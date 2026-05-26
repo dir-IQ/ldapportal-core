@@ -1,0 +1,178 @@
+# Dependabot configuration for LDAPPortal.
+#
+# Surfaces dependency updates as PRs against `main`. Goal: catch
+# Spring Boot CVEs (and their cascade — Tomcat, Spring Security,
+# Spring Framework) before they accumulate the way 3.3.4 did, plus
+# keep frontend tooling and CI runner versions current.
+#
+# Why these update strategies:
+# - Maven `pom.xml`: weekly. Spring Boot patches roughly once a month;
+#   weekly catches them within ~2 weeks of release. Group all Spring
+#   ecosystem deps into a single PR — they version together and a
+#   per-dep PR storm would be noisy.
+# - npm `frontend/`: weekly. Vite + Vue + Pinia don't move as fast,
+#   but @playwright/test, eslint, etc. push patches frequently.
+#   Group dev dependencies; production deps stay individual so reviews
+#   focus on what ships.
+# - Docker `Dockerfile` + Compose: weekly. The base eclipse-temurin and
+#   postgres tags get security patches quietly; this is the loudest
+#   "you're behind" signal we have.
+# - GitHub Actions: weekly. Action major versions occasionally drop
+#   support for older runners; staying current avoids a forced cliff.
+
+version: 2
+updates:
+  # ── Backend Maven (root POM aggregates all modules' deps) ───────────
+  - package-ecosystem: "maven"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Chicago"
+    target-branch: "main"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "backend"
+    # Major-version bumps need human triage (API breaks, BOM coherence,
+    # spring-boot/spring-security cross-version constraints). Suppress
+    # them so the auto-PR feed stays signal-heavy. Dependabot still opens
+    # PRs for documented security advisories regardless of this rule.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      # All Spring Boot / Spring Framework / Spring Security / Spring
+      # Cloud deps move together and the BOM coheres them — a single
+      # PR per Spring patch wave is the right grain.
+      spring:
+        patterns:
+          - "org.springframework.boot:*"
+          - "org.springframework:*"
+          - "org.springframework.security:*"
+          - "org.springframework.data:*"
+      # Test dependency churn (mockito, archunit, junit) — group so
+      # we don't get 5 PRs when JUnit ships a patch.
+      test-tools:
+        patterns:
+          - "org.mockito:*"
+          - "com.tngtech.archunit:*"
+          - "org.junit.jupiter:*"
+          - "org.testcontainers:*"
+          - "net.bytebuddy:*"
+      # Catch-all for everything else — UnboundID SDK, Jakarta servlet,
+      # Lombok, Flyway, PostgreSQL JDBC, Jackson, etc. Dependabot
+      # groups by first match, so a dep that's already in `spring`
+      # or `test-tools` doesn't end up here. Keeps non-Spring patch
+      # waves to a single PR per week instead of one per dep.
+      production-deps:
+        patterns:
+          - "*"
+
+  # ── Frontend npm ────────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Chicago"
+    target-branch: "main"
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps(frontend)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "frontend"
+    # Suppress major-version bumps — Vue 3 → 4, TypeScript 5 → 6, etc.
+    # Dependabot still opens security PRs irrespective of this rule.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      # Vue + Pinia + Vite move together — Vue 3.5.x patches usually
+      # ship with matching Pinia/Vite patches.
+      vue-stack:
+        patterns:
+          - "vue"
+          - "vue-router"
+          - "pinia"
+          - "vite"
+          - "@vitejs/*"
+          - "@vue/*"
+      # Test tooling — one PR per Playwright/Vitest patch wave.
+      test-tools:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+          - "vitest"
+          - "@vitest/*"
+          - "happy-dom"
+          - "eslint-plugin-playwright"
+      # Catch-all for everything else — axios, tailwindcss, typescript,
+      # eslint, the @types/* packages, etc. First-match grouping keeps
+      # vue-stack and test-tools out of this bucket.
+      production-deps:
+        patterns:
+          - "*"
+
+  # ── Docker images (Dockerfile + docker-compose.yml) ────────────────
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Chicago"
+    target-branch: "main"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(docker)"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"
+    # Suppress major-version base-image bumps (e.g. eclipse-temurin 21 → 22,
+    # postgres 16 → 17). Those need a coordinated rebuild + smoke run.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    # Group all docker-image bumps into a single PR. The same image
+    # (postgres, openldap, etc.) is referenced from multiple files —
+    # docker-compose.yml plus Testcontainers definitions in test code.
+    # Bumping them in lockstep prevents drift between dev (compose) and
+    # CI (Testcontainers); the consistency test guards against
+    # human-introduced drift, and this grouping guards against
+    # Dependabot-introduced drift.
+    groups:
+      docker-images:
+        patterns:
+          - "*"
+
+  # ── GitHub Actions runners + actions ───────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/Chicago"
+    target-branch: "main"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "ci"
+    # Suppress major-version action bumps (e.g. actions/checkout@v4 → v5).
+    # Major action bumps occasionally drop runner support; want them
+    # surfaced manually.
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

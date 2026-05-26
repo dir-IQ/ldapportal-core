@@ -1,0 +1,59 @@
+# Publishes com.ldapportal:ldapportal-core to Maven Central.
+# TEMPLATE — validate end-to-end during the Phase 5b staging dry-run (the exact
+# GPG / Central secret wiring can't be exercised until the repo + secrets exist).
+# The -Prelease profile (flatten + sign + central-publishing) lives in core/pom.xml.
+# Requires repo secrets: CENTRAL_TOKEN_USERNAME, CENTRAL_TOKEN_PASSWORD,
+# GPG_PRIVATE_KEY, GPG_PASSPHRASE. autoPublish=false leaves a droppable staging
+# deployment to verify before releasing.
+#
+# Versioning: the pom carries a permanent -SNAPSHOT for day-to-day dev, but a
+# -SNAPSHOT deploy routes to Central's *snapshots* repo (separate endpoint, extra
+# gating, not what we publish). So this workflow stamps a RELEASE version before
+# deploying — from the vX.Y.Z tag, or the manual `version` input — and refuses to
+# deploy a SNAPSHOT.
+name: Release (Maven Central)
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 0.0.1 (manual runs only; tag runs derive it from the vX.Y.Z tag)"
+        required: false
+        default: ''
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+          server-id: central
+          server-username: CENTRAL_TOKEN_USERNAME
+          server-password: CENTRAL_TOKEN_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+      - name: Determine release version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            V="${GITHUB_REF_NAME#v}"          # refs/tags/v0.0.1 -> 0.0.1
+          else
+            V="${{ github.event.inputs.version }}"
+          fi
+          if [ -z "$V" ] || printf '%s' "$V" | grep -q 'SNAPSHOT'; then
+            echo "::error::No release version resolved (got '$V'). Push a vX.Y.Z tag or supply the 'version' input — refusing to deploy a SNAPSHOT (it 403s against Central's snapshots repo)."
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - name: Stamp release version
+        run: mvn -B -ntp versions:set -DnewVersion=${{ steps.ver.outputs.version }} -DgenerateBackupPoms=false
+      - name: Deploy core to Central (staging)
+        run: mvn -B -ntp -Prelease -DskipTests -pl core deploy
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}

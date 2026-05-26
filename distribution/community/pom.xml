@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.ldapportal</groupId>
+        <artifactId>ldapportal-parent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>ldapportal-community</artifactId>
+    <packaging>jar</packaging>
+    <name>ldapportal-community</name>
+    <description>
+        Community distribution — produces the runnable fat JAR that ships
+        under Apache 2.0 with core only. Mirror of distribution/commercial
+        but without the ee dependency. This is what the public
+        ldapportal-community Docker image runs.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.ldapportal</groupId>
+            <artifactId>ldapportal-core</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>ldapportal-community-${project.version}</finalName>
+        <plugins>
+            <!-- Resolves the git short-SHA before spring-boot's build-info
+                 goal runs, so it gets baked into the JAR's
+                 META-INF/build-info.properties (see parent pom additionalProperties). -->
+            <plugin>
+                <groupId>io.github.git-commit-id</groupId>
+                <artifactId>git-commit-id-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>com.ldapportal.LDAPPortalApplication</mainClass>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>build-info</id>
+                        <goals><goal>build-info</goal></goals>
+                    </execution>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- License-line guard: scan the assembled fat JAR for any
+                 com/ldapportal/ee/** entries and fail the build if any are
+                 found. The community JAR ships under Apache 2.0; bundling
+                 commercial-licensed bytecode inside it would blur the
+                 license boundary in ways that are hard to undo once the
+                 artifact is published. Mirrors the verify-library-jar-layout
+                 check in ee/pom.xml. -->
+            <plugin>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>verify-no-ee-bytecode</id>
+                        <phase>verify</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <resourcecount property="community.eeClasses">
+                                    <zipfileset src="${project.build.directory}/${project.build.finalName}.jar"
+                                                includes="BOOT-INF/classes/com/ldapportal/ee/**/*.class,
+                                                          com/ldapportal/ee/**/*.class"/>
+                                </resourcecount>
+                                <resourcecount property="community.eeJars">
+                                    <zipfileset src="${project.build.directory}/${project.build.finalName}.jar"
+                                                includes="BOOT-INF/lib/ldapportal-ee-*.jar"/>
+                                </resourcecount>
+                                <fail message="Community JAR contains ee bytecode: com/ldapportal/ee/**/*.class entries=${community.eeClasses} (expected 0), BOOT-INF/lib/ldapportal-ee-*.jar entries=${community.eeJars} (expected 0). The community distribution must ship Apache-2.0 code only — see docs/edition-boundary.md. Check this module's dependencies; ldapportal-ee must not appear directly or transitively.">
+                                    <condition>
+                                        <or>
+                                            <not><equals arg1="${community.eeClasses}" arg2="0"/></not>
+                                            <not><equals arg1="${community.eeJars}" arg2="0"/></not>
+                                        </or>
+                                    </condition>
+                                </fail>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

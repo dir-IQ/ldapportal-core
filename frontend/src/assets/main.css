@@ -1,0 +1,435 @@
+@import "tailwindcss";
+
+/* ── Global accessibility ──────────────────────────────────────────────────── */
+*:focus-visible {
+  outline: 2px solid #334155;
+  outline-offset: 2px;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible {
+  outline: 2px solid #334155;
+  outline-offset: 1px;
+}
+
+/* Respect the OS "reduce motion" setting (WCAG 2.3.3 / 2.2.2). Near-instant
+   animations + transitions everywhere — toasts, modal/drawer enters, spinners,
+   fade-ins — so motion-sensitive users aren't subjected to movement. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── Entry animations ─────────────────────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out;
+}
+
+/* Brightness hover utility */
+.hover\:brightness-90:hover { filter: brightness(0.9); }
+
+/* ── Page transitions ─────────────────────────────────────────────────────── */
+.page-fade-enter-active,
+.page-fade-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.page-fade-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.page-fade-leave-to {
+  opacity: 0;
+}
+
+/* ── Dark mode overrides ─────────────────────────────────────────────────────
+   Applied via data-theme="dark" on <html>. Tailwind's dark: variant is wired
+   to this attribute via @custom-variant below.
+   ──────────────────────────────────────────────────────────────────────────── */
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* Override Tailwind defaults for dark backgrounds and text */
+[data-theme="dark"] .bg-gray-100  { background-color: #1f2937; }
+[data-theme="dark"] .bg-gray-50   { background-color: #1a2332; }
+[data-theme="dark"] .bg-white     { background-color: #111827; }
+
+[data-theme="dark"] .text-gray-900 { color: #f3f4f6; }
+[data-theme="dark"] .text-gray-700 { color: #d1d5db; }
+[data-theme="dark"] .text-gray-600 { color: #c0c5cd; }
+[data-theme="dark"] .text-gray-500 { color: #9ca3af; }
+[data-theme="dark"] .text-gray-400 { color: #7b8494; }
+
+[data-theme="dark"] .border-gray-200 { border-color: #374151; }
+[data-theme="dark"] .border-gray-100 { border-color: #2d3748; }
+[data-theme="dark"] .border-gray-300 { border-color: #4b5563; }
+
+[data-theme="dark"] .divide-gray-200 > :not(:last-child) { border-color: #374151; }
+[data-theme="dark"] .divide-gray-100 > :not(:last-child) { border-color: #2d3748; }
+
+[data-theme="dark"] .hover\:bg-gray-50:hover { background-color: #1e293b; }
+
+/* Inputs */
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+[data-theme="dark"] select,
+[data-theme="dark"] textarea {
+  background-color: #1f2937;
+  color: #f3f4f6;
+  border-color: #4b5563;
+}
+
+/* Badges */
+[data-theme="dark"] .bg-gray-100.text-gray-700,
+[data-theme="dark"] .bg-gray-100.text-gray-800 {
+  background-color: #374151;
+  color: #d1d5db;
+}
+
+/* Tables */
+[data-theme="dark"] .bg-blue-50 { background-color: #1e3a5f; }
+
+/* ── Global button classes ──────────────────────────────────────────────────
+   Three-tier visual hierarchy:
+     .btn-primary   — solid blue, main action
+     .btn-secondary — soft blue tint, important but not primary
+     .btn-neutral   — light gray fill, cancel/dismiss/back
+   ──────────────────────────────────────────────────────────────────────────── */
+.btn-primary {
+  padding: 0.375rem 0.75rem;
+  background-color: #2563eb;
+  color: #fff;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 0.15s;
+}
+.btn-primary:hover { background-color: #1d4ed8; }
+.btn-primary:disabled { opacity: 0.5; cursor: default; }
+
+.btn-secondary {
+  padding: 0.375rem 0.75rem;
+  background-color: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 0.15s;
+}
+.btn-secondary:hover { background-color: #e2e8f0; }
+.btn-secondary:disabled { opacity: 0.5; cursor: default; }
+
+.btn-neutral {
+  padding: 0.375rem 0.75rem;
+  background-color: #e5e7eb;
+  border: 1px solid #9ca3af;
+  color: #374151;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  transition: background-color 0.15s;
+}
+.btn-neutral:hover { background-color: #d1d5db; }
+.btn-neutral:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Global form inputs ─────────────────────────────────────────────────── */
+.input {
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  outline: none;
+  transition: box-shadow 0.15s;
+}
+.input:focus { box-shadow: 0 0 0 2px #334155; }
+.input:disabled { background-color: #f3f4f6; }
+
+.input-sm {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+  outline: none;
+}
+.input-sm:focus { box-shadow: 0 0 0 2px #94a3b8; }
+
+/* ── Small button (pagination, minor actions) ──────────────────────────── */
+.btn-sm {
+  padding: 0.25rem 0.75rem;
+  border: 1px solid #e5e7eb;
+  color: #4b5563;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  transition: background-color 0.15s;
+}
+.btn-sm:hover { background-color: #f9fafb; }
+.btn-sm:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Danger button ─────────────────────────────────────────────────────── */
+.btn-danger {
+  padding: 0.375rem 0.75rem;
+  background-color: #dc2626;
+  color: #fff;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  transition: background-color 0.15s;
+}
+.btn-danger:hover { background-color: #b91c1c; }
+.btn-danger:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Warning button (orange — for cautionary actions like Force Close) ── */
+.btn-warning {
+  padding: 0.375rem 0.75rem;
+  background-color: #f97316;
+  color: #fff;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 0.15s;
+}
+.btn-warning:hover { background-color: #ea580c; }
+.btn-warning:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Success button (green — for affirmative actions like Approve) ───── */
+.btn-success {
+  padding: 0.375rem 0.75rem;
+  background-color: #16a34a;
+  color: #fff;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 0.15s;
+}
+.btn-success:hover { background-color: #15803d; }
+.btn-success:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Soft variants (light tint + tinted border + colored text) ────────
+ * Use for inline table-row actions where a full color fill would be too
+ * heavy. Match .btn-secondary's silhouette but in red / green. */
+.btn-danger-soft {
+  padding: 0.375rem 0.75rem;
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 0.15s;
+}
+.btn-danger-soft:hover { background-color: #fee2e2; }
+.btn-danger-soft:disabled { opacity: 0.5; cursor: default; }
+
+.btn-success-soft {
+  padding: 0.375rem 0.75rem;
+  background-color: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #16a34a;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color 0.15s;
+}
+.btn-success-soft:hover { background-color: #dcfce7; }
+.btn-success-soft:disabled { opacity: 0.5; cursor: default; }
+
+/* ── Compact size modifier (pure padding/font reduction) ──────────────
+ * Intended to combine with one of the color classes above (.btn-primary,
+ * .btn-secondary, .btn-neutral, .btn-danger, .btn-warning, .btn-success,
+ * and the *-soft variants). Sets ONLY size — no color, no hover state —
+ * so the underlying color class wins on every other property. The older
+ * .btn-sm above is a self-contained pagination chip and should not be
+ * combined with another color class (doing so creates the colour
+ * collisions we patched in commits 82578e9, dede40a). */
+.btn-compact {
+  padding: 0.25rem 0.625rem;
+  font-size: 0.75rem;
+}
+
+/* Tab-filter buttons (used in list views with All / Status filters).
+ * Distinct from the standard btn-* family — these are subtle pill
+ * controls that toggle visible content rather than triggering
+ * actions. Active vs inactive is determined by which class the
+ * caller applies. */
+.btn-tab {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+  background-color: #ffffff;
+  color: #374151;
+  font-weight: 500;
+  transition: background-color 150ms, border-color 150ms;
+}
+.btn-tab:hover {
+  background-color: #f9fafb;
+}
+.btn-tab-active {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  border-radius: 0.5rem;
+  border: 1px solid #2563eb;
+  background-color: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 500;
+  transition: background-color 150ms, border-color 150ms;
+}
+.btn-tab-active:hover {
+  background-color: #dbeafe;
+}
+
+/* ── Status badges ─────────────────────────────────────────────────────── */
+.badge-green  { display: inline-flex; align-items: center; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; background-color: #dcfce7; color: #166534; }
+.badge-red    { display: inline-flex; align-items: center; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; background-color: #fee2e2; color: #991b1b; }
+.badge-yellow { display: inline-flex; align-items: center; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; background-color: #fef9c3; color: #854d0e; }
+.badge-blue   { display: inline-flex; align-items: center; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; background-color: #dbeafe; color: #1e40af; }
+.badge-gray   { display: inline-flex; align-items: center; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; background-color: #f3f4f6; color: #374151; }
+
+/* Dark mode button overrides */
+[data-theme="dark"] .btn-secondary {
+  background-color: #334155;
+  border-color: #475569;
+  color: #cbd5e1;
+}
+[data-theme="dark"] .btn-secondary:hover { background-color: #475569; }
+[data-theme="dark"] .btn-neutral {
+  background-color: #374151;
+  border-color: #4b5563;
+  color: #d1d5db;
+}
+[data-theme="dark"] .btn-neutral:hover { background-color: #4b5563; }
+[data-theme="dark"] .btn-primary {
+  background-color: #2563eb;
+}
+[data-theme="dark"] .btn-primary:hover { background-color: #3b82f6; }
+[data-theme="dark"] .btn-sm {
+  border-color: #4b5563; color: #9ca3af;
+}
+[data-theme="dark"] .btn-sm:hover { background-color: #374151; }
+[data-theme="dark"] .btn-danger { background-color: #dc2626; }
+[data-theme="dark"] .btn-danger:hover { background-color: #ef4444; }
+[data-theme="dark"] .btn-warning { background-color: #f97316; }
+[data-theme="dark"] .btn-warning:hover { background-color: #fb923c; }
+[data-theme="dark"] .btn-success { background-color: #16a34a; }
+[data-theme="dark"] .btn-success:hover { background-color: #22c55e; }
+[data-theme="dark"] .btn-danger-soft {
+  background-color: #4c1d1d; border-color: #7f1d1d; color: #fecaca;
+}
+[data-theme="dark"] .btn-danger-soft:hover { background-color: #7f1d1d; }
+[data-theme="dark"] .btn-success-soft {
+  background-color: #14432a; border-color: #166534; color: #bbf7d0;
+}
+[data-theme="dark"] .btn-success-soft:hover { background-color: #166534; }
+[data-theme="dark"] .input {
+  background-color: #1f2937; color: #f3f4f6; border-color: #4b5563;
+}
+[data-theme="dark"] .input-sm {
+  background-color: #1f2937; color: #f3f4f6; border-color: #4b5563;
+}
+[data-theme="dark"] .btn-tab {
+  background-color: #1f2937;
+  color: #d1d5db;
+  border-color: #374151;
+}
+[data-theme="dark"] .btn-tab:hover {
+  background-color: #374151;
+}
+[data-theme="dark"] .btn-tab-active {
+  background-color: #1e3a8a;
+  color: #bfdbfe;
+  border-color: #3b82f6;
+}
+[data-theme="dark"] .btn-tab-active:hover {
+  background-color: #1e40af;
+}
+
+/* ── Compact density mode ───────────────────────────────────────────────────
+   Activated by setting data-density="compact" on <html> via the useDensity
+   composable. Reduces vertical footprint of form controls, buttons, and
+   page headings sitewide so power users can fit more content per screen.
+
+   Coverage:
+   - Global classes (.input, .input-sm, .btn-primary, .btn-secondary, etc.)
+   - Two heading utilities (h1.text-2xl, h2.text-xl) — narrow scope so the
+     density reduction tracks page titles only, not arbitrary text-2xl spans.
+   - A small set of layout utilities used by app-shell cards: .p-6, .p-5,
+     .py-3, .py-2.5, .mb-6, .mb-4, .mb-3. Overriding these is deliberate
+     even though they're Tailwind utilities — they're load-bearing for
+     "card padding" and "section spacing" sitewide. Views that explicitly
+     don't want to participate should use a non-listed utility (e.g. .p-4
+     → unaffected) or wrap their own scoped style.
+   ──────────────────────────────────────────────────────────────────────── */
+[data-density="compact"] .input {
+  padding: 0.25rem 0.625rem;
+  font-size: 0.8125rem;
+}
+[data-density="compact"] .input-sm {
+  padding: 0.1875rem 0.5rem;
+  font-size: 0.75rem;
+}
+[data-density="compact"] .btn-primary,
+[data-density="compact"] .btn-secondary,
+[data-density="compact"] .btn-neutral,
+[data-density="compact"] .btn-danger,
+[data-density="compact"] .btn-warning,
+[data-density="compact"] .btn-success,
+[data-density="compact"] .btn-danger-soft,
+[data-density="compact"] .btn-success-soft {
+  padding: 0.25rem 0.625rem;
+  font-size: 0.8125rem;
+}
+[data-density="compact"] .btn-sm {
+  padding: 0.1875rem 0.5rem;
+  font-size: 0.6875rem;
+}
+[data-density="compact"] .btn-tab,
+[data-density="compact"] .btn-tab-active {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+}
+/* Top-of-page headings shrink one step. h1 stays visually distinct from h2
+ * but doesn't dominate the viewport. */
+[data-density="compact"] h1.text-2xl { font-size: 1.25rem; line-height: 1.5rem; }
+[data-density="compact"] h2.text-xl  { font-size: 1.0625rem; line-height: 1.5rem; }
+/* Page-level padding: shave a little from the standard p-6 wrapper. Only
+ * fires when the immediate child of a routed view sets `p-6` AND density
+ * is compact — narrow scope to avoid surprising third-party components. */
+[data-density="compact"] .p-6 { padding: 1rem; }
+[data-density="compact"] .p-5 { padding: 0.75rem; }
+[data-density="compact"] .py-3 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+[data-density="compact"] .py-2\.5 { padding-top: 0.375rem; padding-bottom: 0.375rem; }
+/* Margin-bottom on common spacers — tightens form sections without
+ * touching every utility. */
+[data-density="compact"] .mb-6 { margin-bottom: 0.75rem; }
+[data-density="compact"] .mb-4 { margin-bottom: 0.5rem; }
+[data-density="compact"] .mb-3 { margin-bottom: 0.375rem; }
+
+/* Modal chrome: AppModal and most dialogs use px-6 py-4 on their header /
+ * body / footer rows. They aren't matched by the .p-6 / .p-5 rules above
+ * (different utility class strings), so without these the rest of a modal
+ * stays comfortable-density even when controls inside it don't. Other
+ * sites that happen to use px-6 / py-4 also tighten — acceptable trade-off
+ * given how widely these utilities track 'card-style' chrome. */
+[data-density="compact"] .px-6 { padding-left: 1rem; padding-right: 1rem; }
+[data-density="compact"] .py-4 { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+
+/* Result-style tables: ResultsTable tags its <table> with .density-table
+ * so the per-cell padding (currently py-2 px-4 at standard density) drops
+ * to roughly 4px / 12px in compact mode. We can't override the raw .py-2
+ * / .px-4 utilities sitewide — they're load-bearing in too many other
+ * contexts (banners, chips, button rows, etc.) — but a class targeted at
+ * the table element narrows the blast radius to ResultsTable consumers. */
+[data-density="compact"] .density-table thead th,
+[data-density="compact"] .density-table tbody td {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}

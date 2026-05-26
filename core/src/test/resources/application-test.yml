@@ -1,0 +1,27 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:ldapportal-test;DB_CLOSE_DELAY=-1;MODE=PostgreSQL
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+  flyway:
+    enabled: false
+
+app:
+  encryption:
+    key: dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleTA=
+  bootstrap:
+    superadmin:
+      username: admin
+      password: test-bootstrap-pw
+  jwt:
+    secret: dGVzdHNlY3JldHRlc3RzZWNyZXR0ZXN0c2VjcmV0dGVzdHNlY3JldHRlc3Q=
+    expiry-minutes: 60
+  cookie:
+    secure: false

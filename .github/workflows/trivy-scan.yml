@@ -1,0 +1,179 @@
+# Trivy vulnerability scan for the backend Docker image.
+#
+# Builds ldapportal-app:scan from the actual Dockerfile and scans for
+# HIGH/CRITICAL CVEs. Fails the workflow if any are found, locking in
+# the "0 HIGH/CRITICAL" floor we reached after the Spring Boot 3.5.x
+# bump + override cleanup.
+#
+# Why this exists alongside Dependabot:
+#   - Dependabot scans the *manifest* (pom.xml top-level deps).
+#   - Trivy scans the *built artifact* — fat JAR contents, base image
+#     OS packages, embedded binaries. It catches transitive bundles
+#     that aren't in the manifest, base-image regressions, and 0-days
+#     that vendor-feed-Trivy sees before GitHub Advisory Database.
+#
+# Triggers:
+#   - PRs that touch dep manifests or the Dockerfile (where backend
+#     image content actually changes).
+#   - Push to main (so coverage stays current).
+#   - workflow_dispatch (manual, when investigating a CVE report).
+#
+# No weekly schedule — see the on: block below for rationale. New CVEs
+# against unchanged images surface via Dependabot's weekly manifest scan,
+# which opens a PR that re-triggers Trivy here.
+#
+# Frontend image scanning is skipped here — it's static assets behind
+# Alpine + nginx, has been at 0 HIGH/CRITICAL throughout, and isn't
+# affected by Maven dep changes. If that changes (e.g. an actual node
+# server in the frontend image), add a parallel job.
+
+name: Trivy scan (backend image)
+
+on:
+  # PR coverage is broad (no paths filter on the trigger itself) so
+  # this workflow always fires and the branch-protection required
+  # check is always reported. The expensive scan-backend job is
+  # gated below on a `changes` guard job: docs-only PRs skip the
+  # ~5-min Maven+Docker+Trivy build, code PRs run the full scan.
+  # Skipped jobs count as a passing required check provided branch
+  # protection lists the JOB name (not the workflow name).
+  pull_request:
+    branches: [main]
+  # Push events keep the paths filter — re-running the same scan
+  # post-merge is duplicative when nothing dep-affecting changed.
+  push:
+    branches: [main]
+    paths:
+      - 'pom.xml'
+      - 'core/pom.xml'
+      - 'ee/pom.xml'
+      - 'distribution/**/pom.xml'
+      - 'Dockerfile'
+      - '.github/workflows/trivy-scan.yml'
+  # No weekly schedule: Dependabot scans the manifest weekly already,
+  # so the marginal value of a second weekly job focused on the built
+  # image was small vs. the cost (Maven build + Docker build + image
+  # scan = ~15 min). The PR + main-push triggers above keep the floor
+  # locked: any change that bumps a dep, edits the Dockerfile, or
+  # lands on main re-runs the scan. New CVEs against an unchanged
+  # image surface via the weekly Dependabot pass, which opens a PR
+  # that triggers Trivy here.
+  workflow_dispatch: {}
+
+concurrency:
+  group: trivy-${{ github.ref }}
+  cancel-in-progress: true
+
+# See ci.yml for rationale — workflow-level permissions because the
+# guard job's pulls.listFiles call needs pull-requests: read and the
+# org policy didn't grant it from a job-level block.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # Same guard pattern as ci.yml + e2e-smoke.yml: skip the expensive
+  # scan when the PR only touches docs. We deliberately use the broad
+  # docs-only filter (rather than the narrower "dep-manifests +
+  # Dockerfile" filter from the push trigger) so any code change —
+  # Java, TS, build scripts — still gets a Trivy run on the resulting
+  # fat JAR. The push trigger keeps its narrower paths filter because
+  # a post-merge scan adds no new info when nothing dep-affecting moved.
+  changes:
+    name: Detect code changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - id: filter
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Push events: paths filter on the trigger already gates
+            // this; if we reached the workflow at all, we want to scan.
+            // workflow_dispatch + schedule (none here, but defensive):
+            // always scan.
+            if (context.eventName !== 'pull_request') {
+              core.setOutput('code', 'true');
+              return;
+            }
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            const docsOnly = /^(docs\/|stale-docs\/)|\.md$/;
+            const codeChanged = files.some(f => !docsOnly.test(f.filename));
+            core.setOutput('code', codeChanged ? 'true' : 'false');
+            core.notice(`Code changed: ${codeChanged} (${files.length} files in PR)`);
+
+  scan-backend:
+    # Brand-neutral check name so a product rename never breaks the
+    # branch-protection required-check mapping (it built `ldapportal-app` below).
+    name: Trivy — backend image
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: temurin
+          cache: maven
+
+      # Build the fat JAR (skip tests — CI/E2E workflows already gate
+      # on tests; this job is purely about scanning the artifact).
+      # Runner-preinstalled `mvn` (not ./mvnw) to avoid the wrapper's
+      # Maven-distribution bootstrap download from repo.maven.apache.org,
+      # which intermittently 403s — see ci.yml "Run tests" for detail.
+      - name: Build backend JAR
+        run: mvn -B -ntp clean package -DskipTests
+
+      # Build the actual production image — same Dockerfile that ships.
+      # Tag it `:scan` so it can't accidentally collide with anything else.
+      - name: Build Docker image
+        run: docker build -t ldapportal-app:scan -f docker/community/Dockerfile .
+
+      # Trivy via the official action — handles DB caching automatically
+      # via $HOME/.cache/trivy and uploads SARIF for the Security tab.
+      # `exit-code: 1 + severity: HIGH,CRITICAL + ignore-unfixed: false`
+      # means: any HIGH/CRITICAL with or without an upstream fix fails
+      # the build. Drop `ignore-unfixed: false` if upstream-unfixable
+      # CVEs become a recurring blocker; for now we want them visible.
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ldapportal-app:scan
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '1'
+          format: table
+          output: trivy-results.txt
+          # Java fat JAR analysis takes time; the default 5m timeout
+          # was tripping locally, so give it 15 like our manual runs.
+          timeout: 15m
+
+      # Always upload the report so failures are debuggable from the
+      # Actions UI without re-running. Retention 14 days for trend visibility.
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-backend-report
+          path: trivy-results.txt
+          retention-days: 14
+
+      # Print a digest into the job log so the Actions summary view
+      # shows the count even if the artifact isn't downloaded.
+      - name: Summarize report
+        if: always()
+        run: |
+          echo "::group::Trivy summary"
+          tail -50 trivy-results.txt || echo "(no report)"
+          echo "::endgroup::"

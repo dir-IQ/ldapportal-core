@@ -1,0 +1,228 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.14</version>
+        <relativePath/>
+    </parent>
+
+    <groupId>com.ldapportal</groupId>
+    <artifactId>ldapportal-parent</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>ldapportal-parent</name>
+    <description>
+        Parent POM for the ldapportal project. Two library modules (core, ee)
+        and one distribution that assembles the runnable Spring Boot JAR.
+        See docs/refactor-plan.md Phase 5 for the module boundary rationale.
+    </description>
+
+    <modules>
+        <module>core</module>
+        <!--
+            addons/* — open-source optional modules (Apache 2.0). The
+            namespace is created in P0 of the ISVA full-mode plan;
+            individual addon modules uncomment their entry below as
+            they land.
+        -->
+        <module>addons/isva</module>
+        <module>distribution/community</module>
+        <module>distribution/community-plus-isva</module>
+    </modules>
+
+    <properties>
+        <java.version>21</java.version>
+        <jjwt.version>0.13.0</jjwt.version>
+        <logstash-logback.version>7.4</logstash-logback.version>
+        <springdoc.version>2.8.17</springdoc.version>
+        <unboundid-ldapsdk.version>7.0.4</unboundid-ldapsdk.version>
+        <lombok.version>1.18.46</lombok.version>
+        <openpdf.version>2.4.0</openpdf.version>
+        <archunit.version>1.4.2</archunit.version>
+        <!-- Override Spring Boot BOM's pgjdbc 42.7.10 → 42.7.11 to clear
+             CVE-2026-42198 (pgjdbc client-side DoS via malicious
+             SCRAM-SHA-256 auth response). Trivy was failing the
+             backend image scan on this. Drop this override when the
+             Spring Boot BOM bumps past 42.7.11. -->
+        <postgresql.version>42.7.11</postgresql.version>
+        <!-- Override Spring Boot BOM's Tomcat 10.1.54 → 10.1.55 to clear
+             six HIGH/CRITICAL Trivy findings on the backend image:
+               CVE-2026-41293, CVE-2026-43512, CVE-2026-43515 (CRITICAL)
+               CVE-2026-41284, CVE-2026-42498, CVE-2026-43513 (HIGH)
+             All six are fixed in 10.1.55. Drop this override when the
+             Spring Boot BOM bumps past 10.1.55. -->
+        <tomcat.version>10.1.55</tomcat.version>
+        <!-- Override byte-buddy + mockito for Java 25 compatibility -->
+        <byte-buddy.version>1.18.7</byte-buddy.version>
+        <mockito.version>5.23.0</mockito.version>
+    </properties>
+
+    <!--
+        Centralised dependency versions. Leaf modules declare which
+        dependencies they actually pull in, but the version is defined
+        exactly once — here — so core and ee can't drift.
+    -->
+    <dependencyManagement>
+        <dependencies>
+            <!-- ldapportal internal modules -->
+            <dependency>
+                <groupId>com.ldapportal</groupId>
+                <artifactId>ldapportal-core</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.ldapportal</groupId>
+                <artifactId>ldapportal-core</artifactId>
+                <version>${project.version}</version>
+                <type>test-jar</type>
+            </dependency>
+            <dependency>
+                <groupId>com.ldapportal</groupId>
+                <artifactId>ldapportal-ee</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.ldapportal</groupId>
+                <artifactId>ldapportal-addons-isva</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+
+            <!-- Third-party deps whose versions aren't managed by spring-boot-starter-parent -->
+            <dependency>
+                <groupId>com.unboundid</groupId>
+                <artifactId>unboundid-ldapsdk</artifactId>
+                <version>${unboundid-ldapsdk.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-api</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-impl</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-jackson</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.springdoc</groupId>
+                <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+                <version>${springdoc.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.librepdf</groupId>
+                <artifactId>openpdf</artifactId>
+                <version>${openpdf.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.logstash.logback</groupId>
+                <artifactId>logstash-logback-encoder</artifactId>
+                <version>${logstash-logback.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.tngtech.archunit</groupId>
+                <artifactId>archunit-junit5</artifactId>
+                <version>${archunit.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <!-- Surefire: JVM args for Java 22+ module access (Mockito byte-buddy) -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <argLine>
+                            --add-opens java.base/java.lang=ALL-UNNAMED
+                            --add-opens java.base/java.lang.reflect=ALL-UNNAMED
+                            --add-opens java.base/java.util=ALL-UNNAMED
+                        </argLine>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <configuration>
+                        <!-- JDK 23+ no longer runs annotation processors by default -->
+                        <proc>full</proc>
+                        <annotationProcessorPaths>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                                <version>${lombok.version}</version>
+                            </path>
+                            <path>
+                                <groupId>org.springframework.boot</groupId>
+                                <artifactId>spring-boot-configuration-processor</artifactId>
+                                <!-- spring-boot.version is defined by spring-boot-starter-parent.
+                                     Pre-split this was ${project.parent.version} since
+                                     spring-boot-starter-parent was the direct parent; after
+                                     the multi-module split our own parent POM is, so we
+                                     reference Spring Boot's version by property name instead. -->
+                                <version>${spring-boot.version}</version>
+                            </path>
+                        </annotationProcessorPaths>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <configuration>
+                        <excludes>
+                            <exclude>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                            </exclude>
+                        </excludes>
+                        <!-- Surface the git short-SHA in the runtime build-info
+                             so the version endpoint can echo it back and
+                             deployment skew is debuggable at a glance.
+                             git.commit.id.abbrev is set by the
+                             git-commit-id-maven-plugin execution below. -->
+                        <additionalProperties>
+                            <git.sha>${git.commit.id.abbrev}</git.sha>
+                        </additionalProperties>
+                    </configuration>
+                </plugin>
+                <!-- Resolves git.commit.id.abbrev from the working-copy HEAD so
+                     the spring-boot-maven-plugin's build-info goal can write it
+                     into META-INF/build-info.properties. failOnNoGitDirectory
+                     is false so non-git checkouts (release tarballs, CI
+                     workspaces that strip .git) still build — they just won't
+                     have a SHA to surface. -->
+                <plugin>
+                    <groupId>io.github.git-commit-id</groupId>
+                    <artifactId>git-commit-id-maven-plugin</artifactId>
+                    <version>9.2.0</version>
+                    <executions>
+                        <execution>
+                            <id>get-the-git-infos</id>
+                            <goals><goal>revision</goal></goals>
+                            <phase>initialize</phase>
+                        </execution>
+                    </executions>
+                    <configuration>
+                        <failOnNoGitDirectory>false</failOnNoGitDirectory>
+                        <failOnUnableToExtractRepoInfo>false</failOnUnableToExtractRepoInfo>
+                        <abbrevLength>7</abbrevLength>
+                        <generateGitPropertiesFile>false</generateGitPropertiesFile>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+
+</project>

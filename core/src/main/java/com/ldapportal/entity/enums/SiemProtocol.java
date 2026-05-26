@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
+package com.ldapportal.entity.enums;
+
+public enum SiemProtocol {
+    SYSLOG_UDP,
+    SYSLOG_TCP,
+    SYSLOG_TLS,
+    WEBHOOK
+}

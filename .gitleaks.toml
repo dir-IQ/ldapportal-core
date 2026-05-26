@@ -1,0 +1,30 @@
+# gitleaks configuration for ldapportal.
+#
+# Used by the Phase 5b core-snapshot secret scan (docs/5b-repo-split.md §11
+# Step 4: `gitleaks detect --no-git --source .`) and any CI gitleaks job. It
+# ships into the public ldapportal-core snapshot automatically (root dotfile,
+# not on the snapshot deny-list), so the same allowlist governs the monorepo
+# and the published core repo.
+#
+# IMPORTANT: this only ADDS exceptions on top of gitleaks' built-in rules
+# (`useDefault = true`). It does NOT allowlist `dev/` (the real Ed25519 license
+# signing key) — that path is excluded from the core snapshot entirely and must
+# still trip the scanner if it ever appears elsewhere.
+
+title = "ldapportal gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+Confirmed non-secrets (verified during the 2026-05 Phase 5b dry-run):
+  - test fixtures whose base64 'secrets' decode to literal 'testkey…' /
+    'testsecret…' (BaseControllerTest, application-test.yml);
+  - the core-snapshot leak scanner, whose comment quotes the
+    '-----BEGIN PRIVATE KEY-----' PEM header it greps for.
+"""
+paths = [
+  '''src/test/''',                    # dummy creds in test fixtures
+  '''scripts/5b-core-snapshot\.sh''', # scanner documents the PEM header it matches
+]

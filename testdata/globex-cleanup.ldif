@@ -1,0 +1,44 @@
+# =============================================================================
+# Globex cleanup — undoes the membership ADDs from globex-acquisition-overlaps.ldif
+# so the file can be re-imported. Does NOT remove the bulk users from
+# globex-250-users.ldif (those are removed by `ldapdelete -r dc=globex,dc=com`
+# or the companion globex-cleanup-delete.sh script).
+#
+# Usage:
+#   ldapmodify -x -D "cn=admin,dc=globex,dc=com" -w <pw> -f globex-cleanup.ldif
+#
+# After this, you can re-load:
+#   ldapmodify -x -D "cn=admin,dc=globex,dc=com" -w <pw> -a -f globex-acquisition-overlaps.ldif
+# =============================================================================
+
+# --- Remove demo-persona memberships from existing groups ---
+
+dn: cn=globex-engineering,ou=Groups,dc=globex,dc=com
+changetype: modify
+delete: member
+member: uid=glx-demo-exact,ou=Engineering,ou=People,dc=globex,dc=com
+member: uid=glx-demo-high,ou=Engineering,ou=People,dc=globex,dc=com
+member: uid=glx-demo-ambig-1,ou=Engineering,ou=People,dc=globex,dc=com
+member: uid=glx-demo-ambig-2,ou=Engineering,ou=People,dc=globex,dc=com
+
+dn: cn=globex-sales,ou=Groups,dc=globex,dc=com
+changetype: modify
+delete: member
+member: uid=glx-demo-orphan,ou=Sales,ou=People,dc=globex,dc=com
+
+dn: cn=globex-finance,ou=Groups,dc=globex,dc=com
+changetype: modify
+delete: member
+member: uid=glx-demo-offboard,ou=Finance,ou=People,dc=globex,dc=com
+
+dn: cn=globex-leadership,ou=Groups,dc=globex,dc=com
+changetype: modify
+delete: member
+member: uid=glx-demo-exact,ou=Engineering,ou=People,dc=globex,dc=com
+member: uid=glx-demo-orphan,ou=Sales,ou=People,dc=globex,dc=com
+member: uid=glx-demo-offboard,ou=Finance,ou=People,dc=globex,dc=com
+
+dn: cn=globex-finance-readonly,ou=Groups,dc=globex,dc=com
+changetype: modify
+delete: member
+member: uid=glx-demo-offboard,ou=Finance,ou=People,dc=globex,dc=com

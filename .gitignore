@@ -1,0 +1,55 @@
+# Maven build output
+target/
+*.class
+*.jar
+*.war
+# …but the Maven wrapper jar is a committed bootstrap artifact (Maven's
+# own convention). Without it, a fresh CI checkout makes ./mvnw download
+# it from repo.maven.apache.org — which intermittently 403s and breaks
+# the build. Commit it so the build needs no network for the wrapper.
+!.mvn/wrapper/maven-wrapper.jar
+
+# Node — the frontend has its own .gitignore for node_modules under
+# frontend/. The root ignore catches stray caches (e.g. an empty
+# .vite/) that get created if `vitest` or `vite` ever runs with the
+# repo root as cwd instead of frontend/.
+node_modules/
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# Environment / secrets — NEVER commit these
+.env
+*.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Claude Code local settings (contains session-specific config)
+.claude/settings.local.json
+
+# DB backup files — never commit
+ldapportal-backup-*.sql
+*.dump
+
+# Playwright (SP4)
+frontend/tests/e2e/.auth/
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
+
+# superpowers brainstorming visual companion (transient mockups + state)
+.superpowers/
+
+# flatten-maven-plugin output (generated during -Prelease publishing)
+.flattened-pom.xml
+**/.flattened-pom.xml

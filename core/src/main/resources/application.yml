@@ -1,0 +1,142 @@
+spring:
+  application:
+    name: ldap-portal
+
+  datasource:
+    url:                   ${DB_URL:jdbc:postgresql://localhost:5432/ldapportal}
+    username:              ${DB_USERNAME:ldapportal}
+    password:              ${DB_PASSWORD:ldapportal}
+    driver-class-name:     org.postgresql.Driver
+    hikari:
+      minimum-idle:        ${DB_POOL_MIN:2}
+      maximum-pool-size:   ${DB_POOL_MAX:20}
+      connection-timeout:  ${DB_POOL_CONNECT_TIMEOUT_MS:30000}
+      idle-timeout:        ${DB_POOL_IDLE_TIMEOUT_MS:600000}
+      pool-name:           LDAPPortalHikariPool
+
+  jpa:
+    hibernate:
+      # Flyway owns the schema; Hibernate only validates that entities match.
+      ddl-auto: validate
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql:          false
+        jdbc:
+          time_zone:         UTC
+        # Enable JSONB support via Hibernate 6 native JSON type mapping.
+        type:
+          preferred_uuid_jdbc_type: UUID
+
+  flyway:
+    enabled:              true
+    # Migrations are organised per module so each edition only creates
+    # the tables it uses. Community ships classpath:db/migration/core/
+    # only; commercial adds the ee/* trees. Spring Boot's default
+    # location resolution falls back to each folder that exists on the
+    # classpath, so a community JAR that ships without the ee/* resources
+    # simply skips those locations.
+    #
+    # See docs/core-ee-refactor-plan.md → Phase 4 for the layout.
+    locations:
+      - classpath:db/migration/core
+      - classpath:db/migration/ee/governance
+      - classpath:db/migration/ee/hr
+      - classpath:db/migration/ee/alerting
+      - classpath:db/migration/ee/hybrid
+      - classpath:db/migration/addons/isva
+    baseline-on-migrate:  false
+    validate-on-migrate:  true
+    out-of-order:         true
+    # After consolidating migration scripts the schema history table in an
+    # existing DB will have stale/missing entries.  Setting both vars below
+    # to true lets Flyway wipe and recreate the schema automatically.
+    # NEVER enable clean in a production environment that holds live data.
+    clean-disabled:                  ${FLYWAY_CLEAN_DISABLED:true}
+    clean-on-validation-error:       ${FLYWAY_CLEAN_ON_VALIDATION_ERROR:false}
+
+  servlet:
+    multipart:
+      max-file-size:    ${UPLOAD_MAX_FILE_SIZE:10MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:10MB}
+
+# ── Application-specific properties ──────────────────────────────────────────
+app:
+  encryption:
+    # 32-byte AES-256 key, base64-encoded.  REQUIRED — no default.
+    key: ${ENCRYPTION_KEY}
+
+  bootstrap:
+    superadmin:
+      username: ${BOOTSTRAP_SUPERADMIN_USERNAME:superadmin}
+      # REQUIRED on fresh install; no default.
+      password: ${BOOTSTRAP_SUPERADMIN_PASSWORD}
+
+  jwt:
+    # Long random secret, base64-encoded.  REQUIRED — no default.
+    secret:          ${JWT_SECRET}
+    expiry-minutes:  ${JWT_EXPIRY_MINUTES:60}
+
+  cookie:
+    # Set to false only in local development (plain HTTP).  Always true in production.
+    secure: ${COOKIE_SECURE:true}
+
+  approval:
+    # Auto-approve requests submitted by superadmins. Config-only (not a
+    # DB/UI setting) so a superadmin can't grant themselves the bypass.
+    superadmin-bypass: ${APP_APPROVAL_SUPERADMIN_BYPASS:false}
+
+  auth:
+    # Control whether the OIDC / WebSEAL enable toggle + config block are
+    # shown in the Authentication settings tab. UI visibility only —
+    # enablement still comes from the persisted enabledAuthTypes.
+    oidc:
+      ui-visible: ${APP_AUTH_OIDC_UI_VISIBLE:false}
+    webseal:
+      ui-visible: ${APP_AUTH_WEBSEAL_UI_VISIBLE:true}
+
+# ── Access review scheduler ────────────────────────────────────────────────────
+ldapportal:
+  access-review:
+    reminder-days:       ${ACCESS_REVIEW_REMINDER_DAYS:3}
+    escalation-days:     ${ACCESS_REVIEW_ESCALATION_DAYS:14}
+    auto-revoke-enabled: ${ACCESS_REVIEW_AUTO_REVOKE_ENABLED:false}
+    expiry-cron:         ${ACCESS_REVIEW_EXPIRY_CRON:0 0 2 * * ?}
+  sod:
+    scan-cron:               ${SOD_SCAN_CRON:0 0 3 * * ?}
+  drift:
+    analysis-cron:           ${DRIFT_ANALYSIS_CRON:0 0 4 * * ?}
+  monitoring:
+    cron:                    ${MONITORING_CRON:0 */15 * * * ?}
+  entra:
+    poll-interval-ms:        ${ENTRA_POLL_INTERVAL_MS:300000}
+    poll-initial-delay-ms:   ${ENTRA_POLL_INITIAL_DELAY_MS:60000}
+  hr:
+    poll-interval-ms:       ${HR_POLL_INTERVAL_MS:60000}
+    sync-timeout-minutes:   ${HR_SYNC_TIMEOUT_MINUTES:30}
+    max-employees-per-sync: ${HR_MAX_EMPLOYEES:50000}
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+# JSON format is configured in logback-spring.xml.
+# Log level is controlled via environment variable only.
+logging:
+  level:
+    root:             ${LOG_LEVEL:INFO}
+    com.ldapportal:    ${APP_LOG_LEVEL:INFO}
+    # Suppress Hibernate SQL noise in non-debug environments
+    org.hibernate.SQL: ${HIBERNATE_LOG_LEVEL:WARN}
+
+springdoc:
+  api-docs:
+    path: /api/v1/openapi
+
+# ── Actuator ──────────────────────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized

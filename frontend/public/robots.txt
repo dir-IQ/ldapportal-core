@@ -1,0 +1,3 @@
+User-agent: *
+Disallow: /auditor/
+Disallow: /api/v1/auditor/

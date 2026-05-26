@@ -1,0 +1,9 @@
+username,first_name,last_name,full_name,email,title,phone
+alice.smith,Alice,Smith,Alice Smith,alice.smith@example.com,Software Engineer,555-0101
+bob.johnson,Bob,Johnson,Bob Johnson,bob.johnson@example.com,Engineering Manager,555-0102
+carol.davis,Carol,Davis,Carol Davis,carol.davis@example.com,Senior Designer,555-0103
+,David,Miller,David Miller,david.miller@example.com,Software Engineer,555-0104
+eve.wilson,,,Eve Wilson,eve.wilson@example.com,Data Analyst,555-0105
+frank.garcia,Frank,Garcia,Frank Garcia,frank.garcia@example.com,Site Reliability Engineer,555-0106
+grace.lee,Grace,Lee,Grace Lee,grace.lee@example.com,Product Manager,555-0107
+henry.martin,Henry,Martin,Henry Martin,henry.martin@example.com,Software Engineer,555-0108

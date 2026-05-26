@@ -1,0 +1,381 @@
+# =============================================================================
+# LDIF Test Data — ITDS test fixture (~20 users, 5 groups)
+# Base DN: dc=itdstest,dc=example,dc=com
+#
+# Loaded on first volume init by the ldap-itds compose service. Designed to
+# exercise the ITDS-specific code paths from the P2-P5 phases of
+# docs/superpowers/plans/2026-05-11-ibm-directory-server-support.md:
+#
+#   - Standard inetOrgPerson entries (P1 generic path)
+#   - groupOfNames static groups (P4 baseline)
+#   - ibm-nestedGroup with two member groups (P4 ibm-allMembers path)
+#   - ibm-dynamicGroup with a memberURL filter (P4 dynamic-group resolution
+#     and the deferred-but-visible Phase 5 work)
+#
+# Bind DN for the admin: cn=root (set in the docker-compose env).
+# =============================================================================
+
+# ── Base DN ─────────────────────────────────────────────────────────────────
+dn: dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: domain
+dc: itdstest
+
+# ── Organisational units ────────────────────────────────────────────────────
+dn: ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: groups
+
+# ── Users (8 engineers, 4 designers, 4 PMs, 4 misc) ─────────────────────────
+dn: uid=alice.smith,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Alice Smith
+sn: Smith
+givenName: Alice
+uid: alice.smith
+mail: alice.smith@itdstest.example.com
+title: Software Engineer
+telephoneNumber: 555-0101
+userPassword: alice
+
+dn: uid=bob.johnson,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Bob Johnson
+sn: Johnson
+givenName: Bob
+uid: bob.johnson
+mail: bob.johnson@itdstest.example.com
+title: Engineering Manager
+telephoneNumber: 555-0102
+userPassword: bob
+
+dn: uid=carol.davis,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Carol Davis
+sn: Davis
+givenName: Carol
+uid: carol.davis
+mail: carol.davis@itdstest.example.com
+title: Senior Designer
+telephoneNumber: 555-0103
+userPassword: carol
+
+dn: uid=david.miller,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: David Miller
+sn: Miller
+givenName: David
+uid: david.miller
+mail: david.miller@itdstest.example.com
+title: Software Engineer
+telephoneNumber: 555-0104
+userPassword: david
+
+dn: uid=eve.wilson,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Eve Wilson
+sn: Wilson
+givenName: Eve
+uid: eve.wilson
+mail: eve.wilson@itdstest.example.com
+title: Data Analyst
+telephoneNumber: 555-0105
+userPassword: eve
+
+dn: uid=frank.garcia,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Frank Garcia
+sn: Garcia
+givenName: Frank
+uid: frank.garcia
+mail: frank.garcia@itdstest.example.com
+title: Site Reliability Engineer
+telephoneNumber: 555-0106
+userPassword: frank
+
+dn: uid=grace.lee,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Grace Lee
+sn: Lee
+givenName: Grace
+uid: grace.lee
+mail: grace.lee@itdstest.example.com
+title: Product Manager
+telephoneNumber: 555-0107
+userPassword: grace
+
+dn: uid=henry.martin,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Henry Martin
+sn: Martin
+givenName: Henry
+uid: henry.martin
+mail: henry.martin@itdstest.example.com
+title: Software Engineer
+telephoneNumber: 555-0108
+userPassword: henry
+
+dn: uid=isabel.kim,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Isabel Kim
+sn: Kim
+givenName: Isabel
+uid: isabel.kim
+mail: isabel.kim@itdstest.example.com
+title: Designer
+telephoneNumber: 555-0109
+userPassword: isabel
+
+dn: uid=jack.nguyen,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Jack Nguyen
+sn: Nguyen
+givenName: Jack
+uid: jack.nguyen
+mail: jack.nguyen@itdstest.example.com
+title: Software Engineer
+telephoneNumber: 555-0110
+userPassword: jack
+
+dn: uid=kate.brown,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Kate Brown
+sn: Brown
+givenName: Kate
+uid: kate.brown
+mail: kate.brown@itdstest.example.com
+title: Product Manager
+telephoneNumber: 555-0111
+userPassword: kate
+
+dn: uid=liam.taylor,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Liam Taylor
+sn: Taylor
+givenName: Liam
+uid: liam.taylor
+mail: liam.taylor@itdstest.example.com
+title: Designer
+telephoneNumber: 555-0112
+userPassword: liam
+
+dn: uid=mia.thompson,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Mia Thompson
+sn: Thompson
+givenName: Mia
+uid: mia.thompson
+mail: mia.thompson@itdstest.example.com
+title: Software Engineer
+telephoneNumber: 555-0113
+userPassword: mia
+
+dn: uid=noah.white,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Noah White
+sn: White
+givenName: Noah
+uid: noah.white
+mail: noah.white@itdstest.example.com
+title: Software Engineer
+telephoneNumber: 555-0114
+userPassword: noah
+
+dn: uid=olivia.clark,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Olivia Clark
+sn: Clark
+givenName: Olivia
+uid: olivia.clark
+mail: olivia.clark@itdstest.example.com
+title: Senior Designer
+telephoneNumber: 555-0115
+userPassword: olivia
+
+dn: uid=peter.lewis,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Peter Lewis
+sn: Lewis
+givenName: Peter
+uid: peter.lewis
+mail: peter.lewis@itdstest.example.com
+title: Product Manager
+telephoneNumber: 555-0116
+userPassword: peter
+
+dn: uid=quinn.young,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Quinn Young
+sn: Young
+givenName: Quinn
+uid: quinn.young
+mail: quinn.young@itdstest.example.com
+title: Software Engineer
+telephoneNumber: 555-0117
+userPassword: quinn
+
+dn: uid=rachel.hall,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Rachel Hall
+sn: Hall
+givenName: Rachel
+uid: rachel.hall
+mail: rachel.hall@itdstest.example.com
+title: Data Analyst
+telephoneNumber: 555-0118
+userPassword: rachel
+
+dn: uid=sam.king,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Sam King
+sn: King
+givenName: Sam
+uid: sam.king
+mail: sam.king@itdstest.example.com
+title: Product Manager
+telephoneNumber: 555-0119
+userPassword: sam
+
+dn: uid=tara.green,ou=people,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+cn: Tara Green
+sn: Green
+givenName: Tara
+uid: tara.green
+mail: tara.green@itdstest.example.com
+title: Designer
+telephoneNumber: 555-0120
+userPassword: tara
+
+# ── Static groups (groupOfNames) ────────────────────────────────────────────
+dn: cn=engineering,ou=groups,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: engineering
+description: Engineering team — eight engineers reporting to Bob Johnson
+member: uid=alice.smith,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=david.miller,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=frank.garcia,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=henry.martin,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=jack.nguyen,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=mia.thompson,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=noah.white,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=quinn.young,ou=people,dc=itdstest,dc=example,dc=com
+
+dn: cn=design,ou=groups,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: design
+description: Design team
+member: uid=carol.davis,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=isabel.kim,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=liam.taylor,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=olivia.clark,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=tara.green,ou=people,dc=itdstest,dc=example,dc=com
+
+dn: cn=managers,ou=groups,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+cn: managers
+description: All people-managers
+member: uid=bob.johnson,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=grace.lee,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=kate.brown,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=peter.lewis,ou=people,dc=itdstest,dc=example,dc=com
+member: uid=sam.king,ou=people,dc=itdstest,dc=example,dc=com
+
+# ── Nested group (ibm-nestedGroup) ──────────────────────────────────────────
+# Two existing static groups (engineering + design) referenced via
+# ibm-memberGroup. ITDS resolves ibm-allMembers server-side as the union
+# of the leaf member entries from each referenced group. Exercises the
+# Phase 4 code path in LdapGroupService.getNestedMembers when the
+# directory type is IBM_DIRECTORY_SERVER.
+dn: cn=allTechStaff,ou=groups,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: groupOfNames
+objectClass: ibm-nestedGroup
+cn: allTechStaff
+description: All technical staff (engineering + design) — uses ibm-nestedGroup
+ibm-memberGroup: cn=engineering,ou=groups,dc=itdstest,dc=example,dc=com
+ibm-memberGroup: cn=design,ou=groups,dc=itdstest,dc=example,dc=com
+# groupOfNames requires at least one 'member' attribute in standard schema;
+# the bootstrap group's owner / placeholder member is repeated for that.
+member: uid=bob.johnson,ou=people,dc=itdstest,dc=example,dc=com
+
+# ── Dynamic group (ibm-dynamicGroup) ────────────────────────────────────────
+# memberURL is the standard LDAP URL syntax. Anyone whose title matches
+# *Engineer* (case-insensitive substring) is a member. ITDS resolves this
+# server-side and includes the resolved members in ibm-allMembers responses.
+dn: cn=allEngineers,ou=groups,dc=itdstest,dc=example,dc=com
+objectClass: top
+objectClass: groupOfURLs
+objectClass: ibm-dynamicGroup
+cn: allEngineers
+description: All entries with 'Engineer' in title — dynamic-group via memberURL
+memberURL: ldap:///ou=people,dc=itdstest,dc=example,dc=com??sub?(title=*Engineer*)

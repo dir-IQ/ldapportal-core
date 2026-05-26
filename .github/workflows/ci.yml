@@ -1,0 +1,322 @@
+# CI — runs on every push and pull request.
+#
+# Two independent jobs, each runnable in parallel:
+#   - backend: Maven build + full test suite (Java 21, H2 via the test
+#     profile — no Postgres needed here; tests use in-memory H2 with
+#     PostgreSQL compatibility mode, Flyway disabled).
+#   - frontend: Vite production build (Node 20) to catch compile errors
+#     and verify the bundle assembles.
+#
+# A `changes` guard job inspects PR files and emits separate `backend`
+# and `frontend` outputs, so a frontend-only PR skips the Maven suite
+# (and vice versa). Pushes to `main` always run both — that's the
+# canonical green signal and is never narrowed.
+#
+# Once Phase 2 of the packaging refactor lands its ArchUnit rule
+# (`..core.. does not depend on ..ee..`), that rule runs as part of
+# `./mvnw test` here — violations become CI failures.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs on the same ref when a new push arrives. Saves
+# CI minutes on rapid-fire pushes; the latest commit is what matters.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Workflow-level permissions. The `changes` guard job calls
+# `pulls.listFiles` via actions/github-script, which needs
+# `pull-requests: read`. Job-level permissions blocks were tried first
+# but the dir-IQ org's workflow permission policy doesn't grant the
+# scope reliably until lifted to the workflow level (per GitHub's own
+# troubleshooting recommendation). `contents: read` covers
+# actions/checkout in every job. All other scopes default to `none`.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # Compute whether the PR/push touches code (vs. docs-only). Cheap
+  # guard job — runs ~5s and skips the expensive backend+frontend jobs
+  # for changes that can't possibly affect the build.
+  #
+  # Why a guard job instead of `paths-ignore`: this workflow is on the
+  # branch-protection required-checks list. A `paths-ignore`d workflow
+  # that doesn't fire produces no check at all (not a "skipped" pass),
+  # blocking PR merge on docs-only PRs. With the guard-job pattern the
+  # workflow always fires, the dependent jobs report "skipped" — which
+  # branch protection treats as a passing required check.
+  changes:
+    name: Detect code changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - id: filter
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Push events: always run both jobs. We don't trust the
+            // push payload's file list because force-pushes / merge
+            // commits can lie, and `main` is the canonical green
+            // signal — never narrow it.
+            if (context.eventName === 'push') {
+              core.setOutput('backend', 'true');
+              core.setOutput('frontend', 'true');
+              return;
+            }
+            // Paginate — `data: files` from a single listFiles call
+            // caps at per_page (max 100). A PR with 101 files where
+            // the 101st is the only code change would otherwise be
+            // misclassified and the build would skip.
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+
+            // Docs-only files never trigger either job.
+            const docsOnly = /^(docs\/|stale-docs\/)|\.md$/;
+
+            // Backend-relevant: Maven source trees, the root POM, the
+            // wrapper, and the addons SPDX-header script the backend
+            // job invokes.
+            const backendRe = /^(core\/|ee\/|addons\/|distribution\/|pom\.xml$|\.mvn\/|mvnw(\.cmd)?$|scripts\/check-addons-license-headers)/;
+
+            // Frontend-relevant: anything under frontend/.
+            const frontendRe = /^frontend\//;
+
+            // "Ambient" changes — Dockerfiles, terraform/, .github/,
+            // CODEOWNERS, THIRD-PARTY-LICENSES, root configs — are
+            // neither docs nor in the buckets above. Conservative
+            // default: ambient changes trigger BOTH jobs, matching
+            // the pre-split behavior so we don't silently skip a
+            // workflow- or infra-affecting change.
+            let backendChanged = false;
+            let frontendChanged = false;
+            let ambientChanged = false;
+            for (const f of files) {
+              const name = f.filename;
+              if (docsOnly.test(name)) continue;
+              const isBackend = backendRe.test(name);
+              const isFrontend = frontendRe.test(name);
+              if (isBackend) backendChanged = true;
+              if (isFrontend) frontendChanged = true;
+              if (!isBackend && !isFrontend) ambientChanged = true;
+            }
+            if (ambientChanged) {
+              backendChanged = true;
+              frontendChanged = true;
+            }
+            core.setOutput('backend', backendChanged ? 'true' : 'false');
+            core.setOutput('frontend', frontendChanged ? 'true' : 'false');
+            core.notice(`backend=${backendChanged} frontend=${frontendChanged} (${files.length} files in PR)`);
+
+  backend:
+    name: Backend (Java 21, Maven)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: 21
+          distribution: temurin
+          cache: maven
+
+      - name: Cache Maven build outputs
+        # Persists the build-cache-extension's per-module output cache
+        # (~/.m2/build-cache). setup-java's `cache: maven` only covers
+        # the dependency repo (~/.m2/repository), not this. A unique
+        # per-commit key always writes a fresh entry; restore-keys pulls
+        # the most recent prior cache so modules whose inputs are
+        # unchanged restore their outputs and skip recompile + tests.
+        # PR branches also restore from main's cache on their first run.
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/build-cache
+          key: maven-build-cache-${{ github.sha }}
+          restore-keys: |
+            maven-build-cache-
+
+      - name: Check addons/ SPDX headers
+        # Asserts every .java under addons/ carries
+        # `SPDX-License-Identifier: Apache-2.0`. addons/ is the
+        # open-source-only namespace; a proprietary header slipping in
+        # would silently re-license the file. Cheap (<1s grep); no-op
+        # when addons/ has no child modules yet.
+        # Invoke via `bash` rather than `./` so a missing exec bit (e.g. a
+        # snapshot committed from Windows, where git core.filemode is off)
+        # doesn't fail with "Permission denied".
+        run: bash scripts/check-addons-license-headers.sh
+
+      - name: Run tests
+        # Use the runner's preinstalled `mvn` rather than `./mvnw`. The
+        # wrapper bootstraps by downloading the Maven distribution zip
+        # from repo.maven.apache.org on every run (setup-java's cache
+        # covers ~/.m2/repository but not ~/.m2/wrapper), and that
+        # endpoint intermittently 403s — failing the job before any test
+        # runs. The preinstalled mvn needs no bootstrap download; deps
+        # still restore from the cached local repo. Local dev keeps using
+        # ./mvnw (pinned version). `.mvn/extensions.xml` is honored either
+        # way. `-T 1C` parallelises Maven phases across the six modules.
+        run: mvn --batch-mode --no-transfer-progress -T 1C test
+
+      - name: Upload surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          # Multi-module layout (Phase 5a): each module owns its own
+          # target/. Grab reports from every module so a failure in any
+          # one of them is reachable from the run.
+          path: |
+            core/target/surefire-reports/
+            ee/target/surefire-reports/
+            addons/isva/target/surefire-reports/
+            distribution/community/target/surefire-reports/
+            distribution/community-plus-isva/target/surefire-reports/
+            distribution/commercial/target/surefire-reports/
+          retention-days: 7
+
+  # The frontend's three checks (typecheck, unit tests, production
+  # build) are independent — none consumes another's output — so they
+  # fan out into three parallel jobs instead of running serially in
+  # one. Each does its own checkout + setup-node + `npm ci`, but
+  # actions/setup-node's npm cache makes the install step cheap
+  # (~5-10s warm), and the wall-clock saving on the slow steps
+  # (vue-tsc and vite build each take 20-30s) dominates.
+  #
+  # If you change which jobs are required for merge in branch
+  # protection, swap "Frontend (Vite build)" for "Frontend (typecheck)",
+  # "Frontend (unit tests)", and "Frontend (build)".
+
+  frontend-typecheck:
+    name: Frontend (typecheck)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Type check
+        # vue-tsc --noEmit. Catches TypeScript regressions that
+        # Vite/esbuild (used by `npm run build`) silently transpiles
+        # past — without this step, backend contract drift surfaces
+        # only at runtime.
+        run: npm run typecheck
+
+  frontend-a11y-lint:
+    name: Frontend (a11y lint)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Accessibility lint (eslint-plugin-vuejs-accessibility)
+        # Static a11y checks on .vue templates — complements the runtime
+        # axe-core gate (a11y.yml). Error-level rules fail the build; the
+        # pattern/runtime-covered rules are warn-only (see eslint.config.js).
+        run: npm run lint:a11y
+
+  frontend-unit:
+    name: Frontend (unit tests)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Unit tests
+        # Vitest single-pass run. Tests are colocated as src/**/*.spec.{js,ts}.
+        run: npm run test:unit
+
+  frontend-build:
+    name: Frontend (build)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Build
+        run: npm run build
+
+  # Builds the Apache-2.0 community edition (VITE_EDITION=community aliases the
+  # @/ee seam to an inert stub) and scans the bundle for any commercial chunk
+  # that leaked in. Frontend counterpart to the backend's verify-no-ee-bytecode
+  # JAR scan. Must stay green before a community frontend artifact ships.
+  frontend-community-build:
+    name: Frontend (community build + ee-leak scan)
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+      - name: Build community edition
+        run: npm run build:community
+      - name: Scan community bundle for ee leakage
+        run: npm run scan:community-bundle

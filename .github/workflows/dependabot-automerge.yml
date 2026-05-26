@@ -1,0 +1,81 @@
+# Dependabot auto-merge — patches only, conservative first cut.
+#
+# When Dependabot opens a PR for a patch-version bump (semver z increment),
+# this workflow inspects the metadata, and if the change is patches-only
+# AND CI + E2E Smoke pass on the PR's HEAD, GitHub merges it automatically.
+# No human in the loop for that subset.
+#
+# Currently NOT auto-merged (still need human eyes):
+#   - Minor bumps on production deps (Spring Boot, Vue, axios, etc.)
+#   - Minor bumps on dev/test deps (eslint, vitest, archunit, etc.)
+#   - Anything classified as semver-major (already suppressed by
+#     dependabot.yml's ignore rule, so should never appear anyway)
+#   - Group-PRs where any member is non-patch (the metadata's update-type
+#     reflects the highest classification across the group)
+#
+# Always auto-merged regardless of policy: security updates, because the
+# Dependabot security-update path overrides version-update ignore rules
+# AND is the highest-priority class of dep bump we get.
+#
+# When this is comfortable (1-2 months of clean runs), broaden to:
+#   - Add minor bumps for dependency-type != 'direct:production'
+#   - Or per-ecosystem rules (auto-merge github_actions minors,
+#     keep manual gate on Maven production deps).
+# Pattern docs in the GitHub blog post on Dependabot auto-merge.
+
+name: Dependabot auto-merge
+
+on: pull_request_target
+
+# `pull_request_target` runs against the base branch's workflow file with
+# read-write GITHUB_TOKEN access — required because Dependabot's PR-event
+# token is read-only by default. Don't switch to plain `pull_request` or
+# the `gh pr merge` call below 401s.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    name: Auto-merge low-risk Dependabot bumps
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Patches only. Squash-merge so each bump becomes a single commit on
+      # main (matches the project's general commit cadence; Dependabot's
+      # branch-internal commits are noise once merged).
+      #
+      # Note: --auto flips the auto-merge bit. GitHub then waits for the
+      # required-status-checks list (CI + E2E Smoke per branch protection)
+      # to go green before actually merging. If a check stays red, the PR
+      # sits with auto-merge armed; pushing a fix triggers re-evaluation.
+      - name: Auto-merge patches
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          steps.meta.outputs.dependency-type == 'security'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Visible no-op for non-patch PRs so the workflow run isn't blank.
+      # Reading the workflow run log makes the "why didn't this auto-merge?"
+      # question answerable without Dependabot-metadata expertise.
+      - name: Log skipped (not a patch / security update)
+        if: |
+          steps.meta.outputs.update-type != 'version-update:semver-patch' &&
+          steps.meta.outputs.dependency-type != 'security'
+        run: |
+          echo "Skipped auto-merge:"
+          echo "  update-type:     ${{ steps.meta.outputs.update-type }}"
+          echo "  dependency-type: ${{ steps.meta.outputs.dependency-type }}"
+          echo "  dependency-name: ${{ steps.meta.outputs.dependency-names }}"
+          echo "  group:           ${{ steps.meta.outputs.dependency-group }}"
+          echo "Needs human review per the patches-only policy."

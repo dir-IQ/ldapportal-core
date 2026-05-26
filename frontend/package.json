@@ -1,0 +1,58 @@
+{
+  "name": "ldap-portal-ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:commercial": "VITE_EDITION=commercial vite build --outDir dist-commercial",
+    "build:community": "VITE_EDITION=community vite build --outDir dist-community",
+    "scan:community-bundle": "node scripts/scan-community-bundle.mjs",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit",
+    "lint:utility-classes": "node scripts/check-utility-classes.mjs",
+    "lint:a11y": "eslint src",
+    "gen:api": "node scripts/gen-api.mjs",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "e2e": "playwright test",
+    "e2e:smoke": "playwright test --grep @smoke",
+    "e2e:a11y": "playwright test --grep @a11y",
+    "e2e:ui": "playwright test --ui",
+    "e2e:install": "playwright install --with-deps chromium",
+    "e2e:server": "node scripts/run-e2e-server.mjs"
+  },
+  "dependencies": {
+    "axios": "^1.16.1",
+    "pinia": "^3.0.4",
+    "sortablejs": "^1.15.7",
+    "vue": "^3.5.34",
+    "vue-router": "^5.0.7",
+    "vuedraggable": "^4.1.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.11.3",
+    "@playwright/test": "^1.60.0",
+    "@tailwindcss/vite": "^4.3.0",
+    "@typescript-eslint/parser": "^8.60.0",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "@vitest/coverage-v8": "^4.1.7",
+    "@vue/test-utils": "^2.4.10",
+    "eslint": "^10.4.0",
+    "eslint-plugin-vuejs-accessibility": "^2.5.0",
+    "happy-dom": "^20.9.0",
+    "openapi-typescript": "^7.13.0",
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.3",
+    "vite-plugin-vue-devtools": "^8.1.2",
+    "vitest": "^4.1.5",
+    "vue-eslint-parser": "^10.4.0",
+    "vue-tsc": "^3.3.2"
+  },
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  }
+}

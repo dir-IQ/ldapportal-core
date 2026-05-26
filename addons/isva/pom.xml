@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.ldapportal</groupId>
+        <artifactId>ldapportal-parent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>ldapportal-addons-isva</artifactId>
+    <packaging>jar</packaging>
+    <name>ldapportal-addons-isva</name>
+    <description>
+        IBM Security Verify Access (ISVA) full-mode integration. Apache 2.0
+        licensed open-source addon. Makes LDAPPortal produce ISVA-compatible
+        LDAP entries on user/group lifecycle operations by registering a
+        ProvisioningInterceptor that augments writes with the secUser
+        overlay (inline mode) or fans them out across a demographic +
+        management-DIT pair (linked mode). See the design + plan at
+        docs/superpowers/specs/2026-05-20-isva-full-mode-integration-design.md
+        and docs/superpowers/plans/2026-05-20-isva-full-mode-integration.md.
+    </description>
+
+    <dependencies>
+        <!-- core is the only internal dependency. The ArchUnit rule
+             addons_do_not_depend_on_ee in ee/PackagingArchitectureTest
+             enforces this; the Maven omission is the operational guard. -->
+        <dependency>
+            <groupId>com.ldapportal</groupId>
+            <artifactId>ldapportal-core</artifactId>
+        </dependency>
+
+        <!-- ── Third-party deps inherited from the parent BOM ────────────── -->
+        <!-- UnboundID for the LDAP types referenced in interceptor plans. -->
+        <dependency>
+            <groupId>com.unboundid</groupId>
+            <artifactId>unboundid-ldapsdk</artifactId>
+        </dependency>
+        <!-- Spring Boot starter for the @Component / @Bean registrations
+             and JPA scanning the addon adds (the config table). -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <!-- Lombok is compile-time only; needs to be on each module's
+             classpath because annotation processing runs per-module. -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <version>${lombok.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- ── Test ──────────────────────────────────────────────────────── -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Pull in core's test-jar so addon tests can re-use shared
+             Spring-test config + test fixtures without copy-pasting. -->
+        <dependency>
+            <groupId>com.ldapportal</groupId>
+            <artifactId>ldapportal-core</artifactId>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- See ee/pom.xml's verbose rationale: a library jar bundled
+                 inside a Spring Boot distribution must NOT be repackaged
+                 itself, or the outer boot classloader can't find its
+                 classes. addons/isva ships into distribution/commercial
+                 (and the future distribution/community-plus-isva) as a
+                 plain library, so skip the repackage execution.
+
+                 The maven-antrun-plugin guard below is the regression-
+                 catcher if anyone re-enables repackage by accident. -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>repackage</id>
+                        <configuration>
+                            <skip>true</skip>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>verify-library-jar-layout</id>
+                        <phase>verify</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <resourcecount property="addonsIsva.topLevelClasses">
+                                    <zipfileset src="${project.build.directory}/${project.build.finalName}.jar"
+                                                includes="com/ldapportal/addons/isva/**/*.class"/>
+                                </resourcecount>
+                                <resourcecount property="addonsIsva.bootInfEntries">
+                                    <zipfileset src="${project.build.directory}/${project.build.finalName}.jar"
+                                                includes="BOOT-INF/**,org/springframework/boot/loader/**"/>
+                                </resourcecount>
+                                <fail message="addons-isva jar packaging is wrong: com/ldapportal/addons/isva/**/*.class entries=${addonsIsva.topLevelClasses} (expected &gt; 0), BOOT-INF/loader entries=${addonsIsva.bootInfEntries} (expected 0). See ee/pom.xml for the full rationale on why a bundled library jar must stay un-repackaged.">
+                                    <condition>
+                                        <or>
+                                            <equals arg1="${addonsIsva.topLevelClasses}" arg2="0"/>
+                                            <not><equals arg1="${addonsIsva.bootInfEntries}" arg2="0"/></not>
+                                        </or>
+                                    </condition>
+                                </fail>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
