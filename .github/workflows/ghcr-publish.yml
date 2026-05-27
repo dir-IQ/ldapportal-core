@@ -25,6 +25,12 @@ name: Publish images (GHCR)
 on:
   push:
     tags: ['v*']
+  # Manual runs to exercise the publish path without cutting a release.
+  # Manual runs are tagged `manual-<sha>` only — they never produce a
+  # version tag and never move `latest`. NOTE: the "Run workflow" button
+  # only appears once this file is on the default branch (main); GitHub
+  # only surfaces workflow_dispatch for workflows present there.
+  workflow_dispatch: {}
 
 # Least-privilege: read the repo, write packages. No other scopes.
 permissions:
@@ -77,6 +83,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=manual-,enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -109,6 +116,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=manual-,enable=${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
