@@ -6,8 +6,13 @@ the Fly demo deployment (`docs/deployment-fly.md`) but sized for
 production: TLS-only listener, encrypted RDS storage, deletion
 protection on the DB, secrets in Secrets Manager.
 
-**Status:** initial release, 2026-05-22. Tracks the same major
-version as the LDAP Portal app it deploys.
+The backend and frontend run as two separate ECS services, both
+pulling images from GHCR; the ALB serves the SPA by default and routes
+`/api/v1*` to the backend. Postgres stays on managed RDS.
+
+**Status:** In progress (split into backend + frontend services pulling
+GHCR images, 2026-05-27). Tracks the same major version as the LDAP
+Portal app it deploys.
 
 The operator-facing runbook is in
 [`docs/deployment-aws.md`](../../docs/deployment-aws.md). Read it
@@ -15,19 +20,26 @@ first.
 
 ## What this module provisions
 
-- One ECS Fargate cluster + service + task definition.
+- One ECS Fargate cluster with two services + task definitions:
+  - **backend** — the Spring Boot app (`backend_image_uri`, defaults
+    to the GHCR `community-plus-isva` tag).
+  - **frontend** — the nginx-served Vue SPA (`frontend_image_uri`,
+    defaults to the GHCR `frontend` tag).
 - One RDS Postgres 16.13 instance (single-AZ, `gp3` storage,
   encrypted at rest, deletion-protected).
 - Four Secrets Manager entries — `ENCRYPTION_KEY`, `JWT_SECRET`,
   `BOOTSTRAP_SUPERADMIN_PASSWORD`, the DB master password —
-  generated on first apply.
+  generated on first apply (injected into the backend task only).
 - An internet-facing ALB with an HTTPS-only listener using a
   customer-supplied ACM certificate, plus an HTTP → HTTPS
-  redirect.
-- Three security groups (ALB / app / DB), each with the smallest
-  reachable surface.
-- One CloudWatch Logs group for application logs.
-- IAM roles for the ECS execution and task contexts.
+  redirect. The listener serves the frontend by default and routes
+  `/api/v1*` to the backend target group.
+- Four security groups (ALB / app / frontend / DB), each with the
+  smallest reachable surface. Only the backend reaches Postgres.
+- One CloudWatch Logs group for application logs (stream prefixes
+  `app` and `web`).
+- IAM roles for the ECS execution and task contexts (one execution
+  role shared by both services for image pulls).
 
 ## What it does NOT provision
 
@@ -35,10 +47,11 @@ first.
 - The ACM certificate — pass the ARN in. The DNS record from the
   customer's hostname to the ALB also stays outside (CNAME or
   Route 53 ALIAS based on outputs).
-- The image registry credentials. The default image URI is the
-  public `ghcr.io/dir-iq/ldapportal-commercial:latest` tag, which
-  needs no auth; supply `image_pull_secret_arn` only for private
-  tags.
+- The image registry credentials. The default image URIs are the
+  public `ghcr.io/dir-iq/ldapportal-community-plus-isva:latest` and
+  `ghcr.io/dir-iq/ldapportal-frontend:latest` tags, which need no
+  auth; supply `image_pull_secret_arn` only for private tags (it's
+  shared by both services).
 - Multi-region failover. Single region; replicate the module under
   a different `name` for a second region if you need it.
 - Email / Slack alerting for CloudWatch alarms. Wire those up via
@@ -57,7 +70,10 @@ module "ldapportal" {
   private_subnet_ids = ["subnet-…", "subnet-…"]
   certificate_arn    = "arn:aws:acm:us-east-1:…:certificate/…"
 
-  image_uri = "ghcr.io/dir-iq/ldapportal-commercial:1.0.0"
+  # Optional — these default to the public GHCR :latest tags. Pin to a
+  # release tag (or digest) in production.
+  backend_image_uri  = "ghcr.io/dir-iq/ldapportal-community-plus-isva:1.0.0"
+  frontend_image_uri = "ghcr.io/dir-iq/ldapportal-frontend:1.0.0"
 }
 ```
 

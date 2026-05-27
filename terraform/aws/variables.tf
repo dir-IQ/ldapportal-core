@@ -36,14 +36,20 @@ variable "public_subnet_ids" {
   }
 }
 
-variable "image_uri" {
-  description = "Container image to run. Defaults to the published ghcr.io tag for the commercial distribution; set to ldapportal-community for the OSS build, or ldapportal-community-plus-isva for the OSS + ISVA bundle. Pin to a digest in production."
+variable "backend_image_uri" {
+  description = "Backend (Spring Boot) container image. Defaults to the published ghcr.io community-plus-isva tag (core + ISVA addon); set to ldapportal-community for the addon-free OSS build. Pin to a digest in production."
   type        = string
-  default     = "ghcr.io/dir-iq/ldapportal-commercial:latest"
+  default     = "ghcr.io/dir-iq/ldapportal-community-plus-isva:latest"
+}
+
+variable "frontend_image_uri" {
+  description = "Frontend (nginx-served Vue SPA) container image. Defaults to the published ghcr.io frontend tag. Pin to a digest in production. The ALB serves this for all paths except /api/v1*, which it routes to the backend target group."
+  type        = string
+  default     = "ghcr.io/dir-iq/ldapportal-frontend:latest"
 }
 
 variable "image_pull_secret_arn" {
-  description = "ARN of a Secrets Manager secret holding ghcr.io credentials in the {\"username\":\"…\",\"password\":\"…\"} shape, used by the ECS task execution role. Required when pulling private tags; leave null for public tags (no auth needed). Set up an ECR pull-through cache instead for sub-region latency without ghcr.io egress on every cold start."
+  description = "ARN of a Secrets Manager secret holding ghcr.io credentials in the {\"username\":\"…\",\"password\":\"…\"} shape, used by both task execution roles. Required when pulling private tags; leave null for public tags (no auth needed). Set up an ECR pull-through cache instead for sub-region latency without ghcr.io egress on every cold start."
   type        = string
   default     = null
 }
@@ -59,19 +65,37 @@ variable "hostname" {
 }
 
 variable "task_cpu" {
-  description = "Fargate task CPU units. 512 = 0.5 vCPU and is enough for small directories; bump to 1024 for >5k users or heavy approval traffic."
+  description = "Backend Fargate task CPU units. 512 = 0.5 vCPU and is enough for small directories; bump to 1024 for >5k users or heavy approval traffic."
   type        = number
   default     = 512
 }
 
 variable "task_memory" {
-  description = "Fargate task memory in MiB. Match to task_cpu per the Fargate sizing table (https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters.html#task_size). 1024 MiB matches the JVM's -Xms256m -Xmx512m baseline with headroom."
+  description = "Backend Fargate task memory in MiB. Match to task_cpu per the Fargate sizing table (https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters.html#task_size). 1024 MiB matches the JVM's -Xms256m -Xmx512m baseline with headroom."
   type        = number
   default     = 1024
 }
 
 variable "desired_count" {
-  description = "Number of ECS tasks. 1 is fine for prod with brief restart downtime; bump to 2 with an ALB-managed rolling deploy for zero-downtime updates."
+  description = "Number of backend ECS tasks. 1 is fine for prod with brief restart downtime; bump to 2 with an ALB-managed rolling deploy for zero-downtime updates."
+  type        = number
+  default     = 1
+}
+
+variable "frontend_task_cpu" {
+  description = "Frontend Fargate task CPU units. The nginx-served static SPA is light; 256 (0.25 vCPU) is plenty."
+  type        = number
+  default     = 256
+}
+
+variable "frontend_task_memory" {
+  description = "Frontend Fargate task memory in MiB. Match to frontend_task_cpu per the Fargate sizing table. 512 MiB is ample for nginx serving static assets."
+  type        = number
+  default     = 512
+}
+
+variable "frontend_desired_count" {
+  description = "Number of frontend ECS tasks. 1 is fine for prod with brief restart downtime; bump to 2 for zero-downtime frontend rollouts."
   type        = number
   default     = 1
 }

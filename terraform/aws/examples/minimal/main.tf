@@ -31,9 +31,10 @@ module "ldapportal" {
   # ACM cert in the same region as the ALB, covering var.hostname.
   certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/abcd-…"
 
-  # Pin to a digest in production. The :latest tag is fine for
+  # Pin to a digest in production. The :latest tags are fine for
   # eval deployments; bump to a specific release before going live.
-  image_uri = "ghcr.io/dir-iq/ldapportal-commercial:latest"
+  backend_image_uri  = "ghcr.io/dir-iq/ldapportal-community-plus-isva:latest"
+  frontend_image_uri = "ghcr.io/dir-iq/ldapportal-frontend:latest"
 
   tags = {
     Environment = "prod"
