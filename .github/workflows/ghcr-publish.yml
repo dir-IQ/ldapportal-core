@@ -1,0 +1,120 @@
+# Publishes container images to the GitHub Container Registry (GHCR).
+#
+# Three images, all driven off a vX.Y.Z tag so the image version always
+# matches a release:
+#   ghcr.io/<owner>/ldapportal-community
+#   ghcr.io/<owner>/ldapportal-community-plus-isva
+#   ghcr.io/<owner>/ldapportal-frontend
+#
+# The backend Dockerfiles (docker/<edition>/Dockerfile) COPY a pre-built
+# JAR out of distribution/<edition>/target/, so each backend job runs
+# `mvn package` first — same recipe as trivy-scan.yml. Build context is
+# the repo root so the COPY can reach distribution/. The frontend image
+# is self-contained (multi-stage npm build) with context frontend/.
+#
+# Auth: the built-in GITHUB_TOKEN with packages:write — no PAT/secret to
+# manage for same-org pushes. metadata-action lowercases the owner, so a
+# mixed-case org (dir-IQ) still produces a valid lowercase image ref.
+#
+# Package visibility: GHCR creates packages PRIVATE on first publish.
+# Making them public is a one-time manual step per package
+# (Package settings -> Danger Zone -> Change visibility) — it can't be
+# done from the workflow before the package exists.
+name: Publish images (GHCR)
+
+on:
+  push:
+    tags: ['v*']
+
+# Least-privilege: read the repo, write packages. No other scopes.
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ghcr-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  backend:
+    name: Backend image (${{ matrix.edition }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        edition: [community, community-plus-isva]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      # Build only the target distribution + its upstream modules (-am):
+      # community -> core; community-plus-isva -> core + addons/isva. The
+      # distribution module's verify-no-ee-bytecode check keeps the JAR
+      # license-clean. Runner-preinstalled `mvn` (not ./mvnw) avoids the
+      # wrapper's distribution bootstrap download — see trivy-scan.yml.
+      - name: Build ${{ matrix.edition }} JAR
+        run: mvn -B -ntp -DskipTests -pl distribution/${{ matrix.edition }} -am clean package
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/ldapportal-${{ matrix.edition }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/${{ matrix.edition }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  frontend:
+    name: Frontend image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/ldapportal-frontend
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
