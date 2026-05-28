@@ -231,6 +231,43 @@ public class ApprovalNotificationService {
         }
     }
 
+    /**
+     * Notifies {@code target} that another operator just reset their
+     * password. Fires from {@link AdminManagementService#resetAdminPassword}
+     * and {@link SuperadminManagementService#resetPassword}. Skipped
+     * silently for self-resets (the user already knows). Sends to the
+     * target's email address — if the row has no email on file, the
+     * call falls through to the SMTP-not-configured log line in
+     * {@link #sendEmail}.
+     *
+     * <p>Without this, an operator-initiated password reset left the
+     * target with no out-of-band signal that their credentials had
+     * changed; combined with no audit (#12, separate branch), the
+     * only trace was a sudden "can't sign in" support ticket.</p>
+     */
+    @Async
+    public void notifyPasswordReset(com.ldapportal.entity.Account target,
+                                     com.ldapportal.auth.AuthPrincipal actor) {
+        if (target == null || target.getEmail() == null || target.getEmail().isBlank()) {
+            log.info("Password-reset notification skipped — no email on file for {}",
+                    target != null ? target.getUsername() : "null");
+            return;
+        }
+        String actorName = actor != null && actor.username() != null ? actor.username() : "an operator";
+        String subject = "[LDAPPortal] Your password has been reset";
+        String body = String.format(
+                "Hello %s,\n\n"
+                + "Your LDAPPortal account password was reset by %s. Any\n"
+                + "active sessions for your account have been signed out.\n\n"
+                + "If you did not request this — or if this change is unexpected —\n"
+                + "contact your security team immediately.\n\n"
+                + "— LDAPPortal",
+                target.getDisplayName() != null && !target.getDisplayName().isBlank()
+                        ? target.getDisplayName() : target.getUsername(),
+                actorName);
+        sendEmail(target.getEmail(), subject, body);
+    }
+
     private void sendEmail(String to, String subject, String body) {
         ApplicationSettings settings = appSettingsService.getEntity();
         if (settings.getSmtpHost() == null || settings.getSmtpHost().isBlank()
