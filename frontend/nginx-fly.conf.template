@@ -1,0 +1,66 @@
+# nginx config template for the Fly-deployed frontends.
+#
+# nginx:alpine's stock entrypoint envsubsts files under
+# /etc/nginx/templates/*.template into /etc/nginx/conf.d/ at container
+# start, expanding any ${VAR} references against the container's env.
+# Set BACKEND_APP per-app in the matching fly.toml so one image works
+# for both editions:
+#   - ldapportal-c (community)   → BACKEND_APP=ldapportal-c-app
+#   - ldapportal-e (enterprise)  → BACKEND_APP=ldapportal-e-app
+#
+# Three gotchas worth flagging since all three bit earlier iterations:
+#
+# 1. Route via .flycast, not .internal. .internal is direct 6PN
+#    routing that bypasses fly-proxy, so an idle backend (every app
+#    runs `auto_stop_machines = "stop"`) never wakes from incoming
+#    requests — the TCP dial hangs and nginx returns 502 to the
+#    user. .flycast routes through fly-proxy, which honours the
+#    backend's `auto_start_machines = true` and wakes the machine
+#    on demand. First request after idle pays a 5-10s cold start.
+#
+#    The backends' fly.tomls use `[[services]]` (not `[http_service]`)
+#    with an explicit `[[services.ports]] port = 8080`. That makes
+#    fly-proxy listen on flycast:8080 the same way LDAP works on
+#    flycast:389 — so the URL below "just works".
+#
+# 2. `<host>.flycast` is a hostname, not an IPv6 literal. nginx
+#    treats `[name]:port` as an IPv6 literal and rejects it
+#    ("invalid IPv6 address in upstream"). The right form is the
+#    bare hostname `name:port`.
+#
+# 3. nginx caches the resolved address of an upstream named directly
+#    in proxy_pass at startup, so a backend that gets recycled and
+#    comes back on a new IPv6 won't be reached. The fix is to assign
+#    the host to a variable, which forces nginx to resolve it via
+#    the `resolver` on every request.
+#
+# Fly's internal DNS resolver is at [fdaa::3]:53.
+
+server {
+    listen 8080;
+    resolver [fdaa::3]:53 valid=30s ipv6=on;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    client_max_body_size 50m;
+
+    location /api/v1 {
+        # See the gotchas in the file header — .flycast (not
+        # .internal) so a suspended backend auto-wakes; bare
+        # hostname (no IPv6 brackets); variable-form upstream so
+        # nginx re-resolves per request. Plain HTTP because the
+        # backend toml's `[[services.ports]]` declares port 8080
+        # as an HTTP handler with no TLS.
+        set $upstream_host ${BACKEND_APP}.flycast;
+        proxy_pass http://$upstream_host:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

@@ -10,7 +10,10 @@
 # JAR out of distribution/<edition>/target/, so each backend job runs
 # `mvn package` first — same recipe as trivy-scan.yml. Build context is
 # the repo root so the COPY can reach distribution/. The frontend image
-# is self-contained (multi-stage npm build) with context frontend/.
+# is a self-contained multi-stage npm build with context frontend/, built
+# from Dockerfile.fly (envsubst template + .flycast resolver) — NOT the
+# sibling Dockerfile, which is the docker-compose variant and hardcodes
+# `proxy_pass http://app:8080;` (only resolvable on the compose network).
 #
 # Auth: the built-in GITHUB_TOKEN with packages:write — no PAT/secret to
 # manage for same-org pushes. metadata-action lowercases the owner, so a
@@ -122,7 +125,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: frontend
-          file: frontend/Dockerfile
+          file: frontend/Dockerfile.fly
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
