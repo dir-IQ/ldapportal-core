@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.service;
 
+import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.dto.superadmin.CreateSuperadminRequest;
 import com.ldapportal.dto.superadmin.ResetPasswordRequest;
 import com.ldapportal.dto.superadmin.SuperadminResponse;
@@ -56,7 +57,25 @@ public class SuperadminManagementService {
 
     @Transactional
     public SuperadminResponse updateSuperadmin(UUID id, UpdateSuperadminRequest req) {
+        return updateSuperadmin(id, req, null);
+    }
+
+    @Transactional
+    public SuperadminResponse updateSuperadmin(UUID id, UpdateSuperadminRequest req,
+                                                AuthPrincipal principal) {
         Account a = require(id);
+
+        // Self-deactivate guard. The last-LOCAL-superadmin check below
+        // catches the lock-everyone-out case, but with 2+ superadmins the
+        // operator can still deactivate themselves mid-session — landing
+        // on an immediately-failed page reload. Forbid it; if a
+        // superadmin really needs to be deactivated, another operator
+        // does it.
+        if (principal != null && id.equals(principal.id()) && !req.active() && a.isActive()) {
+            throw new IllegalArgumentException(
+                    "Cannot deactivate your own account");
+        }
+
         a.setDisplayName(req.displayName());
         a.setEmail(req.email());
         // Guard: cannot deactivate the last active LOCAL superadmin
@@ -84,7 +103,19 @@ public class SuperadminManagementService {
 
     @Transactional
     public void deleteSuperadmin(UUID id) {
+        deleteSuperadmin(id, null);
+    }
+
+    @Transactional
+    public void deleteSuperadmin(UUID id, AuthPrincipal principal) {
         Account a = require(id);
+        // Self-delete guard. Deleting your own account mid-session is
+        // never the right answer — at minimum it strands the operator
+        // staring at a 401 on the next click. Forbid it explicitly.
+        if (principal != null && id.equals(principal.id())) {
+            throw new IllegalArgumentException(
+                    "Cannot delete your own account");
+        }
         // Guard: never delete the last active LOCAL superadmin
         if (a.getAuthType() == AccountType.LOCAL && a.isActive()
                 && accountRepo.countByRoleAndAuthTypeAndActiveTrueAndIdNot(

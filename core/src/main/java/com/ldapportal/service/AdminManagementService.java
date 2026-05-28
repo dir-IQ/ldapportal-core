@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.service;
 
+import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.dto.admin.AdminAccountRequest;
 import com.ldapportal.dto.admin.AdminAccountResponse;
 import com.ldapportal.dto.admin.AdminPermissionsResponse;
@@ -142,14 +143,48 @@ public class AdminManagementService {
 
     @Transactional
     public AdminAccountResponse updateAdmin(UUID adminId, AdminAccountRequest req) {
+        return updateAdmin(adminId, req, null);
+    }
+
+    @Transactional
+    public AdminAccountResponse updateAdmin(UUID adminId, AdminAccountRequest req,
+                                             AuthPrincipal principal) {
         Account a = requireAccount(adminId);
+
+        // Self-mutation guard. After requireAccount tightens to ADMIN-only,
+        // a SUPERADMIN principal's id can't match an ADMIN row id anyway,
+        // but we assert defensively for clarity and to catch any future
+        // role overlap.
+        if (principal != null && adminId.equals(principal.id())) {
+            throw new IllegalArgumentException(
+                    "Cannot modify your own account through this endpoint");
+        }
+
+        // Role is immutable through this endpoint. Promotion to SUPERADMIN
+        // (or demotion away from ADMIN) is sensitive enough to belong on a
+        // dedicated path with its own guards. Closes the license-cap bypass
+        // where role changes silently sidestepped the create-time check.
+        if (req.role() != a.getRole()) {
+            throw new IllegalArgumentException(
+                    "Role cannot be changed via this endpoint");
+        }
+
+        // License cap re-check on activate: an inactive admin doesn't count
+        // toward the cap; activating it does, so an org at-limit can't
+        // re-light an inactive row to slip past the cap.
+        if (req.active() && !a.isActive()) {
+            usageLimitService.requireWithinLimit(
+                    com.ldapportal.core.entitlement.LimitType.ADMIN_ACCOUNTS,
+                    accountRepo.countByRoleAndActiveTrue(AccountRole.ADMIN));
+        }
+
         if (!a.getUsername().equals(req.username()) && accountRepo.existsByUsername(req.username())) {
             throw new ConflictException("Account [" + req.username() + "] already exists");
         }
         a.setUsername(req.username());
         a.setDisplayName(req.displayName());
         a.setEmail(req.email());
-        a.setRole(req.role());
+        // a.setRole(req.role()) intentionally omitted — role is immutable here.
         a.setAuthType(req.authType());
         a.setActive(req.active());
         if (req.authType() == AccountType.LOCAL && req.password() != null && !req.password().isBlank()) {
@@ -179,6 +214,15 @@ public class AdminManagementService {
 
     @Transactional
     public void deleteAdmin(UUID adminId) {
+        deleteAdmin(adminId, null);
+    }
+
+    @Transactional
+    public void deleteAdmin(UUID adminId, AuthPrincipal principal) {
+        if (principal != null && adminId.equals(principal.id())) {
+            throw new IllegalArgumentException(
+                    "Cannot delete your own account through this endpoint");
+        }
         accountRepo.delete(requireAccount(adminId));
     }
 
@@ -261,9 +305,22 @@ public class AdminManagementService {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    /**
+     * Resolves an admin row by id. Critically, this is the <em>only</em>
+     * lookup used by every mutating method on this service, and it 404s
+     * on anything other than {@link AccountRole#ADMIN}. That closes the
+     * cross-endpoint bypass where {@code PUT /superadmin/admins/{id}} or
+     * {@code DELETE /superadmin/admins/{id}} would otherwise act on a
+     * superadmin row (skipping the last-LOCAL-superadmin and self-delete
+     * guards that live on {@link SuperadminManagementService}).
+     */
     private Account requireAccount(UUID adminId) {
-        return accountRepo.findById(adminId)
+        Account a = accountRepo.findById(adminId)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", adminId));
+        if (a.getRole() != AccountRole.ADMIN) {
+            throw new ResourceNotFoundException("Account", adminId);
+        }
+        return a;
     }
 
     private ProvisioningProfile requireProfile(UUID profileId) {
