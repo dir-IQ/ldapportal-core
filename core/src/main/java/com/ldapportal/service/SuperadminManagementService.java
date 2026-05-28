@@ -26,9 +26,10 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class SuperadminManagementService {
 
-    private final AccountRepository accountRepo;
-    private final PasswordEncoder   passwordEncoder;
-    private final AuditService      auditService;
+    private final AccountRepository           accountRepo;
+    private final PasswordEncoder             passwordEncoder;
+    private final AuditService                auditService;
+    private final ApprovalNotificationService notificationService;
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -53,6 +54,7 @@ public class SuperadminManagementService {
         if (accountRepo.existsByUsername(req.username())) {
             throw new ConflictException("Account [" + req.username() + "] already exists");
         }
+        AccountPasswordPolicy.validate(req.password());
         Account a = new Account();
         a.setUsername(req.username());
         a.setPasswordHash(passwordEncoder.encode(req.password()));
@@ -97,15 +99,28 @@ public class SuperadminManagementService {
 
         boolean activeChanged = a.isActive() != req.active();
 
+        // Belt-and-suspenders invariant: at least one active SUPERADMIN
+        // (any authType) must remain. The LOCAL-specific guard below
+        // covers the break-glass case, but this catches the broader
+        // "we have no superadmin at all" lockout if an org ever ends up
+        // without a LOCAL row.
+        if (!req.active() && a.isActive()
+                && accountRepo.countByRoleAndActiveTrueAndIdNot(AccountRole.SUPERADMIN, id) == 0) {
+            throw new IllegalArgumentException(
+                    "Cannot deactivate the last active superadmin");
+        }
+
         a.setDisplayName(req.displayName());
         a.setEmail(req.email());
         // Guard: cannot deactivate the last active LOCAL superadmin
+        // (the break-glass account that doesn't depend on an external IdP).
         if (!req.active() && a.isActive()
                 && a.getAuthType() == AccountType.LOCAL
                 && accountRepo.countByRoleAndAuthTypeAndActiveTrueAndIdNot(
                         AccountRole.SUPERADMIN, AccountType.LOCAL, id) == 0) {
             throw new IllegalArgumentException(
-                    "Cannot deactivate the last active LOCAL superadmin");
+                    "Cannot deactivate the last active LOCAL (break-glass) superadmin — "
+                            + "promote and activate another LOCAL superadmin first");
         }
         a.setActive(req.active());
         Account saved = accountRepo.save(a);
@@ -134,6 +149,7 @@ public class SuperadminManagementService {
             throw new IllegalArgumentException(
                     "Password reset is only supported for LOCAL accounts");
         }
+        AccountPasswordPolicy.validate(req.newPassword());
         a.setPasswordHash(passwordEncoder.encode(req.newPassword()));
         // Invalidate any JWT issued before this reset.
         Long current = a.getCredentialsVersion();
@@ -141,11 +157,17 @@ public class SuperadminManagementService {
         accountRepo.save(a);
 
         if (principal != null) {
+            boolean selfChange = id.equals(principal.id());
             auditService.recordSystemEvent(principal, AuditAction.PASSWORD_RESET,
                     Map.of("accountId", a.getId(),
                             "username", a.getUsername(),
                             "role", a.getRole().name(),
-                            "selfChange", id.equals(principal.id())));
+                            "selfChange", selfChange));
+            // Email the target only when another operator did the reset —
+            // self-reset doesn't need a notification (the user knows).
+            if (!selfChange) {
+                notificationService.notifyPasswordReset(a, principal);
+            }
         }
     }
 
@@ -164,12 +186,22 @@ public class SuperadminManagementService {
             throw new IllegalArgumentException(
                     "Cannot delete your own account");
         }
+        // Belt-and-suspenders: refuse to delete if it would leave zero
+        // active superadmins (any authType). The LOCAL-specific guard
+        // below is the primary safety net but this catches the rare
+        // case where the LOCAL break-glass row is already inactive.
+        if (a.isActive()
+                && accountRepo.countByRoleAndActiveTrueAndIdNot(AccountRole.SUPERADMIN, id) == 0) {
+            throw new IllegalArgumentException(
+                    "Cannot delete the last active superadmin");
+        }
         // Guard: never delete the last active LOCAL superadmin
         if (a.getAuthType() == AccountType.LOCAL && a.isActive()
                 && accountRepo.countByRoleAndAuthTypeAndActiveTrueAndIdNot(
                         AccountRole.SUPERADMIN, AccountType.LOCAL, id) == 0) {
             throw new IllegalArgumentException(
-                    "Cannot delete the last active LOCAL superadmin");
+                    "Cannot delete the last active LOCAL (break-glass) superadmin — "
+                            + "promote and activate another LOCAL superadmin first");
         }
         String username = a.getUsername();
         accountRepo.delete(a);

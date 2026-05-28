@@ -348,8 +348,10 @@ public class AuthController {
             if (acct.getPasswordHash() == null || !passwordEncoder.matches(req.currentPassword(), acct.getPasswordHash())) {
                 return ResponseEntity.badRequest().body(Map.of("error", "Current password is incorrect."));
             }
-            if (req.newPassword().length() < 8) {
-                return ResponseEntity.badRequest().body(Map.of("error", "New password must be at least 8 characters."));
+            try {
+                com.ldapportal.service.AccountPasswordPolicy.validate(req.newPassword());
+            } catch (IllegalArgumentException ex) {
+                return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
             }
             acct.setPasswordHash(passwordEncoder.encode(req.newPassword()));
             // Bump credentials-version so any other live session for this

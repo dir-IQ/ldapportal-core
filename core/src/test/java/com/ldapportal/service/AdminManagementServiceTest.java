@@ -52,6 +52,7 @@ class AdminManagementServiceTest {
     @Mock private PasswordEncoder                 passwordEncoder;
     @Mock private com.ldapportal.core.entitlement.UsageLimitService usageLimitService;
     @Mock private AuditService                    auditService;
+    @Mock private ApprovalNotificationService     notificationService;
 
     private AdminManagementService service;
 
@@ -63,7 +64,7 @@ class AdminManagementServiceTest {
         service = new AdminManagementService(
                 accountRepo, profileRepo, profileRoleRepo,
                 usageLimitService,
-                featureRepo, passwordEncoder, auditService);
+                featureRepo, passwordEncoder, auditService, notificationService);
     }
 
     // ── listAdmins ────────────────────────────────────────────────────────────
@@ -287,7 +288,7 @@ class AdminManagementServiceTest {
 
         var req = new com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest(
                 new AdminAccountRequest("alice", "Alice", "a@e.com",
-                        AccountRole.ADMIN, AccountType.LOCAL, "pw12345678", null, true),
+                        AccountRole.ADMIN, AccountType.LOCAL, "Str0ng-pw-2026!", null, true),
                 List.of(new ProfileRoleRequest(profileId, BaseRole.ADMIN)),
                 List.of(new FeaturePermissionRequest(FeatureKey.USER_CREATE, true, profileId)));
 
@@ -310,7 +311,7 @@ class AdminManagementServiceTest {
         UUID unassignedProfile = UUID.randomUUID();
         var req = new com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest(
                 new AdminAccountRequest("alice", "Alice", "a@e.com",
-                        AccountRole.ADMIN, AccountType.LOCAL, "pw12345678", null, true),
+                        AccountRole.ADMIN, AccountType.LOCAL, "Str0ng-pw-2026!", null, true),
                 List.of(), // no roles
                 List.of(new FeaturePermissionRequest(FeatureKey.USER_CREATE, true, unassignedProfile)));
 
@@ -331,13 +332,47 @@ class AdminManagementServiceTest {
 
         var req = new com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest(
                 new AdminAccountRequest("alice", "Alice", "a@e.com",
-                        AccountRole.ADMIN, AccountType.LOCAL, "pw12345678", null, true),
+                        AccountRole.ADMIN, AccountType.LOCAL, "Str0ng-pw-2026!", null, true),
                 null, null);
 
         AdminAccountResponse resp = service.createAdminWithPermissions(req);
         assertThat(resp.username()).isEqualTo("alice");
         verify(profileRoleRepo, never()).save(any());
         verify(featureRepo, never()).save(any());
+    }
+
+    // ── setFeaturePermissions duplicate detection ────────────────────────────
+
+    @Test
+    void setFeaturePermissions_duplicateAdminWideEntry_rejected() {
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(adminAccount("alice")));
+
+        var dup = List.of(
+                new FeaturePermissionRequest(FeatureKey.USER_CREATE, true),
+                new FeaturePermissionRequest(FeatureKey.USER_CREATE, false));
+
+        assertThatThrownBy(() -> service.setFeaturePermissions(adminId, dup))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Duplicate feature permission");
+        verify(featureRepo, never()).save(any());
+    }
+
+    @Test
+    void setFeaturePermissions_sameFeatureDifferentScope_allowed() {
+        // Admin-wide override + per-profile override on the same feature
+        // are distinct rows in the DB; the dedup key includes profileId
+        // so this combo must NOT be flagged as a duplicate.
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(adminAccount("alice")));
+        when(profileRepo.findById(profileId)).thenReturn(Optional.of(profile()));
+        when(featureRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        var mixed = List.of(
+                new FeaturePermissionRequest(FeatureKey.USER_CREATE, false),
+                new FeaturePermissionRequest(FeatureKey.USER_CREATE, true, profileId));
+
+        service.setFeaturePermissions(adminId, mixed);
+
+        verify(featureRepo, times(2)).save(any());
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

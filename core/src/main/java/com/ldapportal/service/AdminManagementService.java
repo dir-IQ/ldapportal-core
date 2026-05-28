@@ -48,6 +48,7 @@ public class AdminManagementService {
     private final AdminFeaturePermissionRepository featureRepo;
     private final PasswordEncoder                 passwordEncoder;
     private final AuditService                    auditService;
+    private final ApprovalNotificationService     notificationService;
 
     // ── Admin account CRUD ────────────────────────────────────────────────────
 
@@ -99,6 +100,7 @@ public class AdminManagementService {
         a.setAuthType(req.authType());
         a.setActive(req.active());
         if (req.authType() == AccountType.LOCAL && req.password() != null && !req.password().isBlank()) {
+            AccountPasswordPolicy.validate(req.password());
             a.setPasswordHash(passwordEncoder.encode(req.password()));
         }
         if (req.authType() == AccountType.LDAP) {
@@ -223,6 +225,7 @@ public class AdminManagementService {
         a.setAuthType(req.authType());
         a.setActive(req.active());
         if (passwordSet) {
+            AccountPasswordPolicy.validate(req.password());
             a.setPasswordHash(passwordEncoder.encode(req.password()));
         }
         if (req.authType() == AccountType.LDAP) {
@@ -267,6 +270,7 @@ public class AdminManagementService {
         if (a.getAuthType() != AccountType.LOCAL) {
             throw new IllegalArgumentException("Password reset is only supported for LOCAL accounts");
         }
+        AccountPasswordPolicy.validate(newPassword);
         a.setPasswordHash(passwordEncoder.encode(newPassword));
         bumpCredentialsVersion(a);
         accountRepo.save(a);
@@ -277,6 +281,7 @@ public class AdminManagementService {
                             "username", a.getUsername(),
                             "role", a.getRole().name(),
                             "selfChange", false));
+            notificationService.notifyPasswordReset(a, principal);
         }
     }
 
@@ -391,6 +396,22 @@ public class AdminManagementService {
     public void setFeaturePermissions(UUID adminId, List<FeaturePermissionRequest> permissions,
                                        AuthPrincipal principal) {
         Account admin = requireAccount(adminId);
+
+        // Reject duplicates up-front. The DB has partial-unique indexes on
+        // (admin, feature) for admin-wide and (admin, profile, feature) for
+        // per-profile rows; a duplicate would otherwise fail at INSERT time
+        // and surface as a 500 instead of a useful 400. Compose a key the
+        // same way as the index.
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (FeaturePermissionRequest p : permissions) {
+            String key = p.featureKey().name() + "@" + (p.profileId() == null ? "global" : p.profileId());
+            if (!seen.add(key)) {
+                throw new IllegalArgumentException(
+                        "Duplicate feature permission entry for [" + p.featureKey().name()
+                                + (p.profileId() != null ? "] on profile [" + p.profileId() : "] (admin-wide")
+                                + "]");
+            }
+        }
 
         // Replace every override (admin-wide and per-profile) with the list
         // the caller sent. The permissions dialog loads then re-submits the
