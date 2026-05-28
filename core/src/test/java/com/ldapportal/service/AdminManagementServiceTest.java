@@ -51,6 +51,7 @@ class AdminManagementServiceTest {
     @Mock private AdminFeaturePermissionRepository featureRepo;
     @Mock private PasswordEncoder                 passwordEncoder;
     @Mock private com.ldapportal.core.entitlement.UsageLimitService usageLimitService;
+    @Mock private AuditService                    auditService;
 
     private AdminManagementService service;
 
@@ -62,7 +63,7 @@ class AdminManagementServiceTest {
         service = new AdminManagementService(
                 accountRepo, profileRepo, profileRoleRepo,
                 usageLimitService,
-                featureRepo, passwordEncoder);
+                featureRepo, passwordEncoder, auditService);
     }
 
     // ── listAdmins ────────────────────────────────────────────────────────────

@@ -89,6 +89,7 @@ public class AuthController {
     private final AdminFeaturePermissionRepository               featurePermRepo;
     private final PasswordEncoder                                passwordEncoder;
     private final com.ldapportal.service.ApplicationSettingsService applicationSettingsService;
+    private final com.ldapportal.service.AuditService             auditService;
     private final com.ldapportal.core.entitlement.EntitlementService entitlementService;
 
     /**
@@ -356,6 +357,13 @@ public class AuthController {
             Long cv = acct.getCredentialsVersion();
             acct.setCredentialsVersion((cv != null ? cv : 0L) + 1L);
             accountRepo.save(acct);
+            auditService.recordSystemEvent(principal,
+                    com.ldapportal.entity.enums.AuditAction.PASSWORD_RESET,
+                    Map.of("accountId", acct.getId(),
+                            "username", acct.getUsername(),
+                            "role", acct.getRole().name(),
+                            "selfChange", true,
+                            "authType", "LOCAL"));
             return ResponseEntity.ok(Map.of("status", "ok"));
         } else if (acct.getAuthType() == AccountType.LDAP && acct.getLdapDn() != null) {
             // LDAP password change: verify current via bind, then reset via service account
@@ -371,6 +379,13 @@ public class AuthController {
                     Long cv2 = acct.getCredentialsVersion();
                     acct.setCredentialsVersion((cv2 != null ? cv2 : 0L) + 1L);
                     accountRepo.save(acct);
+                    auditService.recordSystemEvent(principal,
+                            com.ldapportal.entity.enums.AuditAction.PASSWORD_RESET,
+                            Map.of("accountId", acct.getId(),
+                                    "username", acct.getUsername(),
+                                    "role", acct.getRole().name(),
+                                    "selfChange", true,
+                                    "authType", "LDAP"));
                     return ResponseEntity.ok(Map.of("status", "ok"));
                 } catch (Exception ignored) {}
             }

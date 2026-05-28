@@ -50,8 +50,11 @@ public class SuperadminController {
 
     @PostMapping
     public ResponseEntity<SuperadminResponse> create(
-            @Valid @RequestBody CreateSuperadminRequest req) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.createSuperadmin(req));
+            @Valid @RequestBody CreateSuperadminRequest req,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+                    com.ldapportal.auth.AuthPrincipal principal) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(service.createSuperadmin(req, principal));
     }
 
     @GetMapping("/{id}")
@@ -77,8 +80,10 @@ public class SuperadminController {
 
     @PostMapping("/{id}/reset-password")
     public ResponseEntity<Void> resetPassword(@PathVariable UUID id,
-                                              @Valid @RequestBody ResetPasswordRequest req) {
-        service.resetPassword(id, req);
+                                              @Valid @RequestBody ResetPasswordRequest req,
+                                              @org.springframework.security.core.annotation.AuthenticationPrincipal
+                                                      com.ldapportal.auth.AuthPrincipal principal) {
+        service.resetPassword(id, req, principal);
         return ResponseEntity.noContent().build();
     }
 }

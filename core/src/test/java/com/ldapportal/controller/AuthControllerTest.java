@@ -59,6 +59,7 @@ class AuthControllerTest extends BaseControllerTest {
     @MockitoBean LdapUserService ldapUserService;
     @MockitoBean ApplicationSettingsService applicationSettingsService;
     @MockitoBean com.ldapportal.core.entitlement.EntitlementService entitlementService;
+    @MockitoBean com.ldapportal.service.AuditService auditService;
 
     private static final UUID ACCOUNT_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
