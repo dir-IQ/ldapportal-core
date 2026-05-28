@@ -181,13 +181,20 @@ public class AdminManagementService {
         if (!a.getUsername().equals(req.username()) && accountRepo.existsByUsername(req.username())) {
             throw new ConflictException("Account [" + req.username() + "] already exists");
         }
+        // Detect credential-changing edits so we can bump credentialsVersion
+        // and invalidate any JWT issued before the change. authType-switch
+        // also clears the password hash; both are credential-affecting.
+        boolean authTypeChanged = a.getAuthType() != req.authType();
+        boolean passwordSet = req.authType() == AccountType.LOCAL
+                && req.password() != null && !req.password().isBlank();
+
         a.setUsername(req.username());
         a.setDisplayName(req.displayName());
         a.setEmail(req.email());
         // a.setRole(req.role()) intentionally omitted — role is immutable here.
         a.setAuthType(req.authType());
         a.setActive(req.active());
-        if (req.authType() == AccountType.LOCAL && req.password() != null && !req.password().isBlank()) {
+        if (passwordSet) {
             a.setPasswordHash(passwordEncoder.encode(req.password()));
         }
         if (req.authType() == AccountType.LDAP) {
@@ -199,6 +206,9 @@ public class AdminManagementService {
         if (req.authType() != AccountType.LOCAL) {
             a.setPasswordHash(null);
         }
+        if (authTypeChanged || passwordSet) {
+            bumpCredentialsVersion(a);
+        }
         return AdminAccountResponse.from(accountRepo.save(a));
     }
 
@@ -209,7 +219,18 @@ public class AdminManagementService {
             throw new IllegalArgumentException("Password reset is only supported for LOCAL accounts");
         }
         a.setPasswordHash(passwordEncoder.encode(newPassword));
+        bumpCredentialsVersion(a);
         accountRepo.save(a);
+    }
+
+    /**
+     * Bumps the account's credentials-version counter so any JWT issued
+     * before this point fails the next request. Called by every
+     * credential-changing op (password set/reset, authType switch).
+     */
+    private void bumpCredentialsVersion(Account a) {
+        Long current = a.getCredentialsVersion();
+        a.setCredentialsVersion((current != null ? current : 0L) + 1L);
     }
 
     @Transactional

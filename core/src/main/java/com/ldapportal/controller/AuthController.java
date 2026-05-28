@@ -351,6 +351,10 @@ public class AuthController {
                 return ResponseEntity.badRequest().body(Map.of("error", "New password must be at least 8 characters."));
             }
             acct.setPasswordHash(passwordEncoder.encode(req.newPassword()));
+            // Bump credentials-version so any other live session for this
+            // account (different browser / device) is invalidated.
+            Long cv = acct.getCredentialsVersion();
+            acct.setCredentialsVersion((cv != null ? cv : 0L) + 1L);
             accountRepo.save(acct);
             return ResponseEntity.ok(Map.of("status", "ok"));
         } else if (acct.getAuthType() == AccountType.LDAP && acct.getLdapDn() != null) {
@@ -361,6 +365,12 @@ public class AuthController {
                     if (result.getResultCode() != ResultCode.SUCCESS) continue;
                     // Current password verified — now reset via service account
                     ldapUserService.resetPassword(dc, acct.getLdapDn(), req.newPassword());
+                    // Bump credentials-version even though the password
+                    // lives in LDAP — JWTs we issued for this account
+                    // are still tied to the old credential.
+                    Long cv2 = acct.getCredentialsVersion();
+                    acct.setCredentialsVersion((cv2 != null ? cv2 : 0L) + 1L);
+                    accountRepo.save(acct);
                     return ResponseEntity.ok(Map.of("status", "ok"));
                 } catch (Exception ignored) {}
             }

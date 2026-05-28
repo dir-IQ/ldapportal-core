@@ -134,7 +134,10 @@ class ApiTokenEndToEndTest {
         // Control case: the new filter must not break the existing JWT path.
         AuthPrincipal p = new AuthPrincipal(
                 PrincipalType.SUPERADMIN, superadmin.getId(), superadmin.getUsername());
-        String jwt = jwtTokenService.issue(p);
+        // Bind the JWT to the account's current credentials version so the
+        // filter accepts it. Without this the new credentials-version check
+        // rejects every token as stale.
+        String jwt = jwtTokenService.issue(p, superadmin.getCredentialsVersion());
 
         mockMvc.perform(get("/api/v1/superadmin/api-tokens")
                         .header("Authorization", "Bearer " + jwt))

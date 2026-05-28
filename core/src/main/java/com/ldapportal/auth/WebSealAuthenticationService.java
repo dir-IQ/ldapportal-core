@@ -116,7 +116,7 @@ public class WebSealAuthenticationService {
         PrincipalType type = account.getRole() == AccountRole.SUPERADMIN
                 ? PrincipalType.SUPERADMIN : PrincipalType.ADMIN;
         AuthPrincipal principal = new AuthPrincipal(type, account.getId(), account.getUsername());
-        String token = jwtTokenService.issue(principal);
+        String token = jwtTokenService.issue(principal, account.getCredentialsVersion());
 
         return Optional.of(new WebSealLoginResult(
                 token, principal.username(), principal.type().name(), principal.id().toString()));

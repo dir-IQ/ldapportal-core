@@ -231,7 +231,7 @@ public class OidcAuthenticationService {
         PrincipalType type = account.getRole() == AccountRole.SUPERADMIN
                 ? PrincipalType.SUPERADMIN : PrincipalType.ADMIN;
         AuthPrincipal principal = new AuthPrincipal(type, account.getId(), account.getUsername());
-        String token = jwtTokenService.issue(principal);
+        String token = jwtTokenService.issue(principal, account.getCredentialsVersion());
 
         return new OidcLoginResult(token, principal.username(), principal.type().name(),
                 principal.id().toString());

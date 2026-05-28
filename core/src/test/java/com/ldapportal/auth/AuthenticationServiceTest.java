@@ -63,6 +63,7 @@ class AuthenticationServiceTest {
         ldapServer = new InMemoryDirectoryServer(cfg);
         ldapServer.startListening();
 
+        lenient().when(jwtTokenService.issue(any(), any())).thenReturn("token-abc");
         lenient().when(jwtTokenService.issue(any())).thenReturn("token-abc");
     }
 

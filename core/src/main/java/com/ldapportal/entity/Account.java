@@ -96,4 +96,18 @@ public class Account {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
+
+    /**
+     * Monotonic counter bumped on every credential-changing op
+     * (password reset, password change, authType switch). Embedded in
+     * the issued JWT as the {@code cv} claim and re-checked by
+     * {@link com.ldapportal.auth.JwtAuthenticationFilter} on every
+     * request, so a token issued before a credential change is
+     * rejected as soon as the next request lands. Defaults to 1 so
+     * tokens issued by callers that don't (yet) carry a {@code cv}
+     * claim are rejected on first contact — i.e. an op deploy forces
+     * one re-login.
+     */
+    @Column(name = "credentials_version", nullable = false)
+    private Long credentialsVersion = 1L;
 }
