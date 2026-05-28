@@ -72,7 +72,11 @@ public class ProvisioningProfileController {
     @GetMapping("/api/v1/directories/{directoryId}/profiles/{profileId}")
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPERADMIN')")
     public ProfileResponse get(@PathVariable UUID directoryId,
-                                @PathVariable UUID profileId) {
+                                @PathVariable UUID profileId,
+                                @AuthenticationPrincipal AuthPrincipal principal) {
+        // Match list() filtering: an ADMIN must hold a role on this profile.
+        // Superadmins bypass via requireProfileAccess.
+        permissionService.requireProfileAccess(principal, profileId);
         return service.get(directoryId, profileId);
     }
 

@@ -18,12 +18,12 @@ import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.*;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 import java.util.stream.Collectors;
 
 /**
@@ -33,6 +33,14 @@ import java.util.stream.Collectors;
 @Slf4j
 @RequiredArgsConstructor
 public class ProvisioningProfileService {
+
+    /**
+     * Hard cap on the length of an attribute value submitted to regex
+     * validation. Bounds the worst-case backtracking cost of an admin-
+     * supplied {@code validationRegex} — a pathological pattern combined
+     * with an unbounded input is the classic ReDoS shape.
+     */
+    private static final int MAX_REGEX_INPUT_LENGTH = 4096;
 
     private final ProvisioningProfileRepository      profileRepo;
     private final ProfileAttributeConfigRepository   attrConfigRepo;
@@ -251,13 +259,13 @@ public class ProvisioningProfileService {
         copy.setEmailPasswordToUser(source.isEmailPasswordToUser());
         copy.setAutoIncludeGroups(false); // clones don't auto-include
         copy.setExcludeAutoIncludes(source.isExcludeAutoIncludes());
-        copy = profileRepo.save(copy);
-
-        // Clone additional profiles
         copy.setAdditionalProfiles(new HashSet<>(source.getAdditionalProfiles()));
         copy = profileRepo.save(copy);
 
-        // Clone attribute configs
+        // Clone attribute configs — every persistable column must be copied
+        // or the clone silently loses self-registration / self-service form
+        // layout (the missing setSelfRegistrationEdit + registration*/
+        // selfService* fields were the original bug here).
         List<ProfileAttributeConfig> sourceConfigs =
                 attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId);
         for (ProfileAttributeConfig sc : sourceConfigs) {
@@ -270,6 +278,7 @@ public class ProvisioningProfileService {
             cc.setEditableOnCreate(sc.isEditableOnCreate());
             cc.setEditableOnUpdate(sc.isEditableOnUpdate());
             cc.setSelfServiceEdit(sc.isSelfServiceEdit());
+            cc.setSelfRegistrationEdit(sc.isSelfRegistrationEdit());
             cc.setDefaultValue(sc.getDefaultValue());
             cc.setComputedExpression(sc.getComputedExpression());
             cc.setValidationRegex(sc.getValidationRegex());
@@ -281,6 +290,12 @@ public class ProvisioningProfileService {
             cc.setColumnSpan(sc.getColumnSpan());
             cc.setDisplayOrder(sc.getDisplayOrder());
             cc.setHidden(sc.isHidden());
+            cc.setRegistrationSectionName(sc.getRegistrationSectionName());
+            cc.setRegistrationColumnSpan(sc.getRegistrationColumnSpan());
+            cc.setRegistrationDisplayOrder(sc.getRegistrationDisplayOrder());
+            cc.setSelfServiceSectionName(sc.getSelfServiceSectionName());
+            cc.setSelfServiceColumnSpan(sc.getSelfServiceColumnSpan());
+            cc.setSelfServiceDisplayOrder(sc.getSelfServiceDisplayOrder());
             attrConfigRepo.save(cc);
         }
 
@@ -301,6 +316,37 @@ public class ProvisioningProfileService {
                     Map.of("profileId", copy.getId(), "name", copy.getName(),
                             "sourceProfileId", source.getId(), "sourceName", source.getName()));
         }
+        // Clone lifecycle policy (structural config — copying is the
+        // "least surprising" default).
+        final ProvisioningProfile cloned = copy;
+        lifecycleRepo.findByProfileId(profileId).ifPresent(srcPolicy -> {
+            ProfileLifecyclePolicy cp = new ProfileLifecyclePolicy();
+            cp.setProfile(cloned);
+            cp.setExpiresAfterDays(srcPolicy.getExpiresAfterDays());
+            cp.setMaxRenewals(srcPolicy.getMaxRenewals());
+            cp.setRenewalDays(srcPolicy.getRenewalDays());
+            cp.setOnExpiryAction(srcPolicy.getOnExpiryAction());
+            cp.setOnExpiryMoveDn(srcPolicy.getOnExpiryMoveDn());
+            cp.setOnExpiryRemoveGroups(srcPolicy.isOnExpiryRemoveGroups());
+            cp.setOnExpiryNotify(srcPolicy.isOnExpiryNotify());
+            cp.setWarningDaysBefore(srcPolicy.getWarningDaysBefore());
+            lifecycleRepo.save(cp);
+        });
+
+        // Clone approval config (structural) but NOT approvers (people).
+        // Copying approvers would silently grant a list of admins approve
+        // power on a profile they may not be intended to govern; the clone
+        // is disabled by default so leaving approvers empty is benign.
+        approvalConfigRepo.findByProfileId(profileId).ifPresent(srcCfg -> {
+            ProfileApprovalConfig cc = new ProfileApprovalConfig();
+            cc.setProfile(cloned);
+            cc.setRequireApproval(srcCfg.isRequireApproval());
+            cc.setApproverMode(srcCfg.getApproverMode());
+            cc.setApproverGroupDn(srcCfg.getApproverGroupDn());
+            cc.setAutoEscalateDays(srcCfg.getAutoEscalateDays());
+            cc.setEscalationAccount(srcCfg.getEscalationAccount());
+            approvalConfigRepo.save(cc);
+        });
 
         return toResponse(copy);
     }
@@ -365,9 +411,22 @@ public class ProvisioningProfileService {
                     return c;
                 });
 
+        ApproverMode mode = req.approverMode() != null ? req.approverMode() : ApproverMode.DATABASE;
+
+        // Coherence checks — a profile with requireApproval=true must have a
+        // working approver source, otherwise every user-create lands in a
+        // pending-approval queue nobody can clear.
+        if (req.requireApproval() && mode == ApproverMode.LDAP_GROUP
+                && (req.approverGroupDn() == null || req.approverGroupDn().isBlank())) {
+            throw new IllegalArgumentException(
+                    "LDAP_GROUP approver mode requires a non-empty approver group DN");
+        }
+
         config.setRequireApproval(req.requireApproval());
-        config.setApproverMode(req.approverMode() != null ? req.approverMode() : ApproverMode.DATABASE);
-        config.setApproverGroupDn(req.approverGroupDn());
+        config.setApproverMode(mode);
+        // DATABASE mode doesn't use a group DN; clear any stale value so the
+        // stored config can't disagree with itself.
+        config.setApproverGroupDn(mode == ApproverMode.LDAP_GROUP ? req.approverGroupDn() : null);
         config.setAutoEscalateDays(req.autoEscalateDays());
         if (req.escalationAccountId() != null) {
             config.setEscalationAccount(accountRepo.findById(req.escalationAccountId())
@@ -401,6 +460,15 @@ public class ProvisioningProfileService {
         for (UUID accountId : accountIds) {
             Account account = accountRepo.findById(accountId)
                     .orElseThrow(() -> new ResourceNotFoundException("Account", accountId));
+            // The UI already filters by admin role; the backend enforces it
+            // so a hand-crafted request can't silently wedge approvals on
+            // accounts that lack approve permission.
+            if (account.getRole() != com.ldapportal.entity.enums.AccountRole.ADMIN
+                    && account.getRole() != com.ldapportal.entity.enums.AccountRole.SUPERADMIN) {
+                throw new IllegalArgumentException(
+                        "Account [" + account.getUsername()
+                                + "] is not an admin and cannot be a profile approver");
+            }
             ProfileApprover pa = new ProfileApprover();
             pa.setProfile(profile);
             pa.setAdminAccount(account);
@@ -502,7 +570,7 @@ public class ProvisioningProfileService {
 
             // Required check
             if (config.isRequiredOnCreate() && (value == null || value.isBlank())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                throw new IllegalArgumentException(
                         "Attribute [" + config.getAttributeName() + "] is required");
             }
 
@@ -510,23 +578,40 @@ public class ProvisioningProfileService {
 
             // Length checks
             if (config.getMinLength() != null && value.length() < config.getMinLength()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                throw new IllegalArgumentException(
                         "Attribute [" + config.getAttributeName() + "] must be at least "
                                 + config.getMinLength() + " characters");
             }
             if (config.getMaxLength() != null && value.length() > config.getMaxLength()) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                throw new IllegalArgumentException(
                         "Attribute [" + config.getAttributeName() + "] must be at most "
                                 + config.getMaxLength() + " characters");
             }
 
-            // Regex check
+            // Regex check — guard against ReDoS by capping input length and
+            // catching PatternSyntaxException defensively. The pattern is
+            // also validated at config save time in saveAttributeConfigs.
             if (config.getValidationRegex() != null && !config.getValidationRegex().isBlank()) {
-                if (!value.matches(config.getValidationRegex())) {
+                if (value.length() > MAX_REGEX_INPUT_LENGTH) {
+                    throw new IllegalArgumentException(
+                            "Attribute [" + config.getAttributeName() + "] exceeds the "
+                                    + MAX_REGEX_INPUT_LENGTH + "-character limit for regex-validated fields");
+                }
+                boolean matches;
+                try {
+                    matches = Pattern.matches(config.getValidationRegex(), value);
+                } catch (PatternSyntaxException pse) {
+                    log.warn("Invalid validation regex for attribute [{}]; rejecting value: {}",
+                            config.getAttributeName(), pse.getDescription());
+                    throw new IllegalArgumentException(
+                            "Attribute [" + config.getAttributeName()
+                                    + "] cannot be validated: validation pattern is invalid");
+                }
+                if (!matches) {
                     String msg = config.getValidationMessage() != null
                             ? config.getValidationMessage()
                             : "Attribute [" + config.getAttributeName() + "] does not match the required format";
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, msg);
+                    throw new IllegalArgumentException(msg);
                 }
             }
 
@@ -536,12 +621,12 @@ public class ProvisioningProfileService {
                     List<String> allowed = objectMapper.readValue(config.getAllowedValues(),
                             objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
                     if (!allowed.contains(value)) {
-                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        throw new IllegalArgumentException(
                                 "Attribute [" + config.getAttributeName()
                                         + "] value is not in the allowed values list");
                     }
-                } catch (ResponseStatusException rse) {
-                    throw rse;
+                } catch (IllegalArgumentException iae) {
+                    throw iae;
                 } catch (Exception e) {
                     log.warn("Failed to parse allowed values JSON for attribute [{}]: {}",
                             config.getAttributeName(), e.getMessage());
@@ -661,26 +746,41 @@ public class ProvisioningProfileService {
 
     private void saveAttributeConfigs(ProvisioningProfile profile,
                                        List<AttributeConfigEntry> entries) {
-        if (entries == null || entries.isEmpty()) return;
+        // Validations must run on the full request, including the empty
+        // case — a profile with emailPasswordToUser=true and zero attribute
+        // configs is itself a violation, and used to slip through because
+        // the empty-entries early return was above this block.
+        List<AttributeConfigEntry> safeEntries = entries != null ? entries : List.of();
 
-        // Validate: required attributes cannot be hidden (unless they have a computed expression)
-        for (AttributeConfigEntry e : entries) {
-            if (e.requiredOnCreate() && e.hidden()
-                    && (e.computedExpression() == null || e.computedExpression().isBlank())) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "Required attribute '" + e.attributeName() + "' cannot be hidden unless it has a computed expression");
-            }
-        }
-
-        // Validate: emailPasswordToUser requires a 'mail' attribute marked as required
         if (profile.isEmailPasswordToUser()) {
-            boolean hasMailRequired = entries.stream().anyMatch(
+            boolean hasMailRequired = safeEntries.stream().anyMatch(
                     e -> e.attributeName().equalsIgnoreCase("mail") && e.requiredOnCreate());
             if (!hasMailRequired) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                throw new IllegalArgumentException(
                         "Email password to user requires a 'mail' attribute marked as required");
             }
         }
+
+        for (AttributeConfigEntry e : safeEntries) {
+            if (e.requiredOnCreate() && e.hidden()
+                    && (e.computedExpression() == null || e.computedExpression().isBlank())) {
+                throw new IllegalArgumentException(
+                        "Required attribute '" + e.attributeName() + "' cannot be hidden unless it has a computed expression");
+            }
+            // Pre-compile validation regex to catch malformed patterns at
+            // configuration time rather than each user-create call.
+            if (e.validationRegex() != null && !e.validationRegex().isBlank()) {
+                try {
+                    Pattern.compile(e.validationRegex());
+                } catch (PatternSyntaxException pse) {
+                    throw new IllegalArgumentException(
+                            "Invalid validation regex for attribute [" + e.attributeName()
+                                    + "]: " + pse.getDescription());
+                }
+            }
+        }
+
+        if (safeEntries.isEmpty()) return;
 
         for (int i = 0; i < entries.size(); i++) {
             AttributeConfigEntry e = entries.get(i);
@@ -897,14 +997,28 @@ public class ProvisioningProfileService {
 
     /**
      * Applies only the selected group membership changes.
+     *
+     * <p>Validates every entry up-front against the directory's profile
+     * universe before touching LDAP: the {@code groupDn} must be configured
+     * on some profile in this directory (with a matching member attribute),
+     * and the {@code userDn} must live under some profile's target OU. This
+     * prevents a buggy or hostile frontend from using this endpoint as a
+     * generic group-membership writer to arbitrary groups or DNs.</p>
+     *
+     * <p>Validation is strict — if any entry is invalid, the whole request
+     * is rejected with a 400 and no LDAP writes occur. This matches the
+     * intent of the companion "evaluate" endpoint: callers should apply only
+     * changes that came out of evaluate.</p>
      */
     @Transactional
     public int applySelectiveGroupChanges(UUID directoryId,
                                            SelectiveGroupChangeRequest request,
                                            AuthPrincipal principal) {
         DirectoryConnection dc = requireDirectory(directoryId);
-        int applied = 0;
 
+        validateSelectiveGroupChangeEntries(directoryId, request);
+
+        int applied = 0;
         for (SelectiveGroupChangeRequest.GroupMembershipEntry entry : request.entries()) {
             try {
                 ldapGroupService.addMember(dc, entry.groupDn(),
@@ -925,6 +1039,63 @@ public class ProvisioningProfileService {
 
     /**
      * Removes {@code userDn} from every group in the profile's effective
+     * Rejects any selective-group-change entry whose target group or user DN
+     * doesn't belong to this directory's profile universe.
+     */
+    private void validateSelectiveGroupChangeEntries(UUID directoryId,
+                                                      SelectiveGroupChangeRequest request) {
+        if (request == null || request.entries() == null || request.entries().isEmpty()) {
+            return;
+        }
+
+        List<ProvisioningProfile> profiles =
+                profileRepo.findAllByDirectoryIdOrderByNameAsc(directoryId);
+
+        // groupDn (lowercase) → set of acceptable memberAttribute values
+        Map<String, Set<String>> allowedGroups = new HashMap<>();
+        // Lowercase target-OU suffixes for userDn containment checks
+        List<String> targetOus = new ArrayList<>();
+        for (ProvisioningProfile p : profiles) {
+            if (p.getTargetOuDn() != null && !p.getTargetOuDn().isBlank()) {
+                targetOus.add(p.getTargetOuDn().toLowerCase());
+            }
+            for (ProfileGroupAssignment g :
+                    groupAssignmentRepo.findAllByProfileIdOrderByDisplayOrderAsc(p.getId())) {
+                allowedGroups
+                        .computeIfAbsent(g.getGroupDn().toLowerCase(), k -> new HashSet<>())
+                        .add(g.getMemberAttribute() != null ? g.getMemberAttribute() : "member");
+            }
+        }
+
+        for (SelectiveGroupChangeRequest.GroupMembershipEntry entry : request.entries()) {
+            if (entry.groupDn() == null || entry.userDn() == null
+                    || entry.memberAttribute() == null) {
+                throw new IllegalArgumentException(
+                        "Group membership entry is missing required fields");
+            }
+            String groupKey = entry.groupDn().toLowerCase();
+            Set<String> attrs = allowedGroups.get(groupKey);
+            if (attrs == null) {
+                throw new IllegalArgumentException(
+                        "Group [" + entry.groupDn() + "] is not assigned by any profile in this directory");
+            }
+            if (!attrs.contains(entry.memberAttribute())) {
+                throw new IllegalArgumentException(
+                        "Member attribute [" + entry.memberAttribute()
+                                + "] does not match the profile configuration for ["
+                                + entry.groupDn() + "]");
+            }
+            String userDnLower = entry.userDn().toLowerCase();
+            boolean underAnyOu = targetOus.stream().anyMatch(userDnLower::endsWith);
+            if (!underAnyOu) {
+                throw new IllegalArgumentException(
+                        "User [" + entry.userDn() + "] is not under any profile target OU in this directory");
+            }
+        }
+    }
+
+    /**
+     * Adds {@code userDn} to every group in the profile's effective
      * group set (own groups + additional profiles' groups + auto-include
      * profiles' groups, unless excluded). Called by user-delete paths so
      * that group memberships granted by this profile are cleaned up when

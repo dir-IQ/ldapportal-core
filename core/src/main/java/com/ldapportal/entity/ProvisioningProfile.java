@@ -120,4 +120,17 @@ public class ProvisioningProfile {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    /**
+     * Optimistic-lock counter. The update path replaces attribute configs
+     * and group assignments wholesale (delete-then-reinsert), so without
+     * this column two concurrent superadmin edits would silently lose
+     * whichever's reinsert ran first. Hibernate raises
+     * {@link org.springframework.orm.ObjectOptimisticLockingFailureException}
+     * when the version moves under us, which GlobalExceptionHandler maps
+     * to 409 Conflict.
+     */
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
 }
