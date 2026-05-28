@@ -1,15 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# ECS Fargate cluster, task definition, service.
+# ECS Fargate cluster + two services:
+#   backend  — the Spring Boot app (var.backend_image_uri), behind the
+#              ALB's /api/v1* path rule. Reaches RDS Postgres.
+#   frontend — the nginx-served Vue SPA (var.frontend_image_uri), the
+#              ALB default target for every other path.
 #
-# One cluster per `var.name`. Customers consolidating multiple
-# environments into one cluster pass the same `name` to all
-# modules — Terraform's idempotency handles the no-op upsert.
+# Two services rather than one multi-container task because both
+# images bind container port 8080 (they can't share an awsvpc task's
+# single network namespace) and the frontend image proxies /api/v1
+# to the host `app` — which doesn't resolve in ECS. Routing /api/v1*
+# at the ALB sidesteps both: the backend gets API traffic directly and
+# the frontend's nginx proxy block is simply never exercised.
 #
-# The task definition pulls every secret via the ECS-native
-# `secrets` field rather than reading them at startup from an
-# init container. That gives the JVM the values as plain env
-# vars and avoids holding the ciphertext in process memory.
+# Both task definitions pull secrets via the ECS-native `secrets`
+# field (backend only) and share one execution role for image pulls.
 
 resource "aws_ecs_cluster" "this" {
   name = var.name
@@ -25,7 +30,9 @@ resource "aws_ecs_cluster" "this" {
 #
 # Two roles, by AWS's split:
 #   execution_role — used by the ECS agent to pull the image
-#                    + read secrets at task-start time
+#                    + read secrets at task-start time. Shared by
+#                    both services; only the backend task actually
+#                    injects the app secrets.
 #   task_role      — used by the app itself at runtime (none of
 #                    the API endpoints currently call AWS, so the
 #                    task role is empty; kept for future SDK use)
@@ -51,7 +58,9 @@ resource "aws_iam_role_policy_attachment" "execution_managed" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Read the four Secrets Manager entries this task needs at start time.
+# Read the four Secrets Manager entries the backend task needs at
+# start time, plus the optional ghcr.io pull secret used by both
+# task definitions' repositoryCredentials.
 data "aws_iam_policy_document" "execution_secrets" {
   statement {
     actions = [
@@ -83,6 +92,9 @@ resource "aws_iam_role" "task" {
 }
 
 # ── Logs ─────────────────────────────────────────────────────────
+#
+# One log group, two stream prefixes (app / web) so both services'
+# logs land together but stay filterable.
 
 resource "aws_cloudwatch_log_group" "app" {
   name              = "/aws/ecs/${var.name}"
@@ -90,10 +102,12 @@ resource "aws_cloudwatch_log_group" "app" {
   tags              = local.base_tags
 }
 
-# ── Task definition ──────────────────────────────────────────────
+data "aws_region" "current" {}
 
-resource "aws_ecs_task_definition" "this" {
-  family                   = var.name
+# ── Backend task definition ──────────────────────────────────────
+
+resource "aws_ecs_task_definition" "backend" {
+  family                   = "${var.name}-backend"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = var.task_cpu
@@ -104,7 +118,7 @@ resource "aws_ecs_task_definition" "this" {
   container_definitions = jsonencode([
     {
       name      = "app"
-      image     = var.image_uri
+      image     = var.backend_image_uri
       essential = true
       portMappings = [
         { containerPort = 8080, protocol = "tcp" }
@@ -154,14 +168,58 @@ resource "aws_ecs_task_definition" "this" {
   tags = local.base_tags
 }
 
-data "aws_region" "current" {}
+# ── Frontend task definition ─────────────────────────────────────
 
-# ── Service ──────────────────────────────────────────────────────
+resource "aws_ecs_task_definition" "frontend" {
+  family                   = "${var.name}-frontend"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.frontend_task_cpu
+  memory                   = var.frontend_task_memory
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.task.arn
 
-resource "aws_ecs_service" "this" {
-  name            = var.name
+  container_definitions = jsonencode([
+    {
+      name      = "web"
+      image     = var.frontend_image_uri
+      essential = true
+      portMappings = [
+        { containerPort = 8080, protocol = "tcp" }
+      ]
+      # No secrets / DB env — the frontend is static assets served by
+      # nginx. API calls go to the same origin under /api/v1, which the
+      # ALB routes to the backend target group (not through nginx).
+      repositoryCredentials = var.image_pull_secret_arn == null ? null : {
+        credentialsParameter = var.image_pull_secret_arn
+      }
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.app.name
+          awslogs-region        = data.aws_region.current.name
+          awslogs-stream-prefix = "web"
+        }
+      }
+      healthCheck = {
+        command     = ["CMD-SHELL", "wget -qO- http://localhost:8080/ || exit 1"]
+        interval    = 30
+        timeout     = 10
+        retries     = 3
+        startPeriod = 15
+      }
+    }
+  ])
+
+  tags = local.base_tags
+}
+
+# ── Services ─────────────────────────────────────────────────────
+
+resource "aws_ecs_service" "backend" {
+  name            = "${var.name}-backend"
   cluster         = aws_ecs_cluster.this.id
-  task_definition = aws_ecs_task_definition.this.arn
+  task_definition = aws_ecs_task_definition.backend.arn
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
 
@@ -176,8 +234,48 @@ resource "aws_ecs_service" "this" {
   }
 
   load_balancer {
-    target_group_arn = aws_lb_target_group.this.arn
+    target_group_arn = aws_lb_target_group.backend.arn
     container_name   = "app"
+    container_port   = 8080
+  }
+
+  depends_on = [
+    aws_lb_listener.https,
+    aws_lb_listener_rule.api,
+    aws_iam_role_policy.execution_secrets,
+  ]
+
+  lifecycle {
+    # External tooling (deploy workflow,
+    # `aws ecs update-service --force-new-deployment`) bumps the
+    # task def revision out of band. Don't fight it on subsequent
+    # `terraform apply`s.
+    ignore_changes = [task_definition, desired_count]
+  }
+
+  tags = local.base_tags
+}
+
+resource "aws_ecs_service" "frontend" {
+  name            = "${var.name}-frontend"
+  cluster         = aws_ecs_cluster.this.id
+  task_definition = aws_ecs_task_definition.frontend.arn
+  desired_count   = var.frontend_desired_count
+  launch_type     = "FARGATE"
+
+  deployment_maximum_percent         = 200
+  deployment_minimum_healthy_percent = 100
+  health_check_grace_period_seconds  = 30
+
+  network_configuration {
+    subnets          = var.private_subnet_ids
+    security_groups  = [aws_security_group.frontend.id]
+    assign_public_ip = false # private subnets — egress via NAT
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.frontend.arn
+    container_name   = "web"
     container_port   = 8080
   }
 
@@ -187,10 +285,6 @@ resource "aws_ecs_service" "this" {
   ]
 
   lifecycle {
-    # External tooling (deploy-aws.yml workflow,
-    # `aws ecs update-service --force-new-deployment`) bumps the
-    # task def revision out of band. Don't fight it on subsequent
-    # `terraform apply`s.
     ignore_changes = [task_definition, desired_count]
   }
 

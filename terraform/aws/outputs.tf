@@ -15,9 +15,14 @@ output "ecs_cluster_name" {
   value       = aws_ecs_cluster.this.name
 }
 
-output "ecs_service_name" {
-  description = "ECS service name. Used by deploy workflows."
-  value       = aws_ecs_service.this.name
+output "ecs_backend_service_name" {
+  description = "Backend ECS service name. Used by deploy workflows (`aws ecs update-service --service …`)."
+  value       = aws_ecs_service.backend.name
+}
+
+output "ecs_frontend_service_name" {
+  description = "Frontend ECS service name. Used by deploy workflows."
+  value       = aws_ecs_service.frontend.name
 }
 
 output "rds_endpoint" {

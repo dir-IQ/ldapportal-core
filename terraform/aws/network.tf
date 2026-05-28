@@ -1,17 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Security groups only — the VPC + subnets are inputs (customer-managed).
-# Three SGs, each scoped to the smallest reachable surface:
+# Four SGs, each scoped to the smallest reachable surface:
 #
-#   alb_sg → 443 from the internet (ingress); egress to app_sg only
-#   app_sg → 8080 from alb_sg; egress everywhere (so image pulls,
-#            outbound LDAP to the customer's directory, SIEM webhooks
-#            etc. all work)
-#   db_sg  → 5432 from app_sg only; egress nowhere
+#   alb_sg      → 443 from the internet (ingress); egress to app_sg
+#                 and frontend_sg on 8080 only
+#   app_sg      → 8080 from alb_sg; egress everywhere (so image pulls,
+#                 outbound LDAP to the customer's directory, SIEM
+#                 webhooks etc. all work)
+#   frontend_sg → 8080 from alb_sg; egress everywhere (image pulls).
+#                 No DB reach — it serves static assets only.
+#   db_sg       → 5432 from app_sg only; egress nowhere
 #
 # Tight egress on db_sg means the Postgres machine cannot phone home
 # even if compromised — small attack-surface reduction worth the
-# minute of configuration.
+# minute of configuration. The frontend SG deliberately has no path to
+# db_sg: the SPA never touches Postgres directly.
 
 locals {
   base_tags = merge(var.tags, {
@@ -38,8 +42,17 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
 
 resource "aws_vpc_security_group_egress_rule" "alb_to_app" {
   security_group_id            = aws_security_group.alb.id
-  description                  = "Forward to app on container port"
+  description                  = "Forward to backend on container port"
   referenced_security_group_id = aws_security_group.app.id
+  ip_protocol                  = "tcp"
+  from_port                    = 8080
+  to_port                      = 8080
+}
+
+resource "aws_vpc_security_group_egress_rule" "alb_to_frontend" {
+  security_group_id            = aws_security_group.alb.id
+  description                  = "Forward to frontend on container port"
+  referenced_security_group_id = aws_security_group.frontend.id
   ip_protocol                  = "tcp"
   from_port                    = 8080
   to_port                      = 8080
@@ -64,6 +77,29 @@ resource "aws_vpc_security_group_ingress_rule" "app_from_alb" {
 resource "aws_vpc_security_group_egress_rule" "app_egress_v4" {
   security_group_id = aws_security_group.app.id
   description       = "App egress (image pulls, LDAP bind, webhooks)"
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+resource "aws_security_group" "frontend" {
+  name        = "${var.name}-frontend"
+  description = "LDAPPortal frontend — port 8080 from ALB only, egress open for image pulls"
+  vpc_id      = var.vpc_id
+  tags        = merge(local.base_tags, { Name = "${var.name}-frontend" })
+}
+
+resource "aws_vpc_security_group_ingress_rule" "frontend_from_alb" {
+  security_group_id            = aws_security_group.frontend.id
+  description                  = "Container port from ALB"
+  referenced_security_group_id = aws_security_group.alb.id
+  ip_protocol                  = "tcp"
+  from_port                    = 8080
+  to_port                      = 8080
+}
+
+resource "aws_vpc_security_group_egress_rule" "frontend_egress_v4" {
+  security_group_id = aws_security_group.frontend.id
+  description       = "Frontend egress (image pulls only)"
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
 }
