@@ -64,6 +64,19 @@ public class AdminManagementController {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.createAdmin(req));
     }
 
+    /**
+     * Combined create — account plus initial profile roles and feature
+     * permissions in one transactional call. The plain {@link #create} is
+     * preserved for callers that don't want to provision permissions in
+     * the same step.
+     */
+    @PostMapping("/with-permissions")
+    public ResponseEntity<AdminAccountResponse> createWithPermissions(
+            @Valid @RequestBody com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req) {
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(service.createAdminWithPermissions(req));
+    }
+
     @GetMapping("/{adminId}")
     public AdminAccountResponse get(@PathVariable UUID adminId) {
         return service.getAdmin(adminId);

@@ -98,6 +98,49 @@ public class AdminManagementService {
         return AdminAccountResponse.from(accountRepo.save(a));
     }
 
+    /**
+     * Creates an admin and applies its initial profile roles and feature
+     * permission overrides in a single transaction. If any step fails the
+     * whole thing rolls back — no half-created admin sitting in the table
+     * with no permissions.
+     *
+     * <p>Per-profile feature overrides are only meaningful when the admin
+     * has a role on that profile; this method validates that constraint
+     * up-front rather than silently letting the override become inert.</p>
+     */
+    @Transactional
+    public AdminAccountResponse createAdminWithPermissions(
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req) {
+        AdminAccountResponse created = createAdmin(req.account());
+
+        var roles = req.profileRolesOrEmpty();
+        var features = req.featurePermissionsOrEmpty();
+
+        // Per-profile feature overrides require the admin to hold a role
+        // on that profile. The orchestrated create lets us catch the
+        // mismatch up-front instead of silently storing inert override
+        // rows.
+        java.util.Set<UUID> assignedProfileIds = roles.stream()
+                .map(ProfileRoleRequest::profileId)
+                .collect(java.util.stream.Collectors.toSet());
+        for (FeaturePermissionRequest fp : features) {
+            if (fp.profileId() != null && !assignedProfileIds.contains(fp.profileId())) {
+                throw new IllegalArgumentException(
+                        "Feature permission for profile [" + fp.profileId()
+                                + "] requires a profile role on the same profile");
+            }
+        }
+
+        for (ProfileRoleRequest r : roles) {
+            assignProfileRole(created.id(), r);
+        }
+        if (!features.isEmpty()) {
+            setFeaturePermissions(created.id(), features);
+        }
+
+        return AdminAccountResponse.from(requireAccount(created.id()));
+    }
+
     @Transactional
     public AdminAccountResponse updateAdmin(UUID adminId, AdminAccountRequest req) {
         return updateAdmin(adminId, req, null);

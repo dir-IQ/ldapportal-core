@@ -12,8 +12,8 @@
     <DataTable :columns="cols" :rows="admins" :loading="loading" row-key="id" empty-text="No admin users found.">
       <template #cell-displayName="{ row }">
         <div>
-          <p class="font-medium text-gray-900">{{ row.displayName || row.username }}</p>
-          <p class="text-xs text-gray-500">{{ row.username }}</p>
+          <p class="font-medium text-gray-900">{{ (row as AdminRow).displayName || (row as AdminRow).username }}</p>
+          <p class="text-xs text-gray-500">{{ (row as AdminRow).username }}</p>
         </div>
       </template>
       <template #cell-active="{ value }">
@@ -26,18 +26,18 @@
         <span class="text-xs text-gray-500 uppercase">{{ value }}</span>
       </template>
       <template #cell-lastLoginAt="{ value }">
-        <span class="text-xs text-gray-500">{{ value ? new Date(value).toLocaleString() : '—' }}</span>
+        <span class="text-xs text-gray-500">{{ value ? new Date(value as string).toLocaleString() : '—' }}</span>
       </template>
       <template #actions="{ row }">
         <ActionMenu :items="[
-          { label: 'Permissions',      onClick: () => openEditWithPermissions(row), hidden: row.role !== 'ADMIN' },
-          { label: 'What can they do?', onClick: () => openEffectivePermissions(row),
+          { label: 'Permissions',      onClick: () => openEditWithPermissions(row as AdminRow), hidden: (row as AdminRow).role !== 'ADMIN' },
+          { label: 'What can they do?', onClick: () => openEffectivePermissions(row as AdminRow),
             title: 'Show the computed ‘what can this admin actually do?’ breakdown per profile' },
-          { label: 'Delete',           onClick: () => confirmDelete(row), danger: true,
-            hidden: row.id === auth.principal?.id },
+          { label: 'Delete',           onClick: () => confirmDelete(row as AdminRow), danger: true,
+            hidden: (row as AdminRow).id === currentPrincipalId },
         ]">
           <template #primary>
-            <button @click="openEdit(row)" class="btn-secondary btn-compact">Edit</button>
+            <button @click="openEdit(row as AdminRow)" class="btn-secondary btn-compact">Edit</button>
           </template>
         </ActionMenu>
       </template>
@@ -51,12 +51,13 @@
     <AppModal
       v-model="showForm"
       :title="editing ? 'Edit Admin User' : 'New Admin User'"
-      :size="activeTab === 'permissions' ? 'lg' : 'sm'"
+      size="lg"
     >
       <!-- Tab nav. Permissions tab is hidden for SUPERADMIN role
-           (their access isn't profile- or feature-scoped) and for
-           the create flow (no admin id to attach permissions to
-           yet). -->
+           (their access isn't profile- or feature-scoped). For
+           create flows on ADMIN it's available too — selections are
+           kept in a local draft and committed alongside the account
+           via POST /admins/with-permissions. -->
       <div
         v-if="tabs.length > 1"
         class="flex gap-1 mb-4 bg-gray-100 p-1 rounded-lg w-fit"
@@ -111,10 +112,13 @@
         </div>
       </form>
 
-      <!-- ── Permissions tab (visible only when editing an ADMIN). -->
+      <!-- ── Permissions tab (visible on create + edit for ADMIN). -->
       <div v-show="activeTab === 'permissions'" class="space-y-4 text-sm">
         <div v-if="permsLoading" class="py-8 text-center text-sm text-gray-500">Loading…</div>
         <template v-else-if="perms">
+          <p v-if="!editing" class="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+            Permission selections here are committed together with the new account when you click Create.
+          </p>
           <!-- Profile roles -->
           <section>
             <div class="flex items-center justify-between mb-2">
@@ -133,7 +137,7 @@
                 <tr v-for="r in perms.profileRoles" :key="r.profileId" class="hover:bg-gray-50">
                   <td class="px-3 py-2 text-gray-700">{{ r.profileName }}</td>
                   <td class="px-3 py-2">
-                    <select :value="r.baseRole" @change="changeProfileRole(r.profileId, $event.target.value)" :aria-label="`Role for ${r.profileName}`" class="input text-xs py-1">
+                    <select :value="r.baseRole" @change="changeProfileRole(r.profileId, ($event.target as HTMLSelectElement).value as BaseRole)" :aria-label="`Role for ${r.profileName}`" class="input text-xs py-1">
                       <option value="ADMIN">ADMIN</option>
                       <option value="READ_ONLY">READ_ONLY</option>
                     </select>
@@ -165,7 +169,7 @@
             <div class="grid grid-cols-2 gap-x-6 gap-y-2">
               <div v-for="fk in allFeatureKeys" :key="fk" class="flex items-center justify-between">
                 <span class="text-xs text-gray-700 font-mono">{{ fk }}</span>
-                <select :value="featureState(fk)" @change="changeFeature(fk, $event.target.value)" :aria-label="`Permission for ${fk}`" class="input text-xs py-0.5 w-28">
+                <select :value="featureState(fk)" @change="changeFeature(fk, ($event.target as HTMLSelectElement).value as 'default' | 'enabled' | 'disabled')" :aria-label="`Permission for ${fk}`" class="input text-xs py-0.5 w-28">
                   <option value="default">Default</option>
                   <option value="enabled">Enabled</option>
                   <option value="disabled">Disabled</option>
@@ -200,17 +204,30 @@
     />
 
     <EffectivePermissionsDialog v-model="showEffective"
-                                :admin-id="effectiveAdmin.id"
+                                :admin-id="effectiveAdmin.id ?? undefined"
                                 :admin-label="effectiveAdmin.username" />
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import type { Ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notifications'
-import { listAdmins, createAdmin, updateAdmin, deleteAdmin, getPermissions } from '@/api/adminManagement'
-import { setProfileRole, removeProfileRole, setFeaturePermissions, clearFeaturePermission } from '@/api/adminPermissions'
+import {
+  listAdmins,
+  createAdmin,
+  createAdminWithPermissions,
+  updateAdmin,
+  deleteAdmin,
+  getPermissions,
+} from '@/api/adminManagement'
+import {
+  setProfileRole,
+  removeProfileRole,
+  setFeaturePermissions,
+  clearFeaturePermission,
+} from '@/api/adminPermissions'
 import { listAllProfiles } from '@/api/profiles'
 import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
@@ -219,51 +236,125 @@ import FormField from '@/components/FormField.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import EffectivePermissionsDialog from '@/components/EffectivePermissionsDialog.vue'
 
+// ── Types ────────────────────────────────────────────────────────────────────
+
+type Role = 'ADMIN' | 'SUPERADMIN'
+type AuthType = 'LOCAL' | 'LDAP' | 'OIDC' | 'WEBSEAL'
+type BaseRole = 'ADMIN' | 'READ_ONLY'
+
+interface AdminForm {
+  username: string
+  displayName: string
+  email: string
+  role: Role
+  authType: AuthType
+  password: string
+  ldapDn: string
+  active: boolean
+}
+
+interface AdminRow {
+  id: string
+  username: string
+  displayName?: string | null
+  email?: string | null
+  role: Role
+  authType: AuthType
+  ldapDn?: string | null
+  active: boolean
+  lastLoginAt?: string | null
+}
+
+interface ProfileRoleEntry {
+  profileId: string
+  profileName: string
+  baseRole: BaseRole
+}
+
+interface FeatureOverride {
+  featureKey: string
+  enabled: boolean
+  profileId?: string | null
+}
+
+interface PermissionsDraft {
+  profileRoles: ProfileRoleEntry[]
+  featurePermissions: FeatureOverride[]
+}
+
+interface ProfileSummary {
+  id: string
+  name: string
+}
+
+interface ApiError {
+  response?: { data?: { detail?: string } }
+  message?: string
+}
+
+function errMsg(e: unknown): string {
+  const err = e as ApiError
+  return err.response?.data?.detail || err.message || 'Unknown error'
+}
+
+// ── Stores & top-level state ─────────────────────────────────────────────────
+
 const auth  = useAuthStore()
 const notif = useNotificationStore()
 
-const loading = ref(false)
-const saving  = ref(false)
-const admins  = ref([])
+// Hide the row-level Delete on the operator's own account so they
+// can't accidentally lock themselves out. The auth store is plain
+// JS; type the principal lookup locally.
+const currentPrincipalId = computed<string | null>(
+  () => (auth.principal as { id?: string } | null)?.id ?? null,
+)
 
-const showForm   = ref(false)
-const showEffective = ref(false)
-const effectiveAdmin = ref({ id: null, username: '' })
+const loading = ref<boolean>(false)
+const saving  = ref<boolean>(false)
+const admins: Ref<AdminRow[]> = ref([])
 
-function openEffectivePermissions(row) {
+const showForm   = ref<boolean>(false)
+const showEffective = ref<boolean>(false)
+const effectiveAdmin = ref<{ id: string | null; username: string }>({ id: null, username: '' })
+
+function openEffectivePermissions(row: AdminRow): void {
   effectiveAdmin.value = { id: row.id, username: row.username }
   showEffective.value = true
 }
-const editing    = ref(null)   // admin id when editing, null when creating
-const form       = ref(emptyForm())
 
-const showDelete   = ref(false)
-const deleteTarget = ref(null)
+const editing: Ref<string | null> = ref(null) // admin id when editing, null when creating
+const form: Ref<AdminForm> = ref(emptyForm())
 
-// Permissions state — now lives inside the combined modal's
-// Permissions tab. Loaded lazily on first tab activation per
-// admin so opening Edit on a SUPERADMIN or to tweak details only
-// doesn't pay the round-trip cost.
-const activeTab    = ref('details')
-const permsLoading = ref(false)
-const perms        = ref(null)
+const showDelete   = ref<boolean>(false)
+const deleteTarget: Ref<AdminRow | null> = ref(null)
+
+// Permissions state. In edit mode this is fetched from the server on
+// first tab activation and each mutating handler calls the API
+// immediately. In create mode it's a local draft initialized empty;
+// nothing is persisted until save() POSTs to the with-permissions
+// endpoint.
+const activeTab    = ref<'details' | 'permissions'>('details')
+const permsLoading = ref<boolean>(false)
+const perms: Ref<PermissionsDraft | null> = ref(null)
 
 // Tabs visibility:
 //   - Details: always.
-//   - Permissions: only when editing an existing ADMIN. SUPERADMIN
-//     access isn't profile- or feature-scoped, and during create
-//     there's no admin id to attach permissions to.
+//   - Permissions: visible for ADMIN role (both create + edit).
+//     SUPERADMIN access isn't profile- or feature-scoped so the tab
+//     stays hidden there.
 const tabs = computed(() => {
-  const out = [{ key: 'details', label: 'Details' }]
-  if (editing.value && form.value.role === 'ADMIN') {
+  const out: Array<{ key: 'details' | 'permissions'; label: string }> = [
+    { key: 'details', label: 'Details' },
+  ]
+  if (form.value.role === 'ADMIN') {
     out.push({ key: 'permissions', label: 'Permissions' })
   }
   return out
 })
 
-function switchTab(key) {
+function switchTab(key: 'details' | 'permissions'): void {
   activeTab.value = key
-  if (key === 'permissions' && perms.value === null && !permsLoading.value) {
+  if (key === 'permissions' && perms.value === null && !permsLoading.value && editing.value) {
     void loadPerms()
   }
 }
@@ -287,17 +378,30 @@ const cols = [
   { key: 'lastLoginAt', label: 'Last login' },
 ]
 
-function emptyForm() {
-  return { username: '', displayName: '', email: '', role: 'ADMIN', authType: 'LOCAL', password: '', ldapDn: '', active: true }
+function emptyForm(): AdminForm {
+  return {
+    username: '',
+    displayName: '',
+    email: '',
+    role: 'ADMIN',
+    authType: 'LOCAL',
+    password: '',
+    ldapDn: '',
+    active: true,
+  }
 }
 
-async function load() {
+function emptyPermsDraft(): PermissionsDraft {
+  return { profileRoles: [], featurePermissions: [] }
+}
+
+async function load(): Promise<void> {
   loading.value = true
   try {
     const { data } = await listAdmins()
-    admins.value = data
+    admins.value = data as AdminRow[]
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     loading.value = false
   }
@@ -305,26 +409,37 @@ async function load() {
 
 onMounted(load)
 
-function resetModalState() {
-  // Clear permissions cache so re-opening for a different admin
-  // (or after a role flip) refetches.
+function resetModalState(): void {
   perms.value = null
   newProfileId.value = ''
   newProfileRole.value = 'ADMIN'
   activeTab.value = 'details'
 }
 
-function openCreate() {
+function openCreate(): void {
   resetModalState()
   editing.value = null
   form.value = emptyForm()
+  // Initialize an empty draft up-front so the Permissions tab is
+  // usable without a "loading" flash. Nothing reaches the server
+  // until save().
+  perms.value = emptyPermsDraft()
   showForm.value = true
 }
 
-function openEdit(row) {
+function openEdit(row: AdminRow): void {
   resetModalState()
   editing.value = row.id
-  form.value = { username: row.username, displayName: row.displayName || '', email: row.email || '', role: row.role || 'ADMIN', authType: row.authType || 'LOCAL', password: '', ldapDn: row.ldapDn || '', active: row.active }
+  form.value = {
+    username: row.username,
+    displayName: row.displayName || '',
+    email: row.email || '',
+    role: row.role || 'ADMIN',
+    authType: row.authType || 'LOCAL',
+    password: '',
+    ldapDn: row.ldapDn || '',
+    active: row.active,
+  }
   showForm.value = true
 }
 
@@ -334,20 +449,36 @@ function openEdit(row) {
  * openEdit(row) followed by clicking the Permissions tab — the
  * lazy-load happens via switchTab.
  */
-function openEditWithPermissions(row) {
+function openEditWithPermissions(row: AdminRow): void {
   openEdit(row)
   switchTab('permissions')
 }
 
-async function save() {
+async function save(): Promise<void> {
   if (!form.value.username.trim()) return
   saving.value = true
   try {
-    const wasCreating = !editing.value
     if (editing.value) {
       await updateAdmin(editing.value, form.value)
       notif.success('Admin user updated')
+    } else if (form.value.role === 'ADMIN') {
+      // Create-with-permissions: account fields + the draft profile
+      // roles and feature overrides in a single transactional call.
+      const draft = perms.value ?? emptyPermsDraft()
+      await createAdminWithPermissions({
+        account: form.value,
+        profileRoles: draft.profileRoles.map(r => ({
+          profileId: r.profileId, baseRole: r.baseRole,
+        })),
+        featurePermissions: draft.featurePermissions.map(f => ({
+          featureKey: f.featureKey,
+          enabled: f.enabled,
+          profileId: f.profileId ?? null,
+        })),
+      })
+      notif.success('Admin user created')
     } else {
+      // SUPERADMIN create — no profile/feature scoping applies.
       await createAdmin(form.value)
       notif.success('Admin user created')
     }
@@ -355,14 +486,9 @@ async function save() {
     // Profile-less reminder. ADMINs without at least one profile
     // role can sign in but have no scope, so the UI presents this
     // as an informational warning rather than blocking the save.
-    // SUPERADMINs are unrestricted; skip the check for them. On
-    // create, perms haven't been fetched yet but the new admin
-    // hasn't been assigned to any profile either — fire the
-    // warning unconditionally for ADMIN creates.
+    // SUPERADMINs are unrestricted; skip the check for them.
     if (form.value.role === 'ADMIN') {
-      const hasProfileRole = wasCreating
-        ? false
-        : (perms.value?.profileRoles?.length ?? 0) > 0
+      const hasProfileRole = (perms.value?.profileRoles?.length ?? 0) > 0
       if (!hasProfileRole) {
         notif.warning(
           'No provisioning profile is assigned. This admin will not be '
@@ -376,62 +502,64 @@ async function save() {
     showForm.value = false
     await load()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     saving.value = false
   }
 }
 
-function confirmDelete(row) {
+function confirmDelete(row: AdminRow): void {
   deleteTarget.value = row
   showDelete.value = true
 }
 
-async function doDelete() {
+async function doDelete(): Promise<void> {
+  if (!deleteTarget.value) return
   try {
     await deleteAdmin(deleteTarget.value.id)
     notif.success('Admin user deleted')
     await load()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     deleteTarget.value = null
   }
 }
 
-// ── All profiles (for the profile picker in permissions dialog) ──────────────
-const allProfiles = ref([])
+// ── All profiles (for the profile picker in permissions tab) ─────────────────
+
+const allProfiles: Ref<ProfileSummary[]> = ref([])
 
 onMounted(async () => {
   try {
     const { data } = await listAllProfiles()
-    allProfiles.value = data
+    allProfiles.value = data as ProfileSummary[]
   } catch (e) { console.warn('Failed to load profiles:', e) }
 })
 
-// Profiles not already assigned to this admin
-const availableProfiles = computed(() => {
+// Profiles not already assigned in the current draft.
+const availableProfiles = computed<ProfileSummary[]>(() => {
   if (!perms.value) return allProfiles.value
   const assigned = new Set(perms.value.profileRoles.map(r => r.profileId))
   return allProfiles.value.filter(p => !assigned.has(p.id))
 })
 
-const newProfileId   = ref('')
-const newProfileRole = ref('ADMIN')
-const allFeatureKeys = [
+const newProfileId   = ref<string>('')
+const newProfileRole = ref<BaseRole>('ADMIN')
+const allFeatureKeys: string[] = [
   'USER_CREATE', 'USER_EDIT', 'USER_DELETE', 'USER_ENABLE_DISABLE', 'USER_MOVE',
   'GROUP_MANAGE_MEMBERS', 'GROUP_CREATE_DELETE',
   'BULK_IMPORT', 'BULK_EXPORT',
   'REPORTS_RUN', 'REPORTS_EXPORT', 'REPORTS_SCHEDULE',
 ]
 
-function featureState(fk) {
-  const f = perms.value?.featurePermissions?.find(p => p.featureKey === fk)
+function featureState(fk: string): 'default' | 'enabled' | 'disabled' {
+  const f = perms.value?.featurePermissions?.find(p => p.featureKey === fk && !p.profileId)
   if (!f) return 'default'
   return f.enabled ? 'enabled' : 'disabled'
 }
 
-async function loadPerms() {
+async function loadPerms(): Promise<void> {
   // Loaded against the admin currently being edited. Caller is
   // switchTab('permissions') on first activation; subsequent
   // mutating handlers refresh via reloadPerms.
@@ -439,67 +567,110 @@ async function loadPerms() {
   permsLoading.value = true
   try {
     const { data } = await getPermissions(editing.value)
-    perms.value = data
+    perms.value = data as PermissionsDraft
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
     activeTab.value = 'details'
   } finally {
     permsLoading.value = false
   }
 }
 
-async function reloadPerms() {
+async function reloadPerms(): Promise<void> {
   if (!editing.value) return
   try {
     const { data } = await getPermissions(editing.value)
-    perms.value = data
+    perms.value = data as PermissionsDraft
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   }
 }
 
-async function doAddProfileRole() {
-  if (!newProfileId.value || !editing.value) return
-  try {
-    await setProfileRole(editing.value, { profileId: newProfileId.value, baseRole: newProfileRole.value })
-    newProfileId.value = ''
-    await reloadPerms()
-  } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
-  }
+function profileName(profileId: string): string {
+  return allProfiles.value.find(p => p.id === profileId)?.name ?? profileId
 }
 
-async function changeProfileRole(profileId, baseRole) {
-  if (!editing.value) return
-  try {
-    await setProfileRole(editing.value, { profileId, baseRole })
-    await reloadPerms()
-  } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
-  }
-}
-
-async function doRemoveProfileRole(profileId) {
-  if (!editing.value) return
-  try {
-    await removeProfileRole(editing.value, profileId)
-    await reloadPerms()
-  } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
-  }
-}
-
-async function changeFeature(featureKey, state) {
-  if (!editing.value) return
-  try {
-    if (state === 'default') {
-      await clearFeaturePermission(editing.value, featureKey)
-    } else {
-      await setFeaturePermissions(editing.value, [{ featureKey, enabled: state === 'enabled' }])
+async function doAddProfileRole(): Promise<void> {
+  if (!newProfileId.value) return
+  if (editing.value) {
+    try {
+      await setProfileRole(editing.value, {
+        profileId: newProfileId.value, baseRole: newProfileRole.value,
+      })
+      newProfileId.value = ''
+      await reloadPerms()
+    } catch (e) {
+      notif.error(errMsg(e))
     }
-    await reloadPerms()
-  } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+  } else {
+    // Draft mode: mutate locally; committed on save().
+    const draft = perms.value ?? emptyPermsDraft()
+    draft.profileRoles.push({
+      profileId: newProfileId.value,
+      profileName: profileName(newProfileId.value),
+      baseRole: newProfileRole.value,
+    })
+    perms.value = draft
+    newProfileId.value = ''
+  }
+}
+
+async function changeProfileRole(profileId: string, baseRole: BaseRole): Promise<void> {
+  if (editing.value) {
+    try {
+      await setProfileRole(editing.value, { profileId, baseRole })
+      await reloadPerms()
+    } catch (e) {
+      notif.error(errMsg(e))
+    }
+  } else if (perms.value) {
+    const row = perms.value.profileRoles.find(r => r.profileId === profileId)
+    if (row) row.baseRole = baseRole
+  }
+}
+
+async function doRemoveProfileRole(profileId: string): Promise<void> {
+  if (editing.value) {
+    try {
+      await removeProfileRole(editing.value, profileId)
+      await reloadPerms()
+    } catch (e) {
+      notif.error(errMsg(e))
+    }
+  } else if (perms.value) {
+    perms.value.profileRoles = perms.value.profileRoles.filter(r => r.profileId !== profileId)
+    // Drop any per-profile feature overrides tied to the removed role.
+    perms.value.featurePermissions = perms.value.featurePermissions
+      .filter(f => f.profileId !== profileId)
+  }
+}
+
+async function changeFeature(
+  featureKey: string,
+  state: 'default' | 'enabled' | 'disabled',
+): Promise<void> {
+  if (editing.value) {
+    try {
+      if (state === 'default') {
+        await clearFeaturePermission(editing.value, featureKey)
+      } else {
+        await setFeaturePermissions(editing.value, [
+          { featureKey, enabled: state === 'enabled' },
+        ])
+      }
+      await reloadPerms()
+    } catch (e) {
+      notif.error(errMsg(e))
+    }
+  } else if (perms.value) {
+    // Draft mode: admin-wide override only (profileId null) — the
+    // per-profile override UI in this view is read-from-server.
+    const draft = perms.value
+    draft.featurePermissions = draft.featurePermissions
+      .filter(f => !(f.featureKey === featureKey && !f.profileId))
+    if (state !== 'default') {
+      draft.featurePermissions.push({ featureKey, enabled: state === 'enabled' })
+    }
   }
 }
 </script>
