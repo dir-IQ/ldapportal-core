@@ -1,6 +1,18 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <div>
+    <!-- Identity header — only meaningful in edit mode (create mode
+         has no DN yet). Sits above the tab strip so it stays visible
+         across Attributes / Groups / IVIA tabs. -->
+    <UserIdentityHeader
+      v-if="isEdit && local.dn"
+      :dn="local.dn"
+      :attributes="local.attributes || {}"
+      :profile-name="userTemplateConfig?.name ?? null"
+      :enabled="headerEnabled"
+      :ivia="iviaStatus"
+    />
+
     <!-- Tabs (shown in both create and edit modes) -->
     <div class="flex border-b border-gray-200 mb-2">
       <button
@@ -13,6 +25,17 @@
         class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors"
         :class="activeTab === 'groups' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
       >Groups</button>
+      <!-- IVIA tab — visible only in edit mode, when the addon is on
+           the build, and when this directory has IVIA enabled. The
+           per-directory check happens on the parent so the tab itself
+           is hidden when not applicable (instead of flashing 'Loading'
+           then disappearing). -->
+      <button
+        v-if="isEdit && iviaTabVisible"
+        @click="activeTab = 'ivia'"
+        class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors"
+        :class="activeTab === 'ivia' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+      >{{ IVIA_ABBR }} Account</button>
     </div>
 
     <!-- ═══ Attributes tab ═══ -->
@@ -318,16 +341,30 @@
         </ul>
       </div>
     </div>
+
+    <!-- ═══ IVIA Account tab ═══ -->
+    <div v-show="activeTab === 'ivia'" v-if="isEdit && iviaTabVisible">
+      <IsvaAccountPanel
+        :dir-id="dirId || ''"
+        :dn="local.dn || ''"
+        @status-changed="iviaStatus = $event"
+      />
+    </div>
   </div>
 </template>
 
 <script setup>
 import { reactive, ref, watch, nextTick, computed, onMounted } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
 import FormField from '@/components/FormField.vue'
 import DnPicker from '@/components/DnPicker.vue'
+import UserIdentityHeader from '@/components/users/UserIdentityHeader.vue'
+import IsvaAccountPanel from '@/components/users/IsvaAccountPanel.vue'
 import * as groupsApi from '@/api/groups'
 import { generatePassword } from '@/api/profiles'
+import { getIsvaConfig } from '@/api/isvaConfig'
+import { IVIA_ABBR } from '@/constants/productNames'
 
 const props = defineProps({
   data: { type: Object, required: true },
@@ -376,6 +413,40 @@ function copyPassword(attrName) {
 }
 
 const activeTab       = ref('attributes')
+
+// ── IVIA tab gating + cached status snapshot ──────────────────────
+// The tab button is hidden unless: edit mode + addon present + the
+// directory has IVIA enabled. The per-directory check happens here
+// so the tab strip doesn't show a phantom button that hides after
+// the panel mounts. The panel itself also self-gates so it stays
+// usable in non-UserForm contexts.
+const auth = useAuthStore()
+const iviaTabVisible = ref(false)
+const iviaStatus     = ref(null)
+
+async function checkIviaTabVisibility() {
+  iviaTabVisible.value = false
+  if (!props.isEdit || !props.dirId || !auth.isIsvaIntegrationEnabled) return
+  try {
+    const cfg = await getIsvaConfig(props.dirId)
+    iviaTabVisible.value = cfg.data?.enabled === true
+  } catch {
+    // 404 (no config row) / network failure / 403 → hide.
+    iviaTabVisible.value = false
+  }
+}
+
+// 'enabled' attribute, if the backend exposed it as a virtual on the
+// LDAP entry (same shape as the user-list row uses). Null when absent
+// so the header can hide the badge entirely.
+const headerEnabled = computed(() => {
+  const v = local.attributes?.enabled
+  if (v === undefined || v === null || v === '') return null
+  if (typeof v === 'boolean') return v
+  if (Array.isArray(v)) return v.length ? v[0] !== 'false' && v[0] !== false : null
+  return v !== 'false'
+})
+
 const loadingGroups   = ref(false)
 const memberGroups    = ref([])
 const availableGroups = ref([])
@@ -708,6 +779,7 @@ onMounted(() => {
   if (props.dirId) {
     loadGroups()
   }
+  checkIviaTabVisibility()
 })
 
 // Reload groups when switching to edit mode with a new user
@@ -716,6 +788,15 @@ watch(() => props.data?.dn, () => {
     activeTab.value = 'attributes'
     pendingGroups.value = []
     loadGroups()
+    iviaStatus.value = null
+    checkIviaTabVisibility()
   }
+})
+
+// Re-check IVIA visibility when the directory changes (rare but
+// possible if the modal is reused).
+watch(() => props.dirId, () => {
+  iviaStatus.value = null
+  checkIviaTabVisibility()
 })
 </script>
