@@ -71,13 +71,17 @@ public class AdminManagementController {
 
     @PutMapping("/{adminId}")
     public AdminAccountResponse update(@PathVariable UUID adminId,
-                                       @Valid @RequestBody AdminAccountRequest req) {
-        return service.updateAdmin(adminId, req);
+                                       @Valid @RequestBody AdminAccountRequest req,
+                                       @org.springframework.security.core.annotation.AuthenticationPrincipal
+                                               com.ldapportal.auth.AuthPrincipal principal) {
+        return service.updateAdmin(adminId, req, principal);
     }
 
     @DeleteMapping("/{adminId}")
-    public ResponseEntity<Void> delete(@PathVariable UUID adminId) {
-        service.deleteAdmin(adminId);
+    public ResponseEntity<Void> delete(@PathVariable UUID adminId,
+                                        @org.springframework.security.core.annotation.AuthenticationPrincipal
+                                                com.ldapportal.auth.AuthPrincipal principal) {
+        service.deleteAdmin(adminId, principal);
         return ResponseEntity.noContent().build();
     }
 

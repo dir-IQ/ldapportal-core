@@ -105,6 +105,61 @@ class SuperadminManagementServiceTest {
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
+    // ── Self-mutation guards ─────────────────────────────────────────────────
+
+    @Test
+    void deleteSuperadmin_selfDelete_rejected() {
+        UUID id = UUID.randomUUID();
+        Account self = localAccount(id, true);
+        when(repo.findById(id)).thenReturn(Optional.of(self));
+        var principal = new com.ldapportal.auth.AuthPrincipal(
+                com.ldapportal.auth.PrincipalType.SUPERADMIN, id, "admin");
+
+        assertThatThrownBy(() -> service.deleteSuperadmin(id, principal))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Cannot delete your own account");
+        verify(repo, never()).delete(any());
+    }
+
+    @Test
+    void updateSuperadmin_selfDeactivate_rejected() {
+        UUID id = UUID.randomUUID();
+        Account self = localAccount(id, true);
+        when(repo.findById(id)).thenReturn(Optional.of(self));
+        var principal = new com.ldapportal.auth.AuthPrincipal(
+                com.ldapportal.auth.PrincipalType.SUPERADMIN, id, "admin");
+
+        var req = new com.ldapportal.dto.superadmin.UpdateSuperadminRequest(
+                "Admin", null, false);
+
+        assertThatThrownBy(() -> service.updateSuperadmin(id, req, principal))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Cannot deactivate your own account");
+        verify(repo, never()).save(any());
+    }
+
+    @Test
+    void updateSuperadmin_deactivateAnotherSuperadmin_succeeds() {
+        UUID self = UUID.randomUUID();
+        UUID other = UUID.randomUUID();
+        Account otherAcct = localAccount(other, true);
+        when(repo.findById(other)).thenReturn(Optional.of(otherAcct));
+        // Last-LOCAL-superadmin guard: pretend there's another LOCAL
+        // superadmin so we're not at count==0.
+        when(repo.countByRoleAndAuthTypeAndActiveTrueAndIdNot(
+                AccountRole.SUPERADMIN, AccountType.LOCAL, other))
+                .thenReturn(1L);
+        when(repo.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+        var principal = new com.ldapportal.auth.AuthPrincipal(
+                com.ldapportal.auth.PrincipalType.SUPERADMIN, self, "self");
+
+        var req = new com.ldapportal.dto.superadmin.UpdateSuperadminRequest(
+                "Admin", null, false);
+
+        service.updateSuperadmin(other, req, principal);
+        verify(repo).save(any());
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private Account localAccount(UUID id, boolean active) {

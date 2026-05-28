@@ -61,13 +61,17 @@ public class SuperadminController {
 
     @PutMapping("/{id}")
     public SuperadminResponse update(@PathVariable UUID id,
-                                     @Valid @RequestBody UpdateSuperadminRequest req) {
-        return service.updateSuperadmin(id, req);
+                                     @Valid @RequestBody UpdateSuperadminRequest req,
+                                     @org.springframework.security.core.annotation.AuthenticationPrincipal
+                                             com.ldapportal.auth.AuthPrincipal principal) {
+        return service.updateSuperadmin(id, req, principal);
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable UUID id) {
-        service.deleteSuperadmin(id);
+    public ResponseEntity<Void> delete(@PathVariable UUID id,
+                                        @org.springframework.security.core.annotation.AuthenticationPrincipal
+                                                com.ldapportal.auth.AuthPrincipal principal) {
+        service.deleteSuperadmin(id, principal);
         return ResponseEntity.noContent().build();
     }
 

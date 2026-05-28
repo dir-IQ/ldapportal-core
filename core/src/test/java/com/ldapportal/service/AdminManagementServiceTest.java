@@ -38,6 +38,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -175,6 +176,99 @@ class AdminManagementServiceTest {
         verify(featureRepo).save(captor.capture());
         assertThat(captor.getValue().isEnabled()).isTrue();
         assertThat(captor.getValue().getFeatureKey()).isEqualTo(FeatureKey.USER_CREATE);
+    }
+
+    // ── Guard bypass closure: target-role + self-mutation ────────────────────
+
+    @Test
+    void updateAdmin_targetIsSuperadmin_returns404() {
+        Account superadmin = adminAccount("alice");
+        superadmin.setRole(AccountRole.SUPERADMIN);
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(superadmin));
+
+        assertThatThrownBy(() -> service.updateAdmin(adminId,
+                new AdminAccountRequest("alice", null, null,
+                        AccountRole.SUPERADMIN, AccountType.LOCAL, null, null, true)))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verify(accountRepo, never()).save(any());
+    }
+
+    @Test
+    void deleteAdmin_targetIsSuperadmin_returns404() {
+        Account superadmin = adminAccount("alice");
+        superadmin.setRole(AccountRole.SUPERADMIN);
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(superadmin));
+
+        assertThatThrownBy(() -> service.deleteAdmin(adminId))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verify(accountRepo, never()).delete(any());
+    }
+
+    @Test
+    void updateAdmin_roleChange_rejected() {
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(adminAccount("alice")));
+
+        // Promote ADMIN -> SUPERADMIN via /admins endpoint is the
+        // license-bypass shape. Reject.
+        assertThatThrownBy(() -> service.updateAdmin(adminId,
+                new AdminAccountRequest("alice", null, null,
+                        AccountRole.SUPERADMIN, AccountType.LOCAL, null, null, true)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Role cannot be changed");
+        verify(accountRepo, never()).save(any());
+    }
+
+    @Test
+    void updateAdmin_activatingInactive_checksLicenseCap() {
+        Account inactive = adminAccount("alice");
+        inactive.setActive(false);
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(inactive));
+        when(accountRepo.countByRoleAndActiveTrue(AccountRole.ADMIN)).thenReturn(0L);
+        when(accountRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateAdmin(adminId,
+                new AdminAccountRequest("alice", null, null,
+                        AccountRole.ADMIN, AccountType.LOCAL, null, null, true));
+
+        verify(usageLimitService).requireWithinLimit(
+                com.ldapportal.core.entitlement.LimitType.ADMIN_ACCOUNTS, 0L);
+    }
+
+    @Test
+    void updateAdmin_alreadyActive_skipsLicenseCap() {
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(adminAccount("alice")));
+        when(accountRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateAdmin(adminId,
+                new AdminAccountRequest("alice", null, null,
+                        AccountRole.ADMIN, AccountType.LOCAL, null, null, true));
+
+        verify(usageLimitService, never()).requireWithinLimit(any(), anyLong());
+    }
+
+    @Test
+    void updateAdmin_selfEdit_rejected() {
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(adminAccount("alice")));
+        var principal = new com.ldapportal.auth.AuthPrincipal(
+                com.ldapportal.auth.PrincipalType.ADMIN, adminId, "alice");
+
+        assertThatThrownBy(() -> service.updateAdmin(adminId,
+                new AdminAccountRequest("alice", null, null,
+                        AccountRole.ADMIN, AccountType.LOCAL, null, null, true),
+                principal))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("modify your own account");
+    }
+
+    @Test
+    void deleteAdmin_selfDelete_rejected() {
+        var principal = new com.ldapportal.auth.AuthPrincipal(
+                com.ldapportal.auth.PrincipalType.ADMIN, adminId, "alice");
+
+        assertThatThrownBy(() -> service.deleteAdmin(adminId, principal))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("delete your own account");
+        verify(accountRepo, never()).delete(any());
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
