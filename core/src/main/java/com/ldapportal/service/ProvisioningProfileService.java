@@ -852,14 +852,28 @@ public class ProvisioningProfileService {
 
     /**
      * Applies only the selected group membership changes.
+     *
+     * <p>Validates every entry up-front against the directory's profile
+     * universe before touching LDAP: the {@code groupDn} must be configured
+     * on some profile in this directory (with a matching member attribute),
+     * and the {@code userDn} must live under some profile's target OU. This
+     * prevents a buggy or hostile frontend from using this endpoint as a
+     * generic group-membership writer to arbitrary groups or DNs.</p>
+     *
+     * <p>Validation is strict — if any entry is invalid, the whole request
+     * is rejected with a 400 and no LDAP writes occur. This matches the
+     * intent of the companion "evaluate" endpoint: callers should apply only
+     * changes that came out of evaluate.</p>
      */
     @Transactional
     public int applySelectiveGroupChanges(UUID directoryId,
                                            SelectiveGroupChangeRequest request,
                                            AuthPrincipal principal) {
         DirectoryConnection dc = requireDirectory(directoryId);
-        int applied = 0;
 
+        validateSelectiveGroupChangeEntries(directoryId, request);
+
+        int applied = 0;
         for (SelectiveGroupChangeRequest.GroupMembershipEntry entry : request.entries()) {
             try {
                 ldapGroupService.addMember(dc, entry.groupDn(),
@@ -876,6 +890,62 @@ public class ProvisioningProfileService {
             }
         }
         return applied;
+    }
+
+    /**
+     * Rejects any selective-group-change entry whose target group or user DN
+     * doesn't belong to this directory's profile universe.
+     */
+    private void validateSelectiveGroupChangeEntries(UUID directoryId,
+                                                      SelectiveGroupChangeRequest request) {
+        if (request == null || request.entries() == null || request.entries().isEmpty()) {
+            return;
+        }
+
+        List<ProvisioningProfile> profiles =
+                profileRepo.findAllByDirectoryIdOrderByNameAsc(directoryId);
+
+        // groupDn (lowercase) → set of acceptable memberAttribute values
+        Map<String, Set<String>> allowedGroups = new HashMap<>();
+        // Lowercase target-OU suffixes for userDn containment checks
+        List<String> targetOus = new ArrayList<>();
+        for (ProvisioningProfile p : profiles) {
+            if (p.getTargetOuDn() != null && !p.getTargetOuDn().isBlank()) {
+                targetOus.add(p.getTargetOuDn().toLowerCase());
+            }
+            for (ProfileGroupAssignment g :
+                    groupAssignmentRepo.findAllByProfileIdOrderByDisplayOrderAsc(p.getId())) {
+                allowedGroups
+                        .computeIfAbsent(g.getGroupDn().toLowerCase(), k -> new HashSet<>())
+                        .add(g.getMemberAttribute() != null ? g.getMemberAttribute() : "member");
+            }
+        }
+
+        for (SelectiveGroupChangeRequest.GroupMembershipEntry entry : request.entries()) {
+            if (entry.groupDn() == null || entry.userDn() == null
+                    || entry.memberAttribute() == null) {
+                throw new IllegalArgumentException(
+                        "Group membership entry is missing required fields");
+            }
+            String groupKey = entry.groupDn().toLowerCase();
+            Set<String> attrs = allowedGroups.get(groupKey);
+            if (attrs == null) {
+                throw new IllegalArgumentException(
+                        "Group [" + entry.groupDn() + "] is not assigned by any profile in this directory");
+            }
+            if (!attrs.contains(entry.memberAttribute())) {
+                throw new IllegalArgumentException(
+                        "Member attribute [" + entry.memberAttribute()
+                                + "] does not match the profile configuration for ["
+                                + entry.groupDn() + "]");
+            }
+            String userDnLower = entry.userDn().toLowerCase();
+            boolean underAnyOu = targetOus.stream().anyMatch(userDnLower::endsWith);
+            if (!underAnyOu) {
+                throw new IllegalArgumentException(
+                        "User [" + entry.userDn() + "] is not under any profile target OU in this directory");
+            }
+        }
     }
 
     /**
