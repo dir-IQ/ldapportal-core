@@ -1054,15 +1054,6 @@ function toggleApprover(accountId: string) {
             </label>
           </div>
 
-          <!-- Per-profile ISVA exemption — self-gates on addon presence
-               + the directory having ISVA enabled. Edit mode only (needs
-               a persisted profile id). -->
-          <IsvaProfileOverrideControl
-            v-if="editing"
-            :directory-id="selectedDirId ?? ''"
-            :profile-id="editing ?? ''"
-          />
-
         </div>
 
         <!-- Attributes Tab -->
@@ -1416,6 +1407,17 @@ function toggleApprover(accountId: string) {
               </div>
             </div>
           </fieldset>
+
+          <!-- Per-profile IVIA exemption — self-gates on addon presence
+               + the directory having IVIA enabled. Edit mode only (needs
+               a persisted profile id). The component renders its own
+               fieldset with the IVIA Integration legend so it slots in
+               next to Password Generation and Approvals here. -->
+          <IsvaProfileOverrideControl
+            v-if="editing"
+            :directory-id="selectedDirId ?? ''"
+            :profile-id="editing ?? ''"
+          />
         </div>
       </div>
 
