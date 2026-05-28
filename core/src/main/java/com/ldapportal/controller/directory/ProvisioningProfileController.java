@@ -15,8 +15,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
-
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -65,9 +63,10 @@ public class ProvisioningProfileController {
     @PreAuthorize("hasRole('SUPERADMIN')")
     public ResponseEntity<ProfileResponse> create(
             @PathVariable UUID directoryId,
-            @Valid @RequestBody CreateProfileRequest req) {
+            @Valid @RequestBody CreateProfileRequest req,
+            @AuthenticationPrincipal AuthPrincipal principal) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(service.create(directoryId, req));
+                .body(service.create(directoryId, req, principal));
     }
 
     @GetMapping("/api/v1/directories/{directoryId}/profiles/{profileId}")
@@ -85,15 +84,17 @@ public class ProvisioningProfileController {
     @PreAuthorize("hasRole('SUPERADMIN')")
     public ProfileResponse update(@PathVariable UUID directoryId,
                                    @PathVariable UUID profileId,
-                                   @Valid @RequestBody UpdateProfileRequest req) {
-        return service.update(directoryId, profileId, req);
+                                   @Valid @RequestBody UpdateProfileRequest req,
+                                   @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.update(directoryId, profileId, req, principal);
     }
 
     @DeleteMapping("/api/v1/directories/{directoryId}/profiles/{profileId}")
     @PreAuthorize("hasRole('SUPERADMIN')")
     public ResponseEntity<Void> delete(@PathVariable UUID directoryId,
-                                        @PathVariable UUID profileId) {
-        service.delete(directoryId, profileId);
+                                        @PathVariable UUID profileId,
+                                        @AuthenticationPrincipal AuthPrincipal principal) {
+        service.delete(directoryId, profileId, principal);
         return ResponseEntity.noContent().build();
     }
 
@@ -102,13 +103,14 @@ public class ProvisioningProfileController {
     public ResponseEntity<ProfileResponse> clone(
             @PathVariable UUID directoryId,
             @PathVariable UUID profileId,
-            @RequestBody Map<String, String> body) {
+            @RequestBody Map<String, String> body,
+            @AuthenticationPrincipal AuthPrincipal principal) {
         String newName = body.get("name");
         if (newName == null || newName.isBlank()) {
             return ResponseEntity.badRequest().build();
         }
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(service.clone(directoryId, profileId, newName));
+                .body(service.clone(directoryId, profileId, newName, principal));
     }
 
     // ── Group Change Evaluation ─────────────────────────────────────────────
