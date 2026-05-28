@@ -177,6 +177,74 @@ class AdminManagementServiceTest {
         assertThat(captor.getValue().getFeatureKey()).isEqualTo(FeatureKey.USER_CREATE);
     }
 
+    // ── createAdminWithPermissions ───────────────────────────────────────────
+
+    @Test
+    void createAdminWithPermissions_persistsAccountThenRolesThenFeatures() {
+        when(accountRepo.existsByUsername("alice")).thenReturn(false);
+        Account saved = adminAccount("alice");
+        when(accountRepo.save(any())).thenReturn(saved);
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(saved));
+        when(profileRepo.findById(profileId)).thenReturn(Optional.of(profile()));
+        when(profileRoleRepo.findByAdminAccountIdAndProfileId(adminId, profileId))
+                .thenReturn(Optional.empty());
+        when(profileRoleRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest(
+                new AdminAccountRequest("alice", "Alice", "a@e.com",
+                        AccountRole.ADMIN, AccountType.LOCAL, "pw12345678", null, true),
+                List.of(new ProfileRoleRequest(profileId, BaseRole.ADMIN)),
+                List.of(new FeaturePermissionRequest(FeatureKey.USER_CREATE, true, profileId)));
+
+        AdminAccountResponse resp = service.createAdminWithPermissions(req);
+
+        assertThat(resp.username()).isEqualTo("alice");
+        verify(accountRepo, atLeastOnce()).save(any(Account.class));
+        verify(profileRoleRepo).save(any(AdminProfileRole.class));
+        verify(featureRepo).save(any(AdminFeaturePermission.class));
+    }
+
+    @Test
+    void createAdminWithPermissions_featureForUnassignedProfile_rejected() {
+        when(accountRepo.existsByUsername("alice")).thenReturn(false);
+        // Throwing before save() is the goal — but createAdmin runs first
+        // and saves the Account. The orchestration is @Transactional, so
+        // the rollback covers the account save when we throw later.
+        when(accountRepo.save(any())).thenReturn(adminAccount("alice"));
+
+        UUID unassignedProfile = UUID.randomUUID();
+        var req = new com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest(
+                new AdminAccountRequest("alice", "Alice", "a@e.com",
+                        AccountRole.ADMIN, AccountType.LOCAL, "pw12345678", null, true),
+                List.of(), // no roles
+                List.of(new FeaturePermissionRequest(FeatureKey.USER_CREATE, true, unassignedProfile)));
+
+        assertThatThrownBy(() -> service.createAdminWithPermissions(req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("requires a profile role");
+        // No role / feature writes happened.
+        verify(profileRoleRepo, never()).save(any());
+        verify(featureRepo, never()).save(any());
+    }
+
+    @Test
+    void createAdminWithPermissions_emptyListsBehavesLikePlainCreate() {
+        when(accountRepo.existsByUsername("alice")).thenReturn(false);
+        Account saved = adminAccount("alice");
+        when(accountRepo.save(any())).thenReturn(saved);
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(saved));
+
+        var req = new com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest(
+                new AdminAccountRequest("alice", "Alice", "a@e.com",
+                        AccountRole.ADMIN, AccountType.LOCAL, "pw12345678", null, true),
+                null, null);
+
+        AdminAccountResponse resp = service.createAdminWithPermissions(req);
+        assertThat(resp.username()).isEqualTo("alice");
+        verify(profileRoleRepo, never()).save(any());
+        verify(featureRepo, never()).save(any());
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private Account adminAccount(String username) {
