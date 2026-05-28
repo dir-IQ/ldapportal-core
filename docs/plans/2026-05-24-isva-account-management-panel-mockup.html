@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>IVIA Account Panel — mockup</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+  .btn-primary { @apply inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed; }
+  .btn-secondary { @apply inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed; }
+  .btn-danger { @apply inline-flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed; }
+  .btn-neutral { @apply inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50; }
+  .input { @apply block w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500; }
+  .badge { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium; }
+  .badge-green { @apply badge bg-green-50 text-green-700 ring-1 ring-inset ring-green-200; }
+  .badge-amber { @apply badge bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200; }
+  .badge-red   { @apply badge bg-red-50 text-red-700 ring-1 ring-inset ring-red-200; }
+  .badge-blue  { @apply badge bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200; }
+  .badge-gray  { @apply badge bg-gray-100 text-gray-700 ring-1 ring-inset ring-gray-200; }
+  .panel { @apply rounded-lg border border-gray-200 bg-white shadow-sm; }
+  .panel-header { @apply flex items-center justify-between border-b border-gray-100 px-5 py-4; }
+  .panel-body { @apply px-5 py-4 space-y-4; }
+  .field-row { @apply flex items-baseline justify-between gap-4 text-sm; }
+  .field-label { @apply text-gray-500; }
+  .field-value { @apply text-gray-900 font-medium; }
+  .state-label { @apply rounded-md bg-gray-900 px-2.5 py-1 text-xs font-medium text-white tracking-wide; }
+  .alert { @apply rounded-md border p-3 text-sm flex items-start gap-2.5; }
+  .alert-amber { @apply alert border-amber-200 bg-amber-50 text-amber-900; }
+  .alert-red   { @apply alert border-red-200 bg-red-50 text-red-900; }
+  .alert-blue  { @apply alert border-blue-200 bg-blue-50 text-blue-900; }
+</style>
+</head>
+<body class="bg-gray-100 text-gray-900 antialiased">
+
+<!-- ───────── Header ───────── -->
+<header class="bg-white border-b border-gray-200">
+  <div class="mx-auto max-w-7xl px-6 py-4 flex items-center justify-between">
+    <div>
+      <h1 class="text-xl font-bold">IVIA Account Panel — mockup</h1>
+      <p class="text-sm text-gray-500 mt-0.5">P3 of <span class="mono">2026-05-24-isva-account-management-implementation.md</span>. Each card below is one state the panel can be in.</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="badge-blue">IBM Verify Identity Access (IVIA)</span>
+      <span class="badge-gray">addon: isva</span>
+    </div>
+  </div>
+</header>
+
+<main class="mx-auto max-w-7xl px-6 py-8 space-y-10">
+
+<!-- ───────── STATE 1 — Linked + Active (happy path) ───────── -->
+<section>
+  <div class="flex items-center gap-3 mb-3">
+    <span class="state-label">STATE 1</span>
+    <h2 class="text-lg font-semibold">Linked + Active</h2>
+    <span class="text-sm text-gray-500">— full action surface, all verbs available</span>
+  </div>
+
+  <div class="panel max-w-3xl">
+    <div class="panel-header">
+      <div class="flex items-center gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+        <div>
+          <h3 class="font-semibold text-gray-900">IVIA Account</h3>
+          <p class="text-xs text-gray-500">Identity-bound state on the secUser side</p>
+        </div>
+      </div>
+      <span class="badge-green">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="currentColor" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3"/></svg>
+        Linked · Active
+      </span>
+    </div>
+    <div class="panel-body">
+      <div class="grid grid-cols-2 gap-x-8 gap-y-2.5">
+        <div class="field-row"><span class="field-label">Topology</span><span class="field-value">Linked</span></div>
+        <div class="field-row"><span class="field-label">Authority</span><span class="field-value">Default</span></div>
+        <div class="field-row"><span class="field-label">Valid until</span><span class="field-value">2027-05-24 <span class="text-gray-400 font-normal">(365d remaining)</span></span></div>
+        <div class="field-row"><span class="field-label">Account valid</span><span class="field-value text-green-700">TRUE</span></div>
+        <div class="field-row"><span class="field-label">Password last changed</span><span class="field-value">2026-04-12 <span class="text-gray-400 font-normal">(42d ago)</span></span></div>
+        <div class="field-row"><span class="field-label">Password valid</span><span class="field-value text-green-700">TRUE</span></div>
+        <div class="field-row col-span-2"><span class="field-label">secUser DN</span><span class="mono text-xs text-gray-700 truncate">secUUID=8f3b…,cn=Users,secAuthority=Default,o=isva</span></div>
+        <div class="field-row col-span-2"><span class="field-label">Cert mapping</span><span class="badge-gray">Not set</span></div>
+      </div>
+      <div class="pt-3 border-t border-gray-100 flex flex-wrap gap-2">
+        <button class="btn-secondary" disabled title="Already linked — grant is a no-op here">Grant</button>
+        <button class="btn-secondary">Suspend</button>
+        <button class="btn-secondary">Renew…</button>
+        <button class="btn-secondary">Force password reset</button>
+        <button class="btn-secondary">Set cert mapping…</button>
+        <span class="flex-1"></span>
+        <button class="btn-danger">Revoke…</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── STATE 2 — Orphaned ───────── -->
+<section>
+  <div class="flex items-center gap-3 mb-3">
+    <span class="state-label">STATE 2</span>
+    <h2 class="text-lg font-semibold">Orphaned</h2>
+    <span class="text-sm text-gray-500">— demographic exists but no secUser side; account verbs refused, integrity reconcile is the fix</span>
+  </div>
+
+  <div class="panel max-w-3xl">
+    <div class="panel-header">
+      <div class="flex items-center gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.948 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>
+        <div>
+          <h3 class="font-semibold text-gray-900">IVIA Account</h3>
+          <p class="text-xs text-gray-500">Identity-bound state on the secUser side</p>
+        </div>
+      </div>
+      <span class="badge-amber">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="currentColor" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3"/></svg>
+        Orphaned
+      </span>
+    </div>
+    <div class="panel-body">
+      <div class="alert-amber">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 5.25h.008v.008H12v-.008Z"/></svg>
+        <div>
+          <p class="font-medium">This identity has no IVIA account on the directory.</p>
+          <p class="mt-1">The demographic entry exists but the paired secUser is missing. Use <a href="#" class="underline font-medium">Integrity → Reconcile</a> to either re-link an existing secUser or recreate the missing side. Account verbs are unavailable until the link is restored.</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-x-8 gap-y-2.5">
+        <div class="field-row"><span class="field-label">Topology</span><span class="field-value">Linked <span class="text-gray-400 font-normal">(configured)</span></span></div>
+        <div class="field-row"><span class="field-label">secUser DN</span><span class="text-gray-400 italic">— not found —</span></div>
+      </div>
+      <div class="pt-3 border-t border-gray-100 flex flex-wrap gap-2">
+        <button class="btn-secondary" disabled>Grant</button>
+        <button class="btn-secondary" disabled>Suspend</button>
+        <button class="btn-secondary" disabled>Renew…</button>
+        <button class="btn-secondary" disabled>Force password reset</button>
+        <span class="flex-1"></span>
+        <a href="#" class="btn-primary">Open integrity reconcile →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── STATE 3 — Not provisioned ───────── -->
+<section>
+  <div class="flex items-center gap-3 mb-3">
+    <span class="state-label">STATE 3</span>
+    <h2 class="text-lg font-semibold">Not provisioned</h2>
+    <span class="text-sm text-gray-500">— eligible for grant; the only verb visible</span>
+  </div>
+
+  <div class="panel max-w-3xl">
+    <div class="panel-header">
+      <div class="flex items-center gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+        <div>
+          <h3 class="font-semibold text-gray-900">IVIA Account</h3>
+          <p class="text-xs text-gray-500">Identity-bound state on the secUser side</p>
+        </div>
+      </div>
+      <span class="badge-gray">Not provisioned</span>
+    </div>
+    <div class="panel-body">
+      <p class="text-sm text-gray-600">This identity doesn't have an IVIA account yet. Granting one creates a paired <span class="mono text-xs">secUser</span> entry under the management DIT (linked mode) or adds the <span class="mono text-xs">secUser</span> objectClass + <span class="mono text-xs">sec*</span> attributes onto the demographic entry (inline mode).</p>
+      <div class="pt-3 border-t border-gray-100">
+        <button class="btn-primary">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+          Grant IVIA account
+        </button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── STATE 4 — FORCE_OFF refusal ───────── -->
+<section>
+  <div class="flex items-center gap-3 mb-3">
+    <span class="state-label">STATE 4</span>
+    <h2 class="text-lg font-semibold">Grant refused — profile is FORCE_OFF</h2>
+    <span class="text-sm text-gray-500">— inline help linking to the policy that needs flipping</span>
+  </div>
+
+  <div class="panel max-w-3xl">
+    <div class="panel-header">
+      <div class="flex items-center gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9.143 17.082a24.248 24.248 0 0 0 3.844.148m-3.844-.148a23.856 23.856 0 0 1-5.455-1.31 8.964 8.964 0 0 0 2.3-5.542m3.155 6.852a3 3 0 0 0 5.667 1.97m1.965-2.277L21 21m-4.225-4.225a23.81 23.81 0 0 0 3.536-1.003A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6.53 6.53m10.245 10.245L6.53 6.53M3 3l3.53 3.53"/></svg>
+        <div>
+          <h3 class="font-semibold text-gray-900">IVIA Account</h3>
+          <p class="text-xs text-gray-500">Identity-bound state on the secUser side</p>
+        </div>
+      </div>
+      <span class="badge-gray">Not provisioned</span>
+    </div>
+    <div class="panel-body">
+      <div class="alert-red">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"/></svg>
+        <div class="flex-1">
+          <p class="font-medium">Grant refused — this profile is exempt from IVIA.</p>
+          <p class="mt-1">The provisioning profile <strong>contractors-ext</strong> is configured with <span class="mono text-xs bg-red-100 px-1 rounded">FORCE_OFF</span> for IVIA. Flip the override before granting, or the next integrity scan will flag the result as scope drift.</p>
+          <div class="mt-2 flex gap-2">
+            <a href="#" class="btn-secondary">
+              Profile policy →
+              <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg>
+            </a>
+            <button class="btn-secondary" disabled>Retry grant</button>
+          </div>
+          <p class="text-xs text-red-700/70 mt-2 mono">code: ivia_force_off</p>
+        </div>
+      </div>
+      <div class="pt-3 border-t border-gray-100 flex flex-wrap gap-2">
+        <button class="btn-primary" disabled title="Refused — see message above">Grant IVIA account</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── STATE 5 — Suspended ───────── -->
+<section>
+  <div class="flex items-center gap-3 mb-3">
+    <span class="state-label">STATE 5</span>
+    <h2 class="text-lg font-semibold">Linked + Suspended</h2>
+    <span class="text-sm text-gray-500">— Suspend swaps to Restore; everything else stays available</span>
+  </div>
+
+  <div class="panel max-w-3xl">
+    <div class="panel-header">
+      <div class="flex items-center gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.25 9v6m-4.5 0V9M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+        <div>
+          <h3 class="font-semibold text-gray-900">IVIA Account</h3>
+          <p class="text-xs text-gray-500">Identity-bound state on the secUser side</p>
+        </div>
+      </div>
+      <span class="badge-amber">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="currentColor" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3"/></svg>
+        Linked · Suspended
+      </span>
+    </div>
+    <div class="panel-body">
+      <div class="alert-amber">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437 1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008Z"/></svg>
+        <div>
+          <p class="font-medium">Account is suspended.</p>
+          <p class="mt-1"><span class="mono text-xs">secAcctValid</span> is FALSE; the identity cannot authenticate via IVIA. <span class="mono text-xs">secValidUntil</span> is unchanged, so Restore is a clean inverse.</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-x-8 gap-y-2.5">
+        <div class="field-row"><span class="field-label">Account valid</span><span class="field-value text-red-700">FALSE</span></div>
+        <div class="field-row"><span class="field-label">Valid until</span><span class="field-value">2027-05-24 <span class="text-gray-400 font-normal">(365d remaining)</span></span></div>
+        <div class="field-row"><span class="field-label">Password valid</span><span class="field-value text-green-700">TRUE</span></div>
+        <div class="field-row"><span class="field-label">Password last changed</span><span class="field-value">2026-04-12</span></div>
+      </div>
+      <div class="pt-3 border-t border-gray-100 flex flex-wrap gap-2">
+        <button class="btn-primary">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/></svg>
+          Restore
+        </button>
+        <button class="btn-secondary">Renew…</button>
+        <button class="btn-secondary">Force password reset</button>
+        <button class="btn-secondary">Set cert mapping…</button>
+        <span class="flex-1"></span>
+        <button class="btn-danger">Revoke…</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── STATE 6 — Renew dialog ───────── -->
+<section>
+  <div class="flex items-center gap-3 mb-3">
+    <span class="state-label">STATE 6</span>
+    <h2 class="text-lg font-semibold">Renew dialog</h2>
+    <span class="text-sm text-gray-500">— modal over the panel; date picker capped at now+10y</span>
+  </div>
+
+  <div class="relative max-w-3xl">
+    <!-- Faded panel underneath -->
+    <div class="panel opacity-40 pointer-events-none">
+      <div class="panel-header">
+        <div class="flex items-center gap-3">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+          <h3 class="font-semibold text-gray-900">IVIA Account</h3>
+        </div>
+        <span class="badge-green">Linked · Active</span>
+      </div>
+      <div class="panel-body h-32"></div>
+    </div>
+
+    <!-- Modal overlay -->
+    <div class="absolute inset-0 flex items-center justify-center">
+      <div class="bg-white rounded-lg shadow-xl max-w-md w-full border border-gray-200">
+        <div class="px-5 py-4 border-b border-gray-100">
+          <h3 class="font-semibold text-gray-900">Renew IVIA account</h3>
+          <p class="text-xs text-gray-500 mt-0.5">alice.contractor — extends <span class="mono">secValidUntil</span></p>
+        </div>
+        <div class="px-5 py-4 space-y-3">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Current expiry</label>
+            <p class="text-sm text-gray-600">2027-05-24 <span class="text-gray-400">(365d remaining)</span></p>
+          </div>
+          <div>
+            <label for="renew-date" class="block text-sm font-medium text-gray-700 mb-1">New expiry <span class="text-red-500">*</span></label>
+            <input id="renew-date" type="date" class="input" value="2028-05-24" />
+            <p class="text-xs text-gray-500 mt-1">Must be later than the current expiry. Capped at 2036-05-28 (now + 10y).</p>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn-secondary text-xs" data-shortcut>+30 days</button>
+            <button class="btn-secondary text-xs" data-shortcut>+90 days</button>
+            <button class="btn-secondary text-xs" data-shortcut>+1 year</button>
+            <button class="btn-secondary text-xs" data-shortcut>+2 years</button>
+          </div>
+        </div>
+        <div class="px-5 py-3 bg-gray-50 rounded-b-lg flex justify-end gap-2 border-t border-gray-100">
+          <button class="btn-neutral">Cancel</button>
+          <button class="btn-primary">Renew</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── STATE 7 — HARD revoke confirm ───────── -->
+<section>
+  <div class="flex items-center gap-3 mb-3">
+    <span class="state-label">STATE 7</span>
+    <h2 class="text-lg font-semibold">Revoke confirm — HARD mode</h2>
+    <span class="text-sm text-gray-500">— typed-name double-confirm; SOFT is a single click, HARD is destructive</span>
+  </div>
+
+  <div class="relative max-w-3xl">
+    <!-- Faded panel underneath -->
+    <div class="panel opacity-40 pointer-events-none">
+      <div class="panel-header">
+        <div class="flex items-center gap-3">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+          <h3 class="font-semibold text-gray-900">IVIA Account</h3>
+        </div>
+        <span class="badge-green">Linked · Active</span>
+      </div>
+      <div class="panel-body h-32"></div>
+    </div>
+
+    <!-- Modal overlay -->
+    <div class="absolute inset-0 flex items-center justify-center">
+      <div class="bg-white rounded-lg shadow-xl max-w-md w-full border border-gray-200">
+        <div class="px-5 py-4 border-b border-gray-100 flex items-start gap-3">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-red-600 mt-0.5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.948 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/></svg>
+          <div class="flex-1">
+            <h3 class="font-semibold text-gray-900">Revoke IVIA account</h3>
+            <p class="text-xs text-gray-500 mt-0.5">alice.contractor</p>
+          </div>
+        </div>
+        <div class="px-5 py-4 space-y-4">
+          <fieldset class="space-y-2">
+            <legend class="text-sm font-medium text-gray-900">Revoke mode</legend>
+            <label class="flex items-start gap-2 p-2.5 rounded-md border border-gray-300 cursor-pointer hover:bg-gray-50">
+              <input type="radio" name="revoke-mode" class="mt-0.5" />
+              <div>
+                <div class="text-sm font-medium">Soft — disable</div>
+                <p class="text-xs text-gray-600">Flip <span class="mono">secAcctValid=FALSE</span> and expire <span class="mono">secValidUntil</span> to now. Reversible — the secUser entry stays for audit and can be restored.</p>
+              </div>
+            </label>
+            <label class="flex items-start gap-2 p-2.5 rounded-md border-2 border-red-300 bg-red-50/40 cursor-pointer">
+              <input type="radio" name="revoke-mode" class="mt-0.5" checked />
+              <div>
+                <div class="text-sm font-medium text-red-900">Hard — delete</div>
+                <p class="text-xs text-red-800/80">Delete the paired secUser entry. <strong>Irreversible.</strong> Use only when offboarding and policy requires the secUser side gone.</p>
+              </div>
+            </label>
+          </fieldset>
+          <div class="border-t border-gray-100 pt-3">
+            <label for="confirm-name" class="block text-sm font-medium text-gray-700">Type the username to confirm</label>
+            <p class="text-xs text-gray-500 mb-1.5">Type <span class="mono bg-gray-100 px-1 rounded">alice.contractor</span> to enable the Revoke button.</p>
+            <input id="confirm-name" type="text" class="input" placeholder="alice.contractor" value="alice.contr" />
+          </div>
+        </div>
+        <div class="px-5 py-3 bg-gray-50 rounded-b-lg flex justify-end gap-2 border-t border-gray-100">
+          <button class="btn-neutral">Cancel</button>
+          <button class="btn-danger" disabled>Revoke (delete)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── STATE 8 — Inline-mode panel, with cert mapping set ───────── -->
+<section>
+  <div class="flex items-center gap-3 mb-3">
+    <span class="state-label">STATE 8</span>
+    <h2 class="text-lg font-semibold">Inline mode · cert mapping set</h2>
+    <span class="text-sm text-gray-500">— same panel; topology row shows "Inline"; cert mapping value visible</span>
+  </div>
+
+  <div class="panel max-w-3xl">
+    <div class="panel-header">
+      <div class="flex items-center gap-3">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+        <div>
+          <h3 class="font-semibold text-gray-900">IVIA Account</h3>
+          <p class="text-xs text-gray-500">Identity-bound state on the secUser side</p>
+        </div>
+      </div>
+      <span class="badge-green">Inline · Active</span>
+    </div>
+    <div class="panel-body">
+      <div class="grid grid-cols-2 gap-x-8 gap-y-2.5">
+        <div class="field-row"><span class="field-label">Topology</span><span class="field-value">Inline <span class="text-gray-400 font-normal text-xs">(secUser on demographic entry)</span></span></div>
+        <div class="field-row"><span class="field-label">Authority</span><span class="field-value">Default</span></div>
+        <div class="field-row"><span class="field-label">Valid until</span><span class="field-value">2027-05-24 <span class="text-gray-400 font-normal">(365d)</span></span></div>
+        <div class="field-row"><span class="field-label">Account valid</span><span class="field-value text-green-700">TRUE</span></div>
+        <div class="field-row"><span class="field-label">Password last changed</span><span class="field-value">2026-04-12</span></div>
+        <div class="field-row"><span class="field-label">Password valid</span><span class="field-value text-green-700">TRUE</span></div>
+      </div>
+      <div class="pt-3 border-t border-gray-100">
+        <div class="field-row">
+          <span class="field-label">Cert mapping <span class="text-xs text-gray-400 font-normal">(userCertificate;binary · Subject DN)</span></span>
+          <div class="flex items-center gap-2">
+            <span class="badge-green">Set</span>
+            <button class="btn-secondary text-xs">Replace</button>
+            <button class="btn-secondary text-xs">Clear</button>
+          </div>
+        </div>
+        <p class="mono text-xs text-gray-700 mt-1.5 break-all bg-gray-50 px-2 py-1.5 rounded border border-gray-100">CN=Alice Contractor,OU=Identity,O=Acme Corp,C=US</p>
+      </div>
+      <div class="pt-3 border-t border-gray-100 flex flex-wrap gap-2">
+        <button class="btn-secondary">Suspend</button>
+        <button class="btn-secondary">Renew…</button>
+        <button class="btn-secondary" title="In inline mode, this flips IVIA's secPwdValid only — the demographic LDAP bind password is untouched.">Force password reset</button>
+        <span class="flex-1"></span>
+        <button class="btn-danger">Revoke…</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ───────── STATE 9 — User-list orphan chip ───────── -->
+<section>
+  <div class="flex items-center gap-3 mb-3">
+    <span class="state-label">STATE 9</span>
+    <h2 class="text-lg font-semibold">User-list orphan chip</h2>
+    <span class="text-sm text-gray-500">— preview of where the row-level signal surfaces</span>
+  </div>
+
+  <div class="panel max-w-4xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b border-gray-200">
+        <tr class="text-left text-xs uppercase tracking-wide text-gray-500">
+          <th class="px-4 py-2.5 font-medium">User</th>
+          <th class="px-4 py-2.5 font-medium">Email</th>
+          <th class="px-4 py-2.5 font-medium">Profile</th>
+          <th class="px-4 py-2.5 font-medium">Status</th>
+          <th class="px-4 py-2.5 font-medium text-right">Last login</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        <tr class="hover:bg-gray-50">
+          <td class="px-4 py-3"><div class="font-medium text-gray-900">Alice Contractor</div><div class="text-xs text-gray-500">alice.contractor</div></td>
+          <td class="px-4 py-3 text-gray-600">alice@acme.example</td>
+          <td class="px-4 py-3"><span class="badge-gray">contractors-ext</span></td>
+          <td class="px-4 py-3"><div class="flex gap-1.5"><span class="badge-green">Active</span><span class="badge-amber" title="Demographic entry exists but no paired secUser. Use Integrity → Reconcile.">IVIA orphaned</span></div></td>
+          <td class="px-4 py-3 text-right text-xs text-gray-500">2 hours ago</td>
+        </tr>
+        <tr class="hover:bg-gray-50">
+          <td class="px-4 py-3"><div class="font-medium text-gray-900">Bob Henderson</div><div class="text-xs text-gray-500">bob.henderson</div></td>
+          <td class="px-4 py-3 text-gray-600">bob@acme.example</td>
+          <td class="px-4 py-3"><span class="badge-gray">employees</span></td>
+          <td class="px-4 py-3"><span class="badge-green">Active</span></td>
+          <td class="px-4 py-3 text-right text-xs text-gray-500">yesterday</td>
+        </tr>
+        <tr class="hover:bg-gray-50">
+          <td class="px-4 py-3"><div class="font-medium text-gray-900">Carol Vega</div><div class="text-xs text-gray-500">carol.vega</div></td>
+          <td class="px-4 py-3 text-gray-600">carol@acme.example</td>
+          <td class="px-4 py-3"><span class="badge-gray">employees</span></td>
+          <td class="px-4 py-3"><div class="flex gap-1.5"><span class="badge-gray">Inactive</span><span class="badge-amber">IVIA orphaned</span></div></td>
+          <td class="px-4 py-3 text-right text-xs text-gray-500">3 days ago</td>
+        </tr>
+        <tr class="hover:bg-gray-50">
+          <td class="px-4 py-3"><div class="font-medium text-gray-900">Dan Park</div><div class="text-xs text-gray-500">dan.park</div></td>
+          <td class="px-4 py-3 text-gray-600">dan@acme.example</td>
+          <td class="px-4 py-3"><span class="badge-gray">contractors-ext</span></td>
+          <td class="px-4 py-3"><span class="badge-green">Active</span></td>
+          <td class="px-4 py-3 text-right text-xs text-gray-500">last week</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ───────── Footer ───────── -->
+<footer class="text-xs text-gray-500 border-t border-gray-200 pt-6 pb-12 mt-12">
+  <p>Mockup only. Styling approximates Tailwind 4 defaults — production uses the project's <span class="mono">.btn-primary</span> / <span class="mono">.input</span> utility classes (six-state including Compact density) per <span class="mono">docs/frontend-conventions.md</span>. Icons via inline Heroicons.</p>
+  <p class="mt-1">All visible identities, profiles, and DNs are fictional.</p>
+</footer>
+
+</main>
+
+</body>
+</html>
