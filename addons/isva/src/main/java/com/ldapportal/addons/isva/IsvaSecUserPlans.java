@@ -89,6 +89,21 @@ public class IsvaSecUserPlans {
         return new AddStep(secUserDn, secUserAttrs, StepFailurePolicy.COMPENSATE);
     }
 
+    /**
+     * The {@code sec*} overlay attributes written by every grant path —
+     * single source of truth, also used by {@link #revokeInlineOnExisting}
+     * to know which attributes to strip on an inline-mode hard revoke.
+     * Order matches {@link #secDefaults} so the two stay in lockstep when
+     * the schema grows.
+     */
+    static final List<String> SEC_OVERLAY_ATTRS = List.of(
+            "secLogin",
+            "secAuthority",
+            "secAcctValid",
+            "secPwdValid",
+            "secValidUntil",
+            "secPwdLastChanged");
+
     // ── revoke ───────────────────────────────────────────────────────
 
     /**
@@ -112,6 +127,28 @@ public class IsvaSecUserPlans {
      */
     public DeleteStep hardDelete(String secUserDn) {
         return DeleteStep.of(secUserDn);
+    }
+
+    /**
+     * INLINE-mode hard revoke: strip the {@code secUser} objectClass
+     * and the {@code sec*} overlay from a demographic entry, leaving
+     * the underlying identity intact. Mirror of
+     * {@link #grantInlineOnExisting}. The account-management feature's
+     * "hard revoke" verb uses this in inline mode; linked mode uses
+     * {@link #hardDelete} against the paired secUser DN instead.
+     *
+     * <p>Only attributes in {@link #SEC_OVERLAY_ATTRS} are stripped.
+     * If a deployment has set other {@code sec*} attributes
+     * out-of-band, those stay; the orphaned overlay attributes are
+     * inert without the {@code secUser} objectClass.</p>
+     */
+    public ModifyStep revokeInlineOnExisting(String demographicDn) {
+        List<Modification> mods = new ArrayList<>();
+        mods.add(new Modification(ModificationType.DELETE, "objectClass", "secUser"));
+        for (String attr : SEC_OVERLAY_ATTRS) {
+            mods.add(new Modification(ModificationType.DELETE, attr));
+        }
+        return ModifyStep.of(demographicDn, mods);
     }
 
     // ── account verbs (act on an existing identity) ──────────────────
