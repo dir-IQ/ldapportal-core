@@ -52,8 +52,15 @@ public class AdminManagementService {
 
     // ── Admin account CRUD ────────────────────────────────────────────────────
 
+    /**
+     * Lists all admin accounts. Filters by {@link AccountRole#ADMIN} so
+     * the response doesn't conflate admins with superadmins — the endpoint
+     * is mounted at {@code /superadmin/admins} and the table view treats
+     * the result as the admin roster.
+     */
+    @Transactional(readOnly = true)
     public List<AdminAccountResponse> listAdmins() {
-        return accountRepo.findAll().stream()
+        return accountRepo.findAllByRole(AccountRole.ADMIN).stream()
                 .map(AdminAccountResponse::from)
                 .toList();
     }
@@ -70,6 +77,7 @@ public class AdminManagementService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
     public AdminAccountResponse getAdmin(UUID adminId) {
         return AdminAccountResponse.from(requireAccount(adminId));
     }
@@ -98,7 +106,7 @@ public class AdminManagementService {
         a.setEmail(req.email());
         a.setRole(req.role());
         a.setAuthType(req.authType());
-        a.setActive(req.active());
+        a.setActive(req.activeForCreate());
         if (req.authType() == AccountType.LOCAL && req.password() != null && !req.password().isBlank()) {
             AccountPasswordPolicy.validate(req.password());
             a.setPasswordHash(passwordEncoder.encode(req.password()));
@@ -199,10 +207,15 @@ public class AdminManagementService {
                     "Role cannot be changed via this endpoint");
         }
 
+        // Resolve effective active flag: null in the request body means
+        // "preserve current" rather than "set to false" (#16 — the old
+        // primitive boolean silently flipped omitted active to false).
+        boolean nextActive = req.active() == null ? a.isActive() : req.active();
+
         // License cap re-check on activate: an inactive admin doesn't count
         // toward the cap; activating it does, so an org at-limit can't
         // re-light an inactive row to slip past the cap.
-        if (req.active() && !a.isActive()) {
+        if (nextActive && !a.isActive()) {
             usageLimitService.requireWithinLimit(
                     com.ldapportal.core.entitlement.LimitType.ADMIN_ACCOUNTS,
                     accountRepo.countByRoleAndActiveTrue(AccountRole.ADMIN));
@@ -223,19 +236,27 @@ public class AdminManagementService {
         a.setEmail(req.email());
         // a.setRole(req.role()) intentionally omitted — role is immutable here.
         a.setAuthType(req.authType());
-        a.setActive(req.active());
-        if (passwordSet) {
-            AccountPasswordPolicy.validate(req.password());
-            a.setPasswordHash(passwordEncoder.encode(req.password()));
-        }
-        if (req.authType() == AccountType.LDAP) {
-            a.setLdapDn(req.ldapDn());
-        } else {
-            a.setLdapDn(null);
-        }
-        // Clear password hash when switching away from LOCAL
-        if (req.authType() != AccountType.LOCAL) {
-            a.setPasswordHash(null);
+        a.setActive(nextActive);
+        // Single pass over authType: only LOCAL keeps a passwordHash,
+        // only LDAP keeps an ldapDn; everything else is cleared. Avoids
+        // the prior pair-of-branches where the LDAP path set ldapDn and
+        // then a second branch wiped passwordHash anyway.
+        switch (req.authType()) {
+            case LOCAL -> {
+                a.setLdapDn(null);
+                if (passwordSet) {
+                    AccountPasswordPolicy.validate(req.password());
+                    a.setPasswordHash(passwordEncoder.encode(req.password()));
+                }
+            }
+            case LDAP -> {
+                a.setLdapDn(req.ldapDn());
+                a.setPasswordHash(null);
+            }
+            case OIDC, WEBSEAL -> {
+                a.setLdapDn(null);
+                a.setPasswordHash(null);
+            }
         }
         if (authTypeChanged || passwordSet) {
             bumpCredentialsVersion(a);
@@ -375,6 +396,11 @@ public class AdminManagementService {
     public void removeProfileRole(UUID adminId, UUID profileId, AuthPrincipal principal) {
         Account admin = requireAccount(adminId);
         profileRoleRepo.deleteByAdminAccountIdAndProfileId(adminId, profileId);
+        // Per-profile feature overrides are inert without the matching
+        // profile role (the resolver only applies them on profiles the
+        // admin has a role on). Drop them so the effective-permissions
+        // viewer doesn't show stale rows.
+        featureRepo.deleteAllProfileOverrides(adminId, profileId);
 
         if (principal != null) {
             auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_PERMISSION_CHANGED,
@@ -410,6 +436,19 @@ public class AdminManagementService {
                         "Duplicate feature permission entry for [" + p.featureKey().name()
                                 + (p.profileId() != null ? "] on profile [" + p.profileId() : "] (admin-wide")
                                 + "]");
+            }
+        }
+
+        // Per-profile overrides are inert without a matching profile role
+        // — the resolver only applies them on profiles the admin has a
+        // role on. Reject them at write time so the DB doesn't accumulate
+        // orphan rows that confuse the effective-permissions viewer.
+        for (FeaturePermissionRequest p : permissions) {
+            if (p.profileId() != null
+                    && !profileRoleRepo.existsByAdminAccountIdAndProfileId(adminId, p.profileId())) {
+                throw new IllegalArgumentException(
+                        "Feature override for profile [" + p.profileId()
+                                + "] requires a profile role on the same profile");
             }
         }
 

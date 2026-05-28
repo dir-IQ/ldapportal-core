@@ -70,4 +70,17 @@ public interface AdminFeaturePermissionRepository extends JpaRepository<AdminFea
     void deleteByAdminAccountIdAndFeatureKey(UUID adminAccountId, FeatureKey featureKey);
 
     void deleteAllByAdminAccountId(UUID adminAccountId);
+
+    /**
+     * Drops every per-profile feature override an admin holds on a given
+     * profile. Called when the profile role itself is removed — orphan
+     * overrides would otherwise sit forever in the DB, inert (the
+     * resolver only applies them on profiles the admin has a role on)
+     * but visible in the effective-permissions viewer.
+     */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("DELETE FROM AdminFeaturePermission p " +
+           "WHERE p.adminAccount.id = :adminId AND p.profile.id = :profileId")
+    void deleteAllProfileOverrides(@Param("adminId") UUID adminId,
+                                    @Param("profileId") UUID profileId);
 }
