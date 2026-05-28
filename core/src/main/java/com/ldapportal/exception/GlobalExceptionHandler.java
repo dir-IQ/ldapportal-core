@@ -116,11 +116,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ConflictException.class)
     public ProblemDetail handleConflict(ConflictException ex) {
-        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
-        if (ex.getCode() != null) {
-            pd.setProperty("code", ex.getCode());
-        }
-        return pd;
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, ex.getMessage());
     }
 
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
