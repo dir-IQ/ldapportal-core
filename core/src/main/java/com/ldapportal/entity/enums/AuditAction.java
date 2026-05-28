@@ -67,6 +67,12 @@ public enum AuditAction {
     PLAYBOOK_EXECUTED    ("playbook.executed"),
     PLAYBOOK_ROLLED_BACK ("playbook.rolled_back"),
 
+    // ── Provisioning profile config (CRUD on the profile itself) ───────────
+    PROFILE_CREATE       ("profile.create"),
+    PROFILE_UPDATE       ("profile.update"),
+    PROFILE_DELETE       ("profile.delete"),
+    PROFILE_CLONE        ("profile.clone"),
+
     // ── HR integration ──────────────────────────────────────────────────────
     HR_SYNC_STARTED      ("hr.sync_started"),
     HR_SYNC_COMPLETED    ("hr.sync_completed"),

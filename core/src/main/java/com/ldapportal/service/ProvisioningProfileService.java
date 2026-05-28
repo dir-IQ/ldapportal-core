@@ -105,7 +105,7 @@ public class ProvisioningProfileService {
     }
 
     @Transactional
-    public ProfileResponse create(UUID directoryId, CreateProfileRequest req) {
+    public ProfileResponse create(UUID directoryId, CreateProfileRequest req, AuthPrincipal principal) {
         DirectoryConnection dir = requireDirectory(directoryId);
 
         // License cap is per-directory — customers on tighter tiers get a
@@ -137,11 +137,29 @@ public class ProvisioningProfileService {
         saveAttributeConfigs(profile, req.attributeConfigs());
         saveGroupAssignments(profile, req.groupAssignments());
 
+        if (principal != null) {
+            auditService.record(principal, directoryId, AuditAction.PROFILE_CREATE, null,
+                    Map.of("profileId", profile.getId(), "name", profile.getName(),
+                            "targetOuDn", profile.getTargetOuDn()));
+        }
+
         return toResponse(profile);
+    }
+
+    /** Backwards-compatible overload — preserves the no-principal call sites. */
+    @Transactional
+    public ProfileResponse create(UUID directoryId, CreateProfileRequest req) {
+        return create(directoryId, req, null);
     }
 
     @Transactional
     public ProfileResponse update(UUID directoryId, UUID profileId, UpdateProfileRequest req) {
+        return update(directoryId, profileId, req, null);
+    }
+
+    @Transactional
+    public ProfileResponse update(UUID directoryId, UUID profileId, UpdateProfileRequest req,
+                                   AuthPrincipal principal) {
         ProvisioningProfile profile = requireProfileInDirectory(directoryId, profileId);
 
         // Check name uniqueness if changed
@@ -175,17 +193,38 @@ public class ProvisioningProfileService {
         groupAssignmentRepo.flush();
         saveGroupAssignments(profile, req.groupAssignments());
 
+        if (principal != null) {
+            auditService.record(principal, directoryId, AuditAction.PROFILE_UPDATE, null,
+                    Map.of("profileId", profile.getId(), "name", profile.getName()));
+        }
+
         return toResponse(profile);
     }
 
     @Transactional
     public void delete(UUID directoryId, UUID profileId) {
+        delete(directoryId, profileId, null);
+    }
+
+    @Transactional
+    public void delete(UUID directoryId, UUID profileId, AuthPrincipal principal) {
         ProvisioningProfile profile = requireProfileInDirectory(directoryId, profileId);
+        String name = profile.getName();
         profileRepo.delete(profile);
+        if (principal != null) {
+            auditService.record(principal, directoryId, AuditAction.PROFILE_DELETE, null,
+                    Map.of("profileId", profileId, "name", name));
+        }
     }
 
     @Transactional
     public ProfileResponse clone(UUID directoryId, UUID profileId, String newName) {
+        return clone(directoryId, profileId, newName, null);
+    }
+
+    @Transactional
+    public ProfileResponse clone(UUID directoryId, UUID profileId, String newName,
+                                  AuthPrincipal principal) {
         ProvisioningProfile source = requireProfileInDirectory(directoryId, profileId);
 
         if (profileRepo.existsByDirectoryIdAndName(source.getDirectory().getId(), newName)) {
@@ -255,6 +294,12 @@ public class ProvisioningProfileService {
             cg.setMemberAttribute(sg.getMemberAttribute());
             cg.setDisplayOrder(sg.getDisplayOrder());
             groupAssignmentRepo.save(cg);
+        }
+
+        if (principal != null) {
+            auditService.record(principal, directoryId, AuditAction.PROFILE_CLONE, null,
+                    Map.of("profileId", copy.getId(), "name", copy.getName(),
+                            "sourceProfileId", source.getId(), "sourceName", source.getName()));
         }
 
         return toResponse(copy);
@@ -879,20 +924,19 @@ public class ProvisioningProfileService {
     }
 
     /**
-     * Adds {@code userDn} to every group in the profile's effective
+     * Removes {@code userDn} from every group in the profile's effective
      * group set (own groups + additional profiles' groups + auto-include
-     * profiles' groups, unless excluded). Called by the user-create
-     * paths so that group assignments declared on the profile are
-     * applied immediately after the user entry lands in LDAP —
-     * previously this was done client-side by the UI (and not at all
-     * by the bulk-import / approval-approved / API flows).
+     * profiles' groups, unless excluded). Called by user-delete paths so
+     * that group memberships granted by this profile are cleaned up when
+     * the user entry leaves LDAP.
      *
-     * <p>Failures on individual group adds are logged but do not abort
-     * the call; the user still exists and other group adds still run.
-     * This matches {@link #applyGroupChanges} for consistency. Each
-     * successful add emits a {@code GROUP_MEMBER_ADD} audit row with
-     * {@code source = "profile_create"} so reports can distinguish
-     * provisioning-driven additions from operator-initiated ones.</p>
+     * <p>Failures on individual group removes are logged at {@code DEBUG}
+     * (not {@code WARN}): many entries won't be members of every group in
+     * the effective set, and most LDAP servers raise
+     * {@code NO_SUCH_ATTRIBUTE} / {@code NO_SUCH_OBJECT} in that case. Each
+     * successful remove emits a {@code GROUP_MEMBER_REMOVE} audit row with
+     * {@code source = "profile_delete"} so reports can distinguish
+     * provisioning-driven removals from operator-initiated ones.</p>
      */
     @Transactional
     public int removeUserFromProfileGroups(UUID directoryId, UUID profileId,
@@ -926,6 +970,21 @@ public class ProvisioningProfileService {
         return removed;
     }
 
+    /**
+     * Adds {@code userDn} to every group in the profile's effective group
+     * set (own groups + additional profiles' groups + auto-include profiles'
+     * groups, unless excluded). Called by user-create paths so that group
+     * assignments declared on the profile are applied immediately after the
+     * user entry lands in LDAP — previously this was done client-side by
+     * the UI (and not at all by the bulk-import / approval-approved / API
+     * flows).
+     *
+     * <p>Failures on individual group adds are logged but do not abort the
+     * call; the user still exists and other group adds still run. Each
+     * successful add emits a {@code GROUP_MEMBER_ADD} audit row with
+     * {@code source = "profile_create"} so reports can distinguish
+     * provisioning-driven additions from operator-initiated ones.</p>
+     */
     @Transactional
     public int applyGroupAssignmentsToUser(UUID directoryId, UUID profileId,
                                             String userDn, AuthPrincipal principal) {
