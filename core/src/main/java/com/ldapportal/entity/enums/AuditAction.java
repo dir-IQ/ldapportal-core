@@ -73,6 +73,12 @@ public enum AuditAction {
     PROFILE_DELETE       ("profile.delete"),
     PROFILE_CLONE        ("profile.clone"),
 
+    // ── Application account CRUD (admins + superadmins) ────────────────────
+    ACCOUNT_CREATE              ("account.create"),
+    ACCOUNT_UPDATE              ("account.update"),
+    ACCOUNT_DELETE              ("account.delete"),
+    ACCOUNT_PERMISSION_CHANGED  ("account.permission_changed"),
+
     // ── HR integration ──────────────────────────────────────────────────────
     HR_SYNC_STARTED      ("hr.sync_started"),
     HR_SYNC_COMPLETED    ("hr.sync_completed"),

@@ -9,6 +9,7 @@ import com.ldapportal.dto.superadmin.UpdateSuperadminRequest;
 import com.ldapportal.entity.Account;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.AccountType;
+import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.exception.ConflictException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.AccountRepository;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -26,6 +28,7 @@ public class SuperadminManagementService {
 
     private final AccountRepository accountRepo;
     private final PasswordEncoder   passwordEncoder;
+    private final AuditService      auditService;
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -41,6 +44,12 @@ public class SuperadminManagementService {
 
     @Transactional
     public SuperadminResponse createSuperadmin(CreateSuperadminRequest req) {
+        return createSuperadmin(req, null);
+    }
+
+    @Transactional
+    public SuperadminResponse createSuperadmin(CreateSuperadminRequest req,
+                                                AuthPrincipal principal) {
         if (accountRepo.existsByUsername(req.username())) {
             throw new ConflictException("Account [" + req.username() + "] already exists");
         }
@@ -52,7 +61,17 @@ public class SuperadminManagementService {
         a.setRole(AccountRole.SUPERADMIN);
         a.setAuthType(AccountType.LOCAL);
         a.setActive(true);
-        return SuperadminResponse.from(accountRepo.save(a));
+        Account saved = accountRepo.save(a);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_CREATE,
+                    Map.of("accountId", saved.getId(),
+                            "username", saved.getUsername(),
+                            "role", saved.getRole().name(),
+                            "authType", saved.getAuthType().name()));
+        }
+
+        return SuperadminResponse.from(saved);
     }
 
     @Transactional
@@ -76,6 +95,8 @@ public class SuperadminManagementService {
                     "Cannot deactivate your own account");
         }
 
+        boolean activeChanged = a.isActive() != req.active();
+
         a.setDisplayName(req.displayName());
         a.setEmail(req.email());
         // Guard: cannot deactivate the last active LOCAL superadmin
@@ -87,11 +108,27 @@ public class SuperadminManagementService {
                     "Cannot deactivate the last active LOCAL superadmin");
         }
         a.setActive(req.active());
-        return SuperadminResponse.from(accountRepo.save(a));
+        Account saved = accountRepo.save(a);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_UPDATE,
+                    Map.of("accountId", saved.getId(),
+                            "username", saved.getUsername(),
+                            "role", saved.getRole().name(),
+                            "activeChanged", activeChanged,
+                            "active", saved.isActive()));
+        }
+
+        return SuperadminResponse.from(saved);
     }
 
     @Transactional
     public void resetPassword(UUID id, ResetPasswordRequest req) {
+        resetPassword(id, req, null);
+    }
+
+    @Transactional
+    public void resetPassword(UUID id, ResetPasswordRequest req, AuthPrincipal principal) {
         Account a = require(id);
         if (a.getAuthType() != AccountType.LOCAL) {
             throw new IllegalArgumentException(
@@ -102,6 +139,14 @@ public class SuperadminManagementService {
         Long current = a.getCredentialsVersion();
         a.setCredentialsVersion((current != null ? current : 0L) + 1L);
         accountRepo.save(a);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.PASSWORD_RESET,
+                    Map.of("accountId", a.getId(),
+                            "username", a.getUsername(),
+                            "role", a.getRole().name(),
+                            "selfChange", id.equals(principal.id())));
+        }
     }
 
     @Transactional
@@ -126,7 +171,15 @@ public class SuperadminManagementService {
             throw new IllegalArgumentException(
                     "Cannot delete the last active LOCAL superadmin");
         }
+        String username = a.getUsername();
         accountRepo.delete(a);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_DELETE,
+                    Map.of("accountId", id,
+                            "username", username,
+                            "role", "SUPERADMIN"));
+        }
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

@@ -60,8 +60,10 @@ public class AdminManagementController {
     }
 
     @PostMapping
-    public ResponseEntity<AdminAccountResponse> create(@Valid @RequestBody AdminAccountRequest req) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.createAdmin(req));
+    public ResponseEntity<AdminAccountResponse> create(@Valid @RequestBody AdminAccountRequest req,
+                                                        @org.springframework.security.core.annotation.AuthenticationPrincipal
+                                                                com.ldapportal.auth.AuthPrincipal principal) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(service.createAdmin(req, principal));
     }
 
     /**
@@ -72,9 +74,11 @@ public class AdminManagementController {
      */
     @PostMapping("/with-permissions")
     public ResponseEntity<AdminAccountResponse> createWithPermissions(
-            @Valid @RequestBody com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req) {
+            @Valid @RequestBody com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+                    com.ldapportal.auth.AuthPrincipal principal) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(service.createAdminWithPermissions(req));
+                .body(service.createAdminWithPermissions(req, principal));
     }
 
     @GetMapping("/{adminId}")
@@ -122,14 +126,18 @@ public class AdminManagementController {
     @PutMapping("/{adminId}/permissions/profile-roles")
     public ProfileRoleResponse assignProfileRole(
             @PathVariable UUID adminId,
-            @Valid @RequestBody ProfileRoleRequest req) {
-        return service.assignProfileRole(adminId, req);
+            @Valid @RequestBody ProfileRoleRequest req,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+                    com.ldapportal.auth.AuthPrincipal principal) {
+        return service.assignProfileRole(adminId, req, principal);
     }
 
     @DeleteMapping("/{adminId}/permissions/profile-roles/{profileId}")
     public ResponseEntity<Void> removeProfileRole(@PathVariable UUID adminId,
-                                                   @PathVariable UUID profileId) {
-        service.removeProfileRole(adminId, profileId);
+                                                   @PathVariable UUID profileId,
+                                                   @org.springframework.security.core.annotation.AuthenticationPrincipal
+                                                           com.ldapportal.auth.AuthPrincipal principal) {
+        service.removeProfileRole(adminId, profileId, principal);
         return ResponseEntity.noContent().build();
     }
 
@@ -138,16 +146,20 @@ public class AdminManagementController {
     @PutMapping("/{adminId}/permissions/features")
     public ResponseEntity<Void> setFeaturePermissions(
             @PathVariable UUID adminId,
-            @RequestBody List<@Valid FeaturePermissionRequest> permissions) {
-        service.setFeaturePermissions(adminId, permissions);
+            @RequestBody List<@Valid FeaturePermissionRequest> permissions,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+                    com.ldapportal.auth.AuthPrincipal principal) {
+        service.setFeaturePermissions(adminId, permissions, principal);
         return ResponseEntity.noContent().build();
     }
 
     @DeleteMapping("/{adminId}/permissions/features/{featureKey}")
     public ResponseEntity<Void> clearFeaturePermission(
             @PathVariable UUID adminId,
-            @PathVariable FeatureKey featureKey) {
-        service.clearFeaturePermission(adminId, featureKey);
+            @PathVariable FeatureKey featureKey,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+                    com.ldapportal.auth.AuthPrincipal principal) {
+        service.clearFeaturePermission(adminId, featureKey, principal);
         return ResponseEntity.noContent().build();
     }
 }

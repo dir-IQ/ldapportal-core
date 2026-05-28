@@ -32,13 +32,14 @@ import static org.mockito.Mockito.when;
 class SuperadminManagementServiceTest {
 
     @Mock private AccountRepository repo;
+    @Mock private AuditService      auditService;
 
     private PasswordEncoder             encoder = new BCryptPasswordEncoder();
     private SuperadminManagementService service;
 
     @BeforeEach
     void setUp() {
-        service = new SuperadminManagementService(repo, encoder);
+        service = new SuperadminManagementService(repo, encoder, auditService);
     }
 
     @Test

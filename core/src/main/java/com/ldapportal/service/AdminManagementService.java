@@ -16,6 +16,7 @@ import com.ldapportal.entity.AdminProfileRole;
 import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.AccountType;
+import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.FeatureKey;
 import com.ldapportal.exception.ConflictException;
 import com.ldapportal.exception.ResourceNotFoundException;
@@ -29,7 +30,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -43,6 +47,7 @@ public class AdminManagementService {
 
     private final AdminFeaturePermissionRepository featureRepo;
     private final PasswordEncoder                 passwordEncoder;
+    private final AuditService                    auditService;
 
     // ── Admin account CRUD ────────────────────────────────────────────────────
 
@@ -70,6 +75,11 @@ public class AdminManagementService {
 
     @Transactional
     public AdminAccountResponse createAdmin(AdminAccountRequest req) {
+        return createAdmin(req, null);
+    }
+
+    @Transactional
+    public AdminAccountResponse createAdmin(AdminAccountRequest req, AuthPrincipal principal) {
         // License cap applies only to admin-role accounts. Superadmin
         // accounts (operator / break-glass) are out of scope — they're
         // always permitted regardless of license.
@@ -95,7 +105,18 @@ public class AdminManagementService {
             a.setLdapDn(req.ldapDn());
         }
         // OIDC accounts need no password or ldapDn — username is matched against IdP claim
-        return AdminAccountResponse.from(accountRepo.save(a));
+        Account saved = accountRepo.save(a);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_CREATE,
+                    Map.of("accountId", saved.getId(),
+                            "username", saved.getUsername(),
+                            "role", saved.getRole().name(),
+                            "authType", saved.getAuthType().name(),
+                            "active", saved.isActive()));
+        }
+
+        return AdminAccountResponse.from(saved);
     }
 
     /**
@@ -111,7 +132,14 @@ public class AdminManagementService {
     @Transactional
     public AdminAccountResponse createAdminWithPermissions(
             com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req) {
-        AdminAccountResponse created = createAdmin(req.account());
+        return createAdminWithPermissions(req, null);
+    }
+
+    @Transactional
+    public AdminAccountResponse createAdminWithPermissions(
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            AuthPrincipal principal) {
+        AdminAccountResponse created = createAdmin(req.account(), principal);
 
         var roles = req.profileRolesOrEmpty();
         var features = req.featurePermissionsOrEmpty();
@@ -132,10 +160,10 @@ public class AdminManagementService {
         }
 
         for (ProfileRoleRequest r : roles) {
-            assignProfileRole(created.id(), r);
+            assignProfileRole(created.id(), r, principal);
         }
         if (!features.isEmpty()) {
-            setFeaturePermissions(created.id(), features);
+            setFeaturePermissions(created.id(), features, principal);
         }
 
         return AdminAccountResponse.from(requireAccount(created.id()));
@@ -209,11 +237,32 @@ public class AdminManagementService {
         if (authTypeChanged || passwordSet) {
             bumpCredentialsVersion(a);
         }
-        return AdminAccountResponse.from(accountRepo.save(a));
+        Account saved = accountRepo.save(a);
+
+        if (principal != null) {
+            List<String> changed = new ArrayList<>();
+            if (authTypeChanged) changed.add("authType");
+            if (passwordSet) changed.add("password");
+            // The other fields are always assigned from req; we don't try to
+            // compute a precise diff. The audit log carries the actor and
+            // timestamp, and the new state is in the response.
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_UPDATE,
+                    Map.of("accountId", saved.getId(),
+                            "username", saved.getUsername(),
+                            "role", saved.getRole().name(),
+                            "credentialFieldsChanged", changed));
+        }
+
+        return AdminAccountResponse.from(saved);
     }
 
     @Transactional
     public void resetAdminPassword(UUID adminId, String newPassword) {
+        resetAdminPassword(adminId, newPassword, null);
+    }
+
+    @Transactional
+    public void resetAdminPassword(UUID adminId, String newPassword, AuthPrincipal principal) {
         Account a = requireAccount(adminId);
         if (a.getAuthType() != AccountType.LOCAL) {
             throw new IllegalArgumentException("Password reset is only supported for LOCAL accounts");
@@ -221,6 +270,14 @@ public class AdminManagementService {
         a.setPasswordHash(passwordEncoder.encode(newPassword));
         bumpCredentialsVersion(a);
         accountRepo.save(a);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.PASSWORD_RESET,
+                    Map.of("accountId", a.getId(),
+                            "username", a.getUsername(),
+                            "role", a.getRole().name(),
+                            "selfChange", false));
+        }
     }
 
     /**
@@ -244,7 +301,17 @@ public class AdminManagementService {
             throw new IllegalArgumentException(
                     "Cannot delete your own account through this endpoint");
         }
-        accountRepo.delete(requireAccount(adminId));
+        Account a = requireAccount(adminId);
+        String username = a.getUsername();
+        AccountRole role = a.getRole();
+        accountRepo.delete(a);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_DELETE,
+                    Map.of("accountId", adminId,
+                            "username", username,
+                            "role", role.name()));
+        }
     }
 
     // ── Permission management — summary ───────────────────────────────────────
@@ -261,6 +328,12 @@ public class AdminManagementService {
 
     @Transactional
     public ProfileRoleResponse assignProfileRole(UUID adminId, ProfileRoleRequest req) {
+        return assignProfileRole(adminId, req, null);
+    }
+
+    @Transactional
+    public ProfileRoleResponse assignProfileRole(UUID adminId, ProfileRoleRequest req,
+                                                  AuthPrincipal principal) {
         Account admin = requireAccount(adminId);
         ProvisioningProfile profile = requireProfile(req.profileId());
 
@@ -268,24 +341,55 @@ public class AdminManagementService {
                 .findByAdminAccountIdAndProfileId(adminId, req.profileId())
                 .orElseGet(AdminProfileRole::new);
 
-        if (role.getId() == null) {
+        boolean isNew = role.getId() == null;
+        if (isNew) {
             role.setAdminAccount(admin);
             role.setProfile(profile);
         }
         role.setBaseRole(req.baseRole());
-        return ProfileRoleResponse.from(profileRoleRepo.save(role));
+        AdminProfileRole saved = profileRoleRepo.save(role);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_PERMISSION_CHANGED,
+                    Map.of("accountId", adminId,
+                            "username", admin.getUsername(),
+                            "op", isNew ? "assign_profile_role" : "update_profile_role",
+                            "profileId", req.profileId(),
+                            "baseRole", req.baseRole().name()));
+        }
+
+        return ProfileRoleResponse.from(saved);
     }
 
     @Transactional
     public void removeProfileRole(UUID adminId, UUID profileId) {
-        requireAccount(adminId);
+        removeProfileRole(adminId, profileId, null);
+    }
+
+    @Transactional
+    public void removeProfileRole(UUID adminId, UUID profileId, AuthPrincipal principal) {
+        Account admin = requireAccount(adminId);
         profileRoleRepo.deleteByAdminAccountIdAndProfileId(adminId, profileId);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_PERMISSION_CHANGED,
+                    Map.of("accountId", adminId,
+                            "username", admin.getUsername(),
+                            "op", "remove_profile_role",
+                            "profileId", profileId));
+        }
     }
 
     // ── Dimension 4: feature permissions ─────────────────────────────────────
 
     @Transactional
     public void setFeaturePermissions(UUID adminId, List<FeaturePermissionRequest> permissions) {
+        setFeaturePermissions(adminId, permissions, null);
+    }
+
+    @Transactional
+    public void setFeaturePermissions(UUID adminId, List<FeaturePermissionRequest> permissions,
+                                       AuthPrincipal principal) {
         Account admin = requireAccount(adminId);
 
         // Replace every override (admin-wide and per-profile) with the list
@@ -308,20 +412,69 @@ public class AdminManagementService {
             }
             featureRepo.save(fp);
         });
+
+        if (principal != null) {
+            // The wipe-and-recreate model means one audit row covers the
+            // whole new override set. Include the count and the keys so the
+            // log carries useful detail without exploding the row.
+            List<Map<String, Object>> summary = new ArrayList<>();
+            for (FeaturePermissionRequest p : permissions) {
+                Map<String, Object> entry = new HashMap<>();
+                entry.put("featureKey", p.featureKey().name());
+                entry.put("enabled", p.enabled());
+                if (p.profileId() != null) entry.put("profileId", p.profileId());
+                summary.add(entry);
+            }
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_PERMISSION_CHANGED,
+                    Map.of("accountId", adminId,
+                            "username", admin.getUsername(),
+                            "op", "set_feature_permissions",
+                            "count", permissions.size(),
+                            "overrides", summary));
+        }
     }
 
     @Transactional
     public void clearFeaturePermission(UUID adminId, FeatureKey featureKey) {
-        requireAccount(adminId);
+        clearFeaturePermission(adminId, featureKey, null);
+    }
+
+    @Transactional
+    public void clearFeaturePermission(UUID adminId, FeatureKey featureKey,
+                                        AuthPrincipal principal) {
+        Account admin = requireAccount(adminId);
         // Clears the admin-wide override only. Per-profile overrides are
         // addressed by clearProfileFeaturePermission below.
         featureRepo.deleteAdminWideOverride(adminId, featureKey);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_PERMISSION_CHANGED,
+                    Map.of("accountId", adminId,
+                            "username", admin.getUsername(),
+                            "op", "clear_admin_wide_feature",
+                            "featureKey", featureKey.name()));
+        }
     }
 
     @Transactional
     public void clearProfileFeaturePermission(UUID adminId, UUID profileId, FeatureKey featureKey) {
-        requireAccount(adminId);
+        clearProfileFeaturePermission(adminId, profileId, featureKey, null);
+    }
+
+    @Transactional
+    public void clearProfileFeaturePermission(UUID adminId, UUID profileId, FeatureKey featureKey,
+                                                AuthPrincipal principal) {
+        Account admin = requireAccount(adminId);
         featureRepo.deleteProfileOverride(adminId, profileId, featureKey);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_PERMISSION_CHANGED,
+                    Map.of("accountId", adminId,
+                            "username", admin.getUsername(),
+                            "op", "clear_profile_feature",
+                            "profileId", profileId,
+                            "featureKey", featureKey.name()));
+        }
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

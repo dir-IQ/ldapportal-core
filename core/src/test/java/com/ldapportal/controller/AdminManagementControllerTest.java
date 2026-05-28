@@ -80,7 +80,7 @@ class AdminManagementControllerTest extends BaseControllerTest {
 
     @Test
     void createAdmin_superadmin_returns201() throws Exception {
-        given(service.createAdmin(any())).willReturn(sampleResponse());
+        given(service.createAdmin(any(), any())).willReturn(sampleResponse());
 
         mockMvc.perform(post(BASE_URL)
                         .with(authentication(superadminAuth()))
@@ -127,7 +127,7 @@ class AdminManagementControllerTest extends BaseControllerTest {
         ProfileRoleRequest req = new ProfileRoleRequest(PROFILE_ID, BaseRole.ADMIN);
         ProfileRoleResponse resp = new ProfileRoleResponse(
                 UUID.randomUUID(), PROFILE_ID, "Test Profile", UUID.randomUUID(), BaseRole.ADMIN);
-        given(service.assignProfileRole(eq(ADMIN_ID), any())).willReturn(resp);
+        given(service.assignProfileRole(eq(ADMIN_ID), any(), any())).willReturn(resp);
 
         mockMvc.perform(put(BASE_URL + "/" + ADMIN_ID + "/permissions/profile-roles")
                         .with(authentication(superadminAuth()))
