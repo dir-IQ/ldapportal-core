@@ -269,6 +269,8 @@ class AdminManagementServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("delete your own account");
         verify(accountRepo, never()).delete(any());
+    }
+
     // ── createAdminWithPermissions ───────────────────────────────────────────
 
     @Test
