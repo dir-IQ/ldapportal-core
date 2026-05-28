@@ -3,7 +3,7 @@
 import { ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notifications'
-import { IVIA_NAME, IVIA_ABBR } from '@/constants/productNames'
+import { IVIA_ABBR } from '@/constants/productNames'
 import {
   getIsvaConfig,
   getIsvaProfileOverride,
@@ -83,7 +83,8 @@ watch(
 </script>
 
 <template>
-  <div v-if="visible" class="border-t border-gray-100 pt-4">
+  <fieldset v-if="visible" class="border border-gray-300 rounded-lg p-3 space-y-3">
+    <legend class="text-sm font-semibold text-gray-800 px-1">{{ IVIA_ABBR }} Integration</legend>
     <label class="flex items-center gap-2 text-sm font-medium text-gray-900">
       <input
         type="checkbox"
@@ -92,14 +93,14 @@ watch(
         class="rounded"
         @change="onToggle(($event.target as HTMLInputElement).checked)"
       />
-      Exempt this profile from {{ IVIA_NAME }} provisioning
+      Exempt this profile from {{ IVIA_ABBR }} provisioning
     </label>
-    <p class="text-xs text-gray-500 pl-6 mt-1">
+    <p class="text-xs text-gray-500 pl-6">
       When checked, create / delete / password / group operations for entries
       under this profile are plain LDAP — no {{ IVIA_ABBR }} secUser writes —
       even though {{ IVIA_ABBR }} is enabled on the directory. Leave unchecked
       to follow the directory setting. Don't exempt a profile that has already
       provisioned {{ IVIA_ABBR }} accounts without a reconcile.
     </p>
-  </div>
+  </fieldset>
 </template>

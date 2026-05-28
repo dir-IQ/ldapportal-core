@@ -86,6 +86,20 @@ describe('IsvaProfileOverrideControl', () => {
     expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
   })
 
+  it('renders a fieldset with an "IVIA Integration" legend', async () => {
+    hoisted.getIsvaConfig.mockResolvedValue({ data: { enabled: true } })
+    hoisted.getIsvaProfileOverride.mockResolvedValue({ data: { override: 'INHERIT' } })
+    const wrapper = mountControl()
+    await flushPromises()
+    const legend = wrapper.find('fieldset > legend')
+    expect(legend.exists()).toBe(true)
+    expect(legend.text()).toBe('IVIA Integration')
+    // The checkbox label uses the abbreviation per the Policy-tab move:
+    // the fieldset legend already spells IVIA out structurally, so the
+    // label stays short to match the surrounding Policy panel copy.
+    expect(wrapper.text()).toContain('Exempt this profile from IVIA provisioning')
+  })
+
   it('shows the checkbox checked when the profile is FORCE_OFF', async () => {
     hoisted.getIsvaConfig.mockResolvedValue({ data: { enabled: true } })
     hoisted.getIsvaProfileOverride.mockResolvedValue({ data: { override: 'FORCE_OFF' } })
