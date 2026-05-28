@@ -98,6 +98,9 @@ public class SuperadminManagementService {
                     "Password reset is only supported for LOCAL accounts");
         }
         a.setPasswordHash(passwordEncoder.encode(req.newPassword()));
+        // Invalidate any JWT issued before this reset.
+        Long current = a.getCredentialsVersion();
+        a.setCredentialsVersion((current != null ? current : 0L) + 1L);
         accountRepo.save(a);
     }
 

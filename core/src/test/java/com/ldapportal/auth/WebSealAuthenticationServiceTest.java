@@ -40,6 +40,7 @@ class WebSealAuthenticationServiceTest {
     @BeforeEach
     void setUp() {
         service = new WebSealAuthenticationService(settingsRepo, accountRepo, jwtTokenService);
+        lenient().when(jwtTokenService.issue(any(), any())).thenReturn("jwt-token");
         lenient().when(jwtTokenService.issue(any())).thenReturn("jwt-token");
     }
 

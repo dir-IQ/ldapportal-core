@@ -87,7 +87,7 @@ class JwtAuthenticationFilterTest {
         // Pre-existing authentication must survive untouched.
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         assertThat(auth).isSameAs(preExistingAuth);
-        verify(jwtTokenService, never()).parse(any());
+        verify(jwtTokenService, never()).parseFull(any());
         verify(chain).doFilter(any(), any());
     }
 
@@ -111,7 +111,7 @@ class JwtAuthenticationFilterTest {
         // even though parse() would have succeeded.
         assertThat(SecurityContextHolder.getContext().getAuthentication())
                 .isSameAs(preExistingAuth);
-        verify(jwtTokenService, never()).parse(any());
+        verify(jwtTokenService, never()).parseFull(any());
     }
 
     @Test
@@ -120,7 +120,8 @@ class JwtAuthenticationFilterTest {
         // claims are confirmed against a live, active account.
         UUID id = UUID.randomUUID();
         AuthPrincipal parsed = new AuthPrincipal(PrincipalType.ADMIN, id, "bob");
-        when(jwtTokenService.parse("valid.jwt.token")).thenReturn(parsed);
+        when(jwtTokenService.parseFull("valid.jwt.token"))
+                .thenReturn(new JwtTokenService.ParsedJwt(parsed, 1L));
         when(accountRepository.findById(id))
                 .thenReturn(Optional.of(account(id, "bob", AccountRole.ADMIN, true)));
         req.addHeader("Authorization", "Bearer valid.jwt.token");
@@ -138,7 +139,7 @@ class JwtAuthenticationFilterTest {
     @Test
     void noPriorAuth_invalidJwt_clearsContext() throws Exception {
         // Sanity check: existing error-path behavior is preserved.
-        when(jwtTokenService.parse("bad.jwt")).thenThrow(new JwtException("malformed"));
+        when(jwtTokenService.parseFull("bad.jwt")).thenThrow(new JwtException("malformed"));
         req.addHeader("Authorization", "Bearer bad.jwt");
 
         filter.doFilter(req, resp, chain);
@@ -149,8 +150,9 @@ class JwtAuthenticationFilterTest {
     @Test
     void deactivatedAccount_isNotAuthenticated() throws Exception {
         UUID id = UUID.randomUUID();
-        when(jwtTokenService.parse("valid.jwt.token"))
-                .thenReturn(new AuthPrincipal(PrincipalType.SUPERADMIN, id, "alice"));
+        when(jwtTokenService.parseFull("valid.jwt.token"))
+                .thenReturn(new JwtTokenService.ParsedJwt(
+                        new AuthPrincipal(PrincipalType.SUPERADMIN, id, "alice"), 1L));
         when(accountRepository.findById(id))
                 .thenReturn(Optional.of(account(id, "alice", AccountRole.SUPERADMIN, false)));
         req.addHeader("Authorization", "Bearer valid.jwt.token");
@@ -164,8 +166,9 @@ class JwtAuthenticationFilterTest {
     @Test
     void deletedAccount_isNotAuthenticated() throws Exception {
         UUID id = UUID.randomUUID();
-        when(jwtTokenService.parse("valid.jwt.token"))
-                .thenReturn(new AuthPrincipal(PrincipalType.ADMIN, id, "ghost"));
+        when(jwtTokenService.parseFull("valid.jwt.token"))
+                .thenReturn(new JwtTokenService.ParsedJwt(
+                        new AuthPrincipal(PrincipalType.ADMIN, id, "ghost"), 1L));
         when(accountRepository.findById(id)).thenReturn(Optional.empty());
         req.addHeader("Authorization", "Bearer valid.jwt.token");
 
@@ -180,8 +183,9 @@ class JwtAuthenticationFilterTest {
         // to ADMIN. The granted authority must reflect the live role, not the
         // stale claim.
         UUID id = UUID.randomUUID();
-        when(jwtTokenService.parse("valid.jwt.token"))
-                .thenReturn(new AuthPrincipal(PrincipalType.SUPERADMIN, id, "alice"));
+        when(jwtTokenService.parseFull("valid.jwt.token"))
+                .thenReturn(new JwtTokenService.ParsedJwt(
+                        new AuthPrincipal(PrincipalType.SUPERADMIN, id, "alice"), 1L));
         when(accountRepository.findById(id))
                 .thenReturn(Optional.of(account(id, "alice", AccountRole.ADMIN, true)));
         req.addHeader("Authorization", "Bearer valid.jwt.token");
@@ -197,6 +201,43 @@ class JwtAuthenticationFilterTest {
     }
 
     @Test
+    void staleCredentialsVersion_isRejected() throws Exception {
+        // Token carries cv=1 but the account has rotated to cv=2 — the
+        // operator reset the password (or switched authType) since the
+        // token was issued. Filter must refuse the stale credential.
+        UUID id = UUID.randomUUID();
+        when(jwtTokenService.parseFull("stale.jwt.token"))
+                .thenReturn(new JwtTokenService.ParsedJwt(
+                        new AuthPrincipal(PrincipalType.ADMIN, id, "bob"), 1L));
+        Account rotated = account(id, "bob", AccountRole.ADMIN, true);
+        rotated.setCredentialsVersion(2L);
+        when(accountRepository.findById(id)).thenReturn(Optional.of(rotated));
+        req.addHeader("Authorization", "Bearer stale.jwt.token");
+
+        filter.doFilter(req, resp, chain);
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
+    void missingCredentialsVersionClaim_isRejected() throws Exception {
+        // Pre-deploy tokens lack the `cv` claim entirely. Reject so users
+        // are forced to re-login once after the rollout — the same effect
+        // as bumping every account's credentialsVersion.
+        UUID id = UUID.randomUUID();
+        when(jwtTokenService.parseFull("legacy.jwt.token"))
+                .thenReturn(new JwtTokenService.ParsedJwt(
+                        new AuthPrincipal(PrincipalType.ADMIN, id, "bob"), null));
+        when(accountRepository.findById(id))
+                .thenReturn(Optional.of(account(id, "bob", AccountRole.ADMIN, true)));
+        req.addHeader("Authorization", "Bearer legacy.jwt.token");
+
+        filter.doFilter(req, resp, chain);
+
+        assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+    }
+
+    @Test
     void selfServicePrincipal_isNotReloadedFromAccountRepository() throws Exception {
         // Self-service users are LDAP-backed, not Account rows — re-validating
         // them against AccountRepository would wrongly reject every request.
@@ -204,7 +245,8 @@ class JwtAuthenticationFilterTest {
         UUID directoryId = UUID.randomUUID();
         AuthPrincipal selfService = new AuthPrincipal(
                 PrincipalType.SELF_SERVICE, id, "enduser", "cn=enduser,ou=people", directoryId);
-        when(jwtTokenService.parse("valid.jwt.token")).thenReturn(selfService);
+        when(jwtTokenService.parseFull("valid.jwt.token"))
+                .thenReturn(new JwtTokenService.ParsedJwt(selfService, null));
         req.addHeader("Authorization", "Bearer valid.jwt.token");
 
         filter.doFilter(req, resp, chain);

@@ -98,7 +98,7 @@ public class AuthenticationService {
             PrincipalType type = account.getRole() == AccountRole.SUPERADMIN
                     ? PrincipalType.SUPERADMIN : PrincipalType.ADMIN;
             AuthPrincipal principal = new AuthPrincipal(type, account.getId(), account.getUsername());
-            return buildResponse(principal);
+            return buildResponse(principal, account.getCredentialsVersion());
 
         } catch (BadCredentialsException e) {
             log.warn("Failed login attempt for username '{}'", req.username());
@@ -180,8 +180,8 @@ public class AuthenticationService {
 
     // ── Response builder ──────────────────────────────────────────────────────
 
-    private LoginResponse buildResponse(AuthPrincipal principal) {
-        String token = jwtTokenService.issue(principal);
+    private LoginResponse buildResponse(AuthPrincipal principal, Long credentialsVersion) {
+        String token = jwtTokenService.issue(principal, credentialsVersion);
         return new LoginResponse(token, principal.username(), principal.type().name(),
                 principal.id().toString());
     }

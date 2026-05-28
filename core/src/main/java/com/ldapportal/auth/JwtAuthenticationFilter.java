@@ -60,10 +60,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if (token != null
                 && SecurityContextHolder.getContext().getAuthentication() == null) {
             try {
-                AuthPrincipal principal = resolve(jwtTokenService.parse(token));
+                JwtTokenService.ParsedJwt parsed = jwtTokenService.parseFull(token);
+                AuthPrincipal principal = resolve(parsed.principal(), parsed.credentialsVersion());
                 if (principal == null) {
-                    // Token was valid but the account is gone / deactivated —
-                    // refuse the stale credential instead of trusting claims.
+                    // Token was valid but the account is gone / deactivated /
+                    // credentials have rotated — refuse the stale credential
+                    // instead of trusting claims.
                     SecurityContextHolder.clearContext();
                 } else {
                     String role = "ROLE_" + principal.type().name(); // ROLE_SUPERADMIN, ROLE_ADMIN, or ROLE_SELF_SERVICE
@@ -85,18 +87,35 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     /**
-     * Re-validates an admin principal against the live {@link Account} so role
-     * and active-status changes take effect immediately. Returns a principal
-     * rebuilt from current DB state, or {@code null} if the account no longer
-     * exists or is deactivated. Self-service principals (LDAP-backed, no
+     * Re-validates an admin principal against the live {@link Account} so role,
+     * active-status, and credentials-version changes take effect immediately.
+     * Returns a principal rebuilt from current DB state, or {@code null} if
+     * the account no longer exists, is deactivated, or carries a stale
+     * credentials version. Self-service principals (LDAP-backed, no
      * {@code Account} row) are returned untouched.
+     *
+     * <p>A token whose {@code cv} claim doesn't match
+     * {@code Account.credentialsVersion} is treated as revoked — this is the
+     * mechanism that invalidates live sessions after a password reset or
+     * authType switch. Tokens issued before this claim existed have
+     * {@code cv==null} and will always be rejected, which forces one re-login
+     * after deploy.</p>
      */
-    private AuthPrincipal resolve(AuthPrincipal fromToken) {
+    private AuthPrincipal resolve(AuthPrincipal fromToken, Long tokenCredentialsVersion) {
         if (fromToken.type() == PrincipalType.SELF_SERVICE) {
             return fromToken;
         }
         return accountRepository.findById(fromToken.id())
                 .filter(Account::isActive)
+                .filter(a -> {
+                    Long current = a.getCredentialsVersion();
+                    boolean match = current != null && current.equals(tokenCredentialsVersion);
+                    if (!match) {
+                        log.debug("JWT rejected: credentials version mismatch for account {} (token={}, current={})",
+                                a.getId(), tokenCredentialsVersion, current);
+                    }
+                    return match;
+                })
                 .map(a -> new AuthPrincipal(
                         a.getRole() == AccountRole.SUPERADMIN
                                 ? PrincipalType.SUPERADMIN
