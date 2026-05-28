@@ -212,13 +212,13 @@ public class ProvisioningProfileService {
         copy.setEmailPasswordToUser(source.isEmailPasswordToUser());
         copy.setAutoIncludeGroups(false); // clones don't auto-include
         copy.setExcludeAutoIncludes(source.isExcludeAutoIncludes());
-        copy = profileRepo.save(copy);
-
-        // Clone additional profiles
         copy.setAdditionalProfiles(new HashSet<>(source.getAdditionalProfiles()));
         copy = profileRepo.save(copy);
 
-        // Clone attribute configs
+        // Clone attribute configs — every persistable column must be copied
+        // or the clone silently loses self-registration / self-service form
+        // layout (the missing setSelfRegistrationEdit + registration*/
+        // selfService* fields were the original bug here).
         List<ProfileAttributeConfig> sourceConfigs =
                 attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId);
         for (ProfileAttributeConfig sc : sourceConfigs) {
@@ -231,6 +231,7 @@ public class ProvisioningProfileService {
             cc.setEditableOnCreate(sc.isEditableOnCreate());
             cc.setEditableOnUpdate(sc.isEditableOnUpdate());
             cc.setSelfServiceEdit(sc.isSelfServiceEdit());
+            cc.setSelfRegistrationEdit(sc.isSelfRegistrationEdit());
             cc.setDefaultValue(sc.getDefaultValue());
             cc.setComputedExpression(sc.getComputedExpression());
             cc.setValidationRegex(sc.getValidationRegex());
@@ -242,6 +243,12 @@ public class ProvisioningProfileService {
             cc.setColumnSpan(sc.getColumnSpan());
             cc.setDisplayOrder(sc.getDisplayOrder());
             cc.setHidden(sc.isHidden());
+            cc.setRegistrationSectionName(sc.getRegistrationSectionName());
+            cc.setRegistrationColumnSpan(sc.getRegistrationColumnSpan());
+            cc.setRegistrationDisplayOrder(sc.getRegistrationDisplayOrder());
+            cc.setSelfServiceSectionName(sc.getSelfServiceSectionName());
+            cc.setSelfServiceColumnSpan(sc.getSelfServiceColumnSpan());
+            cc.setSelfServiceDisplayOrder(sc.getSelfServiceDisplayOrder());
             attrConfigRepo.save(cc);
         }
 
@@ -256,6 +263,38 @@ public class ProvisioningProfileService {
             cg.setDisplayOrder(sg.getDisplayOrder());
             groupAssignmentRepo.save(cg);
         }
+
+        // Clone lifecycle policy (structural config — copying is the
+        // "least surprising" default).
+        final ProvisioningProfile cloned = copy;
+        lifecycleRepo.findByProfileId(profileId).ifPresent(srcPolicy -> {
+            ProfileLifecyclePolicy cp = new ProfileLifecyclePolicy();
+            cp.setProfile(cloned);
+            cp.setExpiresAfterDays(srcPolicy.getExpiresAfterDays());
+            cp.setMaxRenewals(srcPolicy.getMaxRenewals());
+            cp.setRenewalDays(srcPolicy.getRenewalDays());
+            cp.setOnExpiryAction(srcPolicy.getOnExpiryAction());
+            cp.setOnExpiryMoveDn(srcPolicy.getOnExpiryMoveDn());
+            cp.setOnExpiryRemoveGroups(srcPolicy.isOnExpiryRemoveGroups());
+            cp.setOnExpiryNotify(srcPolicy.isOnExpiryNotify());
+            cp.setWarningDaysBefore(srcPolicy.getWarningDaysBefore());
+            lifecycleRepo.save(cp);
+        });
+
+        // Clone approval config (structural) but NOT approvers (people).
+        // Copying approvers would silently grant a list of admins approve
+        // power on a profile they may not be intended to govern; the clone
+        // is disabled by default so leaving approvers empty is benign.
+        approvalConfigRepo.findByProfileId(profileId).ifPresent(srcCfg -> {
+            ProfileApprovalConfig cc = new ProfileApprovalConfig();
+            cc.setProfile(cloned);
+            cc.setRequireApproval(srcCfg.isRequireApproval());
+            cc.setApproverMode(srcCfg.getApproverMode());
+            cc.setApproverGroupDn(srcCfg.getApproverGroupDn());
+            cc.setAutoEscalateDays(srcCfg.getAutoEscalateDays());
+            cc.setEscalationAccount(srcCfg.getEscalationAccount());
+            approvalConfigRepo.save(cc);
+        });
 
         return toResponse(copy);
     }
