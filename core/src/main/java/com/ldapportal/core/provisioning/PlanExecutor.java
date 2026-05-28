@@ -56,6 +56,19 @@ public class PlanExecutor {
         executeWithCompensation(dir, plan.steps(), plan.compensation().orElse(null));
     }
 
+    /**
+     * Run a single LDAP step. Used by account-management verbs that
+     * map to one MODIFY / DELETE / ADD against an existing identity —
+     * wrapping each in a one-step typed plan was syntax noise without
+     * adding clarity (no compensation, no plan-level invariant). The
+     * step's own {@link StepFailurePolicy} drives behaviour; ABORT is
+     * the only sensible policy for a single-step operation and is the
+     * default on the step constructors.
+     */
+    public void execute(DirectoryConnection dir, LdapOperationStep step) {
+        executeWithCompensation(dir, List.of(step), null);
+    }
+
     public void execute(DirectoryConnection dir, DeletePlan plan) {
         executeWithCompensation(dir, plan.steps(), null);
     }
