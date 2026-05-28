@@ -1,0 +1,164 @@
+# LDAPPortal local-dev compose stack.
+#
+# Brings up: postgres + pgadmin + the backend app + the frontend +
+# two seeded OpenLDAP fixtures (AcmeCorp + Globex). The app + frontend
+# images are built from local source on every `docker compose build` /
+# `make redeploy`; the LDAP fixtures' bootstrap LDIFs from testdata/
+# are loaded on the first volume init only.
+#
+# To force a fresh LDAP seed (e.g. after editing an LDIF):
+#   docker compose down -v && docker compose up --build
+#
+# This file targets the community-plus-isva edition by default — the
+# one this repo's IVIA work exercises. To run the pure community
+# edition instead, swap the app service's dockerfile to
+# docker/community/Dockerfile (its JAR is built by the same
+# `mvn package` / `make package-backend` step).
+
+services:
+
+  db:
+    # Pinned to a specific minor so Dependabot's docker ecosystem can
+    # see version bumps. The floating tag `postgres:16-alpine` would
+    # silently drift on every pull and leave Dependabot blind.
+    image: postgres:16.13-alpine
+    container_name: ldap-portal-db
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-ldapportal}
+      POSTGRES_USER:     ${POSTGRES_USER:-ldapportal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ldapportal}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ldapportal} -d ${POSTGRES_DB:-ldapportal}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  pgadmin:
+    image: elestio/pgadmin:latest
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${POSTGRES_PASSWORD:-ldapportal}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_LISTEN_PORT: 5050
+    ports:
+      - "5050:5050"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    build:
+      context: .
+      # OSS repo split — the original commercial Dockerfile lived at
+      # the repo root; here the community editions each carry their own
+      # Dockerfile, and each COPYs from its matching
+      # distribution/<edition>/target/ JAR. Both images share a build
+      # context of the repo root so the COPY can reach distribution/.
+      dockerfile: docker/community-plus-isva/Dockerfile
+    container_name: ldap-portal-app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Database
+      DB_URL:      jdbc:postgresql://db:5432/${POSTGRES_DB:-ldapportal}
+      DB_USERNAME: ${POSTGRES_USER:-ldapportal}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-ldapportal}
+      # Security — these MUST be supplied; no defaults for secrets
+      ENCRYPTION_KEY:                  ${ENCRYPTION_KEY}
+      JWT_SECRET:                      ${JWT_SECRET}
+      # Bootstrap superadmin (only active when no permanent superadmin exists)
+      BOOTSTRAP_SUPERADMIN_USERNAME:   ${BOOTSTRAP_SUPERADMIN_USERNAME:-superadmin}
+      BOOTSTRAP_SUPERADMIN_PASSWORD:   ${BOOTSTRAP_SUPERADMIN_PASSWORD}
+      # Logging
+      LOG_LEVEL:     ${LOG_LEVEL:-INFO}
+      APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+    ports:
+      - "9090:8080"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ldap-portal-frontend
+    depends_on:
+      - app
+    ports:
+      - "9080:8080"
+    restart: unless-stopped
+
+  # ── AcmeCorp directory ──────────────────────────────────────────────────
+  # Seeded on first volume init from testdata/acmecorp-*.ldif. To reload
+  # from scratch: docker compose down -v && docker compose up --build
+  openldap-acmecorp:
+    image: osixia/openldap:1.5.0
+    container_name: ldap-acmecorp
+    ports:
+      - "1389:389"
+      - "1636:636"
+    environment:
+      LDAP_ORGANISATION: "AcmeCorp"
+      LDAP_DOMAIN: "acmecorp.com"
+      LDAP_BASE_DN: "dc=acmecorp,dc=com"
+      LDAP_ADMIN_PASSWORD: "admin"
+      LDAP_CONFIG_PASSWORD: "config"
+      LDAP_READONLY_USER: "true"
+      LDAP_READONLY_USER_PASSWORD: "readonly_password_456"
+      LDAP_TLS: "false"
+      LDAP_LOG_LEVEL: "256"
+    volumes:
+      - acmecorp_data:/var/lib/ldap
+      - acmecorp_config:/etc/ldap/slapd.d
+      # Bootstrap LDIFs — loaded via ldapmodify -a on first volume init only.
+      # Numeric prefixes control load order. Subsequent boots ignore these.
+      - ./testdata/acmecorp-5000-users.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/01-users.ldif:ro
+      - ./testdata/acmecorp-test-scenarios.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/02-scenarios.ldif:ro
+      - ./testdata/acmecorp-drift-test.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/03-drift.ldif:ro
+    command: ["--copy-service"]
+    restart: unless-stopped
+
+  # ── Globex directory ────────────────────────────────────────────────────
+  # Acquired-company side of the cross-directory story. ~30% overlap with
+  # AcmeCorp on mail/employeeNumber for EXACT/HIGH/AMBIGUOUS resolver tests.
+  # See testdata/README-globex.md for the overlap matrix.
+  openldap-globex:
+    image: osixia/openldap:1.5.0
+    container_name: ldap-globex
+    ports:
+      - "2389:389"
+      - "2636:636"
+    environment:
+      LDAP_ORGANISATION: "Globex Corp"
+      LDAP_DOMAIN: "globex.com"
+      LDAP_BASE_DN: "dc=globex,dc=com"
+      LDAP_ADMIN_PASSWORD: "admin"
+      LDAP_CONFIG_PASSWORD: "config"
+      LDAP_READONLY_USER: "true"
+      LDAP_READONLY_USER_PASSWORD: "readonly_password_456"
+      LDAP_TLS: "false"
+      LDAP_LOG_LEVEL: "256"
+    volumes:
+      - globex_data:/var/lib/ldap
+      - globex_config:/etc/ldap/slapd.d
+      - ./testdata/globex-250-users.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/01-users.ldif:ro
+      - ./testdata/globex-acquisition-overlaps.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/02-overlaps.ldif:ro
+    command: ["--copy-service"]
+    restart: unless-stopped
+
+
+volumes:
+  pgdata:
+  pgadmin_data:
+  acmecorp_data:
+  acmecorp_config:
+  globex_data:
+  globex_config:
