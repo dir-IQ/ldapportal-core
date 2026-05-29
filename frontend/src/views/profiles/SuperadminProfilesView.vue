@@ -18,6 +18,7 @@ import FormLayoutDesigner from '@/components/FormLayoutDesigner.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import DataTable from '@/components/DataTable.vue'
 import IsvaProfileOverrideControl from '@/components/profiles/IsvaProfileOverrideControl.vue'
+import { setIsvaProfileOverride } from '@/api/isvaConfig'
 
 type DirectoryConn = components['schemas']['DirectoryConnectionResponse']
 
@@ -243,8 +244,15 @@ function openCreate() {
   selectedDirId.value = directories.value.length > 0 ? (directories.value[0].id ?? null) : null
   modalTab.value = 'general'
   layoutMode.value = 'admin'
+  pendingIviaOverride.value = 'INHERIT'  // staged value for the create flow; persisted after profile POST
   showModal.value = true
 }
+
+// IVIA per-profile override staged during create. Edit mode persists
+// directly via IsvaProfileOverrideControl; create mode captures the
+// chosen value here and writes it after the profile-create POST
+// returns (no profileId to PUT against until then).
+const pendingIviaOverride = ref<'INHERIT' | 'FORCE_OFF'>('INHERIT')
 
 async function openEdit(p: ProfileRow) {
   editing.value = p.id
@@ -395,6 +403,20 @@ async function save() {
       await setApprovalConfig(data.id, approval.value)
       if (profileApprovers.value.length > 0) {
         await setApprovers(data.id, { accountIds: profileApprovers.value })
+      }
+      // Persist the staged IVIA override, if any. Only FORCE_OFF
+      // requires a PUT — INHERIT is the documented default for an
+      // unconfigured profile, so leaving the row absent is the same
+      // outcome and saves a round-trip.
+      if (pendingIviaOverride.value === 'FORCE_OFF' && selectedDirId.value) {
+        try {
+          await setIsvaProfileOverride(selectedDirId.value, data.id, 'FORCE_OFF')
+        } catch (e) {
+          // Profile is already created; surface the override-save
+          // failure but don't reverse the create. Operator can fix
+          // it via the editor.
+          notif.error(`Profile created but IVIA override save failed: ${errMsg(e)}`)
+        }
       }
       notif.success('Profile created')
       showModal.value = false
@@ -1611,14 +1633,15 @@ function toggleApprover(accountId: string) {
           </fieldset>
 
           <!-- Per-profile IVIA exemption — self-gates on addon presence
-               + the directory having IVIA enabled. Edit mode only (needs
-               a persisted profile id). The component renders its own
-               fieldset with the IVIA Integration legend so it slots in
-               next to Password Generation and Approvals here. -->
+               + the directory having IVIA enabled. Works in both edit
+               and create modes: edit mode persists toggles directly,
+               create mode stages the value locally and the host
+               persists it after the profile-create POST succeeds
+               (see pendingIviaOverride + the save() handler). -->
           <IsvaProfileOverrideControl
-            v-if="editing"
             :directory-id="selectedDirId ?? ''"
-            :profile-id="editing ?? ''"
+            :profile-id="editing"
+            @staged-change="pendingIviaOverride = $event"
           />
         </div>
       </div>
