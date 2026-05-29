@@ -70,6 +70,7 @@ public class IsvaConfigController {
     private final IsvaConfigProbeService probeService;
 
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPERADMIN')")
     public ResponseEntity<IsvaConfigDto> get(@PathVariable UUID directoryId) {
         assertDirectoryExists(directoryId);
         return configRepo.findById(directoryId)
