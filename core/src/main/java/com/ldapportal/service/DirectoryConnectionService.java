@@ -11,8 +11,10 @@ import com.ldapportal.entity.DirectoryGroupBaseDn;
 import com.ldapportal.entity.DirectoryUserBaseDn;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.exception.ResourceNotFoundException;
+import com.ldapportal.ldap.LdapCapabilityProbeService;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.SslHelper;
+import com.ldapportal.ldap.model.DirectoryCapabilities;
 import com.ldapportal.core.directory.event.DirectoryCreatedEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import com.ldapportal.repository.AuditDataSourceRepository;
@@ -53,6 +55,7 @@ public class DirectoryConnectionService {
     private final AuditDataSourceRepository      auditSourceRepo;
     private final EncryptionService              encryptionService;
     private final LdapConnectionFactory          connectionFactory;
+    private final LdapCapabilityProbeService     capabilityProbe;
     private final ApplicationEventPublisher      eventPublisher;
     private final com.ldapportal.core.entitlement.UsageLimitService usageLimitService;
 
@@ -104,6 +107,17 @@ public class DirectoryConnectionService {
         dc = dirRepo.save(dc);
         saveBaseDns(dc, req);
 
+        // Probe the root DSE so the vendor/version badge is populated
+        // immediately, not on first browse. Best-effort — a failed probe
+        // (server hides root DSE, transient network) leaves capabilities
+        // null and the save still succeeds. Entra ID short-circuits to
+        // null inside the probe.
+        DirectoryCapabilities caps = capabilityProbe.probe(dc);
+        if (caps != null) {
+            dc.setCapabilities(caps);
+            dc = dirRepo.save(dc);
+        }
+
         // Fan-out: modules (e.g. ee.alerting) can listen and do per-directory
         // setup. Published synchronously within the @Transactional boundary
         // so listener failures roll back the directory create — this
@@ -129,6 +143,16 @@ public class DirectoryConnectionService {
         connectionFactory.evict(dc.getId());
         dc = dirRepo.save(dc);
         saveBaseDns(dc, req);
+
+        // Re-probe — host/port/credentials may have changed, so the
+        // stored vendor/version snapshot could now be stale. Same
+        // best-effort semantics as createDirectory.
+        DirectoryCapabilities caps = capabilityProbe.probe(dc);
+        if (caps != null) {
+            dc.setCapabilities(caps);
+            dc = dirRepo.save(dc);
+        }
+
         return toResponse(dc);
     }
 

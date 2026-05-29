@@ -26,7 +26,19 @@
         </thead>
         <tbody class="divide-y divide-gray-50">
           <tr v-for="d in dirs" :key="d.id" class="hover:bg-gray-50">
-            <td class="px-4 py-3 font-medium text-gray-900">{{ d.displayName }}</td>
+            <td class="px-4 py-3 font-medium text-gray-900">
+              <div>{{ d.displayName }}</div>
+              <!-- Vendor / version badge from the root-DSE probe.
+                   Hidden when the probe hasn't run or returned no
+                   vendor field (e.g. OpenDJ omits vendorName). Tooltip
+                   lists the supported control OIDs so an operator can
+                   spot-check what the server actually advertises. -->
+              <div
+                v-if="vendorBadge(d)"
+                class="mt-0.5 inline-flex items-center text-[10px] font-normal text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded"
+                :title="capabilitiesTooltip(d)"
+              >{{ vendorBadge(d) }}</div>
+            </td>
             <td class="px-4 py-3 text-gray-600">{{ d.host }}</td>
             <td class="px-4 py-3 text-gray-600">{{ d.port }}</td>
             <td class="px-4 py-3 text-gray-600">{{ d.sslMode }}</td>
@@ -251,6 +263,33 @@ function applyPreset() {
     if (!form.value.selfServiceLoginAttribute || form.value.selfServiceLoginAttribute === 'sAMAccountName')
       form.value.selfServiceLoginAttribute = 'uid'
   }
+}
+
+// Vendor / version badge formatters. The server may publish vendorName
+// and vendorVersion independently; show whichever combination is
+// available, prefer "vendor version" when both, fall back to just the
+// version when only that is set (common on OpenDJ). Returns '' when
+// the probe hasn't yielded anything useful — the template hides the
+// chip in that case.
+function vendorBadge(d) {
+  const caps = d?.capabilities
+  if (!caps) return ''
+  const v = (caps.vendorName || '').trim()
+  const ver = (caps.vendorVersion || '').trim()
+  if (v && ver) return `${v} ${ver}`
+  if (v)        return v
+  if (ver)      return ver
+  return ''
+}
+
+function capabilitiesTooltip(d) {
+  const caps = d?.capabilities
+  if (!caps) return ''
+  const lines = []
+  if (caps.probedAt) lines.push(`Probed ${new Date(caps.probedAt).toLocaleString()}`)
+  const ctrls = caps.supportedControls || []
+  if (ctrls.length) lines.push(`Supported controls (${ctrls.length}):\n${ctrls.slice(0, 12).join('\n')}${ctrls.length > 12 ? '\n…' : ''}`)
+  return lines.join('\n\n')
 }
 
 async function load() {
