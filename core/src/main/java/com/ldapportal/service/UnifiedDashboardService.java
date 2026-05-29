@@ -48,6 +48,7 @@ public class UnifiedDashboardService {
         // signed license (Phase 6).
         boolean complianceEnabled = entitlementService.has(Entitlement.GOVERNANCE);
         boolean hrEnabled = entitlementService.has(Entitlement.HR_SYNC);
+        boolean alertingEnabled = entitlementService.has(Entitlement.ALERTING);
 
         AlertSummary alertSummary = alertSummaryProvider.summary();
         ActivityDashboardResponse activity = activityDashboardService.build(principal);
@@ -101,7 +102,7 @@ public class UnifiedDashboardService {
         }
 
         List<ActionItem> actions = filterActions(activity.actions(), complianceEnabled);
-        List<SuggestedAction> suggestions = filterSuggestions(activity.suggestions(), complianceEnabled, hrEnabled);
+        List<SuggestedAction> suggestions = filterSuggestions(activity.suggestions(), complianceEnabled, hrEnabled, alertingEnabled);
         List<AwarenessItem> awareness = filterAwareness(activity.awareness(), complianceEnabled);
 
         return new UnifiedDashboardDto(
@@ -176,7 +177,8 @@ public class UnifiedDashboardService {
     }
 
     private static List<SuggestedAction> filterSuggestions(List<ActivityDashboardResponse.SuggestedAction> src,
-                                                            boolean complianceEnabled, boolean hrEnabled) {
+                                                            boolean complianceEnabled, boolean hrEnabled,
+                                                            boolean alertingEnabled) {
         if (src == null) return List.of();
         return src.stream()
                 .filter(s -> {
@@ -184,6 +186,7 @@ public class UnifiedDashboardService {
                     if (key == null) return true;
                     if (!complianceEnabled && (key.startsWith("sod-") || key.startsWith("campaign-"))) return false;
                     if (!hrEnabled && key.startsWith("hr-")) return false;
+                    if (!alertingEnabled && key.startsWith("alerts-")) return false;
                     return true;
                 })
                 .map(s -> new SuggestedAction(s.key(), s.title(), s.description(), s.link(), s.icon()))

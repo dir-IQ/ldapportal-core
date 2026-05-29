@@ -44,6 +44,15 @@ interface AttributeTypeInfo {
 const props = defineProps<{
   modelValue: string
   directoryId: string
+  /**
+   * Attribute names the parent considers "relevant" — typically the
+   * provisioning profile's attributeConfigs. When non-empty, the
+   * suggestion list is restricted to these by default; a "Show all
+   * attributes" toggle in the panel header escapes to the full
+   * directory-schema list. If empty or omitted, the builder behaves
+   * as before (full schema only).
+   */
+  relevantAttributes?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -74,6 +83,16 @@ const rules = ref<IndexedRule[]>([])
 // directoryId so switching directories pulls a fresh list.
 const attributeNames = ref<string[]>([])
 const schemaState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
+
+// When `relevantAttributes` is provided, default to suggesting only that
+// subset (typically the profile's attributeConfigs). The toggle below
+// flips this for power users who need to filter on something the
+// profile doesn't surface (objectClass, memberOf, operational attrs).
+const showAllAttributes = ref(false)
+const hasRelevantList = computed(
+  () => Array.isArray(props.relevantAttributes) && props.relevantAttributes.length > 0,
+)
+const isScopedToProfile = computed(() => hasRelevantList.value && !showAllAttributes.value)
 
 // Module-level cache so unmounting the component doesn't drop fetched
 // schemas. The map lives for the page lifetime (acceptable tradeoff —
@@ -160,11 +179,32 @@ const comboHighlightIdx = ref(-1)
 
 const isComboOpen = (id: number): boolean => activeComboRuleId.value === id
 
+// Suggestion source: the profile-relevant subset when scoped, otherwise
+// the full directory schema. Profile-relevant names are normalised to
+// the schema's casing where possible so the dropdown shows e.g.
+// "givenName" instead of whatever case the profile happened to declare.
+const suggestionSource = computed<string[]>(() => {
+  if (isScopedToProfile.value) {
+    const schemaLc = new Map(attributeNames.value.map(n => [n.toLowerCase(), n]))
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const raw of (props.relevantAttributes ?? [])) {
+      const name = schemaLc.get(raw.toLowerCase()) ?? raw
+      const key = name.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(name)
+    }
+    return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+  }
+  return attributeNames.value
+})
+
 function filteredSuggestions(rule: IndexedRule): string[] {
-  if (!attributeNames.value.length) return []
+  const source = suggestionSource.value
+  if (!source.length) return []
   const q = (rule.attr ?? '').trim().toLowerCase()
-  const all = attributeNames.value
-  const matched = q ? all.filter(n => n.toLowerCase().includes(q)) : all
+  const matched = q ? source.filter(n => n.toLowerCase().includes(q)) : source
   // Render cap keeps the listbox cheap when the user hasn't typed
   // anything yet (Active Directory schemas can return 1500+ attrs).
   // Scroll handles overflow within the cap; users typically narrow with
@@ -267,6 +307,11 @@ defineExpose({
   // state without depending on aria-activedescendant string parsing.
   activeComboRuleId,
   comboHighlightIdx,
+  // Profile-scope toggle state so tests can assert the suggestion
+  // source flips without parsing the DOM.
+  showAllAttributes,
+  isScopedToProfile,
+  suggestionSource,
 })
 </script>
 
@@ -314,9 +359,33 @@ defineExpose({
         >Clear</button>
       </div>
 
-      <!-- Schema status hint. Only shown after attempting a load. -->
+      <!-- Suggestion scope hint + toggle. Only shown when the parent
+           passed a relevant-attribute list. Pure UX affordance — the
+           input still accepts any free-text value either way. -->
+      <p v-if="hasRelevantList" class="text-xs text-gray-500 mb-2">
+        <template v-if="isScopedToProfile">
+          Suggesting profile attributes ({{ suggestionSource.length }}).
+          <button
+            type="button"
+            class="text-blue-600 hover:text-blue-700 ml-1"
+            @click="showAllAttributes = true"
+          >Show all attributes</button>
+        </template>
+        <template v-else>
+          Showing all directory attributes.
+          <button
+            type="button"
+            class="text-blue-600 hover:text-blue-700 ml-1"
+            @click="showAllAttributes = false"
+          >Show profile attributes only</button>
+        </template>
+      </p>
+
+      <!-- Schema status hint. Suppressed when scoped to a profile-supplied
+           list — the profile list is a perfectly usable source even if
+           the live schema call failed, so a warning would be misleading. -->
       <p
-        v-if="schemaState === 'error'"
+        v-if="schemaState === 'error' && !isScopedToProfile"
         class="text-xs text-amber-600 mb-2"
       >Schema unavailable — type any attribute name.</p>
 

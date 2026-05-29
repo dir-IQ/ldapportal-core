@@ -32,6 +32,7 @@
     <LdapFilterBuilder
       v-model="filterText"
       :directory-id="dirId"
+      :relevant-attributes="profileAttributeNames"
       class="mb-3"
     />
 
@@ -193,6 +194,7 @@ interface ProfileLite {
   name: string
   targetOuDn?: string | null
   enabled?: boolean
+  attributeConfigs?: Array<{ attributeName: string, defaultValue?: string }>
 }
 
 interface GroupRow {
@@ -259,6 +261,16 @@ const exporting     = ref(false)
 const allProfiles     = ref<ProfileLite[]>([])
 const selectedProfileId = ref('')
 const profileData     = ref<ProfileLite | null>(null)
+
+// Attribute names the active profile declares — fed to LdapFilterBuilder
+// so the attribute picker defaults to this subset instead of the
+// directory's full schema. Builder exposes a "Show all attributes"
+// toggle for power users; empty array disables scoping.
+const profileAttributeNames = computed<string[]>(() =>
+  (profileData.value?.attributeConfigs ?? [])
+    .map(a => a.attributeName)
+    .filter((n): n is string => typeof n === 'string' && n.length > 0),
+)
 const showBulkAdd   = ref(false)
 const bulkMemberDns = ref('')
 const bulkAdding    = ref(false)

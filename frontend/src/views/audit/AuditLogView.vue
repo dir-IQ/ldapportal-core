@@ -14,10 +14,19 @@
     </div>
 
     <!-- Filters -->
-    <div class="bg-white border border-gray-200 rounded-xl p-4 mb-2 grid grid-cols-3 gap-2">
+    <div class="bg-white border border-gray-200 rounded-xl p-4 mb-2 grid grid-cols-4 gap-2">
       <FormField label="From" type="datetime-local" v-model="filters.from" />
       <FormField label="To"   type="datetime-local" v-model="filters.to" />
-      <FormField label="Action" type="select" v-model="filters.action" :options="actionOptions" />
+      <div class="mb-2">
+        <label class="block text-sm font-medium text-gray-700 mb-1">Action</label>
+        <select v-model="filters.action" class="input block w-full">
+          <option value="">All actions</option>
+          <optgroup v-for="group in actionGroups" :key="group.label" :label="group.label">
+            <option v-for="opt in group.options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </optgroup>
+        </select>
+      </div>
+      <FormField label="Source" type="select" v-model="filters.source" :options="sourceOptions" />
     </div>
     <div class="flex gap-2 mb-2">
       <button @click="load(0)" class="btn-primary">Filter</button>
@@ -28,7 +37,7 @@
       empty-text="No audit events found" empty-icon="clipboard">
       <template #cell-occurredAt="{ value }"><RelativeTime :value="value" /></template>
       <template #cell-action="{ value }">
-        <span class="badge-gray">{{ value }}</span>
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" :class="actionColor(value)">{{ actionLabel(value) }}</span>
       </template>
       <template #cell-targetDn="{ value }"><span class="text-xs truncate block max-w-xs" :title="value">{{ value }}</span></template>
       <template #cell-detail="{ value }">
@@ -51,6 +60,7 @@ import { useRoute } from 'vue-router'
 import { useApi } from '@/composables/useApi'
 import { useDirectoryPicker } from '@/composables/useDirectoryPicker'
 import { getAuditLog } from '@/api/audit'
+import { ACTION_LABELS, actionLabel, actionColor } from '@/components/dashboard/auditLabels'
 import DataTable from '@/components/DataTable.vue'
 import FormField from '@/components/FormField.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
@@ -64,13 +74,50 @@ const page       = ref(0)
 const totalPages = ref(1)
 const pageSize   = 20
 
-const filters = ref({ from: '', to: '', action: '' })
+const filters = ref({ from: '', to: '', action: '', source: '' })
 
-const actionOptions = [
-  { value: '', label: 'All actions' },
-  ...['USER_CREATE','USER_UPDATE','USER_DELETE','USER_ENABLE','USER_DISABLE','USER_MOVE',
-      'GROUP_CREATE','GROUP_DELETE','GROUP_MEMBER_ADD','GROUP_MEMBER_REMOVE','LDAP_CHANGE']
-     .map(v => ({ value: v, label: v }))
+// Group every AuditAction known to the frontend into operator-friendly
+// buckets. Prefix matching keeps this in sync with the backend enum
+// automatically — adding a new ACTION_LABELS entry under an existing
+// prefix shows up in the right group without code changes here.
+const ACTION_CATEGORIES = [
+  { label: 'Users',                  prefixes: ['USER_', 'PASSWORD_'] },
+  { label: 'Groups',                 prefixes: ['GROUP_'] },
+  { label: 'Directory entries',      prefixes: ['ENTRY_', 'LDIF_', 'INTEGRITY_', 'BULK_', 'LDAP_'] },
+  { label: 'Approvals',              prefixes: ['APPROVAL_'] },
+  { label: 'Access reviews',         prefixes: ['CAMPAIGN_', 'REVIEW_'] },
+  { label: 'Segregation of duties',  prefixes: ['SOD_'] },
+  { label: 'Lifecycle playbooks',    prefixes: ['PLAYBOOK_'] },
+  { label: 'HR integration',         prefixes: ['HR_'] },
+  { label: 'Provisioning profiles',  prefixes: ['PROFILE_'] },
+  { label: 'Application accounts',   prefixes: ['ACCOUNT_'] },
+  { label: 'Auditor links',          prefixes: ['AUDITOR_'] },
+  { label: 'API tokens',             prefixes: ['API_TOKEN_'] },
+]
+
+const actionGroups = (() => {
+  const claimed = new Set()
+  const groups = ACTION_CATEGORIES.map(cat => {
+    const options = Object.keys(ACTION_LABELS)
+      .filter(k => cat.prefixes.some(p => k.startsWith(p)))
+      .map(k => { claimed.add(k); return { value: k, label: ACTION_LABELS[k] } })
+      .sort((a, b) => a.label.localeCompare(b.label))
+    return { label: cat.label, options }
+  }).filter(g => g.options.length > 0)
+  // Catch-all so any future enum value not covered by a prefix above
+  // still appears in the picker rather than going missing.
+  const orphans = Object.keys(ACTION_LABELS)
+    .filter(k => !claimed.has(k))
+    .map(k => ({ value: k, label: ACTION_LABELS[k] }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+  if (orphans.length) groups.push({ label: 'Other', options: orphans })
+  return groups
+})()
+
+const sourceOptions = [
+  { value: '',                 label: 'All sources' },
+  { value: 'INTERNAL',         label: 'Application' },
+  { value: 'LDAP_CHANGELOG',   label: 'LDAP changelog' },
 ]
 
 const cols = [
@@ -92,7 +139,7 @@ function formatDetail(detail) {
 }
 
 function clearFilters() {
-  filters.value = { from: '', to: '', action: '' }
+  filters.value = { from: '', to: '', action: '', source: '' }
 }
 
 // `<input type="datetime-local">` returns a string like
@@ -120,6 +167,7 @@ async function load(p = 0) {
         from:          toIsoZoned(filters.value.from),
         to:            toIsoZoned(filters.value.to),
         action:        filters.value.action || undefined,
+        source:        filters.value.source || undefined,
       }
       const { data } = await getAuditLog(params)
       const paged = data.content ? data : { content: data, totalPages: 1 }

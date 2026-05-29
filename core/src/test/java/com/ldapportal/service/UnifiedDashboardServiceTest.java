@@ -144,6 +144,31 @@ class UnifiedDashboardServiceTest {
                 .doesNotContain("hr-abc");
     }
 
+    @Test
+    void alerting_disabled_filters_alerts_prefixed_suggestions() {
+        stubSettings(true, true);
+        // Override the default ALERTING=true set in stubSettings — community
+        // editions ship without the alerting entitlement, so the dashboard
+        // should never surface "Initialize alert rules" cards there.
+        when(entitlementService.has(com.ldapportal.core.entitlement.Entitlement.ALERTING))
+                .thenReturn(false);
+        when(dashboardService.getDashboard()).thenReturn(sampleComplianceDto());
+
+        SummaryMetrics metrics = new SummaryMetrics(100, 20, 7, 3, 1);
+        List<SuggestedAction> withAlertSuggestion = List.of(
+                new SuggestedAction("alerts-dir-1", "Initialize alert rules", "", "/superadmin/alert-rules", "alert"),
+                new SuggestedAction("smtp",         "Configure SMTP",         "", "/m",                       "setup")
+        );
+        when(activityDashboardService.build(superadmin)).thenReturn(
+                new ActivityDashboardResponse(List.of(), withAlertSuggestion, List.of(), metrics));
+
+        UnifiedDashboardDto out = service.getDashboard(superadmin);
+
+        assertThat(out.suggestions()).extracting(UnifiedDashboardDto.SuggestedAction::key)
+                .containsExactly("smtp")
+                .doesNotContain("alerts-dir-1");
+    }
+
     // ── Admin dispatch ──────────────────────────────────────────────────────
 
     @Test
@@ -181,14 +206,18 @@ class UnifiedDashboardServiceTest {
     // ── helpers ─────────────────────────────────────────────────────────────
 
     private void stubSettings(boolean compliance, boolean hr) {
-        // UnifiedDashboardService consults entitlementService for these two
+        // UnifiedDashboardService consults entitlementService for these
         // flags (Phase 1 of the packaging refactor). The backing settings
         // row is no longer read from this service's code path, so we only
-        // stub the entitlement side here.
+        // stub the entitlement side here. Alerting defaults to on so the
+        // existing scenarios behave as they always did; tests that need
+        // it off restub ALERTING directly.
         when(entitlementService.has(com.ldapportal.core.entitlement.Entitlement.GOVERNANCE))
                 .thenReturn(compliance);
         when(entitlementService.has(com.ldapportal.core.entitlement.Entitlement.HR_SYNC))
                 .thenReturn(hr);
+        when(entitlementService.has(com.ldapportal.core.entitlement.Entitlement.ALERTING))
+                .thenReturn(true);
     }
 
     private ComplianceDashboardDto sampleComplianceDto() {
