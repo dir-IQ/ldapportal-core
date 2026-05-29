@@ -96,7 +96,7 @@
                   <!-- Password field with generate/show/copy (create mode only) -->
                   <div
                     v-if="!attr.rdn && attr.inputType === 'PASSWORD'"
-                    :style="{ gridColumn: `span ${attr.columnSpan || 3}` }"
+                    :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <label :for="`uf-pw-${attr.attributeName}`" class="block text-sm font-medium text-gray-700 mb-1">
                       {{ attr.customLabel || attr.attributeName }}
@@ -148,7 +148,7 @@
                   <!-- Regular field -->
                   <div
                     v-else-if="!attr.rdn"
-                    :style="{ gridColumn: `span ${attr.columnSpan || 3}` }"
+                    :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <!-- DN Lookup: use DnPicker instead of text input -->
                     <template v-if="attr.inputType === 'DN_LOOKUP'">
@@ -229,7 +229,7 @@
                   <!-- Regular field -->
                   <div
                     v-if="!attr.rdn"
-                    :style="{ gridColumn: `span ${attr.columnSpan || 3}` }"
+                    :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <!-- DN Lookup: use DnPicker instead of text input -->
                     <template v-if="attr.inputType === 'DN_LOOKUP'">
@@ -536,6 +536,26 @@ const INPUT_TYPE_MAP = {
 
 function mapInputType(inputType) {
   return INPUT_TYPE_MAP[inputType] || 'text'
+}
+
+/**
+ * Grid-column width for an attribute. Three layers:
+ *
+ *   1. Widgets that structurally need horizontal room — PASSWORD (show /
+ *      generate / copy controls), TEXTAREA + MULTI_VALUE (multi-line),
+ *      DN_LOOKUP (DN picker + browse button) — always span the full row
+ *      regardless of profile config. The admin can't usefully override
+ *      this; the widget would break at narrower widths.
+ *
+ *   2. Profile config — `attr.columnSpan` set on ProfileAttributeConfig.
+ *      Admin's deliberate choice for this attribute on this profile.
+ *
+ *   3. Fallback to 3 (two-column row) when neither rule applies.
+ */
+const FULL_WIDTH_INPUT_TYPES = new Set(['PASSWORD', 'TEXTAREA', 'MULTI_VALUE', 'DN_LOOKUP'])
+function effectiveColumnSpan(attr) {
+  if (FULL_WIDTH_INPUT_TYPES.has(attr.inputType)) return 6
+  return attr.columnSpan || 3
 }
 
 /** Parse the allowedValues JSON string into FormField options. */
