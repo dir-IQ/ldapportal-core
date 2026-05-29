@@ -33,7 +33,7 @@ public class DirectoryConnection {
     private String displayName;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "directory_type", nullable = false, length = 20)
+    @Column(name = "directory_type", nullable = false, length = 40)
     private DirectoryType directoryType = DirectoryType.GENERIC;
 
     @Column(nullable = false)
