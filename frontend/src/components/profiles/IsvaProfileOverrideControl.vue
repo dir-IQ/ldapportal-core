@@ -10,14 +10,44 @@ import {
   setIsvaProfileOverride,
 } from '@/api/isvaConfig'
 
-// Self-contained per-profile "exempt from ISVA" control. Renders
-// nothing unless (a) the addon is present on this build and (b) the
-// profile's directory has ISVA enabled — mirroring the directory-level
-// gating so community / non-addon builds never see it. Owns its own
-// load + save so the host editor doesn't need ISVA awareness.
-const props = defineProps<{
+/**
+ * Self-contained per-profile "exempt from IVIA" control. Renders
+ * nothing unless (a) the addon is present on this build and (b) the
+ * profile's directory has IVIA enabled — mirroring the directory-
+ * level gating so community / non-addon builds never see it.
+ *
+ * Two modes:
+ *
+ *   1. Edit mode (profileId provided) — owns its own load + save.
+ *      Fetches the current override on mount, persists on toggle.
+ *      Host editor doesn't need to wire anything beyond mounting.
+ *
+ *   2. Staging mode (profileId is null/empty) — used in create-
+ *      profile flows. There's no row to PUT against until the
+ *      profile is saved, so the control:
+ *        - skips the load (no row exists yet)
+ *        - holds the chosen value locally
+ *        - emits 'staged-change' on toggle so the host can
+ *          persist after profile create
+ *        - starts at INHERIT (the documented default for
+ *          unconfigured profiles)
+ *
+ * Both modes use the same directory-enabled probe to decide
+ * visibility.
+ */
+const props = withDefaults(defineProps<{
   directoryId: string
-  profileId: string
+  profileId?: string | null
+}>(), { profileId: null })
+
+const emit = defineEmits<{
+  /**
+   * Fired in staging mode (profileId is null/empty) when the
+   * operator toggles the checkbox. Hosts use it to capture the
+   * staged value and persist after the profile-create POST
+   * succeeds.
+   */
+  (e: 'staged-change', override: 'INHERIT' | 'FORCE_OFF'): void
 }>()
 
 const auth = useAuthStore()
@@ -28,18 +58,28 @@ const loading = ref<boolean>(false)
 const saving = ref<boolean>(false)
 const forceOff = ref<boolean>(false)
 
+const isStaging = (): boolean =>
+  !props.profileId || props.profileId.length === 0
+
 async function load(): Promise<void> {
   visible.value = false
-  if (!auth.isIsvaIntegrationEnabled || !props.directoryId || !props.profileId) {
+  forceOff.value = false
+  if (!auth.isIsvaIntegrationEnabled || !props.directoryId) {
     return
   }
   loading.value = true
   try {
     const cfg = await getIsvaConfig(props.directoryId)
     if (!cfg.data?.enabled) {
-      return // directory has no active ISVA integration → hide
+      return // directory has no active IVIA integration → hide
     }
-    const ovr = await getIsvaProfileOverride(props.directoryId, props.profileId)
+    if (isStaging()) {
+      // No profile yet → nothing to fetch. Default to INHERIT
+      // (the documented behaviour for a profile with no override row).
+      visible.value = true
+      return
+    }
+    const ovr = await getIsvaProfileOverride(props.directoryId, props.profileId!)
     forceOff.value = ovr.data.override === 'FORCE_OFF'
     visible.value = true
   } catch {
@@ -54,11 +94,21 @@ async function load(): Promise<void> {
 async function onToggle(next: boolean): Promise<void> {
   const previous = forceOff.value
   forceOff.value = next
+
+  // Staging mode: emit instead of persisting. Host saves after
+  // profile create. No toast on toggle — too noisy when the
+  // operator is still configuring; the eventual profile-create
+  // success message covers the outcome.
+  if (isStaging()) {
+    emit('staged-change', next ? 'FORCE_OFF' : 'INHERIT')
+    return
+  }
+
   saving.value = true
   try {
     await setIsvaProfileOverride(
       props.directoryId,
-      props.profileId,
+      props.profileId!,
       next ? 'FORCE_OFF' : 'INHERIT',
     )
     notif.success(

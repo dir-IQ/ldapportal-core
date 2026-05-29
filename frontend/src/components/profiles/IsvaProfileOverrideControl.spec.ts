@@ -138,4 +138,46 @@ describe('IsvaProfileOverrideControl', () => {
     expect(hoisted.notifError).toHaveBeenCalledWith('nope')
     expect((checkbox.element as HTMLInputElement).checked).toBe(false)
   })
+
+  // ── Staging mode (no profileId — create flow) ────────────────────
+
+  it('staging mode: renders the toggle without calling getIsvaProfileOverride', async () => {
+    hoisted.getIsvaConfig.mockResolvedValue({ data: { enabled: true } })
+    const wrapper = mount(IsvaProfileOverrideControl, {
+      props: { directoryId: DIR, profileId: null },
+    })
+    await flushPromises()
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(true)
+    // No profile row exists yet — load must skip the override fetch.
+    expect(hoisted.getIsvaProfileOverride).not.toHaveBeenCalled()
+  })
+
+  it('staging mode: emits staged-change on toggle, no PUT to backend, no toast', async () => {
+    hoisted.getIsvaConfig.mockResolvedValue({ data: { enabled: true } })
+    const wrapper = mount(IsvaProfileOverrideControl, {
+      props: { directoryId: DIR, profileId: '' },
+    })
+    await flushPromises()
+    const checkbox = wrapper.find('input[type="checkbox"]')
+    await checkbox.setValue(true)
+    await flushPromises()
+
+    expect(wrapper.emitted('staged-change')).toEqual([['FORCE_OFF']])
+    expect(hoisted.setIsvaProfileOverride).not.toHaveBeenCalled()
+    expect(hoisted.notifSuccess).not.toHaveBeenCalled()
+
+    // Untoggling emits INHERIT.
+    await checkbox.setValue(false)
+    await flushPromises()
+    expect(wrapper.emitted('staged-change')).toEqual([['FORCE_OFF'], ['INHERIT']])
+  })
+
+  it('staging mode: stays hidden when the directory is not IVIA-enabled', async () => {
+    hoisted.getIsvaConfig.mockResolvedValue({ data: { enabled: false } })
+    const wrapper = mount(IsvaProfileOverrideControl, {
+      props: { directoryId: DIR, profileId: null },
+    })
+    await flushPromises()
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+  })
 })

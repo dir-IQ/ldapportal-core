@@ -14,16 +14,16 @@
     />
 
     <!-- Tabs (shown in both create and edit modes) -->
-    <div class="flex border-b border-gray-200 mb-2">
+    <div class="flex border-b border-gray-200 mb-4 gap-1">
       <button
         @click="activeTab = 'attributes'"
-        class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors"
-        :class="activeTab === 'attributes' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        class="px-5 py-3 text-base font-semibold border-b-[3px] -mb-px transition-colors"
+        :class="activeTab === 'attributes' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800'"
       >Attributes</button>
       <button
         @click="activeTab = 'groups'"
-        class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors"
-        :class="activeTab === 'groups' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        class="px-5 py-3 text-base font-semibold border-b-[3px] -mb-px transition-colors"
+        :class="activeTab === 'groups' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800'"
       >Groups</button>
       <!-- IVIA tab — visible only in edit mode, when the addon is on
            the build, and when this directory has IVIA enabled. The
@@ -33,8 +33,8 @@
       <button
         v-if="isEdit && iviaTabVisible"
         @click="activeTab = 'ivia'"
-        class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors"
-        :class="activeTab === 'ivia' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        class="px-5 py-3 text-base font-semibold border-b-[3px] -mb-px transition-colors"
+        :class="activeTab === 'ivia' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800'"
       >{{ IVIA_ABBR }} Account</button>
     </div>
 
@@ -43,8 +43,11 @@
 
       <!-- ── Create mode ── -->
       <div v-if="!isEdit" class="space-y-2">
-        <!-- Fallback RDN + DN row when no user form config -->
-        <div v-if="!userTemplateConfig" class="grid grid-cols-6 gap-2">
+        <!-- Fallback RDN + DN row when the profile has no attribute
+             template (either no userTemplateConfig at all, or its
+             attributeConfigs array is empty — both mean we have no
+             dynamic fields to render). -->
+        <div v-if="!userTemplateConfig?.attributeConfigs?.length" class="grid grid-cols-6 gap-2">
           <FormField label="RDN Attribute" v-model="local.rdnAttribute" placeholder="uid" required />
           <div class="col-span-4">
             <FormField
@@ -57,14 +60,14 @@
           </div>
         </div>
 
-        <!-- RDN Value when using fallback (no user form config) -->
-        <FormField v-if="!userTemplateConfig" label="RDN Value" v-model="local.rdnValue" placeholder="jsmith" required />
+        <!-- RDN Value when using fallback (no dynamic attribute template) -->
+        <FormField v-if="!userTemplateConfig?.attributeConfigs?.length" label="RDN Value" v-model="local.rdnValue" placeholder="jsmith" required />
 
         <!-- Dynamic fields from user form config (all attributes in layout order) -->
         <template v-if="userTemplateConfig?.attributeConfigs?.length">
           <template v-for="(section, sIdx) in createSections" :key="sIdx">
             <fieldset v-if="section.fields.length" class="space-y-2">
-              <legend v-if="section.name" class="text-sm font-semibold text-gray-800 pb-1 border-b border-gray-100 w-full mb-2">{{ section.name }}</legend>
+              <legend v-if="section.name" class="text-base font-semibold text-gray-900 pb-1.5 border-b-2 border-gray-200 w-full mb-3">{{ section.name }}</legend>
               <div class="grid grid-cols-6 gap-2">
                 <template
                   v-for="attr in section.fields"
@@ -93,7 +96,7 @@
                   <!-- Password field with generate/show/copy (create mode only) -->
                   <div
                     v-if="!attr.rdn && attr.inputType === 'PASSWORD'"
-                    :style="{ gridColumn: `span ${attr.columnSpan || 6}` }"
+                    :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <label :for="`uf-pw-${attr.attributeName}`" class="block text-sm font-medium text-gray-700 mb-1">
                       {{ attr.customLabel || attr.attributeName }}
@@ -145,7 +148,7 @@
                   <!-- Regular field -->
                   <div
                     v-else-if="!attr.rdn"
-                    :style="{ gridColumn: `span ${attr.columnSpan || 6}` }"
+                    :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <!-- DN Lookup: use DnPicker instead of text input -->
                     <template v-if="attr.inputType === 'DN_LOOKUP'">
@@ -177,8 +180,10 @@
           </template>
         </template>
 
-        <!-- Fallback: hardcoded fields when no user form config -->
-        <template v-if="!userTemplateConfig">
+        <!-- Fallback: hardcoded inetOrgPerson minimum when no
+             attribute template — either no config row or
+             attributeConfigs empty. -->
+        <template v-if="!userTemplateConfig?.attributeConfigs?.length">
           <FormField label="cn (Common Name)" v-model="local.attributes.cn" required />
           <FormField label="sn (Surname)" v-model="local.attributes.sn" />
           <FormField label="mail" v-model="local.attributes.mail" />
@@ -187,14 +192,15 @@
       </div>
 
       <!-- ── Edit mode ── -->
+      <!-- DN appears in UserIdentityHeader above the tab strip — no
+           need to repeat it here. -->
       <div v-else class="space-y-2">
-        <p class="text-xs text-gray-600 mb-2">Editing: <code class="bg-gray-100 px-1 rounded">{{ local.dn }}</code></p>
 
         <!-- When user form config is available, render structured fields -->
         <template v-if="userTemplateConfig?.attributeConfigs?.length">
           <template v-for="(section, sIdx) in editSections" :key="sIdx">
             <fieldset v-if="section.fields.length" class="space-y-2">
-              <legend v-if="section.name" class="text-sm font-semibold text-gray-800 pb-1 border-b border-gray-100 w-full mb-2">{{ section.name }}</legend>
+              <legend v-if="section.name" class="text-base font-semibold text-gray-900 pb-1.5 border-b-2 border-gray-200 w-full mb-3">{{ section.name }}</legend>
               <div class="grid grid-cols-6 gap-2">
                 <template
                   v-for="attr in section.fields"
@@ -223,7 +229,7 @@
                   <!-- Regular field -->
                   <div
                     v-if="!attr.rdn"
-                    :style="{ gridColumn: `span ${attr.columnSpan || 6}` }"
+                    :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <!-- DN Lookup: use DnPicker instead of text input -->
                     <template v-if="attr.inputType === 'DN_LOOKUP'">
@@ -282,63 +288,75 @@
 
     <!-- ═══ Groups tab ═══ -->
     <div v-show="activeTab === 'groups'">
-      <p v-if="isEdit" class="text-xs text-gray-600 mb-2">Manage group memberships for <code class="bg-gray-100 px-1 rounded">{{ local.dn }}</code></p>
-      <p v-else class="text-xs text-gray-500 mb-2">Select groups for the new user. Memberships will be created after the user is saved.</p>
+      <p v-if="!isEdit" class="text-xs text-gray-500 mb-3">Select groups for the new user. Memberships will be created after the user is saved.</p>
 
-      <!-- Current memberships (edit mode only) -->
-      <div v-if="isEdit" class="mb-2">
-        <h3 class="text-sm font-medium text-gray-700 mb-2">Current Groups</h3>
-        <div v-if="loadingGroups" class="text-sm text-gray-500 py-3 text-center">Loading…</div>
-        <ul v-else-if="memberGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
-          <li v-for="g in memberGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
-            <div>
-              <span class="font-medium text-gray-800">{{ g.cn }}</span>
-              <code class="text-xs text-gray-500 ml-2">{{ g.dn }}</code>
-            </div>
-            <button @click="removeFromGroup(g)" class="text-red-500 hover:text-red-700 text-xs font-medium">Remove</button>
-          </li>
-        </ul>
-        <p v-else class="text-sm text-gray-500 py-3 text-center border border-gray-200 rounded-lg">Not a member of any groups</p>
-      </div>
+      <!-- Two-column layout: left = current/pending memberships,
+           right = search + add. Stacks vertically on narrow screens.
+           Identity DN appears in the header above the tab strip — no
+           need to repeat it inside the tab content. -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-      <!-- Pending groups (create mode only) -->
-      <div v-if="!isEdit && pendingGroups.length" class="mb-2">
-        <h3 class="text-sm font-medium text-gray-700 mb-2">Groups to Join</h3>
-        <ul class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
-          <li v-for="g in pendingGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
-            <div>
-              <span class="font-medium text-gray-800">{{ g.cn }}</span>
-              <code class="text-xs text-gray-500 ml-2">{{ g.dn }}</code>
-            </div>
-            <button @click="removePendingGroup(g)" class="text-red-500 hover:text-red-700 text-xs font-medium">Remove</button>
-          </li>
-        </ul>
-      </div>
+        <!-- LEFT: existing memberships -->
+        <div>
+          <!-- Current memberships (edit mode only) -->
+          <div v-if="isEdit">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">Current Groups</h3>
+            <div v-if="loadingGroups" class="text-sm text-gray-500 py-3 text-center">Loading…</div>
+            <ul v-else-if="memberGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
+              <li v-for="g in memberGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
+                <div class="min-w-0 flex-1">
+                  <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
+                  <code class="text-xs text-gray-500 block truncate" :title="g.dn">{{ g.dn }}</code>
+                </div>
+                <button @click="removeFromGroup(g)" class="ml-2 text-red-500 hover:text-red-700 text-xs font-medium">Remove</button>
+              </li>
+            </ul>
+            <p v-else class="text-sm text-gray-500 py-3 text-center border border-gray-200 rounded-lg">Not a member of any groups</p>
+          </div>
 
-      <!-- Add to group -->
-      <div>
-        <h3 class="text-sm font-medium text-gray-700 mb-2">Add to Group</h3>
-        <div class="flex gap-2 mb-2">
-          <input
-            v-model="groupFilter"
-            placeholder="Search groups…"
-            aria-label="Search groups"
-            @keyup.enter="searchAvailableGroups"
-            class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button @click="searchAvailableGroups" class="btn-primary text-xs">Search</button>
+          <!-- Pending groups (create mode only) -->
+          <div v-if="!isEdit">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">Groups to Join</h3>
+            <ul v-if="pendingGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
+              <li v-for="g in pendingGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
+                <div class="min-w-0 flex-1">
+                  <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
+                  <code class="text-xs text-gray-500 block truncate" :title="g.dn">{{ g.dn }}</code>
+                </div>
+                <button @click="removePendingGroup(g)" class="ml-2 text-red-500 hover:text-red-700 text-xs font-medium">Remove</button>
+              </li>
+            </ul>
+            <p v-else class="text-sm text-gray-500 py-3 text-center border border-gray-200 rounded-lg">No groups selected yet — pick from the right.</p>
+          </div>
         </div>
-        <div v-if="loadingGroups" class="text-sm text-gray-500 py-3 text-center">Loading…</div>
-        <p v-else-if="!groupFilter.trim() && !isEdit && availableGroups.length === 0" class="text-xs text-gray-500 py-3 text-center">Type a group name and click Search to find groups.</p>
-        <ul v-else-if="availableGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
-          <li v-for="g in availableGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
-            <div>
-              <span class="font-medium text-gray-800">{{ g.cn }}</span>
-              <code class="text-xs text-gray-500 ml-2">{{ g.dn }}</code>
-            </div>
-            <button @click="addToGroup(g)" class="text-blue-600 hover:text-blue-800 text-xs font-medium">Add</button>
-          </li>
-        </ul>
+
+        <!-- RIGHT: add to group -->
+        <div>
+          <h3 class="text-sm font-semibold text-gray-800 mb-2">Add to Group</h3>
+          <div class="flex gap-2 mb-2">
+            <input
+              v-model="groupFilter"
+              placeholder="Search groups…"
+              aria-label="Search groups"
+              @keyup.enter="searchAvailableGroups"
+              class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button @click="searchAvailableGroups" class="btn-primary text-xs">Search</button>
+          </div>
+          <div v-if="loadingGroups" class="text-sm text-gray-500 py-3 text-center">Loading…</div>
+          <p v-else-if="!groupFilter.trim() && availableGroups.length === 0" class="text-xs text-gray-500 py-3 text-center">Type a group name and click Search.</p>
+          <ul v-else-if="availableGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden max-h-72 overflow-y-auto">
+            <li v-for="g in availableGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
+              <div class="min-w-0 flex-1">
+                <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
+                <code class="text-xs text-gray-500 block truncate" :title="g.dn">{{ g.dn }}</code>
+              </div>
+              <button @click="addToGroup(g)" class="ml-2 text-blue-600 hover:text-blue-800 text-xs font-medium">Add</button>
+            </li>
+          </ul>
+          <p v-else class="text-xs text-gray-500 py-3 text-center">No matches.</p>
+        </div>
+
       </div>
     </div>
 
@@ -518,6 +536,26 @@ const INPUT_TYPE_MAP = {
 
 function mapInputType(inputType) {
   return INPUT_TYPE_MAP[inputType] || 'text'
+}
+
+/**
+ * Grid-column width for an attribute. Three layers:
+ *
+ *   1. Widgets that structurally need horizontal room — PASSWORD (show /
+ *      generate / copy controls), TEXTAREA + MULTI_VALUE (multi-line),
+ *      DN_LOOKUP (DN picker + browse button) — always span the full row
+ *      regardless of profile config. The admin can't usefully override
+ *      this; the widget would break at narrower widths.
+ *
+ *   2. Profile config — `attr.columnSpan` set on ProfileAttributeConfig.
+ *      Admin's deliberate choice for this attribute on this profile.
+ *
+ *   3. Fallback to 3 (two-column row) when neither rule applies.
+ */
+const FULL_WIDTH_INPUT_TYPES = new Set(['PASSWORD', 'TEXTAREA', 'MULTI_VALUE', 'DN_LOOKUP'])
+function effectiveColumnSpan(attr) {
+  if (FULL_WIDTH_INPUT_TYPES.has(attr.inputType)) return 6
+  return attr.columnSpan || 3
 }
 
 /** Parse the allowedValues JSON string into FormField options. */

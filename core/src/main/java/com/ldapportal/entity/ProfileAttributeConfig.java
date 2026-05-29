@@ -90,8 +90,17 @@ public class ProfileAttributeConfig {
     @Column(name = "section_name", length = 100)
     private String sectionName;
 
+    /**
+     * Width of this attribute in the 6-column user-form grid.
+     * Default {@code 3} → two-column layout (two attributes side-by-side).
+     * Set to {@code 2} for three-up rows of short attributes
+     * (employeeNumber, country code, etc), or {@code 6} for full-width
+     * (descriptions, postal address). Widgets that structurally need
+     * room (PASSWORD, TEXTAREA, MULTI_VALUE, DN_LOOKUP) are forced
+     * full-width by the frontend regardless of this value.
+     */
     @Column(name = "column_span", nullable = false)
-    private int columnSpan = 6;
+    private int columnSpan = 3;
 
     @Column(name = "display_order", nullable = false)
     private int displayOrder = 0;

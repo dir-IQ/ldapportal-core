@@ -59,14 +59,33 @@ public class ProvisioningProfileController {
         return service.list(directoryId, principal);
     }
 
+    /**
+     * Probe whether {@code dn} exists in the directory. Used by the
+     * profile editor's target-OU warning banner: a non-existent OU
+     * silently breaks user creation against the profile, so we want
+     * to flag it during editing.
+     *
+     * <pre>
+     *   POST /api/v1/directories/{directoryId}/profiles/probe-target-ou?dn=...
+     * </pre>
+     */
+    @PostMapping("/api/v1/directories/{directoryId}/profiles/probe-target-ou")
+    @PreAuthorize("hasRole('SUPERADMIN')")
+    public com.ldapportal.service.ProvisioningProfileService.TargetOuProbeResult
+            probeTargetOu(@PathVariable UUID directoryId,
+                           @RequestParam String dn) {
+        return service.probeTargetOu(directoryId, dn);
+    }
+
     @PostMapping("/api/v1/directories/{directoryId}/profiles")
     @PreAuthorize("hasRole('SUPERADMIN')")
     public ResponseEntity<ProfileResponse> create(
             @PathVariable UUID directoryId,
             @Valid @RequestBody CreateProfileRequest req,
+            @RequestParam(defaultValue = "false") boolean force,
             @AuthenticationPrincipal AuthPrincipal principal) {
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(service.create(directoryId, req, principal));
+                .body(service.create(directoryId, req, force, principal));
     }
 
     @GetMapping("/api/v1/directories/{directoryId}/profiles/{profileId}")
@@ -85,8 +104,9 @@ public class ProvisioningProfileController {
     public ProfileResponse update(@PathVariable UUID directoryId,
                                    @PathVariable UUID profileId,
                                    @Valid @RequestBody UpdateProfileRequest req,
+                                   @RequestParam(defaultValue = "false") boolean force,
                                    @AuthenticationPrincipal AuthPrincipal principal) {
-        return service.update(directoryId, profileId, req, principal);
+        return service.update(directoryId, profileId, req, force, principal);
     }
 
     @DeleteMapping("/api/v1/directories/{directoryId}/profiles/{profileId}")
@@ -111,6 +131,26 @@ public class ProvisioningProfileController {
         }
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(service.clone(directoryId, profileId, newName, principal));
+    }
+
+    /**
+     * Seeds the profile's attribute-config list with sensible defaults
+     * for a known schema (currently inetOrgPerson). Refuses if any
+     * attribute config already exists — clear them first if a re-seed
+     * is intended.
+     *
+     * <pre>
+     *   POST /api/v1/directories/{directoryId}/profiles/{profileId}/seed-attribute-defaults?schema=inetOrgPerson
+     * </pre>
+     */
+    @PostMapping("/api/v1/directories/{directoryId}/profiles/{profileId}/seed-attribute-defaults")
+    @PreAuthorize("hasRole('SUPERADMIN')")
+    public ProfileResponse seedAttributeDefaults(
+            @PathVariable UUID directoryId,
+            @PathVariable UUID profileId,
+            @RequestParam(defaultValue = "inetOrgPerson") String schema,
+            @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.seedAttributeDefaults(directoryId, profileId, schema, principal);
     }
 
     // ── Group Change Evaluation ─────────────────────────────────────────────

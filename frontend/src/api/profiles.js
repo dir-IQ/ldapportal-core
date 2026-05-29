@@ -7,10 +7,25 @@ const dirBase = (dirId) => `/directories/${dirId}/profiles`
 export const listAllProfiles   = ()                          => client.get('/profiles')
 export const listProfiles      = (dirId)                     => client.get(dirBase(dirId))
 export const getProfile        = (dirId, profileId)          => client.get(`${dirBase(dirId)}/${profileId}`)
-export const createProfile     = (dirId, data)               => client.post(dirBase(dirId), data)
-export const updateProfile     = (dirId, profileId, data)    => client.put(`${dirBase(dirId)}/${profileId}`, data)
+export const createProfile     = (dirId, data, force = false) =>
+  client.post(dirBase(dirId), data, { params: force ? { force: true } : {} })
+export const updateProfile     = (dirId, profileId, data, force = false) =>
+  client.put(`${dirBase(dirId)}/${profileId}`, data, { params: force ? { force: true } : {} })
+
+// Probe whether the target OU DN actually exists in the directory.
+// Used by the profile editor's warning banner so admins see a typo'd
+// or missing OU during editing instead of discovering it the first
+// time a user creation fails with NO_SUCH_OBJECT.
+export const probeTargetOu    = (dirId, dn) =>
+  client.post(`${dirBase(dirId)}/probe-target-ou`, null, { params: { dn } })
 export const deleteProfile     = (dirId, profileId)          => client.delete(`${dirBase(dirId)}/${profileId}`)
 export const cloneProfile      = (dirId, profileId, name)    => client.post(`${dirBase(dirId)}/${profileId}/clone`, { name })
+
+// Seeds a curated set of attribute configs for a known schema
+// (currently 'inetOrgPerson'). Refuses 409 if the profile already
+// has attribute configs.
+export const seedAttributeDefaults = (dirId, profileId, schema = 'inetOrgPerson') =>
+  client.post(`${dirBase(dirId)}/${profileId}/seed-attribute-defaults`, null, { params: { schema } })
 
 // Password generation
 export const generatePassword = (profileId) => client.post(`/profiles/${profileId}/generate-password`)

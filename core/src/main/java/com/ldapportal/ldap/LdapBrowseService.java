@@ -57,6 +57,14 @@ public class LdapBrowseService {
      * round-trip with the smallest possible payload — cheaper than the full
      * {@link #browse(DirectoryConnection, String)} call when callers only need
      * a yes/no answer (e.g. validating a parent DN before bulk import).
+     *
+     * <p>Treats both {@code NO_SUCH_OBJECT} (syntactically-valid DN, no entry)
+     * and {@code INVALID_DN_SYNTAX} (the string isn't a valid DN at all) as
+     * "no entry" — the observable outcome from the caller's perspective is
+     * identical, and treating malformed input as a connection-level failure
+     * (prior behaviour) surfaced an unhelpful 502 instead of letting the
+     * caller report a friendly "this OU doesn't exist" error. Connection
+     * failures and insufficient-access errors still bubble through.</p>
      */
     public boolean entryExists(DirectoryConnection dc, String dn) {
         if (dn == null || dn.isBlank()) {
@@ -66,7 +74,9 @@ public class LdapBrowseService {
             try {
                 return conn.getEntry(dn, "1.1") != null;
             } catch (LDAPException e) {
-                if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
+                ResultCode rc = e.getResultCode();
+                if (rc == ResultCode.NO_SUCH_OBJECT
+                        || rc == ResultCode.INVALID_DN_SYNTAX) {
                     return false;
                 }
                 throw e;

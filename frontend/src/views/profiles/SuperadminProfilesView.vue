@@ -5,7 +5,7 @@ import { useNotificationStore } from '@/stores/notifications'
 import {
   listAllProfiles, createProfile, updateProfile, deleteProfile, cloneProfile,
   getApprovalConfig, setApprovalConfig, getApprovers, setApprovers,
-  evaluateGroupChanges, applySelectiveGroupChanges
+  evaluateGroupChanges, applySelectiveGroupChanges, probeTargetOu
 } from '@/api/profiles'
 import { listDirectories } from '@/api/directories'
 import { listObjectClasses, getObjectClass } from '@/api/schema'
@@ -18,6 +18,7 @@ import FormLayoutDesigner from '@/components/FormLayoutDesigner.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import DataTable from '@/components/DataTable.vue'
 import IsvaProfileOverrideControl from '@/components/profiles/IsvaProfileOverrideControl.vue'
+import { setIsvaProfileOverride } from '@/api/isvaConfig'
 
 type DirectoryConn = components['schemas']['DirectoryConnectionResponse']
 
@@ -243,8 +244,15 @@ function openCreate() {
   selectedDirId.value = directories.value.length > 0 ? (directories.value[0].id ?? null) : null
   modalTab.value = 'general'
   layoutMode.value = 'admin'
+  pendingIviaOverride.value = 'INHERIT'  // staged value for the create flow; persisted after profile POST
   showModal.value = true
 }
+
+// IVIA per-profile override staged during create. Edit mode persists
+// directly via IsvaProfileOverrideControl; create mode captures the
+// chosen value here and writes it after the profile-create POST
+// returns (no profileId to PUT against until then).
+const pendingIviaOverride = ref<'INHERIT' | 'FORCE_OFF'>('INHERIT')
 
 async function openEdit(p: ProfileRow) {
   editing.value = p.id
@@ -372,9 +380,16 @@ async function save() {
     return
   }
   saving.value = true
+  // If the probe already determined the target OU is missing,
+  // pass force=true so the save goes through (the operator can see
+  // the banner and is consciously pre-staging). 'checking' / 'idle'
+  // states still go through default (server-side validation is the
+  // source of truth — a 400 from the server tells us if force was
+  // needed).
+  const force = targetOuProbeState.value === 'missing'
   try {
     if (editing.value) {
-      await updateProfile(selectedDirId.value, editing.value, profile.value)
+      await updateProfile(selectedDirId.value, editing.value, profile.value, force)
       // Save approval config
       await setApprovalConfig(editing.value, approval.value)
       await setApprovers(editing.value, { accountIds: profileApprovers.value })
@@ -383,11 +398,25 @@ async function save() {
       editing.value = null
       await reload()
     } else {
-      const { data } = await createProfile(selectedDirId.value, profile.value)
+      const { data } = await createProfile(selectedDirId.value, profile.value, force)
       // Save approval config
       await setApprovalConfig(data.id, approval.value)
       if (profileApprovers.value.length > 0) {
         await setApprovers(data.id, { accountIds: profileApprovers.value })
+      }
+      // Persist the staged IVIA override, if any. Only FORCE_OFF
+      // requires a PUT — INHERIT is the documented default for an
+      // unconfigured profile, so leaving the row absent is the same
+      // outcome and saves a round-trip.
+      if (pendingIviaOverride.value === 'FORCE_OFF' && selectedDirId.value) {
+        try {
+          await setIsvaProfileOverride(selectedDirId.value, data.id, 'FORCE_OFF')
+        } catch (e) {
+          // Profile is already created; surface the override-save
+          // failure but don't reverse the create. Operator can fix
+          // it via the editor.
+          notif.error(`Profile created but IVIA override save failed: ${errMsg(e)}`)
+        }
       }
       notif.success('Profile created')
       showModal.value = false
@@ -443,6 +472,171 @@ async function doClone() {
 async function reload() {
   const { data } = await listAllProfiles()
   profiles.value = data
+}
+
+// ── inetOrgPerson seed defaults (client-side) ───────────────────
+//
+// Curated 27-attribute layout. Kept in sync with the backend
+// ProvisioningProfileService.inetOrgPersonDefaults — both define
+// the same Identity / Contact / Organization / Account sections,
+// same columnSpans, same required flags. When this list changes,
+// update both sides; a divergence would mean the UI seed and the
+// API seed produce different shapes.
+//
+// Applied client-side so the button works in the create-profile
+// flow (no profileId to PUT against yet). The backend endpoint
+// stays useful for API consumers and for re-seeding without the
+// editor open.
+type SeedRow = {
+  attributeName: string
+  sectionName: string
+  columnSpan: number
+  inputType: AttributeConfig['inputType']
+  requiredOnCreate: boolean
+  editableOnUpdate: boolean
+}
+const INETORGPERSON_SEED: ReadonlyArray<SeedRow> = [
+  // Identity
+  { attributeName: 'uid',                      sectionName: 'Identity',     columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: true,  editableOnUpdate: false },
+  { attributeName: 'cn',                       sectionName: 'Identity',     columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: true,  editableOnUpdate: true  },
+  { attributeName: 'givenName',                sectionName: 'Identity',     columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'sn',                       sectionName: 'Identity',     columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: true,  editableOnUpdate: true  },
+  { attributeName: 'displayName',              sectionName: 'Identity',     columnSpan: 6, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'initials',                 sectionName: 'Identity',     columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'employeeNumber',           sectionName: 'Identity',     columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'employeeType',             sectionName: 'Identity',     columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  // Contact
+  { attributeName: 'mail',                     sectionName: 'Contact',      columnSpan: 6, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'telephoneNumber',          sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'mobile',                   sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'pager',                    sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'facsimileTelephoneNumber', sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'homePhone',                sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'postalAddress',            sectionName: 'Contact',      columnSpan: 6, inputType: 'TEXTAREA',  requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'street',                   sectionName: 'Contact',      columnSpan: 6, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'l',                        sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'st',                       sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'c',                        sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'postalCode',               sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  // Organization
+  { attributeName: 'title',                    sectionName: 'Organization', columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'ou',                       sectionName: 'Organization', columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'o',                        sectionName: 'Organization', columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'departmentNumber',         sectionName: 'Organization', columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'manager',                  sectionName: 'Organization', columnSpan: 6, inputType: 'DN_LOOKUP', requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'description',              sectionName: 'Organization', columnSpan: 6, inputType: 'TEXTAREA',  requiredOnCreate: false, editableOnUpdate: true  },
+  // Account
+  { attributeName: 'userPassword',             sectionName: 'Account',      columnSpan: 6, inputType: 'PASSWORD',  requiredOnCreate: true,  editableOnUpdate: false },
+]
+
+/**
+ * Whether the inetOrgPerson seed is applicable to the current
+ * profile — visibility gate for the Seed button. The seed is
+ * schema-specific so it wouldn't make sense to surface for a
+ * profile whose objectClass list doesn't include inetOrgPerson.
+ */
+const canSeedInetOrgPerson = computed(() =>
+  profile.value.objectClassNames.some(
+    oc => oc.toLowerCase() === 'inetorgperson'))
+
+// ── Target-OU probe / warning banner ────────────────────────────
+//
+// Debounce a probe against the directory whenever the operator
+// edits the Target OU DN. The banner surfaces 'missing' / 'exists'
+// state; if 'missing' at save time, the form passes force=true so
+// the operator can still save (pre-staging a profile before the OU
+// exists is a legitimate workflow).
+type TargetOuProbeState = 'idle' | 'checking' | 'exists' | 'missing'
+const targetOuProbeState = ref<TargetOuProbeState>('idle')
+let targetOuProbeTimer: ReturnType<typeof setTimeout> | null = null
+let targetOuProbeToken = 0
+
+function scheduleTargetOuProbe() {
+  if (targetOuProbeTimer) clearTimeout(targetOuProbeTimer)
+  const dn = profile.value.targetOuDn?.trim() ?? ''
+  const dirId = selectedDirId.value
+  if (!dn || !dirId) {
+    targetOuProbeState.value = 'idle'
+    return
+  }
+  targetOuProbeState.value = 'checking'
+  // 400ms debounce — long enough that the DnPicker's typeahead
+  // doesn't fire a probe on every keystroke, short enough that the
+  // operator sees the result before tabbing past the field.
+  const myToken = ++targetOuProbeToken
+  targetOuProbeTimer = setTimeout(async () => {
+    try {
+      const { data } = await probeTargetOu(dirId, dn)
+      // Drop the result if a newer probe has been queued.
+      if (myToken !== targetOuProbeToken) return
+      targetOuProbeState.value = data?.exists ? 'exists' : 'missing'
+    } catch {
+      // Probe failure (network, 403, etc) leaves the state as
+      // 'checking'-but-unresolved → treat as idle so a save attempt
+      // gets the server-side validation as the source of truth.
+      if (myToken === targetOuProbeToken) targetOuProbeState.value = 'idle'
+    }
+  }, 400)
+}
+
+// Re-probe whenever the DN or directory changes.
+watch(() => [profile.value.targetOuDn, selectedDirId.value],
+  () => { scheduleTargetOuProbe() })
+/**
+ * Apply the inetOrgPerson seed to the in-memory profile state.
+ *
+ * Works during create (no profileId yet) — purely client-side
+ * state mutation; the seeded configs ride along on the next POST.
+ * Also works during edit, including when attributeConfigs already
+ * has content (confirms replace first). The change isn't
+ * persisted until Save.
+ *
+ * Existing entries are replaced wholesale rather than merged —
+ * a partial merge would leave the operator with an inconsistent
+ * mix of auto-populated MUST attrs (no sections / span 6 / TEXT)
+ * and seeded ones (sections / mixed spans / typed inputs).
+ */
+function doSeedDefaults() {
+  if (profile.value.attributeConfigs.length > 0) {
+    const ok = window.confirm(
+      `Replace ${profile.value.attributeConfigs.length} existing attribute config(s) `
+      + 'with the inetOrgPerson defaults? The change isn\'t persisted until you Save.')
+    if (!ok) return
+  }
+  profile.value.attributeConfigs = INETORGPERSON_SEED.map(row => ({
+    attributeName:             row.attributeName,
+    // Friendly label from the ATTR_LABELS map (sn → 'Last Name',
+    // mail → 'Email', etc), matching addObjectClass()'s auto-pop
+    // behaviour. guessLabel falls back to camelCase / snake_case
+    // splitting for anything not in the map.
+    customLabel:               guessLabel(row.attributeName),
+    inputType:                 row.inputType,
+    requiredOnCreate:          row.requiredOnCreate,
+    editableOnCreate:          true,
+    editableOnUpdate:          row.editableOnUpdate,
+    selfServiceEdit:           isSelfServiceEditable(row.attributeName),
+    selfRegistrationEdit:      isSelfServiceEditable(row.attributeName),
+    defaultValue:              '',
+    computedExpression:        '',
+    validationRegex:           '',
+    validationMessage:         '',
+    allowedValues:             '',
+    minLength:                 null,
+    maxLength:                 null,
+    sectionName:               row.sectionName,
+    columnSpan:                row.columnSpan,
+    hidden:                    false,
+    // Per-surface layout (self-service / registration) is left
+    // unset by the seed; admins configure those independently via
+    // the Self-Service / Registration tabs.
+    registrationSectionName:   null,
+    registrationColumnSpan:    null,
+    registrationDisplayOrder:  null,
+    selfServiceSectionName:    null,
+    selfServiceColumnSpan:     null,
+    selfServiceDisplayOrder:   null,
+  }))
+  notif.success(`Seeded ${INETORGPERSON_SEED.length} attributes from inetOrgPerson defaults`)
 }
 
 // Group assignment management
@@ -1015,6 +1209,28 @@ function toggleApprover(accountId: string) {
             <label class="block text-sm font-medium text-gray-700 mb-1">Target OU DN</label>
             <DnPicker v-model="profile.targetOuDn" :directory-id="selectedDirId ?? ''"
               placeholder="e.g. ou=engineers,ou=people,dc=corp" />
+            <!-- Target-OU warning banner: surfaces when the probe says
+                 the DN doesn't resolve in the directory. Doesn't
+                 block save by itself — the operator can acknowledge
+                 and continue (passes force=true on the save). -->
+            <div v-if="targetOuProbeState === 'missing'"
+                 class="mt-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-900 flex items-start gap-2">
+              <span aria-hidden="true" class="mt-0.5">⚠</span>
+              <div class="flex-1">
+                <div class="font-medium">This OU isn't present in the directory.</div>
+                <div class="text-xs mt-0.5">
+                  User creation will fail with <code>NO_SUCH_OBJECT</code> until the OU exists.
+                  Saving anyway is allowed (the form will submit with <code>force=true</code>)
+                  if you're pre-staging the profile.
+                </div>
+              </div>
+            </div>
+            <div v-else-if="targetOuProbeState === 'exists'"
+                 class="mt-2 text-xs text-green-700 inline-flex items-center gap-1">
+              <span aria-hidden="true">✓</span> OU resolves in the directory.
+            </div>
+            <div v-else-if="targetOuProbeState === 'checking'"
+                 class="mt-2 text-xs text-gray-500">Checking…</div>
           </div>
           <div class="grid grid-cols-3 gap-4 items-end">
             <div class="col-span-2">
@@ -1058,10 +1274,22 @@ function toggleApprover(accountId: string) {
 
         <!-- Attributes Tab -->
         <div v-if="modalTab === 'attributes'" class="space-y-3">
-          <div>
+          <div class="flex items-center gap-2">
             <button class="btn-primary text-sm" :disabled="availableAttributes.length === 0" @click="toggleAttrPicker">
               {{ showAttrPicker ? 'Cancel' : 'Add Attributes' }}
             </button>
+            <!-- Seed defaults: server-side bulk add of a curated
+                 inetOrgPerson set with sections + sensible column
+                 widths + required flags. Only meaningful when the
+                 profile exists server-side AND has no configs yet —
+                 the endpoint refuses 409 otherwise, and the button
+                 hides the same way client-side. -->
+            <button
+              v-if="canSeedInetOrgPerson"
+              class="btn-secondary text-sm"
+              @click="doSeedDefaults"
+            >Seed inetOrgPerson defaults</button>
+          </div>
             <div v-if="showAttrPicker" class="mt-2 border rounded-lg p-3 space-y-2 bg-gray-50">
               <div v-if="availableAttributes.length === 0" class="text-gray-500 text-sm">
                 All attributes from the selected object classes have been added.
@@ -1082,7 +1310,6 @@ function toggleApprover(accountId: string) {
                 </button>
               </template>
             </div>
-          </div>
           <div v-if="profile.attributeConfigs.length === 0" class="text-gray-500 text-sm">
             Add object classes in the General tab to populate attributes.
           </div>
@@ -1409,14 +1636,15 @@ function toggleApprover(accountId: string) {
           </fieldset>
 
           <!-- Per-profile IVIA exemption — self-gates on addon presence
-               + the directory having IVIA enabled. Edit mode only (needs
-               a persisted profile id). The component renders its own
-               fieldset with the IVIA Integration legend so it slots in
-               next to Password Generation and Approvals here. -->
+               + the directory having IVIA enabled. Works in both edit
+               and create modes: edit mode persists toggles directly,
+               create mode stages the value locally and the host
+               persists it after the profile-create POST succeeds
+               (see pendingIviaOverride + the save() handler). -->
           <IsvaProfileOverrideControl
-            v-if="editing"
             :directory-id="selectedDirId ?? ''"
-            :profile-id="editing ?? ''"
+            :profile-id="editing"
+            @staged-change="pendingIviaOverride = $event"
           />
         </div>
       </div>
