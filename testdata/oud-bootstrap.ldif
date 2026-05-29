@@ -18,16 +18,14 @@
 # the docker-compose env via ROOT_PASSWORD).
 # =============================================================================
 
-# ── Base DN ─────────────────────────────────────────────────────────────────
-# OpenDJ creates the suffix entry from the BASE_DN env var on first init.
-# Including it here lets the LDIF also load against a server seeded by
-# hand (ldapadd against an empty suffix) without modification — the
-# openidentityplatform/opendj entrypoint tolerates the duplicate, treating
-# it as a no-op.
-dn: dc=oudtest,dc=example,dc=com
-objectClass: top
-objectClass: domain
-dc: oudtest
+# ── Base DN — NOT included here ─────────────────────────────────────────────
+# The openidentityplatform/opendj entrypoint creates the suffix entry
+# `dc=oudtest,dc=example,dc=com` from the BASE_DN env var before the
+# bootstrap-data import runs. Including a defensive `dn: dc=oudtest,...`
+# ADD here causes the 5.x release's setup.sh to abort the LDIF on
+# `Entry Already Exists (68)` — `--continueOnError` covers some errors
+# but evidently not this one in this release. So this LDIF starts at
+# the OU layer; the suffix entry is the container's job.
 
 # ── Organisational units ────────────────────────────────────────────────────
 dn: ou=people,dc=oudtest,dc=example,dc=com
