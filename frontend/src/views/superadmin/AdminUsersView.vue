@@ -52,7 +52,7 @@
       v-model="showForm"
       :title="editing ? 'Edit Admin User' : 'New Admin User'"
       size="lg"
-      fixed-height="min(640px, 80vh)"
+      fixed-height="min(670px, 80vh)"
     >
       <!-- Tab nav. Permissions tab is hidden for SUPERADMIN role
            (their access isn't profile- or feature-scoped). For
