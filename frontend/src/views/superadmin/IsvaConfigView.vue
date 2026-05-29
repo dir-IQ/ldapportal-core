@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import FormField from '@/components/FormField.vue'
 import {
   getIsvaConfig,
@@ -17,15 +17,18 @@ import {
   type IsvaDemographicDeleteMode,
 } from '@/api/isvaConfig'
 import { IVIA_NAME, IVIA_ABBR } from '@/constants/productNames'
+import { useNotificationStore } from '@/stores/notifications'
+import { useConfirm } from '@/composables/useConfirm'
 
 const route = useRoute()
 const router = useRouter()
 const directoryId = computed(() => route.params.id as string)
+const notif = useNotificationStore()
+const confirm = useConfirm()
 
 const loading = ref(true)
 const saving = ref(false)
 const probing = ref(false)
-const error = ref<string | null>(null)
 const probeResult = ref<ProbeResult | null>(null)
 
 // Form state. Defaults match the entity-level defaults so a fresh
@@ -43,18 +46,32 @@ interface Form {
   onDemographicDelete: IsvaDemographicDeleteMode
 }
 
-const form = ref<Form>({
-  enabled: false,
-  topologyMode: 'INLINE',
-  secAuthority: 'Default',
-  defaultValidUntilYears: 100,
-  deletePolicy: 'DISABLE',
-  requireSecGroup: true,
-  managementDitBaseDn: '',
-  secuserRdnAttribute: 'secUUID',
-  groupMemberTarget: 'DEMOGRAPHIC_DN',
-  onDemographicDelete: 'LEAVE',
-})
+function emptyForm(): Form {
+  return {
+    enabled: false,
+    topologyMode: 'INLINE',
+    secAuthority: 'Default',
+    defaultValidUntilYears: 100,
+    deletePolicy: 'DISABLE',
+    requireSecGroup: true,
+    managementDitBaseDn: '',
+    secuserRdnAttribute: 'secUUID',
+    groupMemberTarget: 'DEMOGRAPHIC_DN',
+    onDemographicDelete: 'LEAVE',
+  }
+}
+
+const form = ref<Form>(emptyForm())
+
+// Snapshot of the form as last loaded from / persisted to the server.
+// Updated on initial load and after every successful save. Drives the
+// isDirty computed and the Discard revert.
+const pristine = ref<Form>(emptyForm())
+
+// JSON.stringify is good enough — the form is flat primitives only.
+// Avoids pulling in a deep-equal dependency for one call site.
+const isDirty = computed(() =>
+  JSON.stringify(form.value) !== JSON.stringify(pristine.value))
 
 // Which topology modes the deployment exposes for configuration
 // (env-driven, UI-only — see EXPOSED_ISVA_TOPOLOGY_MODES). Defaults to
@@ -71,14 +88,30 @@ const modeNotExposed = computed(() => !exposedModes.value.includes(form.value.to
 // operator doesn't fill in values that'll be ignored.
 const isLinkedMode = computed(() => form.value.topologyMode === 'LINKED')
 
-// Save button enabled only when the form is at least minimally
-// valid. The controller validates more strictly; this is just to
-// catch the obvious "linked mode with empty management DIT" case
-// before round-tripping the server.
+// Save enabled only when the form is at least minimally valid. The
+// controller validates more strictly; this catches the obvious
+// "linked mode with empty management DIT" before the round-trip.
 const canSave = computed(() => {
   if (form.value.defaultValidUntilYears < 1) return false
   if (isLinkedMode.value && !form.value.managementDitBaseDn.trim()) return false
   return true
+})
+
+// Probe runs against the persisted config — disabled while the form
+// is dirty so the operator doesn't see results for a config that
+// doesn't match what they're looking at. Tooltip explains why.
+const probeDisabledReason = computed<string | null>(() => {
+  if (probing.value) return 'Probe in flight…'
+  if (isDirty.value) return 'Save your changes first — Probe runs against the persisted config.'
+  if (saving.value) return 'Save in flight…'
+  return null
+})
+
+// Stale-probe-result guard: any form edit invalidates the displayed
+// probe result. Otherwise an operator could tweak the management DIT,
+// not save, and see a green "reachable" result from the old value.
+watch(isDirty, (dirty) => {
+  if (dirty) probeResult.value = null
 })
 
 onMounted(async () => {
@@ -102,9 +135,13 @@ onMounted(async () => {
       // New-install path: no config row. Default to the first exposed mode.
       form.value.topologyMode = exposedModes.value[0]
     } else {
-      error.value = extractErrorMessage(cfgRes.reason, `Could not load ${IVIA_ABBR} configuration.`)
+      notif.error(extractErrorMessage(cfgRes.reason, `Could not load ${IVIA_ABBR} configuration.`))
     }
   }
+  // Whatever we landed on (server DTO, defaults, or defaults with the
+  // first exposed mode), capture as the pristine snapshot so the
+  // initial state isn't reported as dirty.
+  pristine.value = { ...form.value }
   loading.value = false
 })
 
@@ -122,8 +159,8 @@ function populateFromDto(dto: IsvaConfigDto) {
 }
 
 async function save() {
+  if (!canSave.value || saving.value) return
   saving.value = true
-  error.value = null
   try {
     const payload: UpsertIsvaConfigRequest = {
       enabled: form.value.enabled,
@@ -141,31 +178,70 @@ async function save() {
     }
     const { data } = await upsertIsvaConfig(directoryId.value, payload)
     populateFromDto(data)
+    // Reset pristine to the server-confirmed shape, which clears
+    // isDirty and hides the action bar.
+    pristine.value = { ...form.value }
+    notif.success(`${IVIA_ABBR} integration saved.`)
   } catch (e: unknown) {
-    error.value = extractErrorMessage(e, 'Save failed.')
+    notif.error(extractErrorMessage(e, 'Save failed.'))
   } finally {
     saving.value = false
   }
 }
 
+function discard() {
+  // Restore the form to the last-loaded/saved snapshot. Action bar
+  // disappears on its own because isDirty flips false.
+  form.value = { ...pristine.value }
+  // Clear any stale probe result that might have survived the edits
+  // we're now throwing away.
+  probeResult.value = null
+}
+
 async function probe() {
+  if (probeDisabledReason.value) return
   probing.value = true
   probeResult.value = null
   try {
-    // Force a save first so the probe runs against the latest
-    // config values rather than whatever was last persisted.
-    // Skip if form is unchanged from server state — but for v1,
-    // always-save is simpler and the probe-button-implies-save
-    // semantic is consistent with the rest of the panel.
-    await save()
     const { data } = await probeIsvaConfig(directoryId.value)
     probeResult.value = data
   } catch (e: unknown) {
-    error.value = extractErrorMessage(e, 'Probe failed.')
+    notif.error(extractErrorMessage(e, 'Probe failed.'))
   } finally {
     probing.value = false
   }
 }
+
+// ── Navigation guards ──────────────────────────────────────────
+//
+// Two distinct guard surfaces — vue-router for in-app navigation,
+// window.beforeunload for browser-level close / refresh / address-bar.
+// The browser one can only show the native dialog (security model);
+// the in-app one uses the project's custom ConfirmDialog for visual
+// consistency with the rest of the app.
+
+onBeforeRouteLeave(async () => {
+  if (!isDirty.value) return true
+  return await confirm({
+    title: 'Discard unsaved changes?',
+    message: `You have unsaved changes to the ${IVIA_ABBR} integration. `
+      + 'Leaving the page will discard them.',
+    confirmLabel: 'Discard and leave',
+    danger: true,
+  })
+})
+
+function beforeUnloadHandler(e: BeforeUnloadEvent) {
+  if (!isDirty.value) return
+  // Setting returnValue triggers the native "Leave site? Changes
+  // you made may not be saved" prompt. Modern browsers ignore the
+  // string content for security reasons — only the call itself
+  // matters.
+  e.preventDefault()
+  e.returnValue = ''
+}
+onMounted(() => window.addEventListener('beforeunload', beforeUnloadHandler))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnloadHandler))
 
 function extractErrorMessage(e: unknown, fallback: string): string {
   const err = e as { response?: { data?: { detail?: string; message?: string }; status?: number }; message?: string }
@@ -180,19 +256,20 @@ function extractErrorMessage(e: unknown, fallback: string): string {
 </script>
 
 <template>
-  <div class="max-w-3xl mx-auto p-6 space-y-6">
-    <!-- Header + back button -->
-    <header class="flex items-center justify-between">
-      <div>
-        <button
-          @click="router.push('/superadmin/directories')"
-          class="text-sm text-blue-600 hover:text-blue-700 mb-1"
-        >&larr; Back to directories</button>
-        <h1 class="text-xl font-semibold text-gray-900">{{ IVIA_NAME }} integration</h1>
-        <p class="text-sm text-gray-500">
-          Configure the {{ IVIA_ABBR }} full-mode write-path overlay for this directory.
-        </p>
-      </div>
+  <!-- Bottom padding leaves room for the sticky action bar so the
+       last form fields aren't covered when the bar is up. -->
+  <div class="max-w-3xl mx-auto p-6 pb-28 space-y-6">
+    <!-- Header + back button. Back is plain navigation; the route
+         guard intercepts if the form is dirty. -->
+    <header>
+      <button
+        @click="router.push('/superadmin/directories')"
+        class="text-sm text-blue-600 hover:text-blue-700 mb-1"
+      >&larr; Back to directories</button>
+      <h1 class="text-xl font-semibold text-gray-900">{{ IVIA_NAME }} integration</h1>
+      <p class="text-sm text-gray-500">
+        Configure the {{ IVIA_ABBR }} full-mode write-path overlay for this directory.
+      </p>
     </header>
 
     <div v-if="loading" class="text-sm text-gray-500 py-12 text-center">
@@ -215,8 +292,6 @@ function extractErrorMessage(e: unknown, fallback: string): string {
           environment.
         </p>
 
-        <!-- Persisted topology this deployment no longer offers for editing.
-             The selector is hidden, so explain rather than dead-end. -->
         <p v-if="!showTopologySelector && modeNotExposed"
            data-testid="topology-mismatch"
            class="border-t border-gray-100 pt-4 text-xs text-amber-700">
@@ -263,11 +338,6 @@ function extractErrorMessage(e: unknown, fallback: string): string {
           multi-authority deployments.
         </p>
 
-        <!-- Plain input rather than FormField — FormField's modelValue
-             defaults to '' which Vue's type-checker pins as string, and
-             .number-modifier binding then fails the type-check. The
-             tiny duplication of label/input markup is preferable to a
-             cast or to monkey-patching FormField's type. -->
         <div>
           <label class="label" for="defaultValidUntilYears">
             secValidUntil default (years)
@@ -404,49 +474,86 @@ function extractErrorMessage(e: unknown, fallback: string): string {
         </fieldset>
       </section>
 
-      <!-- Probe result -->
-      <section v-if="probeResult"
-               class="bg-white border border-gray-200 rounded-xl p-4 space-y-2 text-sm">
-        <h2 class="text-base font-semibold text-gray-900">Probe result</h2>
-        <p>
-          Management DIT reachable:
-          <span :class="probeResult.reachable ? 'text-green-600 font-medium' : 'text-red-600 font-medium'">
-            {{ probeResult.reachable ? 'yes' : 'no' }}
-          </span>
-        </p>
-        <p>
-          Sample <code>secUser</code> entry found:
-          <span :class="probeResult.sampleSecUserFound ? 'text-green-600 font-medium' : 'text-amber-600 font-medium'">
-            {{ probeResult.sampleSecUserFound ? 'yes' : 'no' }}
-          </span>
-        </p>
-        <ul v-if="probeResult.warnings.length" class="list-disc list-inside text-gray-600">
-          <li v-for="w in probeResult.warnings" :key="w">{{ w }}</li>
-        </ul>
+      <!-- Probe — runs against the persisted config. Sits below the
+           form so it's reachable without scrolling past linked-mode
+           detail, and so the result panel lives next to its trigger. -->
+      <section class="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-base font-semibold text-gray-900">Probe management DIT</h2>
+            <p class="text-xs text-gray-500 mt-0.5">
+              Tests the <em>saved</em> config — reachability of the management DIT
+              and presence of a sample <code>secUser</code> entry.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="btn-secondary"
+            :disabled="!!probeDisabledReason"
+            :title="probeDisabledReason ?? 'Probe the persisted config'"
+            @click="probe"
+          >
+            {{ probing ? 'Probing…' : 'Probe' }}
+          </button>
+        </div>
+
+        <div v-if="probeResult" class="border-t border-gray-100 pt-3 text-sm space-y-1.5">
+          <p>
+            Management DIT reachable:
+            <span :class="probeResult.reachable ? 'text-green-600 font-medium' : 'text-red-600 font-medium'">
+              {{ probeResult.reachable ? 'yes' : 'no' }}
+            </span>
+          </p>
+          <p>
+            Sample <code>secUser</code> entry found:
+            <span :class="probeResult.sampleSecUserFound ? 'text-green-600 font-medium' : 'text-amber-600 font-medium'">
+              {{ probeResult.sampleSecUserFound ? 'yes' : 'no' }}
+            </span>
+          </p>
+          <ul v-if="probeResult.warnings.length" class="list-disc list-inside text-gray-600">
+            <li v-for="w in probeResult.warnings" :key="w">{{ w }}</li>
+          </ul>
+        </div>
       </section>
-
-      <!-- Errors -->
-      <div v-if="error"
-           class="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm">
-        {{ error }}
-      </div>
-
-      <!-- Actions -->
-      <div class="flex justify-end gap-3">
-        <button
-          type="button"
-          class="btn-secondary"
-          :disabled="probing || saving || !canSave"
-          @click="probe">
-          {{ probing ? 'Probing…' : 'Save & probe' }}
-        </button>
-        <button
-          type="submit"
-          class="btn-primary"
-          :disabled="saving || !canSave">
-          {{ saving ? 'Saving…' : 'Save' }}
-        </button>
-      </div>
     </form>
+
+    <!-- Sticky action bar — visible only when the form has unsaved
+         changes. Its visibility doubles as the dirty-state indicator;
+         no separate badge needed. Fixed to the viewport bottom so the
+         operator's eye finds it regardless of scroll position. -->
+    <Transition
+      enter-active-class="transition duration-150 ease-out"
+      enter-from-class="translate-y-full"
+      enter-to-class="translate-y-0"
+      leave-active-class="transition duration-150 ease-in"
+      leave-from-class="translate-y-0"
+      leave-to-class="translate-y-full"
+    >
+      <div
+        v-if="isDirty"
+        class="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-gray-200 shadow-lg"
+      >
+        <div class="max-w-3xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
+          <span class="text-sm font-medium text-amber-700 inline-flex items-center gap-2">
+            <span aria-hidden="true">●</span>
+            Unsaved changes
+          </span>
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class="btn-secondary"
+              :disabled="saving"
+              @click="discard"
+            >Discard</button>
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="saving || !canSave"
+              @click="save"
+            >{{ saving ? 'Saving…' : 'Save' }}</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>

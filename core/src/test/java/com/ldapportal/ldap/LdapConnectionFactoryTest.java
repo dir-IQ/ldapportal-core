@@ -4,10 +4,13 @@ package com.ldapportal.ldap;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.exception.LdapConnectionException;
+import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.listener.InMemoryDirectoryServer;
 import com.unboundid.ldap.listener.InMemoryDirectoryServerConfig;
 import com.unboundid.ldap.sdk.LDAPConnectionPool;
+import com.unboundid.ldap.sdk.LDAPException;
+import com.unboundid.ldap.sdk.ResultCode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -107,6 +110,62 @@ class LdapConnectionFactoryTest {
 
         assertThatThrownBy(() -> factory.getPool(dc))
             .isInstanceOf(LdapConnectionException.class);
+    }
+
+    // ── Operation-vs-connection error discrimination ────────────────
+    //
+    // Operation-level LDAP errors (NO_SUCH_OBJECT, INVALID_DN_SYNTAX,
+    // INSUFFICIENT_ACCESS_RIGHTS, etc) used to wrap as
+    // LdapConnectionException → 502 "LDAP server unreachable", which
+    // misled operators about the root cause. They now wrap as
+    // LdapOperationException → 422 with the actual LDAP message.
+
+    @Test
+    void withConnection_operationLevelError_throwsLdapOperationException_notConnection() {
+        DirectoryConnection dc = buildDirectoryConnection(SslMode.NONE);
+        when(encryptionService.decrypt(anyString())).thenReturn("adminpass");
+
+        // Synthesize an operation-level error: NO_SUCH_OBJECT is the
+        // canonical "operation reached the server fine but the entry
+        // isn't there" code. Throwing it from inside the lambda
+        // exercises the same path that `conn.getEntry(missing-dn)`
+        // would; using a thrown LDAPException keeps the test
+        // server-state-free.
+        assertThatThrownBy(() -> factory.withConnection(dc, conn -> {
+            throw new LDAPException(ResultCode.NO_SUCH_OBJECT, "entry not found");
+        }))
+            .isInstanceOf(LdapOperationException.class)
+            .hasMessageContaining("entry not found");
+    }
+
+    @Test
+    void withConnection_invalidDnSyntax_throwsLdapOperationException() {
+        // INVALID_DN_SYNTAX is the case that surfaced this bug — a
+        // syntactically-bad DN passed into a base-fetch.
+        DirectoryConnection dc = buildDirectoryConnection(SslMode.NONE);
+        when(encryptionService.decrypt(anyString())).thenReturn("adminpass");
+
+        assertThatThrownBy(() -> factory.withConnection(dc, conn -> {
+            throw new LDAPException(ResultCode.INVALID_DN_SYNTAX, "not a valid dn");
+        }))
+            .isInstanceOf(LdapOperationException.class)
+            .hasMessageContaining("not a valid dn");
+    }
+
+    @Test
+    void withConnection_connectionBrokenCode_throwsLdapConnectionException() {
+        // CONNECT_ERROR is one of the result codes that
+        // ResultCode.isConnectionUsable() returns false for — i.e. a
+        // genuine connectivity failure where the socket should be
+        // marked defunct.
+        DirectoryConnection dc = buildDirectoryConnection(SslMode.NONE);
+        when(encryptionService.decrypt(anyString())).thenReturn("adminpass");
+
+        assertThatThrownBy(() -> factory.withConnection(dc, conn -> {
+            throw new LDAPException(ResultCode.CONNECT_ERROR, "socket closed");
+        }))
+            .isInstanceOf(LdapConnectionException.class)
+            .hasMessageContaining("socket closed");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
