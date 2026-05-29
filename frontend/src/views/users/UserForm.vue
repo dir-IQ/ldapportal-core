@@ -14,16 +14,16 @@
     />
 
     <!-- Tabs (shown in both create and edit modes) -->
-    <div class="flex border-b border-gray-200 mb-2">
+    <div class="flex border-b border-gray-200 mb-4 gap-1">
       <button
         @click="activeTab = 'attributes'"
-        class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors"
-        :class="activeTab === 'attributes' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        class="px-5 py-3 text-base font-semibold border-b-[3px] -mb-px transition-colors"
+        :class="activeTab === 'attributes' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800'"
       >Attributes</button>
       <button
         @click="activeTab = 'groups'"
-        class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors"
-        :class="activeTab === 'groups' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        class="px-5 py-3 text-base font-semibold border-b-[3px] -mb-px transition-colors"
+        :class="activeTab === 'groups' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800'"
       >Groups</button>
       <!-- IVIA tab — visible only in edit mode, when the addon is on
            the build, and when this directory has IVIA enabled. The
@@ -33,8 +33,8 @@
       <button
         v-if="isEdit && iviaTabVisible"
         @click="activeTab = 'ivia'"
-        class="px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors"
-        :class="activeTab === 'ivia' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'"
+        class="px-5 py-3 text-base font-semibold border-b-[3px] -mb-px transition-colors"
+        :class="activeTab === 'ivia' ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-800'"
       >{{ IVIA_ABBR }} Account</button>
     </div>
 
@@ -93,7 +93,7 @@
                   <!-- Password field with generate/show/copy (create mode only) -->
                   <div
                     v-if="!attr.rdn && attr.inputType === 'PASSWORD'"
-                    :style="{ gridColumn: `span ${attr.columnSpan || 6}` }"
+                    :style="{ gridColumn: `span ${attr.columnSpan || 3}` }"
                   >
                     <label :for="`uf-pw-${attr.attributeName}`" class="block text-sm font-medium text-gray-700 mb-1">
                       {{ attr.customLabel || attr.attributeName }}
@@ -145,7 +145,7 @@
                   <!-- Regular field -->
                   <div
                     v-else-if="!attr.rdn"
-                    :style="{ gridColumn: `span ${attr.columnSpan || 6}` }"
+                    :style="{ gridColumn: `span ${attr.columnSpan || 3}` }"
                   >
                     <!-- DN Lookup: use DnPicker instead of text input -->
                     <template v-if="attr.inputType === 'DN_LOOKUP'">
@@ -223,7 +223,7 @@
                   <!-- Regular field -->
                   <div
                     v-if="!attr.rdn"
-                    :style="{ gridColumn: `span ${attr.columnSpan || 6}` }"
+                    :style="{ gridColumn: `span ${attr.columnSpan || 3}` }"
                   >
                     <!-- DN Lookup: use DnPicker instead of text input -->
                     <template v-if="attr.inputType === 'DN_LOOKUP'">
