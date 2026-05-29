@@ -19,6 +19,7 @@ import DnPicker from '@/components/DnPicker.vue'
 import DataTable from '@/components/DataTable.vue'
 import IsvaProfileOverrideControl from '@/components/profiles/IsvaProfileOverrideControl.vue'
 import { setIsvaProfileOverride } from '@/api/isvaConfig'
+import { useConfirm } from '@/composables/useConfirm'
 
 type DirectoryConn = components['schemas']['DirectoryConnectionResponse']
 
@@ -151,6 +152,7 @@ const profileCols = [
 ]
 
 const notif = useNotificationStore()
+const confirm = useConfirm()
 
 const loading = ref(false)
 const saving = ref(false)
@@ -596,11 +598,15 @@ watch(() => [profile.value.targetOuDn, selectedDirId.value],
  * mix of auto-populated MUST attrs (no sections / span 6 / TEXT)
  * and seeded ones (sections / mixed spans / typed inputs).
  */
-function doSeedDefaults() {
+async function doSeedDefaults() {
   if (profile.value.attributeConfigs.length > 0) {
-    const ok = window.confirm(
-      `Replace ${profile.value.attributeConfigs.length} existing attribute config(s) `
-      + 'with the inetOrgPerson defaults? The change isn\'t persisted until you Save.')
+    const ok = await confirm({
+      title: 'Replace existing attribute configs?',
+      message: `This profile already has ${profile.value.attributeConfigs.length} `
+        + 'attribute config(s). Seeding will replace them all with the '
+        + 'inetOrgPerson defaults. The change isn\'t persisted until you Save.',
+      confirmLabel: 'Replace and seed',
+    })
     if (!ok) return
   }
   profile.value.attributeConfigs = INETORGPERSON_SEED.map(row => ({
