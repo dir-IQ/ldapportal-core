@@ -46,6 +46,7 @@
     <LdapFilterBuilder
       v-model="filterText"
       :directory-id="dirId"
+      :relevant-attributes="profileAttributeNames"
       class="mb-4"
     />
 
@@ -566,6 +567,17 @@ const allProfiles       = ref<ProfileLite[]>([])
 const selectedProfileId = ref('')
 const profileData       = ref<ProfileLite | null>(null)
 const profileConfig     = ref<ProfileLite | null>(null)
+
+// Attribute names the active profile declares — fed to LdapFilterBuilder
+// so the attribute picker defaults to this subset (typically ~10-30 attrs)
+// instead of the directory's full schema (often 1500+). The builder
+// exposes a "Show all attributes" toggle for power users; empty array
+// means no scoping and the builder shows the full schema list.
+const profileAttributeNames = computed<string[]>(() =>
+  (profileData.value?.attributeConfigs ?? [])
+    .map(a => a.attributeName)
+    .filter((n): n is string => typeof n === 'string' && n.length > 0),
+)
 
 const emptyForm = (): UserFormState => {
   // Pre-populate default values from profile attribute configs
