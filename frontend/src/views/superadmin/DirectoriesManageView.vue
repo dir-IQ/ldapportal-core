@@ -268,9 +268,20 @@ function applyPreset() {
 // Vendor / version badge formatters. The server may publish vendorName
 // and vendorVersion independently; show whichever combination is
 // available, prefer "vendor version" when both, fall back to just the
-// version when only that is set (common on OpenDJ). Returns '' when
-// the probe hasn't yielded anything useful — the template hides the
-// chip in that case.
+// version when only that is set (common on OpenDJ). When the probe ran
+// but the server advertised neither (OpenLDAP doesn't populate vendor*
+// in its root DSE by default), fall back to a friendly directory-type
+// label so the chip still conveys "we know what kind of server this
+// is, we just didn't get a self-reported version." Returns '' only
+// when the probe didn't run or the server is generic enough that the
+// fallback wouldn't tell the operator anything new (GENERIC, ENTRA_ID).
+const TYPE_FALLBACK_LABEL = {
+  OPENLDAP:                 'OpenLDAP',
+  ACTIVE_DIRECTORY:         'Active Directory',
+  IBM_DIRECTORY_SERVER:     'IBM Directory Server',
+  ORACLE_UNIFIED_DIRECTORY: 'Oracle Unified Directory',
+}
+
 function vendorBadge(d) {
   const caps = d?.capabilities
   if (!caps) return ''
@@ -279,7 +290,10 @@ function vendorBadge(d) {
   if (v && ver) return `${v} ${ver}`
   if (v)        return v
   if (ver)      return ver
-  return ''
+  // Probe ran (caps is non-null) but server didn't advertise vendor info.
+  // Use the directory-type label as the chip text for named types; skip
+  // for GENERIC / ENTRA_ID where it would be redundant or wrong.
+  return TYPE_FALLBACK_LABEL[d?.directoryType] || ''
 }
 
 function capabilitiesTooltip(d) {
