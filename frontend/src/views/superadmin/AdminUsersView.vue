@@ -84,13 +84,8 @@
           :options="[{ value: 'ADMIN', label: 'Admin' }, { value: 'SUPERADMIN', label: 'Superadmin' }]"
           hint="Superadmins have full platform access. Admins have profile-scoped permissions." />
         <FormField label="Auth type" v-model="form.authType" type="select" required
-          :options="[
-            { value: 'LOCAL',   label: 'Local' },
-            { value: 'LDAP',    label: 'LDAP' },
-            { value: 'OIDC',    label: 'OIDC' },
-            { value: 'WEBSEAL', label: 'WebSEAL' },
-          ]"
-          hint="LOCAL uses a portal password. LDAP authenticates against the configured LDAP directory. OIDC authenticates via SSO. WEBSEAL trusts the iv-user header from IBM Verify Identity Access." />
+          :options="authTypeOptions"
+          hint="LOCAL uses a portal password. LDAP authenticates against the configured LDAP directory. OIDC authenticates via SSO. WEBSEAL trusts the iv-user header from IBM Verify Identity Access. Only methods configured in Settings are shown." />
         <FormField v-if="form.authType === 'LOCAL'" label="Password" v-model="form.password" type="password"
           :placeholder="editing ? 'Leave blank to keep current' : 'Enter password'"
           :hint="editing ? 'Only fill in to change the password.' : 'Set the initial password for this account.'" />
@@ -214,6 +209,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import type { Ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notifications'
+import { useSettingsStore } from '@/stores/settings'
 import {
   listAdmins,
   createAdmin,
@@ -299,8 +295,36 @@ function errMsg(e: unknown): string {
 
 // ── Stores & top-level state ─────────────────────────────────────────────────
 
-const auth  = useAuthStore()
-const notif = useNotificationStore()
+const auth     = useAuthStore()
+const notif    = useNotificationStore()
+const settings = useSettingsStore()
+
+// Auth-type options for the create/edit dropdown. Filtered by
+// settings.enabledAuthTypes so operators don't see LDAP / OIDC /
+// WEBSEAL as choices when the backend doesn't have those methods
+// configured — picking one would create an account that can't sign
+// in. LOCAL is always offered; it's the always-available fallback.
+//
+// Edge case: when editing an existing account whose authType is
+// currently disabled in settings (admin disconfigured the method
+// after the account was created), surface the value anyway so the
+// form has a matching dropdown option and the operator can either
+// re-save unchanged or pick a configured replacement.
+const ALL_AUTH_TYPE_OPTIONS = [
+  { value: 'LOCAL',   label: 'Local' },
+  { value: 'LDAP',    label: 'LDAP' },
+  { value: 'OIDC',    label: 'OIDC' },
+  { value: 'WEBSEAL', label: 'WebSEAL' },
+] as const
+
+const authTypeOptions = computed(() => {
+  const enabled = new Set(settings.enabledAuthTypes)
+  enabled.add('LOCAL') // belt-and-suspenders — LOCAL is always available
+  // Preserve the editing-account's current type even if it's no
+  // longer enabled, so the dropdown has a valid selection.
+  if (form.value.authType) enabled.add(form.value.authType)
+  return ALL_AUTH_TYPE_OPTIONS.filter(o => enabled.has(o.value))
+})
 
 // Hide the row-level Delete on the operator's own account so they
 // can't accidentally lock themselves out. The auth store is plain

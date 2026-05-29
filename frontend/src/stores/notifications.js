@@ -54,11 +54,15 @@ export const useNotificationStore = defineStore('notifications', () => {
     return id
   }
 
-  // Errors default to sticky (duration=0) so the user must explicitly close
-  // them. The caller can still opt back into auto-dismiss with an explicit
-  // {duration: N} for cases where the error is genuinely transient.
+  // Errors default to a 2-minute auto-dismiss — long enough that the
+  // operator has time to read and react (much longer than the 4s
+  // default for success/info), short enough that a stale error doesn't
+  // pile up across a session. Caller can still opt into other
+  // behaviour: pass {duration: 0} for sticky (close-button only), or
+  // a custom duration in ms for transient errors.
+  const ERROR_TOAST_MS = 2 * 60 * 1000  // 2 minutes
   const success = (msg, opts) => push('success', msg, typeof opts === 'object' ? opts : undefined)
-  const error   = (msg, opts) => push('error',   msg, { duration: 0,    ...(typeof opts === 'object' ? opts : {}) })
+  const error   = (msg, opts) => push('error',   msg, { duration: ERROR_TOAST_MS, ...(typeof opts === 'object' ? opts : {}) })
   const info    = (msg, opts) => push('info',    msg, typeof opts === 'object' ? opts : undefined)
   const warning = (msg, opts) => push('warning', msg, typeof opts === 'object' ? opts : undefined)
 

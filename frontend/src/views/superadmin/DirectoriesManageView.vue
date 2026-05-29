@@ -42,7 +42,7 @@
                   hidden: !d.enabled || d.directoryType === 'ENTRA_ID' },
                 { label: 'Browse',     onClick: () => $router.push(`/superadmin/entra/${d.id}`),
                   hidden: d.directoryType !== 'ENTRA_ID' },
-                { label: 'IBM Verify Identity Access integration',
+                { label: `${IVIA_ABBR} integration`,
                   onClick: () => $router.push(`/superadmin/directories/${d.id}/isva-config`),
                   // Hide when the addon's entitlement isn't granted
                   // (community + commercial-without-addon) AND when the
@@ -194,6 +194,7 @@ import FormField from '@/components/FormField.vue'
 import AppModal from '@/components/AppModal.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import { IVIA_ABBR } from '@/constants/productNames'
 import PageContainer from '@/components/PageContainer.vue'
 
 const notif = useNotificationStore()
