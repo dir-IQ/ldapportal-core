@@ -34,25 +34,34 @@ import java.util.UUID;
  *
  * <pre>
  *   GET    /api/v1/directories/{id}/isva-config        — read (404 if absent)
- *   PUT    /api/v1/directories/{id}/isva-config        — upsert
- *   POST   /api/v1/directories/{id}/isva-config/probe  — health check
+ *   PUT    /api/v1/directories/{id}/isva-config        — upsert (SUPERADMIN)
+ *   POST   /api/v1/directories/{id}/isva-config/probe  — health check (SUPERADMIN)
  * </pre>
  *
  * <p>Page-level UI options (which topology modes to offer) are global and
  * env-driven — see {@link IsvaUiOptionsController}.</p>
  *
- * <p>Superadmin-only. The class-level {@link Entitled} annotation
- * also gates on {@code VENDOR_INTEGRATIONS_ISVA} being granted —
- * which on a community deployment without the addon classpath-
- * present is false, so this controller's endpoints respond 403
- * on community. The frontend hides the panel via the same
- * entitlement flag so operators never see a button that can't be
+ * <p>Class-level {@link Entitled} gates on {@code VENDOR_INTEGRATIONS_ISVA}
+ * being granted — community deployments without the addon classpath
+ * respond 403 on every endpoint. The frontend hides the panel via the
+ * same entitlement flag so operators never see a button that can't be
  * used.</p>
+ *
+ * <p><strong>Per-method authz:</strong> GET is readable by any authenticated
+ * principal (ADMIN, SUPERADMIN). PUT / probe stay superadmin-only —
+ * they mutate directory-wide IVIA policy. Lower-privilege admin reads
+ * are necessary because the IVIA account panel and the user-form's
+ * tab-button gate both fetch GET to decide whether to render anything;
+ * a class-level superadmin gate would 403 the gating call for admins
+ * and make the panel invisible to them. The config fields are admin-
+ * policy (management-DIT base DN, sec authority, topology mode, etc) —
+ * not credentials — and the same information is leakable indirectly
+ * via {@code IsvaUserReadEnricher}'s row tags. Returning it to admins
+ * doesn't widen the disclosure surface.</p>
  */
 @RestController
 @RequestMapping("/api/v1/directories/{directoryId}/isva-config")
 @RequiredArgsConstructor
-@PreAuthorize("hasRole('SUPERADMIN')")
 @Entitled(Entitlement.VENDOR_INTEGRATIONS_ISVA)
 public class IsvaConfigController {
 
@@ -72,6 +81,7 @@ public class IsvaConfigController {
     }
 
     @PutMapping
+    @PreAuthorize("hasRole('SUPERADMIN')")
     public ResponseEntity<IsvaConfigDto> upsert(
             @PathVariable UUID directoryId,
             @AuthenticationPrincipal AuthPrincipal principal,
@@ -114,6 +124,7 @@ public class IsvaConfigController {
     }
 
     @PostMapping("/probe")
+    @PreAuthorize("hasRole('SUPERADMIN')")
     public ResponseEntity<ProbeResult> probe(@PathVariable UUID directoryId) {
         DirectoryConnection dir = directoryRepo.findById(directoryId)
                 .orElseThrow(() -> new ResourceNotFoundException("Directory not found"));
