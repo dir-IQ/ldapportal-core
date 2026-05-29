@@ -11,5 +11,7 @@ public interface ProfileAttributeConfigRepository extends JpaRepository<ProfileA
 
     List<ProfileAttributeConfig> findAllByProfileIdOrderByDisplayOrderAsc(UUID profileId);
 
+    long countByProfileId(UUID profileId);
+
     void deleteAllByProfileId(UUID profileId);
 }

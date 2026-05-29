@@ -113,6 +113,26 @@ public class ProvisioningProfileController {
                 .body(service.clone(directoryId, profileId, newName, principal));
     }
 
+    /**
+     * Seeds the profile's attribute-config list with sensible defaults
+     * for a known schema (currently inetOrgPerson). Refuses if any
+     * attribute config already exists — clear them first if a re-seed
+     * is intended.
+     *
+     * <pre>
+     *   POST /api/v1/directories/{directoryId}/profiles/{profileId}/seed-attribute-defaults?schema=inetOrgPerson
+     * </pre>
+     */
+    @PostMapping("/api/v1/directories/{directoryId}/profiles/{profileId}/seed-attribute-defaults")
+    @PreAuthorize("hasRole('SUPERADMIN')")
+    public ProfileResponse seedAttributeDefaults(
+            @PathVariable UUID directoryId,
+            @PathVariable UUID profileId,
+            @RequestParam(defaultValue = "inetOrgPerson") String schema,
+            @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.seedAttributeDefaults(directoryId, profileId, schema, principal);
+    }
+
     // ── Group Change Evaluation ─────────────────────────────────────────────
 
     @PostMapping("/api/v1/directories/{directoryId}/profiles/{profileId}/evaluate-group-changes")

@@ -12,6 +12,12 @@ export const updateProfile     = (dirId, profileId, data)    => client.put(`${di
 export const deleteProfile     = (dirId, profileId)          => client.delete(`${dirBase(dirId)}/${profileId}`)
 export const cloneProfile      = (dirId, profileId, name)    => client.post(`${dirBase(dirId)}/${profileId}/clone`, { name })
 
+// Seeds a curated set of attribute configs for a known schema
+// (currently 'inetOrgPerson'). Refuses 409 if the profile already
+// has attribute configs.
+export const seedAttributeDefaults = (dirId, profileId, schema = 'inetOrgPerson') =>
+  client.post(`${dirBase(dirId)}/${profileId}/seed-attribute-defaults`, null, { params: { schema } })
+
 // Password generation
 export const generatePassword = (profileId) => client.post(`/profiles/${profileId}/generate-password`)
 

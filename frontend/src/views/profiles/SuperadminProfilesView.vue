@@ -5,7 +5,7 @@ import { useNotificationStore } from '@/stores/notifications'
 import {
   listAllProfiles, createProfile, updateProfile, deleteProfile, cloneProfile,
   getApprovalConfig, setApprovalConfig, getApprovers, setApprovers,
-  evaluateGroupChanges, applySelectiveGroupChanges
+  evaluateGroupChanges, applySelectiveGroupChanges, seedAttributeDefaults
 } from '@/api/profiles'
 import { listDirectories } from '@/api/directories'
 import { listObjectClasses, getObjectClass } from '@/api/schema'
@@ -443,6 +443,35 @@ async function doClone() {
 async function reload() {
   const { data } = await listAllProfiles()
   profiles.value = data
+}
+
+/**
+ * Server-side seed of the curated inetOrgPerson attribute defaults
+ * (~27 attributes across Identity / Contact / Organization / Account
+ * sections, with sensible columnSpans and required flags). Refuses
+ * 409 if the profile already has any attribute configs — the user
+ * has to clear them first if a re-seed is intended.
+ *
+ * Only valuable when the profile is saved (editing an existing one)
+ * AND has no attribute configs yet — the button gates on both.
+ */
+const seeding = ref(false)
+async function doSeedDefaults() {
+  if (!editing.value || !selectedDirId.value) return
+  seeding.value = true
+  try {
+    const { data } = await seedAttributeDefaults(
+      selectedDirId.value, editing.value, 'inetOrgPerson')
+    // Replace local attributeConfigs with the server-rebuilt set.
+    // Avoids hand-merging seeds back into the in-memory profile and
+    // keeps displayOrder / sectionName exactly as the server wrote them.
+    profile.value.attributeConfigs = (data.attributeConfigs ?? []) as AttributeConfig[]
+    notif.success(`Seeded ${data.attributeConfigs?.length ?? 0} attributes from inetOrgPerson defaults`)
+  } catch (e) {
+    notif.error(errMsg(e))
+  } finally {
+    seeding.value = false
+  }
 }
 
 // Group assignment management
@@ -1058,10 +1087,25 @@ function toggleApprover(accountId: string) {
 
         <!-- Attributes Tab -->
         <div v-if="modalTab === 'attributes'" class="space-y-3">
-          <div>
+          <div class="flex items-center gap-2">
             <button class="btn-primary text-sm" :disabled="availableAttributes.length === 0" @click="toggleAttrPicker">
               {{ showAttrPicker ? 'Cancel' : 'Add Attributes' }}
             </button>
+            <!-- Seed defaults: server-side bulk add of a curated
+                 inetOrgPerson set with sections + sensible column
+                 widths + required flags. Only meaningful when the
+                 profile exists server-side AND has no configs yet —
+                 the endpoint refuses 409 otherwise, and the button
+                 hides the same way client-side. -->
+            <button
+              v-if="editing && profile.attributeConfigs.length === 0"
+              class="btn-secondary text-sm"
+              :disabled="seeding"
+              @click="doSeedDefaults"
+            >
+              {{ seeding ? 'Seeding…' : 'Seed inetOrgPerson defaults' }}
+            </button>
+          </div>
             <div v-if="showAttrPicker" class="mt-2 border rounded-lg p-3 space-y-2 bg-gray-50">
               <div v-if="availableAttributes.length === 0" class="text-gray-500 text-sm">
                 All attributes from the selected object classes have been added.

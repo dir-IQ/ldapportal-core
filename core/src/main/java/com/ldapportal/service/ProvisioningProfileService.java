@@ -1184,4 +1184,132 @@ public class ProvisioningProfileService {
         }
         return added;
     }
+
+    // ── Seed attribute defaults ─────────────────────────────────────
+
+    /**
+     * Populates a profile's {@link ProfileAttributeConfig} list with a
+     * curated set of defaults for a known schema. Mostly cuts the
+     * "create a profile, then hand-author 20 attribute configs before
+     * the create-user form is usable" cliff for new admins.
+     *
+     * <p>Refuses if the profile already has attribute configs — would
+     * silently overwrite a deliberately-empty config (the admin might
+     * want exactly that) or a partially-authored one. Caller can clear
+     * the configs first via update if a re-seed is intended.</p>
+     *
+     * <p>Schema selector is a string so additional schemas
+     * ({@code posixAccount}, AD's {@code user}, etc) can be added
+     * without changing the API shape. Unknown schema → 400.</p>
+     */
+    @Transactional
+    public ProfileResponse seedAttributeDefaults(UUID directoryId,
+                                                  UUID profileId,
+                                                  String schema,
+                                                  AuthPrincipal principal) {
+        ProvisioningProfile profile = profileRepo.findByIdAndDirectoryId(profileId, directoryId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Profile [" + profileId + "] not found in directory [" + directoryId + "]"));
+
+        long existing = attrConfigRepo.countByProfileId(profileId);
+        if (existing > 0) {
+            throw new ConflictException(
+                    "Profile already has " + existing + " attribute config(s) — "
+                            + "clear them first if you really want to re-seed defaults");
+        }
+
+        List<ProfileAttributeConfig> seeds = switch (schema == null ? "" : schema.toLowerCase()) {
+            case "inetorgperson" -> inetOrgPersonDefaults(profile);
+            default -> throw new IllegalArgumentException(
+                    "Unsupported schema [" + schema + "] — supported: inetOrgPerson");
+        };
+
+        for (ProfileAttributeConfig c : seeds) {
+            attrConfigRepo.save(c);
+        }
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.PROFILE_UPDATE,
+                    Map.of("profileId", profileId,
+                            "action", "seed_attribute_defaults",
+                            "schema", schema,
+                            "count", seeds.size()));
+        }
+
+        return get(directoryId, profileId);
+    }
+
+    /**
+     * The inetOrgPerson seed set. Sections + column widths + required
+     * flags chosen to match the layout conventions described in
+     * docs/frontend-conventions.md:
+     * <ul>
+     *   <li>Identity / Contact / Organization / Account sections</li>
+     *   <li>{@code columnSpan} 2 for short fields (employeeNumber,
+     *       l/st/c, phone numbers), 3 for medium (default), 6 for long
+     *       (postalAddress, description, mail, displayName, manager)</li>
+     *   <li>{@code requiredOnCreate} for inetOrgPerson MUST attrs
+     *       (cn, sn)</li>
+     *   <li>{@code editableOnUpdate=false} for {@code uid} — it's the
+     *       RDN; a value change is a MODRDN, not an in-place edit</li>
+     * </ul>
+     */
+    private List<ProfileAttributeConfig> inetOrgPersonDefaults(ProvisioningProfile profile) {
+        List<ProfileAttributeConfig> out = new ArrayList<>();
+        int order = 0;
+        // ── Identity ─────────────────────────────────────────────────
+        out.add(seed(profile, "uid",              "Identity", ++order, 3, InputType.TEXT,     true,  true,  false));
+        out.add(seed(profile, "cn",               "Identity", ++order, 3, InputType.TEXT,     true,  true,  true));
+        out.add(seed(profile, "givenName",        "Identity", ++order, 3, InputType.TEXT,     false, true,  true));
+        out.add(seed(profile, "sn",               "Identity", ++order, 3, InputType.TEXT,     true,  true,  true));
+        out.add(seed(profile, "displayName",      "Identity", ++order, 6, InputType.TEXT,     false, true,  true));
+        out.add(seed(profile, "initials",         "Identity", ++order, 2, InputType.TEXT,     false, true,  true));
+        out.add(seed(profile, "employeeNumber",   "Identity", ++order, 2, InputType.TEXT,     false, true,  true));
+        out.add(seed(profile, "employeeType",     "Identity", ++order, 2, InputType.TEXT,     false, true,  true));
+        // ── Contact ──────────────────────────────────────────────────
+        out.add(seed(profile, "mail",                    "Contact", ++order, 6, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "telephoneNumber",         "Contact", ++order, 2, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "mobile",                  "Contact", ++order, 2, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "pager",                   "Contact", ++order, 2, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "facsimileTelephoneNumber","Contact", ++order, 2, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "homePhone",               "Contact", ++order, 2, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "postalAddress",           "Contact", ++order, 6, InputType.TEXTAREA, false, true, true));
+        out.add(seed(profile, "street",                  "Contact", ++order, 6, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "l",                       "Contact", ++order, 2, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "st",                      "Contact", ++order, 2, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "c",                       "Contact", ++order, 2, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "postalCode",              "Contact", ++order, 2, InputType.TEXT,     false, true, true));
+        // ── Organization ─────────────────────────────────────────────
+        out.add(seed(profile, "title",            "Organization", ++order, 3, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "ou",               "Organization", ++order, 3, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "o",                "Organization", ++order, 3, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "departmentNumber", "Organization", ++order, 3, InputType.TEXT,     false, true, true));
+        out.add(seed(profile, "manager",          "Organization", ++order, 6, InputType.DN_LOOKUP,false, true, true));
+        out.add(seed(profile, "description",      "Organization", ++order, 6, InputType.TEXTAREA, false, true, true));
+        // ── Account ──────────────────────────────────────────────────
+        out.add(seed(profile, "userPassword",     "Account",      ++order, 6, InputType.PASSWORD, true, true, false));
+        return out;
+    }
+
+    private ProfileAttributeConfig seed(ProvisioningProfile profile,
+                                         String name,
+                                         String section,
+                                         int order,
+                                         int span,
+                                         InputType type,
+                                         boolean required,
+                                         boolean editableCreate,
+                                         boolean editableUpdate) {
+        ProfileAttributeConfig c = new ProfileAttributeConfig();
+        c.setProfile(profile);
+        c.setAttributeName(name);
+        c.setSectionName(section);
+        c.setDisplayOrder(order);
+        c.setColumnSpan(span);
+        c.setInputType(type);
+        c.setRequiredOnCreate(required);
+        c.setEditableOnCreate(editableCreate);
+        c.setEditableOnUpdate(editableUpdate);
+        return c;
+    }
 }
