@@ -64,7 +64,7 @@
         <template v-if="userTemplateConfig?.attributeConfigs?.length">
           <template v-for="(section, sIdx) in createSections" :key="sIdx">
             <fieldset v-if="section.fields.length" class="space-y-2">
-              <legend v-if="section.name" class="text-sm font-semibold text-gray-800 pb-1 border-b border-gray-100 w-full mb-2">{{ section.name }}</legend>
+              <legend v-if="section.name" class="text-base font-semibold text-gray-900 pb-1.5 border-b-2 border-gray-200 w-full mb-3">{{ section.name }}</legend>
               <div class="grid grid-cols-6 gap-2">
                 <template
                   v-for="attr in section.fields"
@@ -187,14 +187,15 @@
       </div>
 
       <!-- ── Edit mode ── -->
+      <!-- DN appears in UserIdentityHeader above the tab strip — no
+           need to repeat it here. -->
       <div v-else class="space-y-2">
-        <p class="text-xs text-gray-600 mb-2">Editing: <code class="bg-gray-100 px-1 rounded">{{ local.dn }}</code></p>
 
         <!-- When user form config is available, render structured fields -->
         <template v-if="userTemplateConfig?.attributeConfigs?.length">
           <template v-for="(section, sIdx) in editSections" :key="sIdx">
             <fieldset v-if="section.fields.length" class="space-y-2">
-              <legend v-if="section.name" class="text-sm font-semibold text-gray-800 pb-1 border-b border-gray-100 w-full mb-2">{{ section.name }}</legend>
+              <legend v-if="section.name" class="text-base font-semibold text-gray-900 pb-1.5 border-b-2 border-gray-200 w-full mb-3">{{ section.name }}</legend>
               <div class="grid grid-cols-6 gap-2">
                 <template
                   v-for="attr in section.fields"
@@ -282,63 +283,75 @@
 
     <!-- ═══ Groups tab ═══ -->
     <div v-show="activeTab === 'groups'">
-      <p v-if="isEdit" class="text-xs text-gray-600 mb-2">Manage group memberships for <code class="bg-gray-100 px-1 rounded">{{ local.dn }}</code></p>
-      <p v-else class="text-xs text-gray-500 mb-2">Select groups for the new user. Memberships will be created after the user is saved.</p>
+      <p v-if="!isEdit" class="text-xs text-gray-500 mb-3">Select groups for the new user. Memberships will be created after the user is saved.</p>
 
-      <!-- Current memberships (edit mode only) -->
-      <div v-if="isEdit" class="mb-2">
-        <h3 class="text-sm font-medium text-gray-700 mb-2">Current Groups</h3>
-        <div v-if="loadingGroups" class="text-sm text-gray-500 py-3 text-center">Loading…</div>
-        <ul v-else-if="memberGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
-          <li v-for="g in memberGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
-            <div>
-              <span class="font-medium text-gray-800">{{ g.cn }}</span>
-              <code class="text-xs text-gray-500 ml-2">{{ g.dn }}</code>
-            </div>
-            <button @click="removeFromGroup(g)" class="text-red-500 hover:text-red-700 text-xs font-medium">Remove</button>
-          </li>
-        </ul>
-        <p v-else class="text-sm text-gray-500 py-3 text-center border border-gray-200 rounded-lg">Not a member of any groups</p>
-      </div>
+      <!-- Two-column layout: left = current/pending memberships,
+           right = search + add. Stacks vertically on narrow screens.
+           Identity DN appears in the header above the tab strip — no
+           need to repeat it inside the tab content. -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-      <!-- Pending groups (create mode only) -->
-      <div v-if="!isEdit && pendingGroups.length" class="mb-2">
-        <h3 class="text-sm font-medium text-gray-700 mb-2">Groups to Join</h3>
-        <ul class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
-          <li v-for="g in pendingGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
-            <div>
-              <span class="font-medium text-gray-800">{{ g.cn }}</span>
-              <code class="text-xs text-gray-500 ml-2">{{ g.dn }}</code>
-            </div>
-            <button @click="removePendingGroup(g)" class="text-red-500 hover:text-red-700 text-xs font-medium">Remove</button>
-          </li>
-        </ul>
-      </div>
+        <!-- LEFT: existing memberships -->
+        <div>
+          <!-- Current memberships (edit mode only) -->
+          <div v-if="isEdit">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">Current Groups</h3>
+            <div v-if="loadingGroups" class="text-sm text-gray-500 py-3 text-center">Loading…</div>
+            <ul v-else-if="memberGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
+              <li v-for="g in memberGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
+                <div class="min-w-0 flex-1">
+                  <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
+                  <code class="text-xs text-gray-500 block truncate" :title="g.dn">{{ g.dn }}</code>
+                </div>
+                <button @click="removeFromGroup(g)" class="ml-2 text-red-500 hover:text-red-700 text-xs font-medium">Remove</button>
+              </li>
+            </ul>
+            <p v-else class="text-sm text-gray-500 py-3 text-center border border-gray-200 rounded-lg">Not a member of any groups</p>
+          </div>
 
-      <!-- Add to group -->
-      <div>
-        <h3 class="text-sm font-medium text-gray-700 mb-2">Add to Group</h3>
-        <div class="flex gap-2 mb-2">
-          <input
-            v-model="groupFilter"
-            placeholder="Search groups…"
-            aria-label="Search groups"
-            @keyup.enter="searchAvailableGroups"
-            class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button @click="searchAvailableGroups" class="btn-primary text-xs">Search</button>
+          <!-- Pending groups (create mode only) -->
+          <div v-if="!isEdit">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">Groups to Join</h3>
+            <ul v-if="pendingGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
+              <li v-for="g in pendingGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
+                <div class="min-w-0 flex-1">
+                  <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
+                  <code class="text-xs text-gray-500 block truncate" :title="g.dn">{{ g.dn }}</code>
+                </div>
+                <button @click="removePendingGroup(g)" class="ml-2 text-red-500 hover:text-red-700 text-xs font-medium">Remove</button>
+              </li>
+            </ul>
+            <p v-else class="text-sm text-gray-500 py-3 text-center border border-gray-200 rounded-lg">No groups selected yet — pick from the right.</p>
+          </div>
         </div>
-        <div v-if="loadingGroups" class="text-sm text-gray-500 py-3 text-center">Loading…</div>
-        <p v-else-if="!groupFilter.trim() && !isEdit && availableGroups.length === 0" class="text-xs text-gray-500 py-3 text-center">Type a group name and click Search to find groups.</p>
-        <ul v-else-if="availableGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
-          <li v-for="g in availableGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
-            <div>
-              <span class="font-medium text-gray-800">{{ g.cn }}</span>
-              <code class="text-xs text-gray-500 ml-2">{{ g.dn }}</code>
-            </div>
-            <button @click="addToGroup(g)" class="text-blue-600 hover:text-blue-800 text-xs font-medium">Add</button>
-          </li>
-        </ul>
+
+        <!-- RIGHT: add to group -->
+        <div>
+          <h3 class="text-sm font-semibold text-gray-800 mb-2">Add to Group</h3>
+          <div class="flex gap-2 mb-2">
+            <input
+              v-model="groupFilter"
+              placeholder="Search groups…"
+              aria-label="Search groups"
+              @keyup.enter="searchAvailableGroups"
+              class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <button @click="searchAvailableGroups" class="btn-primary text-xs">Search</button>
+          </div>
+          <div v-if="loadingGroups" class="text-sm text-gray-500 py-3 text-center">Loading…</div>
+          <p v-else-if="!groupFilter.trim() && availableGroups.length === 0" class="text-xs text-gray-500 py-3 text-center">Type a group name and click Search.</p>
+          <ul v-else-if="availableGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden max-h-72 overflow-y-auto">
+            <li v-for="g in availableGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
+              <div class="min-w-0 flex-1">
+                <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
+                <code class="text-xs text-gray-500 block truncate" :title="g.dn">{{ g.dn }}</code>
+              </div>
+              <button @click="addToGroup(g)" class="ml-2 text-blue-600 hover:text-blue-800 text-xs font-medium">Add</button>
+            </li>
+          </ul>
+          <p v-else class="text-xs text-gray-500 py-3 text-center">No matches.</p>
+        </div>
+
       </div>
     </div>
 

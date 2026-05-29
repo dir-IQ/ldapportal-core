@@ -152,7 +152,7 @@
     </AppModal>
 
     <!-- Create/Edit modal (step 2 of create, or edit) -->
-    <AppModal v-model="showModal" size="lg" fixed-height="640px">
+    <AppModal v-model="showModal" size="xl" fixed-height="min(640px, 80vh)">
       <template #title>
         <span>{{ editingDn ? 'Edit User' : 'New User' }}</span>
         <span v-if="profileConfig?.name" class="text-gray-500 font-normal"> — </span>
