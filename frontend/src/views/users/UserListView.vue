@@ -65,10 +65,21 @@
           class="btn-secondary text-xs"
         >{{ exporting ? 'Exporting…' : 'Export CSV' }}</button>
       </template>
-      <template #cell-dn="{ value }">
+      <template #cell-dn="{ value, row }">
         <span class="inline-flex items-center gap-1">
           <span class="text-xs truncate max-w-xs" :title="value as string">{{ value }}</span>
           <CopyButton :text="value as string" />
+          <!-- IVIA orphan chip — surfaces the enricher's
+               isva.orphaned=true tag so admins can spot linked-mode
+               accounts whose paired secUser entry is missing without
+               opening each user. Renders only when the addon is on
+               and the row carries the flag (community / non-addon
+               directories never get the attribute). -->
+          <span
+            v-if="auth.isIsvaIntegrationEnabled && isvaOrphaned(row)"
+            class="badge-yellow text-[10px]"
+            :title="`No paired ${IVIA_ABBR} secUser entry found — run Integrity reconcile to repair`"
+          >{{ IVIA_ABBR }} orphan</span>
         </span>
       </template>
       <template #cell-enabled="{ value }">
@@ -334,7 +345,9 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
 import { useApi, downloadBlob } from '@/composables/useApi'
+import { IVIA_ABBR } from '@/constants/productNames'
 import * as usersApi from '@/api/users'
 import * as groupsApi from '@/api/groups'
 import { exportCsv as exportUsersCsv } from '@/api/csvTemplates'
@@ -407,7 +420,21 @@ const FETCH_LIMIT = 1000
 
 const route  = useRoute()
 const notif  = useNotificationStore()
+const auth   = useAuthStore()
 const { loading, call } = useApi()
+
+/**
+ * True iff the row carries the IsvaUserReadEnricher's
+ * isva.orphaned=true tag. The enricher emits the attribute as a
+ * lowercase string ('true' / 'false'); non-IVIA / non-linked-mode
+ * rows have no attribute at all. Defensive against the value being
+ * an array (LDAP attrs are always lists at the wire level).
+ */
+function isvaOrphaned(row: unknown): boolean {
+  const v = (row as Record<string, unknown> | null)?.['isva.orphaned']
+  if (Array.isArray(v)) return v.length > 0 && String(v[0]).toLowerCase() === 'true'
+  return typeof v === 'string' && v.toLowerCase() === 'true'
+}
 
 const dirId          = route.params.dirId as string
 const users          = ref<UserRow[]>([])

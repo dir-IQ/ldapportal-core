@@ -97,7 +97,7 @@ public class SiemExportService {
         Page<AuditEvent> page;
         do {
             page = auditEventRepo.findAll(
-                    null, null, null, null, from, to,
+                    null, null, null, null, null, from, to,
                     PageRequest.of(pageNum, pageSize, Sort.by("occurred_at").ascending()));
 
             for (AuditEvent event : page.getContent()) {

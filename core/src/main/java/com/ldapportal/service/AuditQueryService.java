@@ -35,15 +35,23 @@ public class AuditQueryService {
             OffsetDateTime to,
             int page,
             int size) {
-        return query(directoryId, actorId, action, null, from, to, page, size);
+        return query(directoryId, actorId, action, null, null, from, to, page, size);
     }
 
+    /**
+     * Paginated, multi-filter query with a {@code source} discriminator
+     * that matches against the {@code detail.source} key — the
+     * per-source convention used by the IVIA verbs, profile changes,
+     * etc. ({@code source = "ivia"} narrows to IVIA-only events without
+     * the client having to download other events to filter them out).
+     */
     @Transactional(readOnly = true)
     public Page<AuditEventResponse> query(
             UUID directoryId,
             UUID actorId,
             AuditAction action,
             String targetDn,
+            String source,
             OffsetDateTime from,
             OffsetDateTime to,
             int page,
@@ -51,7 +59,7 @@ public class AuditQueryService {
 
         PageRequest pageable = PageRequest.of(page, clampSize(size));
         String actionStr = action != null ? action.getDbValue() : null;
-        return auditRepo.findAll(directoryId, actorId, actionStr, targetDn, from, to, pageable)
+        return auditRepo.findAll(directoryId, actorId, actionStr, targetDn, source, from, to, pageable)
                 .map(AuditEventResponse::from);
     }
 
@@ -65,6 +73,7 @@ public class AuditQueryService {
             UUID actorId,
             AuditAction action,
             String targetDn,
+            String source,
             OffsetDateTime from,
             OffsetDateTime to,
             int page,
@@ -72,7 +81,7 @@ public class AuditQueryService {
 
         PageRequest pageable = PageRequest.of(page, clampSize(size));
         String actionStr = action != null ? action.getDbValue() : null;
-        return auditRepo.findAllByDirectoryIds(directoryIds, actorId, actionStr, targetDn, from, to, pageable)
+        return auditRepo.findAllByDirectoryIds(directoryIds, actorId, actionStr, targetDn, source, from, to, pageable)
                 .map(AuditEventResponse::from);
     }
 
