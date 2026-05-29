@@ -89,23 +89,33 @@ docker compose --profile oud up opendj-oud
 ## Enable the changelog (for P3 work)
 
 The openidentityplatform/opendj image ships with the external changelog
-**disabled**. To enable it for P3 (`DseeChangelogStrategy` reuse):
+**disabled** — it's part of OpenDJ's replication subsystem, which the
+image leaves off for a single-node fixture. P3 (`DseeChangelogStrategy`
+reuse) only needs the changelog when you want to verify end-to-end
+audit-source ingestion against the fixture; the strategy itself is
+already wired to handle ODSEE-format entries (see
+`DseeChangelogStrategyTest`), so you can skip this for happy-path
+verification.
+
+When you do want to exercise the live changelog: OpenDJ's enable
+sequence is multi-step (configure a replication server, then a
+replication domain on the local backend) and the exact `dsconfig`
+incantation varies by build. Rather than transcribe a command that may
+drift, follow OpenDJ's *External Change Log* admin guide. You'll know
+it's working when:
 
 ```bash
-docker exec ldap-oud /opt/opendj/bin/dsconfig \
-  set-replication-server-prop \
-  --provider-name 'Multimaster Synchronization' \
-  --set replication-port:8989 \
-  --set replication-server-id:1 \
-  --no-prompt \
-  --trustAll \
-  -h localhost -p 4444 \
-  -D 'cn=Directory Manager' -w admin
+docker exec ldap-oud /opt/opendj/bin/ldapsearch \
+  -h localhost -p 1389 \
+  -D 'cn=Directory Manager' -w 'admin' \
+  -b 'cn=changelog' -s one \
+  '(objectClass=changeLogEntry)' changeNumber targetDN changeType
 ```
 
-Then restart the container. The changelog appears under `cn=changelog`
-with one entry per modification, matching the ODSEE wire format that
-`DseeChangelogStrategy` already parses.
+…returns a non-empty list after you make a write through the UI or
+ldapmodify. Once it does, set up an audit source against this
+directory with **Changelog Format = Oracle DSEE / cn=changelog** and
+**Changelog Base DN = cn=changelog**.
 
 ## Manually load the LDIF
 

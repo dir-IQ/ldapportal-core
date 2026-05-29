@@ -129,6 +129,55 @@ class DseeChangelogStrategyTest {
         assertThat(strategy.isRecordable(entry)).isTrue();
     }
 
+    // ── OUD / OpenDJ compatibility ──────────────────────────────────────────
+    // The OUD support work (P3) reuses this strategy because OUD and the
+    // OpenDJ test fixture both emit ODSEE-format changelog entries:
+    // same objectClass=changeLogEntry, same changeNumber / changeType /
+    // targetDN / changes / changeTime / creatorsName attribute names.
+    // The differences worth pinning down with explicit assertions are:
+    //
+    //   - changeTime carries fractional seconds (millis) on OpenDJ 5.x
+    //     where ODSEE-classic emitted plain seconds. The formatter
+    //     accepts both, but a future "simplify the formatter" PR could
+    //     drop the optional millis pattern and silently break OUD.
+    //   - creatorsName uses OpenDJ's actual root-DN suffix
+    //     (cn=Directory Manager,cn=Root DNs,cn=config) rather than the
+    //     bare cn=admin used in the basic tests above.
+    //
+    // If either of these stops working, OUD changelog ingestion breaks
+    // even though the original ODSEE path looks fine.
+
+    @Test
+    void extractOccurredAt_acceptsOpenDjFractionalSeconds() {
+        SearchResultEntry entry = entry(
+                new Attribute("changeTime", "20260530124530.123Z"));
+
+        OffsetDateTime result = strategy.extractOccurredAt(entry);
+        assertThat(result.getYear()).isEqualTo(2026);
+        assertThat(result.getMonthValue()).isEqualTo(5);
+        assertThat(result.getDayOfMonth()).isEqualTo(30);
+        assertThat(result.getHour()).isEqualTo(12);
+        assertThat(result.getMinute()).isEqualTo(45);
+        assertThat(result.getSecond()).isEqualTo(30);
+        assertThat(result.getNano() / 1_000_000).isEqualTo(123);
+        assertThat(result.getOffset()).isEqualTo(ZoneOffset.UTC);
+    }
+
+    @Test
+    void extractDetail_handlesOpenDjStyleCreatorsName() {
+        SearchResultEntry entry = entry(
+                new Attribute("changeType", "add"),
+                new Attribute("changes", "objectClass: inetOrgPerson\nuid: alice.smith\n"),
+                new Attribute("creatorsName",
+                        "cn=Directory Manager,cn=Root DNs,cn=config"));
+
+        Map<String, Object> detail = strategy.extractDetail(entry);
+        assertThat(detail).containsEntry("changeType", "add");
+        assertThat(detail).containsEntry("creatorsName",
+                "cn=Directory Manager,cn=Root DNs,cn=config");
+        assertThat(detail).containsKey("changes");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static AuditDataSource newSource(String baseDn, String branchFilterDn) {
