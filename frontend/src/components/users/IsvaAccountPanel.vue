@@ -4,7 +4,6 @@ import { computed, ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notifications'
 import { IVIA_ABBR } from '@/constants/productNames'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import FormField from '@/components/FormField.vue'
 import AppModal from '@/components/AppModal.vue'
 import { getIsvaConfig } from '@/api/isvaConfig'
@@ -27,10 +26,24 @@ import {
 // The host UserForm can mount it unconditionally; when not applicable
 // it renders nothing.
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   dirId: string
   dn: string
-}>()
+  /**
+   * Whether the directory has an active IVIA config. When the host
+   * (UserForm) already computed this for tab-button gating, passing
+   * it avoids the duplicate `getIsvaConfig` round-trip on panel
+   * mount. Pass `null` (the default) to make the panel self-gate —
+   * the standalone use case that kept the panel reusable outside
+   * UserForm.
+   */
+  iviaConfigEnabled?: boolean | null
+}>(), {
+  // Vue auto-defaults boolean-typed props to `false` when not passed;
+  // we need `null` to disambiguate "host didn't compute" from "host
+  // computed false" so the load function knows when to self-fetch.
+  iviaConfigEnabled: null,
+})
 
 const emit = defineEmits<{
   // Bubbled so the parent header can refresh its IVIA badge.
@@ -90,11 +103,20 @@ async function load(): Promise<void> {
   }
   loading.value = true
   try {
-    // Directory must have an active IVIA config; mirror the
-    // IsvaProfileOverrideControl gating exactly so a community-plus-isva
-    // deployment with IVIA off on this directory hides the panel.
-    const cfg = await getIsvaConfig(props.dirId)
-    if (!cfg.data?.enabled) {
+    // Per-directory IVIA-enabled check. Prefer the prop when the host
+    // already computed it (UserForm did the fetch for tab-button
+    // gating); fall back to a self-fetch when the prop is null/undef
+    // so the panel stays usable in standalone contexts.
+    let enabled: boolean
+    if (props.iviaConfigEnabled === true) {
+      enabled = true
+    } else if (props.iviaConfigEnabled === false) {
+      enabled = false
+    } else {
+      const cfg = await getIsvaConfig(props.dirId)
+      enabled = cfg.data?.enabled === true
+    }
+    if (!enabled) {
       return
     }
     visible.value = true
@@ -142,35 +164,37 @@ watch(
 
 // ── action handlers ─────────────────────────────────────────────
 
-async function doGrant(): Promise<void> {
-  await runVerb(() => grantIsvaAccount(props.dirId, props.dn),
-    `${IVIA_ABBR} account granted.`)
+/**
+ * Verb dispatch table: each entry binds the API call + success
+ * message for one verb. The template binds buttons to
+ * `doVerb('name')` instead of six near-identical wrappers, so a new
+ * verb is one row to add (not a function to copy-paste).
+ */
+type VerbName = 'grant' | 'suspend' | 'restore' | 'forceReset' | 'revokeSoft'
+const verbs: Record<VerbName, { call: () => Promise<{ data: IsvaAccountStatus }>; message: string }> = {
+  grant:       { call: () => grantIsvaAccount(props.dirId, props.dn),               message: `${IVIA_ABBR} account granted.` },
+  suspend:     { call: () => suspendIsvaAccount(props.dirId, props.dn),             message: `${IVIA_ABBR} account suspended.` },
+  restore:     { call: () => restoreIsvaAccount(props.dirId, props.dn),             message: `${IVIA_ABBR} account restored.` },
+  forceReset:  { call: () => forceCredentialReset(props.dirId, props.dn),           message: `${IVIA_ABBR} credential reset required on next sign-in.` },
+  revokeSoft:  { call: () => revokeIsvaAccount(props.dirId, props.dn, 'SOFT'),      message: `${IVIA_ABBR} account revoked (soft).` },
 }
 
-async function doSuspend(): Promise<void> {
-  await runVerb(() => suspendIsvaAccount(props.dirId, props.dn),
-    `${IVIA_ABBR} account suspended.`)
+async function doVerb(name: VerbName): Promise<void> {
+  const v = verbs[name]
+  await runVerb(v.call, v.message)
 }
 
-async function doRestore(): Promise<void> {
-  await runVerb(() => restoreIsvaAccount(props.dirId, props.dn),
-    `${IVIA_ABBR} account restored.`)
-}
-
-async function doForceReset(): Promise<void> {
-  await runVerb(() => forceCredentialReset(props.dirId, props.dn),
-    `${IVIA_ABBR} credential reset required on next sign-in.`)
-}
-
-async function doRevokeSoft(): Promise<void> {
-  await runVerb(() => revokeIsvaAccount(props.dirId, props.dn, 'SOFT'),
-    `${IVIA_ABBR} account revoked (soft).`)
-}
-
+/**
+ * Hard revoke gets its own handler because it's gated by the
+ * type-to-confirm challenge and tears down its dialog state. Doesn't
+ * fit the table cleanly.
+ */
 async function doRevokeHard(): Promise<void> {
   if (revokeTypedName.value !== accountName.value) return
-  await runVerb(() => revokeIsvaAccount(props.dirId, props.dn, 'HARD'),
-    `${IVIA_ABBR} account revoked (hard).`)
+  await runVerb(
+    () => revokeIsvaAccount(props.dirId, props.dn, 'HARD'),
+    `${IVIA_ABBR} account revoked (hard).`,
+  )
   showRevokeHardConfirm.value = false
   revokeTypedName.value = ''
 }
@@ -187,9 +211,14 @@ function openRenewDialog(): void {
 
 async function doRenew(): Promise<void> {
   if (!renewDate.value) return
-  // Convert YYYY-MM-DD to an ISO instant at end-of-day UTC; the
-  // backend accepts OffsetDateTime.
-  const iso = `${renewDate.value}T23:59:59Z`
+  // Treat the picked YYYY-MM-DD as the operator's local end-of-day,
+  // not UTC end-of-day. `new Date(y, m, d, 23, 59, 59)` uses the
+  // local-zone constructor; `.toISOString()` then renders the
+  // corresponding UTC instant. Without this, an operator in PST
+  // picking 2026-12-31 would get validity ending mid-afternoon
+  // their time on the chosen date — eight hours short of intent.
+  const [y, m, d] = renewDate.value.split('-').map(Number)
+  const iso = new Date(y!, (m! - 1), d!, 23, 59, 59).toISOString()
   await runVerb(() => renewIsvaAccount(props.dirId, props.dn, iso),
     `${IVIA_ABBR} account renewed.`)
   showRenewDialog.value = false
@@ -463,23 +492,23 @@ function formatDate(s: string | null): string {
 
       <!-- Actions -->
       <div class="flex flex-wrap items-center gap-2 pt-1">
-        <button v-if="status.orphaned" @click="doGrant" :disabled="acting || !canGrant" class="btn-primary">
+        <button v-if="status.orphaned" @click="doVerb('grant')" :disabled="acting || !canGrant" class="btn-primary">
           Grant {{ IVIA_ABBR }} account
         </button>
-        <button v-if="canSuspend" @click="doSuspend" :disabled="acting" class="btn-secondary">
+        <button v-if="canSuspend" @click="doVerb('suspend')" :disabled="acting" class="btn-secondary">
           Suspend
         </button>
-        <button v-if="canRestore" @click="doRestore" :disabled="acting" class="btn-primary">
+        <button v-if="canRestore" @click="doVerb('restore')" :disabled="acting" class="btn-primary">
           Restore
         </button>
         <button @click="openRenewDialog" :disabled="acting || !canRenew" class="btn-secondary">
           Renew
         </button>
-        <button @click="doForceReset" :disabled="acting || !canForceReset" class="btn-secondary">
+        <button @click="doVerb('forceReset')" :disabled="acting || !canForceReset" class="btn-secondary">
           Force credential reset
         </button>
         <div v-if="canRevoke" class="ml-auto flex items-center gap-2">
-          <button @click="doRevokeSoft" :disabled="acting" class="btn-danger-soft">
+          <button @click="doVerb('revokeSoft')" :disabled="acting" class="btn-danger-soft">
             Revoke (soft)
           </button>
           <button @click="showRevokeHardConfirm = true" :disabled="acting" class="btn-danger">

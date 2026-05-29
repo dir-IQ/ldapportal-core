@@ -347,6 +347,7 @@
       <IsvaAccountPanel
         :dir-id="dirId || ''"
         :dn="local.dn || ''"
+        :ivia-config-enabled="iviaTabVisible"
         @status-changed="iviaStatus = $event"
       />
     </div>
@@ -425,14 +426,23 @@ const iviaTabVisible = ref(false)
 const iviaStatus     = ref(null)
 
 async function checkIviaTabVisibility() {
-  iviaTabVisible.value = false
-  if (!props.isEdit || !props.dirId || !auth.isIsvaIntegrationEnabled) return
+  if (!props.isEdit || !props.dirId || !auth.isIsvaIntegrationEnabled) {
+    iviaTabVisible.value = false
+    if (activeTab.value === 'ivia') activeTab.value = 'attributes'
+    return
+  }
   try {
     const cfg = await getIsvaConfig(props.dirId)
     iviaTabVisible.value = cfg.data?.enabled === true
   } catch {
     // 404 (no config row) / network failure / 403 → hide.
     iviaTabVisible.value = false
+  }
+  // Whenever the tab becomes hidden, reset away from it — otherwise
+  // the tab strip removes the button while activeTab='ivia' renders
+  // a blank content area with no visible tab marked active.
+  if (!iviaTabVisible.value && activeTab.value === 'ivia') {
+    activeTab.value = 'attributes'
   }
 }
 
