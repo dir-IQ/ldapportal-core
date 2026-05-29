@@ -77,4 +77,29 @@ public record IsvaAccountStatus(
                 pwdValid, pwdLastChanged,
                 authority, secUserDn);
     }
+
+    // ── copy-with helpers ────────────────────────────────────────────
+    //
+    // Used by IsvaAccountService to derive post-write snapshots
+    // without re-probing LDAP. The verbs know exactly what fields
+    // their write changed; one of these lets them flip just that
+    // field while preserving every other.
+
+    public IsvaAccountStatus withAcctValid(boolean v) {
+        return new IsvaAccountStatus(
+                linked, orphaned, topology, v, validUntil,
+                pwdValid, pwdLastChanged, authority, secUserDn);
+    }
+
+    public IsvaAccountStatus withValidUntil(OffsetDateTime v) {
+        return new IsvaAccountStatus(
+                linked, orphaned, topology, acctValid, v,
+                pwdValid, pwdLastChanged, authority, secUserDn);
+    }
+
+    public IsvaAccountStatus withPwdValid(boolean v) {
+        return new IsvaAccountStatus(
+                linked, orphaned, topology, acctValid, validUntil,
+                v, pwdLastChanged, authority, secUserDn);
+    }
 }

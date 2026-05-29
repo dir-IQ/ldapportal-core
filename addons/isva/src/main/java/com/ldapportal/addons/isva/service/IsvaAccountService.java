@@ -139,6 +139,7 @@ public class IsvaAccountService {
         detail.put("source", "ivia");
         detail.put("ivia_op", "grant");
         LdapOperationStep step;
+        String createdSecUserDn = null; // linked mode only
         if (ctx.cfg().getTopologyMode() == IsvaTopologyMode.INLINE) {
             String uid = probe.resolveUid(ctx.dir(), dn);
             step = secUserPlans.grantInlineOnExisting(dn, ctx.cfg(), uid);
@@ -155,18 +156,15 @@ public class IsvaAccountService {
             // "compensation attempted" warning.
             step = new AddStep(linkedAdd.targetDn(), linkedAdd.attributes(),
                     StepFailurePolicy.ABORT);
+            createdSecUserDn = linkedAdd.targetDn();
             detail.put("mode", "linked");
-            detail.put("secUserDn", linkedAdd.targetDn());
+            detail.put("secUserDn", createdSecUserDn);
         }
 
         runStep(ctx.dir(), step);
         auditService.record(principal, directoryId,
                 AuditAction.USER_UPDATE, dn, detail);
-        // Re-probe so the caller sees the fresh snapshot. Cheap (one
-        // LDAP round-trip in inline mode, two in linked) and avoids
-        // hand-rolling a status from local-only state that might race
-        // with another operator.
-        return probe.probe(ctx.dir(), ctx.cfg(), dn);
+        return derivePostGrant(ctx.cfg(), createdSecUserDn);
     }
 
     @Transactional
@@ -204,7 +202,14 @@ public class IsvaAccountService {
 
         runStep(ctx.dir(), step);
         auditService.record(principal, directoryId, action, dn, detail);
-        return probe.probe(ctx.dir(), ctx.cfg(), dn);
+        if (mode == IsvaRevokeMode.SOFT) {
+            // disable() writes secAcctValid=FALSE + secValidUntil=now.
+            // Mirror both in the derived snapshot.
+            return status
+                    .withAcctValid(false)
+                    .withValidUntil(OffsetDateTime.now(ZoneOffset.UTC));
+        }
+        return IsvaAccountStatus.orphaned(ctx.cfg().getTopologyMode());
     }
 
     @Transactional
@@ -215,16 +220,14 @@ public class IsvaAccountService {
             throw refuseOrphan();
         }
         if (!status.acctValid()) {
-            // Already suspended — no-op 200. Re-probe so the caller still
-            // gets a fresh, accurate snapshot (paranoia against the race
-            // where the suspended state was the result of a concurrent
-            // op that also flipped other fields).
+            // Already suspended — no-op. The pre-probe snapshot is the
+            // freshest source of truth we have.
             return status;
         }
         runStep(ctx.dir(), secUserPlans.suspend(lifecycleTarget(status, dn)));
         auditService.record(principal, directoryId, AuditAction.USER_DISABLE, dn,
                 iviaDetail(ctx.cfg(), "suspend"));
-        return probe.probe(ctx.dir(), ctx.cfg(), dn);
+        return status.withAcctValid(false);
     }
 
     @Transactional
@@ -240,7 +243,7 @@ public class IsvaAccountService {
         runStep(ctx.dir(), secUserPlans.restore(lifecycleTarget(status, dn)));
         auditService.record(principal, directoryId, AuditAction.USER_ENABLE, dn,
                 iviaDetail(ctx.cfg(), "restore"));
-        return probe.probe(ctx.dir(), ctx.cfg(), dn);
+        return status.withAcctValid(true);
     }
 
     @Transactional
@@ -280,7 +283,7 @@ public class IsvaAccountService {
         Map<String, Object> detail = iviaDetail(ctx.cfg(), "renew");
         detail.put("validUntil", newValidUntil.toString());
         auditService.record(principal, directoryId, AuditAction.USER_UPDATE, dn, detail);
-        return probe.probe(ctx.dir(), ctx.cfg(), dn);
+        return status.withValidUntil(newValidUntil);
     }
 
     @Transactional
@@ -298,7 +301,7 @@ public class IsvaAccountService {
         runStep(ctx.dir(), secUserPlans.forceCredentialReset(lifecycleTarget(status, dn)));
         auditService.record(principal, directoryId, AuditAction.PASSWORD_RESET, dn,
                 iviaDetail(ctx.cfg(), "force_reset"));
-        return probe.probe(ctx.dir(), ctx.cfg(), dn);
+        return status.withPwdValid(false);
     }
 
     // ── internals ───────────────────────────────────────────────────
@@ -400,6 +403,38 @@ public class IsvaAccountService {
         detail.put("mode", cfg.getTopologyMode() == IsvaTopologyMode.INLINE
                 ? "inline" : "linked");
         return detail;
+    }
+
+    /**
+     * Post-grant snapshot derived from cfg defaults — mirrors the
+     * fields {@code IsvaSecUserPlans.secDefaults} wrote during the
+     * verb's ADD/MODIFY. Avoids a second LDAP round-trip (or two, in
+     * linked mode) after a successful grant.
+     *
+     * <p>Negligible millisecond skew between the derived
+     * {@code validUntil}/{@code pwdLastChanged} and what landed in
+     * LDAP — both compute {@code Instant.now()} within microseconds
+     * of each other; rounding to days in the UI makes the difference
+     * invisible.</p>
+     */
+    private IsvaAccountStatus derivePostGrant(VendorIntegrationIsvaConfig cfg,
+                                              String createdSecUserDn) {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        long secondsPerYear = Math.round(365.25d * 24d * 3600d);
+        OffsetDateTime validUntil = now.plusSeconds(
+                secondsPerYear * cfg.getDefaultValidUntilYears());
+        String authority = (cfg.getSecAuthority() == null
+                || cfg.getSecAuthority().isBlank())
+                ? "Default"
+                : cfg.getSecAuthority();
+        return IsvaAccountStatus.present(
+                cfg.getTopologyMode(),
+                createdSecUserDn,
+                true,        // secDefaults wrote secAcctValid=TRUE
+                validUntil,
+                true,        // secDefaults wrote secPwdValid=TRUE
+                now,         // secDefaults wrote secPwdLastChanged=now
+                authority);
     }
 
     /** Loaded once per verb call. */
