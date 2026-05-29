@@ -164,7 +164,7 @@ services:
   #
   # Start: docker compose --profile oud up opendj-oud
   opendj-oud:
-    image: openidentityplatform/opendj:4.9.4
+    image: openidentityplatform/opendj:5.1.0-alpine
     container_name: ldap-oud
     profiles: ["oud"]
     ports:

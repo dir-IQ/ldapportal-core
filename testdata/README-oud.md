@@ -127,9 +127,9 @@ partial load.
 
 `openidentityplatform/opendj` is a community-maintained Apache-2.0
 distribution of the OpenDJ codebase, hosted on Docker Hub. Anonymous
-pull, no OTN acceptance required. Image tag pinned to `4.9.4` so
-Dependabot's docker ecosystem can surface upgrades; the floating tag
-`latest` would silently drift on every rebuild.
+pull, no OTN acceptance required. Image tag pinned to `5.1.0-alpine`
+so Dependabot's docker ecosystem can surface upgrades; the floating
+tag `latest` would silently drift on every rebuild.
 
 If your environment can't reach Docker Hub, mirror the image to your
 internal registry and override the `image:` line in `compose.yaml`.
