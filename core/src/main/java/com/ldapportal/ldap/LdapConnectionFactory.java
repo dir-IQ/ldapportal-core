@@ -4,6 +4,7 @@ package com.ldapportal.ldap;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.exception.LdapConnectionException;
+import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.sdk.*;
 import com.unboundid.ldap.sdk.extensions.StartTLSExtendedRequest;
@@ -72,11 +73,28 @@ public class LdapConnectionFactory {
      * Borrows a connection from the pool, executes the operation, then
      * returns the connection.
      *
-     * <p>On {@link LDAPException}, only releases the connection as defunct when
-     * the result code indicates a broken connection (network failure, server
-     * closed the socket, etc.).  Operation-level errors (e.g.
-     * {@code NO_SUCH_OBJECT}, {@code INSUFFICIENT_ACCESS_RIGHTS}) return the
-     * connection to the pool normally so healthy connections aren't discarded.</p>
+     * <p>On {@link LDAPException}, distinguishes two cases via
+     * {@link ResultCode#isConnectionUsable()}:
+     * <ul>
+     *   <li><b>Connection broken</b> (network failure, server closed
+     *       the socket, SASL bind error, etc) — releases the
+     *       connection as defunct so the pool shrinks, and wraps
+     *       as {@link LdapConnectionException} → 502 in the global
+     *       handler ("LDAP server unreachable").</li>
+     *   <li><b>Operation-level error</b> ({@code NO_SUCH_OBJECT},
+     *       {@code INVALID_DN_SYNTAX}, {@code INSUFFICIENT_ACCESS_RIGHTS},
+     *       constraint violations, etc) — returns the connection to the
+     *       pool normally and wraps as {@link LdapOperationException}
+     *       → 422 in the global handler, with the LDAP message preserved.
+     *       Operators get the actual root cause instead of a misleading
+     *       "LDAP server unreachable".</li>
+     * </ul>
+     *
+     * <p>Callers that need finer per-result-code handling (e.g.
+     * "treat {@code NO_SUCH_OBJECT} as a non-error return value")
+     * should catch {@link LDAPException} inside the lambda and
+     * translate before re-throwing — see
+     * {@link LdapBrowseService#entryExists}.</p>
      */
     public <T> T withConnection(DirectoryConnection dc,
                                 LdapOperation<T> operation) {
@@ -86,18 +104,20 @@ public class LdapConnectionFactory {
             conn = pool.getConnection();
             return operation.execute(conn);
         } catch (LDAPException e) {
+            boolean connectionBroken = !e.getResultCode().isConnectionUsable();
             if (conn != null) {
-                // Only mark connection defunct for genuine connectivity failures;
-                // operation-level errors (result codes ≥ 1 that don't indicate
-                // a broken socket) should not shrink the pool.
-                if (!e.getResultCode().isConnectionUsable()) {
+                if (connectionBroken) {
                     pool.releaseDefunctConnection(conn);
                 } else {
                     pool.releaseConnection(conn);
                 }
                 conn = null;
             }
-            throw new LdapConnectionException(
+            if (connectionBroken) {
+                throw new LdapConnectionException(
+                    "LDAP connection failed on [" + dc.getDisplayName() + "]: " + e.getMessage(), e);
+            }
+            throw new LdapOperationException(
                 "LDAP operation failed on [" + dc.getDisplayName() + "]: " + e.getMessage(), e);
         } finally {
             if (conn != null) {
