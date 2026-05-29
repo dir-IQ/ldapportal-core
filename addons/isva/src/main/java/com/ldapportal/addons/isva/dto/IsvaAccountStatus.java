@@ -4,8 +4,6 @@ package com.ldapportal.addons.isva.dto;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 
 /**
  * Snapshot of an identity's IVIA-side account state, returned by
@@ -18,7 +16,9 @@ import java.time.temporal.ChronoUnit;
  * <p>{@code linked} and {@code orphaned} are inverses by design —
  * exposed as separate fields because the UI panel binds to both
  * predicates and pre-deriving the inverse is cheaper than every
- * caller computing {@code !linked}.</p>
+ * caller computing {@code !linked}. The compact constructor enforces
+ * the invariant so a hand-rolled record (vs. via the factories) can't
+ * silently land in a broken state.</p>
  *
  * <p>{@code secUserDn} is null in {@link IsvaTopologyMode#INLINE} —
  * inline mode keeps the IVIA overlay on the demographic entry,
@@ -28,6 +28,14 @@ import java.time.temporal.ChronoUnit;
  * IVIA-side attribute is null/false; only {@code topology} is
  * meaningful. Callers should branch on {@code orphaned} before
  * reading the lifecycle fields.</p>
+ *
+ * <p><strong>Days-remaining is intentionally not on the snapshot.</strong>
+ * It's a derivation of {@code validUntil} relative to "now", which
+ * has different correct answers on the server (whose clock can drift
+ * from the user's by minutes/hours) vs. on the client. The frontend
+ * computes it locally from {@code validUntil} so the displayed value
+ * always reflects the user's wall-clock — no server/client clock skew
+ * surfacing as a UI inconsistency.</p>
  */
 public record IsvaAccountStatus(
         boolean linked,
@@ -35,16 +43,23 @@ public record IsvaAccountStatus(
         IsvaTopologyMode topology,
         boolean acctValid,
         OffsetDateTime validUntil,
-        Integer daysRemaining,
         boolean pwdValid,
         OffsetDateTime pwdLastChanged,
         String authority,
         String secUserDn) {
 
+    public IsvaAccountStatus {
+        if (linked == orphaned) {
+            throw new IllegalArgumentException(
+                    "linked and orphaned must be inverses (linked=" + linked
+                            + ", orphaned=" + orphaned + ")");
+        }
+    }
+
     public static IsvaAccountStatus orphaned(IsvaTopologyMode topology) {
         return new IsvaAccountStatus(
                 false, true, topology,
-                false, null, null,
+                false, null,
                 false, null,
                 null, null);
     }
@@ -56,18 +71,9 @@ public record IsvaAccountStatus(
                                             boolean pwdValid,
                                             OffsetDateTime pwdLastChanged,
                                             String authority) {
-        // Both sides must be in the same offset for DAYS.between's
-        // LocalDate-boundary walk to give a stable result. validUntil
-        // comes from LDAP as UTC; normalise now() to UTC to match.
-        // Without this, a Chicago-zoned container near a UTC-midnight
-        // boundary reports a count that's one off from a UTC-zoned
-        // container at the same instant.
-        Integer daysRemaining = validUntil == null
-                ? null
-                : (int) ChronoUnit.DAYS.between(OffsetDateTime.now(ZoneOffset.UTC), validUntil);
         return new IsvaAccountStatus(
                 true, false, topology,
-                acctValid, validUntil, daysRemaining,
+                acctValid, validUntil,
                 pwdValid, pwdLastChanged,
                 authority, secUserDn);
     }

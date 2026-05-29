@@ -21,7 +21,6 @@ export interface IsvaAccountStatus {
   topology: IsvaTopology
   acctValid: boolean
   validUntil: string | null
-  daysRemaining: number | null
   pwdValid: boolean
   pwdLastChanged: string | null
   authority: string | null

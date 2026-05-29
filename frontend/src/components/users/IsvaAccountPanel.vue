@@ -309,6 +309,19 @@ const pwdAgeDays = computed<number | null>(() => {
   return Math.floor(ms / (1000 * 60 * 60 * 24))
 })
 
+/**
+ * Days until secValidUntil, computed locally so the displayed value
+ * always reflects the user's clock — the server intentionally doesn't
+ * ship a cached count (would otherwise drift if the snapshot was
+ * fetched 30s ago).
+ */
+const daysRemaining = computed<number | null>(() => {
+  const t = status.value?.validUntil
+  if (!t) return null
+  const ms = new Date(t).getTime() - Date.now()
+  return Math.floor(ms / (1000 * 60 * 60 * 24))
+})
+
 /** Maps an audit row to a one-line lifecycle entry. ivia_op carries the
  *  semantic verb; the AuditAction is just the umbrella category. */
 function lifecycleLabel(e: AuditEvent): string {
@@ -376,14 +389,14 @@ function formatDate(s: string | null): string {
             <span class="inline-block w-1.5 h-1.5 rounded-full mr-1" :class="b.dot"></span>
             {{ b.label }}
           </span>
-          <span v-if="status.linked && status.daysRemaining != null"
+          <span v-if="status.linked && daysRemaining != null"
                 class="inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 shadow-sm">
             <span class="text-gray-400" aria-hidden="true">⏱</span>
-            <template v-if="status.daysRemaining >= 0">
-              Expires in <strong class="font-semibold text-gray-900 ml-0.5">{{ status.daysRemaining }} days</strong>
+            <template v-if="daysRemaining >= 0">
+              Expires in <strong class="font-semibold text-gray-900 ml-0.5">{{ daysRemaining }} days</strong>
             </template>
             <template v-else>
-              Expired <strong class="font-semibold text-red-700 ml-0.5">{{ -status.daysRemaining }} days ago</strong>
+              Expired <strong class="font-semibold text-red-700 ml-0.5">{{ -daysRemaining }} days ago</strong>
             </template>
           </span>
           <span v-if="status.linked && pwdAgeDays !== null"

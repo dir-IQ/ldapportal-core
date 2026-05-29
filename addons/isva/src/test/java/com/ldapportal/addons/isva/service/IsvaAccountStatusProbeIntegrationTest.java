@@ -126,7 +126,6 @@ class IsvaAccountStatusProbeIntegrationTest {
         // Inline mode → no separate secUser DN.
         assertThat(status.secUserDn()).isNull();
         assertThat(status.validUntil()).isNotNull();
-        assertThat(status.daysRemaining()).isNotNull();
     }
 
     @Test

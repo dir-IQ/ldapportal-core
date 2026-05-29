@@ -20,7 +20,6 @@ function status(overrides: Partial<IsvaAccountStatus>): IsvaAccountStatus {
     topology: 'INLINE',
     acctValid: true,
     validUntil: null,
-    daysRemaining: null,
     pwdValid: true,
     pwdLastChanged: null,
     authority: null,
