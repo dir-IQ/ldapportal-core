@@ -52,6 +52,7 @@
       v-model="showForm"
       :title="editing ? 'Edit Admin User' : 'New Admin User'"
       size="lg"
+      fixed-height="min(640px, 80vh)"
     >
       <!-- Tab nav. Permissions tab is hidden for SUPERADMIN role
            (their access isn't profile- or feature-scoped). For
@@ -176,11 +177,17 @@
       </div>
 
       <template #footer>
-        <button @click="showForm = false" class="btn-neutral">
-          {{ activeTab === 'permissions' ? 'Close' : 'Cancel' }}
-        </button>
+        <!-- Footer is consistent across tabs so the operator can fill
+             Details, switch to Permissions, and commit from there
+             without a forced trip back. save() already routes
+             correctly per (editing × role): edit re-PUTs account
+             details (perms are inline-saved as the operator
+             interacts); create+ADMIN posts account + draft perms
+             atomically via createAdminWithPermissions; create+SUPERADMIN
+             posts just the account (the Permissions tab is hidden for
+             SUPERADMIN anyway). -->
+        <button @click="showForm = false" class="btn-neutral">Cancel</button>
         <button
-          v-if="activeTab === 'details'"
           @click="save"
           :disabled="saving || !form.username.trim()"
           class="btn-primary"
