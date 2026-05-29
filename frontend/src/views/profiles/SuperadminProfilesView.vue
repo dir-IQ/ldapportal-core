@@ -605,7 +605,11 @@ function doSeedDefaults() {
   }
   profile.value.attributeConfigs = INETORGPERSON_SEED.map(row => ({
     attributeName:             row.attributeName,
-    customLabel:               '',
+    // Friendly label from the ATTR_LABELS map (sn → 'Last Name',
+    // mail → 'Email', etc), matching addObjectClass()'s auto-pop
+    // behaviour. guessLabel falls back to camelCase / snake_case
+    // splitting for anything not in the map.
+    customLabel:               guessLabel(row.attributeName),
     inputType:                 row.inputType,
     requiredOnCreate:          row.requiredOnCreate,
     editableOnCreate:          true,
