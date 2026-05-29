@@ -62,20 +62,36 @@ const isStaging = (): boolean =>
   !props.profileId || props.profileId.length === 0
 
 async function load(): Promise<void> {
+  // TEMP DIAGNOSTIC — remove after verifying gating works in create
+  // mode. Logs what the gates see at entry so we can tell which check
+  // is bailing.
+  // eslint-disable-next-line no-console
+  console.log('[IsvaOverride] load()', {
+    isIsvaIntegrationEnabled: auth.isIsvaIntegrationEnabled,
+    directoryId: props.directoryId,
+    profileId: props.profileId,
+    isStaging: !props.profileId || props.profileId.length === 0,
+  })
   visible.value = false
   forceOff.value = false
   if (!auth.isIsvaIntegrationEnabled || !props.directoryId) {
+    // eslint-disable-next-line no-console
+    console.log('[IsvaOverride] bailed at addon/directory gate')
     return
   }
   loading.value = true
   try {
     const cfg = await getIsvaConfig(props.directoryId)
+    // eslint-disable-next-line no-console
+    console.log('[IsvaOverride] config fetched', { enabled: cfg.data?.enabled })
     if (!cfg.data?.enabled) {
       return // directory has no active IVIA integration → hide
     }
     if (isStaging()) {
       // No profile yet → nothing to fetch. Default to INHERIT
       // (the documented behaviour for a profile with no override row).
+      // eslint-disable-next-line no-console
+      console.log('[IsvaOverride] staging mode → visible=true')
       visible.value = true
       return
     }
