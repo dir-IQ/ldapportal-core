@@ -269,7 +269,7 @@ public class ActivityDashboardService {
         // Recent changes (last 24h)
         for (UUID dirId : dirIds) {
             try {
-                var events = auditQueryService.query(dirId, null, null, null,
+                var events = auditQueryService.query(dirId, null, null, null, null,
                         now.minusHours(24), null, 0, 1);
                 long count = events.getTotalElements();
                 if (count > 0) {

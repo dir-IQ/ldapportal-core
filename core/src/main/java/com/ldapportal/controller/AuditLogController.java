@@ -62,6 +62,7 @@ public class AuditLogController {
             @RequestParam(required = false) UUID actorId,
             @RequestParam(required = false) AuditAction action,
             @RequestParam(required = false) String targetDn,
+            @RequestParam(required = false) String source,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
                     OffsetDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
@@ -103,10 +104,10 @@ public class AuditLogController {
                 // Query each authorized directory and merge — or require directoryId
                 // For now, require non-superadmins to specify a directoryId filter
                 return queryService.queryForDirectories(
-                        authorizedDirs, actorId, action, targetDn, from, to, page, size);
+                        authorizedDirs, actorId, action, targetDn, source, from, to, page, size);
             }
         }
 
-        return queryService.query(directoryId, actorId, action, targetDn, from, to, page, size);
+        return queryService.query(directoryId, actorId, action, targetDn, source, from, to, page, size);
     }
 }

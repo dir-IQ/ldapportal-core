@@ -119,12 +119,13 @@ async function load(): Promise<void> {
 async function loadLifecycle(): Promise<void> {
   lifecycleLoading.value = true
   try {
-    const r = await getEntryTimeline(props.dirId, props.dn, { size: 50 })
+    // Server-side `source` filter narrows the query to IVIA events at
+    // the SQL layer (detail->>'source' = 'ivia'). Without it the client
+    // would download an unrelated 50-event page and discard most of it;
+    // on busy DNs the IVIA events fall off the first page entirely.
+    const r = await getEntryTimeline(props.dirId, props.dn, { size: 50, source: 'ivia' })
     const events = (r.data?.content ?? r.data ?? []) as AuditEvent[]
-    lifecycle.value = events.filter((e) => {
-      const src = e.detail?.['source']
-      return typeof src === 'string' && src === 'ivia'
-    })
+    lifecycle.value = events
   } catch {
     // The timeline is decorative — a failed load shouldn't break the panel.
     lifecycle.value = []
