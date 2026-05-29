@@ -62,6 +62,7 @@ class ProvisioningProfileServiceTest {
     @Mock private PasswordGeneratorService passwordGenerator;
     @Mock private com.ldapportal.ldap.LdapUserService ldapUserService;
     @Mock private com.ldapportal.ldap.LdapGroupService ldapGroupService;
+    @Mock private com.ldapportal.ldap.LdapBrowseService ldapBrowseService;
     @Mock private AuditService auditService;
 
     private ProvisioningProfileService service;
@@ -75,7 +76,8 @@ class ProvisioningProfileServiceTest {
                 profileRepo, attrConfigRepo, groupAssignmentRepo, lifecycleRepo,
                 approvalConfigRepo, approverRepo, dirRepo, accountRepo,
                 adminProfileRoleRepo, new ObjectMapper(), usageLimitService,
-                passwordGenerator, ldapUserService, ldapGroupService, auditService);
+                passwordGenerator, ldapUserService, ldapGroupService,
+                ldapBrowseService, auditService);
 
         profile = new ProvisioningProfile();
         profile.setId(profileId);

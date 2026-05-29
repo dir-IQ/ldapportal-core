@@ -56,6 +56,7 @@ public class ProvisioningProfileService {
     private final PasswordGeneratorService passwordGenerator;
     private final LdapUserService ldapUserService;
     private final LdapGroupService ldapGroupService;
+    private final com.ldapportal.ldap.LdapBrowseService ldapBrowseService;
     private final AuditService auditService;
 
     // ── Profile CRUD ──────────────────────────────────────────────────────────
@@ -114,6 +115,21 @@ public class ProvisioningProfileService {
 
     @Transactional
     public ProfileResponse create(UUID directoryId, CreateProfileRequest req, AuthPrincipal principal) {
+        return create(directoryId, req, false, principal);
+    }
+
+    /**
+     * Same as {@link #create(UUID, CreateProfileRequest, AuthPrincipal)} but
+     * with a {@code force} flag that skips the
+     * {@link #requireTargetOuExists target-OU existence check}. The
+     * default-false call sites are protected against the typo case;
+     * the {@code force=true} controller path is for the legitimate
+     * pre-stage workflow (admin creates a profile before the OU is
+     * provisioned in LDAP).
+     */
+    @Transactional
+    public ProfileResponse create(UUID directoryId, CreateProfileRequest req,
+                                   boolean force, AuthPrincipal principal) {
         DirectoryConnection dir = requireDirectory(directoryId);
 
         // License cap is per-directory — customers on tighter tiers get a
@@ -122,6 +138,10 @@ public class ProvisioningProfileService {
         usageLimitService.requireWithinLimit(
                 com.ldapportal.core.entitlement.LimitType.PROFILES_PER_DIRECTORY,
                 profileRepo.countByDirectoryId(directoryId));
+
+        if (!force) {
+            requireTargetOuExists(dir, req.targetOuDn());
+        }
 
         if (profileRepo.existsByDirectoryIdAndName(directoryId, req.name())) {
             throw new ConflictException(
@@ -162,12 +182,29 @@ public class ProvisioningProfileService {
 
     @Transactional
     public ProfileResponse update(UUID directoryId, UUID profileId, UpdateProfileRequest req) {
-        return update(directoryId, profileId, req, null);
+        return update(directoryId, profileId, req, false, null);
     }
 
     @Transactional
     public ProfileResponse update(UUID directoryId, UUID profileId, UpdateProfileRequest req,
                                    AuthPrincipal principal) {
+        return update(directoryId, profileId, req, false, principal);
+    }
+
+    /**
+     * Update with the same {@code force} flag semantics as
+     * {@link #create(UUID, CreateProfileRequest, boolean, AuthPrincipal)}.
+     *
+     * <p>Update only re-validates the target OU when it actually
+     * changed between the stored value and the request. An admin
+     * editing other fields (display name, description, attribute
+     * configs) shouldn't get blocked because the OU disappeared
+     * out-of-band — the original deliberate save committed to that
+     * OU, and changing unrelated fields shouldn't re-litigate it.</p>
+     */
+    @Transactional
+    public ProfileResponse update(UUID directoryId, UUID profileId, UpdateProfileRequest req,
+                                   boolean force, AuthPrincipal principal) {
         ProvisioningProfile profile = requireProfileInDirectory(directoryId, profileId);
 
         // Check name uniqueness if changed
@@ -175,6 +212,11 @@ public class ProvisioningProfileService {
                 profileRepo.existsByDirectoryIdAndName(profile.getDirectory().getId(), req.name())) {
             throw new ConflictException(
                     "Profile [" + req.name() + "] already exists in this directory");
+        }
+
+        boolean targetOuDnChanged = !profile.getTargetOuDn().equalsIgnoreCase(req.targetOuDn());
+        if (!force && targetOuDnChanged) {
+            requireTargetOuExists(profile.getDirectory(), req.targetOuDn());
         }
 
         applyCommonFields(profile, req.name(), req.description(), req.targetOuDn(),
@@ -1183,6 +1225,42 @@ public class ProvisioningProfileService {
             }
         }
         return added;
+    }
+
+    // ── Target-OU probe + validation ────────────────────────────────
+
+    /**
+     * Probe result for the target-OU verification — used by the
+     * profile editor's warning banner. {@code exists=true} means the
+     * OU is reachable via the directory's bind credentials and
+     * resolves to an entry; {@code false} means either the OU isn't
+     * there or the bind can't see it (same observable effect — user
+     * creation will fail at the LDAP layer).
+     */
+    public record TargetOuProbeResult(boolean exists, String targetOuDn) {}
+
+    @Transactional(readOnly = true)
+    public TargetOuProbeResult probeTargetOu(UUID directoryId, String targetOuDn) {
+        DirectoryConnection dir = requireDirectory(directoryId);
+        boolean exists = ldapBrowseService.entryExists(dir, targetOuDn);
+        return new TargetOuProbeResult(exists, targetOuDn);
+    }
+
+    /**
+     * Refuses with a clear 400 message when the target OU doesn't
+     * exist in the directory. Save callers gate on this only when
+     * {@code force=false} — the {@code force=true} path is for the
+     * legitimate pre-stage workflow (creating a profile before the
+     * OU is provisioned in LDAP).
+     */
+    private void requireTargetOuExists(DirectoryConnection dir, String targetOuDn) {
+        if (!ldapBrowseService.entryExists(dir, targetOuDn)) {
+            throw new IllegalArgumentException(
+                    "Target OU [" + targetOuDn + "] does not exist in directory ["
+                            + dir.getDisplayName() + "]. Create the OU first, or "
+                            + "pass force=true to save the profile anyway "
+                            + "(user creation will fail until the OU exists).");
+        }
     }
 
     // ── Seed attribute defaults ─────────────────────────────────────

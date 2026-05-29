@@ -5,7 +5,8 @@ import { useNotificationStore } from '@/stores/notifications'
 import {
   listAllProfiles, createProfile, updateProfile, deleteProfile, cloneProfile,
   getApprovalConfig, setApprovalConfig, getApprovers, setApprovers,
-  evaluateGroupChanges, applySelectiveGroupChanges, seedAttributeDefaults
+  evaluateGroupChanges, applySelectiveGroupChanges, seedAttributeDefaults,
+  probeTargetOu
 } from '@/api/profiles'
 import { listDirectories } from '@/api/directories'
 import { listObjectClasses, getObjectClass } from '@/api/schema'
@@ -372,9 +373,16 @@ async function save() {
     return
   }
   saving.value = true
+  // If the probe already determined the target OU is missing,
+  // pass force=true so the save goes through (the operator can see
+  // the banner and is consciously pre-staging). 'checking' / 'idle'
+  // states still go through default (server-side validation is the
+  // source of truth — a 400 from the server tells us if force was
+  // needed).
+  const force = targetOuProbeState.value === 'missing'
   try {
     if (editing.value) {
-      await updateProfile(selectedDirId.value, editing.value, profile.value)
+      await updateProfile(selectedDirId.value, editing.value, profile.value, force)
       // Save approval config
       await setApprovalConfig(editing.value, approval.value)
       await setApprovers(editing.value, { accountIds: profileApprovers.value })
@@ -383,7 +391,7 @@ async function save() {
       editing.value = null
       await reload()
     } else {
-      const { data } = await createProfile(selectedDirId.value, profile.value)
+      const { data } = await createProfile(selectedDirId.value, profile.value, force)
       // Save approval config
       await setApprovalConfig(data.id, approval.value)
       if (profileApprovers.value.length > 0) {
@@ -456,6 +464,50 @@ async function reload() {
  * AND has no attribute configs yet — the button gates on both.
  */
 const seeding = ref(false)
+
+// ── Target-OU probe / warning banner ────────────────────────────
+//
+// Debounce a probe against the directory whenever the operator
+// edits the Target OU DN. The banner surfaces 'missing' / 'exists'
+// state; if 'missing' at save time, the form passes force=true so
+// the operator can still save (pre-staging a profile before the OU
+// exists is a legitimate workflow).
+type TargetOuProbeState = 'idle' | 'checking' | 'exists' | 'missing'
+const targetOuProbeState = ref<TargetOuProbeState>('idle')
+let targetOuProbeTimer: ReturnType<typeof setTimeout> | null = null
+let targetOuProbeToken = 0
+
+function scheduleTargetOuProbe() {
+  if (targetOuProbeTimer) clearTimeout(targetOuProbeTimer)
+  const dn = profile.value.targetOuDn?.trim() ?? ''
+  const dirId = selectedDirId.value
+  if (!dn || !dirId) {
+    targetOuProbeState.value = 'idle'
+    return
+  }
+  targetOuProbeState.value = 'checking'
+  // 400ms debounce — long enough that the DnPicker's typeahead
+  // doesn't fire a probe on every keystroke, short enough that the
+  // operator sees the result before tabbing past the field.
+  const myToken = ++targetOuProbeToken
+  targetOuProbeTimer = setTimeout(async () => {
+    try {
+      const { data } = await probeTargetOu(dirId, dn)
+      // Drop the result if a newer probe has been queued.
+      if (myToken !== targetOuProbeToken) return
+      targetOuProbeState.value = data?.exists ? 'exists' : 'missing'
+    } catch {
+      // Probe failure (network, 403, etc) leaves the state as
+      // 'checking'-but-unresolved → treat as idle so a save attempt
+      // gets the server-side validation as the source of truth.
+      if (myToken === targetOuProbeToken) targetOuProbeState.value = 'idle'
+    }
+  }, 400)
+}
+
+// Re-probe whenever the DN or directory changes.
+watch(() => [profile.value.targetOuDn, selectedDirId.value],
+  () => { scheduleTargetOuProbe() })
 async function doSeedDefaults() {
   if (!editing.value || !selectedDirId.value) return
   seeding.value = true
@@ -1044,6 +1096,28 @@ function toggleApprover(accountId: string) {
             <label class="block text-sm font-medium text-gray-700 mb-1">Target OU DN</label>
             <DnPicker v-model="profile.targetOuDn" :directory-id="selectedDirId ?? ''"
               placeholder="e.g. ou=engineers,ou=people,dc=corp" />
+            <!-- Target-OU warning banner: surfaces when the probe says
+                 the DN doesn't resolve in the directory. Doesn't
+                 block save by itself — the operator can acknowledge
+                 and continue (passes force=true on the save). -->
+            <div v-if="targetOuProbeState === 'missing'"
+                 class="mt-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-900 flex items-start gap-2">
+              <span aria-hidden="true" class="mt-0.5">⚠</span>
+              <div class="flex-1">
+                <div class="font-medium">This OU isn't present in the directory.</div>
+                <div class="text-xs mt-0.5">
+                  User creation will fail with <code>NO_SUCH_OBJECT</code> until the OU exists.
+                  Saving anyway is allowed (the form will submit with <code>force=true</code>)
+                  if you're pre-staging the profile.
+                </div>
+              </div>
+            </div>
+            <div v-else-if="targetOuProbeState === 'exists'"
+                 class="mt-2 text-xs text-green-700 inline-flex items-center gap-1">
+              <span aria-hidden="true">✓</span> OU resolves in the directory.
+            </div>
+            <div v-else-if="targetOuProbeState === 'checking'"
+                 class="mt-2 text-xs text-gray-500">Checking…</div>
           </div>
           <div class="grid grid-cols-3 gap-4 items-end">
             <div class="col-span-2">
