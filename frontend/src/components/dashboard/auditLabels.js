@@ -50,10 +50,34 @@ export const ACTION_LABELS = {
   HR_SYNC_FAILED: 'HR sync failed',
   HR_EMPLOYEE_MATCHED: 'HR employee matched',
   HR_ORPHAN_DETECTED: 'HR orphan detected',
+  PROFILE_CREATE: 'Profile created',
+  PROFILE_UPDATE: 'Profile updated',
+  PROFILE_DELETE: 'Profile deleted',
+  PROFILE_CLONE: 'Profile cloned',
+  ACCOUNT_CREATE: 'Account created',
+  ACCOUNT_UPDATE: 'Account updated',
+  ACCOUNT_DELETE: 'Account deleted',
+  ACCOUNT_PERMISSION_CHANGED: 'Account permissions changed',
+  AUDITOR_LINK_CREATED: 'Auditor link created',
+  AUDITOR_LINK_REVOKED: 'Auditor link revoked',
+  AUDITOR_LINK_ACCESSED: 'Auditor link accessed',
+  API_TOKEN_CREATED: 'API token created',
+  API_TOKEN_REVOKED: 'API token revoked',
+  API_TOKEN_ROTATED: 'API token rotated',
+}
+
+// Fallback humanizer for any audit action not in the map above — keeps the
+// Recent Activity panel readable when a new AuditAction enum value is added
+// on the backend before this map is updated. Turns FOO_BAR_BAZ into
+// "Foo bar baz" rather than displaying the raw UPPER_SNAKE_CASE token.
+function humanize(action) {
+  if (!action || typeof action !== 'string') return action
+  const lower = action.toLowerCase().replace(/_/g, ' ')
+  return lower.charAt(0).toUpperCase() + lower.slice(1)
 }
 
 export function actionLabel(action) {
-  return ACTION_LABELS[action] || action
+  return ACTION_LABELS[action] || humanize(action)
 }
 
 export function actionColor(action) {
