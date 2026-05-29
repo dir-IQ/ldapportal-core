@@ -4,6 +4,7 @@ package com.ldapportal.addons.isva.dto;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 
 /**
@@ -55,9 +56,15 @@ public record IsvaAccountStatus(
                                             boolean pwdValid,
                                             OffsetDateTime pwdLastChanged,
                                             String authority) {
+        // Both sides must be in the same offset for DAYS.between's
+        // LocalDate-boundary walk to give a stable result. validUntil
+        // comes from LDAP as UTC; normalise now() to UTC to match.
+        // Without this, a Chicago-zoned container near a UTC-midnight
+        // boundary reports a count that's one off from a UTC-zoned
+        // container at the same instant.
         Integer daysRemaining = validUntil == null
                 ? null
-                : (int) ChronoUnit.DAYS.between(OffsetDateTime.now(), validUntil);
+                : (int) ChronoUnit.DAYS.between(OffsetDateTime.now(ZoneOffset.UTC), validUntil);
         return new IsvaAccountStatus(
                 true, false, topology,
                 acctValid, validUntil, daysRemaining,

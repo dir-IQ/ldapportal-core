@@ -143,6 +143,65 @@ class IsvaSecUserPlansTest {
         assertThat(step.targetDn()).isEqualTo("secUUID=abc,o=acme,c=us");
     }
 
+    /**
+     * SEC_OVERLAY_ATTRS drives the inline-mode hard revoke; it must
+     * cover every attribute {@link IsvaSecUserPlans#grantInlineOnExisting}
+     * writes via {@code secDefaults}. Without this assertion a
+     * future {@code secDefaults} entry can land without a matching
+     * SEC_OVERLAY_ATTRS entry, and inline-mode hard revoke would
+     * silently leave the new attribute orphaned on the demographic
+     * entry.
+     */
+    @Test
+    void secOverlayAttrs_matchesEveryKey_secDefaultsWrites() {
+        // Build a representative grant; the resulting MODIFY-ADD
+        // mods enumerate exactly what secDefaults wrote. Skip the
+        // objectClass mod — SEC_OVERLAY_ATTRS is about sec* attrs,
+        // not the objectClass.
+        ModifyStep grant = plans.grantInlineOnExisting(
+                "uid=alice,dc=x", inlineConfig(), "alice");
+        java.util.Set<String> grantSecAttrs = new java.util.HashSet<>();
+        for (Modification m : grant.mods()) {
+            String name = m.getAttributeName();
+            if ("objectClass".equalsIgnoreCase(name)) continue;
+            grantSecAttrs.add(name);
+        }
+
+        java.util.Set<String> overlayAttrs =
+                new java.util.HashSet<>(IsvaSecUserPlans.SEC_OVERLAY_ATTRS);
+
+        assertThat(grantSecAttrs)
+                .as("Every attribute secDefaults writes must appear in "
+                        + "SEC_OVERLAY_ATTRS so revokeInlineOnExisting "
+                        + "strips it. Mismatch means schema drift.")
+                .isEqualTo(overlayAttrs);
+    }
+
+    @Test
+    void revokeInlineOnExisting_stripsEveryOverlayAttr_andSecUserObjectClass() {
+        ModifyStep step = plans.revokeInlineOnExisting("uid=alice,dc=x");
+
+        assertThat(step.targetDn()).isEqualTo("uid=alice,dc=x");
+        // Every modification is DELETE — we're tearing down the overlay.
+        assertThat(step.mods()).allMatch(
+                m -> m.getModificationType() == ModificationType.DELETE);
+        // objectClass: secUser DELETE specifically (preserves other
+        // objectClass values on the entry).
+        assertThat(step.mods()).anySatisfy(m -> {
+            assertThat(m.getAttributeName()).isEqualToIgnoringCase("objectClass");
+            assertThat(m.getValues()).contains("secUser");
+        });
+        // Every overlay attribute is removed.
+        java.util.Set<String> deletedAttrs = new java.util.HashSet<>();
+        for (Modification m : step.mods()) {
+            if (!"objectClass".equalsIgnoreCase(m.getAttributeName())) {
+                deletedAttrs.add(m.getAttributeName());
+            }
+        }
+        assertThat(deletedAttrs)
+                .containsExactlyInAnyOrderElementsOf(IsvaSecUserPlans.SEC_OVERLAY_ATTRS);
+    }
+
     // ── account verbs ───────────────────────────────────────────────
 
     @Test
