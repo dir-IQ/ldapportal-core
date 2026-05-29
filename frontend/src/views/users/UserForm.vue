@@ -43,8 +43,11 @@
 
       <!-- ── Create mode ── -->
       <div v-if="!isEdit" class="space-y-2">
-        <!-- Fallback RDN + DN row when no user form config -->
-        <div v-if="!userTemplateConfig" class="grid grid-cols-6 gap-2">
+        <!-- Fallback RDN + DN row when the profile has no attribute
+             template (either no userTemplateConfig at all, or its
+             attributeConfigs array is empty — both mean we have no
+             dynamic fields to render). -->
+        <div v-if="!userTemplateConfig?.attributeConfigs?.length" class="grid grid-cols-6 gap-2">
           <FormField label="RDN Attribute" v-model="local.rdnAttribute" placeholder="uid" required />
           <div class="col-span-4">
             <FormField
@@ -57,8 +60,8 @@
           </div>
         </div>
 
-        <!-- RDN Value when using fallback (no user form config) -->
-        <FormField v-if="!userTemplateConfig" label="RDN Value" v-model="local.rdnValue" placeholder="jsmith" required />
+        <!-- RDN Value when using fallback (no dynamic attribute template) -->
+        <FormField v-if="!userTemplateConfig?.attributeConfigs?.length" label="RDN Value" v-model="local.rdnValue" placeholder="jsmith" required />
 
         <!-- Dynamic fields from user form config (all attributes in layout order) -->
         <template v-if="userTemplateConfig?.attributeConfigs?.length">
@@ -177,8 +180,10 @@
           </template>
         </template>
 
-        <!-- Fallback: hardcoded fields when no user form config -->
-        <template v-if="!userTemplateConfig">
+        <!-- Fallback: hardcoded inetOrgPerson minimum when no
+             attribute template — either no config row or
+             attributeConfigs empty. -->
+        <template v-if="!userTemplateConfig?.attributeConfigs?.length">
           <FormField label="cn (Common Name)" v-model="local.attributes.cn" required />
           <FormField label="sn (Surname)" v-model="local.attributes.sn" />
           <FormField label="mail" v-model="local.attributes.mail" />
