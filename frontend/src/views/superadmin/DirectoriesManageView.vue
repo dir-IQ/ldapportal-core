@@ -73,6 +73,7 @@
               <option value="ACTIVE_DIRECTORY">Active Directory</option>
               <option value="OPENLDAP">OpenLDAP</option>
               <option value="IBM_DIRECTORY_SERVER">IBM Directory Server (Tivoli / Security / Verify)</option>
+              <option value="ORACLE_UNIFIED_DIRECTORY">Oracle Unified Directory</option>
               <option value="ENTRA_ID">Microsoft Entra ID</option>
             </select>
           </div>
@@ -239,12 +240,13 @@ function applyPreset() {
       form.value.enableValue = '512'
       form.value.disableValue = '514'
     }
-  } else if (t === 'OPENLDAP' || t === 'IBM_DIRECTORY_SERVER') {
-    // ITDS and OpenLDAP both default to inetOrgPerson / uid on port 389 —
-    // same preset works for both. ITDS-specific defaults (e.g. ibm-pwdPolicy
-    // enable/disable) are intentionally left blank in this phase; operators
-    // configure server-side and the disable affordances stay generic until
-    // Phase 2 of the ITDS support plan adds the capability probe.
+  } else if (t === 'OPENLDAP' || t === 'IBM_DIRECTORY_SERVER' || t === 'ORACLE_UNIFIED_DIRECTORY') {
+    // OpenLDAP, ITDS and OUD all default to inetOrgPerson / uid on port 389
+    // — same preset works for all three. Vendor-specific defaults (e.g.
+    // ITDS ibm-pwdPolicy enable/disable, OUD ds-pwp-account-disabled) are
+    // intentionally left blank in this phase; operators configure server-side
+    // and the disable affordances stay generic until P2 of each respective
+    // support plan adds a capability probe.
     if (!form.value.port || form.value.port === 636) form.value.port = 389
     if (!form.value.selfServiceLoginAttribute || form.value.selfServiceLoginAttribute === 'sAMAccountName')
       form.value.selfServiceLoginAttribute = 'uid'

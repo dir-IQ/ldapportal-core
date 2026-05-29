@@ -55,7 +55,11 @@ class LdapDirectoryProviderTest {
                 // Phase 1 of the ITDS support plan claims this directory type
                 // for the LDAP provider — same generic code paths apply until
                 // later phases add ibm-allMembers, IbmChangelogStrategy, etc.
-                DirectoryType.IBM_DIRECTORY_SERVER);
+                DirectoryType.IBM_DIRECTORY_SERVER,
+                // P1 of the OUD support plan does the same — generic code
+                // paths until P2-P4 add the vendor probe, DseeChangelogStrategy
+                // mapping, and the isMemberOf nested-group shortcut.
+                DirectoryType.ORACLE_UNIFIED_DIRECTORY);
     }
 
     // ── searchUsers ──────────────────────────────────────────────────────────

@@ -19,11 +19,12 @@ import java.util.Map;
 
 /**
  * {@link DirectoryProvider} implementation that wraps the existing LDAP services.
- * Handles GENERIC, ACTIVE_DIRECTORY, OPENLDAP, and IBM_DIRECTORY_SERVER
- * directory types. ITDS shares the generic LDAP code paths in this phase;
- * IBM-specific optimisations (ibm-allMembers nested-group resolution,
- * IbmChangelogStrategy, capability probe) land in later phases of
- * docs/superpowers/plans/2026-05-11-ibm-directory-server-support.md.
+ * Handles GENERIC, ACTIVE_DIRECTORY, OPENLDAP, IBM_DIRECTORY_SERVER, and
+ * ORACLE_UNIFIED_DIRECTORY directory types. Both ITDS and OUD share the
+ * generic LDAP code paths in this phase; vendor-specific optimisations
+ * (ibm-allMembers / isMemberOf nested-group resolution, vendor
+ * capability probes, changelog strategy selection) land in later phases
+ * of the respective support plans.
  */
 @Component
 @RequiredArgsConstructor
@@ -44,7 +45,8 @@ public class LdapDirectoryProvider implements DirectoryProvider {
     @Override
     public List<DirectoryType> supportedTypes() {
         return List.of(DirectoryType.GENERIC, DirectoryType.ACTIVE_DIRECTORY,
-                DirectoryType.OPENLDAP, DirectoryType.IBM_DIRECTORY_SERVER);
+                DirectoryType.OPENLDAP, DirectoryType.IBM_DIRECTORY_SERVER,
+                DirectoryType.ORACLE_UNIFIED_DIRECTORY);
     }
 
     // Attributes requested for every searchUsers / getUser call.
