@@ -5,8 +5,7 @@ import { useNotificationStore } from '@/stores/notifications'
 import {
   listAllProfiles, createProfile, updateProfile, deleteProfile, cloneProfile,
   getApprovalConfig, setApprovalConfig, getApprovers, setApprovers,
-  evaluateGroupChanges, applySelectiveGroupChanges, seedAttributeDefaults,
-  probeTargetOu
+  evaluateGroupChanges, applySelectiveGroupChanges, probeTargetOu
 } from '@/api/profiles'
 import { listDirectories } from '@/api/directories'
 import { listObjectClasses, getObjectClass } from '@/api/schema'
@@ -453,17 +452,70 @@ async function reload() {
   profiles.value = data
 }
 
+// ── inetOrgPerson seed defaults (client-side) ───────────────────
+//
+// Curated 27-attribute layout. Kept in sync with the backend
+// ProvisioningProfileService.inetOrgPersonDefaults — both define
+// the same Identity / Contact / Organization / Account sections,
+// same columnSpans, same required flags. When this list changes,
+// update both sides; a divergence would mean the UI seed and the
+// API seed produce different shapes.
+//
+// Applied client-side so the button works in the create-profile
+// flow (no profileId to PUT against yet). The backend endpoint
+// stays useful for API consumers and for re-seeding without the
+// editor open.
+type SeedRow = {
+  attributeName: string
+  sectionName: string
+  columnSpan: number
+  inputType: AttributeConfig['inputType']
+  requiredOnCreate: boolean
+  editableOnUpdate: boolean
+}
+const INETORGPERSON_SEED: ReadonlyArray<SeedRow> = [
+  // Identity
+  { attributeName: 'uid',                      sectionName: 'Identity',     columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: true,  editableOnUpdate: false },
+  { attributeName: 'cn',                       sectionName: 'Identity',     columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: true,  editableOnUpdate: true  },
+  { attributeName: 'givenName',                sectionName: 'Identity',     columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'sn',                       sectionName: 'Identity',     columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: true,  editableOnUpdate: true  },
+  { attributeName: 'displayName',              sectionName: 'Identity',     columnSpan: 6, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'initials',                 sectionName: 'Identity',     columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'employeeNumber',           sectionName: 'Identity',     columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'employeeType',             sectionName: 'Identity',     columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  // Contact
+  { attributeName: 'mail',                     sectionName: 'Contact',      columnSpan: 6, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'telephoneNumber',          sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'mobile',                   sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'pager',                    sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'facsimileTelephoneNumber', sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'homePhone',                sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'postalAddress',            sectionName: 'Contact',      columnSpan: 6, inputType: 'TEXTAREA',  requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'street',                   sectionName: 'Contact',      columnSpan: 6, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'l',                        sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'st',                       sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'c',                        sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'postalCode',               sectionName: 'Contact',      columnSpan: 2, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  // Organization
+  { attributeName: 'title',                    sectionName: 'Organization', columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'ou',                       sectionName: 'Organization', columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'o',                        sectionName: 'Organization', columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'departmentNumber',         sectionName: 'Organization', columnSpan: 3, inputType: 'TEXT',      requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'manager',                  sectionName: 'Organization', columnSpan: 6, inputType: 'DN_LOOKUP', requiredOnCreate: false, editableOnUpdate: true  },
+  { attributeName: 'description',              sectionName: 'Organization', columnSpan: 6, inputType: 'TEXTAREA',  requiredOnCreate: false, editableOnUpdate: true  },
+  // Account
+  { attributeName: 'userPassword',             sectionName: 'Account',      columnSpan: 6, inputType: 'PASSWORD',  requiredOnCreate: true,  editableOnUpdate: false },
+]
+
 /**
- * Server-side seed of the curated inetOrgPerson attribute defaults
- * (~27 attributes across Identity / Contact / Organization / Account
- * sections, with sensible columnSpans and required flags). Refuses
- * 409 if the profile already has any attribute configs — the user
- * has to clear them first if a re-seed is intended.
- *
- * Only valuable when the profile is saved (editing an existing one)
- * AND has no attribute configs yet — the button gates on both.
+ * Whether the inetOrgPerson seed is applicable to the current
+ * profile — visibility gate for the Seed button. The seed is
+ * schema-specific so it wouldn't make sense to surface for a
+ * profile whose objectClass list doesn't include inetOrgPerson.
  */
-const seeding = ref(false)
+const canSeedInetOrgPerson = computed(() =>
+  profile.value.objectClassNames.some(
+    oc => oc.toLowerCase() === 'inetorgperson'))
 
 // ── Target-OU probe / warning banner ────────────────────────────
 //
@@ -508,22 +560,57 @@ function scheduleTargetOuProbe() {
 // Re-probe whenever the DN or directory changes.
 watch(() => [profile.value.targetOuDn, selectedDirId.value],
   () => { scheduleTargetOuProbe() })
-async function doSeedDefaults() {
-  if (!editing.value || !selectedDirId.value) return
-  seeding.value = true
-  try {
-    const { data } = await seedAttributeDefaults(
-      selectedDirId.value, editing.value, 'inetOrgPerson')
-    // Replace local attributeConfigs with the server-rebuilt set.
-    // Avoids hand-merging seeds back into the in-memory profile and
-    // keeps displayOrder / sectionName exactly as the server wrote them.
-    profile.value.attributeConfigs = (data.attributeConfigs ?? []) as AttributeConfig[]
-    notif.success(`Seeded ${data.attributeConfigs?.length ?? 0} attributes from inetOrgPerson defaults`)
-  } catch (e) {
-    notif.error(errMsg(e))
-  } finally {
-    seeding.value = false
+/**
+ * Apply the inetOrgPerson seed to the in-memory profile state.
+ *
+ * Works during create (no profileId yet) — purely client-side
+ * state mutation; the seeded configs ride along on the next POST.
+ * Also works during edit, including when attributeConfigs already
+ * has content (confirms replace first). The change isn't
+ * persisted until Save.
+ *
+ * Existing entries are replaced wholesale rather than merged —
+ * a partial merge would leave the operator with an inconsistent
+ * mix of auto-populated MUST attrs (no sections / span 6 / TEXT)
+ * and seeded ones (sections / mixed spans / typed inputs).
+ */
+function doSeedDefaults() {
+  if (profile.value.attributeConfigs.length > 0) {
+    const ok = window.confirm(
+      `Replace ${profile.value.attributeConfigs.length} existing attribute config(s) `
+      + 'with the inetOrgPerson defaults? The change isn\'t persisted until you Save.')
+    if (!ok) return
   }
+  profile.value.attributeConfigs = INETORGPERSON_SEED.map(row => ({
+    attributeName:             row.attributeName,
+    customLabel:               '',
+    inputType:                 row.inputType,
+    requiredOnCreate:          row.requiredOnCreate,
+    editableOnCreate:          true,
+    editableOnUpdate:          row.editableOnUpdate,
+    selfServiceEdit:           isSelfServiceEditable(row.attributeName),
+    selfRegistrationEdit:      isSelfServiceEditable(row.attributeName),
+    defaultValue:              '',
+    computedExpression:        '',
+    validationRegex:           '',
+    validationMessage:         '',
+    allowedValues:             '',
+    minLength:                 null,
+    maxLength:                 null,
+    sectionName:               row.sectionName,
+    columnSpan:                row.columnSpan,
+    hidden:                    false,
+    // Per-surface layout (self-service / registration) is left
+    // unset by the seed; admins configure those independently via
+    // the Self-Service / Registration tabs.
+    registrationSectionName:   null,
+    registrationColumnSpan:    null,
+    registrationDisplayOrder:  null,
+    selfServiceSectionName:    null,
+    selfServiceColumnSpan:     null,
+    selfServiceDisplayOrder:   null,
+  }))
+  notif.success(`Seeded ${INETORGPERSON_SEED.length} attributes from inetOrgPerson defaults`)
 }
 
 // Group assignment management
@@ -1172,13 +1259,10 @@ function toggleApprover(accountId: string) {
                  the endpoint refuses 409 otherwise, and the button
                  hides the same way client-side. -->
             <button
-              v-if="editing && profile.attributeConfigs.length === 0"
+              v-if="canSeedInetOrgPerson"
               class="btn-secondary text-sm"
-              :disabled="seeding"
               @click="doSeedDefaults"
-            >
-              {{ seeding ? 'Seeding…' : 'Seed inetOrgPerson defaults' }}
-            </button>
+            >Seed inetOrgPerson defaults</button>
           </div>
             <div v-if="showAttrPicker" class="mt-2 border rounded-lg p-3 space-y-2 bg-gray-50">
               <div v-if="availableAttributes.length === 0" class="text-gray-500 text-sm">
