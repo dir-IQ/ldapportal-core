@@ -1306,7 +1306,6 @@ function toggleApprover(accountId: string) {
                 </button>
               </template>
             </div>
-          </div>
           <div v-if="profile.attributeConfigs.length === 0" class="text-gray-500 text-sm">
             Add object classes in the General tab to populate attributes.
           </div>
