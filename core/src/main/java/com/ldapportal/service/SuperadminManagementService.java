@@ -33,12 +33,14 @@ public class SuperadminManagementService {
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
+    @Transactional(readOnly = true)
     public List<SuperadminResponse> listSuperadmins() {
         return accountRepo.findAllByRole(AccountRole.SUPERADMIN).stream()
                 .map(SuperadminResponse::from)
                 .toList();
     }
 
+    @Transactional(readOnly = true)
     public SuperadminResponse getSuperadmin(UUID id) {
         return SuperadminResponse.from(require(id));
     }

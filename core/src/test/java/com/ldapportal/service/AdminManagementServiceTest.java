@@ -72,7 +72,7 @@ class AdminManagementServiceTest {
     @Test
     void listAdmins_returnsMappedList() {
         Account a = adminAccount("alice");
-        when(accountRepo.findAll()).thenReturn(List.of(a));
+        when(accountRepo.findAllByRole(AccountRole.ADMIN)).thenReturn(List.of(a));
 
         List<AdminAccountResponse> result = service.listAdmins();
 
@@ -285,6 +285,12 @@ class AdminManagementServiceTest {
         when(profileRoleRepo.findByAdminAccountIdAndProfileId(adminId, profileId))
                 .thenReturn(Optional.empty());
         when(profileRoleRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // The new orphan-override guard checks that the admin holds a
+        // role on the profile before accepting per-profile overrides.
+        // The role is assigned earlier in the same transaction, so the
+        // exists-check returns true by the time the override lands.
+        when(profileRoleRepo.existsByAdminAccountIdAndProfileId(adminId, profileId))
+                .thenReturn(true);
 
         var req = new com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest(
                 new AdminAccountRequest("alice", "Alice", "a@e.com",
@@ -365,6 +371,10 @@ class AdminManagementServiceTest {
         when(accountRepo.findById(adminId)).thenReturn(Optional.of(adminAccount("alice")));
         when(profileRepo.findById(profileId)).thenReturn(Optional.of(profile()));
         when(featureRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // Orphan-override guard: pretend the admin holds a role on the
+        // profile so the per-profile override is accepted.
+        when(profileRoleRepo.existsByAdminAccountIdAndProfileId(adminId, profileId))
+                .thenReturn(true);
 
         var mixed = List.of(
                 new FeaturePermissionRequest(FeatureKey.USER_CREATE, false),

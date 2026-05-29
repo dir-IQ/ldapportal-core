@@ -102,6 +102,22 @@ public class AdminManagementController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * Reset an admin's LOCAL password. Mirrors the
+     * {@code /superadmin/superadmins/{id}/reset-password} endpoint so the
+     * UI has parity between the two account roles. New password must
+     * satisfy {@link com.ldapportal.service.AccountPasswordPolicy}.
+     */
+    @PostMapping("/{adminId}/reset-password")
+    public ResponseEntity<Void> resetPassword(
+            @PathVariable UUID adminId,
+            @Valid @RequestBody com.ldapportal.dto.superadmin.ResetPasswordRequest req,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+                    com.ldapportal.auth.AuthPrincipal principal) {
+        service.resetAdminPassword(adminId, req.newPassword(), principal);
+        return ResponseEntity.noContent().build();
+    }
+
     // ── Permission summary ────────────────────────────────────────────────────
 
     @GetMapping("/{adminId}/permissions")
