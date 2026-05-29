@@ -154,6 +154,35 @@ services:
     command: ["--copy-service"]
     restart: unless-stopped
 
+  # ── OUD test fixture (opt-in, profile: oud) ─────────────────────────────
+  # OpenDJ as an Apache-2.0-licensed substitute for Oracle Unified
+  # Directory — same Sun ONE / ODSEE lineage, API-compatible (isMemberOf
+  # operational attr, ODSEE-style cn=changelog). Pinned to a specific
+  # minor so Dependabot's docker ecosystem can see version bumps.
+  # See testdata/README-oud.md for the substitution rationale and the
+  # behavioural-divergence notes.
+  #
+  # Start: docker compose --profile oud up opendj-oud
+  opendj-oud:
+    image: openidentityplatform/opendj:4.9.4
+    container_name: ldap-oud
+    profiles: ["oud"]
+    ports:
+      - "3389:1389"
+      - "3636:1636"
+    environment:
+      BASE_DN: "dc=oudtest,dc=example,dc=com"
+      ROOT_USER_DN: "cn=Directory Manager"
+      ROOT_PASSWORD: "admin"
+    volumes:
+      - oud_data:/opt/opendj/data
+      # Bootstrap LDIF — the openidentityplatform/opendj entrypoint
+      # imports anything in /opt/opendj/bootstrap/data/*.ldif on first
+      # init (empty data volume). Subsequent boots ignore it; to reload
+      # from scratch: `docker compose --profile oud down -v && ... up`.
+      - ./testdata/oud-bootstrap.ldif:/opt/opendj/bootstrap/data/01-bootstrap.ldif:ro
+    restart: unless-stopped
+
 
 volumes:
   pgdata:
@@ -162,3 +191,4 @@ volumes:
   acmecorp_config:
   globex_data:
   globex_config:
+  oud_data:

@@ -1,0 +1,297 @@
+# =============================================================================
+# LDIF Test Data — OUD test fixture (~15 users, 3 groups)
+# Base DN: dc=oudtest,dc=example,dc=com
+#
+# Loaded on first volume init by the opendj-oud compose service.
+# Designed to exercise the Oracle Unified Directory support phases
+# (P1 generic CRUD, P3 changelog reuse of DseeChangelogStrategy,
+# P4 nested-group resolution via isMemberOf) using OpenDJ as an
+# Apache-2.0-licensed substitute for the OUD vendor image.
+#
+# OpenDJ is API-compatible with OUD (shared ODSEE/Sun ONE lineage)
+# and serves the same isMemberOf operational attribute, ODSEE-style
+# cn=changelog, and Sun-style root-DSE capability surface. Behavioural
+# divergences from real Oracle OUD are documented in
+# testdata/README-oud.md.
+#
+# Bind DN for the admin: cn=Directory Manager (OpenDJ default; set in
+# the docker-compose env via ROOT_PASSWORD).
+# =============================================================================
+
+# ── Base DN ─────────────────────────────────────────────────────────────────
+# OpenDJ creates the suffix entry from the BASE_DN env var on first init.
+# Including it here lets the LDIF also load against a server seeded by
+# hand (ldapadd against an empty suffix) without modification — the
+# openidentityplatform/opendj entrypoint tolerates the duplicate, treating
+# it as a no-op.
+dn: dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: domain
+dc: oudtest
+
+# ── Organisational units ────────────────────────────────────────────────────
+dn: ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: groups
+
+# ── Users ──────────────────────────────────────────────────────────────────
+# 15 inetOrgPerson entries split across three teams so the nested-group
+# resolution test (P4) has interesting structure: an outer group
+# `cn=allTechStaff` whose members are the two team-level groups
+# (`cn=engineering`, `cn=design`); `isMemberOf` on a user should report
+# both their direct team group and the outer aggregate.
+#
+# Every user's userPassword is their uid (e.g. alice.smith → alice.smith).
+# Lengthen / scramble before exposing anywhere non-local.
+
+dn: uid=alice.smith,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice.smith
+cn: Alice Smith
+sn: Smith
+givenName: Alice
+mail: alice.smith@oudtest.example.com
+userPassword: alice.smith
+title: Staff Engineer
+departmentNumber: ENG
+
+dn: uid=bob.jones,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: bob.jones
+cn: Bob Jones
+sn: Jones
+givenName: Bob
+mail: bob.jones@oudtest.example.com
+userPassword: bob.jones
+title: Senior Engineer
+departmentNumber: ENG
+
+dn: uid=carol.davis,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol.davis
+cn: Carol Davis
+sn: Davis
+givenName: Carol
+mail: carol.davis@oudtest.example.com
+userPassword: carol.davis
+title: Engineering Manager
+departmentNumber: ENG
+
+dn: uid=david.lee,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: david.lee
+cn: David Lee
+sn: Lee
+givenName: David
+mail: david.lee@oudtest.example.com
+userPassword: david.lee
+title: Engineer
+departmentNumber: ENG
+
+dn: uid=eve.martinez,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: eve.martinez
+cn: Eve Martinez
+sn: Martinez
+givenName: Eve
+mail: eve.martinez@oudtest.example.com
+userPassword: eve.martinez
+title: Engineer
+departmentNumber: ENG
+
+dn: uid=frank.nguyen,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: frank.nguyen
+cn: Frank Nguyen
+sn: Nguyen
+givenName: Frank
+mail: frank.nguyen@oudtest.example.com
+userPassword: frank.nguyen
+title: Senior Designer
+departmentNumber: DES
+
+dn: uid=grace.oconnor,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: grace.oconnor
+cn: Grace O'Connor
+sn: O'Connor
+givenName: Grace
+mail: grace.oconnor@oudtest.example.com
+userPassword: grace.oconnor
+title: Design Manager
+departmentNumber: DES
+
+dn: uid=henry.park,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: henry.park
+cn: Henry Park
+sn: Park
+givenName: Henry
+mail: henry.park@oudtest.example.com
+userPassword: henry.park
+title: Designer
+departmentNumber: DES
+
+dn: uid=isabel.quinn,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: isabel.quinn
+cn: Isabel Quinn
+sn: Quinn
+givenName: Isabel
+mail: isabel.quinn@oudtest.example.com
+userPassword: isabel.quinn
+title: Designer
+departmentNumber: DES
+
+dn: uid=jack.rivera,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jack.rivera
+cn: Jack Rivera
+sn: Rivera
+givenName: Jack
+mail: jack.rivera@oudtest.example.com
+userPassword: jack.rivera
+title: Product Manager
+departmentNumber: PM
+
+dn: uid=kate.singh,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: kate.singh
+cn: Kate Singh
+sn: Singh
+givenName: Kate
+mail: kate.singh@oudtest.example.com
+userPassword: kate.singh
+title: Senior Product Manager
+departmentNumber: PM
+
+dn: uid=liam.thomas,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: liam.thomas
+cn: Liam Thomas
+sn: Thomas
+givenName: Liam
+mail: liam.thomas@oudtest.example.com
+userPassword: liam.thomas
+title: Product Manager
+departmentNumber: PM
+
+dn: uid=mona.usman,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: mona.usman
+cn: Mona Usman
+sn: Usman
+givenName: Mona
+mail: mona.usman@oudtest.example.com
+userPassword: mona.usman
+title: Operations Lead
+departmentNumber: OPS
+
+dn: uid=noah.vargas,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: noah.vargas
+cn: Noah Vargas
+sn: Vargas
+givenName: Noah
+mail: noah.vargas@oudtest.example.com
+userPassword: noah.vargas
+title: HR Business Partner
+departmentNumber: HR
+
+dn: uid=olivia.wang,ou=people,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: olivia.wang
+cn: Olivia Wang
+sn: Wang
+givenName: Olivia
+mail: olivia.wang@oudtest.example.com
+userPassword: olivia.wang
+title: Finance Analyst
+departmentNumber: FIN
+
+# ── Groups ─────────────────────────────────────────────────────────────────
+# Engineering team — flat membership.
+dn: cn=engineering,ou=groups,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: engineering
+description: Engineering team — all engineers and engineering managers.
+uniqueMember: uid=alice.smith,ou=people,dc=oudtest,dc=example,dc=com
+uniqueMember: uid=bob.jones,ou=people,dc=oudtest,dc=example,dc=com
+uniqueMember: uid=carol.davis,ou=people,dc=oudtest,dc=example,dc=com
+uniqueMember: uid=david.lee,ou=people,dc=oudtest,dc=example,dc=com
+uniqueMember: uid=eve.martinez,ou=people,dc=oudtest,dc=example,dc=com
+
+# Design team — flat membership.
+dn: cn=design,ou=groups,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: design
+description: Design team — designers and the design manager.
+uniqueMember: uid=frank.nguyen,ou=people,dc=oudtest,dc=example,dc=com
+uniqueMember: uid=grace.oconnor,ou=people,dc=oudtest,dc=example,dc=com
+uniqueMember: uid=henry.park,ou=people,dc=oudtest,dc=example,dc=com
+uniqueMember: uid=isabel.quinn,ou=people,dc=oudtest,dc=example,dc=com
+
+# Nested aggregate — members are the two team-level groups, not users.
+# Exercises P4: a search for entries where `isMemberOf` contains
+# cn=allTechStaff should resolve every engineering + design user, even
+# though no user is a direct uniqueMember of cn=allTechStaff.
+dn: cn=allTechStaff,ou=groups,dc=oudtest,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: allTechStaff
+description: All tech staff (engineering + design) — nested group.
+uniqueMember: cn=engineering,ou=groups,dc=oudtest,dc=example,dc=com
+uniqueMember: cn=design,ou=groups,dc=oudtest,dc=example,dc=com
