@@ -33,22 +33,33 @@ public class ReplicationEventTxOps {
     private final ReplicationEventRepository eventRepo;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public int tryClaim(UUID eventId) {
-        return eventRepo.tryClaim(eventId);
+    public int tryClaim(UUID eventId, OffsetDateTime now) {
+        return eventRepo.tryClaim(eventId, now);
     }
 
+    /**
+     * @return {@code true} when the row was actually flipped to
+     *         DELIVERED; {@code false} when the IN_FLIGHT guard
+     *         filtered the update (claim revoked by operator-retry
+     *         or stale-reset, or already settled by another worker).
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void markDelivered(UUID eventId) {
-        eventRepo.markDelivered(eventId, OffsetDateTime.now());
+    public boolean markDelivered(UUID eventId) {
+        return eventRepo.markDelivered(eventId, OffsetDateTime.now()) == 1;
     }
 
+    /**
+     * @return {@code true} when the row was actually updated to the
+     *         new failure status; {@code false} when the IN_FLIGHT
+     *         guard filtered the update.
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void markFailure(UUID eventId,
-                             ReplicationEventStatus status,
-                             int attempts,
-                             OffsetDateTime nextAttemptAt,
-                             String lastError) {
-        eventRepo.markFailure(eventId, status, attempts, nextAttemptAt, lastError);
+    public boolean markFailure(UUID eventId,
+                                ReplicationEventStatus status,
+                                int attempts,
+                                OffsetDateTime nextAttemptAt,
+                                String lastError) {
+        return eventRepo.markFailure(eventId, status, attempts, nextAttemptAt, lastError) == 1;
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

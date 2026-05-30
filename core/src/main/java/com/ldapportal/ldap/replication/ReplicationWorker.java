@@ -115,7 +115,7 @@ public class ReplicationWorker {
      */
     void drainOne(UUID linkId, OffsetDateTime now) {
         eventRepo.findEarliestClaimableForLink(linkId, now).ifPresent(event -> {
-            int claimed = txOps.tryClaim(event.getId());
+            int claimed = txOps.tryClaim(event.getId(), now);
             if (claimed == 0) {
                 log.debug("Event {} claim race lost — skipping", event.getId());
                 return;
@@ -127,7 +127,14 @@ public class ReplicationWorker {
     private void deliverAndSettle(ReplicationEvent event) {
         ReplicationDelivery.DeliveryResult result = delivery.deliver(event);
         if (result.success()) {
-            txOps.markDelivered(event.getId());
+            boolean settled = txOps.markDelivered(event.getId());
+            if (!settled) {
+                // Claim was revoked while we held it (operator retry
+                // or stale-reset sweep) — drop the result rather than
+                // overwrite whatever the new owner produced.
+                log.warn("Replication event {} delivered but claim was revoked — " +
+                        "skipping settlement", event.getId());
+            }
             return;
         }
         settleFailure(event, result.errorMessage());
@@ -137,11 +144,16 @@ public class ReplicationWorker {
         int newAttempts = event.getAttempts() + 1;
         ReplicationBackoffPolicy.Outcome outcome =
                 ReplicationBackoffPolicy.computeOutcome(newAttempts, OffsetDateTime.now());
-        txOps.markFailure(event.getId(),
+        boolean settled = txOps.markFailure(event.getId(),
                 outcome.status(),
                 newAttempts,
                 outcome.nextAttemptAt(),
                 errorMessage);
+        if (!settled) {
+            log.warn("Replication event {} failed but claim was revoked — " +
+                    "skipping failure settlement", event.getId());
+            return;
+        }
         if (outcome.status() == ReplicationEventStatus.DEAD_LETTERED) {
             log.warn("Replication event {} dead-lettered after {} attempts: {}",
                     event.getId(), newAttempts, errorMessage);

@@ -62,22 +62,31 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
 
     /**
      * Atomic claim: transition an event from PENDING / FAILED to
-     * IN_FLIGHT. Returns 1 if the caller won the race, 0 if another
-     * worker beat them to it. The version-style guard is the WHERE
-     * clause on current status — equivalent to compare-and-swap.
+     * IN_FLIGHT and stamp {@code claimed_at} so the stale-reset sweep
+     * can age the claim. Returns 1 if the caller won the race, 0 if
+     * another worker beat them to it. The version-style guard is the
+     * WHERE clause on current status — equivalent to compare-and-swap.
      */
     @Modifying
     @Query("""
         UPDATE ReplicationEvent e
-        SET e.status = com.ldapportal.entity.enums.ReplicationEventStatus.IN_FLIGHT
+        SET e.status     = com.ldapportal.entity.enums.ReplicationEventStatus.IN_FLIGHT,
+            e.claimedAt  = :now
         WHERE e.id = :id
           AND e.status IN ('PENDING', 'FAILED')
         """)
-    int tryClaim(@Param("id") UUID id);
+    int tryClaim(@Param("id") UUID id, @Param("now") OffsetDateTime now);
 
     /**
      * Settle a successful delivery. Caller marks the row DELIVERED with
      * the delivery timestamp; no further worker activity touches it.
+     *
+     * <p>The {@code AND e.status = IN_FLIGHT} guard prevents an
+     * in-flight worker's settlement from silently overwriting state
+     * after an operator's Retry, the stale-reset sweep, or another
+     * worker re-claiming the same row. A 0-row return tells the worker
+     * its claim was revoked and it should drop the result rather than
+     * race the new owner.
      */
     @Modifying
     @Query("""
@@ -87,6 +96,7 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
             e.nextAttemptAt = NULL,
             e.lastError     = NULL
         WHERE e.id = :id
+          AND e.status = com.ldapportal.entity.enums.ReplicationEventStatus.IN_FLIGHT
         """)
     int markDelivered(@Param("id") UUID id, @Param("deliveredAt") OffsetDateTime deliveredAt);
 
@@ -95,6 +105,10 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
      * status (FAILED with retry pending, or DEAD_LETTERED with no
      * retry budget left) and the next attempt time per the backoff
      * policy.
+     *
+     * <p>Same IN_FLIGHT guard rationale as {@link #markDelivered} —
+     * once an operator or the stale-reset sweep has revoked the
+     * claim, this worker's failure verdict is stale.
      */
     @Modifying
     @Query("""
@@ -104,6 +118,7 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
             e.nextAttemptAt = :nextAttemptAt,
             e.lastError     = :lastError
         WHERE e.id = :id
+          AND e.status = com.ldapportal.entity.enums.ReplicationEventStatus.IN_FLIGHT
         """)
     int markFailure(@Param("id") UUID id,
                     @Param("status") ReplicationEventStatus status,
@@ -147,14 +162,25 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
      * this, a JVM crash mid-delivery permanently wedges an event
      * (and behind it, every later event for the same link via the
      * per-link FIFO).
+     *
+     * <p>Predicate is {@code claimed_at < threshold}, NOT
+     * {@code enqueued_at < threshold}: the latter would false-reset
+     * any backlog event the instant a worker claims it (a row
+     * enqueued two hours ago, just claimed, is "older than 10
+     * minutes" by enqueued_at but only "older than seconds" by
+     * claim time). The mistaken reset opens a double-delivery window
+     * since the worker's in-flight LDAP round-trip runs outside any
+     * DB transaction.
      */
     @Modifying
     @Query("""
         UPDATE ReplicationEvent e
-        SET e.status = com.ldapportal.entity.enums.ReplicationEventStatus.PENDING,
-            e.nextAttemptAt = NULL
+        SET e.status        = com.ldapportal.entity.enums.ReplicationEventStatus.PENDING,
+            e.nextAttemptAt = NULL,
+            e.claimedAt     = NULL
         WHERE e.status = com.ldapportal.entity.enums.ReplicationEventStatus.IN_FLIGHT
-          AND e.enqueuedAt < :threshold
+          AND e.claimedAt IS NOT NULL
+          AND e.claimedAt < :threshold
         """)
     int resetStaleInFlight(@Param("threshold") OffsetDateTime threshold);
 
@@ -192,24 +218,40 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
 
     /**
      * Operator-initiated retry: flip a FAILED / DEAD_LETTERED /
-     * SKIPPED / ACKNOWLEDGED / IN_FLIGHT event back to PENDING so the
-     * worker picks it up on the next tick. Resets retry timing but
-     * preserves attempts (so the backoff continues from where it was
-     * — not "fresh start" semantics, which would let an operator
-     * infinite-loop a hopeless event).
+     * SKIPPED / ACKNOWLEDGED event back to PENDING so the worker
+     * picks it up on the next tick. Resets {@code attempts} to 0
+     * (so the full backoff budget is available again) and clears
+     * {@code nextAttemptAt} so the very next worker tick picks it up.
      *
-     * <p>IN_FLIGHT is included because the worker's automated stale-
-     * reset runs on a long interval (10 minutes); operators who need
-     * to recover from a known-crashed worker faster than that should
-     * be able to retry directly without DBA help.
+     * <p>{@code attempts = 0} is intentional even though it lets a
+     * stubborn operator infinite-loop a hopeless event. The previous
+     * "preserve attempts" rule produced exactly one delivery shot
+     * before re-DLQing — a worse UX for the common case (operator
+     * fixed the underlying target / network issue) than the rare
+     * edge case (operator retries the same broken event forever).
+     * Operators with truly hopeless events have SKIP / ACKNOWLEDGE
+     * available; this surface is for the "I fixed it, try again"
+     * case and should restore a full retry budget.
+     *
+     * <p>IN_FLIGHT is deliberately excluded. The previous shape
+     * allowed retrying IN_FLIGHT rows to recover from a known-crashed
+     * worker faster than the stale-reset sweep — but that opened a
+     * double-delivery race against a still-alive in-flight worker
+     * (the LDAP round-trip runs outside any DB transaction; the
+     * operator's flip and the worker's settlement aren't ordered).
+     * The stale-reset sweep, now correctly keyed on {@code claimed_at}
+     * instead of {@code enqueued_at}, handles crash recovery within
+     * 10 minutes; operators wanting faster recovery should restart
+     * the worker process.
      */
     @Modifying
     @Query("""
         UPDATE ReplicationEvent e
         SET e.status        = com.ldapportal.entity.enums.ReplicationEventStatus.PENDING,
-            e.nextAttemptAt = NULL
+            e.nextAttemptAt = NULL,
+            e.attempts      = 0
         WHERE e.id = :id
-          AND e.status IN ('FAILED', 'DEAD_LETTERED', 'SKIPPED', 'ACKNOWLEDGED', 'IN_FLIGHT')
+          AND e.status IN ('FAILED', 'DEAD_LETTERED', 'SKIPPED', 'ACKNOWLEDGED')
         """)
     int retryByOperator(@Param("id") UUID id);
 

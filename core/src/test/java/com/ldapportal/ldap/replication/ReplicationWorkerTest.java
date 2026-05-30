@@ -59,7 +59,7 @@ class ReplicationWorkerTest {
         ReplicationEvent event = event(linkId);
         when(eventRepo.findLinkIdsWithClaimableEvents(any())).thenReturn(List.of(linkId));
         when(eventRepo.findEarliestClaimableForLink(eq(linkId), any())).thenReturn(Optional.of(event));
-        when(txOps.tryClaim(event.getId())).thenReturn(0);  // race lost
+        when(txOps.tryClaim(eq(event.getId()), any())).thenReturn(0);  // race lost
 
         worker.drainQueue();
 
@@ -121,6 +121,9 @@ class ReplicationWorkerTest {
         stubClaim(linkId, event, 1);
         when(delivery.deliver(event)).thenReturn(
                 new ReplicationDelivery.DeliveryResult(false, null, "still failing"));
+        // markFailure settled successfully (claim wasn't revoked) so
+        // the DEAD_LETTERED audit must fire.
+        when(txOps.markFailure(any(), any(), anyInt(), any(), any())).thenReturn(true);
 
         worker.drainQueue();
 
@@ -131,6 +134,29 @@ class ReplicationWorkerTest {
         assertThat(statusCap.getValue()).isEqualTo(ReplicationEventStatus.DEAD_LETTERED);
         verify(auditService).recordSystemEventNoActor(
                 eq(AuditAction.REPLICATION_EVENT_DEAD_LETTERED), any());
+    }
+
+    @Test
+    void deadLetterAuditSuppressed_whenClaimRevokedMidFlight() {
+        // Defensive: if the IN_FLIGHT claim was revoked while we held
+        // it (operator clicked Retry on the dashboard, or the stale-
+        // reset sweep ran in a separate process), markFailure returns
+        // false because the WHERE-status guard filtered the update.
+        // The worker MUST suppress the DEAD_LETTERED audit in that
+        // case — the row is no longer ours to dead-letter, and another
+        // owner's verdict is what counts.
+        UUID linkId = UUID.randomUUID();
+        ReplicationEvent event = event(linkId);
+        event.setOperation(ReplicationOperationType.MODIFY);
+        event.setAttempts(ReplicationBackoffPolicy.MAX_ATTEMPTS);
+        stubClaim(linkId, event, 1);
+        when(delivery.deliver(event)).thenReturn(
+                new ReplicationDelivery.DeliveryResult(false, null, "still failing"));
+        when(txOps.markFailure(any(), any(), anyInt(), any(), any())).thenReturn(false);
+
+        worker.drainQueue();
+
+        verify(auditService, never()).recordSystemEventNoActor(any(), any());
     }
 
     @Test
@@ -162,7 +188,7 @@ class ReplicationWorkerTest {
         when(eventRepo.findLinkIdsWithClaimableEvents(any())).thenReturn(List.of(linkA, linkB));
         when(eventRepo.findEarliestClaimableForLink(eq(linkA), any())).thenReturn(Optional.of(eventA));
         when(eventRepo.findEarliestClaimableForLink(eq(linkB), any())).thenReturn(Optional.of(eventB));
-        when(txOps.tryClaim(any())).thenReturn(1);
+        when(txOps.tryClaim(any(), any())).thenReturn(1);
         when(delivery.deliver(any())).thenReturn(
                 new ReplicationDelivery.DeliveryResult(true, ResultCode.SUCCESS, null));
 
@@ -213,7 +239,7 @@ class ReplicationWorkerTest {
     private void stubClaim(UUID linkId, ReplicationEvent event, int claimResult) {
         when(eventRepo.findLinkIdsWithClaimableEvents(any())).thenReturn(List.of(linkId));
         when(eventRepo.findEarliestClaimableForLink(eq(linkId), any())).thenReturn(Optional.of(event));
-        when(txOps.tryClaim(event.getId())).thenReturn(claimResult);
+        when(txOps.tryClaim(eq(event.getId()), any())).thenReturn(claimResult);
     }
 
     private ReplicationEvent event(UUID linkId) {

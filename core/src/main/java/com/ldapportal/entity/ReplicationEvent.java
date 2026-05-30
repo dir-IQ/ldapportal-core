@@ -97,6 +97,16 @@ public class ReplicationEvent {
     @Column(name = "enqueued_at", nullable = false, updatable = false)
     private OffsetDateTime enqueuedAt;
 
+    /**
+     * When the row last transitioned to IN_FLIGHT, or NULL if never
+     * claimed. Drives the stale-reset sweep — using {@code enqueuedAt}
+     * for that purpose would false-reset old events the instant they
+     * get claimed (a backlog drain or a long-delayed retry has
+     * {@code now() - enqueuedAt} already past the 10-minute threshold).
+     */
+    @Column(name = "claimed_at")
+    private OffsetDateTime claimedAt;
+
     @Column(name = "delivered_at")
     private OffsetDateTime deliveredAt;
 }
