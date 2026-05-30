@@ -93,16 +93,14 @@ public class ReplicationEnqueuer {
                 return;
             }
 
-            // Source-side trace id (R2). Prefer one the wrapper stamped on
-            // the captured write; otherwise read the active correlation
-            // scope, minting an ephemeral one if this write happens outside
-            // any (so every replication event payload carries a non-null
-            // id). currentOrEphemeral() deliberately does NOT install the
-            // minted id, so a write on a pooled scheduler/async thread
-            // doesn't leak it into the next task on that thread.
-            UUID correlationId = write.correlationId() != null
-                    ? write.correlationId()
-                    : CorrelationContext.currentOrEphemeral();
+            // Source-side trace id (R2). enqueue runs synchronously on the
+            // originating write thread, so the active correlation scope is
+            // the originating operation's. currentOrEphemeral() mints one
+            // when there's no scope (e.g. a background write) WITHOUT
+            // installing it, so a pooled scheduler/async thread doesn't leak
+            // the id into its next task. Every event payload gets a non-null
+            // id; this work is reached only when there are links to replicate.
+            UUID correlationId = CorrelationContext.currentOrEphemeral();
 
             List<PendingReplicationEvent> pending = new ArrayList<>(links.size());
             for (ReplicationLinkSnapshot link : links) {

@@ -43,19 +43,32 @@ class WriteSurfaceCoverageTest {
     private static final Set<String> MUTATING_METHODS =
             Set.of("add", "modify", "delete", "modifyDN");
 
+    /**
+     * The UnboundID write surface. {@code add}/{@code modify}/{@code delete}/
+     * {@code modifyDN} are declared on {@link com.unboundid.ldap.sdk.LDAPInterface};
+     * the concrete receivers callers hold are these types. We match the
+     * <em>declared owner</em> against this set by fully-qualified name rather
+     * than a broad {@code com.unboundid.ldap.sdk.*} package prefix, so an
+     * unrelated SDK class that merely happens to expose a method named
+     * {@code add}/{@code delete}/etc. can't trip the rule.
+     */
+    private static final Set<String> LDAP_WRITE_OWNERS = Set.of(
+            "com.unboundid.ldap.sdk.LDAPInterface",
+            "com.unboundid.ldap.sdk.FullLDAPInterface",
+            "com.unboundid.ldap.sdk.LDAPConnection",
+            "com.unboundid.ldap.sdk.LDAPConnectionPool");
+
     /** A call to a mutating method whose target owner is an UnboundID LDAP interface. */
     private static boolean isMutatingLdapCall(JavaMethodCall call) {
         if (!MUTATING_METHODS.contains(call.getTarget().getName())) {
             return false;
         }
         JavaClass owner = call.getTargetOwner();
-        // Match by owner type: the UnboundID write surface (LDAPInterface
-        // and everything assignable to it — LDAPConnection,
-        // FullLDAPInterface, LDAPConnectionPool). Falling back to the
-        // package guards against the SDK hierarchy not being fully resolved
-        // at import time.
+        // isAssignableTo catches subtypes when the SDK hierarchy resolved at
+        // import time; the explicit name set is the robust fallback (and the
+        // precise allow-list) covering the four write-surface owner types.
         return owner.isAssignableTo("com.unboundid.ldap.sdk.LDAPInterface")
-                || owner.getName().startsWith("com.unboundid.ldap.sdk.");
+                || LDAP_WRITE_OWNERS.contains(owner.getName());
     }
 
     private static final ArchCondition<JavaClass> BE_AUTHORIZED_IF_ISSUING_MUTATING_LDAP_CALLS =

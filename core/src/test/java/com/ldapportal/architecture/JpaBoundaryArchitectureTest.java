@@ -59,7 +59,11 @@ class JpaBoundaryArchitectureTest {
                     .orShould().dependOnClassesThat().haveFullyQualifiedName(REPLICATION_EVENT)
                     .because("JPA entities must not cross out of the snapshot/persistence "
                            + "boundary. Use a ReplicationLinkSnapshot / ReplicationEventSnapshot "
-                           + "obtained from ReplicationReadOps inside a @Transactional method.");
+                           + "obtained from ReplicationReadOps inside a @Transactional method.")
+                    // Fail (not vacuously pass) if the subject set is empty —
+                    // e.g. the replication package was renamed/moved and this
+                    // rule's package matcher silently stopped matching anything.
+                    .allowEmptyShould(false);
 
     /**
      * The outbox entities ({@link com.ldapportal.core.events.entity.OutboxEntry},

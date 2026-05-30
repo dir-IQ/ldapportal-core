@@ -70,31 +70,6 @@ public class AuditService {
                        AuditAction action,
                        String targetDn,
                        Map<String, Object> detail) {
-        doRecord(principal, directoryId, action, targetDn, detail, resolveCorrelation(null));
-    }
-
-    /**
-     * Explicit-correlation overload for cross-thread callers where the
-     * {@link CorrelationContext} ThreadLocal won't have propagated. A null
-     * {@code correlationId} falls back to the current context.
-     */
-    @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void record(AuthPrincipal principal,
-                       UUID directoryId,
-                       AuditAction action,
-                       String targetDn,
-                       Map<String, Object> detail,
-                       UUID correlationId) {
-        doRecord(principal, directoryId, action, targetDn, detail, resolveCorrelation(correlationId));
-    }
-
-    private void doRecord(AuthPrincipal principal,
-                          UUID directoryId,
-                          AuditAction action,
-                          String targetDn,
-                          Map<String, Object> detail,
-                          UUID correlationId) {
         try {
             DirectoryConnection dir = dirRepo.findById(directoryId).orElse(null);
             String dirName = dir != null ? dir.getDisplayName() : null;
@@ -111,7 +86,7 @@ public class AuditService {
                     .action(action)
                     .targetDn(targetDn)
                     .detail(enrichedDetail)
-                    .correlationId(correlationId)
+                    .correlationId(currentCorrelation())
                     .occurredAt(OffsetDateTime.now())
                     .build();
 
@@ -173,17 +148,6 @@ public class AuditService {
     // ── System-level events (non-directory) ───────────────────────────────────
 
     /**
-     * Records a non-directory audit event — used for system-level actions
-     * like API token CRUD where no {@link DirectoryConnection} is involved.
-     *
-     * <p>Async + own transaction + swallow-on-failure, matching
-     * {@link #record}. Safe to call from request threads without blocking.</p>
-     *
-     * @param principal the acting principal (must be non-null)
-     * @param action    the lifecycle action being recorded
-     * @param detail    optional payload — tokenId, tokenName, etc.
-     */
-    /**
      * Record a system-level audit event with no actor — used for
      * background-worker transitions where no human or token initiated
      * the change. Currently used by the directory-sync worker to
@@ -195,31 +159,12 @@ public class AuditService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordSystemEventNoActor(AuditAction action,
                                           Map<String, Object> detail) {
-        doRecordSystemEventNoActor(action, detail, resolveCorrelation(null));
-    }
-
-    /**
-     * Explicit-correlation overload used by the replication worker, which
-     * stamps the delivery-side correlation id (the source-side id travels
-     * in {@code detail.sourceCorrelationId}).
-     */
-    @Async
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void recordSystemEventNoActor(AuditAction action,
-                                          Map<String, Object> detail,
-                                          UUID correlationId) {
-        doRecordSystemEventNoActor(action, detail, resolveCorrelation(correlationId));
-    }
-
-    private void doRecordSystemEventNoActor(AuditAction action,
-                                            Map<String, Object> detail,
-                                            UUID correlationId) {
         try {
             AuditEvent event = AuditEvent.builder()
                     .source(AuditSource.INTERNAL)
                     .action(action)
                     .detail(detail)
-                    .correlationId(correlationId)
+                    .correlationId(currentCorrelation())
                     .occurredAt(OffsetDateTime.now())
                     .build();
             auditRepo.save(event);
@@ -244,7 +189,7 @@ public class AuditService {
                     .actorUsername(principal.username())
                     .action(action)
                     .detail(detail)
-                    .correlationId(resolveCorrelation(null))
+                    .correlationId(currentCorrelation())
                     .occurredAt(OffsetDateTime.now())
                     .build();
 
@@ -258,13 +203,13 @@ public class AuditService {
     }
 
     /**
-     * Resolve the correlation id to stamp on an audit row: the explicit
-     * value when supplied, otherwise the active {@link CorrelationContext}
-     * scope (propagated onto async threads by the task decorator), else
-     * null.
+     * The correlation id to stamp on an audit row: the active
+     * {@link CorrelationContext} scope (set by the request filter or a
+     * scheduler/worker scope, and propagated onto {@code @Async} threads by
+     * the task decorator), or null when no scope is active.
      */
-    private static UUID resolveCorrelation(UUID explicit) {
-        return explicit != null ? explicit : CorrelationContext.current().orElse(null);
+    private static UUID currentCorrelation() {
+        return CorrelationContext.current().orElse(null);
     }
 
     // ── Detail enrichment ─────────────────────────────────────────────────────

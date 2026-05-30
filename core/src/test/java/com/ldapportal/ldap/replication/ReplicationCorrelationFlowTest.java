@@ -59,20 +59,7 @@ class ReplicationCorrelationFlowTest {
     }
 
     @Test
-    void wrapperStampedCorrelation_reachesPayload() {
-        UUID source = UUID.randomUUID();
-        UUID correlation = UUID.randomUUID();
-        when(readOps.snapshotsForSource(source)).thenReturn(List.of(link()));
-
-        enqueuer.enqueue(source, CapturedWrite
-                .add("uid=alice,dc=src,dc=com", List.of(new Attribute("uid", "alice")))
-                .withCorrelation(correlation));
-
-        assertThat(capturedCorrelationId()).isEqualTo(correlation.toString());
-    }
-
-    @Test
-    void ambientScopeCorrelation_reachesPayload_whenWriteUnstamped() {
+    void ambientScopeCorrelation_reachesPayload() {
         UUID source = UUID.randomUUID();
         UUID correlation = UUID.randomUUID();
         when(readOps.snapshotsForSource(source)).thenReturn(List.of(link()));
