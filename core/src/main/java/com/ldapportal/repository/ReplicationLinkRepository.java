@@ -8,10 +8,22 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 @Repository
 public interface ReplicationLinkRepository extends JpaRepository<ReplicationLink, UUID> {
+
+    /**
+     * First link, if any, with exactly this (source, target) directory
+     * pair — <b>regardless of {@code enabled} state</b>. Backs the
+     * bidirectional-rejection guard: a new A→B link is refused when a
+     * B→A link already exists. Matching on enabled-only would let an
+     * operator pause B→A, create A→B, then re-enable B→A and have a
+     * hidden replication loop, so this intentionally ignores enabled.
+     */
+    Optional<ReplicationLink> findFirstBySourceDirectoryIdAndTargetDirectoryId(
+            UUID sourceDirectoryId, UUID targetDirectoryId);
 
     /**
      * All enabled links whose source is the given directory. Called

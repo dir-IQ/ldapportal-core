@@ -168,6 +168,21 @@ public class ReplicationLinkService {
             throw new IllegalArgumentException(
                     "sourceBaseDn and targetBaseDn must both be set or both null");
         }
+        // Bidirectional-rejection guard (create only). Reject A→B when a
+        // B→A link already exists, regardless of either link's enabled
+        // state — rejecting only enabled links would let an operator
+        // pause B→A, create A→B, then re-enable B→A and re-arm a hidden
+        // loop. v1 replication has no origin stamping to break such loops.
+        if (updatingId == null) {
+            linkRepo.findFirstBySourceDirectoryIdAndTargetDirectoryId(
+                            req.targetDirectoryId(), req.sourceDirectoryId())
+                    .ifPresent(existing -> {
+                        throw new IllegalArgumentException(
+                                "Would create reverse of existing link " + existing.getId()
+                              + " — bidirectional configurations require origin-stamped "
+                              + "events, not in v1. Disable or delete the reverse link first.");
+                    });
+        }
     }
 
     private void applyRequest(ReplicationLink link, ReplicationLinkRequest req) {
