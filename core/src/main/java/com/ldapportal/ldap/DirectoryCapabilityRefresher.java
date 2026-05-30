@@ -9,37 +9,32 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.util.Optional;
 
 /**
- * Post-commit handler that runs the root-DSE capability probe and
- * persists the snapshot on the directory connection. Wired this way
- * rather than inline in {@code DirectoryConnectionService} so that:
+ * Post-commit handler that probes the directory's root DSE and writes
+ * the snapshot back to the {@code capabilities} JSONB column.
  *
- * <ol>
- *   <li>The LDAP network round-trip never sits inside the save's
- *       {@code @Transactional} boundary — saves return in DB time,
- *       not LDAP time, so a misconfigured / unreachable host doesn't
- *       hold row locks for up to {@code poolConnectTimeoutSeconds +
- *       poolResponseTimeoutSeconds} (default 40s) and can't exhaust
- *       the HikariCP pool under concurrent admin activity.</li>
- *   <li>The probe-time {@link LdapConnectionFactory} pool creation
- *       cannot leak under a rolled-back UUID. The
- *       {@link TransactionPhase#AFTER_COMMIT} phase guarantees the
- *       row exists in the DB before the probe runs; if the create
- *       transaction rolled back, the saved event never fires.</li>
- * </ol>
+ * <p>Critical resource-ordering invariant: <b>no DB connection is held
+ * across the LDAP probe</b>. The method is plain — no {@code @Transactional}
+ * — so {@code findById} runs in its own auto-commit read, the probe
+ * runs with no DB context at all, and the writer below opens a tiny
+ * transaction only for the targeted UPDATE. Without this split, a
+ * misconfigured / unreachable host would pin a HikariCP connection
+ * for up to {@code poolConnectTimeoutSeconds + poolResponseTimeoutSeconds}
+ * (default 40s) on every refresh, starving the pool under any burst
+ * of saves.
  *
- * <p>The probe persists in a separate {@code REQUIRES_NEW} transaction
- * because the originating one has already committed. Failures here are
- * logged and swallowed — capabilities being null is a recognised state
- * the UI handles by hiding the vendor chip (or rendering the
- * type-label fallback when probed-with-no-vendor returns a snapshot).
+ * <p>All errors are caught and logged. The listener runs {@code @Async}
+ * on Spring's default executor, and a bare {@code RuntimeException}
+ * propagating out of an async listener is consumed by
+ * {@code SimpleAsyncUncaughtExceptionHandler} with a single warn-level
+ * line that operators don't watch — so the outer catch is there to
+ * keep every failure visible at error level and tagged with the
+ * directory id.
  */
 @Component
 @RequiredArgsConstructor
@@ -48,34 +43,36 @@ public class DirectoryCapabilityRefresher {
 
     private final DirectoryConnectionRepository dirRepo;
     private final LdapCapabilityProbeService    probeService;
+    private final CapabilityWriter              writer;
 
-    /**
-     * Async so the calling thread (the HTTP request handler that just
-     * committed the directory save) returns immediately. Annotation
-     * picks up Spring's default async executor; if the deployment
-     * disables {@code @EnableAsync}, listeners fall back to running
-     * inline on the publisher thread — still after commit, just not
-     * off the request thread.
-     */
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onDirectorySaved(DirectoryConnectionSavedEvent event) {
-        Optional<DirectoryConnection> opt = dirRepo.findById(event.directoryId());
-        if (opt.isEmpty()) {
-            log.debug("Directory {} no longer exists at refresh time — skipping probe", event.directoryId());
-            return;
-        }
-        DirectoryConnection dc = opt.get();
-        DirectoryCapabilities caps = probeService.probe(dc);
-        // Null caps means: probe was skipped (Entra) or failed (network /
-        // RBAC / server hides root DSE). Either way, leave the row's
-        // capabilities column as set by DirectoryConnectionService —
-        // which clears it on type/host change so a stale snapshot from a
-        // previous vendor can't survive the rename.
-        if (caps != null) {
-            dc.setCapabilities(caps);
-            dirRepo.save(dc);
+        try {
+            Optional<DirectoryConnection> opt = dirRepo.findById(event.directoryId());
+            if (opt.isEmpty()) {
+                log.debug("Directory {} no longer exists at refresh time — skipping probe",
+                        event.directoryId());
+                return;
+            }
+            DirectoryConnection dc = opt.get();
+            DirectoryCapabilities caps = probeService.probe(dc);
+            if (caps == null) {
+                // Null caps means: probe was skipped (Entra) or failed
+                // (network / RBAC / server hides root DSE). The save path
+                // explicitly clears capabilities on update, so leaving it
+                // alone here keeps a stale snapshot from outliving the
+                // host/credential change that triggered this event.
+                return;
+            }
+            int rows = writer.persistCapabilities(event.directoryId(), caps);
+            if (rows == 0) {
+                log.debug("Directory {} deleted between probe and persist — skipping",
+                        event.directoryId());
+            }
+        } catch (Exception ex) {
+            log.error("Capability refresh failed for directory {}: {}",
+                    event.directoryId(), ex.toString());
         }
     }
 }

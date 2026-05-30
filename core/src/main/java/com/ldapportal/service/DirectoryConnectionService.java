@@ -126,7 +126,6 @@ public class DirectoryConnectionService {
     @Transactional
     public DirectoryConnectionResponse updateDirectory(UUID id, DirectoryConnectionRequest req) {
         DirectoryConnection dc = require(id);
-        var previousType = dc.getDirectoryType();
         applyRequest(dc, req);
 
         if (req.bindPassword() != null && !req.bindPassword().isBlank()) {
@@ -136,23 +135,24 @@ public class DirectoryConnectionService {
             dc.setEntraClientSecretEncrypted(encryptionService.encrypt(req.entraClientSecret()));
         }
 
-        // When the operator changes the directory type, the previous
-        // capabilities snapshot is now describing the wrong vendor — clear
-        // it so the post-commit re-probe is the only thing that can put a
-        // vendor chip back, and a probe failure leaves the row in a
-        // truthful "unknown" state rather than displaying e.g. "Oracle
-        // Corporation 12.x" next to an OPENLDAP-typed row.
-        if (previousType != dc.getDirectoryType()) {
-            dc.setCapabilities(null);
-        }
+        // Clear capabilities on every update — host / port / credentials
+        // / type may have changed, and any one of those invalidates the
+        // stored vendor / OID snapshot. Clearing unconditionally (rather
+        // than guessing which subset of fields matters) keeps the invariant
+        // simple: between updateDirectory commit and the AFTER_COMMIT
+        // probe completing, the chip is hidden. A probe failure then
+        // leaves the row in a truthful "unknown" state rather than
+        // displaying stale vendor data from a previous host.
+        dc.setCapabilities(null);
 
         connectionFactory.evict(dc.getId());
         dc = dirRepo.save(dc);
         saveBaseDns(dc, req);
 
-        // Re-probe out-of-band — host / port / credentials / type may
-        // have changed, so the stored snapshot needs a refresh. Runs in
-        // DirectoryCapabilityRefresher after this transaction commits.
+        // Re-probe out-of-band via DirectoryCapabilityRefresher — runs
+        // AFTER_COMMIT, off the request thread, on a connectionless
+        // listener path so nothing pins a DB or LDAP resource through
+        // the probe round-trip.
         eventPublisher.publishEvent(new DirectoryConnectionSavedEvent(dc.getId()));
 
         return toResponse(dc);
