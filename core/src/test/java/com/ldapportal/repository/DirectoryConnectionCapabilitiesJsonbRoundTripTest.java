@@ -5,6 +5,7 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.ldap.model.DirectoryCapabilities;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -47,6 +48,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DirectoryConnectionCapabilitiesJsonbRoundTripTest {
 
     @Autowired private DirectoryConnectionRepository repo;
+    @Autowired private EntityManager                 em;
 
     @Test
     void capabilities_roundTripThroughJsonb() {
@@ -61,7 +63,16 @@ class DirectoryConnectionCapabilitiesJsonbRoundTripTest {
                 probedAt);
 
         DirectoryConnection saved = repo.save(buildDc(caps));
-        repo.flush();
+        // flush() pushes the INSERT through Hibernate but leaves the
+        // entity attached in the L1 cache; without clear(), the
+        // subsequent findById returns the SAME Java instance and the
+        // Jackson deserialiser is never exercised — the "round-trip"
+        // assertion below would pass even if jackson-datatype-jsr310
+        // were missing or the record's canonical constructor broken.
+        // flushAndClear forces a true read-after-write through the
+        // JSONB column and the Jackson mapper.
+        em.flush();
+        em.clear();
 
         DirectoryConnection fetched = repo.findById(saved.getId()).orElseThrow();
         DirectoryCapabilities readBack = fetched.getCapabilities();
@@ -92,9 +103,12 @@ class DirectoryConnectionCapabilitiesJsonbRoundTripTest {
         // returned null) leaves the column literally NULL — not an empty
         // DirectoryCapabilities record. Pins that the entity mapping
         // doesn't accidentally apply default-construct semantics on
-        // read.
+        // read. flushAndClear() for the same reason as the round-trip
+        // test — without clearing the L1 cache, findById would return
+        // the in-memory instance with capabilities=null trivially.
         DirectoryConnection saved = repo.save(buildDc(null));
-        repo.flush();
+        em.flush();
+        em.clear();
 
         DirectoryConnection fetched = repo.findById(saved.getId()).orElseThrow();
         assertThat(fetched.getCapabilities()).isNull();
