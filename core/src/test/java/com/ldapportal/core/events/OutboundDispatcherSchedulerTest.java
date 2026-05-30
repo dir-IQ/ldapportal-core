@@ -197,6 +197,41 @@ class OutboundDispatcherSchedulerTest {
     }
 
     /**
+     * Race-safety pin: if the stale-reset sweep (or a future HA-mode
+     * peer dispatcher) revokes the claim while the HTTP POST is in
+     * flight, the dispatcher's settle MUST NOT overwrite the new
+     * owner's state. Before the {@code claimed_at} fix + status guard
+     * combo, a backlog-drain claim could be false-reset within the
+     * 60s sweep tick, the dispatcher's POST would complete, and
+     * {@code resolveRow} would silently flip the row back to
+     * DELIVERED — masking the double-delivery and overwriting
+     * whatever state the new owner produced.
+     */
+    @Test
+    void settle_dropsOutcomeWhenClaimWasRevokedMidFlight() {
+        UUID id = UUID.randomUUID();
+        UUID subId = UUID.randomUUID();
+        when(outboxRepository.claimBatch(anyString(), any(Instant.class), anyInt()))
+                .thenReturn(List.of(id));
+        when(readOps.outboxSnapshot(id))
+                .thenReturn(Optional.of(rowSnapshot(id, subId, 1)));
+        when(readOps.subscriptionSnapshot(subId))
+                .thenReturn(Optional.of(subscriptionSnapshot(subId, true)));
+        when(channel.deliver(any(), any())).thenReturn(DeliveryOutcome.success(200));
+
+        // Simulate the stale-reset sweep having fired between claim
+        // and settle: the row the settle loads is back to PENDING.
+        OutboxEntry revoked = rowEntity(id, subId, 1);
+        revoked.setStatus(OutboxStatus.PENDING);
+        when(outboxRepository.findById(id)).thenReturn(Optional.of(revoked));
+
+        scheduler.dispatch();
+
+        // No save — settle must no-op when claim was revoked.
+        verify(outboxRepository, never()).save(any());
+    }
+
+    /**
      * Structural-safety pin: the channel receives an
      * {@link EventSubscriptionSnapshot}, not the
      * {@code EventSubscription} JPA entity. The snapshot carries

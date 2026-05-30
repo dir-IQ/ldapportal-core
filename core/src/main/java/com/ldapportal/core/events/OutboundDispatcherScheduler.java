@@ -148,6 +148,16 @@ public class OutboundDispatcherScheduler {
     private void resolveRow(UUID id, DeliveryOutcome outcome) {
         OutboxEntry row = outboxRepository.findById(id).orElse(null);
         if (row == null) return;
+        // Status guard: the stale-reset sweep (or another dispatcher
+        // in a future HA world) may have revoked our claim while the
+        // HTTP POST was in flight. If the row is no longer DELIVERING,
+        // the new owner's verdict — not ours — is what counts. Drop
+        // the result rather than overwrite their state.
+        if (row.getStatus() != OutboxStatus.DELIVERING) {
+            log.warn("outbox.settle_skipped id={} reason=\"claim revoked, current status {}\"",
+                    id, row.getStatus());
+            return;
+        }
         switch (outcome.kind()) {
             case SUCCESS -> {
                 row.setStatus(OutboxStatus.DELIVERED);
@@ -188,6 +198,15 @@ public class OutboundDispatcherScheduler {
     private void markDeadLettered(UUID id, String reason, Integer httpStatus) {
         OutboxEntry row = outboxRepository.findById(id).orElse(null);
         if (row == null) return;
+        // Same status guard as resolveRow — don't overwrite a row whose
+        // claim has been revoked. If a different owner subsequently picks
+        // it up and finds the subscription is back / the channel is now
+        // registered, they're free to make their own verdict.
+        if (row.getStatus() != OutboxStatus.DELIVERING) {
+            log.warn("outbox.dead_letter_skipped id={} reason=\"claim revoked, current status {}\"",
+                    id, row.getStatus());
+            return;
+        }
         row.setStatus(OutboxStatus.DEAD_LETTERED);
         row.setDeadLetteredAt(clock.instant());
         row.setLastError(reason);
