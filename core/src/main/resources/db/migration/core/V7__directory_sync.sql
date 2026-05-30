@@ -43,10 +43,10 @@ CREATE TABLE replication_link_attr_mappings (
     link_id        UUID NOT NULL REFERENCES replication_links(id) ON DELETE CASCADE,
     source_attr    VARCHAR(255) NOT NULL,
     target_attr    VARCHAR(255) NOT NULL,
-    -- Identity when NULL. Supports a single '${value}' substitution token
-    -- in v1 — no scripting. Examples:
-    --   '${value}@corp.com'   prepends a literal suffix
-    --   '${value}'            equivalent to NULL (explicit identity)
+    -- Identity when NULL. Supports a single dollar-brace value substitution
+    -- token in v1 — no scripting. See AttributeMapper.VALUE_TOKEN. Examples:
+    --   "<TOKEN>@corp.com"   prepends a literal suffix
+    --   "<TOKEN>"            equivalent to NULL (explicit identity)
     value_template VARCHAR(2000),
     PRIMARY KEY (link_id, source_attr)
 );
