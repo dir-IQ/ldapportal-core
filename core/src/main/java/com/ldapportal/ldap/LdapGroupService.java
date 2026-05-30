@@ -268,20 +268,56 @@ public class LdapGroupService {
 
     /**
      * Returns all members of a group, including nested/transitive members.
-     * For Active Directory, uses LDAP_MATCHING_RULE_IN_CHAIN (OID 1.2.840.113556.1.4.1941)
-     * for efficient server-side resolution. For other directories, performs
-     * client-side recursive enumeration with cycle detection.
+     * Per-directory dispatch:
+     * <ul>
+     *   <li>Active Directory — server-side resolution via
+     *       LDAP_MATCHING_RULE_IN_CHAIN (OID 1.2.840.113556.1.4.1941).</li>
+     *   <li>Oracle Unified Directory — server-side resolution via the
+     *       {@code isMemberOf} operational attribute. OUD (and its OpenDJ
+     *       upstream) populate {@code isMemberOf} with the full transitive
+     *       group closure for every user, so a single SUB-scoped filter
+     *       returns the same answer the AD matching-rule path produces.</li>
+     *   <li>Everything else — client-side recursive enumeration with
+     *       cycle detection. One LDAP read per group discovered.</li>
+     * </ul>
      */
     public List<String> getNestedMembers(DirectoryConnection dc, String groupDn) {
-        if (dc.getDirectoryType() == com.ldapportal.entity.enums.DirectoryType.ACTIVE_DIRECTORY) {
-            return getNestedMembersAD(dc, groupDn);
-        }
-        return getNestedMembersRecursive(dc, groupDn);
+        return switch (dc.getDirectoryType()) {
+            case ACTIVE_DIRECTORY         -> getNestedMembersAD(dc, groupDn);
+            case ORACLE_UNIFIED_DIRECTORY -> getNestedMembersIsMemberOf(dc, groupDn);
+            default                       -> getNestedMembersRecursive(dc, groupDn);
+        };
     }
 
     private List<String> getNestedMembersAD(DirectoryConnection dc, String groupDn) {
         // AD's LDAP_MATCHING_RULE_IN_CHAIN resolves all transitive members server-side
         String filter = "(memberOf:1.2.840.113556.1.4.1941:=" + Filter.encodeValue(groupDn) + ")";
+        return pagedDnSearch(dc, filter);
+    }
+
+    private List<String> getNestedMembersIsMemberOf(DirectoryConnection dc, String groupDn) {
+        // OUD / OpenDJ expose `isMemberOf` as an operational attribute on
+        // user entries, populated with the full transitive group closure.
+        // A single SUB-scoped filter returns the same set the AD matching-
+        // rule path produces, without the recursive walk the generic path
+        // would do. The capability probe (P2) records supported attributes
+        // on the connection but doesn't enumerate operational ones — we
+        // dispatch by DirectoryType and rely on the operator having
+        // selected the right type; a server that doesn't honour the
+        // attribute would silently return zero hits rather than fail, but
+        // that's the same failure mode as the AD branch on a stripped-down
+        // AD that disabled the matching rule.
+        String filter = "(isMemberOf=" + Filter.encodeValue(groupDn) + ")";
+        return pagedDnSearch(dc, filter);
+    }
+
+    /**
+     * Server-side paged search returning entry DNs only. Shared by the AD
+     * matching-rule branch and the OUD {@code isMemberOf} branch — both
+     * produce the same shape (filter-only, base = directory base DN, no
+     * attributes wanted), only the filter differs.
+     */
+    private List<String> pagedDnSearch(DirectoryConnection dc, String filter) {
         return connectionFactory.withConnection(dc, conn -> {
             List<String> members = new java.util.ArrayList<>();
             SearchRequest request = new SearchRequest(dc.getBaseDn(), SearchScope.SUB, filter, "1.1");

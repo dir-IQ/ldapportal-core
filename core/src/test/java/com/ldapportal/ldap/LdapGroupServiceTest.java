@@ -247,6 +247,96 @@ class LdapGroupServiceTest {
         assertThat(members).isEmpty();
     }
 
+
+
+    // ── getNestedMembers — per-directory-type dispatch ───────────────────────
+
+    @Test
+    void getNestedMembers_oudDirectoryType_usesIsMemberOfFilter() throws Exception {
+        // OUD/OpenDJ populate `isMemberOf` on user entries with the full
+        // transitive group closure. The InMemoryDirectoryServer doesn't
+        // compute it automatically (it's only an operational attribute on
+        // real OUD), but with schema validation off we can put it on the
+        // user entries explicitly — exactly the shape OUD would emit.
+        String engineering   = "cn=engineering,ou=groups,dc=example,dc=com";
+        String allTechStaff  = "cn=allTechStaff,ou=groups,dc=example,dc=com";
+        String alice         = "cn=Alice,ou=users,dc=example,dc=com";
+        String bob           = "cn=Bob,ou=users,dc=example,dc=com";
+        String carol         = "cn=Carol,ou=users,dc=example,dc=com";  // not in the target group
+
+        inMemoryServer.add(new Entry(alice,
+                new Attribute("objectClass", "top", "inetOrgPerson"),
+                new Attribute("cn", "Alice"),
+                new Attribute("sn", "Smith"),
+                // Both the direct team group and the transitive aggregate —
+                // matches what OpenDJ returned for alice.smith in the live
+                // P0 verification (engineering + allTechStaff).
+                new Attribute("isMemberOf", engineering, allTechStaff)));
+        inMemoryServer.add(new Entry(bob,
+                new Attribute("objectClass", "top", "inetOrgPerson"),
+                new Attribute("cn", "Bob"),
+                new Attribute("sn", "Jones"),
+                new Attribute("isMemberOf", engineering, allTechStaff)));
+        inMemoryServer.add(new Entry(carol,
+                new Attribute("objectClass", "top", "inetOrgPerson"),
+                new Attribute("cn", "Carol"),
+                new Attribute("sn", "Davis"),
+                // Not in engineering; in a different group only.
+                new Attribute("isMemberOf",
+                        "cn=design,ou=groups,dc=example,dc=com")));
+
+        dc.setDirectoryType(com.ldapportal.entity.enums.DirectoryType.ORACLE_UNIFIED_DIRECTORY);
+
+        // Direct group — alice + bob, carol excluded.
+        List<String> direct = groupService.getNestedMembers(dc, engineering);
+        assertThat(direct).containsExactlyInAnyOrder(alice, bob);
+
+        // Transitive aggregate — same two users, this time because they
+        // hit it indirectly via the engineering team. The whole point of
+        // the OUD branch is that we get them in one query rather than
+        // walking through cn=engineering first.
+        List<String> transitive = groupService.getNestedMembers(dc, allTechStaff);
+        assertThat(transitive).containsExactlyInAnyOrder(alice, bob);
+    }
+
+    @Test
+    void getNestedMembers_genericDirectoryType_recursivelyResolvesNested() throws Exception {
+        // Regression for the default (non-AD, non-OUD) path — the
+        // recursive walk should descend through a nested group and
+        // surface both the direct and transitive members. Existing test
+        // coverage of getNestedMembers was zero before P4; covering the
+        // generic branch here so we don't have a one-sided assertion.
+        String alice    = "cn=Alice,ou=users,dc=example,dc=com";
+        String bob      = "cn=Bob,ou=users,dc=example,dc=com";
+        String teamGrp  = "cn=engineering,ou=groups,dc=example,dc=com";
+        String topGrp   = "cn=allTechStaff,ou=groups,dc=example,dc=com";
+
+        // Two users with no membership attributes — the recursive walk
+        // works off `member` on the groups, not `isMemberOf` on users.
+        inMemoryServer.add(new Entry(alice,
+                new Attribute("objectClass", "top", "inetOrgPerson"),
+                new Attribute("cn", "Alice"),
+                new Attribute("sn", "Smith")));
+        inMemoryServer.add(new Entry(bob,
+                new Attribute("objectClass", "top", "inetOrgPerson"),
+                new Attribute("cn", "Bob"),
+                new Attribute("sn", "Jones")));
+        // Team group with both users as direct members.
+        addGroup(teamGrp, "engineering", alice);
+        inMemoryServer.modify(teamGrp,
+                new com.unboundid.ldap.sdk.Modification(
+                        com.unboundid.ldap.sdk.ModificationType.ADD, "member", bob));
+        // Aggregate whose only member is the team group.
+        addGroup(topGrp, "allTechStaff", teamGrp);
+
+        dc.setDirectoryType(com.ldapportal.entity.enums.DirectoryType.GENERIC);
+
+        List<String> transitive = groupService.getNestedMembers(dc, topGrp);
+        // Should include the nested group itself + both users discovered
+        // by recursing into it.
+        assertThat(transitive).contains(teamGrp, alice, bob);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void addGroup(String dn, String cn, String firstMember) throws Exception {
