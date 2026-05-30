@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.dto.replication.ReplicationEventResponse;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.service.ReplicationEventService;
@@ -8,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
@@ -50,20 +52,23 @@ public class ReplicationEventController {
     }
 
     @PostMapping("/api/v1/superadmin/replication-events/{id}/retry")
-    public ResponseEntity<Void> retry(@PathVariable UUID id) {
-        service.retry(id);
+    public ResponseEntity<Void> retry(@AuthenticationPrincipal AuthPrincipal principal,
+                                       @PathVariable UUID id) {
+        service.retry(principal, id);
         return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/api/v1/superadmin/replication-events/{id}/skip")
-    public ResponseEntity<Void> skip(@PathVariable UUID id) {
-        service.skip(id);
+    public ResponseEntity<Void> skip(@AuthenticationPrincipal AuthPrincipal principal,
+                                      @PathVariable UUID id) {
+        service.skip(principal, id);
         return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/api/v1/superadmin/replication-events/{id}/acknowledge")
-    public ResponseEntity<Void> acknowledge(@PathVariable UUID id) {
-        service.acknowledge(id);
+    public ResponseEntity<Void> acknowledge(@AuthenticationPrincipal AuthPrincipal principal,
+                                             @PathVariable UUID id) {
+        service.acknowledge(principal, id);
         return ResponseEntity.noContent().build();
     }
 }

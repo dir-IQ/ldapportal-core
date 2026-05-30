@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.dto.replication.ReplicationLinkRequest;
 import com.ldapportal.dto.replication.ReplicationLinkResponse;
 import com.ldapportal.service.ReplicationLinkService;
@@ -9,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -45,19 +47,22 @@ public class ReplicationLinkController {
     }
 
     @PostMapping
-    public ResponseEntity<ReplicationLinkResponse> create(@Valid @RequestBody ReplicationLinkRequest req) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.createLink(req));
+    public ResponseEntity<ReplicationLinkResponse> create(@AuthenticationPrincipal AuthPrincipal principal,
+                                                           @Valid @RequestBody ReplicationLinkRequest req) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(service.createLink(principal, req));
     }
 
     @PutMapping("/{id}")
-    public ReplicationLinkResponse update(@PathVariable UUID id,
+    public ReplicationLinkResponse update(@AuthenticationPrincipal AuthPrincipal principal,
+                                           @PathVariable UUID id,
                                            @Valid @RequestBody ReplicationLinkRequest req) {
-        return service.updateLink(id, req);
+        return service.updateLink(principal, id, req);
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable UUID id) {
-        service.deleteLink(id);
+    public ResponseEntity<Void> delete(@AuthenticationPrincipal AuthPrincipal principal,
+                                        @PathVariable UUID id) {
+        service.deleteLink(principal, id);
         return ResponseEntity.noContent().build();
     }
 }

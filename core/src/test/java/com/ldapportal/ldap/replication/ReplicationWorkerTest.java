@@ -3,8 +3,11 @@ package com.ldapportal.ldap.replication;
 
 import com.ldapportal.entity.ReplicationEvent;
 import com.ldapportal.entity.ReplicationLink;
+import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
+import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.ldapportal.repository.ReplicationEventRepository;
+import com.ldapportal.service.AuditService;
 import com.unboundid.ldap.sdk.ResultCode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,6 +34,7 @@ class ReplicationWorkerTest {
 
     @Mock private ReplicationEventRepository eventRepo;
     @Mock private ReplicationDelivery        delivery;
+    @Mock private AuditService               auditService;
     @InjectMocks private ReplicationWorker   worker;
 
     @Test
@@ -101,12 +105,17 @@ class ReplicationWorkerTest {
     }
 
     @Test
-    void retryBudgetExhausted_marksDeadLettered() {
-        // Sixth failure → DEAD_LETTERED. Pinning the boundary the
-        // backoff-policy test owns at a unit level, here at the worker
-        // level so a regression in either layer surfaces.
+    void retryBudgetExhausted_marksDeadLettered_andEmitsAudit() {
+        // Sixth failure → DEAD_LETTERED. Two contracts pinned here:
+        // (1) the status transition itself, (2) the actor-less audit
+        // emission for the DEAD_LETTERED transition — without it, the
+        // operator-facing audit log misses the moment the queue gave
+        // up. Audit goes through recordSystemEventNoActor because
+        // the worker has no principal.
         UUID linkId = UUID.randomUUID();
         ReplicationEvent event = event(linkId);
+        event.setOperation(ReplicationOperationType.MODIFY);
+        event.setTargetDn("uid=alice,dc=target,dc=com");
         event.setAttempts(ReplicationBackoffPolicy.MAX_ATTEMPTS);  // 5 prior failures
         stubClaim(linkId, event, 1);
         when(delivery.deliver(event)).thenReturn(
@@ -119,6 +128,25 @@ class ReplicationWorkerTest {
                 statusCap.capture(), eq(ReplicationBackoffPolicy.MAX_ATTEMPTS + 1),
                 any(), any());
         assertThat(statusCap.getValue()).isEqualTo(ReplicationEventStatus.DEAD_LETTERED);
+        verify(auditService).recordSystemEventNoActor(
+                eq(AuditAction.REPLICATION_EVENT_DEAD_LETTERED), any());
+    }
+
+    @Test
+    void retryUnderBudget_doesNotEmitDeadLetterAudit() {
+        // First failure → FAILED, not DEAD_LETTERED. The audit-on-
+        // dead-letter event must NOT fire here, or we'd see one audit
+        // per attempt instead of one when the budget runs out.
+        UUID linkId = UUID.randomUUID();
+        ReplicationEvent event = event(linkId);
+        event.setAttempts(0);
+        stubClaim(linkId, event, 1);
+        when(delivery.deliver(event)).thenReturn(
+                new ReplicationDelivery.DeliveryResult(false, null, "transient"));
+
+        worker.drainQueue();
+
+        verify(auditService, never()).recordSystemEventNoActor(any(), any());
     }
 
     @Test

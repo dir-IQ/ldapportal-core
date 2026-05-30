@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.service;
 
+import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.dto.replication.ReplicationLinkRequest;
 import com.ldapportal.dto.replication.ReplicationLinkResponse;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.ReplicationLink;
+import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.ReplicationEventRepository;
 import com.ldapportal.repository.ReplicationLinkRepository;
@@ -22,6 +25,9 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -30,7 +36,11 @@ class ReplicationLinkServiceTest {
     @Mock private ReplicationLinkRepository  linkRepo;
     @Mock private ReplicationEventRepository eventRepo;
     @Mock private DirectoryConnectionRepository dirRepo;
+    @Mock private AuditService               auditService;
     @InjectMocks private ReplicationLinkService service;
+
+    private final AuthPrincipal principal =
+            new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "root");
 
     @Test
     void create_buildsLinkAndPersists() {
@@ -46,7 +56,7 @@ class ReplicationLinkServiceTest {
             return l;
         });
 
-        ReplicationLinkResponse resp = service.createLink(new ReplicationLinkRequest(
+        ReplicationLinkResponse resp = service.createLink(principal, new ReplicationLinkRequest(
                 "Acme → Backup",
                 source.getId(), target.getId(),
                 null, null,
@@ -70,7 +80,7 @@ class ReplicationLinkServiceTest {
         // No need to stub dirRepo lookups — validation fires before
         // the helpers are called.
 
-        assertThatThrownBy(() -> service.createLink(new ReplicationLinkRequest(
+        assertThatThrownBy(() -> service.createLink(principal, new ReplicationLinkRequest(
                 "Self loop", one.getId(), one.getId(),
                 null, null, true, false, List.of())))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -85,7 +95,7 @@ class ReplicationLinkServiceTest {
         DirectoryConnection source = directory("Source");
         DirectoryConnection target = directory("Target");
 
-        assertThatThrownBy(() -> service.createLink(new ReplicationLinkRequest(
+        assertThatThrownBy(() -> service.createLink(principal, new ReplicationLinkRequest(
                 "Mixed",
                 source.getId(), target.getId(),
                 "dc=src,dc=com", null,    // only source set
@@ -118,6 +128,93 @@ class ReplicationLinkServiceTest {
         assertThat(a.lastDeliveredAt()).isEqualTo(now);
         assertThat(b.deadLetteredCount()).isEqualTo(2);
         assertThat(b.lastDeliveredAt()).isNull();
+    }
+
+    // ── audit emissions ──────────────────────────────────────────────────────
+
+    @Test
+    void create_recordsLinkCreatedAudit() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> {
+            ReplicationLink l = inv.getArgument(0);
+            l.setId(UUID.randomUUID());
+            return l;
+        });
+
+        service.createLink(principal, new ReplicationLinkRequest(
+                "Audit Link", source.getId(), target.getId(),
+                null, null, true, false, List.of()));
+
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_LINK_CREATED), any());
+    }
+
+    @Test
+    void update_recordsUpdatedAudit_andEnabledToggleWhenFlipped() {
+        // Toggling enabled flips emits BOTH the generic UPDATED action
+        // and the specific DISABLED action. Pinning the dual-emission
+        // contract so a future 'only emit the toggle' regression breaks.
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        ReplicationLink existing = link("Existing");
+        existing.setSourceDirectory(source);
+        existing.setTargetDirectory(target);
+        existing.setEnabled(true);  // was enabled
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateLink(principal, existing.getId(), new ReplicationLinkRequest(
+                "Existing", source.getId(), target.getId(),
+                null, null, false, false, List.of()));  // now disabled
+
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_LINK_UPDATED), any());
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_LINK_DISABLED), any());
+        verify(auditService, never()).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_LINK_ENABLED), any());
+    }
+
+    @Test
+    void update_noToggleEmission_whenEnabledFlagUnchanged() {
+        // Rename only — no toggle audit, just the generic update.
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        ReplicationLink existing = link("OldName");
+        existing.setSourceDirectory(source);
+        existing.setTargetDirectory(target);
+        existing.setEnabled(true);
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateLink(principal, existing.getId(), new ReplicationLinkRequest(
+                "NewName", source.getId(), target.getId(),
+                null, null, true, false, List.of()));
+
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_LINK_UPDATED), any());
+        verify(auditService, never()).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_LINK_ENABLED), any());
+        verify(auditService, never()).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_LINK_DISABLED), any());
+    }
+
+    @Test
+    void delete_recordsLinkDeletedAudit() {
+        ReplicationLink existing = link("ToDelete");
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+
+        service.deleteLink(principal, existing.getId());
+
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_LINK_DELETED), any());
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

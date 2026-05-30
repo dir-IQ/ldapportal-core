@@ -156,6 +156,34 @@ public class AuditService {
      * @param action    the lifecycle action being recorded
      * @param detail    optional payload — tokenId, tokenName, etc.
      */
+    /**
+     * Record a system-level audit event with no actor — used for
+     * background-worker transitions where no human or token initiated
+     * the change. Currently used by the directory-sync worker to
+     * record REPLICATION_EVENT_DEAD_LETTERED. Distinct from
+     * {@link #recordSystemEvent(AuthPrincipal, AuditAction, Map)} so
+     * the actor-required contract there stays explicit.
+     */
+    @Async
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void recordSystemEventNoActor(AuditAction action,
+                                          Map<String, Object> detail) {
+        try {
+            AuditEvent event = AuditEvent.builder()
+                    .source(AuditSource.INTERNAL)
+                    .action(action)
+                    .detail(detail)
+                    .occurredAt(OffsetDateTime.now())
+                    .build();
+            auditRepo.save(event);
+            eventPublisher.publishEvent(new AuditRecordedEvent(event));
+            siemExportService.export(event);
+        } catch (Exception ex) {
+            log.error("Failed to record actor-less audit event [action={}]: {}",
+                    action, ex.getMessage(), ex);
+        }
+    }
+
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordSystemEvent(AuthPrincipal principal,

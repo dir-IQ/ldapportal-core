@@ -64,6 +64,15 @@ export const ACTION_LABELS = {
   API_TOKEN_CREATED: 'API token created',
   API_TOKEN_REVOKED: 'API token revoked',
   API_TOKEN_ROTATED: 'API token rotated',
+  REPLICATION_LINK_CREATED: 'Replication link created',
+  REPLICATION_LINK_UPDATED: 'Replication link updated',
+  REPLICATION_LINK_DELETED: 'Replication link deleted',
+  REPLICATION_LINK_ENABLED: 'Replication link enabled',
+  REPLICATION_LINK_DISABLED: 'Replication link disabled',
+  REPLICATION_EVENT_DEAD_LETTERED: 'Replication event dead-lettered',
+  REPLICATION_EVENT_RETRIED_BY_OPERATOR: 'Replication event retried',
+  REPLICATION_EVENT_SKIPPED_BY_OPERATOR: 'Replication event skipped',
+  REPLICATION_EVENT_ACKNOWLEDGED: 'Replication event acknowledged',
 }
 
 // Fallback humanizer for any audit action not in the map above — keeps the

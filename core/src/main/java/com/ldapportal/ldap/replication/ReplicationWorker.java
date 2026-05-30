@@ -2,8 +2,10 @@
 package com.ldapportal.ldap.replication;
 
 import com.ldapportal.entity.ReplicationEvent;
+import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.repository.ReplicationEventRepository;
+import com.ldapportal.service.AuditService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -13,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -39,6 +42,7 @@ public class ReplicationWorker {
 
     private final ReplicationEventRepository eventRepo;
     private final ReplicationDelivery        delivery;
+    private final AuditService               auditService;
 
     /**
      * Poll interval. 10s is short enough that operator-visible
@@ -118,6 +122,18 @@ public class ReplicationWorker {
         if (outcome.status() == ReplicationEventStatus.DEAD_LETTERED) {
             log.warn("Replication event {} dead-lettered after {} attempts: {}",
                     event.getId(), newAttempts, errorMessage);
+            // No principal — the worker isn't a user-driven action.
+            // recordSystemEventNoActor preserves the action + detail
+            // without forcing a synthetic actor row.
+            auditService.recordSystemEventNoActor(
+                    AuditAction.REPLICATION_EVENT_DEAD_LETTERED,
+                    Map.of(
+                            "eventId",   event.getId().toString(),
+                            "linkId",    event.getLink().getId().toString(),
+                            "operation", event.getOperation().name(),
+                            "targetDn",  event.getTargetDn(),
+                            "attempts",  newAttempts,
+                            "lastError", errorMessage == null ? "" : errorMessage));
         }
     }
 }

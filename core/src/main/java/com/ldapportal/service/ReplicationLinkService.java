@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.service;
 
+import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.dto.replication.ReplicationLinkRequest;
 import com.ldapportal.dto.replication.ReplicationLinkResponse;
 import com.ldapportal.dto.replication.ReplicationLinkResponse.LinkHealth;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.ReplicationLinkAttrMapping;
+import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.DirectoryConnectionRepository;
@@ -41,6 +43,7 @@ public class ReplicationLinkService {
     private final ReplicationLinkRepository  linkRepo;
     private final ReplicationEventRepository eventRepo;
     private final DirectoryConnectionRepository dirRepo;
+    private final AuditService               auditService;
 
     @Transactional(readOnly = true)
     public List<ReplicationLinkResponse> listLinks() {
@@ -60,7 +63,7 @@ public class ReplicationLinkService {
     }
 
     @Transactional
-    public ReplicationLinkResponse createLink(ReplicationLinkRequest req) {
+    public ReplicationLinkResponse createLink(AuthPrincipal principal, ReplicationLinkRequest req) {
         validateRequest(req, null);
         ReplicationLink link = new ReplicationLink();
         applyRequest(link, req);
@@ -68,24 +71,54 @@ public class ReplicationLinkService {
         log.info("Replication link created: {} ({} → {})",
                 link.getId(), link.getSourceDirectory().getDisplayName(),
                 link.getTargetDirectory().getDisplayName());
+        auditService.recordSystemEvent(principal, AuditAction.REPLICATION_LINK_CREATED, auditDetail(link));
         return ReplicationLinkResponse.from(link, LinkHealth.empty());
     }
 
     @Transactional
-    public ReplicationLinkResponse updateLink(UUID id, ReplicationLinkRequest req) {
+    public ReplicationLinkResponse updateLink(AuthPrincipal principal, UUID id, ReplicationLinkRequest req) {
         ReplicationLink link = require(id);
+        boolean wasEnabled = link.isEnabled();
         validateRequest(req, id);
         applyRequest(link, req);
         link = linkRepo.save(link);
         Map<UUID, LinkHealth> health = healthByLinkId(List.of(link));
+
+        // Always record the general update first; if the enabled flag
+        // also flipped, follow with the specific ENABLED / DISABLED
+        // action so the audit log carries both signals. Operators
+        // reviewing 'who turned this off' shouldn't have to read the
+        // generic UPDATE detail map to find the answer.
+        auditService.recordSystemEvent(principal, AuditAction.REPLICATION_LINK_UPDATED, auditDetail(link));
+        if (wasEnabled != link.isEnabled()) {
+            AuditAction toggle = link.isEnabled()
+                    ? AuditAction.REPLICATION_LINK_ENABLED
+                    : AuditAction.REPLICATION_LINK_DISABLED;
+            auditService.recordSystemEvent(principal, toggle, auditDetail(link));
+        }
+
         return ReplicationLinkResponse.from(link, health.getOrDefault(id, LinkHealth.empty()));
     }
 
     @Transactional
-    public void deleteLink(UUID id) {
+    public void deleteLink(AuthPrincipal principal, UUID id) {
         ReplicationLink link = require(id);
+        Map<String, Object> detail = auditDetail(link);
         linkRepo.delete(link);
+        auditService.recordSystemEvent(principal, AuditAction.REPLICATION_LINK_DELETED, detail);
         log.info("Replication link deleted: {}", id);
+    }
+
+    private static Map<String, Object> auditDetail(ReplicationLink link) {
+        Map<String, Object> detail = new java.util.LinkedHashMap<>();
+        detail.put("linkId",              link.getId().toString());
+        detail.put("displayName",         link.getDisplayName());
+        detail.put("sourceDirectoryId",   link.getSourceDirectory().getId().toString());
+        detail.put("sourceDirectoryName", link.getSourceDirectory().getDisplayName());
+        detail.put("targetDirectoryId",   link.getTargetDirectory().getId().toString());
+        detail.put("targetDirectoryName", link.getTargetDirectory().getDisplayName());
+        detail.put("enabled",             link.isEnabled());
+        return detail;
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

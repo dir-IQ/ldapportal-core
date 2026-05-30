@@ -97,7 +97,18 @@ public enum AuditAction {
     // ── API tokens (machine auth) ─────────────────────────────────────────────
     API_TOKEN_CREATED    ("api_token.created"),
     API_TOKEN_REVOKED    ("api_token.revoked"),
-    API_TOKEN_ROTATED    ("api_token.rotated");
+    API_TOKEN_ROTATED    ("api_token.rotated"),
+
+    // ── Directory sync (cross-directory replication) ──────────────────────────
+    REPLICATION_LINK_CREATED               ("replication.link_created"),
+    REPLICATION_LINK_UPDATED               ("replication.link_updated"),
+    REPLICATION_LINK_DELETED               ("replication.link_deleted"),
+    REPLICATION_LINK_ENABLED               ("replication.link_enabled"),
+    REPLICATION_LINK_DISABLED              ("replication.link_disabled"),
+    REPLICATION_EVENT_DEAD_LETTERED        ("replication.event_dead_lettered"),
+    REPLICATION_EVENT_RETRIED_BY_OPERATOR  ("replication.event_retried_by_operator"),
+    REPLICATION_EVENT_SKIPPED_BY_OPERATOR  ("replication.event_skipped_by_operator"),
+    REPLICATION_EVENT_ACKNOWLEDGED         ("replication.event_acknowledged");
 
     private final String dbValue;
 
