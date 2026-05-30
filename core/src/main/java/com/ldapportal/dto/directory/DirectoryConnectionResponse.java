@@ -13,7 +13,21 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
-/** Directory connection response — bind password is never included. */
+/**
+ * Directory connection response — bind password is never included.
+ *
+ * <p><b>Eventual consistency on {@code capabilities}:</b> the field is
+ * populated by {@link com.ldapportal.ldap.DirectoryCapabilityRefresher},
+ * which runs AFTER_COMMIT and asynchronously. A response returned
+ * directly from {@code createDirectory} or {@code updateDirectory}
+ * will therefore have {@code capabilities = null} (or, on update, the
+ * cleared value) — the snapshot lands on the next {@code getDirectory}
+ * once the listener completes. Clients that need the chip immediately
+ * should poll {@code GET /api/v1/superadmin/directories/{id}} on a
+ * short interval after a successful save; the typical refresh window
+ * is sub-second for a reachable host and up to the LDAP timeout for an
+ * unreachable one.
+ */
 public record DirectoryConnectionResponse(
         UUID id,
         DirectoryType directoryType,
