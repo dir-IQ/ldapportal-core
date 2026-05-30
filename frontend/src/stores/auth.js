@@ -24,6 +24,10 @@ export const useAuthStore = defineStore('auth', () => {
   // any client talking to a server that predates this field; gating the UI
   // strictly on a missing flag would hide alerts after a backend rollback.
   const isAlertingEnabled = computed(() => principal.value?.alertingEnabled !== false)
+  // Directory-sync gates the Directory Sync sidebar entry and the
+  // backend's /replication-links surface. Default false on missing
+  // payload — same conservative pattern as isvaIntegrationEnabled.
+  const isDirectorySyncEnabled = computed(() => principal.value?.directorySyncEnabled === true)
   // Addon-granted entitlement. Defaults to false (not true) — an
   // addon's absence is the safer default: don't show ISVA UI on a
   // server where we can't confirm the addon is loaded. Set to true
@@ -202,7 +206,7 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     principal, isLoggedIn, isSuperadmin, isSelfService, username,
     themePreference, authType, hasFeature, isHrEnabled, isComplianceEnabled,
-    isAlertingEnabled, isIsvaIntegrationEnabled, isCommunityDistribution, isDirectorySearchInlineEditEnabled,
+    isAlertingEnabled, isDirectorySyncEnabled, isIsvaIntegrationEnabled, isCommunityDistribution, isDirectorySearchInlineEditEnabled,
     setupPending, init, reinit, login, selfServiceLogin, logout,
     markSetupComplete, updatePrincipal,
   }

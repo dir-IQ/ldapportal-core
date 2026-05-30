@@ -186,6 +186,16 @@ const router = createRouter({
           meta: { requiresSuperadmin: true },
         },
         {
+          path: 'superadmin/directory-sync',
+          name: 'directorySync',
+          component: () => import('@/views/superadmin/DirectorySyncView.vue'),
+          // Sidebar v-if also gates on auth.isDirectorySyncEnabled so
+          // the link doesn't render in editions that withhold the
+          // entitlement. Deep links still resolve to this route; the
+          // API then returns 403 and the view surfaces an error.
+          meta: { requiresSuperadmin: true },
+        },
+        {
           path: 'superadmin/profiles',
           name: 'profiles',
           component: () => import('@/views/profiles/SuperadminProfilesView.vue'),

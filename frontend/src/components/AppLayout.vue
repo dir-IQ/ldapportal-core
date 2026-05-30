@@ -188,6 +188,10 @@
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16z"/><path d="M10 6v4l2.5 2.5"/></svg>
             <span v-if="!collapsed">Audit Sources</span>
           </RouterLink>
+          <RouterLink v-if="auth.isDirectorySyncEnabled" to="/superadmin/directory-sync" class="nav-item">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10a7 7 0 0 1 12.9-3.8M17 10a7 7 0 0 1-12.9 3.8"/><path d="M16 3v4h-4M4 17v-4h4"/></svg>
+            <span v-if="!collapsed">Directory Sync</span>
+          </RouterLink>
           <RouterLink v-if="auth.isComplianceEnabled" to="/superadmin/access-reviews" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9"/><path d="M9 11l8-8"/><path d="M14 3h3v3"/></svg>
             <span v-if="!collapsed">Access Reviews</span>
