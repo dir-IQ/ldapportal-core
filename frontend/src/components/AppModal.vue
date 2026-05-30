@@ -3,8 +3,15 @@
   <Teleport to="body">
     <Transition name="modal">
       <div v-if="modelValue" class="fixed inset-0 z-40 flex items-center justify-center p-4"
-           @click.self="$emit('update:modelValue', false)"
            role="dialog" aria-modal="true" :aria-labelledby="titleId">
+        <!--
+          Backdrop click intentionally does NOT close the modal. Accidental
+          off-target clicks (especially on tall forms where the operator
+          drags-to-select text past the panel edge) used to destroy
+          half-completed work. Dismissal paths now: the explicit × button,
+          the footer Cancel/Close, and Escape (kept for WCAG 2.1.2 keyboard
+          accessibility — wired in useDialogA11y, not here).
+        -->
         <div class="fixed inset-0 bg-black/40" />
         <div ref="panelRef" :class="['relative bg-white rounded-xl shadow-xl w-full', sizeClass]">
           <!-- Header -->

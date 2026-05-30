@@ -269,7 +269,7 @@ function parsedStepResults(json) {
     </DataTable>
 
     <!-- Create/Edit Modal -->
-    <AppModal v-model="showModal" :title="editing ? 'Edit Playbook' : 'New Playbook'" size="lg">
+    <AppModal v-model="showModal" :title="editing ? 'Edit Playbook' : 'New Playbook'" size="lg" fixed-height="min(640px, 80vh)">
       <div class="flex border-b gap-1 mb-4">
         <button v-for="tab in [{ id: 'general', label: 'General' }, { id: 'steps', label: 'Steps' }]" :key="tab.id"
           :class="['px-4 py-2 text-sm font-medium border-b-2 -mb-px', modalTab === tab.id ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700']"

@@ -5,7 +5,14 @@
        cancelDialog → revertDensityIfChanged) while the request still
        resolved later, causing a flicker — and any save error would
        happen with the dialog already closed, swallowing the message. -->
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="saving ? null : cancelDialog()">
+  <!--
+    Backdrop click intentionally does NOT close the dialog. Same
+    rationale as AppModal: accidental off-target clicks would discard
+    pending preference changes. Dismissal paths are the explicit × /
+    Cancel buttons and Escape (preserved on the panel below for
+    keyboard a11y).
+  -->
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
     <div v-dialog-a11y role="dialog" aria-modal="true" aria-labelledby="user-prefs-title"
          @keydown.escape="saving ? null : cancelDialog()"
          class="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col">
