@@ -10,10 +10,11 @@ import com.ldapportal.core.events.dto.TestDeliveryResult;
 import com.ldapportal.core.events.dto.UpdateEventSubscriptionRequest;
 import com.ldapportal.core.events.dto.WebhookAuthRequest;
 import com.ldapportal.core.events.entity.EventSubscription;
-import com.ldapportal.core.events.entity.OutboxEntry;
 import com.ldapportal.core.events.enums.ChannelType;
 import com.ldapportal.core.events.enums.OutboxStatus;
 import com.ldapportal.core.events.repository.EventSubscriptionRepository;
+import com.ldapportal.core.events.snapshot.EventSubscriptionSnapshot;
+import com.ldapportal.core.events.snapshot.OutboxEntrySnapshot;
 import com.ldapportal.entity.Account;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.AccountRepository;
@@ -135,18 +136,15 @@ public class EventSubscriptionService {
                 .orElseThrow(() -> new IllegalStateException(
                         "no channel registered for " + sub.getChannelType()));
 
-        OutboxEntry probe = new OutboxEntry();
-        probe.setId(UUID.randomUUID());
-        probe.setSubscriptionId(sub.getId());
-        probe.setEventId(UUID.randomUUID());
-        probe.setEventType("test.ping");
-        probe.setOccurredAt(clock.instant());
-        probe.setStatus(OutboxStatus.DELIVERING);
-        probe.setAttempts(1);
-        probe.setNextAttemptAt(clock.instant());
-
+        // Synthetic probe — no outbox row persisted, no subscription
+        // mutation, just a one-shot envelope handed straight to the
+        // channel. Build the snapshot records inline so the channel
+        // receives the same types it would in the real dispatch path
+        // (no entity reference in scope outside this @Transactional
+        // method).
+        UUID probeEventId = UUID.randomUUID();
         Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("id", probe.getEventId().toString());
+        envelope.put("id", probeEventId.toString());
         envelope.put("type", "test.ping");
         envelope.put("schemaVersion", 1);
         envelope.put("occurredAt", clock.instant().toString());
@@ -156,12 +154,17 @@ public class EventSubscriptionService {
                 "type", principal != null ? principal.type().name() : null));
         envelope.put("resource", Map.of("type", "test", "id", ""));
         envelope.put("payload", Map.of("message", "Test delivery from LDAPPortal"));
-        probe.setEnvelope(envelope);
+
+        OutboxEntrySnapshot probe = new OutboxEntrySnapshot(
+                UUID.randomUUID(), sub.getId(), probeEventId, "test.ping",
+                clock.instant(), envelope, OutboxStatus.DELIVERING, 1,
+                clock.instant(), null, null, null, null, clock.instant());
+        EventSubscriptionSnapshot subSnapshot = EventSubscriptionSnapshot.from(sub);
 
         Instant start = clock.instant();
         DeliveryOutcome outcome;
         try {
-            outcome = channel.deliver(probe, sub);
+            outcome = channel.deliver(probe, subSnapshot);
         } catch (RuntimeException e) {
             outcome = DeliveryOutcome.transientFailure("uncaught: " + e.getMessage(), null);
         }

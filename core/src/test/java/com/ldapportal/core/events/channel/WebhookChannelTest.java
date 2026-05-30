@@ -2,9 +2,10 @@
 package com.ldapportal.core.events.channel;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ldapportal.core.events.entity.EventSubscription;
-import com.ldapportal.core.events.entity.OutboxEntry;
 import com.ldapportal.core.events.enums.ChannelType;
+import com.ldapportal.core.events.enums.OutboxStatus;
+import com.ldapportal.core.events.snapshot.EventSubscriptionSnapshot;
+import com.ldapportal.core.events.snapshot.OutboxEntrySnapshot;
 import com.ldapportal.service.EncryptionService;
 import okhttp3.mockwebserver.MockResponse;
 import okhttp3.mockwebserver.MockWebServer;
@@ -126,7 +127,7 @@ class WebhookChannelTest {
         // Shut down immediately so the channel hits a connection refused.
         int port = server.getPort();
         server.shutdown();
-        EventSubscription sub = subscriptionTo("http://127.0.0.1:" + port + "/");
+        EventSubscriptionSnapshot sub = subscriptionTo("http://127.0.0.1:" + port + "/");
         DeliveryOutcome outcome = channel.deliver(row(), sub);
         assertThat(outcome.kind()).isEqualTo(DeliveryOutcome.Kind.TRANSIENT_FAILURE);
         assertThat(outcome.httpStatus()).isNull();
@@ -137,8 +138,7 @@ class WebhookChannelTest {
         when(encryptionService.decrypt("ENC-TOKEN")).thenReturn("plain-token");
         server.enqueue(new MockResponse().setResponseCode(200));
 
-        EventSubscription sub = subscriptionTo(server.url("/").toString());
-        sub.setDestinationConfig(Map.of(
+        EventSubscriptionSnapshot sub = subscriptionWithConfig(Map.of(
                 "url", server.url("/").toString(),
                 "auth", Map.of("type", "bearer", "tokenEnc", "ENC-TOKEN")));
 
@@ -155,12 +155,11 @@ class WebhookChannelTest {
         when(encryptionService.decrypt("ENC-SECRET")).thenReturn(secret);
         server.enqueue(new MockResponse().setResponseCode(200));
 
-        EventSubscription sub = subscriptionTo(server.url("/").toString());
-        sub.setDestinationConfig(Map.of(
+        EventSubscriptionSnapshot sub = subscriptionWithConfig(Map.of(
                 "url", server.url("/").toString(),
                 "auth", Map.of("type", "hmac", "secretEnc", "ENC-SECRET")));
 
-        OutboxEntry row = row();
+        OutboxEntrySnapshot row = row();
         channel.deliver(row, sub);
 
         RecordedRequest req = server.takeRequest(1, TimeUnit.SECONDS);
@@ -184,8 +183,8 @@ class WebhookChannelTest {
 
     @Test
     void malformedConfig_returnsPermanent() {
-        EventSubscription sub = subscriptionTo("not-a-url");
-        sub.setDestinationConfig(Map.of("not-url-field", "garbage"));
+        EventSubscriptionSnapshot sub = subscriptionWithConfig(
+                Map.of("not-url-field", "garbage"));
         DeliveryOutcome outcome = channel.deliver(row(), sub);
         assertThat(outcome.kind()).isEqualTo(DeliveryOutcome.Kind.PERMANENT_FAILURE);
     }
@@ -197,7 +196,7 @@ class WebhookChannelTest {
         // Uses the production guard (not the neutralised seam above).
         WebhookChannel guarded =
                 new WebhookChannel(RestClient.builder(), encryptionService, new ObjectMapper(), fixedClock);
-        EventSubscription sub = subscriptionTo("http://169.254.169.254/latest/meta-data/");
+        EventSubscriptionSnapshot sub = subscriptionTo("http://169.254.169.254/latest/meta-data/");
         DeliveryOutcome outcome = guarded.deliver(row(), sub);
 
         assertThat(outcome.kind()).isEqualTo(DeliveryOutcome.Kind.PERMANENT_FAILURE);
@@ -208,7 +207,7 @@ class WebhookChannelTest {
     @Test
     void deliveredEnvelopeIsJsonOfEntryEnvelope() throws Exception {
         server.enqueue(new MockResponse().setResponseCode(200));
-        OutboxEntry row = row();
+        OutboxEntrySnapshot row = row();
         channel.deliver(row, subNoAuth());
 
         RecordedRequest req = server.takeRequest(1, TimeUnit.SECONDS);
@@ -221,36 +220,35 @@ class WebhookChannelTest {
 
     // ── helpers ──
 
-    private OutboxEntry row() {
-        OutboxEntry r = new OutboxEntry();
-        r.setId(UUID.randomUUID());
-        r.setEventId(UUID.randomUUID());
-        r.setEventType("api_token.created");
-        r.setOccurredAt(Instant.parse("2026-04-23T10:00:00Z"));
+    private OutboxEntrySnapshot row() {
+        UUID eventId = UUID.randomUUID();
         Map<String, Object> env = new LinkedHashMap<>();
-        env.put("id", r.getEventId().toString());
+        env.put("id", eventId.toString());
         env.put("type", "api_token.created");
         env.put("schemaVersion", 1);
         env.put("occurredAt", "2026-04-23T10:00:00Z");
         env.put("actor", Map.of("id", "u-1", "username", "alice", "type", "SUPERADMIN"));
         env.put("resource", Map.of("type", "api_token", "id", ""));
         env.put("payload", Map.of("tokenId", "t-1", "tokenName", "ci"));
-        r.setEnvelope(env);
-        return r;
+        return new OutboxEntrySnapshot(
+                UUID.randomUUID(), UUID.randomUUID(), eventId, "api_token.created",
+                Instant.parse("2026-04-23T10:00:00Z"), env,
+                OutboxStatus.DELIVERING, 1, Instant.parse("2026-04-23T10:00:00Z"),
+                null, null, null, null, Instant.parse("2026-04-23T10:00:00Z"));
     }
 
-    private EventSubscription subNoAuth() {
+    private EventSubscriptionSnapshot subNoAuth() {
         return subscriptionTo(server.url("/").toString());
     }
 
-    private EventSubscription subscriptionTo(String url) {
-        EventSubscription sub = new EventSubscription();
-        sub.setId(UUID.randomUUID());
-        sub.setName("test");
-        sub.setChannelType(ChannelType.WEBHOOK);
-        sub.setDestinationConfig(Map.of("url", url));
-        sub.setEnabled(true);
-        return sub;
+    private EventSubscriptionSnapshot subscriptionTo(String url) {
+        return subscriptionWithConfig(Map.of("url", url));
+    }
+
+    private EventSubscriptionSnapshot subscriptionWithConfig(Map<String, Object> cfg) {
+        return new EventSubscriptionSnapshot(
+                UUID.randomUUID(), "test", null, ChannelType.WEBHOOK,
+                cfg, null, true, null);
     }
 
     private static String hmacSha256Hex(String secret, String data) throws Exception {

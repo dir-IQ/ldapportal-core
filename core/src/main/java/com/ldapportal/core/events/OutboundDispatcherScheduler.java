@@ -3,11 +3,11 @@ package com.ldapportal.core.events;
 
 import com.ldapportal.core.events.channel.DeliveryOutcome;
 import com.ldapportal.core.events.channel.OutboundChannel;
-import com.ldapportal.core.events.entity.EventSubscription;
 import com.ldapportal.core.events.entity.OutboxEntry;
 import com.ldapportal.core.events.enums.OutboxStatus;
-import com.ldapportal.core.events.repository.EventSubscriptionRepository;
 import com.ldapportal.core.events.repository.OutboxEntryRepository;
+import com.ldapportal.core.events.snapshot.EventSubscriptionSnapshot;
+import com.ldapportal.core.events.snapshot.OutboxEntrySnapshot;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -15,8 +15,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
 
@@ -32,6 +32,22 @@ import java.util.UUID;
  * <p>Single-instance assumption: two dispatchers running concurrently would
  * double-dispatch. HA is Phase 11's problem. SKIP LOCKED gives us the right
  * concurrency primitive when HA lands.</p>
+ *
+ * <p><b>Snapshot-based read boundary.</b> The dispatcher reads outbox
+ * rows and subscriptions via {@link OutboundEventReadOps}, which
+ * returns immutable {@link OutboxEntrySnapshot} /
+ * {@link EventSubscriptionSnapshot} records. Channel implementations
+ * receive snapshots, not entities — so accidental access to a LAZY
+ * association ({@code subscription.createdBy}, or anything added later)
+ * cannot silently fail through the dispatcher's transient-failure
+ * catch and trigger a retry loop for no real-world reason. Mirrors
+ * the architecture of {@code com.ldapportal.ldap.replication}.
+ *
+ * <p>The settle paths ({@link #resolveRow}, {@link #markDeadLettered})
+ * continue to load the entity inside a {@code TransactionTemplate}
+ * block and mutate-then-save it. That's a load + mutate + flush all
+ * inside one tx — the entity stays attached the whole time, no
+ * boundary crossing involved.
  */
 @Component
 @Slf4j
@@ -47,18 +63,18 @@ public class OutboundDispatcherScheduler {
     private static final Random JITTER = new Random();
 
     private final OutboxEntryRepository outboxRepository;
-    private final EventSubscriptionRepository subscriptionRepository;
+    private final OutboundEventReadOps readOps;
     private final List<OutboundChannel> channels;
     private final TransactionTemplate txTemplate;
     private final Clock clock;
 
     public OutboundDispatcherScheduler(OutboxEntryRepository outboxRepository,
-                                       EventSubscriptionRepository subscriptionRepository,
+                                       OutboundEventReadOps readOps,
                                        List<OutboundChannel> channels,
                                        TransactionTemplate txTemplate,
                                        Clock clock) {
         this.outboxRepository = outboxRepository;
-        this.subscriptionRepository = subscriptionRepository;
+        this.readOps = readOps;
         this.channels = channels;
         this.txTemplate = txTemplate;
         this.clock = clock;
@@ -91,24 +107,30 @@ public class OutboundDispatcherScheduler {
     }
 
     private void deliverAndResolve(UUID id) {
-        OutboxEntry row = outboxRepository.findById(id).orElse(null);
-        if (row == null) return;
-        EventSubscription sub = subscriptionRepository
-                .findById(row.getSubscriptionId()).orElse(null);
+        // Read both projections via ReadOps so the entity never escapes
+        // the read tx — channels see immutable records, no JPA proxies
+        // in scope, no possibility of LazyInitializationException
+        // leaking into the dispatcher's generic transient-failure catch.
+        Optional<OutboxEntrySnapshot> rowOpt = readOps.outboxSnapshot(id);
+        if (rowOpt.isEmpty()) return;
+        OutboxEntrySnapshot row = rowOpt.get();
 
-        if (sub == null || !sub.isEnabled()) {
+        EventSubscriptionSnapshot sub = readOps.subscriptionSnapshot(row.subscriptionId())
+                .orElse(null);
+
+        if (sub == null || !sub.enabled()) {
             txTemplate.executeWithoutResult(s -> markDeadLettered(
                     id, "subscription disabled or deleted", null));
             return;
         }
 
         OutboundChannel channel = channels.stream()
-                .filter(c -> c.type() == sub.getChannelType()).findFirst()
+                .filter(c -> c.type() == sub.channelType()).findFirst()
                 .orElse(null);
         if (channel == null) {
-            log.error("no channel registered for type={}", sub.getChannelType());
+            log.error("no channel registered for type={}", sub.channelType());
             txTemplate.executeWithoutResult(s -> markDeadLettered(
-                    id, "no channel registered for " + sub.getChannelType(), null));
+                    id, "no channel registered for " + sub.channelType(), null));
             return;
         }
 

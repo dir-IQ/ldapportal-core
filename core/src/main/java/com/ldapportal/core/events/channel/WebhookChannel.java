@@ -3,9 +3,9 @@ package com.ldapportal.core.events.channel;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.ldapportal.core.events.entity.EventSubscription;
-import com.ldapportal.core.events.entity.OutboxEntry;
 import com.ldapportal.core.events.enums.ChannelType;
+import com.ldapportal.core.events.snapshot.EventSubscriptionSnapshot;
+import com.ldapportal.core.events.snapshot.OutboxEntrySnapshot;
 import com.ldapportal.service.EncryptionService;
 import com.ldapportal.util.UrlValidator;
 import lombok.extern.slf4j.Slf4j;
@@ -66,8 +66,8 @@ public class WebhookChannel implements OutboundChannel {
     public ChannelType type() { return ChannelType.WEBHOOK; }
 
     @Override
-    public DeliveryOutcome deliver(OutboxEntry row, EventSubscription sub) {
-        Map<String, Object> cfg = sub.getDestinationConfig();
+    public DeliveryOutcome deliver(OutboxEntrySnapshot row, EventSubscriptionSnapshot sub) {
+        Map<String, Object> cfg = sub.destinationConfig();
         if (cfg == null) {
             return DeliveryOutcome.permanentFailure("null destination_config", 0);
         }
@@ -88,7 +88,7 @@ public class WebhookChannel implements OutboundChannel {
 
         String body;
         try {
-            body = objectMapper.writeValueAsString(row.getEnvelope());
+            body = objectMapper.writeValueAsString(row.envelope());
         } catch (JsonProcessingException e) {
             return DeliveryOutcome.permanentFailure(
                     "envelope serialization failed: " + e.getMessage(), 0);
@@ -107,8 +107,8 @@ public class WebhookChannel implements OutboundChannel {
                     .uri(target)
                     .header("Content-Type", "application/json")
                     .header("User-Agent", "LDAPPortal-Webhook/1")
-                    .header("X-LDAPPortal-Event-Id",   row.getEventId().toString())
-                    .header("X-LDAPPortal-Event-Type", row.getEventType())
+                    .header("X-LDAPPortal-Event-Id",   row.eventId().toString())
+                    .header("X-LDAPPortal-Event-Type", row.eventType())
                     .header("X-LDAPPortal-Timestamp",  Long.toString(timestamp));
 
             try {
