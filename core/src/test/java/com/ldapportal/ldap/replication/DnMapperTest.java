@@ -60,12 +60,16 @@ class DnMapperTest {
     }
 
     @Test
-    void unparseableDn_returnsSourceDnAsFallback() {
-        // Malformed DN: rather than throwing, fall back to identity so
-        // the caller's failure mode is "delivery fails at the target"
-        // — a visible error — rather than "wrote to the wrong place".
+    void unparseableDn_returnsNullToSkipLink() {
+        // Malformed DN: return null so the enqueuer skips this link
+        // entirely. The earlier identity-fallback behaviour produced
+        // an event per enabled link with the malformed string as
+        // targetDn — the worker would burn its retry budget on each
+        // and block the per-link FIFO behind the wedge. Source-side
+        // write already succeeded; the divergence surfaces in
+        // monitoring rather than as queue garbage.
         ReplicationLink link = link("dc=src,dc=com", "dc=tgt,dc=com");
-        assertThat(DnMapper.map("this is not a dn", link)).isEqualTo("this is not a dn");
+        assertThat(DnMapper.map("this is not a dn", link)).isNull();
     }
 
     private static ReplicationLink link(String sourceBaseDn, String targetBaseDn) {

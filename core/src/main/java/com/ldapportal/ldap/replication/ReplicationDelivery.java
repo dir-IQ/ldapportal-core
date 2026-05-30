@@ -82,11 +82,7 @@ public class ReplicationDelivery {
                                           ReplicationLink link,
                                           DirectoryConnection target) {
         try {
-            return connectionFactory.withConnectionUnreplicated(target, conn -> {
-                LDAPResult r = conn.modify(ReplicationPayloadCodec.decodeModify(
-                        event.getTargetDn(), event.getPayload()));
-                return interpret(r);
-            });
+            return modifyOnce(event, target);
         } catch (com.ldapportal.exception.LdapOperationException ex) {
             // Inner LDAPException is wrapped — fish it back out to
             // check for NO_SUCH_OBJECT, the trigger for the auto-create
@@ -100,6 +96,14 @@ public class ReplicationDelivery {
             }
             throw ex;
         }
+    }
+
+    private DeliveryResult modifyOnce(ReplicationEvent event, DirectoryConnection target) {
+        return connectionFactory.withConnectionUnreplicated(target, conn -> {
+            LDAPResult r = conn.modify(ReplicationPayloadCodec.decodeModify(
+                    event.getTargetDn(), event.getPayload()));
+            return interpret(r);
+        });
     }
 
     /**
@@ -151,10 +155,19 @@ public class ReplicationDelivery {
                     "auto-create: target ADD failed: " + ex.getMessage());
         }
 
-        // Now re-attempt the original MODIFY against the now-existing
-        // entry. Recursion is bounded — auto-create won't re-trigger
-        // because the entry now exists.
-        return deliverModify(event, link, target);
+        // Re-attempt the original MODIFY against the now-existing entry.
+        // Use the non-recursive variant — if this second MODIFY still
+        // reports NO_SUCH_OBJECT (entry deleted under us, target replica
+        // lag, etc.) we surface the failure rather than loop back into
+        // autoCreateThenModify and risk an unbounded retry hot-loop
+        // inside a single worker tick.
+        try {
+            return modifyOnce(event, target);
+        } catch (com.ldapportal.exception.LdapOperationException ex) {
+            ResultCode rc = (ex.getCause() instanceof LDAPException le) ? le.getResultCode() : null;
+            return DeliveryResult.fail(rc,
+                    "auto-create: post-create MODIFY failed: " + ex.getMessage());
+        }
     }
 
     private DeliveryResult deliverDelete(ReplicationEvent event, DirectoryConnection target) {

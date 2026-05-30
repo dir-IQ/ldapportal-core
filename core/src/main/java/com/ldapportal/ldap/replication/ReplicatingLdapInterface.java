@@ -69,6 +69,7 @@ import java.util.UUID;
  * {@code LdapConnectionFactory.withConnectionUnreplicated} which
  * yields the raw {@code LDAPConnection}.
  */
+@lombok.extern.slf4j.Slf4j
 public final class ReplicatingLdapInterface implements FullLDAPInterface {
 
     private final LDAPConnection      delegate;
@@ -135,7 +136,16 @@ public final class ReplicatingLdapInterface implements FullLDAPInterface {
                     captureAddIfSuccess(r, add.getDN(),
                             List.copyOf(add.getEntryToAdd().getAttributes()));
                 }
-            } catch (LDIFException ignored) { /* re-parse failed — skip capture */ }
+            } catch (LDIFException ex) {
+                // Source-side write already succeeded; we just couldn't
+                // reconstruct structured capture data. Log at warn with
+                // enough context that operators noticing target drift
+                // can correlate to a specific call site rather than
+                // chase silently-missing events.
+                log.warn("Capture skipped — LDIF re-parse failed for successful LDAP write " +
+                        "(source change applied but no replication event enqueued): {}",
+                        ex.getMessage());
+            }
         }
         return r;
     }
@@ -185,7 +195,16 @@ public final class ReplicatingLdapInterface implements FullLDAPInterface {
                     captureModifyIfSuccess(r, mod.getDN(),
                             Arrays.asList(mod.getModifications()));
                 }
-            } catch (LDIFException ignored) { /* re-parse failed — skip capture */ }
+            } catch (LDIFException ex) {
+                // Source-side write already succeeded; we just couldn't
+                // reconstruct structured capture data. Log at warn with
+                // enough context that operators noticing target drift
+                // can correlate to a specific call site rather than
+                // chase silently-missing events.
+                log.warn("Capture skipped — LDIF re-parse failed for successful LDAP write " +
+                        "(source change applied but no replication event enqueued): {}",
+                        ex.getMessage());
+            }
         }
         return r;
     }

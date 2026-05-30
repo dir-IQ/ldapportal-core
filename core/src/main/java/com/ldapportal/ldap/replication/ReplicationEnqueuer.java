@@ -6,21 +6,19 @@ import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.enums.ReplicationEnqueueSource;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.entity.enums.ReplicationOperationType;
-import com.ldapportal.repository.ReplicationEventRepository;
 import com.ldapportal.repository.ReplicationLinkRepository;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -56,24 +54,37 @@ import java.util.UUID;
 public class ReplicationEnqueuer {
 
     private final ReplicationLinkRepository  linkRepo;
-    private final ReplicationEventRepository eventRepo;
+    private final ReplicationEventPersister  persister;
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    /**
+     * Capture point for every successful LDAP write the wrapper sees.
+     * Called from {@code ReplicatingLdapInterface} on the hot path,
+     * so the no-links case must be cheap: no transaction boundary,
+     * no event allocation, no JPA flush. The link lookup is a single
+     * indexed SELECT — cheap on its own — but the REQUIRES_NEW tx
+     * around it (the previous shape) added BEGIN/COMMIT overhead to
+     * every LDAP write in the entire application, even on directories
+     * with zero replication links configured. Splitting the
+     * transactional save into a sibling bean
+     * ({@link ReplicationEventPersister}) keeps the tx cost on the
+     * actually-replicating path only.
+     */
     public void enqueue(UUID sourceDirectoryId, CapturedWrite write) {
         try {
             List<ReplicationLink> links =
                     linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(sourceDirectoryId);
             if (links.isEmpty()) return;
 
+            List<ReplicationEvent> events = new ArrayList<>(links.size());
             for (ReplicationLink link : links) {
                 ReplicationEvent event = buildEvent(link, write);
-                if (event == null) {
-                    // DN out of scope for this link's source base — skip,
-                    // don't log per-write (could be very high volume).
-                    continue;
-                }
-                eventRepo.save(event);
+                if (event != null) events.add(event);
+                // null = DN out of scope for this link's source base —
+                // skip, don't log per-write (could be very high volume).
             }
+            if (events.isEmpty()) return;  // all links out-of-scope for this DN
+
+            persister.saveAll(events);
         } catch (RuntimeException ex) {
             // Source write has already committed against the directory.
             // Don't propagate; log so operators see the gap surfaces in
@@ -131,10 +142,20 @@ public class ReplicationEnqueuer {
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put("type", m.getModificationType().getName().toUpperCase());
             entry.put("name", mapping.targetAttr());
+            // m.getValues() returns null (not an empty array) for the
+            // "delete the entire attribute" form — new Modification(
+            // DELETE, "attrName") with no values. Without this guard
+            // a values.length deref NPE-s, the enqueuer's outer
+            // try/catch swallows it, and the source-side write
+            // silently never replicates.
             String[] values = m.getValues();
-            List<String> transformed = new ArrayList<>(values.length);
-            for (String v : values) {
-                transformed.add(mapping.valueTransform().apply(v));
+            List<String> transformed = values == null
+                    ? List.of()
+                    : new ArrayList<>(values.length);
+            if (values != null) {
+                for (String v : values) {
+                    transformed.add(mapping.valueTransform().apply(v));
+                }
             }
             entry.put("values", transformed);
             out.add(entry);

@@ -15,18 +15,20 @@ import java.util.List;
  *
  * <p>{@code attempts} on the entity counts <em>total</em> attempts so
  * far. After the first failure, {@code attempts == 1} and the next
- * retry is scheduled 30 seconds out. After the fifth failure,
- * {@code attempts == 5} — the retry budget is exhausted and the
+ * retry is scheduled 30 seconds out. The fifth failure schedules the
+ * final 6h retry; the sixth failure exhausts the retry budget and the
  * worker transitions the event to {@link ReplicationEventStatus#DEAD_LETTERED}
- * for operator review.
+ * for operator review. (See {@link #computeOutcome} — the boundary check
+ * uses {@code >} not {@code >=} so the 6h slot is actually used.)
  */
 public final class ReplicationBackoffPolicy {
 
     /**
      * Backoff delays indexed by attempt count - 1 (i.e. delay applied
      * after the Nth attempt fails is at index N-1). The list length
-     * is the retry budget: 5 entries → 5 attempts total → DEAD_LETTERED
-     * on the 5th failure.
+     * is the retry budget: 5 entries → 5 scheduled retries → the
+     * sixth failure (which would need a non-existent 6th delay) is
+     * what trips DEAD_LETTERED.
      */
     static final List<Duration> SCHEDULE = List.of(
             Duration.ofSeconds(30),

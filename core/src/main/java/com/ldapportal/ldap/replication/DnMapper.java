@@ -58,11 +58,18 @@ public final class DnMapper {
             String prefix = sourceNorm.substring(0, sourceNorm.length() - scopeNorm.length() - 1);
             return prefix + "," + link.getTargetBaseDn();
         } catch (LDAPException ex) {
-            // Unparseable DN — fall back to identity so the caller's
-            // failure mode is "delivery fails at the target" rather than
-            // "wrote to the wrong place". Callers that want strictness can
-            // check this case via a pre-validation pass.
-            return sourceDn;
+            // Unparseable DN — skip this link rather than enqueue an
+            // event with the malformed string as the target. Without
+            // this guard the enqueuer fans out an event per enabled
+            // link, the worker burns its retry budget on every link
+            // before dead-lettering, and the per-link FIFO blocks
+            // every subsequent valid write behind the wedged head.
+            // The source-side write already succeeded; the divergence
+            // here surfaces in the operator's monitoring rather than
+            // as a queue full of garbage. Returning null is the same
+            // signal as "out of scope for this link" — the enqueuer
+            // already handles that case.
+            return null;
         }
     }
 }

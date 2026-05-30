@@ -5,7 +5,7 @@ import com.ldapportal.entity.ReplicationEvent;
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.entity.enums.ReplicationOperationType;
-import com.ldapportal.repository.ReplicationEventRepository;
+import com.ldapportal.ldap.replication.ReplicationEventPersister;
 import com.ldapportal.repository.ReplicationLinkRepository;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
@@ -32,7 +32,7 @@ import static org.mockito.Mockito.when;
 class ReplicationEnqueuerTest {
 
     @Mock private ReplicationLinkRepository  linkRepo;
-    @Mock private ReplicationEventRepository eventRepo;
+    @Mock private ReplicationEventPersister persister;
     @InjectMocks private ReplicationEnqueuer enqueuer;
 
     @Test
@@ -45,7 +45,7 @@ class ReplicationEnqueuerTest {
 
         enqueuer.enqueue(source, CapturedWrite.delete("uid=alice,dc=corp"));
 
-        verifyNoInteractions(eventRepo);
+        verifyNoInteractions(persister);
     }
 
     @Test
@@ -60,9 +60,10 @@ class ReplicationEnqueuerTest {
                 List.of(new Attribute("uid", "alice"),
                         new Attribute("mail", "alice@src.com"))));
 
-        ArgumentCaptor<ReplicationEvent> cap = ArgumentCaptor.forClass(ReplicationEvent.class);
-        verify(eventRepo).save(cap.capture());
-        ReplicationEvent ev = cap.getValue();
+        ArgumentCaptor<List<ReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
+        verify(persister).saveAll(cap.capture());
+        assertThat(cap.getValue()).hasSize(1);
+        ReplicationEvent ev = cap.getValue().get(0);
         assertThat(ev.getOperation()).isEqualTo(ReplicationOperationType.ADD);
         assertThat(ev.getStatus()).isEqualTo(ReplicationEventStatus.PENDING);
         assertThat(ev.getSourceDn()).isEqualTo("uid=alice,ou=people,dc=src,dc=com");
@@ -73,6 +74,8 @@ class ReplicationEnqueuerTest {
     @Test
     void multipleLinks_persistsOneEventPerLink() {
         // Fan-out: one source write → one event per matching enabled link.
+        // Single saveAll call with both events in the batch (the
+        // persister opens one tx for the batch, not one tx per event).
         UUID source = UUID.randomUUID();
         ReplicationLink linkA = link(null, null);  // identity
         ReplicationLink linkB = link("dc=src,dc=com", "dc=mirror,dc=com");
@@ -81,7 +84,9 @@ class ReplicationEnqueuerTest {
 
         enqueuer.enqueue(source, CapturedWrite.delete("uid=alice,dc=src,dc=com"));
 
-        verify(eventRepo, times(2)).save(any(ReplicationEvent.class));
+        ArgumentCaptor<List<ReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
+        verify(persister).saveAll(cap.capture());
+        assertThat(cap.getValue()).hasSize(2);
     }
 
     @Test
@@ -97,7 +102,25 @@ class ReplicationEnqueuerTest {
 
         enqueuer.enqueue(source, CapturedWrite.delete("uid=alice,ou=people,dc=src,dc=com"));
 
-        verify(eventRepo, times(1)).save(any(ReplicationEvent.class));
+        ArgumentCaptor<List<ReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
+        verify(persister).saveAll(cap.capture());
+        assertThat(cap.getValue()).hasSize(1);
+    }
+
+    @Test
+    void allLinksOutOfScope_doesNotOpenTransactionAtAll() {
+        // Every link's DnMapper returns null (no scope match). The
+        // hot-path optimisation: skip the persister call entirely so
+        // we don't open the REQUIRES_NEW tx for zero events. This
+        // matches the no-links path's cost profile.
+        UUID source = UUID.randomUUID();
+        ReplicationLink outScope = link("ou=other,dc=src,dc=com", "ou=other,dc=tgt,dc=com");
+        when(linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(source))
+                .thenReturn(List.of(outScope));
+
+        enqueuer.enqueue(source, CapturedWrite.delete("uid=alice,ou=people,dc=src,dc=com"));
+
+        verifyNoInteractions(persister);
     }
 
     @Test
@@ -111,11 +134,35 @@ class ReplicationEnqueuerTest {
                 "uid=alice,dc=corp,dc=com",
                 List.of(new Modification(ModificationType.REPLACE, "mail", "new@corp.com"))));
 
-        ArgumentCaptor<ReplicationEvent> cap = ArgumentCaptor.forClass(ReplicationEvent.class);
-        verify(eventRepo).save(cap.capture());
-        ReplicationEvent ev = cap.getValue();
+        ArgumentCaptor<List<ReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
+        verify(persister).saveAll(cap.capture());
+        ReplicationEvent ev = cap.getValue().get(0);
         assertThat(ev.getOperation()).isEqualTo(ReplicationOperationType.MODIFY);
         assertThat(ev.getPayload()).containsKey("modifications");
+    }
+
+    @Test
+    void modifyOp_withNullValues_doesNotNPE() {
+        // Regression: UnboundID returns null (not an empty array) for the
+        // 'delete the entire attribute' form. Earlier enqueuer code did
+        // `values.length` -> NPE -> outer catch swallowed -> source write
+        // succeeded but no event was enqueued. Pin the null-safe path.
+        UUID source = UUID.randomUUID();
+        ReplicationLink link = link(null, null);
+        when(linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(source))
+                .thenReturn(List.of(link));
+
+        // Modification(DELETE, attrName) with no values — the wipe form.
+        Modification wipe = new Modification(ModificationType.DELETE, "description");
+
+        enqueuer.enqueue(source, CapturedWrite.modify(
+                "uid=alice,dc=corp,dc=com", List.of(wipe)));
+
+        // Must not have NPE'd; persister got the event with an empty
+        // values list in the modifications payload.
+        ArgumentCaptor<List<ReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
+        verify(persister).saveAll(cap.capture());
+        assertThat(cap.getValue()).hasSize(1);
     }
 
     @Test
@@ -123,13 +170,14 @@ class ReplicationEnqueuerTest {
         // Source LDAP write has already committed; an enqueue failure
         // here must not propagate to the caller (would tie source
         // durability to replication-queue durability). Verified by
-        // arranging save() to throw and asserting enqueue returns
-        // normally.
+        // arranging persister.saveAll to throw and asserting enqueue
+        // returns normally.
         UUID source = UUID.randomUUID();
         ReplicationLink link = link(null, null);
         when(linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(source))
                 .thenReturn(List.of(link));
-        when(eventRepo.save(any())).thenThrow(new RuntimeException("simulated DB failure"));
+        org.mockito.Mockito.doThrow(new RuntimeException("simulated DB failure"))
+                .when(persister).saveAll(any());
 
         // Must not throw.
         enqueuer.enqueue(source, CapturedWrite.delete("uid=alice,dc=corp"));
