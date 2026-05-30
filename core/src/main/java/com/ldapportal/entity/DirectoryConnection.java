@@ -165,6 +165,18 @@ public class DirectoryConnection {
     private boolean enabled = true;
 
     /**
+     * Per-directory replication master switch (R2). When {@code false}
+     * the {@link com.ldapportal.ldap.LdapConnectionFactory} skips the
+     * replication-capture wrapper entirely for writes sourced from this
+     * directory — no events accumulate for any link. Defaults
+     * {@code false}: replication is opt-in per directory. Distinct from
+     * the per-link {@code enabled} flag, which pauses one link's dispatch
+     * while capture continues.
+     */
+    @Column(name = "replication_enabled", nullable = false)
+    private boolean replicationEnabled = false;
+
+    /**
      * Root-DSE capability snapshot — populated at connect-time by
      * {@link com.ldapportal.ldap.LdapCapabilityProbeService}. Null when
      * the probe was skipped (Entra ID) or failed; UI displays the

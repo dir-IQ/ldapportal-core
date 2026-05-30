@@ -50,6 +50,14 @@ public class ReplicationEnqueuer {
 
     private final ReplicationReadOps         readOps;
     private final ReplicationEventPersister  persister;
+    /**
+     * Community-edition degradation (R2). Spring always wires a bean
+     * (a default {@code EntitlementService} is registered via
+     * {@code @ConditionalOnMissingBean}); may be {@code null} only in
+     * unit tests that construct the enqueuer directly without it, in
+     * which case the entitlement gate is treated as open.
+     */
+    private final EntitlementService         entitlementService;
 
     /**
      * Capture point for every successful LDAP write the wrapper sees.
@@ -62,6 +70,18 @@ public class ReplicationEnqueuer {
      */
     public void enqueue(UUID sourceDirectoryId, CapturedWrite write) {
         try {
+            // Community-edition degradation: when DIRECTORY_SYNC isn't
+            // entitled, no events accumulate regardless of the directory's
+            // replication_enabled DB value. An entitlement downgrade
+            // commercial → community → commercial round-trips cleanly:
+            // the column keeps its value, capture simply pauses while
+            // unlicensed. (Null in direct-construction unit tests → gate
+            // treated as open.)
+            if (entitlementService != null
+                    && !entitlementService.has(Entitlement.DIRECTORY_SYNC)) {
+                return;
+            }
+
             List<ReplicationLinkSnapshot> links =
                     readOps.snapshotsForSource(sourceDirectoryId);
             if (links.isEmpty()) return;

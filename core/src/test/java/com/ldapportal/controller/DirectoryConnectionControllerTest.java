@@ -95,7 +95,8 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 null, null, null, null, null, true,
                 false, null, null, null, null,
                 List.of(), List.of(),
-                null, null, null, null);
+                null, null, null, null,
+                false);
     }
 
     // ── GET list ──────────────────────────────────────────────────────────────
@@ -148,7 +149,8 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 null, null, null, null, null, true,
                 false, null, null, null, null,
                 List.of(), List.of(),
-                null, null, null, null);
+                null, null, null, null,
+                false);
 
         mockMvc.perform(post(BASE_URL)
                         .with(authentication(superadminAuth()))
@@ -167,7 +169,8 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 null, null, null, null, null, true,
                 false, null, null, null, null,
                 List.of(), List.of(),
-                null, null, null, null);
+                null, null, null, null,
+                false);
 
         mockMvc.perform(post(BASE_URL)
                         .with(authentication(superadminAuth()))

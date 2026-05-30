@@ -220,6 +220,7 @@ public class DirectoryConnectionService {
         dc.setSecondaryPort(req.secondaryPort());
         dc.setGlobalCatalogPort(req.globalCatalogPort());
         dc.setSelfServiceEnabled(req.selfServiceEnabled());
+        dc.setReplicationEnabled(req.replicationEnabled());
         dc.setSelfServiceLoginAttribute(
                 req.selfServiceLoginAttribute() != null && !req.selfServiceLoginAttribute().isBlank()
                         ? req.selfServiceLoginAttribute() : "uid");
