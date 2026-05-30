@@ -29,7 +29,10 @@ public record ReplicationEventResponse(
         OffsetDateTime nextAttemptAt,
         String lastError,
         OffsetDateTime enqueuedAt,
-        OffsetDateTime deliveredAt) {
+        OffsetDateTime deliveredAt,
+        // Source-side trace id (R2), surfaced from the payload so the
+        // operator console can pivot to the originating audit rows.
+        String correlationId) {
 
     public static ReplicationEventResponse from(ReplicationEvent e) {
         return new ReplicationEventResponse(
@@ -46,6 +49,13 @@ public record ReplicationEventResponse(
                 e.getNextAttemptAt(),
                 e.getLastError(),
                 e.getEnqueuedAt(),
-                e.getDeliveredAt());
+                e.getDeliveredAt(),
+                correlationId(e.getPayload()));
+    }
+
+    private static String correlationId(Map<String, Object> payload) {
+        if (payload == null) return null;
+        Object id = payload.get("correlationId");
+        return id == null ? null : id.toString();
     }
 }

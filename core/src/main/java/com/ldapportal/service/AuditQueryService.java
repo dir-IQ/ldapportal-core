@@ -35,7 +35,7 @@ public class AuditQueryService {
             OffsetDateTime to,
             int page,
             int size) {
-        return query(directoryId, actorId, action, null, null, from, to, page, size);
+        return query(directoryId, actorId, action, null, null, null, from, to, page, size);
     }
 
     /**
@@ -52,6 +52,7 @@ public class AuditQueryService {
             AuditAction action,
             String targetDn,
             String source,
+            UUID correlationId,
             OffsetDateTime from,
             OffsetDateTime to,
             int page,
@@ -59,7 +60,7 @@ public class AuditQueryService {
 
         PageRequest pageable = PageRequest.of(page, clampSize(size));
         String actionStr = action != null ? action.getDbValue() : null;
-        return auditRepo.findAll(directoryId, actorId, actionStr, targetDn, source, from, to, pageable)
+        return auditRepo.findAll(directoryId, actorId, actionStr, targetDn, source, correlationId, from, to, pageable)
                 .map(AuditEventResponse::from);
     }
 
@@ -74,6 +75,7 @@ public class AuditQueryService {
             AuditAction action,
             String targetDn,
             String source,
+            UUID correlationId,
             OffsetDateTime from,
             OffsetDateTime to,
             int page,
@@ -81,7 +83,7 @@ public class AuditQueryService {
 
         PageRequest pageable = PageRequest.of(page, clampSize(size));
         String actionStr = action != null ? action.getDbValue() : null;
-        return auditRepo.findAllByDirectoryIds(directoryIds, actorId, actionStr, targetDn, source, from, to, pageable)
+        return auditRepo.findAllByDirectoryIds(directoryIds, actorId, actionStr, targetDn, source, correlationId, from, to, pageable)
                 .map(AuditEventResponse::from);
     }
 
