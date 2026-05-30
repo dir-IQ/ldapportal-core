@@ -99,4 +99,97 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
                     @Param("attempts") int attempts,
                     @Param("nextAttemptAt") OffsetDateTime nextAttemptAt,
                     @Param("lastError") String lastError);
+
+    // ── UI surfacing: list / filter / counts ──────────────────────────────────
+
+    /**
+     * Per-link health rollup in a single query. Returns one row per
+     * link: counts of PENDING / FAILED / DEAD_LETTERED events, plus
+     * the timestamp of the most recently DELIVERED event (the "lag"
+     * indicator). NULL last-delivered is acceptable (no event ever
+     * succeeded yet — first delivery still pending).
+     *
+     * <p>Returned as Object[] rows because JPQL can't construct an
+     * arbitrary record from a GROUP BY result without a constructor
+     * expression listing every field at the call site. The service
+     * unpacks into a Map<UUID, LinkHealth>.
+     */
+    @Query("""
+        SELECT e.link.id,
+               SUM(CASE WHEN e.status = com.ldapportal.entity.enums.ReplicationEventStatus.PENDING       THEN 1 ELSE 0 END),
+               SUM(CASE WHEN e.status = com.ldapportal.entity.enums.ReplicationEventStatus.FAILED        THEN 1 ELSE 0 END),
+               SUM(CASE WHEN e.status = com.ldapportal.entity.enums.ReplicationEventStatus.DEAD_LETTERED THEN 1 ELSE 0 END),
+               MAX(e.deliveredAt)
+        FROM ReplicationEvent e
+        WHERE e.link.id IN :linkIds
+        GROUP BY e.link.id
+        """)
+    List<Object[]> findHealthRollup(@Param("linkIds") java.util.Collection<UUID> linkIds);
+
+    /** System-wide count of dead-lettered events — drives the dashboard metric. */
+    long countByStatus(ReplicationEventStatus status);
+
+    /**
+     * Per-link event list ordered by enqueued_at desc. Filter args
+     * are all optional (controller passes null when the operator
+     * didn't supply a constraint).
+     */
+    @Query("""
+        SELECT e FROM ReplicationEvent e
+        WHERE e.link.id = :linkId
+          AND (:status IS NULL OR e.status = :status)
+        ORDER BY e.enqueuedAt DESC
+        """)
+    org.springframework.data.domain.Page<ReplicationEvent> findByLinkAndStatus(
+            @Param("linkId") UUID linkId,
+            @Param("status") ReplicationEventStatus status,
+            org.springframework.data.domain.Pageable pageable);
+
+    // ── Operator actions: retry, skip, acknowledge ────────────────────────────
+
+    /**
+     * Operator-initiated retry: flip a FAILED or DEAD_LETTERED event
+     * back to PENDING so the worker picks it up on the next tick.
+     * Resets retry timing but preserves attempts (so the backoff
+     * continues from where it was — not "fresh start" semantics, which
+     * would let an operator infinite-loop a hopeless event).
+     */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationEvent e
+        SET e.status        = com.ldapportal.entity.enums.ReplicationEventStatus.PENDING,
+            e.nextAttemptAt = NULL
+        WHERE e.id = :id
+          AND e.status IN ('FAILED', 'DEAD_LETTERED', 'SKIPPED', 'ACKNOWLEDGED')
+        """)
+    int retryByOperator(@Param("id") UUID id);
+
+    /**
+     * Operator-initiated skip: drop the event without applying. Used
+     * when the operator decides the change isn't appropriate for the
+     * target (e.g. an attribute the target schema rejects).
+     */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationEvent e
+        SET e.status = com.ldapportal.entity.enums.ReplicationEventStatus.SKIPPED
+        WHERE e.id = :id
+          AND e.status IN ('PENDING', 'FAILED', 'DEAD_LETTERED')
+        """)
+    int skipByOperator(@Param("id") UUID id);
+
+    /**
+     * Operator-initiated acknowledge: mark a DEAD_LETTERED event as
+     * "seen and dismissed". Differs from SKIPPED — acknowledge implies
+     * the operator understood the failure and chose not to retry,
+     * rather than intentionally discarding the change.
+     */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationEvent e
+        SET e.status = com.ldapportal.entity.enums.ReplicationEventStatus.ACKNOWLEDGED
+        WHERE e.id = :id
+          AND e.status = com.ldapportal.entity.enums.ReplicationEventStatus.DEAD_LETTERED
+        """)
+    int acknowledgeByOperator(@Param("id") UUID id);
 }
