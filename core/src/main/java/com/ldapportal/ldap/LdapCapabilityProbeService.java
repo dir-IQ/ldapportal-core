@@ -17,27 +17,23 @@ import java.util.List;
 
 /**
  * Reads the root DSE on a directory connection and returns a
- * {@link DirectoryCapabilities} snapshot. Called once at connect-time
- * (on Test Connection and on save) by
- * {@link com.ldapportal.service.DirectoryConnectionService}; the
- * result is persisted as JSONB on
- * {@link DirectoryConnection#getCapabilities()}.
+ * {@link DirectoryCapabilities} snapshot. Invoked out-of-band from
+ * {@link DirectoryCapabilityRefresher}, which handles AFTER_COMMIT
+ * dispatch so the probe never sits inside the save transaction.
  *
- * <p>Two flavours of failure are explicitly tolerated:
+ * <p>Returns {@code null} (signalling "no useful snapshot") in three
+ * cases the UI handles by hiding the vendor chip:
  * <ul>
- *   <li><b>Entra ID</b> — not an LDAP server, no root DSE. The probe
- *       short-circuits to {@code null} for Entra-type connections so
- *       callers don't have to guard at every call site.</li>
- *   <li><b>Server returns no root DSE entry</b> — some hardened
- *       deployments hide it from unauthenticated callers; the probe
- *       runs under the configured bind, so this is rare but possible
- *       on aggressively-locked-down servers. We return {@code null}
- *       rather than throwing, so a partial-config directory still saves
- *       successfully.</li>
+ *   <li>The connection is Entra ID — not LDAP, no root DSE to read.</li>
+ *   <li>The server returned no root DSE entry — some hardened
+ *       deployments hide it. Returning {@code null} (rather than a
+ *       non-null snapshot with vendor=null) keeps the UI fallback
+ *       from pretending we confirmed the vendor when we confirmed
+ *       only that the bind succeeded.</li>
+ *   <li>Any exception during the LDAP call — connection broken, RBAC
+ *       denial, etc. Logged and swallowed; capability persistence is
+ *       best-effort.</li>
  * </ul>
- * Errors inside the LDAP call itself (broken connection, RBAC denial)
- * propagate normally — those are real connection problems that the
- * operator should see during Test Connection.
  */
 @Service
 @RequiredArgsConstructor
@@ -47,10 +43,11 @@ public class LdapCapabilityProbeService {
     private final LdapConnectionFactory connectionFactory;
 
     /**
-     * Probe through the cached connection pool. Used during
-     * {@code updateDirectory} / {@code createDirectory} once the
-     * connection is persisted; the pool exists because save already
-     * ran.
+     * Probe through the cached connection pool. The connection pool is
+     * created on demand if not already cached — fine here because the
+     * caller is the AFTER_COMMIT refresher, so the directory row exists
+     * by the time we open the pool (no risk of a rolled-back UUID
+     * orphaning sockets in the cache).
      */
     public DirectoryCapabilities probe(DirectoryConnection dc) {
         if (dc == null || dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
@@ -59,26 +56,8 @@ public class LdapCapabilityProbeService {
         try {
             return connectionFactory.withConnection(dc, this::readRootDse);
         } catch (Exception ex) {
-            // Capability probing is non-fatal — log and move on. A
-            // missing capabilities row just means the badge isn't
-            // displayed; the directory still works for CRUD.
             log.warn("Capability probe failed for directory {}: {}",
                     dc.getDisplayName(), ex.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * Probe over a one-shot connection — for use during Test Connection,
-     * where the directory hasn't been saved yet and there's no pool to
-     * draw from.
-     */
-    public DirectoryCapabilities probe(LDAPConnection conn) {
-        try {
-            return readRootDse(conn);
-        } catch (Exception ex) {
-            log.warn("Capability probe over one-shot connection failed: {}",
-                    ex.getMessage());
             return null;
         }
     }
@@ -86,10 +65,15 @@ public class LdapCapabilityProbeService {
     private DirectoryCapabilities readRootDse(LDAPConnection conn) throws LDAPException {
         RootDSE root = conn.getRootDSE();
         if (root == null) {
-            log.debug("Server returned no root DSE — capability snapshot will be empty");
-            return new DirectoryCapabilities(
-                    null, null, List.of(), List.of(), List.of(), List.of(),
-                    OffsetDateTime.now());
+            // Returning null instead of an empty snapshot is deliberate:
+            // a non-null snapshot with vendor=null would trick the UI's
+            // type-label fallback into rendering a confident vendor chip
+            // ("Oracle Unified Directory", say) whose only evidence is
+            // the operator's own dropdown pick — confirming a guess
+            // they made themselves. With null, the chip simply doesn't
+            // render and the absence is itself the signal.
+            log.debug("Server returned no root DSE — capability snapshot omitted");
+            return null;
         }
         return new DirectoryCapabilities(
                 root.getAttributeValue("vendorName"),
