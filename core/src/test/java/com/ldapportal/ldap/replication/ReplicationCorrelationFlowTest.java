@@ -38,11 +38,14 @@ class ReplicationCorrelationFlowTest {
     }
 
     private static ReplicationLinkSnapshot link() {
+        // sourceDirectory/targetDirectory are entity refs the enqueuer
+        // doesn't dereference on this path → null is fine (matches the
+        // existing ReplicationEnqueuerTest helper).
         return new ReplicationLinkSnapshot(
                 UUID.randomUUID(), "L",
-                UUID.randomUUID(), UUID.randomUUID(),
+                null, null,
                 "dc=src,dc=com", "dc=tgt,dc=com",
-                false, List.of());
+                true, false, List.of());
     }
 
     @SuppressWarnings("unchecked")

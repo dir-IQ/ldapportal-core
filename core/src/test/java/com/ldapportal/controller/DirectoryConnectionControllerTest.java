@@ -83,7 +83,8 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 null,                               // graphEndpoint
                 null,                               // capabilities
                 OffsetDateTime.now(),               // createdAt
-                OffsetDateTime.now());              // updatedAt
+                OffsetDateTime.now(),               // updatedAt
+                false);                             // replicationEnabled
     }
 
     DirectoryConnectionRequest validRequest() {
