@@ -86,9 +86,19 @@ public class ReplicationEnqueuer {
                     readOps.snapshotsForSource(sourceDirectoryId);
             if (links.isEmpty()) return;
 
+            // Source-side trace id (R2). Prefer one the wrapper stamped on
+            // the captured write; otherwise read the active correlation
+            // scope, minting one if this write happens outside any (so every
+            // replication event payload carries a non-null id). enqueue runs
+            // synchronously on the write thread, so this is the originating
+            // operation's scope.
+            UUID correlationId = write.correlationId() != null
+                    ? write.correlationId()
+                    : CorrelationContext.currentOrGenerate();
+
             List<PendingReplicationEvent> pending = new ArrayList<>(links.size());
             for (ReplicationLinkSnapshot link : links) {
-                PendingReplicationEvent event = buildEvent(link, write);
+                PendingReplicationEvent event = buildEvent(link, write, correlationId);
                 if (event != null) pending.add(event);
                 // null = DN out of scope for this link's source base —
                 // skip, don't log per-write (could be very high volume).
@@ -107,7 +117,8 @@ public class ReplicationEnqueuer {
     }
 
     private PendingReplicationEvent buildEvent(ReplicationLinkSnapshot link,
-                                                 CapturedWrite write) {
+                                                 CapturedWrite write,
+                                                 UUID correlationId) {
         String targetDn = DnMapper.map(write.dn(), link);
         if (targetDn == null) {
             return null;
@@ -118,11 +129,17 @@ public class ReplicationEnqueuer {
                 write.operation(),
                 write.dn(),
                 targetDn,
-                buildPayload(write, link));
+                buildPayload(write, link, correlationId));
     }
 
-    private Map<String, Object> buildPayload(CapturedWrite write, ReplicationLinkSnapshot link) {
+    private Map<String, Object> buildPayload(CapturedWrite write, ReplicationLinkSnapshot link,
+                                             UUID correlationId) {
         Map<String, Object> payload = new LinkedHashMap<>();
+        // Source-side trace id travels on the payload so dispatch-side audit
+        // rows can pivot back to the originating operation's audit rows.
+        if (correlationId != null) {
+            payload.put("correlationId", correlationId.toString());
+        }
         switch (write.operation()) {
             case ADD -> payload.put("attributes", mappedAddAttributes(write.attributes(), link));
             case MODIFY -> payload.put("modifications", mappedModifications(write.modifications(), link));

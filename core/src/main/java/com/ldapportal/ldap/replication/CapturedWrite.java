@@ -6,6 +6,7 @@ import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * A successful LDAP mutation captured by {@code ReplicatingLDAPInterface}
@@ -30,27 +31,33 @@ public record CapturedWrite(
         String dn,
         List<Attribute> attributes,
         List<Modification> modifications,
-        ModifyDnParts modifyDn) {
+        ModifyDnParts modifyDn,
+        UUID correlationId) {
 
     public record ModifyDnParts(String newRdn, boolean deleteOldRdn, String newSuperiorDn) {}
 
     public static CapturedWrite add(String dn, List<Attribute> attributes) {
         return new CapturedWrite(ReplicationOperationType.ADD, dn,
-                List.copyOf(attributes), null, null);
+                List.copyOf(attributes), null, null, null);
     }
 
     public static CapturedWrite modify(String dn, List<Modification> modifications) {
         return new CapturedWrite(ReplicationOperationType.MODIFY, dn,
-                null, List.copyOf(modifications), null);
+                null, List.copyOf(modifications), null, null);
     }
 
     public static CapturedWrite delete(String dn) {
-        return new CapturedWrite(ReplicationOperationType.DELETE, dn, null, null, null);
+        return new CapturedWrite(ReplicationOperationType.DELETE, dn, null, null, null, null);
     }
 
     public static CapturedWrite modifyDn(String dn, String newRdn,
                                           boolean deleteOldRdn, String newSuperiorDn) {
         return new CapturedWrite(ReplicationOperationType.MODIFY_DN, dn, null, null,
-                new ModifyDnParts(newRdn, deleteOldRdn, newSuperiorDn));
+                new ModifyDnParts(newRdn, deleteOldRdn, newSuperiorDn), null);
+    }
+
+    /** Returns a copy of this write stamped with the given source-side correlation id. */
+    public CapturedWrite withCorrelation(UUID correlationId) {
+        return new CapturedWrite(operation, dn, attributes, modifications, modifyDn, correlationId);
     }
 }

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ldapportal.auth.ApiTokenAuthenticationFilter;
 import com.ldapportal.auth.JwtAuthenticationFilter;
 import com.ldapportal.config.AppProperties;
+import com.ldapportal.core.observability.CorrelationFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -53,6 +54,7 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http,
                                            JwtAuthenticationFilter jwtFilter,
                                            ApiTokenAuthenticationFilter apiTokenFilter,
+                                           CorrelationFilter correlationFilter,
                                            ObjectMapper objectMapper) throws Exception {
         http
             .csrf(AbstractHttpConfigurer::disable)
@@ -70,6 +72,9 @@ public class SecurityConfig {
             )
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(apiTokenFilter, JwtAuthenticationFilter.class)
+            // Correlation scope must be established before auth so even
+            // authentication-failure audit rows carry the request's id.
+            .addFilterBefore(correlationFilter, ApiTokenAuthenticationFilter.class)
             .authorizeHttpRequests(auth -> auth
                 // ── Public ────────────────────────────────────────────────────
                 .requestMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/logout").permitAll()
