@@ -176,9 +176,17 @@ public class OperationalReportService {
     }
 
     private ReportData runDisabledAccountsReport(DirectoryConnection dc, String scopeBaseDn) {
+        // Keep the vendor-disable attribute set here in sync with
+        // LdapDirectoryProvider.isEnabled — both code paths classify
+        // accounts as disabled, and they must agree or operators see a
+        // divergence between the directory browse view's badge and this
+        // report. ds-pwp-account-disabled was added with OUD support;
+        // without it here the disabled-accounts report silently misses
+        // OUD/OpenDJ users disabled through the password-policy bit.
         String filter = dc.getDirectoryType() == DirectoryType.ACTIVE_DIRECTORY
                 ? "(userAccountControl:1.2.840.113556.1.4.803:=2)"
-                : "(|(pwdAccountLockedTime=*)(nsAccountLock=TRUE)(loginDisabled=TRUE)"
+                : "(|(pwdAccountLockedTime=*)(nsAccountLock=TRUE)"
+                  + "(ds-pwp-account-disabled=TRUE)(loginDisabled=TRUE)"
                   + "(employeeType=Terminated)(loginShell=/sbin/nologin))";
         return runLdapReport(dc, filter, scopeBaseDn);
     }

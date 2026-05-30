@@ -131,12 +131,28 @@ public class LdapDirectoryProvider implements DirectoryProvider {
 
     /**
      * Detect whether a user account is enabled.
-     * AD: userAccountControl bit 2 (0x2) = ACCOUNTDISABLE.
-     * OpenLDAP / 389 DS: nsAccountLock = "true" means locked/disabled.
-     * OUD / OpenDJ:      ds-pwp-account-disabled = "true" means disabled.
-     * Vendor-agnostic check at this layer keeps the UI's enabled badge
-     * truthful for OUD users; per-DirectoryType dispatch would also work
-     * but isn't required since the three attributes are non-overlapping.
+     * <ul>
+     *   <li>AD: userAccountControl bit 2 (0x2) = ACCOUNTDISABLE.</li>
+     *   <li>OpenLDAP / 389 DS: nsAccountLock = "true" means locked/disabled.</li>
+     *   <li>OUD / OpenDJ:      ds-pwp-account-disabled = "true" means disabled.</li>
+     * </ul>
+     *
+     * <p>The chain is a "first 'true' wins" fold, which is the right
+     * semantic for sticky-disabled: any attribute saying the account
+     * is disabled means the account is disabled. The previous comment
+     * claimed the three attributes are "non-overlapping" — that's only
+     * true vendor-by-vendor in isolation, NOT in practice. OpenDJ in
+     * particular can populate <em>both</em> nsAccountLock (via the
+     * Sun / Netscape compatibility plugin) <em>and</em>
+     * ds-pwp-account-disabled, and migration tooling commonly leaves
+     * legacy nsAccountLock=true on entries that have been re-enabled
+     * via the modern password-policy path. The current chain reports
+     * such an entry as disabled — same as OpenDJ itself does when both
+     * attributes are present, since OpenDJ's pwpolicy honours legacy
+     * nsAccountLock as a disable signal. If a future deployment needs
+     * pwpolicy-only semantics, switch to per-DirectoryType dispatch
+     * here (and matching change in OperationalReportService's
+     * runDisabledAccountsReport filter).
      */
     private boolean isEnabled(LdapUser u) {
         // Active Directory
