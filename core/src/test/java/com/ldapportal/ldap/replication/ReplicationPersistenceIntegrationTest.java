@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
+import com.ldapportal.core.entitlement.Edition;
+import com.ldapportal.core.entitlement.Entitlement;
+import com.ldapportal.core.entitlement.License;
+import com.ldapportal.core.entitlement.LicenseProvider;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.ReplicationEvent;
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.ReplicationLinkAttrMapping;
-import com.ldapportal.core.entitlement.Entitlement;
-import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.entity.enums.SslMode;
@@ -20,17 +22,22 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.when;
 
 /**
  * Production-shape integration test for the replication persistence
@@ -57,10 +64,39 @@ import static org.mockito.Mockito.when;
  * production session-boundary semantics are reproduced — setup
  * commits, the unit-under-test runs outside any caller tx, and we
  * assert against a fresh read.
+ *
+ * <p>R2: the enqueuer drops captured writes when {@code DIRECTORY_SYNC}
+ * isn't entitled. The {@code test} profile loads the community-shape
+ * context (no license), so this test supplies a {@code @Primary}
+ * all-entitlements {@link LicenseProvider} — a real bean, so the
+ * entitlement startup reporter still works — to exercise the enqueue
+ * path. Registered via {@code @ConditionalOnMissingBean} in
+ * {@code LicenseAutoConfiguration}, so the {@code @Primary} override
+ * wins cleanly.
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@Import(ReplicationPersistenceIntegrationTest.DirectorySyncEntitledConfig.class)
 class ReplicationPersistenceIntegrationTest {
+
+    @TestConfiguration
+    static class DirectorySyncEntitledConfig {
+        @Bean
+        @Primary
+        LicenseProvider directorySyncEntitledLicenseProvider() {
+            // COMMUNITY edition + DIRECTORY_SYNC as an add-on grants the
+            // entitlement; Instant.MAX keeps the startup reporter's expiry
+            // branch a no-op.
+            License full = new License(
+                    null, Edition.COMMUNITY,
+                    EnumSet.of(Entitlement.DIRECTORY_SYNC),
+                    Map.of(), Instant.EPOCH, Instant.MAX, null);
+            return new LicenseProvider() {
+                @Override public License current() { return full; }
+                @Override public String source() { return "test (DIRECTORY_SYNC entitled)"; }
+            };
+        }
+    }
 
     @Autowired private ReplicationEnqueuer        enqueuer;
     @Autowired private ReplicationEventTxOps      txOps;
@@ -69,20 +105,11 @@ class ReplicationPersistenceIntegrationTest {
     @Autowired private DirectoryConnectionRepository dirRepo;
     @Autowired private TransactionTemplate        txTemplate;
 
-    /**
-     * R2: the enqueuer drops captured writes when DIRECTORY_SYNC isn't
-     * entitled. The test profile has no license (community shape), so stub
-     * the entitlement on to exercise the persistence path under test.
-     */
-    @MockitoBean private EntitlementService entitlementService;
-
     private UUID sourceDirId;
     private UUID targetDirId;
 
     @BeforeEach
     void cleanFixtures() {
-        when(entitlementService.has(Entitlement.DIRECTORY_SYNC)).thenReturn(true);
-
         // Order matters: events depend on links, links depend on dirs.
         // No @Transactional on the test, so each delete commits.
         eventRepo.deleteAll();
