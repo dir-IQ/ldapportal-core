@@ -7,6 +7,7 @@ import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.ldap.LdapConnectionFactory;
+import com.ldapportal.repository.ReplicationLinkRepository;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.listener.InMemoryDirectoryServer;
 import com.unboundid.ldap.listener.InMemoryDirectoryServerConfig;
@@ -33,6 +34,7 @@ import static org.mockito.Mockito.when;
 class ReplicationDeliveryTest {
 
     @Mock private EncryptionService encryptionService;
+    @Mock private ReplicationLinkRepository linkRepo;
 
     private InMemoryDirectoryServer targetServer;
     private InMemoryDirectoryServer sourceServer;
@@ -53,7 +55,7 @@ class ReplicationDeliveryTest {
         // null replicationEnqueuer — delivery uses withConnectionUnreplicated,
         // so the wrapper never activates anyway.
         factory = new LdapConnectionFactory(encryptionService, null);
-        delivery = new ReplicationDelivery(factory);
+        delivery = new ReplicationDelivery(factory, linkRepo);
 
         targetDc = buildDc(targetServer.getListenPort());
         sourceDc = buildDc(sourceServer.getListenPort());

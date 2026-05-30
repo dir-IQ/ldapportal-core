@@ -6,6 +6,7 @@ import com.ldapportal.entity.ReplicationEvent;
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.ldapportal.ldap.LdapConnectionFactory;
+import com.ldapportal.repository.ReplicationLinkRepository;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.LDAPResult;
 import com.unboundid.ldap.sdk.ResultCode;
@@ -41,6 +42,17 @@ import java.util.Map;
 public class ReplicationDelivery {
 
     private final LdapConnectionFactory connectionFactory;
+    private final ReplicationLinkRepository linkRepo;
+
+    /**
+     * Short retry budget for the post-auto-create MODIFY against
+     * the target. Covers replica-lag windows where the freshly-added
+     * entry hasn't propagated to the replica the MODIFY lands on.
+     * 3 attempts × 500ms gap = up to ~1s extra latency in the
+     * pathological case; the common case is one attempt that succeeds.
+     */
+    private static final int POST_CREATE_MODIFY_MAX_ATTEMPTS = 3;
+    private static final long POST_CREATE_MODIFY_RETRY_MS = 500L;
 
     /**
      * Apply {@code event} to {@code event.getLink().getTargetDirectory()}.
@@ -129,13 +141,25 @@ public class ReplicationDelivery {
                     "auto-create: source entry no longer exists");
         }
 
+        // Reload the link with its attributeMappings collection
+        // initialised. The worker's findEarliestClaimableForLink only
+        // JOIN FETCHes the link + source/target directories, not the
+        // attribute-mapping rules — accessing link.getAttributeMappings()
+        // on the detached entity here would trip
+        // LazyInitializationException (open-in-view=false) and the
+        // outer catch in deliver() would surface it as a generic
+        // failure, permanently breaking auto-create for any link
+        // with mappings configured.
+        ReplicationLink linkWithMappings = linkRepo.findByIdWithMappings(link.getId())
+                .orElse(link);
+
         // Apply attribute mapping to the source entry's attribute set
         // so the ADD targets the right names / values.
         Map<String, List<String>> raw = new java.util.LinkedHashMap<>();
         for (com.unboundid.ldap.sdk.Attribute a : sourceEntry.getAttributes()) {
             raw.put(a.getName(), Arrays.asList(a.getValues()));
         }
-        Map<String, List<String>> mapped = AttributeMapper.mapAttributes(raw, link);
+        Map<String, List<String>> mapped = AttributeMapper.mapAttributes(raw, linkWithMappings);
         List<com.unboundid.ldap.sdk.Attribute> attrs = new ArrayList<>(mapped.size());
         mapped.forEach((name, values) ->
                 attrs.add(new com.unboundid.ldap.sdk.Attribute(name, values.toArray(new String[0]))));
@@ -156,18 +180,36 @@ public class ReplicationDelivery {
         }
 
         // Re-attempt the original MODIFY against the now-existing entry.
-        // Use the non-recursive variant — if this second MODIFY still
-        // reports NO_SUCH_OBJECT (entry deleted under us, target replica
-        // lag, etc.) we surface the failure rather than loop back into
-        // autoCreateThenModify and risk an unbounded retry hot-loop
-        // inside a single worker tick.
-        try {
-            return modifyOnce(event, target);
-        } catch (com.ldapportal.exception.LdapOperationException ex) {
-            ResultCode rc = (ex.getCause() instanceof LDAPException le) ? le.getResultCode() : null;
-            return DeliveryResult.fail(rc,
-                    "auto-create: post-create MODIFY failed: " + ex.getMessage());
+        // On a multi-replica target, the ADD lands on one replica and
+        // the MODIFY may hit another that hasn't seen the ADD yet —
+        // NO_SUCH_OBJECT recurs. Retry a few times with a small pause
+        // (bounded budget — does not recurse into autoCreateThenModify)
+        // so transient replica lag self-heals instead of falling into
+        // backoff and head-of-line-blocking the link's FIFO.
+        com.ldapportal.exception.LdapOperationException lastEx = null;
+        for (int attempt = 1; attempt <= POST_CREATE_MODIFY_MAX_ATTEMPTS; attempt++) {
+            try {
+                return modifyOnce(event, target);
+            } catch (com.ldapportal.exception.LdapOperationException ex) {
+                lastEx = ex;
+                boolean noSuchObject = ex.getCause() instanceof LDAPException le
+                        && le.getResultCode() == ResultCode.NO_SUCH_OBJECT;
+                if (!noSuchObject || attempt == POST_CREATE_MODIFY_MAX_ATTEMPTS) {
+                    break;
+                }
+                try {
+                    Thread.sleep(POST_CREATE_MODIFY_RETRY_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
+        ResultCode rc = (lastEx != null && lastEx.getCause() instanceof LDAPException le)
+                ? le.getResultCode() : null;
+        return DeliveryResult.fail(rc,
+                "auto-create: post-create MODIFY failed: "
+                        + (lastEx == null ? "unknown" : lastEx.getMessage()));
     }
 
     private DeliveryResult deliverDelete(ReplicationEvent event, DirectoryConnection target) {
