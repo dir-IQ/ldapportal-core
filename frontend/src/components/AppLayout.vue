@@ -171,14 +171,15 @@
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2V5z"/><path d="M6.5 3v14"/><path d="M2.5 7h4M2.5 11h4"/></svg>
             <span v-if="!collapsed">Directory Connections</span>
           </RouterLink>
-          <RouterLink
-            v-if="auth.isSuperadmin || auth.hasFeature('HYBRID')"
-            to="/superadmin/identities"
-            class="nav-item"
-          >
-            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="3.25"/><circle cx="13" cy="13" r="3.25"/><path d="M9.3 9.3l1.4 1.4"/></svg>
-            <span v-if="!collapsed">Identities</span>
-          </RouterLink>
+          <!-- "Identities" link removed: target /superadmin/identities has
+               no matching route in this edition (the cross-directory
+               identities view lives in ee/, which isn't packaged into
+               community / community-plus-isva). The link landed any
+               superadmin click on the dashboard via the catch-all
+               redirect. Restore here when an Identities view ships in
+               this distribution and gate it on auth.hasFeature('HYBRID')
+               (the entitlement check must match the route's actual
+               availability, not just superadmin role). -->
           <RouterLink v-if="auth.isHrEnabled" to="/superadmin/hr" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="5" r="2.5"/><path d="M2 14c0-2.76 2.24-5 5-5s5 2.24 5 5"/><path d="M14 6h4M14 9h3M14 12h2"/></svg>
             <span v-if="!collapsed">HR Integration</span>
