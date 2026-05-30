@@ -65,7 +65,7 @@ public class LdapDirectoryProvider implements DirectoryProvider {
     // tertiary slots in the UI a no-op.
     private static final String[] USER_ATTRS = {
             "cn", "uid", "sAMAccountName", "mail", "displayName", "memberOf",
-            "userAccountControl", "nsAccountLock",
+            "userAccountControl", "nsAccountLock", "ds-pwp-account-disabled",
             "employeeNumber", "employeeID", "userPrincipalName"
     };
 
@@ -132,7 +132,11 @@ public class LdapDirectoryProvider implements DirectoryProvider {
     /**
      * Detect whether a user account is enabled.
      * AD: userAccountControl bit 2 (0x2) = ACCOUNTDISABLE.
-     * OpenLDAP: nsAccountLock = "true" means locked/disabled.
+     * OpenLDAP / 389 DS: nsAccountLock = "true" means locked/disabled.
+     * OUD / OpenDJ:      ds-pwp-account-disabled = "true" means disabled.
+     * Vendor-agnostic check at this layer keeps the UI's enabled badge
+     * truthful for OUD users; per-DirectoryType dispatch would also work
+     * but isn't required since the three attributes are non-overlapping.
      */
     private boolean isEnabled(LdapUser u) {
         // Active Directory
@@ -142,9 +146,12 @@ public class LdapDirectoryProvider implements DirectoryProvider {
                 return (Integer.parseInt(uac) & 0x2) == 0;
             } catch (NumberFormatException ignored) {}
         }
-        // OpenLDAP
+        // OpenLDAP / 389 DS
         String lock = u.getFirstValue("nsaccountlock");
         if ("true".equalsIgnoreCase(lock)) return false;
+        // OUD / OpenDJ
+        String pwp = u.getFirstValue("ds-pwp-account-disabled");
+        if ("true".equalsIgnoreCase(pwp)) return false;
         // Default: assume enabled
         return true;
     }

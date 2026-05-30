@@ -300,14 +300,30 @@ public class LdapGroupService {
         // user entries, populated with the full transitive group closure.
         // A single SUB-scoped filter returns the same set the AD matching-
         // rule path produces, without the recursive walk the generic path
-        // would do. The capability probe (P2) records supported attributes
-        // on the connection but doesn't enumerate operational ones — we
-        // dispatch by DirectoryType and rely on the operator having
-        // selected the right type; a server that doesn't honour the
-        // attribute would silently return zero hits rather than fail, but
-        // that's the same failure mode as the AD branch on a stripped-down
-        // AD that disabled the matching rule.
-        String filter = "(isMemberOf=" + Filter.encodeValue(groupDn) + ")";
+        // would do.
+        //
+        // Normalise the caller-supplied DN before encoding it into the
+        // filter. OpenDJ's default attribute matching on operational attrs
+        // is case- and whitespace-sensitive string equality — without
+        // normalisation, 'CN=Engineering, OU=Groups, ...' from one caller
+        // and 'cn=engineering,ou=groups,...' from the server's stored
+        // isMemberOf value would silently fail to match (zero hits, no
+        // error). DN.toNormalizedString() folds case, collapses spacing,
+        // and standardises RDN attribute ordering — matching what the
+        // server stores.
+        //
+        // If the input isn't a parseable DN, fall back to using it as-is
+        // (with the trade-off above) rather than throwing — caller bugs
+        // surface as zero hits rather than 500s, consistent with the AD
+        // branch's behaviour on a malformed DN passed to the matching
+        // rule.
+        String normalized = groupDn;
+        try {
+            normalized = new com.unboundid.ldap.sdk.DN(groupDn).toNormalizedString();
+        } catch (com.unboundid.ldap.sdk.LDAPException ex) {
+            log.debug("isMemberOf groupDn not parseable, using as-is: {}", ex.getMessage());
+        }
+        String filter = "(isMemberOf=" + Filter.encodeValue(normalized) + ")";
         return pagedDnSearch(dc, filter);
     }
 

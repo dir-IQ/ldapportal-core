@@ -337,6 +337,35 @@ class LdapGroupServiceTest {
         assertThat(transitive).contains(teamGrp, alice, bob);
     }
 
+    @Test
+    void getNestedMembers_oudBranch_normalisesCallerSuppliedDn() throws Exception {
+        // OpenDJ's default attribute matching on isMemberOf is case- and
+        // whitespace-sensitive string equality. Without normalising the
+        // caller-supplied DN, a query for 'CN=Engineering, OU=Groups,
+        // DC=example, DC=com' would silently miss entries whose stored
+        // isMemberOf value is 'cn=engineering,ou=groups,dc=example,dc=com'.
+        // The OUD branch now runs the input through DN.toNormalizedString
+        // before encoding it into the filter.
+        String engineering = "cn=engineering,ou=groups,dc=example,dc=com";
+        String alice       = "cn=Alice,ou=users,dc=example,dc=com";
+
+        inMemoryServer.add(new com.unboundid.ldap.sdk.Entry(alice,
+                new com.unboundid.ldap.sdk.Attribute("objectClass", "top", "inetOrgPerson"),
+                new com.unboundid.ldap.sdk.Attribute("cn", "Alice"),
+                new com.unboundid.ldap.sdk.Attribute("sn", "Smith"),
+                // Server stores the lowercase canonical form.
+                new com.unboundid.ldap.sdk.Attribute("isMemberOf", engineering)));
+
+        dc.setDirectoryType(com.ldapportal.entity.enums.DirectoryType.ORACLE_UNIFIED_DIRECTORY);
+
+        // Caller passes a different case/spacing variant of the same DN.
+        // Without normalisation the in-memory server's string-equality
+        // matcher would return zero hits.
+        List<String> hits = groupService.getNestedMembers(
+                dc, "CN=Engineering, OU=Groups, DC=example, DC=com");
+        assertThat(hits).containsExactly(alice);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private void addGroup(String dn, String cn, String firstMember) throws Exception {

@@ -192,6 +192,27 @@ class LdapDirectoryProviderTest {
     }
 
     @Test
+    void searchUsers_detectsOudDisabledAccount() {
+        // OUD / OpenDJ populates ds-pwp-account-disabled when the password-
+        // policy 'disable' affordance has been applied. P1 registered OUD
+        // as a supported directory type, which would have left every OUD
+        // user reporting enabled=true regardless of the policy bit until
+        // this attribute was added to the USER_ATTRS fetch list and the
+        // enabled-detection mapper learned to read it.
+        DirectoryConnection dc = makeConnection();
+        LdapUser ldapUser = new LdapUser("uid=carol,ou=people,dc=oudtest", Map.of(
+                "cn", List.of("Carol"),
+                "uid", List.of("carol"),
+                "ds-pwp-account-disabled", List.of("true")));
+
+        when(userService.searchUsers(eq(dc), anyString(), any(), anyInt(), any(String[].class)))
+                .thenReturn(List.of(ldapUser));
+
+        List<DirectoryUser> result = provider.searchUsers(dc, null, 100);
+        assertThat(result.get(0).enabled()).isFalse();
+    }
+
+    @Test
     void searchUsers_defaultsToEnabled_whenNoDisableAttribute() {
         DirectoryConnection dc = makeConnection();
         LdapUser ldapUser = new LdapUser("uid=normal,dc=corp", Map.of(
