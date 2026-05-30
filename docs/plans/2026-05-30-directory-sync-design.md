@@ -252,11 +252,69 @@ frontend/src/components/dashboard/RecentActivityPanel.vue                       
 frontend/src/components/AppLayout.vue                                                 (sidebar nav)
 ```
 
-## 9. Effort estimate
+## 9. Implementation notes from P0
+
+These choices materialised during P0 implementation and constrain
+subsequent phases. The §2 design table remains canonical; this
+section records concrete details a later implementer needs to know
+without re-reading the P0 entity / wrapper code.
+
+### 9.1 `LdapOperation` parameter type
+
+`LdapOperation<T>.execute` takes `LDAPInterface`, not
+`LDAPConnection`. Operation lambdas passed to either
+`withConnection` or `withConnectionUnreplicated` receive the SDK's
+interface — the {@code ReplicatingLdapInterface} wrapper for the
+former, the raw {@code LDAPConnection} (which implements
+{@code LDAPInterface}) for the latter. Callers that need extended-
+operation methods not exposed on the interface (rare) must add them
+to {@code ReplicatingLdapInterface}'s passthrough surface; do not
+cast.
+
+### 9.2 `ReplicationEvent.payload` JSONB shape
+
+The worker (P1) deserialises this shape; the wire-stable schema is:
+
+```
+ADD:       { "attributes": { attrName: [v1, v2, ...], ... } }
+MODIFY:    { "modifications": [
+               { "type": "REPLACE|ADD|DELETE",
+                 "name": targetAttrName,
+                 "values": [v1, ...] },
+               ...
+             ] }
+DELETE:    {}   (DN alone identifies the operation)
+MODIFY_DN: { "newRdn": "...",
+             "deleteOldRdn": true|false,
+             "newSuperiorDn": "..." | null }
+```
+
+Attribute names and values are already DN- and value-mapped at
+enqueue time ({@code DnMapper} + {@code AttributeMapper}). The
+worker applies the payload to the target as-is — no per-event
+mapping in P1.
+
+### 9.3 Capture only on `ResultCode.SUCCESS`
+
+{@code ReplicatingLdapInterface} invokes the enqueuer only when the
+delegated LDAP operation returns {@code ResultCode.SUCCESS}. A
+thrown {@code LDAPException} records nothing. Tests should not
+assume an event is recorded for partial-failure result codes
+({@code REFERRAL}, etc.); they aren't.
+
+### 9.4 `LdapConnectionFactory` nullable `replicationEnqueuer`
+
+The factory's second constructor parameter is nullable. Unit tests
+that construct the factory directly pass {@code null}; the wrapper
+short-circuits when the enqueuer is absent, so the rest of the
+codebase behaves identically to pre-P0. P1's worker tests can do
+the same if they want isolated coverage.
+
+## 10. Effort estimate
 
 | Phase | Estimate | Notes |
 |---|---|---|
-| P0 | 4 days | `ReplicatingLDAPConnection` wrapper is the biggest piece; needs careful read-passthrough plumbing. |
+| P0 | 4 days | `ReplicatingLdapInterface` wrapper is the biggest piece; needs careful read-passthrough plumbing. |
 | P1 | 3 days | Worker + backoff + per-link FIFO; reuses outbox conventions. |
 | P2 | 5 days | Both pages + dashboard surfacing + attribute-mapping editor. |
 | P3 | 1 day | Audit subfamily + labels. |
