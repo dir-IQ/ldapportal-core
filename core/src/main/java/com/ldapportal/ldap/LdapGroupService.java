@@ -8,6 +8,7 @@ import com.ldapportal.core.provisioning.ProvisioningInterceptorChain;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.exception.ResourceNotFoundException;
+import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.ldapportal.ldap.model.LdapGroup;
 import com.unboundid.asn1.ASN1OctetString;
 import com.unboundid.ldap.sdk.*;
@@ -33,6 +34,8 @@ import java.util.Map;
  */
 @Service
 @Slf4j
+@LdapWriteAuthorized("Direct group create/delete/modify and membership writes; "
+        + "not yet plan-mediated (see R6).")
 public class LdapGroupService {
 
     private final LdapConnectionFactory connectionFactory;

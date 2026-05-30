@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
+import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.unboundid.ldap.sdk.AddRequest;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.BindRequest;
@@ -70,6 +71,8 @@ import java.util.UUID;
  * yields the raw {@code LDAPConnection}.
  */
 @lombok.extern.slf4j.Slf4j
+@LdapWriteAuthorized("SDK-level capture wrapper: passes add/modify/delete/modifyDN "
+        + "through to the delegate connection, then enqueues a replication event.")
 public final class ReplicatingLdapInterface implements FullLDAPInterface {
 
     private final LDAPConnection      delegate;

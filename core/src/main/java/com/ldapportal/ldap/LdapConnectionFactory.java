@@ -7,6 +7,7 @@ import com.ldapportal.exception.LdapConnectionException;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.replication.ReplicatingLdapInterface;
 import com.ldapportal.ldap.replication.ReplicationEnqueuer;
+import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.sdk.*;
 import com.unboundid.ldap.sdk.extensions.StartTLSExtendedRequest;
@@ -54,6 +55,9 @@ import java.util.concurrent.ConcurrentMap;
 @Component
 @Slf4j
 @RequiredArgsConstructor
+@LdapWriteAuthorized("Constructs the write surface — wraps pooled connections in "
+        + "ReplicatingLdapInterface and hands out the write-capable interface; "
+        + "issues no mutating calls itself.")
 public class LdapConnectionFactory {
 
     private final EncryptionService encryptionService;

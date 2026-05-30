@@ -4,6 +4,7 @@ package com.ldapportal.core.provisioning;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdapConnectionFactory;
+import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.unboundid.ldap.sdk.AddRequest;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.LDAPInterface;
@@ -48,6 +49,8 @@ import java.util.List;
 @Component
 @RequiredArgsConstructor
 @Slf4j
+@LdapWriteAuthorized("Central provisioning chokepoint: applies AddStep/ModifyStep/"
+        + "DeleteStep against a pooled connection.")
 public class PlanExecutor {
 
     private final LdapConnectionFactory connectionFactory;
