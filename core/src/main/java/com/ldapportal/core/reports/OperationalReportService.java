@@ -203,17 +203,17 @@ public class OperationalReportService {
         List<AuditEvent> allDeletes = new ArrayList<>();
         if (includeUsers) {
             allDeletes.addAll(auditEventRepo.findAll(directoryId, null,
-                    AuditAction.USER_DELETE.getDbValue(), null, null, from, null,
+                    AuditAction.USER_DELETE.getDbValue(), null, null, null, from, null,
                     Pageable.unpaged()).getContent());
         }
         if (includeGroups) {
             allDeletes.addAll(auditEventRepo.findAll(directoryId, null,
-                    AuditAction.GROUP_DELETE.getDbValue(), null, null, from, null,
+                    AuditAction.GROUP_DELETE.getDbValue(), null, null, null, from, null,
                     Pageable.unpaged()).getContent());
         }
 
         var changelogDeletes = auditEventRepo.findAll(directoryId, null,
-                AuditAction.LDAP_CHANGE.getDbValue(), null, null, from, null, Pageable.unpaged());
+                AuditAction.LDAP_CHANGE.getDbValue(), null, null, null, from, null, Pageable.unpaged());
 
         List<String> columns = List.of("Entry", "Deleted By", "Deleted At", "Source");
         List<Map<String, String>> rows = new ArrayList<>();

@@ -196,7 +196,7 @@ public class AdminDashboardService {
 
         // ── Recent activity ──────────────────────────────────────────────────
         var recentAudit = auditQueryService.queryForDirectories(
-                authorizedDirIds, null, null, null, null, null, null, 0, 10);
+                authorizedDirIds, null, null, null, null, null, null, null, 0, 10);
 
         String firstDirId = dirs.isEmpty() ? null : dirs.get(0).getId().toString();
 
