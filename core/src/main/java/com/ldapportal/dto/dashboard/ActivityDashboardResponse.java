@@ -50,6 +50,14 @@ public record ActivityDashboardResponse(
             long totalGroups,
             long openSodViolations,
             long openAlerts,
-            long activeReviewCampaigns
+            long activeReviewCampaigns,
+            /**
+             * System-wide count of replication events in DEAD_LETTERED
+             * status. Drives the matching dashboard metric card; zero
+             * when the DIRECTORY_SYNC entitlement is absent so the
+             * card stays hidden in editions that don't ship the
+             * feature.
+             */
+            long replicationEventsDeadLettered
     ) {}
 }

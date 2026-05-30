@@ -154,7 +154,7 @@ class UnifiedDashboardServiceTest {
                 .thenReturn(false);
         when(dashboardService.getDashboard()).thenReturn(sampleComplianceDto());
 
-        SummaryMetrics metrics = new SummaryMetrics(100, 20, 7, 3, 1);
+        SummaryMetrics metrics = new SummaryMetrics(100, 20, 7, 3, 1, 0);
         List<SuggestedAction> withAlertSuggestion = List.of(
                 new SuggestedAction("alerts-dir-1", "Initialize alert rules", "", "/superadmin/alert-rules", "alert"),
                 new SuggestedAction("smtp",         "Configure SMTP",         "", "/m",                       "setup")
@@ -167,6 +167,45 @@ class UnifiedDashboardServiceTest {
         assertThat(out.suggestions()).extracting(UnifiedDashboardDto.SuggestedAction::key)
                 .containsExactly("smtp")
                 .doesNotContain("alerts-dir-1");
+    }
+
+    @Test
+    void directorySync_disabled_filters_replication_action_and_awareness() {
+        // Community editions ship without the DIRECTORY_SYNC
+        // entitlement. The dashboard must not surface the
+        // REPLICATION_DEAD_LETTERED action item or the
+        // REPLICATION_LAG_HIGH awareness item — both link to a page
+        // that doesn't exist there.
+        stubSettings(true, true);
+        when(entitlementService.has(com.ldapportal.core.entitlement.Entitlement.DIRECTORY_SYNC))
+                .thenReturn(false);
+        when(dashboardService.getDashboard()).thenReturn(sampleComplianceDto());
+
+        SummaryMetrics metrics = new SummaryMetrics(100, 20, 7, 3, 1, 5);
+        List<ActionItem> actions = List.of(
+                new ActionItem("APPROVAL", "HIGH", "2 approvals pending", null, "/approvals", 2),
+                new ActionItem("REPLICATION_DEAD_LETTERED", "HIGH",
+                        "5 replication events failed delivery",
+                        "Review or acknowledge to clear",
+                        "/superadmin/directory-sync?status=DEAD_LETTERED", 5));
+        List<AwarenessItem> awareness = List.of(
+                new AwarenessItem("RECENT_CHANGES", "10 changes", null, "/audit"),
+                new AwarenessItem("REPLICATION_LAG_HIGH",
+                        "Replication lag exceeds 5 minutes on 1 link",
+                        "Target directory may be unreachable or write-throttled",
+                        "/superadmin/directory-sync"));
+        when(activityDashboardService.build(superadmin)).thenReturn(
+                new ActivityDashboardResponse(actions, List.of(), awareness, metrics));
+
+        UnifiedDashboardDto out = service.getDashboard(superadmin);
+
+        // Both replication items are filtered out — the rest pass through.
+        assertThat(out.actions()).extracting(UnifiedDashboardDto.ActionItem::type)
+                .containsExactly("APPROVAL")
+                .doesNotContain("REPLICATION_DEAD_LETTERED");
+        assertThat(out.awareness()).extracting(UnifiedDashboardDto.AwarenessItem::type)
+                .containsExactly("RECENT_CHANGES")
+                .doesNotContain("REPLICATION_LAG_HIGH");
     }
 
     // ── Admin dispatch ──────────────────────────────────────────────────────
@@ -207,16 +246,17 @@ class UnifiedDashboardServiceTest {
 
     private void stubSettings(boolean compliance, boolean hr) {
         // UnifiedDashboardService consults entitlementService for these
-        // flags (Phase 1 of the packaging refactor). The backing settings
-        // row is no longer read from this service's code path, so we only
-        // stub the entitlement side here. Alerting defaults to on so the
-        // existing scenarios behave as they always did; tests that need
-        // it off restub ALERTING directly.
+        // flags. Alerting and directory-sync default to on so existing
+        // scenarios behave as they always did; tests that need either
+        // off restub the specific Entitlement directly (see
+        // alerting_disabled_* and directorySync_disabled_* tests).
         when(entitlementService.has(com.ldapportal.core.entitlement.Entitlement.GOVERNANCE))
                 .thenReturn(compliance);
         when(entitlementService.has(com.ldapportal.core.entitlement.Entitlement.HR_SYNC))
                 .thenReturn(hr);
         when(entitlementService.has(com.ldapportal.core.entitlement.Entitlement.ALERTING))
+                .thenReturn(true);
+        when(entitlementService.has(com.ldapportal.core.entitlement.Entitlement.DIRECTORY_SYNC))
                 .thenReturn(true);
     }
 
@@ -269,7 +309,7 @@ class UnifiedDashboardServiceTest {
                 new AwarenessItem("UPCOMING_DEADLINE", "Review due soon", null, "/reviews"),
                 new AwarenessItem("SYNC_STATUS",       "Synced 4h ago", null, "/entra")
         );
-        SummaryMetrics metrics = new SummaryMetrics(100, 20, 7, 3, 1);
+        SummaryMetrics metrics = new SummaryMetrics(100, 20, 7, 3, 1, 0);
         return new ActivityDashboardResponse(actions, suggestions, awareness, metrics);
     }
 }

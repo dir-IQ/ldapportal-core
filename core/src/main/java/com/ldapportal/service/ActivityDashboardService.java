@@ -60,6 +60,7 @@ public class ActivityDashboardService {
     private final AlertingDashboardProvider alertingDashboard;
     private final HrDashboardProvider hrDashboard;
     private final ReportJobHealthProvider reportJobHealth;
+    private final com.ldapportal.repository.ReplicationEventRepository replicationEventRepo;
 
     @Transactional(readOnly = true)
     public ActivityDashboardResponse build(AuthPrincipal principal) {
@@ -142,6 +143,23 @@ public class ActivityDashboardService {
                     dirName(o.directoryId()),
                     "/directories/" + o.directoryId() + "/access-reviews/" + o.campaignId(),
                     1));
+        }
+
+        // Dead-lettered replication events — operator action required:
+        // review the event, then retry / skip / acknowledge.
+        // UnifiedDashboardService filters this out when DIRECTORY_SYNC
+        // is withheld.
+        long replicationDeadLettered = replicationEventRepo
+                .countByStatus(com.ldapportal.entity.enums.ReplicationEventStatus.DEAD_LETTERED);
+        if (replicationDeadLettered > 0) {
+            String title = replicationDeadLettered == 1
+                    ? "1 replication event failed delivery"
+                    : replicationDeadLettered + " replication events failed delivery";
+            items.add(new ActionItem("REPLICATION_DEAD_LETTERED", "HIGH",
+                    title,
+                    "Review or acknowledge to clear",
+                    "/superadmin/directory-sync?status=DEAD_LETTERED",
+                    Math.toIntExact(Math.min(replicationDeadLettered, Integer.MAX_VALUE))));
         }
 
         return items;
@@ -303,6 +321,22 @@ public class ActivityDashboardService {
             });
         }
 
+        // Replication lag — links with unresolved events older than 5
+        // minutes. Informational only (not a call to action); the
+        // operator may already know the target is down. Filtered out
+        // when DIRECTORY_SYNC entitlement is absent.
+        long laggingLinks = replicationEventRepo.countLinksLaggingSince(
+                java.time.OffsetDateTime.now().minus(java.time.Duration.ofMinutes(5)));
+        if (laggingLinks > 0) {
+            String title = laggingLinks == 1
+                    ? "Replication lag exceeds 5 minutes on 1 link"
+                    : "Replication lag exceeds 5 minutes on " + laggingLinks + " links";
+            items.add(new AwarenessItem("REPLICATION_LAG_HIGH",
+                    title,
+                    "Target directory may be unreachable or write-throttled",
+                    "/superadmin/directory-sync"));
+        }
+
         return items;
     }
 
@@ -320,9 +354,17 @@ public class ActivityDashboardService {
         long openAlerts = alertSummaryProvider.summary().openCount();
         long activeCampaigns = governance.activeCampaignProgress().size();
 
+        // Directory-sync metric: count dead-lettered replication
+        // events. Zero when the feature isn't in use, regardless of
+        // entitlement — the UnifiedDashboardService zeroes the field
+        // again when DIRECTORY_SYNC is withheld, but a zero here keeps
+        // the card hidden by default rather than relying on the filter.
+        long replicationDeadLettered = replicationEventRepo
+                .countByStatus(com.ldapportal.entity.enums.ReplicationEventStatus.DEAD_LETTERED);
+
         // User/group counts would require LDAP queries — use 0 for now
         // (the current dashboard already provides these via the compliance dashboard)
-        return new SummaryMetrics(0, 0, openSod, openAlerts, activeCampaigns);
+        return new SummaryMetrics(0, 0, openSod, openAlerts, activeCampaigns, replicationDeadLettered);
     }
 
     // ══════════════════════════════════════════════════════════════════════

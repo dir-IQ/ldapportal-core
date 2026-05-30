@@ -32,7 +32,8 @@ class EditionTest {
                         Entitlement.HYBRID,
                         Entitlement.EVENTS,
                         Entitlement.ALERTING,
-                        Entitlement.SERVICE_ACCOUNTS);
+                        Entitlement.SERVICE_ACCOUNTS,
+                        Entitlement.DIRECTORY_SYNC);
     }
 
     @Test
@@ -51,6 +52,7 @@ class EditionTest {
                         Entitlement.HR_SYNC,
                         Entitlement.ALERTING,
                         Entitlement.SERVICE_ACCOUNTS,
+                        Entitlement.DIRECTORY_SYNC,
                         Entitlement.SAML_ADMIN_SSO,
                         Entitlement.AUDIT_LOG_SIGNING,
                         Entitlement.HA_DEPLOYMENT,

@@ -130,6 +130,20 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
     long countByStatus(ReplicationEventStatus status);
 
     /**
+     * Number of distinct links with at least one unresolved event
+     * (PENDING or FAILED) older than the given timestamp. Drives the
+     * REPLICATION_LAG_HIGH awareness item — a link with old PENDING
+     * events is either deeply backlogged or its target is
+     * unreachable.
+     */
+    @Query("""
+        SELECT count(DISTINCT e.link.id) FROM ReplicationEvent e
+        WHERE e.status IN ('PENDING', 'FAILED')
+          AND e.enqueuedAt < :threshold
+        """)
+    long countLinksLaggingSince(@Param("threshold") OffsetDateTime threshold);
+
+    /**
      * Per-link event list ordered by enqueued_at desc. Filter args
      * are all optional (controller passes null when the operator
      * didn't supply a constraint).

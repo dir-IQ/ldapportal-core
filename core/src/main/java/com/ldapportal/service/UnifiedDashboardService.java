@@ -49,6 +49,7 @@ public class UnifiedDashboardService {
         boolean complianceEnabled = entitlementService.has(Entitlement.GOVERNANCE);
         boolean hrEnabled = entitlementService.has(Entitlement.HR_SYNC);
         boolean alertingEnabled = entitlementService.has(Entitlement.ALERTING);
+        boolean directorySyncEnabled = entitlementService.has(Entitlement.DIRECTORY_SYNC);
 
         AlertSummary alertSummary = alertSummaryProvider.summary();
         ActivityDashboardResponse activity = activityDashboardService.build(principal);
@@ -101,9 +102,9 @@ public class UnifiedDashboardService {
             campaignProgress = List.of();
         }
 
-        List<ActionItem> actions = filterActions(activity.actions(), complianceEnabled);
+        List<ActionItem> actions = filterActions(activity.actions(), complianceEnabled, directorySyncEnabled);
         List<SuggestedAction> suggestions = filterSuggestions(activity.suggestions(), complianceEnabled, hrEnabled, alertingEnabled);
-        List<AwarenessItem> awareness = filterAwareness(activity.awareness(), complianceEnabled);
+        List<AwarenessItem> awareness = filterAwareness(activity.awareness(), complianceEnabled, directorySyncEnabled);
 
         return new UnifiedDashboardDto(
                 complianceEnabled, hrEnabled, approvalsConfigured,
@@ -168,10 +169,13 @@ public class UnifiedDashboardService {
 
     // ── Feature-flag filters ────────────────────────────────────────────────
 
-    private static List<ActionItem> filterActions(List<ActivityDashboardResponse.ActionItem> src, boolean complianceEnabled) {
+    private static List<ActionItem> filterActions(List<ActivityDashboardResponse.ActionItem> src,
+                                                   boolean complianceEnabled,
+                                                   boolean directorySyncEnabled) {
         if (src == null) return List.of();
         return src.stream()
                 .filter(a -> complianceEnabled || !COMPLIANCE_ACTION_TYPES.contains(a.type()))
+                .filter(a -> directorySyncEnabled || !"REPLICATION_DEAD_LETTERED".equals(a.type()))
                 .map(a -> new ActionItem(a.type(), a.severity(), a.title(), a.detail(), a.link(), a.count()))
                 .toList();
     }
@@ -193,10 +197,13 @@ public class UnifiedDashboardService {
                 .toList();
     }
 
-    private static List<AwarenessItem> filterAwareness(List<ActivityDashboardResponse.AwarenessItem> src, boolean complianceEnabled) {
+    private static List<AwarenessItem> filterAwareness(List<ActivityDashboardResponse.AwarenessItem> src,
+                                                        boolean complianceEnabled,
+                                                        boolean directorySyncEnabled) {
         if (src == null) return List.of();
         return src.stream()
                 .filter(a -> complianceEnabled || !COMPLIANCE_AWARENESS_TYPES.contains(a.type()))
+                .filter(a -> directorySyncEnabled || !"REPLICATION_LAG_HIGH".equals(a.type()))
                 .map(a -> new AwarenessItem(a.type(), a.title(), a.detail(), a.link()))
                 .toList();
     }
