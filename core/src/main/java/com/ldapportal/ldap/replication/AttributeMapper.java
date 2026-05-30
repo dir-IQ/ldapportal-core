@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
-import com.ldapportal.entity.ReplicationLink;
-import com.ldapportal.entity.ReplicationLinkAttrMapping;
+import com.ldapportal.ldap.replication.ReplicationLinkSnapshot.AttrMappingSnapshot;
 
 import java.util.List;
 import java.util.Map;
@@ -10,7 +9,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * Applies a {@link ReplicationLink}'s attribute-rename and
+ * Applies a {@link ReplicationLinkSnapshot}'s attribute-rename and
  * value-template rules. Identity mapping (no rule for the attribute,
  * or an empty rule list) passes the attribute through unchanged.
  *
@@ -33,10 +32,10 @@ public final class AttributeMapper {
      * <p>Attribute names are compared case-insensitively to match LDAP
      * attribute-type matching semantics.
      */
-    public static Mapping mappingFor(String sourceAttr, ReplicationLink link) {
-        for (ReplicationLinkAttrMapping rule : link.getAttributeMappings()) {
-            if (rule.getSourceAttr().equalsIgnoreCase(sourceAttr)) {
-                return new Mapping(rule.getTargetAttr(), templateFn(rule.getValueTemplate()));
+    public static Mapping mappingFor(String sourceAttr, ReplicationLinkSnapshot link) {
+        for (AttrMappingSnapshot rule : link.attributeMappings()) {
+            if (rule.sourceAttr().equalsIgnoreCase(sourceAttr)) {
+                return new Mapping(rule.targetAttr(), templateFn(rule.valueTemplate()));
             }
         }
         return new Mapping(sourceAttr, Function.identity());
@@ -48,7 +47,7 @@ public final class AttributeMapper {
      * the target attribute names.
      */
     public static Map<String, List<String>> mapAttributes(
-            Map<String, List<String>> source, ReplicationLink link) {
+            Map<String, List<String>> source, ReplicationLinkSnapshot link) {
         return source.entrySet().stream()
                 .map(e -> {
                     Mapping m = mappingFor(e.getKey(), link);

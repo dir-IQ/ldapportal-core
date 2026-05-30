@@ -2,12 +2,10 @@
 package com.ldapportal.ldap.replication;
 
 import com.ldapportal.entity.DirectoryConnection;
-import com.ldapportal.entity.ReplicationEvent;
-import com.ldapportal.entity.ReplicationLink;
+import com.ldapportal.entity.enums.ReplicationEnqueueSource;
 import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.ldap.LdapConnectionFactory;
-import com.ldapportal.repository.ReplicationLinkRepository;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.listener.InMemoryDirectoryServer;
 import com.unboundid.ldap.listener.InMemoryDirectoryServerConfig;
@@ -21,6 +19,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -34,7 +33,6 @@ import static org.mockito.Mockito.when;
 class ReplicationDeliveryTest {
 
     @Mock private EncryptionService encryptionService;
-    @Mock private ReplicationLinkRepository linkRepo;
 
     private InMemoryDirectoryServer targetServer;
     private InMemoryDirectoryServer sourceServer;
@@ -55,7 +53,9 @@ class ReplicationDeliveryTest {
         // null replicationEnqueuer — delivery uses withConnectionUnreplicated,
         // so the wrapper never activates anyway.
         factory = new LdapConnectionFactory(encryptionService, null);
-        delivery = new ReplicationDelivery(factory, linkRepo);
+        // Delivery no longer needs a ReplicationLinkRepository — the
+        // snapshot carries the attribute-mapping rules end-to-end.
+        delivery = new ReplicationDelivery(factory);
 
         targetDc = buildDc(targetServer.getListenPort());
         sourceDc = buildDc(sourceServer.getListenPort());
@@ -70,7 +70,7 @@ class ReplicationDeliveryTest {
 
     @Test
     void addEvent_appliesToTarget() throws Exception {
-        ReplicationEvent event = event(ReplicationOperationType.ADD,
+        ReplicationEventSnapshot event = event(ReplicationOperationType.ADD,
                 "uid=alice,dc=test,dc=com",
                 Map.of("attributes", Map.of(
                         "objectClass", List.of("top", "person"),
@@ -80,7 +80,6 @@ class ReplicationDeliveryTest {
         ReplicationDelivery.DeliveryResult r = delivery.deliver(event);
 
         assertThat(r.success()).isTrue();
-        // Read the entry back from the target to confirm structure.
         SearchResultEntry e = targetServer.getEntry("uid=alice,dc=test,dc=com");
         assertThat(e).isNotNull();
         assertThat(e.getAttributeValue("cn")).isEqualTo("Alice");
@@ -93,7 +92,7 @@ class ReplicationDeliveryTest {
                 new Attribute("cn", "Bob"),
                 new Attribute("sn", "Jones")));
 
-        ReplicationEvent event = event(ReplicationOperationType.MODIFY,
+        ReplicationEventSnapshot event = event(ReplicationOperationType.MODIFY,
                 "uid=bob,dc=test,dc=com",
                 Map.of("modifications", List.of(
                         Map.of("type", "REPLACE", "name", "cn", "values", List.of("Robert")))));
@@ -112,7 +111,7 @@ class ReplicationDeliveryTest {
                 new Attribute("cn", "Carol"),
                 new Attribute("sn", "Davis")));
 
-        ReplicationEvent event = event(ReplicationOperationType.DELETE,
+        ReplicationEventSnapshot event = event(ReplicationOperationType.DELETE,
                 "uid=carol,dc=test,dc=com", Map.of());
 
         ReplicationDelivery.DeliveryResult r = delivery.deliver(event);
@@ -123,11 +122,7 @@ class ReplicationDeliveryTest {
 
     @Test
     void deleteEvent_missingOnTarget_treatedAsConvergentSuccess() {
-        // Target already has no such entry — the desired final state is
-        // already achieved. Worker should mark as DELIVERED and stop
-        // retrying instead of indefinitely hammering a NO_SUCH_OBJECT
-        // error. This is the contract baked into deliverDelete().
-        ReplicationEvent event = event(ReplicationOperationType.DELETE,
+        ReplicationEventSnapshot event = event(ReplicationOperationType.DELETE,
                 "uid=never-existed,dc=test,dc=com", Map.of());
 
         ReplicationDelivery.DeliveryResult r = delivery.deliver(event);
@@ -136,12 +131,8 @@ class ReplicationDeliveryTest {
     }
 
     @Test
-    void modifyAgainstMissingTarget_withoutAutoCreate_fails() throws Exception {
-        ReplicationEvent event = event(ReplicationOperationType.MODIFY,
-                "uid=missing,dc=test,dc=com",
-                Map.of("modifications", List.of(
-                        Map.of("type", "REPLACE", "name", "cn", "values", List.of("X")))));
-        event.getLink().setAutoCreateOnMissing(false);
+    void modifyAgainstMissingTarget_withoutAutoCreate_fails() {
+        ReplicationEventSnapshot event = eventForMissingTarget(false, null);
 
         ReplicationDelivery.DeliveryResult r = delivery.deliver(event);
 
@@ -158,14 +149,7 @@ class ReplicationDeliveryTest {
                 new Attribute("cn", "Dave"),
                 new Attribute("sn", "Edwards")));
 
-        ReplicationEvent event = event(ReplicationOperationType.MODIFY,
-                "uid=dave,dc=test,dc=com",
-                Map.of("modifications", List.of(
-                        Map.of("type", "REPLACE", "name", "cn", "values", List.of("David")))));
-        // Same DN on both sides (identity DN mapping).
-        event.setSourceDn("uid=dave,dc=test,dc=com");
-        event.getLink().setAutoCreateOnMissing(true);
-        event.getLink().setSourceDirectory(sourceDc);
+        ReplicationEventSnapshot event = eventForMissingTarget(true, "uid=dave,dc=test,dc=com");
 
         ReplicationDelivery.DeliveryResult r = delivery.deliver(event);
 
@@ -208,15 +192,33 @@ class ReplicationDeliveryTest {
         return dc;
     }
 
-    private ReplicationEvent event(ReplicationOperationType op, String targetDn, Map<String, Object> payload) {
-        ReplicationEvent e = new ReplicationEvent();
-        e.setId(UUID.randomUUID());
-        e.setOperation(op);
-        e.setTargetDn(targetDn);
-        e.setPayload(new LinkedHashMap<>(payload));
-        ReplicationLink link = new ReplicationLink();
-        link.setTargetDirectory(targetDc);
-        e.setLink(link);
-        return e;
+    private ReplicationEventSnapshot event(ReplicationOperationType op,
+                                            String targetDn,
+                                            Map<String, Object> payload) {
+        ReplicationLinkSnapshot link = new ReplicationLinkSnapshot(
+                UUID.randomUUID(), "test-link",
+                sourceDc, targetDc, null, null, true,
+                /* autoCreateOnMissing */ false,
+                List.of());
+        return new ReplicationEventSnapshot(
+                UUID.randomUUID(), link,
+                ReplicationEnqueueSource.APP_INTERCEPT, op,
+                targetDn /* sourceDn — identity for these tests */, targetDn,
+                new LinkedHashMap<>(payload), 0, OffsetDateTime.now());
+    }
+
+    private ReplicationEventSnapshot eventForMissingTarget(boolean autoCreate, String existingSourceDn) {
+        String dn = existingSourceDn != null ? existingSourceDn : "uid=missing,dc=test,dc=com";
+        ReplicationLinkSnapshot link = new ReplicationLinkSnapshot(
+                UUID.randomUUID(), "auto-create-link",
+                sourceDc, targetDc, null, null, true,
+                autoCreate, List.of());
+        return new ReplicationEventSnapshot(
+                UUID.randomUUID(), link,
+                ReplicationEnqueueSource.APP_INTERCEPT, ReplicationOperationType.MODIFY,
+                dn, dn,
+                Map.of("modifications", List.of(
+                        Map.of("type", "REPLACE", "name", "cn", "values", List.of("David")))),
+                0, OffsetDateTime.now());
     }
 }

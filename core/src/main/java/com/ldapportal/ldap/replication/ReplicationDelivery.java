@@ -2,11 +2,7 @@
 package com.ldapportal.ldap.replication;
 
 import com.ldapportal.entity.DirectoryConnection;
-import com.ldapportal.entity.ReplicationEvent;
-import com.ldapportal.entity.ReplicationLink;
-import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.ldapportal.ldap.LdapConnectionFactory;
-import com.ldapportal.repository.ReplicationLinkRepository;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.LDAPResult;
 import com.unboundid.ldap.sdk.ResultCode;
@@ -21,7 +17,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Applies one {@link ReplicationEvent} to its target directory.
+ * Applies one {@link ReplicationEventSnapshot} to its target directory.
  * Stateless; the worker (see {@code ReplicationWorker}) calls
  * {@link #deliver} per claimed event and translates the result into
  * a status transition.
@@ -35,6 +31,12 @@ import java.util.Map;
  * targets an entry the target doesn't have (NO_SUCH_OBJECT), and the
  * link allows it, the delivery re-reads the entry from the source
  * directory and re-attempts as an ADD before failing.
+ *
+ * <p>This bean has no JPA repository dependency — it operates entirely
+ * on the immutable snapshot the worker hands it. The link's attribute-
+ * mapping rules are already materialised inside the snapshot's
+ * {@code attributeMappings} list, so the auto-create path needs no
+ * extra DB round-trip.
  */
 @Service
 @RequiredArgsConstructor
@@ -42,7 +44,6 @@ import java.util.Map;
 public class ReplicationDelivery {
 
     private final LdapConnectionFactory connectionFactory;
-    private final ReplicationLinkRepository linkRepo;
 
     /**
      * Short retry budget for the post-auto-create MODIFY against
@@ -55,14 +56,14 @@ public class ReplicationDelivery {
     private static final long POST_CREATE_MODIFY_RETRY_MS = 500L;
 
     /**
-     * Apply {@code event} to {@code event.getLink().getTargetDirectory()}.
+     * Apply {@code event} to {@code event.link().targetDirectory()}.
      * Returns success/failure. Caller maps to status transitions.
      */
-    public DeliveryResult deliver(ReplicationEvent event) {
-        ReplicationLink link = event.getLink();
-        DirectoryConnection target = link.getTargetDirectory();
+    public DeliveryResult deliver(ReplicationEventSnapshot event) {
+        ReplicationLinkSnapshot link = event.link();
+        DirectoryConnection target = link.targetDirectory();
         try {
-            return switch (event.getOperation()) {
+            return switch (event.operation()) {
                 case ADD       -> deliverAdd(event, target);
                 case MODIFY    -> deliverModify(event, link, target);
                 case DELETE    -> deliverDelete(event, target);
@@ -82,16 +83,16 @@ public class ReplicationDelivery {
         }
     }
 
-    private DeliveryResult deliverAdd(ReplicationEvent event, DirectoryConnection target) {
+    private DeliveryResult deliverAdd(ReplicationEventSnapshot event, DirectoryConnection target) {
         return connectionFactory.withConnectionUnreplicated(target, conn -> {
             LDAPResult r = conn.add(ReplicationPayloadCodec.decodeAdd(
-                    event.getTargetDn(), event.getPayload()));
+                    event.targetDn(), event.payload()));
             return interpret(r);
         });
     }
 
-    private DeliveryResult deliverModify(ReplicationEvent event,
-                                          ReplicationLink link,
+    private DeliveryResult deliverModify(ReplicationEventSnapshot event,
+                                          ReplicationLinkSnapshot link,
                                           DirectoryConnection target) {
         try {
             return modifyOnce(event, target);
@@ -103,17 +104,17 @@ public class ReplicationDelivery {
             Throwable cause = ex.getCause();
             if (cause instanceof LDAPException le
                 && le.getResultCode() == ResultCode.NO_SUCH_OBJECT
-                && link.isAutoCreateOnMissing()) {
+                && link.autoCreateOnMissing()) {
                 return autoCreateThenModify(event, link, target);
             }
             throw ex;
         }
     }
 
-    private DeliveryResult modifyOnce(ReplicationEvent event, DirectoryConnection target) {
+    private DeliveryResult modifyOnce(ReplicationEventSnapshot event, DirectoryConnection target) {
         return connectionFactory.withConnectionUnreplicated(target, conn -> {
             LDAPResult r = conn.modify(ReplicationPayloadCodec.decodeModify(
-                    event.getTargetDn(), event.getPayload()));
+                    event.targetDn(), event.payload()));
             return interpret(r);
         });
     }
@@ -124,14 +125,14 @@ public class ReplicationDelivery {
      * re-attempt the original MODIFY. Falls back to a clean failure
      * if either step doesn't produce success.
      */
-    private DeliveryResult autoCreateThenModify(ReplicationEvent event,
-                                                  ReplicationLink link,
+    private DeliveryResult autoCreateThenModify(ReplicationEventSnapshot event,
+                                                  ReplicationLinkSnapshot link,
                                                   DirectoryConnection target) {
-        DirectoryConnection source = link.getSourceDirectory();
+        DirectoryConnection source = link.sourceDirectory();
         SearchResultEntry sourceEntry;
         try {
             sourceEntry = connectionFactory.withConnectionUnreplicated(source, conn ->
-                    conn.getEntry(event.getSourceDn()));
+                    conn.getEntry(event.sourceDn()));
         } catch (Exception ex) {
             return DeliveryResult.fail(null,
                     "auto-create: source read failed: " + ex.getMessage());
@@ -141,25 +142,15 @@ public class ReplicationDelivery {
                     "auto-create: source entry no longer exists");
         }
 
-        // Reload the link with its attributeMappings collection
-        // initialised. The worker's findEarliestClaimableForLink only
-        // JOIN FETCHes the link + source/target directories, not the
-        // attribute-mapping rules — accessing link.getAttributeMappings()
-        // on the detached entity here would trip
-        // LazyInitializationException (open-in-view=false) and the
-        // outer catch in deliver() would surface it as a generic
-        // failure, permanently breaking auto-create for any link
-        // with mappings configured.
-        ReplicationLink linkWithMappings = linkRepo.findByIdWithMappings(link.getId())
-                .orElse(link);
-
         // Apply attribute mapping to the source entry's attribute set
-        // so the ADD targets the right names / values.
+        // so the ADD targets the right names / values. The link
+        // snapshot already carries the materialised attributeMappings
+        // — no DB round-trip needed.
         Map<String, List<String>> raw = new java.util.LinkedHashMap<>();
         for (com.unboundid.ldap.sdk.Attribute a : sourceEntry.getAttributes()) {
             raw.put(a.getName(), Arrays.asList(a.getValues()));
         }
-        Map<String, List<String>> mapped = AttributeMapper.mapAttributes(raw, linkWithMappings);
+        Map<String, List<String>> mapped = AttributeMapper.mapAttributes(raw, link);
         List<com.unboundid.ldap.sdk.Attribute> attrs = new ArrayList<>(mapped.size());
         mapped.forEach((name, values) ->
                 attrs.add(new com.unboundid.ldap.sdk.Attribute(name, values.toArray(new String[0]))));
@@ -167,7 +158,7 @@ public class ReplicationDelivery {
         try {
             connectionFactory.withConnectionUnreplicated(target, conn -> {
                 LDAPResult r = conn.add(new com.unboundid.ldap.sdk.AddRequest(
-                        event.getTargetDn(), attrs));
+                        event.targetDn(), attrs));
                 if (r.getResultCode() != ResultCode.SUCCESS) {
                     throw new LDAPException(r.getResultCode(),
                             "auto-create ADD failed: " + r.getDiagnosticMessage());
@@ -212,10 +203,10 @@ public class ReplicationDelivery {
                         + (lastEx == null ? "unknown" : lastEx.getMessage()));
     }
 
-    private DeliveryResult deliverDelete(ReplicationEvent event, DirectoryConnection target) {
+    private DeliveryResult deliverDelete(ReplicationEventSnapshot event, DirectoryConnection target) {
         try {
             return connectionFactory.withConnectionUnreplicated(target, conn -> {
-                LDAPResult r = conn.delete(ReplicationPayloadCodec.decodeDelete(event.getTargetDn()));
+                LDAPResult r = conn.delete(ReplicationPayloadCodec.decodeDelete(event.targetDn()));
                 return interpret(r);
             });
         } catch (com.ldapportal.exception.LdapOperationException ex) {
@@ -225,17 +216,17 @@ public class ReplicationDelivery {
             if (ex.getCause() instanceof LDAPException le
                 && le.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
                 log.debug("Target already missing for DELETE {} — treating as delivered",
-                        event.getTargetDn());
+                        event.targetDn());
                 return DeliveryResult.ok();
             }
             throw ex;
         }
     }
 
-    private DeliveryResult deliverModifyDn(ReplicationEvent event, DirectoryConnection target) {
+    private DeliveryResult deliverModifyDn(ReplicationEventSnapshot event, DirectoryConnection target) {
         return connectionFactory.withConnectionUnreplicated(target, conn -> {
             LDAPResult r = conn.modifyDN(ReplicationPayloadCodec.decodeModifyDn(
-                    event.getTargetDn(), event.getPayload()));
+                    event.targetDn(), event.payload()));
             return interpret(r);
         });
     }

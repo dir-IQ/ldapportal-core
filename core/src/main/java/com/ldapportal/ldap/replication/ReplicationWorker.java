@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
-import com.ldapportal.entity.ReplicationEvent;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.repository.ReplicationEventRepository;
@@ -42,12 +41,15 @@ import java.util.UUID;
  * JVM crash between claim and settle would permanently wedge the
  * event (and behind it, every later event for the same link).
  *
- * <p>Transactional methods live on {@link ReplicationEventTxOps},
- * NOT on this class — Spring's transactional proxy only applies to
- * cross-bean calls. An earlier version had {@code @Transactional}
- * methods on this class and called them via {@code this.xxx()},
- * which silently bypassed the proxy and ran every write without a
- * transaction.
+ * <p><b>Snapshot-based boundary.</b> This worker holds only
+ * {@link ReplicationEventSnapshot} records — never JPA entities.
+ * The read tx that materialises the snapshot lives in
+ * {@link ReplicationReadOps}; the write txs that settle the outcome
+ * live in {@link ReplicationEventTxOps}. The worker's own methods
+ * are intentionally non-transactional so the LDAP delivery round-trip
+ * isn't held inside any DB transaction, and so the lazy-load bug class
+ * is structurally absent: there are no proxies in scope for the
+ * delivery code to accidentally dereference outside a session.
  */
 @Component
 @RequiredArgsConstructor
@@ -55,6 +57,7 @@ import java.util.UUID;
 public class ReplicationWorker {
 
     private final ReplicationEventRepository eventRepo;
+    private final ReplicationReadOps         readOps;
     private final ReplicationDelivery        delivery;
     private final ReplicationEventTxOps      txOps;
     private final AuditService               auditService;
@@ -114,59 +117,59 @@ public class ReplicationWorker {
      * is lost.
      */
     void drainOne(UUID linkId, OffsetDateTime now) {
-        eventRepo.findEarliestClaimableForLink(linkId, now).ifPresent(event -> {
-            int claimed = txOps.tryClaim(event.getId(), now);
+        readOps.earliestClaimableSnapshot(linkId, now).ifPresent(event -> {
+            int claimed = txOps.tryClaim(event.id(), now);
             if (claimed == 0) {
-                log.debug("Event {} claim race lost — skipping", event.getId());
+                log.debug("Event {} claim race lost — skipping", event.id());
                 return;
             }
             deliverAndSettle(event);
         });
     }
 
-    private void deliverAndSettle(ReplicationEvent event) {
+    private void deliverAndSettle(ReplicationEventSnapshot event) {
         ReplicationDelivery.DeliveryResult result = delivery.deliver(event);
         if (result.success()) {
-            boolean settled = txOps.markDelivered(event.getId());
+            boolean settled = txOps.markDelivered(event.id());
             if (!settled) {
                 // Claim was revoked while we held it (operator retry
                 // or stale-reset sweep) — drop the result rather than
                 // overwrite whatever the new owner produced.
                 log.warn("Replication event {} delivered but claim was revoked — " +
-                        "skipping settlement", event.getId());
+                        "skipping settlement", event.id());
             }
             return;
         }
         settleFailure(event, result.errorMessage());
     }
 
-    private void settleFailure(ReplicationEvent event, String errorMessage) {
-        int newAttempts = event.getAttempts() + 1;
+    private void settleFailure(ReplicationEventSnapshot event, String errorMessage) {
+        int newAttempts = event.attempts() + 1;
         ReplicationBackoffPolicy.Outcome outcome =
                 ReplicationBackoffPolicy.computeOutcome(newAttempts, OffsetDateTime.now());
-        boolean settled = txOps.markFailure(event.getId(),
+        boolean settled = txOps.markFailure(event.id(),
                 outcome.status(),
                 newAttempts,
                 outcome.nextAttemptAt(),
                 errorMessage);
         if (!settled) {
             log.warn("Replication event {} failed but claim was revoked — " +
-                    "skipping failure settlement", event.getId());
+                    "skipping failure settlement", event.id());
             return;
         }
         if (outcome.status() == ReplicationEventStatus.DEAD_LETTERED) {
             log.warn("Replication event {} dead-lettered after {} attempts: {}",
-                    event.getId(), newAttempts, errorMessage);
+                    event.id(), newAttempts, errorMessage);
             // No principal — the worker isn't a user-driven action.
             // recordSystemEventNoActor preserves the action + detail
             // without forcing a synthetic actor row.
             auditService.recordSystemEventNoActor(
                     AuditAction.REPLICATION_EVENT_DEAD_LETTERED,
                     Map.of(
-                            "eventId",   event.getId().toString(),
-                            "linkId",    event.getLink().getId().toString(),
-                            "operation", event.getOperation().name(),
-                            "targetDn",  event.getTargetDn(),
+                            "eventId",   event.id().toString(),
+                            "linkId",    event.link().id().toString(),
+                            "operation", event.operation().name(),
+                            "targetDn",  event.targetDn(),
                             "attempts",  newAttempts,
                             "lastError", errorMessage == null ? "" : errorMessage));
         }

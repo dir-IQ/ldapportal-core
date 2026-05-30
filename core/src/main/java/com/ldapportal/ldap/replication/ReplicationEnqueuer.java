@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
-import com.ldapportal.entity.ReplicationEvent;
-import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.enums.ReplicationEnqueueSource;
-import com.ldapportal.entity.enums.ReplicationEventStatus;
-import com.ldapportal.entity.enums.ReplicationOperationType;
-import com.ldapportal.repository.ReplicationLinkRepository;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
 import lombok.RequiredArgsConstructor;
@@ -18,30 +13,30 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 
 /**
  * Takes a {@link CapturedWrite} from the {@code ReplicatingLDAPInterface}
- * wrapper, finds every enabled {@link ReplicationLink} whose source is
- * the given directory, applies the link's DN + attribute mapping, and
- * persists one {@link ReplicationEvent} per matching link.
+ * wrapper, finds every enabled {@link ReplicationLinkSnapshot} whose source
+ * is the given directory, applies the link's DN + attribute mapping, and
+ * hands one {@link PendingReplicationEvent} per matching link to the
+ * {@link ReplicationEventPersister} for durable enqueue.
  *
- * <p>Runs in {@link Propagation#REQUIRES_NEW}: the source-side LDAP
- * write has already happened on the directory by the time we enqueue,
- * and the caller's @Transactional (if any) is for the surrounding
- * portal request, not for this side-effect persistence. Failing to
- * enqueue an event must NOT roll back the caller's transaction —
- * that would tie source-write durability to replication-queue
- * durability, which contradicts the spec's decoupling promise. So:
- * <ul>
- *   <li>REQUIRES_NEW gives us our own tx boundary.</li>
- *   <li>Exceptions are swallowed and logged at error level — the
- *       source write succeeded, the source data is fine; only
- *       replication of this one event is lost. Operators see the
- *       gap as missing target writes; future audit-trail of
- *       enqueue failures lands with the dashboard work in P2.</li>
- * </ul>
+ * <p><b>Architecture:</b> the entire enqueue path operates on immutable
+ * snapshot / pending records — no JPA entity reference ever leaves the
+ * {@link ReplicationReadOps} read tx, and no JPA entity reference ever
+ * enters the {@link ReplicationEventPersister} write tx. Both tx
+ * boundaries are owned by sibling beans; this enqueuer is intentionally
+ * non-transactional so the no-link hot path costs only a single
+ * indexed SELECT with no BEGIN/COMMIT around it.
+ *
+ * <p>Per the design plan: failing to enqueue an event must NOT roll
+ * back the caller's transaction — that would tie source-write
+ * durability to replication-queue durability, contradicting the
+ * spec's decoupling promise. The outer catch swallows exceptions and
+ * logs at error so operators see the gap surface in the app log
+ * (and, in P2, in the dashboard's enqueue-failure surface) without
+ * the source write itself failing.
  *
  * <p>The {@code findAllBySourceDirectoryIdAndEnabledTrue} query has
  * very high read frequency (every LDAP write triggers it) but very
@@ -53,38 +48,34 @@ import java.util.UUID;
 @Slf4j
 public class ReplicationEnqueuer {
 
-    private final ReplicationLinkRepository  linkRepo;
+    private final ReplicationReadOps         readOps;
     private final ReplicationEventPersister  persister;
 
     /**
      * Capture point for every successful LDAP write the wrapper sees.
      * Called from {@code ReplicatingLdapInterface} on the hot path,
-     * so the no-links case must be cheap: no transaction boundary,
-     * no event allocation, no JPA flush. The link lookup is a single
-     * indexed SELECT — cheap on its own — but the REQUIRES_NEW tx
-     * around it (the previous shape) added BEGIN/COMMIT overhead to
-     * every LDAP write in the entire application, even on directories
-     * with zero replication links configured. Splitting the
-     * transactional save into a sibling bean
-     * ({@link ReplicationEventPersister}) keeps the tx cost on the
-     * actually-replicating path only.
+     * so the no-links case must be cheap: no transaction boundary held
+     * across the persister call, no event allocation, no JPA flush.
+     * The snapshot lookup is a single short read tx owned by
+     * {@link ReplicationReadOps}; the persister call only fires when
+     * there's actually work to do.
      */
     public void enqueue(UUID sourceDirectoryId, CapturedWrite write) {
         try {
-            List<ReplicationLink> links =
-                    linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(sourceDirectoryId);
+            List<ReplicationLinkSnapshot> links =
+                    readOps.snapshotsForSource(sourceDirectoryId);
             if (links.isEmpty()) return;
 
-            List<ReplicationEvent> events = new ArrayList<>(links.size());
-            for (ReplicationLink link : links) {
-                ReplicationEvent event = buildEvent(link, write);
-                if (event != null) events.add(event);
+            List<PendingReplicationEvent> pending = new ArrayList<>(links.size());
+            for (ReplicationLinkSnapshot link : links) {
+                PendingReplicationEvent event = buildEvent(link, write);
+                if (event != null) pending.add(event);
                 // null = DN out of scope for this link's source base —
                 // skip, don't log per-write (could be very high volume).
             }
-            if (events.isEmpty()) return;  // all links out-of-scope for this DN
+            if (pending.isEmpty()) return;  // all links out-of-scope for this DN
 
-            persister.saveAll(events);
+            persister.saveAll(pending);
         } catch (RuntimeException ex) {
             // Source write has already committed against the directory.
             // Don't propagate; log so operators see the gap surfaces in
@@ -95,23 +86,22 @@ public class ReplicationEnqueuer {
         }
     }
 
-    private ReplicationEvent buildEvent(ReplicationLink link, CapturedWrite write) {
+    private PendingReplicationEvent buildEvent(ReplicationLinkSnapshot link,
+                                                 CapturedWrite write) {
         String targetDn = DnMapper.map(write.dn(), link);
         if (targetDn == null) {
             return null;
         }
-        ReplicationEvent event = new ReplicationEvent();
-        event.setLink(link);
-        event.setEnqueueSource(ReplicationEnqueueSource.APP_INTERCEPT);
-        event.setOperation(write.operation());
-        event.setSourceDn(write.dn());
-        event.setTargetDn(targetDn);
-        event.setStatus(ReplicationEventStatus.PENDING);
-        event.setPayload(buildPayload(write, link));
-        return event;
+        return new PendingReplicationEvent(
+                link.id(),
+                ReplicationEnqueueSource.APP_INTERCEPT,
+                write.operation(),
+                write.dn(),
+                targetDn,
+                buildPayload(write, link));
     }
 
-    private Map<String, Object> buildPayload(CapturedWrite write, ReplicationLink link) {
+    private Map<String, Object> buildPayload(CapturedWrite write, ReplicationLinkSnapshot link) {
         Map<String, Object> payload = new LinkedHashMap<>();
         switch (write.operation()) {
             case ADD -> payload.put("attributes", mappedAddAttributes(write.attributes(), link));
@@ -127,7 +117,8 @@ public class ReplicationEnqueuer {
         return payload;
     }
 
-    private Map<String, List<String>> mappedAddAttributes(List<Attribute> source, ReplicationLink link) {
+    private Map<String, List<String>> mappedAddAttributes(List<Attribute> source,
+                                                           ReplicationLinkSnapshot link) {
         Map<String, List<String>> raw = new LinkedHashMap<>();
         for (Attribute a : source) {
             raw.put(a.getName(), Arrays.asList(a.getValues()));
@@ -135,7 +126,8 @@ public class ReplicationEnqueuer {
         return AttributeMapper.mapAttributes(raw, link);
     }
 
-    private List<Map<String, Object>> mappedModifications(List<Modification> source, ReplicationLink link) {
+    private List<Map<String, Object>> mappedModifications(List<Modification> source,
+                                                            ReplicationLinkSnapshot link) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Modification m : source) {
             AttributeMapper.Mapping mapping = AttributeMapper.mappingFor(m.getAttributeName(), link);

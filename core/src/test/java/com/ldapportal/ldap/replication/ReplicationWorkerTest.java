@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
-import com.ldapportal.entity.ReplicationEvent;
-import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.enums.AuditAction;
+import com.ldapportal.entity.enums.ReplicationEnqueueSource;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.ldapportal.repository.ReplicationEventRepository;
@@ -18,6 +17,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -33,6 +33,7 @@ import static org.mockito.Mockito.when;
 class ReplicationWorkerTest {
 
     @Mock private ReplicationEventRepository eventRepo;
+    @Mock private ReplicationReadOps         readOps;
     @Mock private ReplicationDelivery        delivery;
     @Mock private ReplicationEventTxOps      txOps;
     @Mock private AuditService               auditService;
@@ -44,7 +45,7 @@ class ReplicationWorkerTest {
 
         worker.drainQueue();
 
-        verify(eventRepo, never()).findEarliestClaimableForLink(any(), any());
+        verify(readOps, never()).earliestClaimableSnapshot(any(), any());
         verify(delivery, never()).deliver(any());
     }
 
@@ -56,10 +57,10 @@ class ReplicationWorkerTest {
         // the contract that lets a future multi-worker deployment ship
         // without double-delivery.
         UUID linkId = UUID.randomUUID();
-        ReplicationEvent event = event(linkId);
+        ReplicationEventSnapshot event = event(linkId);
         when(eventRepo.findLinkIdsWithClaimableEvents(any())).thenReturn(List.of(linkId));
-        when(eventRepo.findEarliestClaimableForLink(eq(linkId), any())).thenReturn(Optional.of(event));
-        when(txOps.tryClaim(eq(event.getId()), any())).thenReturn(0);  // race lost
+        when(readOps.earliestClaimableSnapshot(eq(linkId), any())).thenReturn(Optional.of(event));
+        when(txOps.tryClaim(eq(event.id()), any())).thenReturn(0);  // race lost
 
         worker.drainQueue();
 
@@ -69,14 +70,14 @@ class ReplicationWorkerTest {
     @Test
     void successfulDelivery_marksDelivered() {
         UUID linkId = UUID.randomUUID();
-        ReplicationEvent event = event(linkId);
+        ReplicationEventSnapshot event = event(linkId);
         stubClaim(linkId, event, 1);
         when(delivery.deliver(event)).thenReturn(
                 new ReplicationDelivery.DeliveryResult(true, ResultCode.SUCCESS, null));
 
         worker.drainQueue();
 
-        verify(txOps).markDelivered(eq(event.getId()));
+        verify(txOps).markDelivered(eq(event.id()));
         verify(txOps, never()).markFailure(any(), any(), anyInt(), any(), any());
     }
 
@@ -86,8 +87,7 @@ class ReplicationWorkerTest {
         // policy (30s for attempts=1). Worker passes the new attempts
         // count and the error message to markFailure.
         UUID linkId = UUID.randomUUID();
-        ReplicationEvent event = event(linkId);
-        event.setAttempts(0);
+        ReplicationEventSnapshot event = event(linkId, 0);
         stubClaim(linkId, event, 1);
         when(delivery.deliver(event)).thenReturn(
                 new ReplicationDelivery.DeliveryResult(false, ResultCode.UNAVAILABLE,
@@ -98,7 +98,7 @@ class ReplicationWorkerTest {
         ArgumentCaptor<ReplicationEventStatus> statusCap = ArgumentCaptor.forClass(ReplicationEventStatus.class);
         ArgumentCaptor<Integer> attemptsCap = ArgumentCaptor.forClass(Integer.class);
         ArgumentCaptor<String> errorCap = ArgumentCaptor.forClass(String.class);
-        verify(txOps).markFailure(eq(event.getId()),
+        verify(txOps).markFailure(eq(event.id()),
                 statusCap.capture(), attemptsCap.capture(), any(OffsetDateTime.class), errorCap.capture());
         assertThat(statusCap.getValue()).isEqualTo(ReplicationEventStatus.FAILED);
         assertThat(attemptsCap.getValue()).isEqualTo(1);
@@ -114,10 +114,8 @@ class ReplicationWorkerTest {
         // up. Audit goes through recordSystemEventNoActor because
         // the worker has no principal.
         UUID linkId = UUID.randomUUID();
-        ReplicationEvent event = event(linkId);
-        event.setOperation(ReplicationOperationType.MODIFY);
-        event.setTargetDn("uid=alice,dc=target,dc=com");
-        event.setAttempts(ReplicationBackoffPolicy.MAX_ATTEMPTS);  // 5 prior failures
+        ReplicationEventSnapshot event = event(linkId, ReplicationBackoffPolicy.MAX_ATTEMPTS,
+                ReplicationOperationType.MODIFY, "uid=alice,dc=target,dc=com");
         stubClaim(linkId, event, 1);
         when(delivery.deliver(event)).thenReturn(
                 new ReplicationDelivery.DeliveryResult(false, null, "still failing"));
@@ -128,7 +126,7 @@ class ReplicationWorkerTest {
         worker.drainQueue();
 
         ArgumentCaptor<ReplicationEventStatus> statusCap = ArgumentCaptor.forClass(ReplicationEventStatus.class);
-        verify(txOps).markFailure(eq(event.getId()),
+        verify(txOps).markFailure(eq(event.id()),
                 statusCap.capture(), eq(ReplicationBackoffPolicy.MAX_ATTEMPTS + 1),
                 any(), any());
         assertThat(statusCap.getValue()).isEqualTo(ReplicationEventStatus.DEAD_LETTERED);
@@ -146,9 +144,8 @@ class ReplicationWorkerTest {
         // case — the row is no longer ours to dead-letter, and another
         // owner's verdict is what counts.
         UUID linkId = UUID.randomUUID();
-        ReplicationEvent event = event(linkId);
-        event.setOperation(ReplicationOperationType.MODIFY);
-        event.setAttempts(ReplicationBackoffPolicy.MAX_ATTEMPTS);
+        ReplicationEventSnapshot event = event(linkId, ReplicationBackoffPolicy.MAX_ATTEMPTS,
+                ReplicationOperationType.MODIFY, "uid=alice,dc=corp");
         stubClaim(linkId, event, 1);
         when(delivery.deliver(event)).thenReturn(
                 new ReplicationDelivery.DeliveryResult(false, null, "still failing"));
@@ -165,8 +162,7 @@ class ReplicationWorkerTest {
         // dead-letter event must NOT fire here, or we'd see one audit
         // per attempt instead of one when the budget runs out.
         UUID linkId = UUID.randomUUID();
-        ReplicationEvent event = event(linkId);
-        event.setAttempts(0);
+        ReplicationEventSnapshot event = event(linkId, 0);
         stubClaim(linkId, event, 1);
         when(delivery.deliver(event)).thenReturn(
                 new ReplicationDelivery.DeliveryResult(false, null, "transient"));
@@ -183,11 +179,11 @@ class ReplicationWorkerTest {
         // single-event-per-link contract.
         UUID linkA = UUID.randomUUID();
         UUID linkB = UUID.randomUUID();
-        ReplicationEvent eventA = event(linkA);
-        ReplicationEvent eventB = event(linkB);
+        ReplicationEventSnapshot eventA = event(linkA);
+        ReplicationEventSnapshot eventB = event(linkB);
         when(eventRepo.findLinkIdsWithClaimableEvents(any())).thenReturn(List.of(linkA, linkB));
-        when(eventRepo.findEarliestClaimableForLink(eq(linkA), any())).thenReturn(Optional.of(eventA));
-        when(eventRepo.findEarliestClaimableForLink(eq(linkB), any())).thenReturn(Optional.of(eventB));
+        when(readOps.earliestClaimableSnapshot(eq(linkA), any())).thenReturn(Optional.of(eventA));
+        when(readOps.earliestClaimableSnapshot(eq(linkB), any())).thenReturn(Optional.of(eventB));
         when(txOps.tryClaim(any(), any())).thenReturn(1);
         when(delivery.deliver(any())).thenReturn(
                 new ReplicationDelivery.DeliveryResult(true, ResultCode.SUCCESS, null));
@@ -195,8 +191,8 @@ class ReplicationWorkerTest {
         worker.drainQueue();
 
         // Both links' heads delivered; markDelivered called once per link.
-        verify(txOps).markDelivered(eq(eventA.getId()));
-        verify(txOps).markDelivered(eq(eventB.getId()));
+        verify(txOps).markDelivered(eq(eventA.id()));
+        verify(txOps).markDelivered(eq(eventB.id()));
     }
 
     @Test
@@ -236,18 +232,28 @@ class ReplicationWorkerTest {
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    private void stubClaim(UUID linkId, ReplicationEvent event, int claimResult) {
+    private void stubClaim(UUID linkId, ReplicationEventSnapshot event, int claimResult) {
         when(eventRepo.findLinkIdsWithClaimableEvents(any())).thenReturn(List.of(linkId));
-        when(eventRepo.findEarliestClaimableForLink(eq(linkId), any())).thenReturn(Optional.of(event));
-        when(txOps.tryClaim(eq(event.getId()), any())).thenReturn(claimResult);
+        when(readOps.earliestClaimableSnapshot(eq(linkId), any())).thenReturn(Optional.of(event));
+        when(txOps.tryClaim(eq(event.id()), any())).thenReturn(claimResult);
     }
 
-    private ReplicationEvent event(UUID linkId) {
-        ReplicationEvent e = new ReplicationEvent();
-        e.setId(UUID.randomUUID());
-        ReplicationLink link = new ReplicationLink();
-        link.setId(linkId);
-        e.setLink(link);
-        return e;
+    private ReplicationEventSnapshot event(UUID linkId) {
+        return event(linkId, 0, ReplicationOperationType.DELETE, "uid=alice,dc=corp");
+    }
+
+    private ReplicationEventSnapshot event(UUID linkId, int attempts) {
+        return event(linkId, attempts, ReplicationOperationType.DELETE, "uid=alice,dc=corp");
+    }
+
+    private ReplicationEventSnapshot event(UUID linkId, int attempts,
+                                            ReplicationOperationType op, String targetDn) {
+        ReplicationLinkSnapshot link = new ReplicationLinkSnapshot(
+                linkId, "test-link", null, null, null, null, true, false, List.of());
+        return new ReplicationEventSnapshot(
+                UUID.randomUUID(), link,
+                ReplicationEnqueueSource.APP_INTERCEPT, op,
+                "uid=alice,dc=src", targetDn,
+                Map.of(), attempts, OffsetDateTime.now());
     }
 }

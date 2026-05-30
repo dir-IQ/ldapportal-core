@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
-import com.ldapportal.entity.ReplicationLink;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.LDAPException;
 import org.junit.jupiter.api.Test;
@@ -16,14 +15,14 @@ class DnMapperTest {
         // not touch the DN at all — preserves whitespace and case
         // exactly so a caller passing the same DN to the source and
         // the target sees the same bytes on both sides.
-        ReplicationLink link = link(null, null);
+        ReplicationLinkSnapshot link = link(null, null);
         assertThat(DnMapper.map("uid=alice,ou=people,dc=corp,dc=com", link))
                 .isEqualTo("uid=alice,ou=people,dc=corp,dc=com");
     }
 
     @Test
     void baseDnSubstitution_rewritesSuffix() {
-        ReplicationLink link = link("dc=src,dc=com", "dc=tgt,dc=com");
+        ReplicationLinkSnapshot link = link("dc=src,dc=com", "dc=tgt,dc=com");
         String mapped = DnMapper.map("uid=alice,ou=people,dc=src,dc=com", link);
         assertThat(mapped).isEqualTo("uid=alice,ou=people,dc=tgt,dc=com");
     }
@@ -32,14 +31,14 @@ class DnMapperTest {
     void baseDnSubstitution_dnIsBase_returnsTargetBase() {
         // Edge case: the source DN IS the base. The mapped target is
         // the target base itself, not '<empty>,<target>'.
-        ReplicationLink link = link("dc=src,dc=com", "dc=tgt,dc=com");
+        ReplicationLinkSnapshot link = link("dc=src,dc=com", "dc=tgt,dc=com");
         assertThat(DnMapper.map("dc=src,dc=com", link)).isEqualTo("dc=tgt,dc=com");
     }
 
     @Test
     void outOfScopeDn_returnsNull() {
         // DN is not under the source base — replication should skip.
-        ReplicationLink link = link("dc=src,dc=com", "dc=tgt,dc=com");
+        ReplicationLinkSnapshot link = link("dc=src,dc=com", "dc=tgt,dc=com");
         assertThat(DnMapper.map("uid=alice,dc=other,dc=com", link)).isNull();
     }
 
@@ -52,7 +51,7 @@ class DnMapperTest {
         // the configured target base case verbatim (operators see
         // what they typed), so we assert the structural relationship
         // via DN equality rather than substring match.
-        ReplicationLink link = link("DC=src,DC=com", "DC=tgt,DC=com");
+        ReplicationLinkSnapshot link = link("DC=src,DC=com", "DC=tgt,DC=com");
         String mapped = DnMapper.map("uid=alice,ou=people,dc=src,dc=com", link);
         assertThat(mapped).isNotNull();
         assertThat(new DN(mapped)).isEqualTo(
@@ -68,14 +67,14 @@ class DnMapperTest {
         // and block the per-link FIFO behind the wedge. Source-side
         // write already succeeded; the divergence surfaces in
         // monitoring rather than as queue garbage.
-        ReplicationLink link = link("dc=src,dc=com", "dc=tgt,dc=com");
+        ReplicationLinkSnapshot link = link("dc=src,dc=com", "dc=tgt,dc=com");
         assertThat(DnMapper.map("this is not a dn", link)).isNull();
     }
 
-    private static ReplicationLink link(String sourceBaseDn, String targetBaseDn) {
-        ReplicationLink l = new ReplicationLink();
-        l.setSourceBaseDn(sourceBaseDn);
-        l.setTargetBaseDn(targetBaseDn);
-        return l;
+    private static ReplicationLinkSnapshot link(String sourceBaseDn, String targetBaseDn) {
+        return new ReplicationLinkSnapshot(
+                java.util.UUID.randomUUID(), "test-link",
+                null, null, sourceBaseDn, targetBaseDn, true, false,
+                java.util.List.of());
     }
 }

@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
-import com.ldapportal.entity.ReplicationLink;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.LDAPException;
 
 /**
  * Translates a source-side DN to the target-side DN for a given
- * {@link ReplicationLink}. Three cases:
+ * {@link ReplicationLinkSnapshot}. Three cases:
  *
  * <ul>
  *   <li><b>Identity mapping</b> ({@code sourceBaseDn == null}): target
@@ -31,14 +30,14 @@ public final class DnMapper {
      * @return the mapped target DN, or {@code null} when the source DN
      *         is outside the link's source base scope.
      */
-    public static String map(String sourceDn, ReplicationLink link) {
-        if (link.getSourceBaseDn() == null) {
+    public static String map(String sourceDn, ReplicationLinkSnapshot link) {
+        if (link.sourceBaseDn() == null) {
             // Identity mapping — return the DN as-is.
             return sourceDn;
         }
         try {
             DN source = new DN(sourceDn);
-            DN scope = new DN(link.getSourceBaseDn());
+            DN scope = new DN(link.sourceBaseDn());
             if (!source.isDescendantOf(scope, /* allowEquals */ true)) {
                 return null;
             }
@@ -52,11 +51,11 @@ public final class DnMapper {
             // means the source DN IS the base, and the target is the
             // target base.
             if (sourceNorm.equals(scopeNorm)) {
-                return link.getTargetBaseDn();
+                return link.targetBaseDn();
             }
             // Otherwise sourceNorm = '<prefix>,<scopeNorm>'.
             String prefix = sourceNorm.substring(0, sourceNorm.length() - scopeNorm.length() - 1);
-            return prefix + "," + link.getTargetBaseDn();
+            return prefix + "," + link.targetBaseDn();
         } catch (LDAPException ex) {
             // Unparseable DN — skip this link rather than enqueue an
             // event with the malformed string as the target. Without

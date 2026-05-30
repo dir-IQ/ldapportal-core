@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
-import com.ldapportal.entity.ReplicationEvent;
-import com.ldapportal.entity.ReplicationLink;
-import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.entity.enums.ReplicationOperationType;
-import com.ldapportal.ldap.replication.ReplicationEventPersister;
-import com.ldapportal.repository.ReplicationLinkRepository;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
@@ -22,8 +17,6 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -31,8 +24,8 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ReplicationEnqueuerTest {
 
-    @Mock private ReplicationLinkRepository  linkRepo;
-    @Mock private ReplicationEventPersister persister;
+    @Mock private ReplicationReadOps         readOps;
+    @Mock private ReplicationEventPersister  persister;
     @InjectMocks private ReplicationEnqueuer enqueuer;
 
     @Test
@@ -41,7 +34,7 @@ class ReplicationEnqueuerTest {
         // configured. Hit on every LDAP write so it must short-circuit
         // before doing any work beyond the link query.
         UUID source = UUID.randomUUID();
-        when(linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(source)).thenReturn(List.of());
+        when(readOps.snapshotsForSource(source)).thenReturn(List.of());
 
         enqueuer.enqueue(source, CapturedWrite.delete("uid=alice,dc=corp"));
 
@@ -51,24 +44,23 @@ class ReplicationEnqueuerTest {
     @Test
     void singleLink_addOp_persistsEventWithMappedDnAndAttributes() {
         UUID source = UUID.randomUUID();
-        ReplicationLink link = link("dc=src,dc=com", "dc=tgt,dc=com");
-        when(linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(source))
-                .thenReturn(List.of(link));
+        ReplicationLinkSnapshot link = link("dc=src,dc=com", "dc=tgt,dc=com");
+        when(readOps.snapshotsForSource(source)).thenReturn(List.of(link));
 
         enqueuer.enqueue(source, CapturedWrite.add(
                 "uid=alice,ou=people,dc=src,dc=com",
                 List.of(new Attribute("uid", "alice"),
                         new Attribute("mail", "alice@src.com"))));
 
-        ArgumentCaptor<List<ReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<PendingReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
         verify(persister).saveAll(cap.capture());
         assertThat(cap.getValue()).hasSize(1);
-        ReplicationEvent ev = cap.getValue().get(0);
-        assertThat(ev.getOperation()).isEqualTo(ReplicationOperationType.ADD);
-        assertThat(ev.getStatus()).isEqualTo(ReplicationEventStatus.PENDING);
-        assertThat(ev.getSourceDn()).isEqualTo("uid=alice,ou=people,dc=src,dc=com");
-        assertThat(ev.getTargetDn()).contains("dc=tgt,dc=com").contains("uid=alice");
-        assertThat(ev.getPayload()).containsKey("attributes");
+        PendingReplicationEvent ev = cap.getValue().get(0);
+        assertThat(ev.operation()).isEqualTo(ReplicationOperationType.ADD);
+        assertThat(ev.sourceDn()).isEqualTo("uid=alice,ou=people,dc=src,dc=com");
+        assertThat(ev.targetDn()).contains("dc=tgt,dc=com").contains("uid=alice");
+        assertThat(ev.payload()).containsKey("attributes");
+        assertThat(ev.linkId()).isEqualTo(link.id());
     }
 
     @Test
@@ -77,14 +69,13 @@ class ReplicationEnqueuerTest {
         // Single saveAll call with both events in the batch (the
         // persister opens one tx for the batch, not one tx per event).
         UUID source = UUID.randomUUID();
-        ReplicationLink linkA = link(null, null);  // identity
-        ReplicationLink linkB = link("dc=src,dc=com", "dc=mirror,dc=com");
-        when(linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(source))
-                .thenReturn(List.of(linkA, linkB));
+        ReplicationLinkSnapshot linkA = link(null, null);  // identity
+        ReplicationLinkSnapshot linkB = link("dc=src,dc=com", "dc=mirror,dc=com");
+        when(readOps.snapshotsForSource(source)).thenReturn(List.of(linkA, linkB));
 
         enqueuer.enqueue(source, CapturedWrite.delete("uid=alice,dc=src,dc=com"));
 
-        ArgumentCaptor<List<ReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<PendingReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
         verify(persister).saveAll(cap.capture());
         assertThat(cap.getValue()).hasSize(2);
     }
@@ -95,14 +86,13 @@ class ReplicationEnqueuerTest {
         // The in-scope link gets an event; the out-of-scope link is
         // silently skipped (no error, no save).
         UUID source = UUID.randomUUID();
-        ReplicationLink inScope  = link("ou=people,dc=src,dc=com", "ou=people,dc=tgt,dc=com");
-        ReplicationLink outScope = link("ou=other,dc=src,dc=com",  "ou=other,dc=tgt,dc=com");
-        when(linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(source))
-                .thenReturn(List.of(inScope, outScope));
+        ReplicationLinkSnapshot inScope  = link("ou=people,dc=src,dc=com", "ou=people,dc=tgt,dc=com");
+        ReplicationLinkSnapshot outScope = link("ou=other,dc=src,dc=com",  "ou=other,dc=tgt,dc=com");
+        when(readOps.snapshotsForSource(source)).thenReturn(List.of(inScope, outScope));
 
         enqueuer.enqueue(source, CapturedWrite.delete("uid=alice,ou=people,dc=src,dc=com"));
 
-        ArgumentCaptor<List<ReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<PendingReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
         verify(persister).saveAll(cap.capture());
         assertThat(cap.getValue()).hasSize(1);
     }
@@ -114,9 +104,8 @@ class ReplicationEnqueuerTest {
         // we don't open the REQUIRES_NEW tx for zero events. This
         // matches the no-links path's cost profile.
         UUID source = UUID.randomUUID();
-        ReplicationLink outScope = link("ou=other,dc=src,dc=com", "ou=other,dc=tgt,dc=com");
-        when(linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(source))
-                .thenReturn(List.of(outScope));
+        ReplicationLinkSnapshot outScope = link("ou=other,dc=src,dc=com", "ou=other,dc=tgt,dc=com");
+        when(readOps.snapshotsForSource(source)).thenReturn(List.of(outScope));
 
         enqueuer.enqueue(source, CapturedWrite.delete("uid=alice,ou=people,dc=src,dc=com"));
 
@@ -126,19 +115,18 @@ class ReplicationEnqueuerTest {
     @Test
     void modifyOp_persistsMappedModifications() {
         UUID source = UUID.randomUUID();
-        ReplicationLink link = link(null, null);
-        when(linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(source))
-                .thenReturn(List.of(link));
+        ReplicationLinkSnapshot link = link(null, null);
+        when(readOps.snapshotsForSource(source)).thenReturn(List.of(link));
 
         enqueuer.enqueue(source, CapturedWrite.modify(
                 "uid=alice,dc=corp,dc=com",
                 List.of(new Modification(ModificationType.REPLACE, "mail", "new@corp.com"))));
 
-        ArgumentCaptor<List<ReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<PendingReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
         verify(persister).saveAll(cap.capture());
-        ReplicationEvent ev = cap.getValue().get(0);
-        assertThat(ev.getOperation()).isEqualTo(ReplicationOperationType.MODIFY);
-        assertThat(ev.getPayload()).containsKey("modifications");
+        PendingReplicationEvent ev = cap.getValue().get(0);
+        assertThat(ev.operation()).isEqualTo(ReplicationOperationType.MODIFY);
+        assertThat(ev.payload()).containsKey("modifications");
     }
 
     @Test
@@ -148,9 +136,8 @@ class ReplicationEnqueuerTest {
         // `values.length` -> NPE -> outer catch swallowed -> source write
         // succeeded but no event was enqueued. Pin the null-safe path.
         UUID source = UUID.randomUUID();
-        ReplicationLink link = link(null, null);
-        when(linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(source))
-                .thenReturn(List.of(link));
+        ReplicationLinkSnapshot link = link(null, null);
+        when(readOps.snapshotsForSource(source)).thenReturn(List.of(link));
 
         // Modification(DELETE, attrName) with no values — the wipe form.
         Modification wipe = new Modification(ModificationType.DELETE, "description");
@@ -160,7 +147,7 @@ class ReplicationEnqueuerTest {
 
         // Must not have NPE'd; persister got the event with an empty
         // values list in the modifications payload.
-        ArgumentCaptor<List<ReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<PendingReplicationEvent>> cap = ArgumentCaptor.forClass(List.class);
         verify(persister).saveAll(cap.capture());
         assertThat(cap.getValue()).hasSize(1);
     }
@@ -173,9 +160,8 @@ class ReplicationEnqueuerTest {
         // arranging persister.saveAll to throw and asserting enqueue
         // returns normally.
         UUID source = UUID.randomUUID();
-        ReplicationLink link = link(null, null);
-        when(linkRepo.findAllBySourceDirectoryIdAndEnabledTrue(source))
-                .thenReturn(List.of(link));
+        ReplicationLinkSnapshot link = link(null, null);
+        when(readOps.snapshotsForSource(source)).thenReturn(List.of(link));
         org.mockito.Mockito.doThrow(new RuntimeException("simulated DB failure"))
                 .when(persister).saveAll(any());
 
@@ -183,10 +169,10 @@ class ReplicationEnqueuerTest {
         enqueuer.enqueue(source, CapturedWrite.delete("uid=alice,dc=corp"));
     }
 
-    private static ReplicationLink link(String sourceBaseDn, String targetBaseDn) {
-        ReplicationLink l = new ReplicationLink();
-        l.setSourceBaseDn(sourceBaseDn);
-        l.setTargetBaseDn(targetBaseDn);
-        return l;
+    private static ReplicationLinkSnapshot link(String sourceBaseDn, String targetBaseDn) {
+        return new ReplicationLinkSnapshot(
+                UUID.randomUUID(), "test-link",
+                null, null, sourceBaseDn, targetBaseDn, true, false,
+                List.of());
     }
 }

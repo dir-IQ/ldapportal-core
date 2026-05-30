@@ -32,24 +32,31 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
 
     /**
      * The earliest claimable event for a given link — the FIFO head.
-     * The worker reads this, attempts to atomically claim it via
-     * {@link #tryClaim}, then delivers. Returning an Optional rather
-     * than throwing keeps the iteration loop short on transient
-     * race-windows (another thread claimed it first).
+     * Called from {@code ReplicationReadOps.earliestClaimableSnapshot},
+     * which materialises the entity into a {@link ReplicationEventSnapshot}
+     * inside the same read tx. Returning an Optional rather than throwing
+     * keeps the iteration loop short on transient race-windows (another
+     * thread claimed it first).
      *
-     * <p>JOIN FETCH the link and both directories so the worker can
-     * read those associations after the entity is detached
-     * ({@code open-in-view=false} closes the session as soon as this
-     * query returns). Without the fetch, the first
-     * {@code event.getLink().getTargetDirectory()} access in
-     * {@code ReplicationDelivery} throws
-     * {@code LazyInitializationException} and no event ever delivers.
+     * <p>The {@code JOIN FETCH}es populate everything the snapshot
+     * factory reads — {@code e.link}, both {@code DirectoryConnection}s,
+     * and the link's {@code attributeMappings}. The collection fetch
+     * combined with {@code LIMIT 1} makes Hibernate apply pagination
+     * in memory after the row fetch (it warns about this in the log,
+     * which is benign for the FIFO-head + small-rules cardinality
+     * here — a link rarely has more than a handful of rules and we
+     * fetch exactly one event). Without the {@code attributeMappings}
+     * fetch the snapshot factory's iteration through it would trip
+     * {@code LazyInitializationException} once the read tx commits,
+     * and the auto-create path inside delivery would permanently
+     * fail for any link with rules configured.
      */
     @Query("""
         SELECT e FROM ReplicationEvent e
-          JOIN FETCH e.link l
-          JOIN FETCH l.sourceDirectory
-          JOIN FETCH l.targetDirectory
+               JOIN FETCH e.link l
+          LEFT JOIN FETCH l.attributeMappings
+               JOIN FETCH l.sourceDirectory
+               JOIN FETCH l.targetDirectory
         WHERE e.link.id = :linkId
           AND e.status IN ('PENDING', 'FAILED')
           AND (e.nextAttemptAt IS NULL OR e.nextAttemptAt <= :now)
