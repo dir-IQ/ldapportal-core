@@ -12,8 +12,11 @@
  *   - doSavePrefs bumps `initialDensity` to the saved value, so a
  *     subsequent revert sees no diff.
  *   - doSavePrefs emit('close') on success.
- *   - Backdrop click is no-op while saving (guards against mid-flight
- *     dismissal).
+ *   - (Historical) Backdrop-click handling guarded against mid-flight
+ *     dismissal while saving. Backdrop click is now a no-op
+ *     unconditionally — see UserPreferencesDialog.vue and the
+ *     matching AppModal change — so the saving-guard branch the
+ *     original regression spawned no longer fires by any path.
  *
  * The auth/api/composable dependencies are mocked at the module level
  * — these are pure component tests, not integration tests.
