@@ -115,7 +115,7 @@ public class LdapSchemaService {
     private Schema fetchSchema(DirectoryConnection dc) {
         return connectionFactory.withConnection(dc, conn -> {
             try {
-                Schema schema = Schema.getSchema(conn);
+                Schema schema = conn.getSchema();
                 if (schema == null) {
                     throw new LdapOperationException(
                         "Server did not return a schema for [" + dc.getDisplayName() + "]");

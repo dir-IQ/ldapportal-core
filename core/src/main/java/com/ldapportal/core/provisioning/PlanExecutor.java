@@ -5,8 +5,8 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.unboundid.ldap.sdk.AddRequest;
-import com.unboundid.ldap.sdk.LDAPConnection;
 import com.unboundid.ldap.sdk.LDAPException;
+import com.unboundid.ldap.sdk.LDAPInterface;
 import com.unboundid.ldap.sdk.LDAPResult;
 import com.unboundid.ldap.sdk.ModifyRequest;
 import com.unboundid.ldap.sdk.ResultCode;
@@ -131,7 +131,7 @@ public class PlanExecutor {
         });
     }
 
-    private void applyStep(LDAPConnection conn, LdapOperationStep step) throws LDAPException {
+    private void applyStep(LDAPInterface conn, LdapOperationStep step) throws LDAPException {
         LDAPResult result = switch (step) {
             case AddStep add ->
                     conn.add(new AddRequest(add.targetDn(), add.attributes()));
@@ -143,7 +143,7 @@ public class PlanExecutor {
         checkResult(result, describe(step), step.targetDn());
     }
 
-    private void handleFailure(LDAPConnection conn,
+    private void handleFailure(LDAPInterface conn,
                                LdapOperationStep step,
                                LDAPException originalFailure,
                                int stepNumber,
@@ -169,7 +169,7 @@ public class PlanExecutor {
         }
     }
 
-    private void runCompensation(LDAPConnection conn,
+    private void runCompensation(LDAPInterface conn,
                                   List<LdapOperationStep> compensation,
                                   LDAPException originalFailure) {
         if (compensation == null || compensation.isEmpty()) {

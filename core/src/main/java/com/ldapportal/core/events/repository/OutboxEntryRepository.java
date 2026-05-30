@@ -18,15 +18,17 @@ public interface OutboxEntryRepository extends JpaRepository<OutboxEntry, UUID> 
 
     /**
      * Claim a batch of PENDING rows ready to dispatch. Atomically transitions
-     * them to DELIVERING and increments attempts. Uses FOR UPDATE SKIP LOCKED
-     * so concurrent dispatchers (in the future HA world) don't contend.
+     * them to DELIVERING, increments attempts, and stamps claimed_at so the
+     * stale-reset sweep can age the claim. Uses FOR UPDATE SKIP LOCKED so
+     * concurrent dispatchers (in the future HA world) don't contend.
      * Returns the claimed row IDs.
      */
     @Modifying
     @Query(value = """
         UPDATE event_outbox
-           SET status   = 'DELIVERING',
-               attempts = attempts + 1
+           SET status     = 'DELIVERING',
+               attempts   = attempts + 1,
+               claimed_at = :now
          WHERE id IN (
              SELECT id FROM event_outbox
               WHERE status = :pendingStatus
@@ -44,14 +46,24 @@ public interface OutboxEntryRepository extends JpaRepository<OutboxEntry, UUID> 
     /**
      * Crash recovery: DELIVERING rows stuck longer than MAX_DELIVERING get
      * flipped back to PENDING so they retry on the next tick.
+     *
+     * <p>Predicate is {@code claimed_at < cutoff}, NOT
+     * {@code next_attempt_at < cutoff}: the latter would false-reset any
+     * backlog-drain claim the instant it lands (next_attempt_at can be
+     * far in the past at claim time when the dispatcher was down or the
+     * backoff already elapsed). The mistaken reset opens a double-
+     * delivery window since the dispatcher's in-flight HTTP POST runs
+     * outside any DB transaction.
      */
     @Modifying
     @Query(value = """
         UPDATE event_outbox
-           SET status = 'PENDING',
-               next_attempt_at = :resetTo
+           SET status          = 'PENDING',
+               next_attempt_at = :resetTo,
+               claimed_at      = NULL
          WHERE status = 'DELIVERING'
-           AND next_attempt_at < :cutoff
+           AND claimed_at IS NOT NULL
+           AND claimed_at < :cutoff
         """, nativeQuery = true)
     int resetStaleDelivering(@Param("cutoff") Instant cutoff,
                              @Param("resetTo") Instant resetTo);

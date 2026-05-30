@@ -31,6 +31,14 @@ public enum Entitlement {
     ALERTING,
     /** Service account registry and vault-integrated password rotation. */
     SERVICE_ACCOUNTS,
+    /**
+     * Asynchronous cross-directory replication of app-initiated LDAP
+     * writes. Gates the {@code /replication-links} surface, the
+     * Directory Sync page, and the related dashboard surfacing
+     * (metric / action item / awareness). See
+     * {@code docs/plans/2026-05-30-directory-sync-design.md}.
+     */
+    DIRECTORY_SYNC,
 
     // ── Enterprise-tier feature flags ──────────────────────────────────────
     /** SAML 2.0 admin SSO (OIDC is core). */

@@ -5,6 +5,8 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.exception.LdapConnectionException;
 import com.ldapportal.exception.LdapOperationException;
+import com.ldapportal.ldap.replication.ReplicatingLdapInterface;
+import com.ldapportal.ldap.replication.ReplicationEnqueuer;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.sdk.*;
 import com.unboundid.ldap.sdk.extensions.StartTLSExtendedRequest;
@@ -56,6 +58,15 @@ public class LdapConnectionFactory {
 
     private final EncryptionService encryptionService;
 
+    /**
+     * Replication enqueuer for app-initiated writes. Wired via Spring;
+     * may be {@code null} in unit tests that construct the factory
+     * directly. When null, {@link #withConnection} passes the raw
+     * {@link LDAPConnection} through without wrapping — replication is
+     * inactive.
+     */
+    private final ReplicationEnqueuer replicationEnqueuer;
+
     private final ConcurrentMap<UUID, LDAPConnectionPool> pools = new ConcurrentHashMap<>();
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -98,11 +109,41 @@ public class LdapConnectionFactory {
      */
     public <T> T withConnection(DirectoryConnection dc,
                                 LdapOperation<T> operation) {
+        return doWithConnection(dc, operation, replicationEnqueuer != null);
+    }
+
+    /**
+     * Variant of {@link #withConnection} that bypasses the replication
+     * wrapper. Use sparingly — every call site must have a deliberate
+     * reason not to participate in replication capture. Currently
+     * intended for two paths:
+     *
+     * <ol>
+     *   <li>The {@code ReplicationWorker} (P1) — target-side writes
+     *       must not loop back into the queue.</li>
+     *   <li>The {@code ChangelogReplicationEnqueuer} (future) — its
+     *       own LDAP reads on the source are uninteresting.</li>
+     * </ol>
+     *
+     * Everything else should call {@link #withConnection}.
+     */
+    public <T> T withConnectionUnreplicated(DirectoryConnection dc,
+                                             LdapOperation<T> operation) {
+        return doWithConnection(dc, operation, false);
+    }
+
+    private <T> T doWithConnection(DirectoryConnection dc,
+                                    LdapOperation<T> operation,
+                                    boolean replicate) {
         LDAPConnectionPool pool = getPool(dc);
         LDAPConnection conn = null;
         try {
             conn = pool.getConnection();
-            return operation.execute(conn);
+            com.unboundid.ldap.sdk.FullLDAPInterface iface =
+                    (replicate && replicationEnqueuer != null)
+                    ? new ReplicatingLdapInterface(conn, replicationEnqueuer, dc.getId())
+                    : conn;
+            return operation.execute(iface);
         } catch (LDAPException e) {
             boolean connectionBroken = !e.getResultCode().isConnectionUsable();
             if (conn != null) {
@@ -278,8 +319,29 @@ public class LdapConnectionFactory {
 
     // ── Functional interface ──────────────────────────────────────────────────
 
+    /**
+     * Callback receiving a {@link com.unboundid.ldap.sdk.FullLDAPInterface}
+     * — either a raw {@link LDAPConnection} (from
+     * {@link #withConnectionUnreplicated}) or a
+     * {@code ReplicatingLdapInterface} wrapping one (from
+     * {@link #withConnection}). The wrapper intercepts successful
+     * writes to enqueue replication events; reads pass through.
+     *
+     * <p>The parameter type is {@code FullLDAPInterface} rather than
+     * the narrower {@code LDAPInterface} so addon callers that need
+     * {@code bind()} or {@code processExtendedOperation()} inside a
+     * lambda still compile — both methods live on
+     * {@code FullLDAPInterface} and are implemented by both
+     * {@code LDAPConnection} and {@code ReplicatingLdapInterface}.
+     *
+     * <p>Callers must not cast to {@code LDAPConnection} — there's no
+     * guarantee about the underlying type. Methods that need
+     * connection-only features (reconnect, getConnectedAddress, etc.)
+     * should use {@link #openUnboundConnection} instead of this
+     * callback surface.
+     */
     @FunctionalInterface
     public interface LdapOperation<T> {
-        T execute(LDAPConnection connection) throws LDAPException;
+        T execute(com.unboundid.ldap.sdk.FullLDAPInterface connection) throws LDAPException;
     }
 }

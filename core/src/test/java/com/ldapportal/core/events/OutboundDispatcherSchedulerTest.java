@@ -3,12 +3,12 @@ package com.ldapportal.core.events;
 
 import com.ldapportal.core.events.channel.DeliveryOutcome;
 import com.ldapportal.core.events.channel.OutboundChannel;
-import com.ldapportal.core.events.entity.EventSubscription;
 import com.ldapportal.core.events.entity.OutboxEntry;
 import com.ldapportal.core.events.enums.ChannelType;
 import com.ldapportal.core.events.enums.OutboxStatus;
-import com.ldapportal.core.events.repository.EventSubscriptionRepository;
 import com.ldapportal.core.events.repository.OutboxEntryRepository;
+import com.ldapportal.core.events.snapshot.EventSubscriptionSnapshot;
+import com.ldapportal.core.events.snapshot.OutboxEntrySnapshot;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,7 +43,7 @@ import static org.mockito.Mockito.when;
 class OutboundDispatcherSchedulerTest {
 
     @Mock private OutboxEntryRepository outboxRepository;
-    @Mock private EventSubscriptionRepository subscriptionRepository;
+    @Mock private OutboundEventReadOps readOps;
     @Mock private OutboundChannel channel;
     @Mock private TransactionTemplate txTemplate;
 
@@ -55,7 +55,7 @@ class OutboundDispatcherSchedulerTest {
     void setUp() {
         when(channel.type()).thenReturn(ChannelType.WEBHOOK);
         scheduler = new OutboundDispatcherScheduler(
-                outboxRepository, subscriptionRepository,
+                outboxRepository, readOps,
                 List.of(channel), txTemplate, fixedClock);
 
         // txTemplate.execute just invokes the callback with a fake status.
@@ -85,13 +85,7 @@ class OutboundDispatcherSchedulerTest {
     @Test
     void dispatch_claimsAndDelegatesOnSuccess() {
         UUID id = UUID.randomUUID();
-        when(outboxRepository.claimBatch(eq("PENDING"), any(Instant.class), anyInt()))
-                .thenReturn(List.of(id));
-
-        OutboxEntry row = rowForDispatch(id);
-        when(outboxRepository.findById(id)).thenReturn(Optional.of(row));
-        when(subscriptionRepository.findById(row.getSubscriptionId()))
-                .thenReturn(Optional.of(subscription()));
+        stageDispatch(id, 1, true);
         when(channel.deliver(any(), any())).thenReturn(DeliveryOutcome.success(200));
 
         scheduler.dispatch();
@@ -106,14 +100,7 @@ class OutboundDispatcherSchedulerTest {
     @Test
     void dispatch_transientFailure_reschedulesWithBackoff() {
         UUID id = UUID.randomUUID();
-        when(outboxRepository.claimBatch(anyString(), any(Instant.class), anyInt()))
-                .thenReturn(List.of(id));
-
-        OutboxEntry row = rowForDispatch(id);
-        row.setAttempts(1);       // first attempt just happened (claim incremented it)
-        when(outboxRepository.findById(id)).thenReturn(Optional.of(row));
-        when(subscriptionRepository.findById(row.getSubscriptionId()))
-                .thenReturn(Optional.of(subscription()));
+        stageDispatch(id, 1, true);    // first attempt just happened (claim incremented it)
         when(channel.deliver(any(), any()))
                 .thenReturn(DeliveryOutcome.transientFailure("503", 503));
 
@@ -134,14 +121,7 @@ class OutboundDispatcherSchedulerTest {
     @Test
     void dispatch_permanentFailure_deadLetters() {
         UUID id = UUID.randomUUID();
-        when(outboxRepository.claimBatch(anyString(), any(Instant.class), anyInt()))
-                .thenReturn(List.of(id));
-
-        OutboxEntry row = rowForDispatch(id);
-        row.setAttempts(1);
-        when(outboxRepository.findById(id)).thenReturn(Optional.of(row));
-        when(subscriptionRepository.findById(row.getSubscriptionId()))
-                .thenReturn(Optional.of(subscription()));
+        stageDispatch(id, 1, true);
         when(channel.deliver(any(), any()))
                 .thenReturn(DeliveryOutcome.permanentFailure("401", 401));
 
@@ -157,14 +137,7 @@ class OutboundDispatcherSchedulerTest {
     @Test
     void dispatch_transientFailureAtMaxAttempts_deadLetters() {
         UUID id = UUID.randomUUID();
-        when(outboxRepository.claimBatch(anyString(), any(Instant.class), anyInt()))
-                .thenReturn(List.of(id));
-
-        OutboxEntry row = rowForDispatch(id);
-        row.setAttempts(6);     // BACKOFF.length + 1; this is the final attempt
-        when(outboxRepository.findById(id)).thenReturn(Optional.of(row));
-        when(subscriptionRepository.findById(row.getSubscriptionId()))
-                .thenReturn(Optional.of(subscription()));
+        stageDispatch(id, 6, true);    // BACKOFF.length + 1; this is the final attempt
         when(channel.deliver(any(), any()))
                 .thenReturn(DeliveryOutcome.transientFailure("503", 503));
 
@@ -179,14 +152,7 @@ class OutboundDispatcherSchedulerTest {
     @Test
     void dispatch_channelThrows_treatedAsTransient() {
         UUID id = UUID.randomUUID();
-        when(outboxRepository.claimBatch(anyString(), any(Instant.class), anyInt()))
-                .thenReturn(List.of(id));
-
-        OutboxEntry row = rowForDispatch(id);
-        row.setAttempts(1);
-        when(outboxRepository.findById(id)).thenReturn(Optional.of(row));
-        when(subscriptionRepository.findById(row.getSubscriptionId()))
-                .thenReturn(Optional.of(subscription()));
+        stageDispatch(id, 1, true);
         when(channel.deliver(any(), any())).thenThrow(new RuntimeException("boom"));
 
         scheduler.dispatch();
@@ -201,15 +167,7 @@ class OutboundDispatcherSchedulerTest {
     @Test
     void dispatch_disabledSubscription_deadLetters() {
         UUID id = UUID.randomUUID();
-        when(outboxRepository.claimBatch(anyString(), any(Instant.class), anyInt()))
-                .thenReturn(List.of(id));
-
-        OutboxEntry row = rowForDispatch(id);
-        EventSubscription disabled = subscription();
-        disabled.setEnabled(false);
-        when(outboxRepository.findById(id)).thenReturn(Optional.of(row));
-        when(subscriptionRepository.findById(row.getSubscriptionId()))
-                .thenReturn(Optional.of(disabled));
+        stageDispatch(id, 1, /* subEnabled */ false);
 
         scheduler.dispatch();
 
@@ -222,13 +180,13 @@ class OutboundDispatcherSchedulerTest {
     @Test
     void dispatch_deletedSubscription_deadLetters() {
         UUID id = UUID.randomUUID();
+        UUID subId = UUID.randomUUID();
         when(outboxRepository.claimBatch(anyString(), any(Instant.class), anyInt()))
                 .thenReturn(List.of(id));
-
-        OutboxEntry row = rowForDispatch(id);
-        when(outboxRepository.findById(id)).thenReturn(Optional.of(row));
-        when(subscriptionRepository.findById(row.getSubscriptionId()))
-                .thenReturn(Optional.empty());
+        when(readOps.outboxSnapshot(id))
+                .thenReturn(Optional.of(rowSnapshot(id, subId, 1)));
+        when(readOps.subscriptionSnapshot(subId)).thenReturn(Optional.empty());
+        when(outboxRepository.findById(id)).thenReturn(Optional.of(rowEntity(id, subId, 1)));
 
         scheduler.dispatch();
 
@@ -236,6 +194,72 @@ class OutboundDispatcherSchedulerTest {
         ArgumentCaptor<OutboxEntry> cap = ArgumentCaptor.forClass(OutboxEntry.class);
         verify(outboxRepository, atLeastOnce()).save(cap.capture());
         assertThat(cap.getValue().getStatus()).isEqualTo(OutboxStatus.DEAD_LETTERED);
+    }
+
+    /**
+     * Race-safety pin: if the stale-reset sweep (or a future HA-mode
+     * peer dispatcher) revokes the claim while the HTTP POST is in
+     * flight, the dispatcher's settle MUST NOT overwrite the new
+     * owner's state. Before the {@code claimed_at} fix + status guard
+     * combo, a backlog-drain claim could be false-reset within the
+     * 60s sweep tick, the dispatcher's POST would complete, and
+     * {@code resolveRow} would silently flip the row back to
+     * DELIVERED — masking the double-delivery and overwriting
+     * whatever state the new owner produced.
+     */
+    @Test
+    void settle_dropsOutcomeWhenClaimWasRevokedMidFlight() {
+        UUID id = UUID.randomUUID();
+        UUID subId = UUID.randomUUID();
+        when(outboxRepository.claimBatch(anyString(), any(Instant.class), anyInt()))
+                .thenReturn(List.of(id));
+        when(readOps.outboxSnapshot(id))
+                .thenReturn(Optional.of(rowSnapshot(id, subId, 1)));
+        when(readOps.subscriptionSnapshot(subId))
+                .thenReturn(Optional.of(subscriptionSnapshot(subId, true)));
+        when(channel.deliver(any(), any())).thenReturn(DeliveryOutcome.success(200));
+
+        // Simulate the stale-reset sweep having fired between claim
+        // and settle: the row the settle loads is back to PENDING.
+        OutboxEntry revoked = rowEntity(id, subId, 1);
+        revoked.setStatus(OutboxStatus.PENDING);
+        when(outboxRepository.findById(id)).thenReturn(Optional.of(revoked));
+
+        scheduler.dispatch();
+
+        // No save — settle must no-op when claim was revoked.
+        verify(outboxRepository, never()).save(any());
+    }
+
+    /**
+     * Structural-safety pin: the channel receives an
+     * {@link EventSubscriptionSnapshot}, not the
+     * {@code EventSubscription} JPA entity. The snapshot carries
+     * {@code createdById} as a UUID — not the LAZY {@code createdBy}
+     * Account reference — so a future channel implementation that
+     * tries to enrich the webhook payload with the creator's username
+     * can't accidentally trip {@code LazyInitializationException}
+     * outside the read tx and silently retry-loop the row forever.
+     *
+     * <p>Verifying via {@code ArgumentCaptor.forClass(EventSubscriptionSnapshot.class)}
+     * — if the SPI ever regresses back to the entity type, this fails
+     * at compile time, not at runtime in production.
+     */
+    @Test
+    void channelReceivesSnapshot_notEntity() {
+        UUID id = UUID.randomUUID();
+        stageDispatch(id, 1, true);
+        when(channel.deliver(any(), any())).thenReturn(DeliveryOutcome.success(200));
+
+        scheduler.dispatch();
+
+        ArgumentCaptor<EventSubscriptionSnapshot> subCap =
+                ArgumentCaptor.forClass(EventSubscriptionSnapshot.class);
+        ArgumentCaptor<OutboxEntrySnapshot> rowCap =
+                ArgumentCaptor.forClass(OutboxEntrySnapshot.class);
+        verify(channel).deliver(rowCap.capture(), subCap.capture());
+        assertThat(subCap.getValue()).isInstanceOf(EventSubscriptionSnapshot.class);
+        assertThat(rowCap.getValue()).isInstanceOf(OutboxEntrySnapshot.class);
     }
 
     @Test
@@ -266,26 +290,54 @@ class OutboundDispatcherSchedulerTest {
 
     // ── helpers ──
 
-    private OutboxEntry rowForDispatch(UUID id) {
+    /**
+     * Stage the canonical dispatch path for an outbox row: claim
+     * returns {@code id}, readOps returns a snapshot for the dispatch
+     * read, the entity is returned for the settle path's
+     * {@code outboxRepository.findById(id)} mutation.
+     */
+    private OutboxEntry stageDispatch(UUID id, int attempts, boolean subEnabled) {
+        UUID subId = UUID.randomUUID();
+        when(outboxRepository.claimBatch(anyString(), any(Instant.class), anyInt()))
+                .thenReturn(List.of(id));
+
+        OutboxEntrySnapshot rowSnapshot = rowSnapshot(id, subId, attempts);
+        when(readOps.outboxSnapshot(id)).thenReturn(Optional.of(rowSnapshot));
+        when(readOps.subscriptionSnapshot(subId))
+                .thenReturn(Optional.of(subscriptionSnapshot(subId, subEnabled)));
+
+        OutboxEntry entity = rowEntity(id, subId, attempts);
+        when(outboxRepository.findById(id)).thenReturn(Optional.of(entity));
+        return entity;
+    }
+
+    private OutboxEntrySnapshot rowSnapshot(UUID id, UUID subId, int attempts) {
+        return new OutboxEntrySnapshot(
+                id, subId, UUID.randomUUID(), "api_token.created",
+                fixedClock.instant(),
+                java.util.Map.of("type", "api_token.created"),
+                OutboxStatus.DELIVERING, attempts, fixedClock.instant(),
+                null, null, null, null, fixedClock.instant());
+    }
+
+    private OutboxEntry rowEntity(UUID id, UUID subId, int attempts) {
         OutboxEntry r = new OutboxEntry();
         r.setId(id);
-        r.setSubscriptionId(UUID.randomUUID());
+        r.setSubscriptionId(subId);
         r.setEventId(UUID.randomUUID());
         r.setEventType("api_token.created");
         r.setStatus(OutboxStatus.DELIVERING);
-        r.setAttempts(1);
+        r.setAttempts(attempts);
         r.setOccurredAt(fixedClock.instant());
         r.setEnvelope(java.util.Map.of("type", "api_token.created"));
         return r;
     }
 
-    private EventSubscription subscription() {
-        EventSubscription s = new EventSubscription();
-        s.setId(UUID.randomUUID());
-        s.setName("t");
-        s.setChannelType(ChannelType.WEBHOOK);
-        s.setEnabled(true);
-        return s;
+    private EventSubscriptionSnapshot subscriptionSnapshot(UUID id, boolean enabled) {
+        return new EventSubscriptionSnapshot(
+                id, "t", null, ChannelType.WEBHOOK,
+                java.util.Map.of("url", "https://example.test/"),
+                null, enabled, null);
     }
 
     private static <T> org.mockito.stubbing.Stubber doAnswer(org.mockito.stubbing.Answer<T> ans) {

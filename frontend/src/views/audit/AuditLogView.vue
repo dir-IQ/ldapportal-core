@@ -93,6 +93,7 @@ const ACTION_CATEGORIES = [
   { label: 'Application accounts',   prefixes: ['ACCOUNT_'] },
   { label: 'Auditor links',          prefixes: ['AUDITOR_'] },
   { label: 'API tokens',             prefixes: ['API_TOKEN_'] },
+  { label: 'Directory sync',         prefixes: ['REPLICATION_'] },
 ]
 
 const actionGroups = (() => {

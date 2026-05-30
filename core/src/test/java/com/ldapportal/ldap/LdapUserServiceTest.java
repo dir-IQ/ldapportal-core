@@ -69,7 +69,7 @@ class LdapUserServiceTest {
         inMemoryServer.startListening();
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(BIND_PASS);
-        connectionFactory = new LdapConnectionFactory(encryptionService);
+        connectionFactory = new LdapConnectionFactory(encryptionService, null);
         // Empty interceptor chain — the BaselinePlans fallback path
         // is what these tests exercise. This is the "no behaviour
         // change from the SPI" invariant: every assertion below

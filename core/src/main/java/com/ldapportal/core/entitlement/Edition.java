@@ -36,7 +36,8 @@ public enum Edition {
             Entitlement.HYBRID,
             Entitlement.EVENTS,
             Entitlement.ALERTING,
-            Entitlement.SERVICE_ACCOUNTS)),
+            Entitlement.SERVICE_ACCOUNTS,
+            Entitlement.DIRECTORY_SYNC)),
 
     /**
      * Top tier: everything. No add-ons needed.
@@ -48,6 +49,7 @@ public enum Edition {
             Entitlement.HR_SYNC,
             Entitlement.ALERTING,
             Entitlement.SERVICE_ACCOUNTS,
+            Entitlement.DIRECTORY_SYNC,
             Entitlement.SAML_ADMIN_SSO,
             Entitlement.AUDIT_LOG_SIGNING,
             Entitlement.HA_DEPLOYMENT,

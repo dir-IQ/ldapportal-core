@@ -362,7 +362,7 @@ public class LdapGroupService {
         return new java.util.ArrayList<>(members);
     }
 
-    private void resolveGroupRecursive(LDAPConnection conn, String groupDn,
+    private void resolveGroupRecursive(LDAPInterface conn, String groupDn,
                                         java.util.Set<String> members, java.util.Set<String> visitedGroups) {
         if (!visitedGroups.add(groupDn.toLowerCase())) return;
         try {

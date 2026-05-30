@@ -251,6 +251,11 @@ class EventBackboneEndToEndTest {
         stuck.setStatus(OutboxStatus.DELIVERING);
         stuck.setOccurredAt(Instant.now().minus(10, ChronoUnit.MINUTES));
         stuck.setNextAttemptAt(Instant.now().minus(10, ChronoUnit.MINUTES));
+        // The reset sweep predicate is claimed_at < cutoff (see V9). In
+        // production claimBatch sets claimed_at atomically with the status
+        // transition; the seeded row has to mirror that or the predicate
+        // misses it and the row stays DELIVERING.
+        stuck.setClaimedAt(Instant.now().minus(10, ChronoUnit.MINUTES));
         stuck.setEnvelope(Map.<String, Object>of("seeded", true));
         stuck.setAttempts(1);
         UUID id = outboxRepository.save(stuck).getId();

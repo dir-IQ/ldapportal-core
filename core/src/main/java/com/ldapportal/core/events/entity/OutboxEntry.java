@@ -72,6 +72,16 @@ public class OutboxEntry {
     @Column(name = "last_http_status")
     private Integer lastHttpStatus;
 
+    /**
+     * When the row last transitioned to DELIVERING, or NULL if never
+     * claimed. Drives the stale-reset sweep — using {@code nextAttemptAt}
+     * for that purpose false-resets backlog-drain claims (the row's
+     * next_attempt_at can be far in the past at claim time when the
+     * dispatcher was down or the backoff already elapsed).
+     */
+    @Column(name = "claimed_at")
+    private Instant claimedAt;
+
     @Column(name = "delivered_at")
     private Instant deliveredAt;
 

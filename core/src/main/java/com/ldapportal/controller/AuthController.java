@@ -250,6 +250,8 @@ public class AuthController {
                     entitlementService.has(com.ldapportal.core.entitlement.Entitlement.GOVERNANCE));
             body.put("alertingEnabled",
                     entitlementService.has(com.ldapportal.core.entitlement.Entitlement.ALERTING));
+            body.put("directorySyncEnabled",
+                    entitlementService.has(com.ldapportal.core.entitlement.Entitlement.DIRECTORY_SYNC));
             // Addon-granted (classpath-probed). Default to false at the
             // fallback below — unlike tier entitlements where missing
             // info means "assume on", an addon's absence is the safer
