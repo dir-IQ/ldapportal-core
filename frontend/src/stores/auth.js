@@ -67,6 +67,7 @@ export const useAuthStore = defineStore('auth', () => {
       complianceEnabled: data.complianceEnabled !== false,
       alertingEnabled: data.alertingEnabled !== false,
       isvaIntegrationEnabled: data.isvaIntegrationEnabled === true,
+      directorySyncEnabled: data.directorySyncEnabled === true,
       directorySearchInlineEditEnabled: data.directorySearchInlineEditEnabled !== false,
     }
   }

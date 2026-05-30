@@ -80,6 +80,18 @@ public class ReplicationLinkService {
         ReplicationLink link = require(id);
         boolean wasEnabled = link.isEnabled();
         validateRequest(req, id);
+        // Drop the existing mapping rows BEFORE staging the new ones,
+        // not in the same flush. The mapping table has a composite PK
+        // (link_id, source_attr); when an update preserves any
+        // source_attr value, Hibernate's default action ordering
+        // (orphan-remove → insert → delete) fires the INSERT for the
+        // new row before the DELETE of the old one with the same PK,
+        // tripping a unique-constraint violation. Two-step replace
+        // (clear+flush, then add) bypasses the ordering issue.
+        if (!link.getAttributeMappings().isEmpty()) {
+            link.getAttributeMappings().clear();
+            linkRepo.saveAndFlush(link);
+        }
         applyRequest(link, req);
         link = linkRepo.save(link);
         Map<UUID, LinkHealth> health = healthByLinkId(List.of(link));
@@ -104,9 +116,22 @@ public class ReplicationLinkService {
     public void deleteLink(AuthPrincipal principal, UUID id) {
         ReplicationLink link = require(id);
         Map<String, Object> detail = auditDetail(link);
+        // FK ON DELETE CASCADE (V7 migration) wipes every queued event
+        // for this link with no per-event audit. Capture the counts
+        // before the cascade fires so the compliance trail at least
+        // records how many unresolved events were destroyed — without
+        // this an operator nuking a wedged link erases all forensic
+        // evidence of the failures.
+        LinkHealth health = healthByLinkId(List.of(link))
+                .getOrDefault(id, LinkHealth.empty());
+        detail.put("eventsPending",       health.pendingCount());
+        detail.put("eventsFailed",        health.failedCount());
+        detail.put("eventsDeadLettered",  health.deadLetteredCount());
+
         linkRepo.delete(link);
         auditService.recordSystemEvent(principal, AuditAction.REPLICATION_LINK_DELETED, detail);
-        log.info("Replication link deleted: {}", id);
+        log.info("Replication link deleted: {} (cascaded pending={} failed={} dead-lettered={})",
+                id, health.pendingCount(), health.failedCount(), health.deadLetteredCount());
     }
 
     private static Map<String, Object> auditDetail(ReplicationLink link) {
