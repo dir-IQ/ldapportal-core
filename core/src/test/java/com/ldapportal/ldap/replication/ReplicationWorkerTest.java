@@ -34,6 +34,7 @@ class ReplicationWorkerTest {
 
     @Mock private ReplicationEventRepository eventRepo;
     @Mock private ReplicationDelivery        delivery;
+    @Mock private ReplicationEventTxOps      txOps;
     @Mock private AuditService               auditService;
     @InjectMocks private ReplicationWorker   worker;
 
@@ -58,7 +59,7 @@ class ReplicationWorkerTest {
         ReplicationEvent event = event(linkId);
         when(eventRepo.findLinkIdsWithClaimableEvents(any())).thenReturn(List.of(linkId));
         when(eventRepo.findEarliestClaimableForLink(eq(linkId), any())).thenReturn(Optional.of(event));
-        when(eventRepo.tryClaim(event.getId())).thenReturn(0);  // race lost
+        when(txOps.tryClaim(event.getId())).thenReturn(0);  // race lost
 
         worker.drainQueue();
 
@@ -75,8 +76,8 @@ class ReplicationWorkerTest {
 
         worker.drainQueue();
 
-        verify(eventRepo).markDelivered(eq(event.getId()), any(OffsetDateTime.class));
-        verify(eventRepo, never()).markFailure(any(), any(), anyInt(), any(), any());
+        verify(txOps).markDelivered(eq(event.getId()));
+        verify(txOps, never()).markFailure(any(), any(), anyInt(), any(), any());
     }
 
     @Test
@@ -97,7 +98,7 @@ class ReplicationWorkerTest {
         ArgumentCaptor<ReplicationEventStatus> statusCap = ArgumentCaptor.forClass(ReplicationEventStatus.class);
         ArgumentCaptor<Integer> attemptsCap = ArgumentCaptor.forClass(Integer.class);
         ArgumentCaptor<String> errorCap = ArgumentCaptor.forClass(String.class);
-        verify(eventRepo).markFailure(eq(event.getId()),
+        verify(txOps).markFailure(eq(event.getId()),
                 statusCap.capture(), attemptsCap.capture(), any(OffsetDateTime.class), errorCap.capture());
         assertThat(statusCap.getValue()).isEqualTo(ReplicationEventStatus.FAILED);
         assertThat(attemptsCap.getValue()).isEqualTo(1);
@@ -124,7 +125,7 @@ class ReplicationWorkerTest {
         worker.drainQueue();
 
         ArgumentCaptor<ReplicationEventStatus> statusCap = ArgumentCaptor.forClass(ReplicationEventStatus.class);
-        verify(eventRepo).markFailure(eq(event.getId()),
+        verify(txOps).markFailure(eq(event.getId()),
                 statusCap.capture(), eq(ReplicationBackoffPolicy.MAX_ATTEMPTS + 1),
                 any(), any());
         assertThat(statusCap.getValue()).isEqualTo(ReplicationEventStatus.DEAD_LETTERED);
@@ -161,15 +162,38 @@ class ReplicationWorkerTest {
         when(eventRepo.findLinkIdsWithClaimableEvents(any())).thenReturn(List.of(linkA, linkB));
         when(eventRepo.findEarliestClaimableForLink(eq(linkA), any())).thenReturn(Optional.of(eventA));
         when(eventRepo.findEarliestClaimableForLink(eq(linkB), any())).thenReturn(Optional.of(eventB));
-        when(eventRepo.tryClaim(any())).thenReturn(1);
+        when(txOps.tryClaim(any())).thenReturn(1);
         when(delivery.deliver(any())).thenReturn(
                 new ReplicationDelivery.DeliveryResult(true, ResultCode.SUCCESS, null));
 
         worker.drainQueue();
 
         // Both links' heads delivered; markDelivered called once per link.
-        verify(eventRepo).markDelivered(eq(eventA.getId()), any());
-        verify(eventRepo).markDelivered(eq(eventB.getId()), any());
+        verify(txOps).markDelivered(eq(eventA.getId()));
+        verify(txOps).markDelivered(eq(eventB.getId()));
+    }
+
+    @Test
+    void resetStaleInFlight_delegatesToTxOps() {
+        // Pins that the stale-recovery path delegates to the
+        // transactional sibling bean (so REQUIRES_NEW commits per
+        // call), not to eventRepo directly. Without this, a worker
+        // crash mid-delivery would leave events stuck IN_FLIGHT
+        // forever — the per-link FIFO then blocks every later event
+        // for the same link.
+        when(txOps.resetStaleInFlight(any())).thenReturn(2);
+
+        worker.resetStaleInFlight();
+
+        verify(txOps).resetStaleInFlight(any(OffsetDateTime.class));
+    }
+
+    @Test
+    void resetStaleInFlight_absorbsExceptions() {
+        // Same scheduled-method-must-not-throw contract as drainQueue.
+        when(txOps.resetStaleInFlight(any()))
+                .thenThrow(new RuntimeException("DB blip"));
+        worker.resetStaleInFlight();  // must not throw
     }
 
     @Test
@@ -189,7 +213,7 @@ class ReplicationWorkerTest {
     private void stubClaim(UUID linkId, ReplicationEvent event, int claimResult) {
         when(eventRepo.findLinkIdsWithClaimableEvents(any())).thenReturn(List.of(linkId));
         when(eventRepo.findEarliestClaimableForLink(eq(linkId), any())).thenReturn(Optional.of(event));
-        when(eventRepo.tryClaim(event.getId())).thenReturn(claimResult);
+        when(txOps.tryClaim(event.getId())).thenReturn(claimResult);
     }
 
     private ReplicationEvent event(UUID linkId) {

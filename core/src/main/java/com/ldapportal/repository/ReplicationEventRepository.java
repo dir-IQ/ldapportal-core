@@ -36,9 +36,20 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
      * {@link #tryClaim}, then delivers. Returning an Optional rather
      * than throwing keeps the iteration loop short on transient
      * race-windows (another thread claimed it first).
+     *
+     * <p>JOIN FETCH the link and both directories so the worker can
+     * read those associations after the entity is detached
+     * ({@code open-in-view=false} closes the session as soon as this
+     * query returns). Without the fetch, the first
+     * {@code event.getLink().getTargetDirectory()} access in
+     * {@code ReplicationDelivery} throws
+     * {@code LazyInitializationException} and no event ever delivers.
      */
     @Query("""
         SELECT e FROM ReplicationEvent e
+          JOIN FETCH e.link l
+          JOIN FETCH l.sourceDirectory
+          JOIN FETCH l.targetDirectory
         WHERE e.link.id = :linkId
           AND e.status IN ('PENDING', 'FAILED')
           AND (e.nextAttemptAt IS NULL OR e.nextAttemptAt <= :now)
@@ -130,6 +141,24 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
     long countByStatus(ReplicationEventStatus status);
 
     /**
+     * Reset events stuck in IN_FLIGHT for longer than the given
+     * threshold back to PENDING so the worker picks them up again.
+     * Used by {@link ReplicationWorker#resetStaleInFlight()}; without
+     * this, a JVM crash mid-delivery permanently wedges an event
+     * (and behind it, every later event for the same link via the
+     * per-link FIFO).
+     */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationEvent e
+        SET e.status = com.ldapportal.entity.enums.ReplicationEventStatus.PENDING,
+            e.nextAttemptAt = NULL
+        WHERE e.status = com.ldapportal.entity.enums.ReplicationEventStatus.IN_FLIGHT
+          AND e.enqueuedAt < :threshold
+        """)
+    int resetStaleInFlight(@Param("threshold") OffsetDateTime threshold);
+
+    /**
      * Number of distinct links with at least one unresolved event
      * (PENDING or FAILED) older than the given timestamp. Drives the
      * REPLICATION_LAG_HIGH awareness item — a link with old PENDING
@@ -162,11 +191,17 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
     // ── Operator actions: retry, skip, acknowledge ────────────────────────────
 
     /**
-     * Operator-initiated retry: flip a FAILED or DEAD_LETTERED event
-     * back to PENDING so the worker picks it up on the next tick.
-     * Resets retry timing but preserves attempts (so the backoff
-     * continues from where it was — not "fresh start" semantics, which
-     * would let an operator infinite-loop a hopeless event).
+     * Operator-initiated retry: flip a FAILED / DEAD_LETTERED /
+     * SKIPPED / ACKNOWLEDGED / IN_FLIGHT event back to PENDING so the
+     * worker picks it up on the next tick. Resets retry timing but
+     * preserves attempts (so the backoff continues from where it was
+     * — not "fresh start" semantics, which would let an operator
+     * infinite-loop a hopeless event).
+     *
+     * <p>IN_FLIGHT is included because the worker's automated stale-
+     * reset runs on a long interval (10 minutes); operators who need
+     * to recover from a known-crashed worker faster than that should
+     * be able to retry directly without DBA help.
      */
     @Modifying
     @Query("""
@@ -174,7 +209,7 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
         SET e.status        = com.ldapportal.entity.enums.ReplicationEventStatus.PENDING,
             e.nextAttemptAt = NULL
         WHERE e.id = :id
-          AND e.status IN ('FAILED', 'DEAD_LETTERED', 'SKIPPED', 'ACKNOWLEDGED')
+          AND e.status IN ('FAILED', 'DEAD_LETTERED', 'SKIPPED', 'ACKNOWLEDGED', 'IN_FLIGHT')
         """)
     int retryByOperator(@Param("id") UUID id);
 
