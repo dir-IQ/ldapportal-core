@@ -5,6 +5,8 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.ReplicationEvent;
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.ReplicationLinkAttrMapping;
+import com.ldapportal.core.entitlement.Entitlement;
+import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.entity.enums.SslMode;
@@ -19,6 +21,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -27,6 +30,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.when;
 
 /**
  * Production-shape integration test for the replication persistence
@@ -65,11 +69,20 @@ class ReplicationPersistenceIntegrationTest {
     @Autowired private DirectoryConnectionRepository dirRepo;
     @Autowired private TransactionTemplate        txTemplate;
 
+    /**
+     * R2: the enqueuer drops captured writes when DIRECTORY_SYNC isn't
+     * entitled. The test profile has no license (community shape), so stub
+     * the entitlement on to exercise the persistence path under test.
+     */
+    @MockitoBean private EntitlementService entitlementService;
+
     private UUID sourceDirId;
     private UUID targetDirId;
 
     @BeforeEach
     void cleanFixtures() {
+        when(entitlementService.has(Entitlement.DIRECTORY_SYNC)).thenReturn(true);
+
         // Order matters: events depend on links, links depend on dirs.
         // No @Transactional on the test, so each delete commits.
         eventRepo.deleteAll();
