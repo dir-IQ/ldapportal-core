@@ -26,7 +26,19 @@
         </thead>
         <tbody class="divide-y divide-gray-50">
           <tr v-for="d in dirs" :key="d.id" class="hover:bg-gray-50">
-            <td class="px-4 py-3 font-medium text-gray-900">{{ d.displayName }}</td>
+            <td class="px-4 py-3 font-medium text-gray-900">
+              <div>{{ d.displayName }}</div>
+              <!-- Vendor / version badge from the root-DSE probe.
+                   Hidden when the probe hasn't run or returned no
+                   vendor field (e.g. OpenDJ omits vendorName). Tooltip
+                   lists the supported control OIDs so an operator can
+                   spot-check what the server actually advertises. -->
+              <div
+                v-if="vendorBadge(d)"
+                class="mt-0.5 inline-flex items-center text-[10px] font-normal text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded"
+                :title="capabilitiesTooltip(d)"
+              >{{ vendorBadge(d) }}</div>
+            </td>
             <td class="px-4 py-3 text-gray-600">{{ d.host }}</td>
             <td class="px-4 py-3 text-gray-600">{{ d.port }}</td>
             <td class="px-4 py-3 text-gray-600">{{ d.sslMode }}</td>
@@ -73,6 +85,7 @@
               <option value="ACTIVE_DIRECTORY">Active Directory</option>
               <option value="OPENLDAP">OpenLDAP</option>
               <option value="IBM_DIRECTORY_SERVER">IBM Directory Server (Tivoli / Security / Verify)</option>
+              <option value="ORACLE_UNIFIED_DIRECTORY">Oracle Unified Directory</option>
               <option value="ENTRA_ID">Microsoft Entra ID</option>
             </select>
           </div>
@@ -239,16 +252,58 @@ function applyPreset() {
       form.value.enableValue = '512'
       form.value.disableValue = '514'
     }
-  } else if (t === 'OPENLDAP' || t === 'IBM_DIRECTORY_SERVER') {
-    // ITDS and OpenLDAP both default to inetOrgPerson / uid on port 389 —
-    // same preset works for both. ITDS-specific defaults (e.g. ibm-pwdPolicy
-    // enable/disable) are intentionally left blank in this phase; operators
-    // configure server-side and the disable affordances stay generic until
-    // Phase 2 of the ITDS support plan adds the capability probe.
+  } else if (t === 'OPENLDAP' || t === 'IBM_DIRECTORY_SERVER' || t === 'ORACLE_UNIFIED_DIRECTORY') {
+    // OpenLDAP, ITDS and OUD all default to inetOrgPerson / uid on port 389
+    // — same preset works for all three. Vendor-specific defaults (e.g.
+    // ITDS ibm-pwdPolicy enable/disable, OUD ds-pwp-account-disabled) are
+    // intentionally left blank in this phase; operators configure server-side
+    // and the disable affordances stay generic until P2 of each respective
+    // support plan adds a capability probe.
     if (!form.value.port || form.value.port === 636) form.value.port = 389
     if (!form.value.selfServiceLoginAttribute || form.value.selfServiceLoginAttribute === 'sAMAccountName')
       form.value.selfServiceLoginAttribute = 'uid'
   }
+}
+
+// Vendor / version badge formatters. The server may publish vendorName
+// and vendorVersion independently; show whichever combination is
+// available, prefer "vendor version" when both, fall back to just the
+// version when only that is set (common on OpenDJ). When the probe ran
+// but the server advertised neither (OpenLDAP doesn't populate vendor*
+// in its root DSE by default), fall back to a friendly directory-type
+// label so the chip still conveys "we know what kind of server this
+// is, we just didn't get a self-reported version." Returns '' only
+// when the probe didn't run or the server is generic enough that the
+// fallback wouldn't tell the operator anything new (GENERIC, ENTRA_ID).
+const TYPE_FALLBACK_LABEL = {
+  OPENLDAP:                 'OpenLDAP',
+  ACTIVE_DIRECTORY:         'Active Directory',
+  IBM_DIRECTORY_SERVER:     'IBM Directory Server',
+  ORACLE_UNIFIED_DIRECTORY: 'Oracle Unified Directory',
+}
+
+function vendorBadge(d) {
+  const caps = d?.capabilities
+  if (!caps) return ''
+  const v = (caps.vendorName || '').trim()
+  const ver = (caps.vendorVersion || '').trim()
+  if (v && ver) return `${v} ${ver}`
+  if (v)        return v
+  if (ver)      return ver
+  // Probe ran (caps is non-null) but server didn't advertise vendor info.
+  // Use the directory-type label as the chip text for named types; skip
+  // for GENERIC / ENTRA_ID where it would be redundant or wrong.
+  return TYPE_FALLBACK_LABEL[d?.directoryType] || ''
+}
+
+function capabilitiesTooltip(d) {
+  const caps = d?.capabilities
+  if (!caps) return ''
+  const lines = []
+  if (caps.probedAt) lines.push(`Probed ${new Date(caps.probedAt).toLocaleString()}`)
+  const ctrls = caps.supportedControls || []
+  if (ctrls.length) lines.push(`Supported controls (${ctrls.length}):\n${ctrls.slice(0, 12).join('\n')}${ctrls.length > 12 ? '\n…' : ''}`)
+  return lines.join('\n\n')
 }
 
 async function load() {

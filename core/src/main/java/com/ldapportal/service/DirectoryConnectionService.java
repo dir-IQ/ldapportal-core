@@ -13,6 +13,7 @@ import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.SslHelper;
+import com.ldapportal.core.directory.event.DirectoryConnectionSavedEvent;
 import com.ldapportal.core.directory.event.DirectoryCreatedEvent;
 import org.springframework.context.ApplicationEventPublisher;
 import com.ldapportal.repository.AuditDataSourceRepository;
@@ -111,12 +112,21 @@ public class DirectoryConnectionService {
         // was logged-but-swallowed (see AlertAutoSeeder).
         eventPublisher.publishEvent(new DirectoryCreatedEvent(dc.getId()));
 
+        // Capability probe runs out-of-band via DirectoryCapabilityRefresher
+        // (AFTER_COMMIT, REQUIRES_NEW). Publishing inside the tx is fine —
+        // Spring routes AFTER_COMMIT listeners through TransactionSynchronization,
+        // so the event-fire here doesn't make the probe run until commit
+        // succeeds. If the create rolls back (e.g. an alerting listener
+        // throws above), the saved-event never reaches the refresher.
+        eventPublisher.publishEvent(new DirectoryConnectionSavedEvent(dc.getId()));
+
         return toResponse(dc);
     }
 
     @Transactional
     public DirectoryConnectionResponse updateDirectory(UUID id, DirectoryConnectionRequest req) {
         DirectoryConnection dc = require(id);
+        var previousType = dc.getDirectoryType();
         applyRequest(dc, req);
 
         if (req.bindPassword() != null && !req.bindPassword().isBlank()) {
@@ -126,9 +136,25 @@ public class DirectoryConnectionService {
             dc.setEntraClientSecretEncrypted(encryptionService.encrypt(req.entraClientSecret()));
         }
 
+        // When the operator changes the directory type, the previous
+        // capabilities snapshot is now describing the wrong vendor — clear
+        // it so the post-commit re-probe is the only thing that can put a
+        // vendor chip back, and a probe failure leaves the row in a
+        // truthful "unknown" state rather than displaying e.g. "Oracle
+        // Corporation 12.x" next to an OPENLDAP-typed row.
+        if (previousType != dc.getDirectoryType()) {
+            dc.setCapabilities(null);
+        }
+
         connectionFactory.evict(dc.getId());
         dc = dirRepo.save(dc);
         saveBaseDns(dc, req);
+
+        // Re-probe out-of-band — host / port / credentials / type may
+        // have changed, so the stored snapshot needs a refresh. Runs in
+        // DirectoryCapabilityRefresher after this transaction commits.
+        eventPublisher.publishEvent(new DirectoryConnectionSavedEvent(dc.getId()));
+
         return toResponse(dc);
     }
 

@@ -4,12 +4,15 @@ package com.ldapportal.entity;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.EnableDisableValueType;
 import com.ldapportal.entity.enums.SslMode;
+import com.ldapportal.ldap.model.DirectoryCapabilities;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -30,7 +33,7 @@ public class DirectoryConnection {
     private String displayName;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "directory_type", nullable = false, length = 20)
+    @Column(name = "directory_type", nullable = false, length = 40)
     private DirectoryType directoryType = DirectoryType.GENERIC;
 
     @Column(nullable = false)
@@ -160,6 +163,16 @@ public class DirectoryConnection {
 
     @Column(nullable = false)
     private boolean enabled = true;
+
+    /**
+     * Root-DSE capability snapshot — populated at connect-time by
+     * {@link com.ldapportal.ldap.LdapCapabilityProbeService}. Null when
+     * the probe was skipped (Entra ID) or failed; UI displays the
+     * vendor/version badge only when present.
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb")
+    private DirectoryCapabilities capabilities;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

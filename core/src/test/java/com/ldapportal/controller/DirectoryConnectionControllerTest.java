@@ -81,6 +81,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 null,                               // tenantId
                 null,                               // entraClientId
                 null,                               // graphEndpoint
+                null,                               // capabilities
                 OffsetDateTime.now(),               // createdAt
                 OffsetDateTime.now());              // updatedAt
     }

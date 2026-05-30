@@ -268,20 +268,72 @@ public class LdapGroupService {
 
     /**
      * Returns all members of a group, including nested/transitive members.
-     * For Active Directory, uses LDAP_MATCHING_RULE_IN_CHAIN (OID 1.2.840.113556.1.4.1941)
-     * for efficient server-side resolution. For other directories, performs
-     * client-side recursive enumeration with cycle detection.
+     * Per-directory dispatch:
+     * <ul>
+     *   <li>Active Directory — server-side resolution via
+     *       LDAP_MATCHING_RULE_IN_CHAIN (OID 1.2.840.113556.1.4.1941).</li>
+     *   <li>Oracle Unified Directory — server-side resolution via the
+     *       {@code isMemberOf} operational attribute. OUD (and its OpenDJ
+     *       upstream) populate {@code isMemberOf} with the full transitive
+     *       group closure for every user, so a single SUB-scoped filter
+     *       returns the same answer the AD matching-rule path produces.</li>
+     *   <li>Everything else — client-side recursive enumeration with
+     *       cycle detection. One LDAP read per group discovered.</li>
+     * </ul>
      */
     public List<String> getNestedMembers(DirectoryConnection dc, String groupDn) {
-        if (dc.getDirectoryType() == com.ldapportal.entity.enums.DirectoryType.ACTIVE_DIRECTORY) {
-            return getNestedMembersAD(dc, groupDn);
-        }
-        return getNestedMembersRecursive(dc, groupDn);
+        return switch (dc.getDirectoryType()) {
+            case ACTIVE_DIRECTORY         -> getNestedMembersAD(dc, groupDn);
+            case ORACLE_UNIFIED_DIRECTORY -> getNestedMembersIsMemberOf(dc, groupDn);
+            default                       -> getNestedMembersRecursive(dc, groupDn);
+        };
     }
 
     private List<String> getNestedMembersAD(DirectoryConnection dc, String groupDn) {
         // AD's LDAP_MATCHING_RULE_IN_CHAIN resolves all transitive members server-side
         String filter = "(memberOf:1.2.840.113556.1.4.1941:=" + Filter.encodeValue(groupDn) + ")";
+        return pagedDnSearch(dc, filter);
+    }
+
+    private List<String> getNestedMembersIsMemberOf(DirectoryConnection dc, String groupDn) {
+        // OUD / OpenDJ expose `isMemberOf` as an operational attribute on
+        // user entries, populated with the full transitive group closure.
+        // A single SUB-scoped filter returns the same set the AD matching-
+        // rule path produces, without the recursive walk the generic path
+        // would do.
+        //
+        // Normalise the caller-supplied DN before encoding it into the
+        // filter. OpenDJ's default attribute matching on operational attrs
+        // is case- and whitespace-sensitive string equality — without
+        // normalisation, 'CN=Engineering, OU=Groups, ...' from one caller
+        // and 'cn=engineering,ou=groups,...' from the server's stored
+        // isMemberOf value would silently fail to match (zero hits, no
+        // error). DN.toNormalizedString() folds case, collapses spacing,
+        // and standardises RDN attribute ordering — matching what the
+        // server stores.
+        //
+        // If the input isn't a parseable DN, fall back to using it as-is
+        // (with the trade-off above) rather than throwing — caller bugs
+        // surface as zero hits rather than 500s, consistent with the AD
+        // branch's behaviour on a malformed DN passed to the matching
+        // rule.
+        String normalized = groupDn;
+        try {
+            normalized = new com.unboundid.ldap.sdk.DN(groupDn).toNormalizedString();
+        } catch (com.unboundid.ldap.sdk.LDAPException ex) {
+            log.debug("isMemberOf groupDn not parseable, using as-is: {}", ex.getMessage());
+        }
+        String filter = "(isMemberOf=" + Filter.encodeValue(normalized) + ")";
+        return pagedDnSearch(dc, filter);
+    }
+
+    /**
+     * Server-side paged search returning entry DNs only. Shared by the AD
+     * matching-rule branch and the OUD {@code isMemberOf} branch — both
+     * produce the same shape (filter-only, base = directory base DN, no
+     * attributes wanted), only the filter differs.
+     */
+    private List<String> pagedDnSearch(DirectoryConnection dc, String filter) {
         return connectionFactory.withConnection(dc, conn -> {
             List<String> members = new java.util.ArrayList<>();
             SearchRequest request = new SearchRequest(dc.getBaseDn(), SearchScope.SUB, filter, "1.1");

@@ -7,6 +7,7 @@ import com.ldapportal.entity.DirectoryUserBaseDn;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.EnableDisableValueType;
 import com.ldapportal.entity.enums.SslMode;
+import com.ldapportal.ldap.model.DirectoryCapabilities;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -45,6 +46,7 @@ public record DirectoryConnectionResponse(
         String tenantId,
         String entraClientId,
         String graphEndpoint,
+        DirectoryCapabilities capabilities,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt) {
 
@@ -92,6 +94,7 @@ public record DirectoryConnectionResponse(
                 dc.getTenantId(),
                 dc.getEntraClientId(),
                 dc.getGraphEndpoint(),
+                dc.getCapabilities(),
                 dc.getCreatedAt(),
                 dc.getUpdatedAt());
     }
