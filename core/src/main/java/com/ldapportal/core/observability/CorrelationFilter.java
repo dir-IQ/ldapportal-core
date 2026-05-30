@@ -5,9 +5,6 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.core.Ordered;
-import org.springframework.core.annotation.Order;
-import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -24,9 +21,14 @@ import java.util.UUID;
  * authentication-failure rows) carries the id. The {@code finally} clears
  * the ThreadLocal so a pooled request thread never leaks a stale id into
  * the next request.
+ *
+ * <p><b>Not a Spring bean.</b> Boot auto-registers any {@code Filter} bean
+ * into the root servlet chain (running it on every path, outside the
+ * security chain). To keep a single, security-chain-only registration this
+ * filter is instantiated directly in {@code SecurityConfig} via
+ * {@code addFilterBefore(new CorrelationFilter(), ...)} — it has no injected
+ * dependencies (it only touches the static {@link CorrelationContext}).
  */
-@Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
 public class CorrelationFilter extends OncePerRequestFilter {
 
     static final String HEADER = "X-Correlation-Id";

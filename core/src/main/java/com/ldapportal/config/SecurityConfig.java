@@ -54,7 +54,6 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http,
                                            JwtAuthenticationFilter jwtFilter,
                                            ApiTokenAuthenticationFilter apiTokenFilter,
-                                           CorrelationFilter correlationFilter,
                                            ObjectMapper objectMapper) throws Exception {
         http
             .csrf(AbstractHttpConfigurer::disable)
@@ -74,7 +73,9 @@ public class SecurityConfig {
             .addFilterBefore(apiTokenFilter, JwtAuthenticationFilter.class)
             // Correlation scope must be established before auth so even
             // authentication-failure audit rows carry the request's id.
-            .addFilterBefore(correlationFilter, ApiTokenAuthenticationFilter.class)
+            // Instantiated directly (not a bean) so Boot doesn't also
+            // auto-register it into the root servlet chain.
+            .addFilterBefore(new CorrelationFilter(), ApiTokenAuthenticationFilter.class)
             .authorizeHttpRequests(auth -> auth
                 // ── Public ────────────────────────────────────────────────────
                 .requestMatchers(HttpMethod.POST, "/api/v1/auth/login", "/api/v1/auth/logout").permitAll()

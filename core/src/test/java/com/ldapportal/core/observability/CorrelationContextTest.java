@@ -21,12 +21,22 @@ class CorrelationContextTest {
     }
 
     @Test
-    void currentOrGenerate_mintsAndInstalls() {
-        UUID id = CorrelationContext.currentOrGenerate();
-        assertThat(id).isNotNull();
-        // A second call returns the same installed id (not a fresh one).
-        assertThat(CorrelationContext.currentOrGenerate()).isEqualTo(id);
-        assertThat(CorrelationContext.current()).contains(id);
+    void currentOrEphemeral_returnsActiveScopeId_whenPresent() {
+        UUID scope = UUID.randomUUID();
+        CorrelationContext.set(scope);
+        assertThat(CorrelationContext.currentOrEphemeral()).isEqualTo(scope);
+    }
+
+    @Test
+    void currentOrEphemeral_mintsWithoutInstalling_whenNoScope() {
+        // Must NOT write the ThreadLocal — otherwise a pooled scheduler/async
+        // thread with no CorrelationFilter to clear it would leak the minted
+        // id into the next unrelated task on that thread.
+        UUID first = CorrelationContext.currentOrEphemeral();
+        assertThat(first).isNotNull();
+        assertThat(CorrelationContext.current()).isEmpty();
+        // A second call mints a different id (nothing was installed).
+        assertThat(CorrelationContext.currentOrEphemeral()).isNotEqualTo(first);
     }
 
     @Test

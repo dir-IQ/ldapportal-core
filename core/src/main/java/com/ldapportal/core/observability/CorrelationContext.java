@@ -39,17 +39,17 @@ public final class CorrelationContext {
     }
 
     /**
-     * The current correlation id, minting and installing a fresh one if
-     * no scope is active. Used on the capture hot path so every captured
-     * write is traceable even when no filter/scheduler scope was opened.
+     * The current correlation id, or a fresh ephemeral one when no scope
+     * is active. Unlike a "get-or-install" accessor this does <b>not</b>
+     * write the ThreadLocal, so it is safe on the capture hot path: a
+     * write driven by a pooled scheduler/async thread (which has no
+     * {@link CorrelationFilter} to {@link #clear()} afterwards) won't leak
+     * a minted id into the next unrelated task on that thread. Every
+     * captured write still gets a non-null id to stamp.
      */
-    public static UUID currentOrGenerate() {
+    public static UUID currentOrEphemeral() {
         UUID id = CURRENT.get();
-        if (id == null) {
-            id = UUID.randomUUID();
-            CURRENT.set(id);
-        }
-        return id;
+        return id != null ? id : UUID.randomUUID();
     }
 
     /** Install {@code id} for the current thread (used by the request filter). */

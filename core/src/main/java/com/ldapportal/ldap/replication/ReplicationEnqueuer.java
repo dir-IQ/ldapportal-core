@@ -73,6 +73,14 @@ public class ReplicationEnqueuer {
      */
     public void enqueue(UUID sourceDirectoryId, CapturedWrite write) {
         try {
+            // Cheap short-circuit first: a single indexed SELECT. Doing
+            // this before the entitlement gate keeps the per-write license
+            // read (FileLicenseProvider re-reads + verifies the JWT on every
+            // current() call) off the path when there's nothing to enqueue.
+            List<ReplicationLinkSnapshot> links =
+                    readOps.snapshotsForSource(sourceDirectoryId);
+            if (links.isEmpty()) return;
+
             // Community-edition degradation: when DIRECTORY_SYNC isn't
             // entitled, no events accumulate regardless of the directory's
             // replication_enabled DB value. An entitlement downgrade
@@ -85,19 +93,16 @@ public class ReplicationEnqueuer {
                 return;
             }
 
-            List<ReplicationLinkSnapshot> links =
-                    readOps.snapshotsForSource(sourceDirectoryId);
-            if (links.isEmpty()) return;
-
             // Source-side trace id (R2). Prefer one the wrapper stamped on
             // the captured write; otherwise read the active correlation
-            // scope, minting one if this write happens outside any (so every
-            // replication event payload carries a non-null id). enqueue runs
-            // synchronously on the write thread, so this is the originating
-            // operation's scope.
+            // scope, minting an ephemeral one if this write happens outside
+            // any (so every replication event payload carries a non-null
+            // id). currentOrEphemeral() deliberately does NOT install the
+            // minted id, so a write on a pooled scheduler/async thread
+            // doesn't leak it into the next task on that thread.
             UUID correlationId = write.correlationId() != null
                     ? write.correlationId()
-                    : CorrelationContext.currentOrGenerate();
+                    : CorrelationContext.currentOrEphemeral();
 
             List<PendingReplicationEvent> pending = new ArrayList<>(links.size());
             for (ReplicationLinkSnapshot link : links) {
