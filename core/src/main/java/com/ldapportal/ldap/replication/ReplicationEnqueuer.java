@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
+import com.ldapportal.core.entitlement.Entitlement;
+import com.ldapportal.core.entitlement.EntitlementService;
+import com.ldapportal.core.observability.CorrelationContext;
 import com.ldapportal.entity.enums.ReplicationEnqueueSource;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
