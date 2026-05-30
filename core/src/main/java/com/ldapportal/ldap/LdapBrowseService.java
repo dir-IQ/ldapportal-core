@@ -84,7 +84,7 @@ public class LdapBrowseService {
         });
     }
 
-    private Map<String, List<String>> readEntry(LDAPConnection conn, String dn)
+    private Map<String, List<String>> readEntry(LDAPInterface conn, String dn)
             throws LDAPException {
         SearchResultEntry entry = conn.getEntry(dn);
         if (entry == null) {
@@ -97,7 +97,7 @@ public class LdapBrowseService {
         return attrs;
     }
 
-    private List<ChildEntry> listChildren(LDAPConnection conn,
+    private List<ChildEntry> listChildren(LDAPInterface conn,
                                            DirectoryConnection dc,
                                            String baseDn) throws LDAPException {
         List<ChildEntry> children = new ArrayList<>();
@@ -136,7 +136,7 @@ public class LdapBrowseService {
         return children;
     }
 
-    private boolean hasSubEntries(LDAPConnection conn, String dn) {
+    private boolean hasSubEntries(LDAPInterface conn, String dn) {
         try {
             SearchRequest probe = new SearchRequest(
                     dn, SearchScope.ONE,
@@ -268,7 +268,7 @@ public class LdapBrowseService {
         });
     }
 
-    private void deleteSubtree(LDAPConnection conn, DirectoryConnection dc,
+    private void deleteSubtree(LDAPInterface conn, DirectoryConnection dc,
                                 String dn) throws LDAPException {
         // Depth-first: delete children before the parent
         List<ChildEntry> children = listChildren(conn, dc, dn);

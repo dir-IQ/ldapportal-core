@@ -40,7 +40,7 @@ class LdapConnectionFactoryTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        factory = new LdapConnectionFactory(encryptionService);
+        factory = new LdapConnectionFactory(encryptionService, null);
 
         // Start an in-memory LDAP server with a simple base DN
         InMemoryDirectoryServerConfig config =

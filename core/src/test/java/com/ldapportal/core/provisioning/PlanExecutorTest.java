@@ -71,7 +71,7 @@ class PlanExecutorTest {
         inMemoryServer.startListening();
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(BIND_PASS);
-        connectionFactory = new LdapConnectionFactory(encryptionService);
+        connectionFactory = new LdapConnectionFactory(encryptionService, null);
         executor = new PlanExecutor(connectionFactory);
         dc = buildDc();
     }

@@ -68,7 +68,7 @@ public class IntegrityCheckService {
      * Loads all DNs under the base using paged search. Used as a lookup set
      * for both broken-member and orphaned-entry checks, avoiding N+1 queries.
      */
-    private Set<String> loadAllDns(LDAPConnection conn, String baseDn) throws LDAPException {
+    private Set<String> loadAllDns(LDAPInterface conn, String baseDn) throws LDAPException {
         Set<String> dns = new HashSet<>();
         SearchRequest request = new SearchRequest(
                 baseDn, SearchScope.SUB, "(objectClass=*)", "1.1");
@@ -109,7 +109,7 @@ public class IntegrityCheckService {
      * which do not exist in the directory. Uses the pre-loaded DN set
      * instead of individual LDAP lookups per member.
      */
-    private List<IntegrityIssue> checkBrokenMembers(LDAPConnection conn, String baseDn,
+    private List<IntegrityIssue> checkBrokenMembers(LDAPInterface conn, String baseDn,
                                                      Set<String> allDns) throws LDAPException {
         List<IntegrityIssue> issues = new ArrayList<>();
 
@@ -190,7 +190,7 @@ public class IntegrityCheckService {
     /**
      * Finds group entries that have no members. Uses paged search.
      */
-    private List<IntegrityIssue> checkEmptyGroups(LDAPConnection conn,
+    private List<IntegrityIssue> checkEmptyGroups(LDAPInterface conn,
                                                    String baseDn) throws LDAPException {
         List<IntegrityIssue> issues = new ArrayList<>();
 

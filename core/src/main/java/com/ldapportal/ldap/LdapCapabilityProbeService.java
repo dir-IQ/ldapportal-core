@@ -4,8 +4,8 @@ package com.ldapportal.ldap;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.ldap.model.DirectoryCapabilities;
-import com.unboundid.ldap.sdk.LDAPConnection;
 import com.unboundid.ldap.sdk.LDAPException;
+import com.unboundid.ldap.sdk.LDAPInterface;
 import com.unboundid.ldap.sdk.RootDSE;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -62,7 +62,7 @@ public class LdapCapabilityProbeService {
         }
     }
 
-    private DirectoryCapabilities readRootDse(LDAPConnection conn) throws LDAPException {
+    private DirectoryCapabilities readRootDse(LDAPInterface conn) throws LDAPException {
         RootDSE root = conn.getRootDSE();
         if (root == null) {
             // Returning null instead of an empty snapshot is deliberate:

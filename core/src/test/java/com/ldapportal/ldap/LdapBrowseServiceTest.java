@@ -76,7 +76,7 @@ class LdapBrowseServiceTest {
         inMemoryServer.startListening();
 
         when(encryptionService.decrypt(anyString())).thenReturn(BIND_PASS);
-        connectionFactory = new LdapConnectionFactory(encryptionService);
+        connectionFactory = new LdapConnectionFactory(encryptionService, null);
         browseService = new LdapBrowseService(connectionFactory);
         dc = buildDc();
     }
