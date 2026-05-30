@@ -70,14 +70,26 @@ class AdminManagementServiceTest {
     // ── listAdmins ────────────────────────────────────────────────────────────
 
     @Test
-    void listAdmins_returnsMappedList() {
-        Account a = adminAccount("alice");
-        when(accountRepo.findAllByRole(AccountRole.ADMIN)).thenReturn(List.of(a));
+    void listAdmins_returnsBothAdminAndSuperadminRoles() {
+        // The view (AdminUsersView) is titled "Manage Accounts" and
+        // explicitly lists both roles in its subtitle and role-picker.
+        // A prior cleanup (38c0e9b) filtered to ADMIN-only, which hid
+        // the bootstrap superadmin from the roster while leaving the
+        // create form able to mint SUPERADMIN rows that vanished after
+        // save. listAdmins now returns both roles; the frontend gates
+        // row-level actions per role.
+        Account alice = adminAccount("alice");
+        Account root  = adminAccount("root");
+        root.setRole(AccountRole.SUPERADMIN);
+        when(accountRepo.findAll()).thenReturn(List.of(alice, root));
 
         List<AdminAccountResponse> result = service.listAdmins();
 
-        assertThat(result).hasSize(1);
-        assertThat(result.get(0).username()).isEqualTo("alice");
+        assertThat(result).hasSize(2);
+        assertThat(result).extracting(AdminAccountResponse::username)
+                .containsExactly("alice", "root");
+        assertThat(result).extracting(AdminAccountResponse::role)
+                .containsExactly(AccountRole.ADMIN, AccountRole.SUPERADMIN);
     }
 
     // ── getAdmin ──────────────────────────────────────────────────────────────

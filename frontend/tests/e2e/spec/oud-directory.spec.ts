@@ -73,7 +73,15 @@ test.describe('Oracle Unified Directory @smoke', () => {
     expect(created.id).toBeTruthy()
 
     // Round-trip: GET returns the row with the same type, and
-    // capabilities is null because the probe couldn't reach port 1.
+    // capabilities stays null. Two reasons it's null here:
+    //   1. The probe runs AFTER_COMMIT on an async listener (see
+    //      DirectoryCapabilityRefresher) — the create response was
+    //      built before the listener fired, so capabilities is null
+    //      in the 201 regardless of probe success.
+    //   2. The probe itself couldn't reach port 1, so by the time the
+    //      listener runs the targeted UPDATE would write null anyway.
+    // The combined effect is a stable null assertion that doesn't
+    // race the async listener.
     try {
       const get = await superadmin.request.get(
         `/api/v1/superadmin/directories/${created.id}`,

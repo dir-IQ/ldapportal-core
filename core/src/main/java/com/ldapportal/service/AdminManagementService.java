@@ -60,7 +60,20 @@ public class AdminManagementService {
      */
     @Transactional(readOnly = true)
     public List<AdminAccountResponse> listAdmins() {
-        return accountRepo.findAllByRole(AccountRole.ADMIN).stream()
+        // Returns BOTH admin and superadmin accounts. The endpoint is
+        // mounted at /superadmin/admins for legacy reasons, but the UI
+        // (AdminUsersView.vue) is titled "Manage Accounts" with the
+        // subtitle "Create and manage superadmin and admin accounts"
+        // and the new/edit modal explicitly offers SUPERADMIN as a
+        // role option. A prior cleanup commit (38c0e9b, item #1)
+        // tightened this to findAllByRole(ADMIN) on the rationale that
+        // the path name should match its data — but that hid the
+        // bootstrap superadmin from the roster while leaving the
+        // create form able to mint new superadmin rows that then
+        // vanished after save. findAll() puts the API back in step
+        // with what the view promises; the frontend decides which
+        // row-level actions to expose for SUPERADMIN rows.
+        return accountRepo.findAll().stream()
                 .map(AdminAccountResponse::from)
                 .toList();
     }
