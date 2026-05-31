@@ -114,18 +114,22 @@ services:
       # Logging
       LOG_LEVEL:     ${LOG_LEVEL:-INFO}
       APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
-      # Licensing — self-issued JWT mounted from the project root (below).
-      # This is where DIRECTORY_SYNC and other entitlements come from.
-      # Remove this var + the volume to run the community baseline.
-      LDAPPORTAL_LICENSE_PATH: /etc/ldapportal/ldapportal.lic
-    volumes:
-      # Self-issued license JWT from the repo root, read-only in-container.
-      # The file is gitignored (never commit it). Generate it with
-      # LicenseIssuer (see the licensing notes).
-      # NOTE: ./ldapportal.lic MUST exist before `docker compose up` — a
-      # bind mount of a missing path makes Docker create a *directory*
-      # there, and the app then fails loud ("not a readable file").
-      - ./ldapportal.lic:/etc/ldapportal/ldapportal.lic:ro
+      # Entitlements — self-host override (no signed license needed).
+      # ConfiguredEntitlementsProbe grants the listed entitlements via the
+      # addon-probe SPI. Only allow-listed OSS entitlements can be granted
+      # this way (currently DIRECTORY_SYNC, which gates directory
+      # replication); commercial/EE entitlements are refused. Set to an
+      # empty string in your .env to run the pure community baseline.
+      LDAPPORTAL_ENTITLEMENTS_GRANT: ${LDAPPORTAL_ENTITLEMENTS_GRANT:-DIRECTORY_SYNC}
+      #
+      # Alternative — a real signed license instead of the grant above:
+      # set LDAPPORTAL_LICENSE_PATH and mount the JWT (see .gitignore;
+      # generate with LicenseIssuer). NOTE: if you set a license path the
+      # file MUST exist, or the app fails to start (a bind mount of a
+      # missing path makes Docker create a directory there).
+      #   LDAPPORTAL_LICENSE_PATH: /etc/ldapportal/ldapportal.lic
+    # volumes:
+    #   - ./ldapportal.lic:/etc/ldapportal/ldapportal.lic:ro   # see note above
     ports:
       - "9090:8080"
     restart: unless-stopped
