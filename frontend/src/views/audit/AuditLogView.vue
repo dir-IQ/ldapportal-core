@@ -13,6 +13,18 @@
       </select>
     </div>
 
+    <!-- Correlation-trace banner: shown when arriving via a "trace" link
+         from the Directory Sync console. Narrows the log to every row
+         emitted while handling one originating operation. -->
+    <div v-if="correlationId"
+         class="mb-3 flex items-center justify-between bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2">
+      <span class="text-sm text-indigo-800">
+        Showing one operation trace
+        <code class="font-mono text-xs bg-indigo-100 px-1.5 py-0.5 rounded ml-1">{{ correlationId }}</code>
+      </span>
+      <button @click="clearCorrelation" class="text-sm text-indigo-700 hover:text-indigo-900 underline">Clear</button>
+    </div>
+
     <!-- Filters -->
     <div class="bg-white border border-gray-200 rounded-xl p-4 mb-2 grid grid-cols-4 gap-2">
       <FormField label="From" type="datetime-local" v-model="filters.from" />
@@ -55,8 +67,8 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useApi } from '@/composables/useApi'
 import { useDirectoryPicker } from '@/composables/useDirectoryPicker'
 import { getAuditLog } from '@/api/audit'
@@ -66,6 +78,7 @@ import FormField from '@/components/FormField.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
 
 const route = useRoute()
+const router = useRouter()
 const { loading, call } = useApi()
 const { dirId, directories, selectedDir, loadingDirs, showPicker } = useDirectoryPicker()
 
@@ -75,6 +88,10 @@ const totalPages = ref(1)
 const pageSize   = 20
 
 const filters = ref({ from: '', to: '', action: '', source: '' })
+
+// Correlation id arrives as a query param from the Directory Sync
+// "trace" link; it narrows the log to a single originating operation.
+const correlationId = ref(route.query.correlationId || '')
 
 // Group every AuditAction known to the frontend into operator-friendly
 // buckets. Prefix matching keeps this in sync with the backend enum
@@ -169,6 +186,7 @@ async function load(p = 0) {
         to:            toIsoZoned(filters.value.to),
         action:        filters.value.action || undefined,
         source:        filters.value.source || undefined,
+        correlationId: correlationId.value || undefined,
       }
       const { data } = await getAuditLog(params)
       const paged = data.content ? data : { content: data, totalPages: 1 }
@@ -179,6 +197,21 @@ async function load(p = 0) {
     // Error already displayed by useApi — prevent unhandled rejection
   }
 }
+
+function clearCorrelation() {
+  // Drop the query param; the route watcher reloads with it removed.
+  const q = { ...route.query }
+  delete q.correlationId
+  router.replace({ query: q })
+}
+
+// React to in-place navigations that change the trace target (e.g. a
+// second "trace" click while already on this view). Initial mount is
+// handled by onMounted, so this fires only on subsequent changes.
+watch(() => route.query.correlationId, (v) => {
+  correlationId.value = v || ''
+  load(0)
+})
 
 onMounted(() => load(0))
 </script>
