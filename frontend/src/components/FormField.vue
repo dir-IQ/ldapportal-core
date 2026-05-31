@@ -50,7 +50,9 @@ const props = defineProps({
   id:          { type: String, default: () => `field-${Math.random().toString(36).slice(2)}` },
   label:       String,
   type:        { type: String, default: 'text' },
-  modelValue:  { default: '' },
+  // String | Number so numeric fields (v-model.number) type-check; the
+  // input still round-trips the value as-is at runtime.
+  modelValue:  { type: [String, Number], default: '' },
   placeholder: String,
   hint:        String,
   disabled:    Boolean,

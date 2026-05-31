@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
 import type { components } from '@/api/openapi'
+import EmptyState from '@/components/EmptyState.vue'
 
 // Backend's DirectoryStatDto plus the `name` and `enabled` fields the
 // dashboard service merges in. All numeric fields are nullable per the
@@ -53,9 +54,7 @@ function formatCount(n: number | null | undefined): string {
 
     <!-- Empty state lives outside the grid so the "No directories" message
          doesn't pretend to be a card. -->
-    <div v-if="!directories.length" class="px-5 py-8 text-center text-sm text-gray-500">
-      No directories configured.
-    </div>
+    <EmptyState v-if="!directories.length" icon="folder" title="No directories configured." />
 
     <!--
       Card grid replaces the prior <table>. The table layout cut metric

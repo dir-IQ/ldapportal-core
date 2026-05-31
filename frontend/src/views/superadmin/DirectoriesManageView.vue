@@ -11,7 +11,7 @@
 
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <div v-if="loading" class="p-8 text-center text-gray-500 text-sm">Loading…</div>
-      <div v-else-if="dirs.length === 0" class="p-8 text-center text-gray-500 text-sm">No directories configured.</div>
+      <EmptyState v-else-if="dirs.length === 0" icon="folder" title="No directories configured." />
       <table v-else class="w-full text-sm">
         <thead class="bg-gray-50 border-b border-gray-100">
           <tr>
@@ -203,7 +203,7 @@
   </PageContainer>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
@@ -213,24 +213,91 @@ import FormField from '@/components/FormField.vue'
 import AppModal from '@/components/AppModal.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import { IVIA_ABBR } from '@/constants/productNames'
 import PageContainer from '@/components/PageContainer.vue'
+import type { components } from '@/api/openapi'
+
+// The generated schema lags the backend (no IBM/Oracle directory types,
+// replication, or capabilities), so the form is a superset of the typed
+// request. Cast at the API boundary rather than narrowing the form.
+type DirectoryRequest = components['schemas']['DirectoryConnectionRequest']
+
+interface DirectoryForm {
+  directoryType: string
+  displayName: string
+  host: string
+  port: number | undefined
+  sslMode: string
+  trustAllCerts: boolean
+  bindDn: string
+  bindPassword: string
+  baseDn: string
+  pagingSize: number | undefined
+  poolMinSize: number | undefined
+  poolMaxSize: number | undefined
+  poolConnectTimeoutSeconds: number | undefined
+  poolResponseTimeoutSeconds: number | undefined
+  enableDisableAttribute: string
+  enableDisableValueType: string
+  enableValue: string
+  disableValue: string
+  enabled: boolean
+  replicationEnabled: boolean
+  selfServiceEnabled: boolean
+  selfServiceLoginAttribute: string
+  secondaryHost: string
+  secondaryPort: number | undefined
+  globalCatalogPort: number | undefined
+  tenantId: string
+  entraClientId: string
+  entraClientSecret: string
+  graphEndpoint: string
+}
+
+// Root-DSE probe result the directory list renders as a vendor chip.
+interface DirectoryCapabilities {
+  vendorName?: string | null
+  vendorVersion?: string | null
+  probedAt?: string | null
+  supportedControls?: string[] | null
+}
+
+// Row shape from the (untyped) directories API; only the fields this
+// view reads are modelled.
+interface DirectoryRow extends Partial<DirectoryForm> {
+  id: string
+  displayName: string
+  enabled: boolean
+  capabilities?: DirectoryCapabilities | null
+}
+
+interface TestResult {
+  success?: boolean
+  message?: string
+}
+
+// Repo-standard axios/native error narrowing (see docs/frontend-conventions.md).
+function errMsg(e: unknown, fallback = 'Something went wrong'): string {
+  const err = e as { response?: { data?: { detail?: string } }; message?: string }
+  return err.response?.data?.detail || err.message || fallback
+}
 
 const notif = useNotificationStore()
 const auth = useAuthStore()
 
 const loading      = ref(false)
 const saving       = ref(false)
-const dirs         = ref([])
+const dirs         = ref<DirectoryRow[]>([])
 const showModal    = ref(false)
-const editing      = ref(null)
-const deleteTarget = ref(null)
+const editing      = ref<string | null>(null)
+const deleteTarget = ref<DirectoryRow | null>(null)
 const testLoading  = ref(false)
-const testResult   = ref(null)
+const testResult   = ref<TestResult | null>(null)
 
-const form = ref(emptyForm())
+const form = ref<DirectoryForm>(emptyForm())
 
-function emptyForm() {
+function emptyForm(): DirectoryForm {
   return {
     directoryType: 'GENERIC',
     displayName: '', host: '', port: 389, sslMode: 'NONE',
@@ -241,7 +308,7 @@ function emptyForm() {
     enableValue: '', disableValue: '', enabled: true,
     replicationEnabled: false,
     selfServiceEnabled: false, selfServiceLoginAttribute: 'uid',
-    secondaryHost: '', secondaryPort: null, globalCatalogPort: null,
+    secondaryHost: '', secondaryPort: undefined, globalCatalogPort: undefined,
     tenantId: '', entraClientId: '', entraClientSecret: '', graphEndpoint: '',
   }
 }
@@ -282,14 +349,14 @@ function applyPreset() {
 // is, we just didn't get a self-reported version." Returns '' only
 // when the probe didn't run or the server is generic enough that the
 // fallback wouldn't tell the operator anything new (GENERIC, ENTRA_ID).
-const TYPE_FALLBACK_LABEL = {
+const TYPE_FALLBACK_LABEL: Record<string, string> = {
   OPENLDAP:                 'OpenLDAP',
   ACTIVE_DIRECTORY:         'Active Directory',
   IBM_DIRECTORY_SERVER:     'IBM Directory Server',
   ORACLE_UNIFIED_DIRECTORY: 'Oracle Unified Directory',
 }
 
-function vendorBadge(d) {
+function vendorBadge(d: DirectoryRow) {
   const caps = d?.capabilities
   if (!caps) return ''
   const v = (caps.vendorName || '').trim()
@@ -300,13 +367,13 @@ function vendorBadge(d) {
   // Probe ran (caps is non-null) but server didn't advertise vendor info.
   // Use the directory-type label as the chip text for named types; skip
   // for GENERIC / ENTRA_ID where it would be redundant or wrong.
-  return TYPE_FALLBACK_LABEL[d?.directoryType] || ''
+  return TYPE_FALLBACK_LABEL[d?.directoryType ?? ''] || ''
 }
 
-function capabilitiesTooltip(d) {
+function capabilitiesTooltip(d: DirectoryRow) {
   const caps = d?.capabilities
   if (!caps) return ''
-  const lines = []
+  const lines: string[] = []
   if (caps.probedAt) lines.push(`Probed ${new Date(caps.probedAt).toLocaleString()}`)
   const ctrls = caps.supportedControls || []
   if (ctrls.length) lines.push(`Supported controls (${ctrls.length}):\n${ctrls.slice(0, 12).join('\n')}${ctrls.length > 12 ? '\n…' : ''}`)
@@ -317,9 +384,11 @@ async function load() {
   loading.value = true
   try {
     const { data } = await listDirectories()
-    dirs.value = data
+    // Runtime rows are richer than the stale generated schema (capabilities,
+    // replication, extra directory types); treat them as DirectoryRow.
+    dirs.value = data as DirectoryRow[]
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     loading.value = false
   }
@@ -334,12 +403,12 @@ function openCreate() {
   showModal.value = true
 }
 
-function openEdit(d) {
+function openEdit(d: DirectoryRow) {
   editing.value = d.id
   form.value = {
     directoryType: d.directoryType || 'GENERIC',
-    displayName: d.displayName, host: d.host, port: d.port, sslMode: d.sslMode,
-    trustAllCerts: d.trustAllCerts, bindDn: d.bindDn, bindPassword: '', baseDn: d.baseDn,
+    displayName: d.displayName, host: d.host ?? '', port: d.port, sslMode: d.sslMode ?? 'NONE',
+    trustAllCerts: d.trustAllCerts ?? false, bindDn: d.bindDn ?? '', bindPassword: '', baseDn: d.baseDn ?? '',
     pagingSize: d.pagingSize, poolMinSize: d.poolMinSize, poolMaxSize: d.poolMaxSize,
     poolConnectTimeoutSeconds: d.poolConnectTimeoutSeconds,
     poolResponseTimeoutSeconds: d.poolResponseTimeoutSeconds,
@@ -351,8 +420,8 @@ function openEdit(d) {
     selfServiceEnabled: d.selfServiceEnabled || false,
     selfServiceLoginAttribute: d.selfServiceLoginAttribute || 'uid',
     secondaryHost: d.secondaryHost || '',
-    secondaryPort: d.secondaryPort || null,
-    globalCatalogPort: d.globalCatalogPort || null,
+    secondaryPort: d.secondaryPort || undefined,
+    globalCatalogPort: d.globalCatalogPort || undefined,
     tenantId: d.tenantId || '',
     entraClientId: d.entraClientId || '',
     entraClientSecret: '',
@@ -365,35 +434,38 @@ function openEdit(d) {
 async function save() {
   saving.value = true
   try {
-    const payload = { ...form.value }
+    const payload: Partial<DirectoryForm> = { ...form.value }
     if (editing.value && !payload.bindPassword) delete payload.bindPassword
     if (editing.value && !payload.entraClientSecret) delete payload.entraClientSecret
+    // Form is a superset of the (stale) generated request schema.
+    const requestBody = payload as unknown as DirectoryRequest
     if (editing.value) {
-      await updateDirectory(editing.value, payload)
+      await updateDirectory(editing.value, requestBody)
       notif.success('Directory updated')
     } else {
-      await createDirectory(payload)
+      await createDirectory(requestBody)
       notif.success('Directory created')
     }
     showModal.value = false
     await load()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     saving.value = false
   }
 }
 
-function confirmDelete(d) { deleteTarget.value = d }
+function confirmDelete(d: DirectoryRow) { deleteTarget.value = d }
 
 async function doDelete() {
+  if (!deleteTarget.value) return
   try {
     await deleteDirectory(deleteTarget.value.id)
     notif.success('Directory deleted')
     deleteTarget.value = null
     await load()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
     deleteTarget.value = null
   }
 }
@@ -402,7 +474,7 @@ async function doTest() {
   testLoading.value = true
   testResult.value = null
   try {
-    let data
+    let data: TestResult
     if (form.value.directoryType === 'ENTRA_ID') {
       const dirId = editing.value || '00000000-0000-0000-0000-000000000000'
       const res = await testEntraConnection(dirId, {
@@ -413,23 +485,23 @@ async function doTest() {
       })
       data = res.data
     } else {
-      const res = await testDirectory(form.value)
+      const res = await testDirectory(form.value as unknown as components['schemas']['TestConnectionRequest'])
       data = res.data
     }
     testResult.value = data
   } catch (e) {
-    testResult.value = { success: false, message: e.response?.data?.detail || e.message }
+    testResult.value = { success: false, message: errMsg(e) }
   } finally {
     testLoading.value = false
   }
 }
 
-async function doEvictPool(d) {
+async function doEvictPool(d: DirectoryRow) {
   try {
     await evictPool(d.id)
     notif.success('Connection pool evicted')
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   }
 }
 </script>
