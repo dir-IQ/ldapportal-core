@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+# IVIA test-fixture ISVA/ISAM schema — OpenDJ (OUD substitute) form.
+#
+# Same elements as testdata/isva-schema-openldap.ldif, expressed in
+# OpenDJ's native subschema-entry format (the form config/schema/*.ldif
+# files take). Mounted into the oud1-*/oud2-* fixtures via the image's
+# schema bootstrap; OpenDJ loads config/schema/*.ldif at startup.
+#
+# Private-arc OIDs (1.3.6.1.4.1.99999.*) — fixture only, not IBM's
+# registered OIDs. The app keys on attribute/objectClass NAMES, not OIDs.
+#
+# Manual fallback (if the schema wasn't auto-imported): copy this file
+# into the running container's config/schema and restart, e.g.
+#   docker cp testdata/isva-schema-opendj.ldif \
+#     ldap-oud1-primary:/opt/opendj/config/schema/99-isva.ldif
+#   docker restart ldap-oud1-primary
+# (OpenDJ reads every config/schema/*.ldif at boot.) Or apply live with
+# ldapmodify against cn=schema using the changetype:modify variant.
+
+dn: cn=schema
+objectClass: top
+objectClass: ldapSubentry
+objectClass: subschema
+attributeTypes: ( 1.3.6.1.4.1.99999.1.1.1 NAME 'secLogin' DESC 'IVIA test fixture: login name within secAuthority' EQUALITY caseIgnoreMatch SUBSTR caseIgnoreSubstringsMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{255} SINGLE-VALUE X-ORIGIN 'IVIA test fixture' )
+attributeTypes: ( 1.3.6.1.4.1.99999.1.1.2 NAME 'secAuthority' DESC 'IVIA test fixture: authority / policy domain' EQUALITY caseIgnoreMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{255} SINGLE-VALUE X-ORIGIN 'IVIA test fixture' )
+attributeTypes: ( 1.3.6.1.4.1.99999.1.1.3 NAME 'secAcctValid' DESC 'IVIA test fixture: TRUE when the account is valid' EQUALITY caseIgnoreMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{5} SINGLE-VALUE X-ORIGIN 'IVIA test fixture' )
+attributeTypes: ( 1.3.6.1.4.1.99999.1.1.4 NAME 'secPwdValid' DESC 'IVIA test fixture: TRUE when the password is valid' EQUALITY caseIgnoreMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{5} SINGLE-VALUE X-ORIGIN 'IVIA test fixture' )
+attributeTypes: ( 1.3.6.1.4.1.99999.1.1.5 NAME 'secValidUntil' DESC 'IVIA test fixture: generalized time the account ceases to be valid' EQUALITY generalizedTimeMatch ORDERING generalizedTimeOrderingMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.24 SINGLE-VALUE X-ORIGIN 'IVIA test fixture' )
+attributeTypes: ( 1.3.6.1.4.1.99999.1.1.6 NAME 'secPwdLastChanged' DESC 'IVIA test fixture: generalized time the password was last changed' EQUALITY generalizedTimeMatch ORDERING generalizedTimeOrderingMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.24 SINGLE-VALUE X-ORIGIN 'IVIA test fixture' )
+attributeTypes: ( 1.3.6.1.4.1.99999.1.1.7 NAME 'secDN' DESC 'IVIA test fixture: back-reference DN of the paired demographic (linked mode)' EQUALITY distinguishedNameMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.12 SINGLE-VALUE X-ORIGIN 'IVIA test fixture' )
+attributeTypes: ( 1.3.6.1.4.1.99999.1.1.8 NAME 'secUUID' DESC 'IVIA test fixture: opaque identifier for the secUser entry' EQUALITY caseIgnoreMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{255} SINGLE-VALUE X-ORIGIN 'IVIA test fixture' )
+objectClasses: ( 1.3.6.1.4.1.99999.1.2.1 NAME 'secUser' DESC 'IVIA test fixture: account overlay (AUXILIARY here; IBM ships STRUCTURAL)' SUP top AUXILIARY MAY ( secLogin $ secAuthority $ secAcctValid $ secPwdValid $ secValidUntil $ secPwdLastChanged $ secDN $ secUUID ) X-ORIGIN 'IVIA test fixture' )
+objectClasses: ( 1.3.6.1.4.1.99999.1.2.2 NAME 'secAuthorityInfo' DESC 'IVIA test fixture: structural class for the management-DIT base entry whose RDN is secAuthority=...' SUP top STRUCTURAL MUST ( secAuthority ) X-ORIGIN 'IVIA test fixture' )
