@@ -8,7 +8,10 @@
 > deferred** after recon — see the R3 phase note for the blocking
 > `core → addon` couplings and the Apache-2.0 license reframe. **R4 is
 > deferred too** — it's gated on R3 (no second addon to bundle, so the
-> `-addons` rename is premature; see the R4 note). R5 is unstarted; R6 is
+> `-addons` rename is premature; see the R4 note). **R5 is partially
+> shipped** — the retention scheduler + operator doc landed on
+> `feat/replication-operability`; the audit-detail contributor and the
+> Playwright `@smoke` spec are deferred (see the R5 note). R6 is
 > demand-driven and won't ship without a separate spec.
 >
 > **Companion docs:**
@@ -100,7 +103,7 @@ spec, not a refinement of this plan.
 | R2 | Per-directory `replication_enabled`; `CorrelationContext` ThreadLocal + `correlation_id` plumbing | Low | ~2 sessions | After R1b |
 | R3 | Code-only module move `core/...` → `addons/replication/` (existing migrations + tables stay in core) | Medium | ~1-2 sessions | **Deferred — see R3 note (rev. 3)** |
 | R4 | Distribution rename `community-plus-isva` → `community-plus-addons` with alias-and-deprecate | Low | ~1 session | **Deferred — gated on R3 (rev. 3)** |
-| R5 | Retention scheduler; `details.replicationEnabled` audit-detail contributor; operator docs; Playwright `@smoke` | Low | ~1-2 sessions | After R3 |
+| R5 | Retention scheduler; `details.replicationEnabled` audit-detail contributor; operator docs; Playwright `@smoke` | Low | ~1-2 sessions | **Partially shipped (rev. 3): retention + operator doc done; contributor & Playwright deferred — see R5 note** |
 | R6 | `PlanExecutor` SPI widening + `LdapStepExecutedEvent` chokepoint swap, **post-commit semantics preserved** | High — capture-path change | Spec required | Demand-driven only |
 
 Each phase ends with a mergeable commit. R1a + R1b in one PR. R2
@@ -620,6 +623,36 @@ warning fires and the new `-ca` apps are targeted. Then run with
 ## Phase R5 — Operability: retention, docs, audit-detail, Playwright
 
 **Branch:** `feat/replication-operability`
+
+> **Status (rev. 3, 2026-05-31): PARTIALLY SHIPPED.** The functional core
+> of R5 is done on `feat/replication-operability`; the rest is
+> deliberately deferred.
+>
+> **Shipped & verified:**
+> - **`ReplicationEventRetentionScheduler`** (`c04187b`) — floor + cap
+>   passes. Implemented with **portable JPQL deletes (cutoffs computed in
+>   Java)** rather than the Postgres `INTERVAL` SQL sketched below, so the
+>   queries run identically on H2 and Postgres and are integration-testable
+>   without Docker. Covered by a Mockito unit test (cutoff arithmetic +
+>   error-swallowing) and an H2 integration test (status × age ×
+>   link-enabled fixtures). Knobs:
+>   `ldapportal.replication.retention.{floor-days=30,cap-days=90,cron}`.
+>   *(Note: a fixture caught that `enqueued_at` is `@Column(updatable=false)`
+>   — backdating it needs native SQL, not an entity merge.)*
+> - **Operator doc** (`ea99121`) — `docs/directory-replication.md`.
+>
+> **Deferred (skipped for now):**
+> - **`details.replicationEnabled` audit-detail contributor** — niche
+>   (compliance-report filtering) and adds a per-audit-row directory
+>   lookup; not worth the cost until a report actually needs it.
+> - **Playwright `@smoke` spec** — can be written but **cannot be run or
+>   verified** in the current sandbox (no browser / running stack; it would
+>   execute only in CI/Fly). Left unwritten rather than shipped unverified.
+>
+> **N/A in this repo:** the `docs/edition-boundary.md` and
+> `docs/enterprise-roadmap.md` targets below **do not exist** here (the
+> plan assumed them), and replication adds **no third-party dependency**,
+> so `THIRD-PARTY-LICENSES` needs no change.
 
 ### Tasks
 
