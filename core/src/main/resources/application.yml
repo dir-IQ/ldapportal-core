@@ -116,6 +116,16 @@ ldapportal:
     poll-interval-ms:       ${HR_POLL_INTERVAL_MS:60000}
     sync-timeout-minutes:   ${HR_SYNC_TIMEOUT_MINUTES:30}
     max-employees-per-sync: ${HR_MAX_EMPLOYEES:50000}
+  replication:
+    # Nightly retention sweep for replication_events (see
+    # ReplicationEventRetentionScheduler / docs/directory-replication.md).
+    # floor: delete DELIVERED events older than floor-days for enabled links.
+    # cap:   hard-delete ANY event enqueued more than cap-days ago (incl.
+    #        dead-lettered / skipped / acknowledged that were never triaged).
+    retention:
+      floor-days: ${REPLICATION_RETENTION_FLOOR_DAYS:30}
+      cap-days:   ${REPLICATION_RETENTION_CAP_DAYS:90}
+      cron:       ${REPLICATION_RETENTION_CRON:0 30 2 * * *}
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 # JSON format is configured in logback-spring.xml.

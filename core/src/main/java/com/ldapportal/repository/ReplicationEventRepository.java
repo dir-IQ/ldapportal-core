@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -290,4 +291,45 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
           AND e.status = com.ldapportal.entity.enums.ReplicationEventStatus.DEAD_LETTERED
         """)
     int acknowledgeByOperator(@Param("id") UUID id);
+
+    // ── Retention (R5) ─────────────────────────────────────────────────────────
+
+    /**
+     * Retention floor: delete DELIVERED events older than {@code cutoff}
+     * for ENABLED links. A successful delivery is already audit-recorded;
+     * the event row is dispatch bookkeeping and need not be kept long.
+     * Disabled links' delivered rows are left for the cap sweep so a
+     * paused link keeps its recent history.
+     *
+     * <p>The cutoff is computed in Java (rather than a Postgres
+     * {@code INTERVAL} literal) so the query is plain JPQL and runs
+     * identically on H2 and Postgres. The enabled-link constraint is a
+     * subquery, not an {@code e.link.enabled} path navigation, so the
+     * bulk DELETE stays portable. Self-transactional — called directly
+     * from {@code ReplicationEventRetentionScheduler}.
+     */
+    @Transactional
+    @Modifying
+    @Query("""
+        DELETE FROM ReplicationEvent e
+        WHERE e.status = com.ldapportal.entity.enums.ReplicationEventStatus.DELIVERED
+          AND e.deliveredAt < :cutoff
+          AND e.link.id IN (SELECT l.id FROM ReplicationLink l WHERE l.enabled = true)
+        """)
+    int deleteDeliveredForEnabledLinksOlderThan(@Param("cutoff") OffsetDateTime cutoff);
+
+    /**
+     * Retention cap: hard-delete any event enqueued before {@code cutoff},
+     * regardless of status — deliberately including DEAD_LETTERED /
+     * SKIPPED / ACKNOWLEDGED rows. An operator who hasn't triaged a dead
+     * letter within the cap window isn't going to, and the dead-lettering
+     * itself was already audit-recorded.
+     */
+    @Transactional
+    @Modifying
+    @Query("""
+        DELETE FROM ReplicationEvent e
+        WHERE e.enqueuedAt < :cutoff
+        """)
+    int deleteEnqueuedBefore(@Param("cutoff") OffsetDateTime cutoff);
 }
