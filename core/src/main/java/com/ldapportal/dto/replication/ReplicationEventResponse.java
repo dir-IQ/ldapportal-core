@@ -5,6 +5,7 @@ import com.ldapportal.entity.ReplicationEvent;
 import com.ldapportal.entity.enums.ReplicationEnqueueSource;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.entity.enums.ReplicationOperationType;
+import com.ldapportal.ldap.replication.ReplicationPayloadCodec;
 
 import java.time.OffsetDateTime;
 import java.util.Map;
@@ -50,12 +51,6 @@ public record ReplicationEventResponse(
                 e.getLastError(),
                 e.getEnqueuedAt(),
                 e.getDeliveredAt(),
-                correlationId(e.getPayload()));
-    }
-
-    private static String correlationId(Map<String, Object> payload) {
-        if (payload == null) return null;
-        Object id = payload.get("correlationId");
-        return id == null ? null : id.toString();
+                ReplicationPayloadCodec.correlationId(e.getPayload()).orElse(null));
     }
 }

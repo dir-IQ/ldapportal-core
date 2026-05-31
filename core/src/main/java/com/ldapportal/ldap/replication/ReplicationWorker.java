@@ -16,7 +16,6 @@ import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -189,17 +188,13 @@ public class ReplicationWorker {
             detail.put("targetDn",  event.targetDn());
             detail.put("attempts",  newAttempts);
             detail.put("lastError", errorMessage == null ? "" : errorMessage);
-            sourceCorrelationId(event).ifPresent(src -> detail.put("sourceCorrelationId", src));
+            // The originating source-side trace id (stamped on the payload at
+            // enqueue) travels into the dead-letter audit detail so the row
+            // pivots back to the originating operation.
+            ReplicationPayloadCodec.correlationId(event.payload())
+                    .ifPresent(src -> detail.put("sourceCorrelationId", src));
             auditService.recordSystemEventNoActor(
                     AuditAction.REPLICATION_EVENT_DEAD_LETTERED, detail);
         }
-    }
-
-    /** The originating source-side trace id, stamped on the payload at enqueue. */
-    private static Optional<String> sourceCorrelationId(ReplicationEventSnapshot event) {
-        Map<String, Object> payload = event.payload();
-        if (payload == null) return Optional.empty();
-        Object id = payload.get("correlationId");
-        return id == null ? Optional.empty() : Optional.of(id.toString());
     }
 }

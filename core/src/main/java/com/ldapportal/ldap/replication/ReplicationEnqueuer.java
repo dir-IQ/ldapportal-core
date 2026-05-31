@@ -144,7 +144,7 @@ public class ReplicationEnqueuer {
         // Source-side trace id travels on the payload so dispatch-side audit
         // rows can pivot back to the originating operation's audit rows.
         if (correlationId != null) {
-            payload.put("correlationId", correlationId.toString());
+            payload.put(ReplicationPayloadCodec.CORRELATION_ID, correlationId.toString());
         }
         switch (write.operation()) {
             case ADD -> payload.put("attributes", mappedAddAttributes(write.attributes(), link));

@@ -12,6 +12,7 @@ import com.unboundid.ldap.sdk.ModifyRequest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Decodes the JSONB {@code payload} on a {@link com.ldapportal.entity.ReplicationEvent}
@@ -37,10 +38,30 @@ import java.util.Map;
  *
  * <p>Values are already DN- and value-mapped at enqueue time, so the
  * worker uses the decoded request as-is against the target.
+ *
+ * <p>Alongside the operation shape above, the enqueuer stamps one
+ * envelope key, {@link #CORRELATION_ID}, carrying the source-side trace
+ * id (R2). This class owns that key so the writer ({@code ReplicationEnqueuer}),
+ * the worker, and the {@code ReplicationEventResponse} DTO all read/write
+ * it through one definition rather than repeating the string literal.
  */
 public final class ReplicationPayloadCodec {
 
+    /**
+     * Envelope key for the source-side correlation id (R2), stamped at
+     * enqueue and read on the dispatch side so audit rows pivot back to
+     * the originating operation. Distinct from the operation payload keys.
+     */
+    public static final String CORRELATION_ID = "correlationId";
+
     private ReplicationPayloadCodec() {}
+
+    /** The source-side correlation id on the payload, if one was stamped. */
+    public static Optional<String> correlationId(Map<String, Object> payload) {
+        if (payload == null) return Optional.empty();
+        Object id = payload.get(CORRELATION_ID);
+        return id == null ? Optional.empty() : Optional.of(id.toString());
+    }
 
     public static AddRequest decodeAdd(String targetDn, Map<String, Object> payload) {
         @SuppressWarnings("unchecked")
