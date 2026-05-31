@@ -127,6 +127,12 @@
             <input type="checkbox" v-model="form.enabled" class="rounded" />
             Enabled
           </label>
+          <label v-if="auth.isDirectorySyncEnabled && form.directoryType !== 'ENTRA_ID'"
+                 class="flex items-center gap-2 text-sm text-gray-700"
+                 title="Capture app-initiated writes to this directory and replicate them to its linked targets.">
+            <input type="checkbox" v-model="form.replicationEnabled" class="rounded" />
+            Replication enabled
+          </label>
         </div>
 
         <!-- Self-service settings (LDAP only) -->
