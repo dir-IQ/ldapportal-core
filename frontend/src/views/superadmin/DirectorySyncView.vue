@@ -13,9 +13,7 @@
 
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <div v-if="loading" class="p-8 text-center text-gray-500 text-sm">Loading…</div>
-      <div v-else-if="links.length === 0" class="p-8 text-center text-gray-500 text-sm">
-        No replication links configured.
-      </div>
+      <EmptyState v-else-if="links.length === 0" icon="folder" title="No replication links configured." />
       <table v-else class="w-full text-sm">
         <thead class="bg-gray-50 border-b border-gray-100">
           <tr>
@@ -240,7 +238,7 @@
   </PageContainer>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
@@ -254,36 +252,96 @@ import AppModal from '@/components/AppModal.vue'
 import FormField from '@/components/FormField.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
+import type { components } from '@/api/openapi'
+
+type Directory = components['schemas']['DirectoryConnectionResponse']
+
+interface AttributeMapping {
+  sourceAttr: string
+  targetAttr: string
+  valueTemplate: string
+}
+
+interface ReplicationForm {
+  displayName: string
+  sourceDirectoryId: string
+  targetDirectoryId: string
+  sourceBaseDn: string
+  targetBaseDn: string
+  enabled: boolean
+  autoCreateOnMissing: boolean
+  attributeMappings: AttributeMapping[]
+}
+
+// Row shapes from the (untyped) replication API; only the fields this
+// view reads are modelled.
+interface ReplicationLink {
+  id: string
+  displayName: string
+  sourceDirectoryId: string
+  targetDirectoryId: string
+  sourceDirectoryName?: string
+  targetDirectoryName?: string
+  sourceBaseDn?: string | null
+  targetBaseDn?: string | null
+  enabled: boolean
+  autoCreateOnMissing: boolean
+  pendingCount: number
+  failedCount: number
+  deadLetteredCount: number
+  lastDeliveredAt?: string | null
+  attributeMappings?: AttributeMapping[]
+}
+
+interface ReplicationEvent {
+  id: string
+  enqueuedAt: string
+  operation: string
+  targetDn: string
+  status: string
+  attempts: number
+  lastError?: string
+  correlationId?: string
+}
+
+type EventAction = 'retry' | 'skip' | 'ack'
+
+// Repo-standard axios/native error narrowing (see docs/frontend-conventions.md).
+function errMsg(e: unknown, fallback = 'Something went wrong'): string {
+  const err = e as { response?: { data?: { detail?: string } }; message?: string }
+  return err.response?.data?.detail || err.message || fallback
+}
 
 const notif = useNotificationStore()
 const router = useRouter()
 
-const links     = ref([])
-const directoryOptions = ref([])
+const links     = ref<ReplicationLink[]>([])
+const directoryOptions = ref<Directory[]>([])
 const loading   = ref(false)
 
 const showForm  = ref(false)
-const editing   = ref(null)
+const editing   = ref<ReplicationLink | null>(null)
 const saving    = ref(false)
-const form      = ref(emptyForm())
+const form      = ref<ReplicationForm>(emptyForm())
 
-const deleteTarget      = ref(null)
+const deleteTarget      = ref<ReplicationLink | null>(null)
 const confirmDeleteOpen = computed({
   get: () => !!deleteTarget.value,
-  set: (v) => { if (!v) deleteTarget.value = null },
+  set: (v: boolean) => { if (!v) deleteTarget.value = null },
 })
 
 // Event log state
 const showEvents       = ref(false)
-const eventsLink       = ref(null)
-const events           = ref([])
+const eventsLink       = ref<ReplicationLink | null>(null)
+const events           = ref<ReplicationEvent[]>([])
 const eventStatusFilter = ref('')
 const eventsPage       = ref(0)
 const eventsTotalPages = ref(1)
 const loadingEvents    = ref(false)
 
-function emptyForm() {
+function emptyForm(): ReplicationForm {
   return {
     displayName: '',
     sourceDirectoryId: '',
@@ -307,7 +365,7 @@ async function load() {
     links.value = linksRes.data
     directoryOptions.value = dirsRes.data
   } catch (e) {
-    notif.error(`Failed to load: ${e?.response?.data?.detail || e.message}`)
+    notif.error(`Failed to load: ${errMsg(e)}`)
   } finally {
     loading.value = false
   }
@@ -319,7 +377,7 @@ function openCreate() {
   showForm.value = true
 }
 
-function openEdit(link) {
+function openEdit(link: ReplicationLink) {
   editing.value = link
   form.value = {
     displayName: link.displayName,
@@ -357,13 +415,13 @@ async function save() {
     showForm.value = false
     await load()
   } catch (e) {
-    notif.error(`Save failed: ${e?.response?.data?.detail || e.message}`)
+    notif.error(`Save failed: ${errMsg(e)}`)
   } finally {
     saving.value = false
   }
 }
 
-function confirmDelete(link) { deleteTarget.value = link }
+function confirmDelete(link: ReplicationLink) { deleteTarget.value = link }
 
 async function doDelete() {
   if (!deleteTarget.value) return
@@ -373,11 +431,11 @@ async function doDelete() {
     deleteTarget.value = null
     await load()
   } catch (e) {
-    notif.error(`Delete failed: ${e?.response?.data?.detail || e.message}`)
+    notif.error(`Delete failed: ${errMsg(e)}`)
   }
 }
 
-async function openEvents(link) {
+async function openEvents(link: ReplicationLink) {
   eventsLink.value = link
   eventStatusFilter.value = ''
   eventsPage.value = 0
@@ -389,19 +447,19 @@ async function loadEvents() {
   if (!eventsLink.value) return
   loadingEvents.value = true
   try {
-    const params = { page: eventsPage.value, size: 50 }
+    const params: { page: number; size: number; status?: string } = { page: eventsPage.value, size: 50 }
     if (eventStatusFilter.value) params.status = eventStatusFilter.value
     const { data } = await listReplicationEvents(eventsLink.value.id, params)
     events.value = data.content || []
     eventsTotalPages.value = data.totalPages || 1
   } catch (e) {
-    notif.error(`Failed to load events: ${e?.response?.data?.detail || e.message}`)
+    notif.error(`Failed to load events: ${errMsg(e)}`)
   } finally {
     loadingEvents.value = false
   }
 }
 
-async function doEventAction(event, kind) {
+async function doEventAction(event: ReplicationEvent, kind: EventAction) {
   try {
     if (kind === 'retry') await retryReplicationEvent(event.id)
     else if (kind === 'skip') await skipReplicationEvent(event.id)
@@ -410,11 +468,11 @@ async function doEventAction(event, kind) {
     await loadEvents()
     await load()  // refresh link health counts
   } catch (e) {
-    notif.error(`Event ${kind} failed: ${e?.response?.data?.detail || e.message}`)
+    notif.error(`Event ${kind} failed: ${errMsg(e)}`)
   }
 }
 
-function traceCorrelation(e) {
+function traceCorrelation(e: ReplicationEvent) {
   // Pivot to the audit log filtered by this event's source-side
   // correlation id — every row emitted while handling the originating
   // operation (the source write, its audit row, and any dispatch-side
@@ -422,13 +480,13 @@ function traceCorrelation(e) {
   router.push({ name: 'superadminAuditLog', query: { correlationId: e.correlationId } })
 }
 
-function canRetry(status) {
+function canRetry(status: string) {
   return ['FAILED', 'DEAD_LETTERED', 'SKIPPED', 'ACKNOWLEDGED'].includes(status)
 }
-function canSkip(status) {
+function canSkip(status: string) {
   return ['PENDING', 'FAILED', 'DEAD_LETTERED'].includes(status)
 }
-function statusClass(status) {
+function statusClass(status: string) {
   switch (status) {
     case 'DELIVERED':     return 'bg-green-50 text-green-700'
     case 'PENDING':       return 'bg-blue-50 text-blue-700'

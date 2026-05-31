@@ -44,6 +44,7 @@ import {
 } from '@/api/ldapEntry'
 import type { ColumnDef } from './ResultsTable.vue'
 import type { SortableRow } from '@/composables/useTablePreferences'
+import EmptyState from '@/components/EmptyState.vue'
 
 interface Props {
   /** Stable namespace; reserved for future per-table preference persistence. */
@@ -56,6 +57,8 @@ interface Props {
   rowClickable?: boolean
   /** Empty-state copy. */
   emptyText?: string
+  /** Empty-state icon (see EmptyState.vue: folder|users|search|shield|clipboard). */
+  emptyIcon?: string
   /**
    * Edit-mode flag. When false (Phase 1 default), every cell renders
    * read-only. Task 5 enables editable inputs for cells whose row +
@@ -77,6 +80,7 @@ const props = withDefaults(defineProps<Props>(), {
   rowKey: 'dn',
   rowClickable: false,
   emptyText: 'No results.',
+  emptyIcon: 'folder',
   edit: false,
   directoryId: '',
   schemaMap: () => new Map<string, AttributeTypeInfo>(),
@@ -326,9 +330,8 @@ defineExpose({
     </div>
 
     <!-- Empty state. -->
-    <div v-if="rows.length === 0" class="p-6 text-center text-sm text-gray-500">
-      {{ emptyText }}
-    </div>
+    <EmptyState v-if="rows.length === 0" :icon="emptyIcon" :title="emptyText" />
+
 
     <!-- Table. Phase 1 ships without sort / filter / paginate /
          column-picker — those are ResultsTable's job, and this
