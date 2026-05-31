@@ -91,7 +91,11 @@ const filters = ref({ from: '', to: '', action: '', source: '' })
 
 // Correlation id arrives as a query param from the Directory Sync
 // "trace" link; it narrows the log to a single originating operation.
-const correlationId = ref(route.query.correlationId || '')
+// vue-router types a query value as string | string[] | null, so a
+// hand-crafted ?correlationId=a&correlationId=b would arrive as an array
+// — collapse to the first value so we always bind a single string.
+const firstQueryValue = (v) => (Array.isArray(v) ? v[0] : v) || ''
+const correlationId = ref(firstQueryValue(route.query.correlationId))
 
 // Group every AuditAction known to the frontend into operator-friendly
 // buckets. Prefix matching keeps this in sync with the backend enum
@@ -158,6 +162,10 @@ function formatDetail(detail) {
 
 function clearFilters() {
   filters.value = { from: '', to: '', action: '', source: '' }
+  // Also drop an active correlation trace so "Clear" means clear
+  // everything. When no trace is active this is a no-op (the route
+  // watcher won't fire), preserving the apply-on-Filter behaviour.
+  clearCorrelation()
 }
 
 // `<input type="datetime-local">` returns a string like
@@ -209,7 +217,7 @@ function clearCorrelation() {
 // second "trace" click while already on this view). Initial mount is
 // handled by onMounted, so this fires only on subsequent changes.
 watch(() => route.query.correlationId, (v) => {
-  correlationId.value = v || ''
+  correlationId.value = firstQueryValue(v)
   load(0)
 })
 
