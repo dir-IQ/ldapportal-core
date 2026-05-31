@@ -103,7 +103,10 @@ jobs:
               pull_number: context.payload.pull_request.number,
               per_page: 100,
             });
-            const docsOnly = /^(docs\/|stale-docs\/)|\.md$/;
+            // Docs — and editor/agent config under .claude/ — never change
+            // the built image, so they don't warrant the Maven+Docker+Trivy
+            // scan. .claude/ holds Claude Code settings + hooks only.
+            const docsOnly = /^(docs\/|stale-docs\/|\.claude\/)|\.md$/;
             const codeChanged = files.some(f => !docsOnly.test(f.filename));
             core.setOutput('code', codeChanged ? 'true' : 'false');
             core.notice(`Code changed: ${codeChanged} (${files.length} files in PR)`);

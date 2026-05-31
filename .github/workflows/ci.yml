@@ -83,8 +83,10 @@ jobs:
               per_page: 100,
             });
 
-            // Docs-only files never trigger either job.
-            const docsOnly = /^(docs\/|stale-docs\/)|\.md$/;
+            // Docs — and editor/agent config under .claude/ — never affect
+            // the build, so they trigger neither job. .claude/ holds Claude
+            // Code settings + hooks (no Java/POM/Docker impact on the JAR).
+            const docsOnly = /^(docs\/|stale-docs\/|\.claude\/)|\.md$/;
 
             // Backend-relevant: Maven source trees, the root POM, the
             // wrapper, and the addons SPDX-header script the backend
