@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap;
 
+import com.ldapportal.core.observability.CorrelationContext;
 import com.ldapportal.entity.AuditDataSource;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.SslMode;
@@ -108,7 +109,12 @@ public class LdapChangelogReader {
             }
 
             try {
-                pollSource(src);
+                // One correlation scope per source-poll: every audit row
+                // ingested from this source in this tick shares an id, so an
+                // operator can group a poll's ingested changes. pollSource
+                // throws only unchecked exceptions, so the Runnable overload
+                // propagates them to the catch below.
+                CorrelationContext.withCorrelation(UUID.randomUUID(), () -> pollSource(src));
                 consecutiveFailures.remove(src.getId());
             } catch (Exception ex) {
                 // Check for configuration-level errors (invalid DN, bad credentials)

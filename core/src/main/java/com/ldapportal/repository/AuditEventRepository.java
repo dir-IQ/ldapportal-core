@@ -28,6 +28,7 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
               AND (CAST(:targetDn AS VARCHAR) IS NULL OR e.target_dn = CAST(:targetDn AS VARCHAR))
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
+              AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
               AND (CAST(:from AS TIMESTAMPTZ) IS NULL OR e.occurred_at >= CAST(:from AS TIMESTAMPTZ))
               AND (CAST(:to AS TIMESTAMPTZ)   IS NULL OR e.occurred_at <= CAST(:to AS TIMESTAMPTZ))
             ORDER BY e.occurred_at DESC
@@ -40,6 +41,7 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
               AND (CAST(:targetDn AS VARCHAR) IS NULL OR e.target_dn = CAST(:targetDn AS VARCHAR))
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
+              AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
               AND (CAST(:from AS TIMESTAMPTZ) IS NULL OR e.occurred_at >= CAST(:from AS TIMESTAMPTZ))
               AND (CAST(:to AS TIMESTAMPTZ)   IS NULL OR e.occurred_at <= CAST(:to AS TIMESTAMPTZ))
             """,
@@ -50,6 +52,7 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
             @Param("action")      String action,
             @Param("targetDn")    String targetDn,
             @Param("source")      String source,
+            @Param("correlationId") UUID correlationId,
             @Param("from")        OffsetDateTime from,
             @Param("to")          OffsetDateTime to,
             Pageable pageable);
@@ -66,6 +69,7 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
               AND (CAST(:targetDn AS VARCHAR) IS NULL OR e.target_dn = CAST(:targetDn AS VARCHAR))
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
+              AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
               AND (CAST(:from AS TIMESTAMPTZ) IS NULL OR e.occurred_at >= CAST(:from AS TIMESTAMPTZ))
               AND (CAST(:to AS TIMESTAMPTZ)   IS NULL OR e.occurred_at <= CAST(:to AS TIMESTAMPTZ))
             ORDER BY e.occurred_at DESC
@@ -78,6 +82,7 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
               AND (CAST(:targetDn AS VARCHAR) IS NULL OR e.target_dn = CAST(:targetDn AS VARCHAR))
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
+              AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
               AND (CAST(:from AS TIMESTAMPTZ) IS NULL OR e.occurred_at >= CAST(:from AS TIMESTAMPTZ))
               AND (CAST(:to AS TIMESTAMPTZ)   IS NULL OR e.occurred_at <= CAST(:to AS TIMESTAMPTZ))
             """,
@@ -88,6 +93,7 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
             @Param("action")       String action,
             @Param("targetDn")     String targetDn,
             @Param("source")       String source,
+            @Param("correlationId") UUID correlationId,
             @Param("from")         OffsetDateTime from,
             @Param("to")           OffsetDateTime to,
             Pageable pageable);

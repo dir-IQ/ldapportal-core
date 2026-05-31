@@ -208,6 +208,9 @@
                 {{ e.lastError || '—' }}
               </td>
               <td class="px-2 py-1 text-right whitespace-nowrap">
+                <button v-if="e.correlationId" @click="traceCorrelation(e)"
+                        title="Show every audit row from this event's originating operation"
+                        class="text-indigo-600 hover:text-indigo-700 text-[10px] px-1">trace</button>
                 <button v-if="canRetry(e.status)" @click="doEventAction(e, 'retry')"
                         class="text-blue-600 hover:text-blue-700 text-[10px] px-1">retry</button>
                 <button v-if="canSkip(e.status)" @click="doEventAction(e, 'skip')"
@@ -239,6 +242,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import {
   listReplicationLinks, createReplicationLink, updateReplicationLink, deleteReplicationLink,
@@ -253,6 +257,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
 
 const notif = useNotificationStore()
+const router = useRouter()
 
 const links     = ref([])
 const directoryOptions = ref([])
@@ -407,6 +412,14 @@ async function doEventAction(event, kind) {
   } catch (e) {
     notif.error(`Event ${kind} failed: ${e?.response?.data?.detail || e.message}`)
   }
+}
+
+function traceCorrelation(e) {
+  // Pivot to the audit log filtered by this event's source-side
+  // correlation id — every row emitted while handling the originating
+  // operation (the source write, its audit row, and any dispatch-side
+  // dead-letter row) shares this id.
+  router.push({ name: 'superadminAuditLog', query: { correlationId: e.correlationId } })
 }
 
 function canRetry(status) {

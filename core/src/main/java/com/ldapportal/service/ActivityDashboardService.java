@@ -4,6 +4,7 @@ package com.ldapportal.service;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PermissionService;
 import com.ldapportal.core.alerting.AlertSummary;
+import com.ldapportal.dto.audit.AuditQueryCriteria;
 import com.ldapportal.core.alerting.AlertSummaryProvider;
 import com.ldapportal.core.alerting.AlertingDashboardProvider;
 import com.ldapportal.core.dashboard.ReportJobHealth;
@@ -287,8 +288,9 @@ public class ActivityDashboardService {
         // Recent changes (last 24h)
         for (UUID dirId : dirIds) {
             try {
-                var events = auditQueryService.query(dirId, null, null, null, null,
-                        now.minusHours(24), null, 0, 1);
+                var events = auditQueryService.query(
+                        AuditQueryCriteria.builder().directoryId(dirId).from(now.minusHours(24)).build(),
+                        0, 1);
                 long count = events.getTotalElements();
                 if (count > 0) {
                     items.add(new AwarenessItem("RECENT_CHANGES",

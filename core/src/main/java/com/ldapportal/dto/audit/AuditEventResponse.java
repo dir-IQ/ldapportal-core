@@ -22,7 +22,9 @@ public record AuditEventResponse(
         Map<String, Object> detail,
         String changelogChangeNumber,
         OffsetDateTime occurredAt,
-        OffsetDateTime recordedAt
+        OffsetDateTime recordedAt,
+        // Trace id (R2) for pivoting to related rows of the same operation.
+        UUID correlationId
 ) {
     public static AuditEventResponse from(AuditEvent e) {
         return new AuditEventResponse(
@@ -38,7 +40,8 @@ public record AuditEventResponse(
                 e.getDetail(),
                 e.getChangelogChangeNumber(),
                 e.getOccurredAt(),
-                e.getRecordedAt()
+                e.getRecordedAt(),
+                e.getCorrelationId()
         );
     }
 }

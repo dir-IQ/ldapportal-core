@@ -4,6 +4,7 @@ package com.ldapportal.service;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PermissionService;
 import com.ldapportal.core.governance.GovernanceDashboardProvider;
+import com.ldapportal.dto.audit.AuditQueryCriteria;
 import com.ldapportal.dto.audit.AuditEventResponse;
 import com.ldapportal.dto.dashboard.AdminDashboardDto;
 import com.ldapportal.dto.dashboard.AdminDashboardDto.*;
@@ -196,7 +197,7 @@ public class AdminDashboardService {
 
         // ── Recent activity ──────────────────────────────────────────────────
         var recentAudit = auditQueryService.queryForDirectories(
-                authorizedDirIds, null, null, null, null, null, null, 0, 10);
+                authorizedDirIds, AuditQueryCriteria.EMPTY, 0, 10);
 
         String firstDirId = dirs.isEmpty() ? null : dirs.get(0).getId().toString();
 

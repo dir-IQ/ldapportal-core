@@ -5,6 +5,7 @@ import com.ldapportal.dto.ldap.LdifImportResult;
 import com.ldapportal.dto.ldap.LdifImportResult.LdifImportError;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.ConflictHandling;
+import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.unboundid.asn1.ASN1OctetString;
 import com.unboundid.ldap.sdk.*;
 import com.unboundid.ldap.sdk.controls.SimplePagedResultsControl;
@@ -37,6 +38,7 @@ import java.util.List;
 @Service
 @Slf4j
 @RequiredArgsConstructor
+@LdapWriteAuthorized("LDIF import: applies change records and content entries directly.")
 public class LdifService {
 
     private final LdapConnectionFactory connectionFactory;

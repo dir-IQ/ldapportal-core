@@ -5,6 +5,7 @@ import com.ldapportal.entity.ReplicationEvent;
 import com.ldapportal.entity.enums.ReplicationEnqueueSource;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.entity.enums.ReplicationOperationType;
+import com.ldapportal.ldap.replication.ReplicationPayloadCodec;
 
 import java.time.OffsetDateTime;
 import java.util.Map;
@@ -29,7 +30,10 @@ public record ReplicationEventResponse(
         OffsetDateTime nextAttemptAt,
         String lastError,
         OffsetDateTime enqueuedAt,
-        OffsetDateTime deliveredAt) {
+        OffsetDateTime deliveredAt,
+        // Source-side trace id (R2), surfaced from the payload so the
+        // operator console can pivot to the originating audit rows.
+        String correlationId) {
 
     public static ReplicationEventResponse from(ReplicationEvent e) {
         return new ReplicationEventResponse(
@@ -46,6 +50,7 @@ public record ReplicationEventResponse(
                 e.getNextAttemptAt(),
                 e.getLastError(),
                 e.getEnqueuedAt(),
-                e.getDeliveredAt());
+                e.getDeliveredAt(),
+                ReplicationPayloadCodec.correlationId(e.getPayload()).orElse(null));
     }
 }

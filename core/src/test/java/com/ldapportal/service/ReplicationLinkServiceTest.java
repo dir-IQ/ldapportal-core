@@ -105,6 +105,29 @@ class ReplicationLinkServiceTest {
     }
 
     @Test
+    void create_rejectsReverseOfExistingLink_regardlessOfEnabledState() {
+        // A→B is requested while a B→A link already exists. The guard
+        // must reject even though the existing reverse link is DISABLED:
+        // a paused reverse link can be re-enabled later to re-arm a loop.
+        DirectoryConnection source = directory("A");
+        DirectoryConnection target = directory("B");
+        ReplicationLink reverse = link("B → A");
+        reverse.setEnabled(false);                  // disabled — must still block
+        // The guard queries for the reverse pair (target, source).
+        when(linkRepo.findFirstBySourceDirectoryIdAndTargetDirectoryId(
+                target.getId(), source.getId())).thenReturn(Optional.of(reverse));
+
+        assertThatThrownBy(() -> service.createLink(principal, new ReplicationLinkRequest(
+                "A → B", source.getId(), target.getId(),
+                null, null, true, false, List.of())))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("reverse of existing link");
+
+        verify(linkRepo, never()).save(any());
+        verify(auditService, never()).recordSystemEvent(any(), any(), any());
+    }
+
+    @Test
     void list_attachesHealthCountsFromRollup() {
         // Two links — service should call findHealthRollup once with
         // both IDs and attach the returned counts. Pinning the batched

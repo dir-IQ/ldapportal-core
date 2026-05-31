@@ -94,6 +94,16 @@ public class AuditEvent {
     @Column(name = "changelog_change_number", updatable = false)
     private String changelogChangeNumber;
 
+    /**
+     * Trace id linking every audit row emitted while handling one
+     * top-level operation (R2). Populated from {@link
+     * com.ldapportal.core.observability.CorrelationContext} when the
+     * caller doesn't pass one explicitly. Nullable: changelog-sourced and
+     * pre-R2 rows have none.
+     */
+    @Column(name = "correlation_id", updatable = false)
+    private UUID correlationId;
+
     /** When the underlying LDAP operation actually occurred. */
     @Column(name = "occurred_at", nullable = false, updatable = false)
     private OffsetDateTime occurredAt;

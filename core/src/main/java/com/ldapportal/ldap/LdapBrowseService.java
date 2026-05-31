@@ -4,6 +4,7 @@ package com.ldapportal.ldap;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.exception.LdapOperationException;
+import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.unboundid.asn1.ASN1OctetString;
 import com.unboundid.ldap.sdk.*;
 import com.unboundid.ldap.sdk.controls.SimplePagedResultsControl;
@@ -23,6 +24,7 @@ import java.util.*;
 @Service
 @Slf4j
 @RequiredArgsConstructor
+@LdapWriteAuthorized("Superadmin directory-browser create/modify/delete/move/rename writes.")
 public class LdapBrowseService {
 
     private final LdapConnectionFactory connectionFactory;

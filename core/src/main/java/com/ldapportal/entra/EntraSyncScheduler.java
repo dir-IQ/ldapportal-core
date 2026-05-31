@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.entra;
 
+import com.ldapportal.core.observability.CorrelationContext;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.repository.DirectoryConnectionRepository;
@@ -39,7 +40,10 @@ public class EntraSyncScheduler {
             }
 
             try {
-                syncService.deltaSync(dc);
+                // One correlation scope per directory-sync so every audit
+                // row this sync ingests shares an id (deltaSync throws only
+                // unchecked exceptions, caught below).
+                CorrelationContext.withCorrelation(UUID.randomUUID(), () -> syncService.deltaSync(dc));
             } catch (Exception e) {
                 log.warn("Entra sync failed for {}: {}", dc.getDisplayName(), e.getMessage());
             } finally {
