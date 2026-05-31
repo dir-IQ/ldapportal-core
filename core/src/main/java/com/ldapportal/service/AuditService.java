@@ -133,6 +133,10 @@ public class AuditService {
                     .targetDn(targetDn)
                     .detail(changeDetail)
                     .changelogChangeNumber(changeNumber)
+                    // Stamp the active ingest-poll scope (set per source by
+                    // LdapChangelogReader) so every row from one source-poll
+                    // shares a correlation id. Null when no scope is active.
+                    .correlationId(currentCorrelation())
                     .occurredAt(occurredAt)
                     .build();
 
