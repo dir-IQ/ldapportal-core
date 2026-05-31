@@ -3,8 +3,11 @@
 > **Baseline:** `feat/directory-sync` at commit `875a1e2`. Builds on the
 > shipped impl; doesn't restart.
 >
-> **Status:** Plan only. R1a is the next-step recommendation; R6 is
-> demand-driven and won't ship without a separate spec.
+> **Status (rev. 3, 2026-05-31):** R1a + R1b + R2 (plus the R2-review
+> cleanups) are implemented on `feat/directory-sync-migration`. **R3 is
+> deferred** after recon — see the R3 phase note for the blocking
+> `core → addon` couplings and the Apache-2.0 license reframe. R4/R5 are
+> unstarted; R6 is demand-driven and won't ship without a separate spec.
 >
 > **Companion docs:**
 > - [`2026-05-30-directory-sync-design.md`](./2026-05-30-directory-sync-design.md)
@@ -93,7 +96,7 @@ spec, not a refinement of this plan.
 | R1a | ArchUnit `JpaBoundaryArchitectureTest`; shared `BackoffPolicy` (no jitter); bidirectional-reject (state-blind) | None — pure structural | ~1 session | Now |
 | R1b | `@LdapWriteAuthorized` marker + `WriteSurfaceCoverageTest`; annotate existing chokepoints | None — additive | ~1 session | After R1a |
 | R2 | Per-directory `replication_enabled`; `CorrelationContext` ThreadLocal + `correlation_id` plumbing | Low | ~2 sessions | After R1b |
-| R3 | Code-only module move `core/...` → `addons/replication/` (existing migrations + tables stay in core) | Medium | ~1-2 sessions | After R2 |
+| R3 | Code-only module move `core/...` → `addons/replication/` (existing migrations + tables stay in core) | Medium | ~1-2 sessions | **Deferred — see R3 note (rev. 3)** |
 | R4 | Distribution rename `community-plus-isva` → `community-plus-addons` with alias-and-deprecate | Low | ~1 session | After R3 |
 | R5 | Retention scheduler; `details.replicationEnabled` audit-detail contributor; operator docs; Playwright `@smoke` | Low | ~1-2 sessions | After R3 |
 | R6 | `PlanExecutor` SPI widening + `LdapStepExecutedEvent` chokepoint swap, **post-commit semantics preserved** | High — capture-path change | Spec required | Demand-driven only |
@@ -382,6 +385,46 @@ current row count.
 ## Phase R3 — Code-only module move (migrations stay in core)
 
 **Branch:** `feat/addons-replication-module-move`
+
+> **Status (rev. 3, 2026-05-31): DEFERRED after recon.** Assessed on
+> `feat/directory-sync-migration` (which carries R1a + R1b + R2 + the
+> review cleanups). A clean "code-only move" as specified below is **not
+> achievable** — the real coupling produces `core → addon` dependency
+> cycles:
+>
+> 1. **`ActivityDashboardService` (core)** reads `ReplicationEventRepository`
+>    + `ReplicationEventStatus` to surface a "dead-lettered events"
+>    awareness item. Decoupling needs a new **dashboard-contributor SPI**,
+>    not a move.
+> 2. The **superadmin controllers** (`ReplicationLinkController`,
+>    `ReplicationEventController`) + their services + DTOs are core-resident
+>    API surface; moving them drags the whole API layer out of core.
+> 3. **`ReplicationEventResponse` (core DTO)** reads
+>    `ReplicationPayloadCodec` (a would-move class) — a coupling introduced
+>    by the R2-review cleanup that centralized the `correlationId` payload
+>    key. The codec can't cleanly leave while the DTO stays.
+>
+> A *full* move therefore requires new decoupling SPIs (a dashboard
+> contributor at minimum) — that is SPI-design work, beyond this phase's
+> "code-only move" framing, and raises the risk above the Medium budgeted.
+>
+> **Reframe that lowers the payoff:** replication is **Apache-2.0** (an
+> open-source addon, like ISVA), so — unlike the EE/commercial code the
+> `verify-no-ee-bytecode` guard protects — there is **no license-boundary
+> reason** it must be absent from the `distribution/community` JAR. The
+> runtime edition boundary is already enforced by the `DIRECTORY_SYNC`
+> entitlement gate (capture is inert without it). R3's remaining value is
+> *modularization/packaging* only, at Medium risk — not worth doing on
+> spec.
+>
+> **Prerequisites when revisited:** (a) a dashboard-contributor SPI to
+> decouple `ActivityDashboardService`; (b) a decision on whether the API
+> surface (entities/enums/repos/services/controllers/DTOs) moves or stays
+> — only the `ldap.replication.*` dispatch engine is cleanly movable; (c)
+> resolve the DTO→codec coupling (keep the codec/key in core, or un-share
+> the read helper). A partial "dispatch-engine-only" move behind a
+> `LdapConnectionFactory.setWrapper` seam is the achievable middle path if
+> packaging pressure arises before the full SPI work is justified.
 
 **Important correction from rev. 1**: tables stay where they are;
 existing migrations stay where they are. Only the Java source code
