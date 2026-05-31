@@ -8,6 +8,7 @@ import com.ldapportal.core.events.enums.OutboxStatus;
 import com.ldapportal.core.events.repository.OutboxEntryRepository;
 import com.ldapportal.core.events.snapshot.EventSubscriptionSnapshot;
 import com.ldapportal.core.events.snapshot.OutboxEntrySnapshot;
+import com.ldapportal.core.util.BackoffPolicies;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -55,11 +56,6 @@ public class OutboundDispatcherScheduler {
 
     private static final int BATCH_SIZE = 50;
     private static final Duration MAX_DELIVERING = Duration.ofMinutes(5);
-    static final Duration[] BACKOFF = {
-        Duration.ofMinutes(1), Duration.ofMinutes(5), Duration.ofMinutes(15),
-        Duration.ofHours(1),   Duration.ofHours(6)
-    };
-    private static final int MAX_ATTEMPTS = BACKOFF.length + 1;
     private static final Random JITTER = new Random();
 
     private final OutboxEntryRepository outboxRepository;
@@ -168,16 +164,22 @@ public class OutboundDispatcherScheduler {
                         id, row.getEventType(), outcome.httpStatus());
             }
             case TRANSIENT_FAILURE -> {
-                if (row.getAttempts() >= MAX_ATTEMPTS) {
+                // The shared OUTBOUND_EVENTS ladder has 5 rungs; an empty
+                // delay means the retry budget is exhausted (attempts past
+                // the last rung) and the row dead-letters. Jitter is applied
+                // here, at the call site — it's a delivery concern, not part
+                // of the nominal schedule the policy describes.
+                Optional<Duration> base =
+                        BackoffPolicies.OUTBOUND_EVENTS.delayForAttempt(row.getAttempts());
+                if (base.isEmpty()) {
                     row.setStatus(OutboxStatus.DEAD_LETTERED);
                     row.setDeadLetteredAt(clock.instant());
                     row.setLastError(outcome.message());
                     row.setLastHttpStatus(outcome.httpStatus());
                     log.warn("outbox.dead_lettered id={} reason={}", id, outcome.message());
                 } else {
-                    Duration base = BACKOFF[row.getAttempts() - 1];
                     row.setStatus(OutboxStatus.PENDING);
-                    row.setNextAttemptAt(clock.instant().plus(withJitter(base)));
+                    row.setNextAttemptAt(clock.instant().plus(withJitter(base.get())));
                     row.setLastError(outcome.message());
                     row.setLastHttpStatus(outcome.httpStatus());
                     log.info("outbox.retry id={} attempts={} reason=\"{}\"",

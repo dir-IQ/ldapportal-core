@@ -149,7 +149,7 @@ class DashboardServiceTest {
         when(governance.activeCampaignProgress()).thenReturn(List.of());
         when(governance.overdueCampaignsCount()).thenReturn(0L);
         when(governance.reviewedUsersSince(eq(directoryId), any())).thenReturn(30L);
-        when(auditQueryService.query(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+        when(auditQueryService.query(any(), anyInt(), anyInt()))
                 .thenReturn(new PageImpl<>(List.of()));
         when(reportJobHealthProvider.health()).thenReturn(ReportJobHealth.empty());
 
@@ -179,7 +179,7 @@ class DashboardServiceTest {
         when(governance.totalOpenSodViolations()).thenReturn(0L);
         when(governance.activeCampaignProgress()).thenReturn(List.of());
         when(governance.overdueCampaignsCount()).thenReturn(0L);
-        when(auditQueryService.query(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+        when(auditQueryService.query(any(), anyInt(), anyInt()))
                 .thenReturn(new PageImpl<>(List.of()));
         when(reportJobHealthProvider.health()).thenReturn(ReportJobHealth.empty());
 
@@ -239,7 +239,7 @@ class DashboardServiceTest {
         when(governance.totalOpenSodViolations()).thenReturn(0L);
         when(governance.activeCampaignProgress()).thenReturn(List.of());
         when(governance.overdueCampaignsCount()).thenReturn(0L);
-        when(auditQueryService.query(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+        when(auditQueryService.query(any(), anyInt(), anyInt()))
                 .thenReturn(new PageImpl<>(List.of()));
         when(reportJobHealthProvider.health()).thenReturn(ReportJobHealth.empty());
     }

@@ -54,5 +54,7 @@ public record DirectoryConnectionRequest(
         String tenantId,
         String entraClientId,
         String entraClientSecret,               // plaintext; null on update = keep existing
-        String graphEndpoint) {
+        String graphEndpoint,
+        // ── Replication (R2) ────────────────────────────────────────────────
+        boolean replicationEnabled) {
 }

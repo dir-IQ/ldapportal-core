@@ -4,6 +4,7 @@ package com.ldapportal.service;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.core.audit.AuditDetailContributor;
 import com.ldapportal.core.events.AuditRecordedEvent;
+import com.ldapportal.core.observability.CorrelationContext;
 import com.ldapportal.entity.AuditEvent;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.AuditAction;
@@ -85,6 +86,7 @@ public class AuditService {
                     .action(action)
                     .targetDn(targetDn)
                     .detail(enrichedDetail)
+                    .correlationId(currentCorrelation())
                     .occurredAt(OffsetDateTime.now())
                     .build();
 
@@ -131,6 +133,10 @@ public class AuditService {
                     .targetDn(targetDn)
                     .detail(changeDetail)
                     .changelogChangeNumber(changeNumber)
+                    // Stamp the active ingest-poll scope (set per source by
+                    // LdapChangelogReader) so every row from one source-poll
+                    // shares a correlation id. Null when no scope is active.
+                    .correlationId(currentCorrelation())
                     .occurredAt(occurredAt)
                     .build();
 
@@ -145,17 +151,6 @@ public class AuditService {
 
     // ── System-level events (non-directory) ───────────────────────────────────
 
-    /**
-     * Records a non-directory audit event — used for system-level actions
-     * like API token CRUD where no {@link DirectoryConnection} is involved.
-     *
-     * <p>Async + own transaction + swallow-on-failure, matching
-     * {@link #record}. Safe to call from request threads without blocking.</p>
-     *
-     * @param principal the acting principal (must be non-null)
-     * @param action    the lifecycle action being recorded
-     * @param detail    optional payload — tokenId, tokenName, etc.
-     */
     /**
      * Record a system-level audit event with no actor — used for
      * background-worker transitions where no human or token initiated
@@ -173,6 +168,7 @@ public class AuditService {
                     .source(AuditSource.INTERNAL)
                     .action(action)
                     .detail(detail)
+                    .correlationId(currentCorrelation())
                     .occurredAt(OffsetDateTime.now())
                     .build();
             auditRepo.save(event);
@@ -197,6 +193,7 @@ public class AuditService {
                     .actorUsername(principal.username())
                     .action(action)
                     .detail(detail)
+                    .correlationId(currentCorrelation())
                     .occurredAt(OffsetDateTime.now())
                     .build();
 
@@ -207,6 +204,16 @@ public class AuditService {
             log.error("Failed to record system audit event [action={}, actor={}]: {}",
                     action, principal.username(), ex.getMessage(), ex);
         }
+    }
+
+    /**
+     * The correlation id to stamp on an audit row: the active
+     * {@link CorrelationContext} scope (set by the request filter or a
+     * scheduler/worker scope, and propagated onto {@code @Async} threads by
+     * the task decorator), or null when no scope is active.
+     */
+    private static UUID currentCorrelation() {
+        return CorrelationContext.current().orElse(null);
     }
 
     // ── Detail enrichment ─────────────────────────────────────────────────────

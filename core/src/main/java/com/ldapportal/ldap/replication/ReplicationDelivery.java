@@ -3,6 +3,7 @@ package com.ldapportal.ldap.replication;
 
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.ldap.LdapConnectionFactory;
+import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.LDAPResult;
 import com.unboundid.ldap.sdk.ResultCode;
@@ -41,6 +42,8 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 @Slf4j
+@LdapWriteAuthorized("Target-side replication apply via withConnectionUnreplicated "
+        + "(deliberately uncaptured so replicated writes don't loop back).")
 public class ReplicationDelivery {
 
     private final LdapConnectionFactory connectionFactory;

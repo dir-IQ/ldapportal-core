@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
+import com.ldapportal.core.observability.CorrelationContext;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.repository.ReplicationEventRepository;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -128,19 +130,28 @@ public class ReplicationWorker {
     }
 
     private void deliverAndSettle(ReplicationEventSnapshot event) {
-        ReplicationDelivery.DeliveryResult result = delivery.deliver(event);
-        if (result.success()) {
-            boolean settled = txOps.markDelivered(event.id());
-            if (!settled) {
-                // Claim was revoked while we held it (operator retry
-                // or stale-reset sweep) — drop the result rather than
-                // overwrite whatever the new owner produced.
-                log.warn("Replication event {} delivered but claim was revoked — " +
-                        "skipping settlement", event.id());
+        // Each delivery runs in its own correlation scope (a fresh id), so
+        // delivery-side audit rows pivot independently of the source-side
+        // ones. The originating source id is preserved separately on the
+        // event payload (stamped at enqueue) and surfaced in the dead-letter
+        // audit detail as sourceCorrelationId. withCorrelation restores the
+        // previous (here: empty) scope in its finally, so the @Scheduled
+        // worker thread doesn't leak the id into the next event.
+        CorrelationContext.withCorrelation(UUID.randomUUID(), () -> {
+            ReplicationDelivery.DeliveryResult result = delivery.deliver(event);
+            if (result.success()) {
+                boolean settled = txOps.markDelivered(event.id());
+                if (!settled) {
+                    // Claim was revoked while we held it (operator retry
+                    // or stale-reset sweep) — drop the result rather than
+                    // overwrite whatever the new owner produced.
+                    log.warn("Replication event {} delivered but claim was revoked — " +
+                            "skipping settlement", event.id());
+                }
+                return;
             }
-            return;
-        }
-        settleFailure(event, result.errorMessage());
+            settleFailure(event, result.errorMessage());
+        });
     }
 
     private void settleFailure(ReplicationEventSnapshot event, String errorMessage) {
@@ -162,16 +173,28 @@ public class ReplicationWorker {
                     event.id(), newAttempts, errorMessage);
             // No principal — the worker isn't a user-driven action.
             // recordSystemEventNoActor preserves the action + detail
-            // without forcing a synthetic actor row.
+            // without forcing a synthetic actor row. The delivery-side id
+            // (the active CorrelationContext scope from deliverAndSettle)
+            // lands on the audit row's correlation_id column; the originating
+            // source-side id travels in detail.sourceCorrelationId so an
+            // operator can pivot a dead-lettered event back to the audit
+            // rows of the operation that produced it. Mutable map because
+            // sourceCorrelationId may be absent (pre-R2 events) and Map.of
+            // rejects null values.
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("eventId",   event.id().toString());
+            detail.put("linkId",    event.link().id().toString());
+            detail.put("operation", event.operation().name());
+            detail.put("targetDn",  event.targetDn());
+            detail.put("attempts",  newAttempts);
+            detail.put("lastError", errorMessage == null ? "" : errorMessage);
+            // The originating source-side trace id (stamped on the payload at
+            // enqueue) travels into the dead-letter audit detail so the row
+            // pivots back to the originating operation.
+            ReplicationPayloadCodec.correlationId(event.payload())
+                    .ifPresent(src -> detail.put("sourceCorrelationId", src));
             auditService.recordSystemEventNoActor(
-                    AuditAction.REPLICATION_EVENT_DEAD_LETTERED,
-                    Map.of(
-                            "eventId",   event.id().toString(),
-                            "linkId",    event.link().id().toString(),
-                            "operation", event.operation().name(),
-                            "targetDn",  event.targetDn(),
-                            "attempts",  newAttempts,
-                            "lastError", errorMessage == null ? "" : errorMessage));
+                    AuditAction.REPLICATION_EVENT_DEAD_LETTERED, detail);
         }
     }
 }

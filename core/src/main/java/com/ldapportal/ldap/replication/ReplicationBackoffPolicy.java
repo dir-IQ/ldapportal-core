@@ -1,45 +1,33 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
+import com.ldapportal.core.util.BackoffPolicies;
+import com.ldapportal.core.util.BackoffPolicy;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 
-import java.time.Duration;
 import java.time.OffsetDateTime;
-import java.util.List;
 
 /**
  * Exponential-backoff schedule for failed replication events.
  *
  * <p>Per the design plan (§3 P1):
- * {@code 30s, 2m, 10m, 1h, 6h → DEAD_LETTERED}.
+ * {@code 30s, 2m, 10m, 1h, 6h → DEAD_LETTERED}. The ladder itself lives
+ * in the shared {@link BackoffPolicies#REPLICATION_EVENTS} policy; this
+ * class maps a ladder lookup onto replication's status transitions.
  *
  * <p>{@code attempts} on the entity counts <em>total</em> attempts so
  * far. After the first failure, {@code attempts == 1} and the next
  * retry is scheduled 30 seconds out. The fifth failure schedules the
- * final 6h retry; the sixth failure exhausts the retry budget and the
- * worker transitions the event to {@link ReplicationEventStatus#DEAD_LETTERED}
- * for operator review. (See {@link #computeOutcome} — the boundary check
- * uses {@code >} not {@code >=} so the 6h slot is actually used.)
+ * final 6h retry; the sixth failure exhausts the retry budget (the
+ * ladder has no sixth rung) and the worker transitions the event to
+ * {@link ReplicationEventStatus#DEAD_LETTERED} for operator review.
  */
 public final class ReplicationBackoffPolicy {
 
-    /**
-     * Backoff delays indexed by attempt count - 1 (i.e. delay applied
-     * after the Nth attempt fails is at index N-1). The list length
-     * is the retry budget: 5 entries → 5 scheduled retries → the
-     * sixth failure (which would need a non-existent 6th delay) is
-     * what trips DEAD_LETTERED.
-     */
-    static final List<Duration> SCHEDULE = List.of(
-            Duration.ofSeconds(30),
-            Duration.ofMinutes(2),
-            Duration.ofMinutes(10),
-            Duration.ofHours(1),
-            Duration.ofHours(6)
-    );
+    private static final BackoffPolicy POLICY = BackoffPolicies.REPLICATION_EVENTS;
 
-    /** Visible for tests; identical to {@code SCHEDULE.size()}. */
-    public static final int MAX_ATTEMPTS = SCHEDULE.size();
+    /** Visible for tests; the length of the shared replication backoff ladder. */
+    public static final int MAX_ATTEMPTS = POLICY.maxAttempts();
 
     private ReplicationBackoffPolicy() {}
 
@@ -55,16 +43,12 @@ public final class ReplicationBackoffPolicy {
      */
     public static Outcome computeOutcome(int attemptsAfterFailure, OffsetDateTime now) {
         // attemptsAfterFailure counts failures so far (1 = first
-        // failure). The schedule has 5 entries indexed 0..4; we use
-        // them on failures 1..5 to schedule retries at 30s, 2m, 10m,
-        // 1h, 6h respectively. On the 6th failure the budget is gone
-        // and we dead-letter. Using `>` (not `>=`) makes the 6h slot
-        // reachable.
-        if (attemptsAfterFailure > MAX_ATTEMPTS) {
-            return new Outcome(ReplicationEventStatus.DEAD_LETTERED, null);
-        }
-        Duration delay = SCHEDULE.get(attemptsAfterFailure - 1);
-        return new Outcome(ReplicationEventStatus.FAILED, now.plus(delay));
+        // failure). The shared ladder has 5 rungs; failures 1..5 schedule
+        // retries at 30s, 2m, 10m, 1h, 6h. On the 6th failure the ladder
+        // is exhausted (delayForAttempt returns empty) and we dead-letter.
+        return POLICY.delayForAttempt(attemptsAfterFailure)
+                .map(delay -> new Outcome(ReplicationEventStatus.FAILED, now.plus(delay)))
+                .orElseGet(() -> new Outcome(ReplicationEventStatus.DEAD_LETTERED, null));
     }
 
     public record Outcome(ReplicationEventStatus status, OffsetDateTime nextAttemptAt) {}

@@ -135,6 +135,36 @@ class ReplicationWorkerTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void deadLetterAudit_carriesSourceCorrelationId_fromEventPayload() {
+        // R2 pivot: the dead-letter audit detail must surface the source-side
+        // correlation id the enqueuer stamped on the event payload, so an
+        // operator can jump from a dead-lettered event to the audit rows of
+        // the originating operation.
+        UUID linkId = UUID.randomUUID();
+        String sourceCorr = UUID.randomUUID().toString();
+        ReplicationLinkSnapshot link = new ReplicationLinkSnapshot(
+                linkId, "test-link", null, null, null, null, true, false, List.of());
+        ReplicationEventSnapshot event = new ReplicationEventSnapshot(
+                UUID.randomUUID(), link,
+                ReplicationEnqueueSource.APP_INTERCEPT, ReplicationOperationType.MODIFY,
+                "uid=alice,dc=src", "uid=alice,dc=corp",
+                Map.of("correlationId", sourceCorr),
+                ReplicationBackoffPolicy.MAX_ATTEMPTS, OffsetDateTime.now());
+        stubClaim(linkId, event, 1);
+        when(delivery.deliver(event)).thenReturn(
+                new ReplicationDelivery.DeliveryResult(false, null, "still failing"));
+        when(txOps.markFailure(any(), any(), anyInt(), any(), any())).thenReturn(true);
+
+        worker.drainQueue();
+
+        ArgumentCaptor<Map<String, Object>> detailCap = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).recordSystemEventNoActor(
+                eq(AuditAction.REPLICATION_EVENT_DEAD_LETTERED), detailCap.capture());
+        assertThat(detailCap.getValue()).containsEntry("sourceCorrelationId", sourceCorr);
+    }
+
+    @Test
     void deadLetterAuditSuppressed_whenClaimRevokedMidFlight() {
         // Defensive: if the IN_FLIGHT claim was revoked while we held
         // it (operator clicked Retry on the dashboard, or the stale-

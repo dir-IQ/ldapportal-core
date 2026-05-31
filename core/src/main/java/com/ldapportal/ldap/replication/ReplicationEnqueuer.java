@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
+import com.ldapportal.core.entitlement.Entitlement;
+import com.ldapportal.core.entitlement.EntitlementService;
+import com.ldapportal.core.observability.CorrelationContext;
 import com.ldapportal.entity.enums.ReplicationEnqueueSource;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
@@ -50,6 +53,14 @@ public class ReplicationEnqueuer {
 
     private final ReplicationReadOps         readOps;
     private final ReplicationEventPersister  persister;
+    /**
+     * Community-edition degradation (R2). Spring always wires a bean
+     * (a default {@code EntitlementService} is registered via
+     * {@code @ConditionalOnMissingBean}); may be {@code null} only in
+     * unit tests that construct the enqueuer directly without it, in
+     * which case the entitlement gate is treated as open.
+     */
+    private final EntitlementService         entitlementService;
 
     /**
      * Capture point for every successful LDAP write the wrapper sees.
@@ -62,13 +73,38 @@ public class ReplicationEnqueuer {
      */
     public void enqueue(UUID sourceDirectoryId, CapturedWrite write) {
         try {
+            // Cheap short-circuit first: a single indexed SELECT. Doing
+            // this before the entitlement gate keeps the per-write license
+            // read (FileLicenseProvider re-reads + verifies the JWT on every
+            // current() call) off the path when there's nothing to enqueue.
             List<ReplicationLinkSnapshot> links =
                     readOps.snapshotsForSource(sourceDirectoryId);
             if (links.isEmpty()) return;
 
+            // Community-edition degradation: when DIRECTORY_SYNC isn't
+            // entitled, no events accumulate regardless of the directory's
+            // replication_enabled DB value. An entitlement downgrade
+            // commercial → community → commercial round-trips cleanly:
+            // the column keeps its value, capture simply pauses while
+            // unlicensed. (Null in direct-construction unit tests → gate
+            // treated as open.)
+            if (entitlementService != null
+                    && !entitlementService.has(Entitlement.DIRECTORY_SYNC)) {
+                return;
+            }
+
+            // Source-side trace id (R2). enqueue runs synchronously on the
+            // originating write thread, so the active correlation scope is
+            // the originating operation's. currentOrEphemeral() mints one
+            // when there's no scope (e.g. a background write) WITHOUT
+            // installing it, so a pooled scheduler/async thread doesn't leak
+            // the id into its next task. Every event payload gets a non-null
+            // id; this work is reached only when there are links to replicate.
+            UUID correlationId = CorrelationContext.currentOrEphemeral();
+
             List<PendingReplicationEvent> pending = new ArrayList<>(links.size());
             for (ReplicationLinkSnapshot link : links) {
-                PendingReplicationEvent event = buildEvent(link, write);
+                PendingReplicationEvent event = buildEvent(link, write, correlationId);
                 if (event != null) pending.add(event);
                 // null = DN out of scope for this link's source base —
                 // skip, don't log per-write (could be very high volume).
@@ -87,7 +123,8 @@ public class ReplicationEnqueuer {
     }
 
     private PendingReplicationEvent buildEvent(ReplicationLinkSnapshot link,
-                                                 CapturedWrite write) {
+                                                 CapturedWrite write,
+                                                 UUID correlationId) {
         String targetDn = DnMapper.map(write.dn(), link);
         if (targetDn == null) {
             return null;
@@ -98,11 +135,17 @@ public class ReplicationEnqueuer {
                 write.operation(),
                 write.dn(),
                 targetDn,
-                buildPayload(write, link));
+                buildPayload(write, link, correlationId));
     }
 
-    private Map<String, Object> buildPayload(CapturedWrite write, ReplicationLinkSnapshot link) {
+    private Map<String, Object> buildPayload(CapturedWrite write, ReplicationLinkSnapshot link,
+                                             UUID correlationId) {
         Map<String, Object> payload = new LinkedHashMap<>();
+        // Source-side trace id travels on the payload so dispatch-side audit
+        // rows can pivot back to the originating operation's audit rows.
+        if (correlationId != null) {
+            payload.put(ReplicationPayloadCodec.CORRELATION_ID, correlationId.toString());
+        }
         switch (write.operation()) {
             case ADD -> payload.put("attributes", mappedAddAttributes(write.attributes(), link));
             case MODIFY -> payload.put("modifications", mappedModifications(write.modifications(), link));

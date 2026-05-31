@@ -62,7 +62,9 @@ public record DirectoryConnectionResponse(
         String graphEndpoint,
         DirectoryCapabilities capabilities,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt) {
+        OffsetDateTime updatedAt,
+        // ── Replication (R2) ────────────────────────────────────────────────
+        boolean replicationEnabled) {
 
     public record BaseDnItem(UUID id, String dn, int displayOrder) {
         public static BaseDnItem fromUser(DirectoryUserBaseDn b) {
@@ -110,6 +112,7 @@ public record DirectoryConnectionResponse(
                 dc.getGraphEndpoint(),
                 dc.getCapabilities(),
                 dc.getCreatedAt(),
-                dc.getUpdatedAt());
+                dc.getUpdatedAt(),
+                dc.isReplicationEnabled());
     }
 }

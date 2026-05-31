@@ -14,6 +14,7 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.EnableDisableValueType;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.exception.ResourceNotFoundException;
+import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.ldapportal.ldap.model.LdapUser;
 import com.unboundid.asn1.ASN1OctetString;
 import com.unboundid.ldap.sdk.*;
@@ -36,6 +37,7 @@ import java.util.function.Consumer;
  */
 @Service
 @Slf4j
+@LdapWriteAuthorized("Direct user modify/move; not yet plan-mediated (see R6).")
 public class LdapUserService {
 
     private final LdapConnectionFactory connectionFactory;

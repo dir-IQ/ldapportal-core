@@ -7,6 +7,7 @@ import com.ldapportal.exception.LdapConnectionException;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.replication.ReplicatingLdapInterface;
 import com.ldapportal.ldap.replication.ReplicationEnqueuer;
+import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.sdk.*;
 import com.unboundid.ldap.sdk.extensions.StartTLSExtendedRequest;
@@ -54,6 +55,9 @@ import java.util.concurrent.ConcurrentMap;
 @Component
 @Slf4j
 @RequiredArgsConstructor
+@LdapWriteAuthorized("Constructs the write surface — wraps pooled connections in "
+        + "ReplicatingLdapInterface and hands out the write-capable interface; "
+        + "issues no mutating calls itself.")
 public class LdapConnectionFactory {
 
     private final EncryptionService encryptionService;
@@ -139,8 +143,16 @@ public class LdapConnectionFactory {
         LDAPConnection conn = null;
         try {
             conn = pool.getConnection();
+            // Per-directory replication gate (R2): when the directory's
+            // master switch is off, skip the capture wrapper entirely —
+            // no events accumulate for any link sourced here. The
+            // entitlement-level degradation (community edition) is enforced
+            // downstream in ReplicationEnqueuer.
+            boolean wrap = replicate
+                    && replicationEnqueuer != null
+                    && dc.isReplicationEnabled();
             com.unboundid.ldap.sdk.FullLDAPInterface iface =
-                    (replicate && replicationEnqueuer != null)
+                    wrap
                     ? new ReplicatingLdapInterface(conn, replicationEnqueuer, dc.getId())
                     : conn;
             return operation.execute(iface);

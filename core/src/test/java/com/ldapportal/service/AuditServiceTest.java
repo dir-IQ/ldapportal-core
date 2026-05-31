@@ -3,6 +3,7 @@ package com.ldapportal.service;
 
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PrincipalType;
+import com.ldapportal.core.observability.CorrelationContext;
 import com.ldapportal.entity.AuditEvent;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.AuditAction;
@@ -135,6 +136,28 @@ class AuditServiceTest {
         assertThat(saved.getSource()).isEqualTo(AuditSource.LDAP_CHANGELOG);
         assertThat(saved.getAction()).isEqualTo(AuditAction.LDAP_CHANGE);
         assertThat(saved.getChangelogChangeNumber()).isEqualTo(changeNumber);
+        // No ambient scope here → correlation id stays null.
+        assertThat(saved.getCorrelationId()).isNull();
+    }
+
+    @Test
+    void recordChangelogEvent_stampsActiveCorrelationScope() {
+        String changeNumber = "12345";
+        when(auditRepo.existsByDirectoryIdAndChangelogChangeNumber(directoryId, changeNumber))
+                .thenReturn(false);
+        UUID pollScope = UUID.randomUUID();
+
+        // Simulate the per-source scope LdapChangelogReader opens around the poll.
+        CorrelationContext.withCorrelation(pollScope, () ->
+                auditService.recordChangelogEvent(
+                        directoryId, "corp-ldap",
+                        "uid=dave,dc=corp", changeNumber,
+                        Map.of("changeType", "modify"),
+                        OffsetDateTime.now()));
+
+        ArgumentCaptor<AuditEvent> captor = ArgumentCaptor.forClass(AuditEvent.class);
+        verify(auditRepo).save(captor.capture());
+        assertThat(captor.getValue().getCorrelationId()).isEqualTo(pollScope);
     }
 
     @Test

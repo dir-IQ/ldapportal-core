@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.ldapportal.directory.DirectoryAuditEvent;
 import com.ldapportal.entity.AuditEvent;
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.core.observability.CorrelationContext;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.AuditSource;
 import com.ldapportal.entra.entity.*;
@@ -369,6 +370,10 @@ public class EntraSyncService {
                         .targetDn(evt.targetId()) // use object ID as target identifier
                         .detail(evt.detail())
                         .changelogChangeNumber(evt.id()) // for dedup
+                        // Stamp the active per-directory sync scope (set by
+                        // EntraSyncScheduler) so a sync's ingested rows share
+                        // a correlation id. Null when called outside a scope.
+                        .correlationId(CorrelationContext.current().orElse(null))
                         .occurredAt(evt.occurredAt())
                         .build();
                 auditEventRepo.save(ae);
