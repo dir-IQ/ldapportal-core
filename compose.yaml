@@ -1,19 +1,53 @@
 # LDAPPortal local-dev compose stack.
 #
-# Brings up: postgres + pgadmin + the backend app + the frontend +
-# two seeded OpenLDAP fixtures (AcmeCorp + Globex). The app + frontend
-# images are built from local source on every `docker compose build` /
-# `make redeploy`; the LDAP fixtures' bootstrap LDIFs from testdata/
-# are loaded on the first volume init only.
+# Brings up: postgres + pgadmin + the backend app + the frontend + a
+# fleet of empty directory-server fixtures for multi-directory / failover
+# testing:
 #
-# To force a fresh LDAP seed (e.g. after editing an LDIF):
+#   OpenLDAP : openldap-primary, openldap-alternate
+#   OUD/OpenDJ: oud1-primary, oud1-alternate, oud2-primary, oud2-alternate
+#   AD/Samba : ad-primary
+#
+# NO test data is bootstrapped — every directory comes up empty. The
+# OpenLDAP and OUD fixtures get the IVIA/ISVA fixture schema
+# (secUser / secAuthorityInfo overlay) loaded at first init; AD uses its
+# own native schema and gets none.
+#
+# "primary" + "alternate" are independent instances that share a base DN
+# and credentials, for pointing the app at one or the other (failover /
+# alternate-endpoint testing). They do NOT replicate to each other.
+#
+# ── Connection details ───────────────────────────────────────────────────────
+# | Service            | Host port (ldap/ldaps) | Base DN                       | Bind DN / user                                   | Password   |
+# |--------------------|------------------------|-------------------------------|--------------------------------------------------|------------|
+# | openldap-primary   | 1389 / 1636            | dc=openldap,dc=example,dc=com | cn=admin,dc=openldap,dc=example,dc=com           | admin      |
+# | openldap-alternate | 2389 / 2636            | dc=openldap,dc=example,dc=com | cn=admin,dc=openldap,dc=example,dc=com           | admin      |
+# | oud1-primary       | 3389 / 3636            | dc=oud1,dc=example,dc=com     | cn=Directory Manager                             | admin      |
+# | oud1-alternate     | 4389 / 4636            | dc=oud1,dc=example,dc=com     | cn=Directory Manager                             | admin      |
+# | oud2-primary       | 5389 / 5636            | dc=oud2,dc=example,dc=com     | cn=Directory Manager                             | admin      |
+# | oud2-alternate     | 6389 / 6636            | dc=oud2,dc=example,dc=com     | cn=Directory Manager                             | admin      |
+# | ad-primary         | 7389 / 7636            | dc=samdom,dc=example,dc=com   | CN=Administrator,CN=Users,DC=samdom,DC=example,DC=com | Passw0rd!  |
+# | postgres           | 5432                   | db=ldapportal                 | ldapportal                                       | ldapportal |
+# | app (backend)      | 9090 -> 8080           | —                             | bootstrap superadmin (env-supplied)              | —          |
+# | frontend           | 9080 -> 8080           | —                             | —                                                | —          |
+#
+# TLS is disabled on every fixture (dev only); the ldaps host ports are
+# published for convenience but the servers answer plain LDAP. Point the
+# app at host.docker.internal:<port> (or the service name + internal port
+# on the compose network).
+#
+# To reload a fixture from scratch (re-run schema/init):
 #   docker compose down -v && docker compose up --build
 #
-# This file targets the community-plus-isva edition by default — the
-# one this repo's IVIA work exercises. To run the pure community
-# edition instead, swap the app service's dockerfile to
-# docker/community/Dockerfile (its JAR is built by the same
-# `mvn package` / `make package-backend` step).
+# !! UNVERIFIED IN THIS REPO'S SANDBOX !! This stack was authored without a
+# local Docker daemon to run it. Smoke-test with `docker compose up` and
+# see testdata/README-directory-fixtures.md for per-server schema-load
+# verification + manual fallbacks (esp. OUD schema path and the Samba AD
+# image's env contract).
+#
+# This file targets the community-plus-isva edition by default — the one
+# this repo's IVIA work exercises. To run the pure community edition,
+# swap the app service's dockerfile to docker/community/Dockerfile.
 
 services:
 
@@ -57,8 +91,7 @@ services:
   app:
     build:
       context: .
-      # OSS repo split — the original commercial Dockerfile lived at
-      # the repo root; here the community editions each carry their own
+      # OSS repo split — the community editions each carry their own
       # Dockerfile, and each COPYs from its matching
       # distribution/<edition>/target/ JAR. Both images share a build
       # context of the repo root so the COPY can reach distribution/.
@@ -96,99 +129,164 @@ services:
       - "9080:8080"
     restart: unless-stopped
 
-  # ── AcmeCorp directory ──────────────────────────────────────────────────
-  # Seeded on first volume init from testdata/acmecorp-*.ldif. To reload
-  # from scratch: docker compose down -v && docker compose up --build
-  openldap-acmecorp:
+  # ── OpenLDAP fixtures ─────────────────────────────────────────────────────
+  # Empty OpenLDAP directories (base dc=openldap,dc=example,dc=com) with the
+  # IVIA/ISVA fixture schema loaded on first init. primary + alternate are
+  # independent instances sharing the base DN — point the app at either.
+  openldap-primary:
     image: osixia/openldap:1.5.0
-    container_name: ldap-acmecorp
+    container_name: ldap-openldap-primary
     ports:
       - "1389:389"
       - "1636:636"
     environment:
-      LDAP_ORGANISATION: "AcmeCorp"
-      LDAP_DOMAIN: "acmecorp.com"
-      LDAP_BASE_DN: "dc=acmecorp,dc=com"
+      LDAP_ORGANISATION: "OpenLDAP Fixture"
+      LDAP_DOMAIN: "openldap.example.com"
+      LDAP_BASE_DN: "dc=openldap,dc=example,dc=com"
       LDAP_ADMIN_PASSWORD: "admin"
       LDAP_CONFIG_PASSWORD: "config"
-      LDAP_READONLY_USER: "true"
-      LDAP_READONLY_USER_PASSWORD: "readonly_password_456"
       LDAP_TLS: "false"
       LDAP_LOG_LEVEL: "256"
     volumes:
-      - acmecorp_data:/var/lib/ldap
-      - acmecorp_config:/etc/ldap/slapd.d
-      # Bootstrap LDIFs — loaded via ldapmodify -a on first volume init only.
-      # Numeric prefixes control load order. Subsequent boots ignore these.
-      - ./testdata/acmecorp-5000-users.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/01-users.ldif:ro
-      - ./testdata/acmecorp-test-scenarios.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/02-scenarios.ldif:ro
-      - ./testdata/acmecorp-drift-test.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/03-drift.ldif:ro
+      - openldap_primary_data:/var/lib/ldap
+      - openldap_primary_config:/etc/ldap/slapd.d
+      # ISVA fixture schema (cn=config form) — added to cn=config on first
+      # init. No data bootstrap: the directory comes up empty.
+      - ./testdata/isva-schema-openldap.ldif:/container/service/slapd/assets/config/bootstrap/schema/isva.ldif:ro
     command: ["--copy-service"]
     restart: unless-stopped
 
-  # ── Globex directory ────────────────────────────────────────────────────
-  # Acquired-company side of the cross-directory story. ~30% overlap with
-  # AcmeCorp on mail/employeeNumber for EXACT/HIGH/AMBIGUOUS resolver tests.
-  # See testdata/README-globex.md for the overlap matrix.
-  openldap-globex:
+  openldap-alternate:
     image: osixia/openldap:1.5.0
-    container_name: ldap-globex
+    container_name: ldap-openldap-alternate
     ports:
       - "2389:389"
       - "2636:636"
     environment:
-      LDAP_ORGANISATION: "Globex Corp"
-      LDAP_DOMAIN: "globex.com"
-      LDAP_BASE_DN: "dc=globex,dc=com"
+      LDAP_ORGANISATION: "OpenLDAP Fixture"
+      LDAP_DOMAIN: "openldap.example.com"
+      LDAP_BASE_DN: "dc=openldap,dc=example,dc=com"
       LDAP_ADMIN_PASSWORD: "admin"
       LDAP_CONFIG_PASSWORD: "config"
-      LDAP_READONLY_USER: "true"
-      LDAP_READONLY_USER_PASSWORD: "readonly_password_456"
       LDAP_TLS: "false"
       LDAP_LOG_LEVEL: "256"
     volumes:
-      - globex_data:/var/lib/ldap
-      - globex_config:/etc/ldap/slapd.d
-      - ./testdata/globex-250-users.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/01-users.ldif:ro
-      - ./testdata/globex-acquisition-overlaps.ldif:/container/service/slapd/assets/config/bootstrap/ldif/custom/02-overlaps.ldif:ro
+      - openldap_alternate_data:/var/lib/ldap
+      - openldap_alternate_config:/etc/ldap/slapd.d
+      - ./testdata/isva-schema-openldap.ldif:/container/service/slapd/assets/config/bootstrap/schema/isva.ldif:ro
     command: ["--copy-service"]
     restart: unless-stopped
 
-  # ── OUD test fixture (opt-in, profile: oud) ─────────────────────────────
-  # OpenDJ as an Apache-2.0-licensed substitute for Oracle Unified
-  # Directory — same Sun ONE / ODSEE lineage, API-compatible (isMemberOf
-  # operational attr, ODSEE-style cn=changelog). Pinned to a specific
-  # minor so Dependabot's docker ecosystem can see version bumps.
-  # See testdata/README-oud.md for the substitution rationale and the
-  # behavioural-divergence notes.
-  #
-  # Start: docker compose --profile oud up opendj-oud
-  opendj-oud:
+  # ── OUD fixtures (OpenDJ) ──────────────────────────────────────────────────
+  # OpenDJ as an Apache-2.0 stand-in for Oracle Unified Directory (same
+  # Sun ONE / ODSEE lineage). Two independent directories (oud1, oud2), each
+  # with a primary + alternate instance sharing that directory's base DN.
+  # IVIA/ISVA fixture schema loaded from the mounted schema LDIF; no data.
+  oud1-primary:
     image: openidentityplatform/opendj:5.1.0-alpine
-    container_name: ldap-oud
-    profiles: ["oud"]
+    container_name: ldap-oud1-primary
     ports:
       - "3389:1389"
       - "3636:1636"
     environment:
-      BASE_DN: "dc=oudtest,dc=example,dc=com"
+      BASE_DN: "dc=oud1,dc=example,dc=com"
       ROOT_USER_DN: "cn=Directory Manager"
       ROOT_PASSWORD: "admin"
     volumes:
-      - oud_data:/opt/opendj/data
-      # Bootstrap LDIF — the openidentityplatform/opendj entrypoint
-      # imports anything in /opt/opendj/bootstrap/data/*.ldif on first
-      # init (empty data volume). Subsequent boots ignore it; to reload
-      # from scratch: `docker compose --profile oud down -v && ... up`.
-      - ./testdata/oud-bootstrap.ldif:/opt/opendj/bootstrap/data/01-bootstrap.ldif:ro
+      - oud1_primary_data:/opt/opendj/data
+      # ISVA fixture schema (OpenDJ subschema form). See the file header
+      # for the manual config/schema fallback if not auto-imported.
+      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
+    restart: unless-stopped
+
+  oud1-alternate:
+    image: openidentityplatform/opendj:5.1.0-alpine
+    container_name: ldap-oud1-alternate
+    ports:
+      - "4389:1389"
+      - "4636:1636"
+    environment:
+      BASE_DN: "dc=oud1,dc=example,dc=com"
+      ROOT_USER_DN: "cn=Directory Manager"
+      ROOT_PASSWORD: "admin"
+    volumes:
+      - oud1_alternate_data:/opt/opendj/data
+      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
+    restart: unless-stopped
+
+  oud2-primary:
+    image: openidentityplatform/opendj:5.1.0-alpine
+    container_name: ldap-oud2-primary
+    ports:
+      - "5389:1389"
+      - "5636:1636"
+    environment:
+      BASE_DN: "dc=oud2,dc=example,dc=com"
+      ROOT_USER_DN: "cn=Directory Manager"
+      ROOT_PASSWORD: "admin"
+    volumes:
+      - oud2_primary_data:/opt/opendj/data
+      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
+    restart: unless-stopped
+
+  oud2-alternate:
+    image: openidentityplatform/opendj:5.1.0-alpine
+    container_name: ldap-oud2-alternate
+    ports:
+      - "6389:1389"
+      - "6636:1636"
+    environment:
+      BASE_DN: "dc=oud2,dc=example,dc=com"
+      ROOT_USER_DN: "cn=Directory Manager"
+      ROOT_PASSWORD: "admin"
+    volumes:
+      - oud2_alternate_data:/opt/opendj/data
+      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
+    restart: unless-stopped
+
+  # ── Active Directory fixture (Samba AD DC) ─────────────────────────────────
+  # Samba provisioned as an AD domain controller, exposing AD-compatible
+  # LDAP. AD ships its own schema — no IVIA/ISVA schema is added here.
+  # INSECURELDAP=true allows plain LDAP simple binds (dev only).
+  #
+  # !! VERIFY: nowsci/samba-domain's env contract + required privileges
+  # against its current docs before relying on this. AD DC in a container
+  # typically needs privileged + a stable hostname; only LDAP ports are
+  # published below (add 88/445/464 if you exercise Kerberos/SMB).
+  ad-primary:
+    image: nowsci/samba-domain:latest
+    container_name: ldap-ad-primary
+    hostname: dc1
+    privileged: true
+    dns:
+      - 127.0.0.1
+      - 8.8.8.8
+    environment:
+      DOMAIN: "SAMDOM.EXAMPLE.COM"
+      DOMAINPASS: "Passw0rd!"
+      DNSFORWARDER: "8.8.8.8"
+      INSECURELDAP: "true"
+      NOCOMPLEXITY: "true"
+    ports:
+      - "7389:389"
+      - "7636:636"
+    volumes:
+      - ad_primary_data:/var/lib/samba
+      - ad_primary_config:/etc/samba/external
+      - /etc/localtime:/etc/localtime:ro
     restart: unless-stopped
 
 
 volumes:
   pgdata:
   pgadmin_data:
-  acmecorp_data:
-  acmecorp_config:
-  globex_data:
-  globex_config:
-  oud_data:
+  openldap_primary_data:
+  openldap_primary_config:
+  openldap_alternate_data:
+  openldap_alternate_config:
+  oud1_primary_data:
+  oud1_alternate_data:
+  oud2_primary_data:
+  oud2_alternate_data:
+  ad_primary_data:
+  ad_primary_config:
