@@ -4,6 +4,7 @@ package com.ldapportal.controller;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PermissionService;
 import com.ldapportal.dto.audit.AuditEventResponse;
+import com.ldapportal.dto.audit.AuditQueryCriteria;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.service.AuditQueryService;
 import lombok.RequiredArgsConstructor;
@@ -71,6 +72,11 @@ public class AuditLogController {
             @RequestParam(defaultValue = "0")  int page,
             @RequestParam(defaultValue = "50") int size) {
 
+        AuditQueryCriteria criteria = AuditQueryCriteria.builder()
+                .directoryId(directoryId).actorId(actorId).action(action)
+                .targetDn(targetDn).source(source).correlationId(correlationId)
+                .from(from).to(to).build();
+
         // Non-superadmins can only query their authorized directories
         Set<UUID> authorizedDirs = permissionService.getAuthorizedDirectoryIds(principal);
         if (!authorizedDirs.isEmpty()) {
@@ -104,11 +110,10 @@ public class AuditLogController {
             if (directoryId == null) {
                 // Query each authorized directory and merge — or require directoryId
                 // For now, require non-superadmins to specify a directoryId filter
-                return queryService.queryForDirectories(
-                        authorizedDirs, actorId, action, targetDn, source, correlationId, from, to, page, size);
+                return queryService.queryForDirectories(authorizedDirs, criteria, page, size);
             }
         }
 
-        return queryService.query(directoryId, actorId, action, targetDn, source, correlationId, from, to, page, size);
+        return queryService.query(criteria, page, size);
     }
 }

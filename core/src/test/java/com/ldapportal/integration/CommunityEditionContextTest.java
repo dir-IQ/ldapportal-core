@@ -137,10 +137,6 @@ class CommunityEditionContextTest {
         // runs on H2. See the @MockitoBean Javadoc above for context.
         org.mockito.Mockito.when(auditQueryService.query(
                         org.mockito.ArgumentMatchers.any(),
-                        org.mockito.ArgumentMatchers.any(),
-                        org.mockito.ArgumentMatchers.any(),
-                        org.mockito.ArgumentMatchers.any(),
-                        org.mockito.ArgumentMatchers.any(),
                         org.mockito.ArgumentMatchers.anyInt(),
                         org.mockito.ArgumentMatchers.anyInt()))
                 .thenReturn(new PageImpl<>(List.of()));

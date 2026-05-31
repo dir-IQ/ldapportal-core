@@ -3,6 +3,7 @@ package com.ldapportal.service;
 
 import com.ldapportal.core.governance.GovernanceDashboardProvider;
 import com.ldapportal.dto.audit.AuditEventResponse;
+import com.ldapportal.dto.audit.AuditQueryCriteria;
 import com.ldapportal.dto.dashboard.ComplianceDashboardDto;
 import com.ldapportal.dto.dashboard.ComplianceDashboardDto.*;
 import com.ldapportal.entity.DirectoryConnection;
@@ -159,7 +160,7 @@ public class DashboardService {
         long usersNotReviewedIn90Days = computeUsersNotReviewedIn90Days(dirs, now);
 
         // ── Recent audit events ──────────────────────────────────────────────
-        var recentAudit = auditQueryService.query(null, null, null, null, null, 0, 10);
+        var recentAudit = auditQueryService.query(AuditQueryCriteria.EMPTY, 0, 10);
 
         // ── Scheduled report job stats ────────────────────────────────────────
         var reportJobs = reportJobHealthProvider.health();
