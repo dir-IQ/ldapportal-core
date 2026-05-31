@@ -53,3 +53,11 @@ frontend/blob-report/
 # flatten-maven-plugin output (generated during -Prelease publishing)
 .flattened-pom.xml
 **/.flattened-pom.xml
+
+# Self-issued license JWT (mounted by compose's app service) and its
+# Ed25519 signing private key — operator secrets, NEVER commit. The
+# public key under core/src/main/resources/license/ is the only key
+# that belongs in the repo.
+/ldapportal.lic
+*.lic
+*-signing-private.pem
