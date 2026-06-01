@@ -40,6 +40,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.doThrow;
 
 @ExtendWith(MockitoExtension.class)
 class LdapOperationServiceTest {
@@ -171,6 +174,26 @@ class LdapOperationServiceTest {
         verify(userService, never()).moveUser(any(), anyString(), anyString());
     }
 
+    @Test
+    void createUser_profileValidationFailure_throwsAndSkipsWrite() {
+        ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
+        UUID profileId = UUID.randomUUID();
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        doThrow(new IllegalArgumentException("Attribute [mail] is required"))
+                .when(ps).validateAttributes(eq(profileId), any());
+
+        LdapOperationService svc = serviceWithProfile(ps);
+        CreateEntryRequest req = new CreateEntryRequest(
+                "uid=jsmith,ou=people,dc=example,dc=com", Map.of("cn", List.of("J")));
+
+        assertThatThrownBy(() -> svc.createUser(dirId, adminPrincipal(), req, profileId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("is required");
+
+        verify(userService, never()).createUser(any(), anyString(), any(), any());
+    }
+
     // ── Group operations ──────────────────────────────────────────────────────
 
     @Test
@@ -221,6 +244,18 @@ class LdapOperationServiceTest {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Builds a service whose ObjectProvider yields the given profile service. */
+    private LdapOperationService serviceWithProfile(ProvisioningProfileService ps) {
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<ProvisioningProfileService> provider =
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        lenient().when(provider.getIfAvailable()).thenReturn(ps);
+        return new LdapOperationService(
+                dirRepo, permissionService, browseService, userService, groupService,
+                schemaService, auditService, bulkUserService, bulkGroupService, csvTemplateService,
+                membershipGate, provider);
+    }
 
     private AuthPrincipal adminPrincipal() {
         return new AuthPrincipal(PrincipalType.ADMIN, adminId, "alice");

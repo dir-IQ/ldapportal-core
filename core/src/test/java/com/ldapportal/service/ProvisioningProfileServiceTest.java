@@ -32,6 +32,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
@@ -187,5 +188,43 @@ class ProvisioningProfileServiceTest {
         assertThatThrownBy(() -> service.validateAttributes(profileId, attrs))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("validation pattern is invalid");
+    }
+
+    // ── validateModifiedAttributes (update path) ─────────────────────────────
+
+    @Test
+    void validateModifiedAttributes_enforcesValueConstraints() {
+        ProfileAttributeConfig cfg = new ProfileAttributeConfig();
+        cfg.setAttributeName("mail");
+        cfg.setValidationRegex("^[^@]+@[^@]+$");
+        cfg.setValidationMessage("must be an email");
+        given(attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(cfg));
+
+        Map<String, List<String>> attrs = new HashMap<>();
+        attrs.put("mail", List.of("not-an-email"));
+
+        assertThatThrownBy(() -> service.validateModifiedAttributes(profileId, attrs))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must be an email");
+    }
+
+    @Test
+    void validateModifiedAttributes_doesNotEnforceRequiredOnCreate() {
+        ProfileAttributeConfig required = new ProfileAttributeConfig();
+        required.setAttributeName("uid");
+        required.setRequiredOnCreate(true);
+        ProfileAttributeConfig other = new ProfileAttributeConfig();
+        other.setAttributeName("displayName");
+        given(attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(required, other));
+
+        // The update touches only displayName; the required uid is absent and
+        // must NOT trigger a missing-required error on the modify path.
+        Map<String, List<String>> attrs = new HashMap<>();
+        attrs.put("displayName", List.of("New Name"));
+
+        assertThatCode(() -> service.validateModifiedAttributes(profileId, attrs))
+                .doesNotThrowAnyException();
     }
 }

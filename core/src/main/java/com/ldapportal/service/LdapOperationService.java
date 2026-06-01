@@ -221,6 +221,14 @@ public class LdapOperationService {
         permissionService.requireDnWithinScope(principal, directoryId, req.dn());
         DnValidator.requireValidDn(req.dn(), dc.getDirectoryType());
 
+        // Enforce the matched profile's attribute rules (required/length/regex/
+        // allowed-values) on the admin create path, mirroring the self-service
+        // path. Defaults/computed values are already applied by the caller.
+        ProvisioningProfileService createProfileSvc = profileServiceProvider.getIfAvailable();
+        if (createProfileSvc != null && profileId != null) {
+            createProfileSvc.validateAttributes(profileId, req.attributes());
+        }
+
         userService.createUser(dc, req.dn(), req.attributes(), profileId);
         LdapEntryResponse result = LdapEntryResponse.from(userService.getUser(dc, req.dn()));
         Map<String, Object> detail = new java.util.LinkedHashMap<>();
@@ -234,6 +242,19 @@ public class LdapOperationService {
                                         String dn, UpdateEntryRequest req) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
+
+        // Enforce the matched profile's value rules (length/regex/allowed) on
+        // the attributes being modified. Required-on-create is intentionally
+        // NOT enforced here — an attribute absent from this update is not a
+        // missing-required error.
+        ProvisioningProfileService updateProfileSvc = profileServiceProvider.getIfAvailable();
+        if (updateProfileSvc != null) {
+            UUID profileId = updateProfileSvc.resolveProfileForDn(directoryId, dn)
+                    .map(p -> p.getId()).orElse(null);
+            if (profileId != null) {
+                updateProfileSvc.validateModifiedAttributes(profileId, modifiedAttributeValues(req));
+            }
+        }
 
         List<Modification> mods = toModifications(req);
         userService.updateUser(dc, dn, mods);
@@ -784,6 +805,23 @@ public class LdapOperationService {
             throw new ResourceNotFoundException("DirectoryConnection", directoryId);
         }
         return dc;
+    }
+
+    /**
+     * Collects the attribute values being set (ADD/REPLACE with non-empty
+     * values) from an update request, keyed by attribute name. DELETE
+     * operations are excluded — removing values has no value-constraint to
+     * validate.
+     */
+    private static Map<String, List<String>> modifiedAttributeValues(UpdateEntryRequest req) {
+        Map<String, List<String>> map = new java.util.LinkedHashMap<>();
+        for (AttributeModification m : req.modifications()) {
+            if (m.operation() != AttributeModification.Operation.DELETE
+                    && m.values() != null && !m.values().isEmpty()) {
+                map.put(m.attribute(), m.values());
+            }
+        }
+        return map;
     }
 
     private List<Modification> toModifications(UpdateEntryRequest req) {
