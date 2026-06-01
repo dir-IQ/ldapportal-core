@@ -40,14 +40,25 @@ class JpaBoundaryArchitectureTest {
     private static final String EVENT_SUBSCRIPTION = "com.ldapportal.core.events.entity.EventSubscription";
 
     /**
-     * Within the async replication dispatch package, only the snapshot
-     * factories ({@code *Snapshot}) and the persister ({@code *Persister})
-     * may depend on the {@link com.ldapportal.entity.ReplicationLink} /
-     * {@link com.ldapportal.entity.ReplicationEvent} JPA entities. Every
-     * other class (worker, delivery, enqueuer, codec, mappers, the wrapper)
-     * must go through a {@code ReplicationLinkSnapshot} /
-     * {@code ReplicationEventSnapshot} obtained from {@code ReplicationReadOps}
-     * inside a {@code @Transactional} method.
+     * Within the async replication dispatch package, only the persistence-
+     * boundary classes may depend on the
+     * {@link com.ldapportal.entity.ReplicationLink} /
+     * {@link com.ldapportal.entity.ReplicationEvent} JPA entities:
+     * <ul>
+     *   <li>{@code *Snapshot} — read-side detached projections;</li>
+     *   <li>{@code *Persister} — the replication enqueue persister;</li>
+     *   <li>{@code *TxOps} — the reconciliation transactional helpers
+     *       ({@code ReconciliationTxOps}, {@code ReconciliationFindingTxOps}),
+     *       which mutate managed entities (run lifecycle, finding status,
+     *       corrective-event enqueue) inside a {@code @Transactional} method.
+     *       Same persistence-boundary role as {@code *Persister}, just a name
+     *       that reflects the broader transactional orchestration.</li>
+     * </ul>
+     * Every other class (worker, delivery, enqueuer, codec, mappers, the
+     * wrapper, the comparison/scheduler classes) must go through a
+     * {@code ReplicationLinkSnapshot} / {@code ReplicationEventSnapshot}
+     * obtained from {@code ReplicationReadOps} inside a {@code @Transactional}
+     * method.
      */
     @ArchTest
     static final ArchRule replication_entities_stay_behind_snapshot_boundary =
@@ -55,6 +66,7 @@ class JpaBoundaryArchitectureTest {
                     .that().resideInAPackage("com.ldapportal.ldap.replication..")
                     .and().haveSimpleNameNotEndingWith("Snapshot")
                     .and().haveSimpleNameNotEndingWith("Persister")
+                    .and().haveSimpleNameNotEndingWith("TxOps")
                     .should().dependOnClassesThat().haveFullyQualifiedName(REPLICATION_LINK)
                     .orShould().dependOnClassesThat().haveFullyQualifiedName(REPLICATION_EVENT)
                     .because("JPA entities must not cross out of the snapshot/persistence "

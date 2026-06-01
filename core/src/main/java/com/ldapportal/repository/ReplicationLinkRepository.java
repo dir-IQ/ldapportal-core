@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -50,4 +51,32 @@ public interface ReplicationLinkRepository extends JpaRepository<ReplicationLink
         """)
     List<ReplicationLink> findAllBySourceDirectoryIdAndEnabledTrue(
             @Param("sourceDirectoryId") UUID sourceDirectoryId);
+
+    /**
+     * Fully-hydrated link for reconciliation, materialised into a
+     * {@code ReplicationLinkSnapshot} inside the read tx. Fetch-joins the
+     * same associations as {@link #findAllBySourceDirectoryIdAndEnabledTrue}
+     * so the snapshot factory triggers no lazy load.
+     */
+    @Query("""
+        SELECT DISTINCT l FROM ReplicationLink l
+          LEFT JOIN FETCH l.attributeMappings
+               JOIN FETCH l.sourceDirectory
+               JOIN FETCH l.targetDirectory
+         WHERE l.id = :id
+        """)
+    Optional<ReplicationLink> findByIdForSnapshot(@Param("id") UUID id);
+
+    /**
+     * IDs of enabled links whose reconciliation is due (next-run reached).
+     * Backs the scheduler sweep; uses the partial
+     * {@code idx_replication_links_reconcile_due} index.
+     */
+    @Query("""
+        SELECT l.id FROM ReplicationLink l
+         WHERE l.reconcileEnabled = true
+           AND l.reconcileNextRunAt IS NOT NULL
+           AND l.reconcileNextRunAt <= :now
+        """)
+    List<UUID> findReconcileDueIds(@Param("now") OffsetDateTime now);
 }

@@ -3,6 +3,8 @@ package com.ldapportal.dto.replication;
 
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.ReplicationLinkAttrMapping;
+import com.ldapportal.entity.enums.ReconcileDeleteAction;
+import com.ldapportal.entity.enums.ReconcileMode;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -31,6 +33,14 @@ public record ReplicationLinkResponse(
         long failedCount,
         long deadLetteredCount,
         OffsetDateTime lastDeliveredAt,
+        boolean reconcileEnabled,
+        ReconcileMode reconcileMode,
+        OffsetDateTime reconcileFirstRunAt,
+        Integer reconcileIntervalSecs,
+        ReconcileDeleteAction reconcileDeleteAction,
+        OffsetDateTime reconcileNextRunAt,
+        OffsetDateTime reconcileLastRunAt,
+        long openFindingCount,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt) {
 
@@ -63,15 +73,24 @@ public record ReplicationLinkResponse(
                 health.failedCount(),
                 health.deadLetteredCount(),
                 health.lastDeliveredAt(),
+                link.isReconcileEnabled(),
+                link.getReconcileMode(),
+                link.getReconcileFirstRunAt(),
+                link.getReconcileIntervalSecs(),
+                link.getReconcileDeleteAction(),
+                link.getReconcileNextRunAt(),
+                link.getReconcileLastRunAt(),
+                health.openFindingCount(),
                 link.getCreatedAt(),
                 link.getUpdatedAt());
     }
 
     /** Per-link aggregate counts + lag, computed by the service layer. */
     public record LinkHealth(long pendingCount, long failedCount,
-                              long deadLetteredCount, OffsetDateTime lastDeliveredAt) {
+                              long deadLetteredCount, OffsetDateTime lastDeliveredAt,
+                              long openFindingCount) {
         public static LinkHealth empty() {
-            return new LinkHealth(0L, 0L, 0L, null);
+            return new LinkHealth(0L, 0L, 0L, null, 0L);
         }
     }
 }

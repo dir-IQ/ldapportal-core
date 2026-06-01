@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  Static mockup of the Reconciliation findings review modal
+  (see 2026-05-31-replication-reconciliation-design.md §9.3).
+  Self-contained — no build step, no CDN. Open directly in a browser.
+  Visuals approximate the app's Tailwind look (Inter, gray chrome,
+  blue-600 primary). Not wired to anything; the expand chevrons and the
+  "expanded" row are baked in to show the three finding shapes at once.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reconciliation findings — mockup</title>
+<style>
+  :root {
+    --gray-50:#f9fafb; --gray-100:#f3f4f6; --gray-200:#e5e7eb; --gray-300:#d1d5db;
+    --gray-400:#9ca3af; --gray-500:#6b7280; --gray-600:#4b5563; --gray-700:#374151;
+    --gray-900:#111827;
+    --blue-50:#eff6ff; --blue-100:#dbeafe; --blue-600:#2563eb; --blue-700:#1d4ed8;
+    --amber-50:#fffbeb; --amber-100:#fef3c7; --amber-700:#b45309; --amber-800:#92400e;
+    --red-50:#fef2f2; --red-100:#fee2e2; --red-600:#dc2626; --red-700:#b91c1c;
+    --green-50:#ecfdf5; --green-100:#d1fae5; --green-700:#047857;
+  }
+  * { box-sizing:border-box; }
+  body {
+    margin:0; min-height:100vh; background:#1f2937;
+    font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    color:var(--gray-900); display:flex; align-items:center; justify-content:center;
+    padding:32px;
+  }
+  /* ── Modal shell ─────────────────────────────────────────── */
+  .overlay { position:fixed; inset:0; background:rgba(17,24,39,.55); }
+  .modal {
+    position:relative; width:min(1080px,96vw); height:min(760px,92vh);
+    background:#fff; border-radius:14px; box-shadow:0 20px 60px rgba(0,0,0,.35);
+    display:flex; flex-direction:column; overflow:hidden;
+  }
+  .modal-header {
+    display:flex; align-items:flex-start; justify-content:space-between;
+    padding:16px 20px 12px; border-bottom:1px solid var(--gray-100);
+  }
+  .modal-title { font-size:17px; font-weight:700; }
+  .modal-sub { font-size:12px; color:var(--gray-500); margin-top:2px; }
+  .x-btn {
+    border:none; background:transparent; color:var(--gray-400); cursor:pointer;
+    font-size:20px; line-height:1; padding:4px 8px; border-radius:8px;
+  }
+  .x-btn:hover { background:var(--gray-100); color:var(--gray-600); }
+
+  /* ── Summary chips ───────────────────────────────────────── */
+  .summary { display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+    padding:12px 20px; border-bottom:1px solid var(--gray-100); }
+  .chip {
+    display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600;
+    padding:4px 10px; border-radius:999px; border:1px solid transparent; white-space:nowrap;
+  }
+  .chip .n { font-variant-numeric:tabular-nums; }
+  .chip-neutral { background:var(--gray-100); color:var(--gray-600); }
+  .chip-blue  { background:var(--blue-50);  color:var(--blue-700);  border-color:var(--blue-100); }
+  .chip-amber { background:var(--amber-50); color:var(--amber-800); border-color:var(--amber-100); }
+  .chip-red   { background:var(--red-50);   color:var(--red-700);   border-color:var(--red-100); }
+  .chip-gray  { background:var(--gray-100); color:var(--gray-500); }
+  .dot { width:7px; height:7px; border-radius:999px; }
+  .dot-blue{background:var(--blue-600);} .dot-amber{background:#d97706;}
+  .dot-red{background:var(--red-600);} .dot-gray{background:var(--gray-400);}
+
+  /* ── Toolbar ─────────────────────────────────────────────── */
+  .toolbar { display:flex; align-items:center; gap:10px; padding:10px 20px;
+    border-bottom:1px solid var(--gray-100); background:var(--gray-50); }
+  label.fld { font-size:12px; color:var(--gray-600); display:inline-flex; align-items:center; gap:6px; }
+  .input {
+    font:inherit; font-size:13px; color:var(--gray-700); background:#fff;
+    border:1px solid var(--gray-300); border-radius:8px; padding:5px 9px;
+  }
+  .spacer { flex:1; }
+  .sel-count { font-size:12px; color:var(--gray-500); }
+  .btn {
+    font:inherit; font-size:13px; font-weight:600; border-radius:8px; padding:6px 12px;
+    cursor:pointer; border:1px solid transparent;
+  }
+  .btn-primary { background:var(--blue-600); color:#fff; }
+  .btn-primary:hover { background:var(--blue-700); }
+  .btn-primary:disabled { background:var(--blue-600); opacity:.45; cursor:not-allowed; }
+  .btn-secondary { background:#fff; color:var(--gray-700); border-color:var(--gray-300); }
+  .btn-secondary:hover { background:var(--gray-100); }
+  .btn-ghost { background:transparent; color:var(--gray-600); border-color:var(--gray-200); }
+  .btn-ghost:hover { background:var(--gray-100); }
+  .btn-sm { padding:4px 9px; font-size:12px; }
+
+  /* ── Table ───────────────────────────────────────────────── */
+  .table-wrap { flex:1; overflow:auto; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  thead th {
+    position:sticky; top:0; z-index:1; background:var(--gray-50);
+    text-align:left; font-size:11px; font-weight:600; letter-spacing:.04em;
+    text-transform:uppercase; color:var(--gray-500); padding:9px 12px;
+    border-bottom:1px solid var(--gray-200);
+  }
+  tbody td { padding:10px 12px; border-bottom:1px solid var(--gray-100); vertical-align:top; }
+  tbody tr.row:hover { background:var(--gray-50); }
+  tr.row.sel { background:var(--blue-50); }
+  .col-cb { width:34px; } .col-type { width:96px; } .col-act { width:150px; } .col-x { width:34px; }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11.5px;
+    color:var(--gray-700); word-break:break-all; }
+  .muted { color:var(--gray-400); }
+
+  .badge { display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:6px; }
+  .badge-blue { background:var(--blue-100); color:var(--blue-700); }
+  .badge-amber{ background:var(--amber-100); color:var(--amber-800); }
+  .badge-red  { background:var(--red-100);  color:var(--red-700); }
+  .op { display:inline-block; font-size:11px; font-weight:700; letter-spacing:.03em;
+    padding:2px 8px; border-radius:6px; background:var(--gray-100); color:var(--gray-600); }
+  .op-add { background:var(--green-100); color:var(--green-700); }
+  .op-mod { background:var(--amber-100); color:var(--amber-800); }
+  .op-del { background:var(--red-100); color:var(--red-700); }
+  .op-note { font-size:10.5px; color:var(--gray-400); margin-top:3px; }
+
+  .chev { border:none; background:transparent; cursor:pointer; color:var(--gray-400);
+    font-size:12px; padding:4px; border-radius:6px; }
+  .chev:hover { background:var(--gray-100); }
+  input[type=checkbox] { width:15px; height:15px; accent-color:var(--blue-600); margin-top:1px; }
+
+  /* ── Expanded diff panel ─────────────────────────────────── */
+  tr.detail td { background:var(--gray-50); padding:0; border-bottom:1px solid var(--gray-100); }
+  .diff { padding:12px 16px 14px 46px; }
+  .diff h4 { margin:0 0 8px; font-size:11px; text-transform:uppercase; letter-spacing:.04em;
+    color:var(--gray-500); font-weight:700; }
+  .attr-add { display:flex; flex-direction:column; gap:4px; }
+  .attr-add .ln { font-size:12px; }
+  .attr-add .ln .k { font-weight:600; color:var(--gray-700); }
+  .attr-add .ln .v { font-family:ui-monospace,monospace; color:var(--gray-600); }
+  .add-pill { color:var(--green-700); font-weight:700; margin-right:6px; }
+
+  table.diff-tbl { width:auto; min-width:560px; border:1px solid var(--gray-200);
+    border-radius:8px; overflow:hidden; }
+  table.diff-tbl th { position:static; background:var(--gray-100); }
+  table.diff-tbl td { border-bottom:1px solid var(--gray-100); padding:7px 12px; }
+  .cell-cur { background:var(--red-50); }
+  .cell-exp { background:var(--green-50); }
+  .val { font-family:ui-monospace,monospace; font-size:11.5px; }
+  .val.del { color:var(--red-700); text-decoration:line-through; }
+  .val.ins { color:var(--green-700); }
+
+  .warn { display:flex; gap:8px; align-items:flex-start; background:var(--red-50);
+    border:1px solid var(--red-100); border-radius:8px; padding:8px 10px; margin-top:10px;
+    font-size:12px; color:var(--red-700); max-width:620px; }
+  .warn b { color:var(--red-700); }
+
+  .link { color:var(--blue-600); text-decoration:none; font-size:12px; font-weight:600; }
+  .link:hover { text-decoration:underline; }
+
+  /* ── Footer ──────────────────────────────────────────────── */
+  .modal-footer { display:flex; align-items:center; justify-content:space-between;
+    padding:10px 20px; border-top:1px solid var(--gray-100); background:#fff; font-size:12px; color:var(--gray-500); }
+  .note { position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    background:#111827; color:#e5e7eb; font-size:11px; padding:5px 12px; border-radius:999px; opacity:.85; }
+</style>
+</head>
+<body>
+  <div class="note">Static mockup · Reconciliation findings review modal · §9.3</div>
+  <div class="overlay"></div>
+
+  <div class="modal" role="dialog" aria-label="Reconciliation findings">
+    <!-- Header -->
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">Reconciliation findings — Corp&nbsp;LDAP&nbsp;→&nbsp;DR&nbsp;Replica</div>
+        <div class="modal-sub">Run #4f2a · Manual · completed 2 minutes ago · source ou=people,dc=corp,dc=com → ou=people,dc=corp,dc=net</div>
+      </div>
+      <button class="x-btn" aria-label="Close">&times;</button>
+    </div>
+
+    <!-- Summary chips -->
+    <div class="summary">
+      <span class="chip chip-neutral">Source <span class="n">1,240</span></span>
+      <span class="chip chip-neutral">Target <span class="n">1,238</span></span>
+      <span style="width:1px;height:18px;background:var(--gray-200);margin:0 4px;"></span>
+      <span class="chip chip-blue"><span class="dot dot-blue"></span>Missing <span class="n">3</span></span>
+      <span class="chip chip-amber"><span class="dot dot-amber"></span>Drift <span class="n">5</span></span>
+      <span class="chip chip-red"><span class="dot dot-red"></span>Extra <span class="n">2</span></span>
+      <span class="chip chip-gray"><span class="dot dot-gray"></span>Suppressed <span class="n">1</span></span>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <label class="fld">Status
+        <select class="input">
+          <option>Proposed</option><option>All</option><option>Applied</option><option>Dismissed</option>
+        </select>
+      </label>
+      <label class="fld">Type
+        <select class="input">
+          <option>All</option><option>Missing in target</option><option>Attribute drift</option><option>Extra in target</option>
+        </select>
+      </label>
+      <button class="btn btn-ghost btn-sm">↻ Refresh</button>
+      <div class="spacer"></div>
+      <span class="sel-count">2 selected</span>
+      <button class="btn btn-secondary btn-sm">Dismiss selected</button>
+      <button class="btn btn-primary btn-sm">Apply selected</button>
+    </div>
+
+    <!-- Table -->
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="col-cb"><input type="checkbox" aria-label="Select all" /></th>
+            <th class="col-type">Type</th>
+            <th>Source DN</th>
+            <th>Target DN</th>
+            <th class="col-act">Suggested action</th>
+            <th class="col-x"></th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <!-- 1. MISSING_IN_TARGET — expanded -->
+          <tr class="row sel">
+            <td><input type="checkbox" checked aria-label="Select finding" /></td>
+            <td><span class="badge badge-blue">Missing</span></td>
+            <td><span class="mono">uid=jdoe,ou=people,dc=corp,dc=com</span></td>
+            <td><span class="mono">uid=jdoe,ou=people,dc=corp,dc=net</span></td>
+            <td><span class="op op-add">ADD</span></td>
+            <td><button class="chev" aria-label="Collapse">▾</button></td>
+          </tr>
+          <tr class="detail">
+            <td colspan="6">
+              <div class="diff">
+                <h4>Attributes to add on target</h4>
+                <div class="attr-add">
+                  <div class="ln"><span class="add-pill">+</span><span class="k">cn:</span> <span class="v">John Doe</span></div>
+                  <div class="ln"><span class="add-pill">+</span><span class="k">sn:</span> <span class="v">Doe</span></div>
+                  <div class="ln"><span class="add-pill">+</span><span class="k">givenName:</span> <span class="v">John</span></div>
+                  <div class="ln"><span class="add-pill">+</span><span class="k">mail:</span> <span class="v">jdoe@corp.com</span></div>
+                  <div class="ln"><span class="add-pill">+</span><span class="k">objectClass:</span> <span class="v">inetOrgPerson, organizationalPerson, person, top</span></div>
+                </div>
+              </div>
+            </td>
+          </tr>
+
+          <!-- 2. ATTRIBUTE_DRIFT — expanded -->
+          <tr class="row sel">
+            <td><input type="checkbox" checked aria-label="Select finding" /></td>
+            <td><span class="badge badge-amber">Drift</span></td>
+            <td><span class="mono">uid=asmith,ou=people,dc=corp,dc=com</span></td>
+            <td><span class="mono">uid=asmith,ou=people,dc=corp,dc=net</span></td>
+            <td><span class="op op-mod">MODIFY</span><div class="op-note">2 attributes differ</div></td>
+            <td><button class="chev" aria-label="Collapse">▾</button></td>
+          </tr>
+          <tr class="detail">
+            <td colspan="6">
+              <div class="diff">
+                <h4>Attribute drift — current target vs expected (source)</h4>
+                <table class="diff-tbl">
+                  <thead>
+                    <tr><th>Attribute</th><th>Current (target)</th><th>Expected (source)</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="k" style="font-weight:600;color:var(--gray-700);">mail</td>
+                      <td class="cell-cur"><span class="val del">asmith@old-corp.com</span></td>
+                      <td class="cell-exp"><span class="val ins">asmith@corp.com</span></td>
+                    </tr>
+                    <tr>
+                      <td class="k" style="font-weight:600;color:var(--gray-700);">telephoneNumber</td>
+                      <td class="cell-cur"><span class="val del">+1 555 0100</span></td>
+                      <td class="cell-exp"><span class="val ins">+1 555 0142</span></td>
+                    </tr>
+                    <tr>
+                      <td class="k" style="font-weight:600;color:var(--gray-700);">title</td>
+                      <td class="cell-cur"><span class="val muted">— (absent)</span></td>
+                      <td class="cell-exp"><span class="val ins">Staff Engineer</span></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </td>
+          </tr>
+
+          <!-- 3. ATTRIBUTE_DRIFT — collapsed -->
+          <tr class="row">
+            <td><input type="checkbox" aria-label="Select finding" /></td>
+            <td><span class="badge badge-amber">Drift</span></td>
+            <td><span class="mono">uid=bwong,ou=people,dc=corp,dc=com</span></td>
+            <td><span class="mono">uid=bwong,ou=people,dc=corp,dc=net</span></td>
+            <td><span class="op op-mod">MODIFY</span><div class="op-note">1 attribute differs</div></td>
+            <td><button class="chev" aria-label="Expand">▸</button></td>
+          </tr>
+
+          <!-- 4. MISSING — collapsed -->
+          <tr class="row">
+            <td><input type="checkbox" aria-label="Select finding" /></td>
+            <td><span class="badge badge-blue">Missing</span></td>
+            <td><span class="mono">uid=kpatel,ou=people,dc=corp,dc=com</span></td>
+            <td><span class="mono">uid=kpatel,ou=people,dc=corp,dc=net</span></td>
+            <td><span class="op op-add">ADD</span></td>
+            <td><button class="chev" aria-label="Expand">▸</button></td>
+          </tr>
+
+          <!-- 5. EXTRA_IN_TARGET — expanded (held for review under delete_action=REVIEW) -->
+          <tr class="row">
+            <td><input type="checkbox" aria-label="Select finding" /></td>
+            <td><span class="badge badge-red">Extra</span></td>
+            <td><span class="muted">—</span></td>
+            <td><span class="mono">uid=tmp9931,ou=people,dc=corp,dc=net</span></td>
+            <td><span class="op op-del">DELETE</span><div class="op-note">held for review</div></td>
+            <td><button class="chev" aria-label="Collapse">▾</button></td>
+          </tr>
+          <tr class="detail">
+            <td colspan="6">
+              <div class="diff">
+                <h4>Target entry with no source counterpart — would be deleted</h4>
+                <div class="attr-add">
+                  <div class="ln"><span class="k">cn:</span> <span class="v">Temp Account 9931</span></div>
+                  <div class="ln"><span class="k">mail:</span> <span class="v">tmp9931@corp.net</span></div>
+                  <div class="ln"><span class="k">createTimestamp:</span> <span class="v muted">20260514093210Z</span></div>
+                </div>
+                <div class="warn">
+                  <span>⚠</span>
+                  <span><b>Destructive.</b> This entry exists on the target but not the source. Applying will issue a
+                  <b>DELETE</b> against the target. This link's deletion policy is <b>Review before deleting</b>, so it
+                  was not applied automatically.</span>
+                </div>
+              </div>
+            </td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Footer -->
+    <div class="modal-footer">
+      <span>Showing 10 of 10 proposed findings · 1 suppressed (a live replication event already targets that DN)</span>
+      <span>Applied findings link to their event in the <a href="#" class="link">event log</a> ↗</span>
+    </div>
+  </div>
+</body>
+</html>

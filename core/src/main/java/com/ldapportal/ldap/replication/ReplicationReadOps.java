@@ -72,4 +72,14 @@ public class ReplicationReadOps {
         return eventRepo.findEarliestClaimableForLink(linkId, now)
                 .map(ReplicationEventSnapshot::from);
     }
+
+    /**
+     * A single link's snapshot by id, fully hydrated. Used by the
+     * reconciliation engine, which runs outside any caller transaction.
+     */
+    @Transactional(readOnly = true)
+    public Optional<ReplicationLinkSnapshot> snapshotById(UUID linkId) {
+        return linkRepo.findByIdForSnapshot(linkId)
+                .map(ReplicationLinkSnapshot::from);
+    }
 }
