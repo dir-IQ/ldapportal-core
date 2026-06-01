@@ -1,7 +1,7 @@
 # Replication reconciliation — design plan
 
 - **Date:** 2026-05-31
-- **Status:** Not started (design proposal, 2026-05-31).
+- **Status:** In progress (R-P0 + R-P1 shipped; performance hardening part 1 — R-PP1 — in progress, 2026-06-01).
 - **Scope:** Periodic, operator-scheduled reconciliation between the
   source and target DITs of an existing **replication link**. Compares the
   replicated subtrees, classifies discrepancies, and either auto-corrects
@@ -497,11 +497,13 @@ later, out of core).
 
 | Phase | Deliverable |
 |---|---|
-| **R-P0 — Config + schema** | Migration (§5), `ReplicationLink` fields + `EnqueueSource.RECONCILIATION`, request/response DTO additions, validation, UI config section (§9.1), audit `CONFIG_UPDATED`. No comparison yet. Tests: DTO round-trip, validation (interval floor, enabled-requires-schedule), migration. |
-| **R-P1 — Engine + scheduler + AUTO_CORRECT** | `ReconciliationReadOps` paged subtree read, `ReconciliationService` compare/classify, the `@Scheduled` sweeper + single-flight + catch-up (§6), `reconciliation_runs`, shadow-suppression, enqueue-as-event for auto-correct, `RUN_*` + `FINDING_AUTO_CORRECTED` audit, **manual "Reconcile now"** endpoint + button. Tests (in-memory LDAP): missing→ADD, drift→MODIFY shape, extra gated by `delete_action` (IGNORE/REVIEW/AUTO), suppression vs a live event, catch-up math, single-flight, exclusion set, mapping rename/template parity with replication. |
+| **R-P0 — Config + schema** ✅ | Migration (§5), `ReplicationLink` fields + `EnqueueSource.RECONCILIATION`, request/response DTO additions, validation, UI config section (§9.1), audit `CONFIG_UPDATED`. No comparison yet. Tests: DTO round-trip, validation (interval floor, enabled-requires-schedule), migration. |
+| **R-P1 — Engine + scheduler + AUTO_CORRECT** ✅ | `ReconciliationReadOps` subtree read, `ReconciliationService` compare/classify, the `@Scheduled` sweeper + single-flight + catch-up (§6), `reconciliation_runs`, shadow-suppression, enqueue-as-event for auto-correct, `RUN_*` audit, **manual "Reconcile now"** endpoint + button. Tests (in-memory LDAP): missing→ADD, drift→MODIFY shape, extra gated by `delete_action` (IGNORE/REVIEW/AUTO), suppression vs a live event, catch-up math, single-flight, exclusion set, mapping rename/template parity with replication. |
+| **R-PP1 — Performance hardening, part 1** ⏳ *(now)* | Paged subtree reads + checksum/two-pass diff (§16). Bounds peak memory to O(N digests) and removes the hard server size-limit failure. Tests: digest equality/canonicalisation, two-pass classification (missing/drift/extra) against a faked paged reader, hydration-only-on-difference. |
 | **R-P2 — REVIEW mode + operator UI** | `reconciliation_findings` persistence, findings list/apply/dismiss endpoints (§8), the review modal + selective apply (§9.3), row surfacing (§9.2), `FINDING_APPLIED/DISMISSED` audit. Tests: MockMvc authz + selective apply count + status transitions; Vitest for the modal (mock api, pinia). |
 | **R-P3 — Retention + dashboard** | Retention sweep for runs/findings (mirror `ReplicationEventRetentionScheduler`), dashboard awareness item (§11), `auditLabels` entries. |
-| **R-P4 — (deferred)** | MODIFY_DN/rename reconciliation; bidirectional; scripted attribute authority; EE alerting rule. |
+| **R-PP2 — Performance hardening, part 2** *(final implementation phase)* | Throttled / dedicated reconciliation connection budget + chunked corrective-event enqueue (§17). Stops reconciliation scans from starving the live LDAP pools and bounds the enqueue transaction size. Tests: per-directory concurrency cap, chunk-boundary enqueue, pool-isolation. |
+| **Deferred (beyond MVP)** | MODIFY_DN/rename reconciliation; bidirectional; scripted attribute authority; per-link managed-attribute allow-list; EE alerting rule. |
 
 ## 13. Known limitations (accepted for v1)
 
@@ -510,16 +512,21 @@ later, out of core).
   finding that the next run clears. Shadow-suppression (§7.5) covers the
   app's own in-flight writes, not third-party concurrent writes.
 - **No rename detection** — a renamed source entry reads as EXTRA (old DN)
-  + MISSING (new DN) rather than a MODIFY_DN. Deferred to R-P4. Net effect
-  is still correct (delete-old + add-new) once the EXTRA delete is applied
-  (per `reconcile_delete_action`).
+  + MISSING (new DN) rather than a MODIFY_DN. Deferred (beyond MVP). Net
+  effect is still correct (delete-old + add-new) once the EXTRA delete is
+  applied (per `reconcile_delete_action`).
 - **Scope is the link's base DN** — entries outside `source_base_dn` /
   `target_base_dn` are invisible to reconciliation, by design.
-- **Cost** — a full subtree compare is O(entries) reads on both sides each
-  cycle; the operator's interval choice is the throttle, and `page-size` /
-  `max-findings-per-run` bound a single run. No incremental/changelog-based
-  reconciliation in v1 (a future `SOURCE_CHANGELOG` capture path would
-  reduce the need for frequent full compares).
+- **Cost / large datasets** — a full subtree compare is O(entries) on both
+  sides each cycle; the operator's interval choice (≥ 1 h) is the throttle.
+  The R-P1 read materialised both subtrees fully in memory and failed on a
+  server size-limit. **R-PP1 (§16)** replaces that with paged reads + a
+  checksum/two-pass diff so peak memory is O(N digests) and large subtrees
+  read in pages instead of failing; **R-PP2 (§17)** throttles the
+  reconciliation connection budget and chunks the corrective-event enqueue
+  so a big run neither starves the live LDAP pools nor opens one giant
+  transaction. No incremental/changelog-based reconciliation in v1 (a future
+  `SOURCE_CHANGELOG` capture path would remove the full-scan need entirely).
 - **Password drift unobservable** — `userPassword` can't be read back from
   most targets; reconciliation never asserts password equality.
 
@@ -567,3 +574,152 @@ frontend/src/components/dashboard/auditLabels.js                                
 5. **`resolved_by` account table** — confirm the operator-account
    table/column for the FK (the predecessor's event-operator actions use an
    account id; reuse the same).
+
+## 16. Performance hardening, part 1 — paged reads + checksum diff (R-PP1)
+
+### 16.1 Problem
+
+The R-P1 read path (`ReconciliationReadOps.readSubtree`) issues a single
+unpaged `SUB` search and materialises **every** entry on both sides — DN
+plus all user attributes — into in-memory lists before diffing. Two
+consequences at scale:
+
+- **Memory** grows with the dataset: ~tens-to-hundreds of MB for 10 k × 2
+  entries, ×`pool-size` concurrent runs — a GC-pressure / OOM risk that can
+  hurt the whole JVM.
+- **Server size-limits** (e.g. AD's default 1 000) make the search throw
+  `SIZE_LIMIT_EXCEEDED`, which the run surfaces as a hard failure — so past
+  the limit reconciliation can't run at all.
+
+### 16.2 Design
+
+**Paged streaming read.** `ReconciliationReadOps` gains
+`streamSubtree(dc, baseDn, pageSize, EntryConsumer)`, using a
+`SimplePagedResultsControl` loop pinned to a **single** pooled connection
+(cookie continuity requires one connection — the `withConnectionUnreplicated`
+lambda already holds exactly one for its duration). Each page's entries are
+handed to the consumer and then released; the full result set is never held
+at once. `pageSize` ← `ldapportal.reconciliation.page-size` (default 500,
+falling back to the directory's `pagingSize`). A page error still fails the
+run (never diff a truncated view).
+
+**Two-pass checksum diff.** A new `ReconciliationDigest` computes a stable
+digest (SHA-256 hex) over an entry's *managed* attributes — names
+lower-cased, the §3 exclusion set removed, value-sets sorted — so an
+expected (source-mapped) entry and an equal actual (target) entry hash
+identically.
+
+- **Pass 1 — index (streaming, low memory).** Stream the source subtree:
+  for each entry compute `expectedTargetDn = DnMapper.map(...)` and
+  `expectedDigest = digest(AttributeMapper.mapAttributes(...))`; record
+  `expectedDigest[normExpectedDn]` and `sourceDnOf[normExpectedDn]` (the
+  source DN to re-read in pass 2). Stream the target subtree into
+  `actualDigest[normTargetDn]`. Memory is **O(N) small entries** (normalised
+  DN + 64-char hash), not O(N) full entries.
+- **Classify by set ops + digest compare.** `MISSING` = expected DNs absent
+  from target; `EXTRA` = target DNs absent from expected (gated by
+  `reconcile_delete_action`); `DRIFT` = DNs in both whose digests differ.
+  Shadow-suppression (undelivered-event target DNs) is applied to this DN
+  set **before** pass 2, so suppressed entries are never re-fetched.
+- **Pass 2 — hydrate only the differences.** Re-read just the discrepant
+  entries by DN (`readEntry(dc, dn)`, BASE scope): the source entry for each
+  `MISSING`/`DRIFT` (to build the ADD / minimal-MODIFY payload via the
+  existing `ReconciliationDiffer` helpers) and the target entry for each
+  `DRIFT` (for the `before` diff). `EXTRA` needs only the DN for an auto
+  DELETE; the target entry is fetched lazily for the review `currentTarget`.
+  Full-attribute memory is now **O(discrepancies)** — small in steady state.
+
+The existing pure `ReconciliationDiffer.diff(...)` (full-list, in-memory) is
+retained for small links and as the unit-test surface; its per-entry payload
+builders (`computeDrift`, exclusion handling) are reused by pass 2. The
+service selects the streaming/checksum path for production runs.
+
+### 16.3 Properties
+
+| Aspect | R-P1 | R-PP1 |
+|---|---|---|
+| Peak memory | O(N) full entries × 2 | O(N) digests + O(diffs) full entries |
+| Server size-limit | hard failure | read in pages |
+| LDAP round-trips | 2 searches | 2 paged searches + 1 BASE read per discrepancy |
+| Diff complexity | O(S+T) | O(S+T) hash + O(diffs) reads |
+
+The extra pass-2 round-trips are the deliberate trade: a handful of targeted
+reads (proportional to drift) in exchange for never holding the whole target
+subtree in heap. In a healthy steady state (few diffs) it is strictly
+cheaper on memory and comparable on I/O.
+
+### 16.4 New / changed classes
+
+```
+core/.../ldap/replication/reconcile/ReconciliationDigest.java     (new — canonical SHA-256 over managed attrs)
+core/.../ldap/replication/reconcile/ReconciliationReadOps.java    (add streamSubtree + readEntry; paged)
+core/.../ldap/replication/reconcile/ChecksumReconciler.java       (new — two-pass classify + hydrate)
+core/.../ldap/replication/reconcile/ReconciliationService.java    (use the streaming path)
+core/.../ldap/replication/reconcile/ReconciliationDiffer.java     (expose payload builders for reuse)
+```
+
+### 16.5 Tests
+
+- `ReconciliationDigestTest` — equal managed state → equal digest; excluded
+  attribute change → digest unchanged; value reorder → unchanged; real change
+  → differs.
+- `ChecksumReconcilerTest` — against a fake paged reader: missing/drift/extra
+  classification matches `ReconciliationDiffer`; only discrepant DNs are
+  hydrated (assert the re-read calls); suppression skips re-fetch.
+- Parity test: for a small dataset the checksum path yields the same findings
+  as the pure `diff(...)`.
+
+## 17. Performance hardening, part 2 — throttled connections + chunked enqueue (R-PP2)
+
+### 17.1 Problem
+
+Two remaining ways a large run perturbs the rest of the app:
+
+- **Connection contention.** Each subtree read borrows a connection from the
+  directory's shared pool for the whole (now paged, possibly long) search.
+  Two reconcile threads can hold four connections for minutes, starving live
+  user/admin LDAP operations against those directories.
+- **Enqueue transaction size.** Auto-applied corrections are persisted with a
+  single `persister.saveAll(pending)` — up to `max-findings-per-run` (5 000)
+  INSERTs in one transaction, a heavy WAL/lock burst, and the cap also blocks
+  a legitimate large initial backfill.
+
+### 17.2 Design
+
+**Throttled / isolated connection budget.**
+- A **per-directory reconciliation concurrency cap** (default 1) so at most
+  one in-flight reconciliation read touches a given directory at a time,
+  regardless of `pool-size`. Implemented as a keyed semaphore in
+  `ReconciliationReadOps` (`Map<directoryId, Semaphore>`), acquired around the
+  paged read and pass-2 reads.
+- Optionally a **dedicated small connection pool** for reconciliation reads
+  (`ldapportal.reconciliation.pool.*`), so scans draw from a separate budget
+  than live traffic rather than the shared `LDAPConnectionPool`. Config-gated;
+  defaults to the shared pool when unset to avoid doubling idle connections.
+
+**Chunked enqueue.** Replace the single `saveAll` with a chunked loop
+(`ldapportal.reconciliation.enqueue-chunk-size`, default 500): each chunk
+commits in its own `REQUIRES_NEW` transaction via the persister, bounding WAL
+and lock footprint and letting the worker start draining the first chunk
+while later chunks are still being written. The `max-findings-per-run` cap is
+re-framed as a *soft* warning threshold for chunked applies (still a hard
+abort for the unreviewed AUTO path's safety), so a deliberate large backfill
+can proceed in bounded batches.
+
+### 17.3 Config
+
+```
+ldapportal.reconciliation.read-concurrency-per-directory  (default 1)
+ldapportal.reconciliation.enqueue-chunk-size              (default 500)
+ldapportal.reconciliation.pool.min-size / max-size        (optional dedicated pool)
+```
+
+### 17.4 Tests
+
+- Per-directory concurrency cap: a second reconcile read for the same
+  directory blocks/serialises while the first holds the permit; different
+  directories proceed in parallel.
+- Chunked enqueue: 1 250 auto-applied findings → 3 persister transactions of
+  ≤ 500; failure mid-chunk leaves prior chunks committed (resumable).
+- Pool isolation (when the dedicated pool is configured): reconciliation reads
+  never draw from the shared pool.

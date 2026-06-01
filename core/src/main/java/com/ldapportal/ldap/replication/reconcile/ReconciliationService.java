@@ -56,7 +56,7 @@ import java.util.stream.Collectors;
 public class ReconciliationService {
 
     private final ReplicationReadOps        replicationReadOps;
-    private final ReconciliationReadOps     reconReadOps;
+    private final ChecksumReconciler        checksumReconciler;
     private final ReplicationEventPersister persister;
     private final ReplicationEventRepository eventRepo;
     private final ReconciliationRunRepository runRepo;
@@ -118,15 +118,14 @@ public class ReconciliationService {
             String targetBase = link.targetBaseDn() != null
                     ? link.targetBaseDn() : link.targetDirectory().getBaseDn();
 
-            List<ReconEntry> sourceEntries = reconReadOps.readSubtree(link.sourceDirectory(), sourceBase);
-            List<ReconEntry> targetEntries = reconReadOps.readSubtree(link.targetDirectory(), targetBase);
-
             Set<String> undelivered = eventRepo.findUndeliveredTargetDns(linkId).stream()
                     .map(ReconciliationDiffer::normDn)
                     .collect(Collectors.toSet());
 
-            DiffResult diff = ReconciliationDiffer.diff(
-                    link, targetBase, sourceEntries, targetEntries, undelivered, sr.deleteAction());
+            // Paged + checksum two-pass read (R-PP1): bounds peak memory and
+            // reads large subtrees in pages instead of failing on a size-limit.
+            DiffResult diff = checksumReconciler.reconcile(
+                    link, sourceBase, targetBase, undelivered, sr.deleteAction());
 
             // Safety cap: a base-DN typo can make every entry look missing/extra.
             // Abort rather than enqueue a mass mutation.

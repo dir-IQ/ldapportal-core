@@ -131,8 +131,8 @@ public final class ReconciliationDiffer {
      * current values. Returns a MODIFY payload ({@code modifications} +
      * {@code before}) when any managed attribute differs, else null.
      */
-    private static Map<String, Object> computeDrift(Map<String, List<String>> expected,
-                                                     Map<String, List<String>> targetAttrs) {
+    static Map<String, Object> computeDrift(Map<String, List<String>> expected,
+                                            Map<String, List<String>> targetAttrs) {
         Map<String, List<String>> targetCi = caseInsensitive(targetAttrs);
         List<Map<String, Object>> mods = new ArrayList<>();
         Map<String, List<String>> before = new LinkedHashMap<>();
@@ -155,7 +155,7 @@ public final class ReconciliationDiffer {
         return payload;
     }
 
-    private static Map<String, List<String>> stripExcluded(Map<String, List<String>> attrs) {
+    static Map<String, List<String>> stripExcluded(Map<String, List<String>> attrs) {
         Map<String, List<String>> out = new LinkedHashMap<>();
         for (Map.Entry<String, List<String>> e : attrs.entrySet()) {
             if (!EXCLUDED_ATTRS.contains(e.getKey().toLowerCase(Locale.ROOT))) {
