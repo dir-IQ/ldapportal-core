@@ -1,7 +1,7 @@
 # Replication reconciliation — design plan
 
 - **Date:** 2026-05-31
-- **Status:** In progress (R-P0 + R-P1 + R-PP1 + R-P2 + R-P3 shipped; only performance hardening part 2 — R-PP2 — remains, 2026-06-01).
+- **Status:** In progress (R-P0 + R-P1 + R-PP1 + R-P2 + R-P3 + post-review hardening **merged to `main`** via PR #40; only performance hardening part 2 — R-PP2 — remains, 2026-06-01). **Next session: start at §0.**
 - **Scope:** Periodic, operator-scheduled reconciliation between the
   source and target DITs of an existing **replication link**. Compares the
   replicated subtrees, classifies discrepancies, and either auto-corrects
@@ -17,6 +17,93 @@
   session. Paths are relative to the repo root.
 - **Suggested branch:** `feat/replication-reconciliation` (cut fresh from
   `origin/main`).
+
+## 0. Implementation status & handoff  *(next session: start here)*
+
+As of **2026-06-01**, everything except the final performance phase is
+**merged to `main`** (PR #40, commits `4f399c3` → `d8c3dcb`). The feature
+works end-to-end: scheduled + manual runs, paged checksum diff, `AUTO_CORRECT`
+and `REVIEW` modes, operator findings review/apply/dismiss, retention, and
+dashboard surfacing. **Only R-PP2 (§17) remains.** Cut a fresh branch from
+`origin/main` to start it (the `feat/replication-reconciliation` branch is
+merged and closed).
+
+### 0.1 Shipped — component map
+
+| Area | Lives in |
+|---|---|
+| Schema | `db/migration/core/V12` (link config), `V13` (`reconciliation_runs` + widen `replication_events.enqueue_source`), `V14` (`reconciliation_findings`) |
+| Entities / enums | `entity/ReconciliationRun`, `entity/ReconciliationFinding` (`@OnDelete(CASCADE)` on `run`/`link`); enums `ReconcileMode`, `ReconcileDeleteAction`, `ReconciliationRunStatus`, `ReconciliationRunTrigger`, `ReconciliationFindingType`, `ReconciliationFindingStatus`, `ReplicationEnqueueSource.RECONCILIATION` |
+| Diff core | `reconcile/ReconEntry`, `FindingCandidate`, `ReconciliationDiffer` (pure diff + the `parityWithPureDiffer` **test oracle**; helpers `stripExcluded`/`computeDrift`/`normDn` reused), `ReconciliationDigest` (length-prefixed SHA-256 over managed attrs) |
+| Read / compare | `reconcile/ReconciliationReadOps` (`streamSubtree` paged via `SimplePagedResultsControl`, `readEntry` BASE), `ChecksumReconciler` (two-pass: digest index → hydrate only discrepancies) |
+| Orchestration | `reconcile/ReconciliationService` (off-thread executor, `pool-size` threads), `ReconciliationTxOps` (run lifecycle: `tryStart` single-flight, `completeRun`/`failRun`/`advanceSchedule`/`resetStaleRuns`), `ReconciliationFindingTxOps` (`persistFindings`, `apply`, `dismiss`, `enqueueCorrection`, `supersedeOpenForLink`) |
+| Scheduling | `reconcile/ReconciliationScheduler` (`sweep` + stale-reset, **entitlement-gated**), `ReconciliationRetentionScheduler` (nightly run/finding purge) |
+| Repos | `ReconciliationRunRepository`, `ReconciliationFindingRepository`; extensions on `ReplicationLinkRepository` (`findReconcileDueIds`, `findByIdForSnapshot`), `ReplicationEventRepository` (`findUndeliveredTargetDns`), `ReplicationReadOps` (`snapshotById`) |
+| API | `controller/superadmin/ReconciliationController` (`@PreAuthorize SUPERADMIN` + `@Entitled(DIRECTORY_SYNC)`); DTOs `ReconciliationRunResponse`, `ReconciliationFindingResponse`, `FindingActionRequest`; reconcile fields on `ReplicationLinkRequest/Response` + `openFindingCount` |
+| Config write-path | `ReplicationLinkService` (reconcile-config validate/apply, `RECONCILE_MIN_INTERVAL_SECS=3600`, open-findings count batched into `LinkHealth`) |
+| Dashboard / audit | `ActivityDashboardService` (`RECONCILIATION_DRIFT_OPEN`), `UnifiedDashboardService` (`DIRECTORY_SYNC_AWARENESS_TYPES` filter); `AuditAction.RECONCILIATION_{CONFIG_UPDATED,RUN_STARTED,RUN_COMPLETED,RUN_FAILED,FINDING_APPLIED,FINDING_DISMISSED}` |
+| Frontend | `views/superadmin/DirectorySyncView.vue` (config section §9.1, runs modal, findings review modal §9.3, row badge §9.2), `api/replication.js`, `components/dashboard/auditLabels.js`; spec `DirectorySyncView.spec.ts` |
+
+### 0.2 Corrections already applied after the design text below was written
+
+The sections below are the *original* design; these deltas supersede them where
+they conflict (all merged):
+
+- **Entitlement enforced at runtime** (not just nominal §4 gating):
+  `ReconciliationScheduler.sweep` early-returns when `DIRECTORY_SYNC` is absent
+  (mirrors `ReplicationEnqueuer`), and `ReconciliationController` carries
+  `@Entitled(DIRECTORY_SYNC)`. Without both, the autonomous path would keep
+  enqueuing corrective writes (incl. deletes) after a commercial→community
+  downgrade, because corrective events are written straight to
+  `replication_events` and bypass the enqueuer's licence gate.
+- **Finding supersession implemented** (§11 note): `persistFindings` calls
+  `supersedeOpenForLink(linkId, now)` first, so a link's prior `PROPOSED`
+  findings flip to `SUPERSEDED` instead of piling up per run.
+- **`RECONCILIATION_RUN_FAILED` audit** added — emitted on link-missing,
+  safety-cap abort, and exception paths (the safety-cap path no longer logs a
+  fake `RUN_COMPLETED`/`ABORTED` outcome).
+- **Digest ↔ differ asymmetry documented** as source-authoritative /
+  REPLACE-only: `computeDrift` only compares source-managed attributes;
+  `ReconciliationDigest` hashes the full managed set, so it is a *conservative*
+  pre-filter (digest-equal ⇒ no drift; a target-only managed attr forces a
+  harmless pass-2 hydration). Behavior intentionally **not** made symmetric.
+- **Dead code removed:** `ReconciliationReadOps.readSubtree` deleted (the
+  streaming path replaced it); `ReconciliationDiffer.diff` kept **on purpose**
+  as the parity oracle.
+
+### 0.3 Remaining — R-PP2 (full design in §17; corrected starting points here)
+
+Two changes, both with precise current anchors:
+
+1. **Per-directory read-concurrency cap.** Add a keyed semaphore
+   (`Map<directoryId, Semaphore>`, permit count = new key
+   `ldapportal.reconciliation.read-concurrency-per-directory`, default `1`) in
+   `ReconciliationReadOps`, acquired around **both** `streamSubtree` and each
+   `readEntry` (pass-2 hydration borrows a fresh pooled connection per entry —
+   that per-entry borrow is the contention to bound). Optional dedicated pool
+   via `ldapportal.reconciliation.pool.{min,max}-size` through
+   `LdapConnectionFactory`; default to the shared pool when unset.
+2. **Chunked corrective-event enqueue.** ⚠️ §17.1 below is stale: there is no
+   `persister.saveAll`. The real shape is `ReconciliationFindingTxOps.persistFindings`
+   looping `findingRepo.save` + `enqueueCorrection`→`eventRepo.save` per finding,
+   **all in one `REQUIRES_NEW` tx** (up to `max-findings-per-run` = 5000 of each).
+   Chunk that loop into batches of `ldapportal.reconciliation.enqueue-chunk-size`
+   (default `500`), each its own committed tx, so the worker can start draining
+   chunk 1 while later chunks write. Call `supersedeOpenForLink` **once** before
+   the first chunk, not per chunk. Apply the same chunking to the operator
+   `apply(applyAll=true, …)` path, which can also enqueue a large set in one tx.
+
+**Config keys already present (do not re-add):** `page-size` (500),
+`pool-size` (2 — this is the *executor thread* count, **not** an LDAP
+connection pool), `max-findings-per-run` (5000), `sweep-ms` (30000),
+`stale-sweep-ms` (120000), `run-timeout-ms` (1800000), `retention.days` (90) /
+`retention.cron`. **R-PP2 adds:** `read-concurrency-per-directory`,
+`enqueue-chunk-size`, and the optional `pool.*`.
+
+Tests to write: per-directory cap serialises same-directory reads but lets
+different directories run in parallel; 1250 auto-applied findings → 3 committed
+chunks of ≤ 500, failure mid-run leaves earlier chunks committed; (if a
+dedicated pool is wired) reconciliation reads never draw from the shared pool.
 
 ## 1. Goal
 
@@ -690,10 +777,13 @@ Two remaining ways a large run perturbs the rest of the app:
   directory's shared pool for the whole (now paged, possibly long) search.
   Two reconcile threads can hold four connections for minutes, starving live
   user/admin LDAP operations against those directories.
-- **Enqueue transaction size.** Auto-applied corrections are persisted with a
-  single `persister.saveAll(pending)` — up to `max-findings-per-run` (5 000)
-  INSERTs in one transaction, a heavy WAL/lock burst, and the cap also blocks
-  a legitimate large initial backfill.
+- **Enqueue transaction size.** `ReconciliationFindingTxOps.persistFindings`
+  saves every finding and (for auto-applied ones) its corrective
+  `replication_events` row inside a **single `REQUIRES_NEW` transaction** — up
+  to `max-findings-per-run` (5 000) of each in one tx, a heavy WAL/lock burst;
+  the cap also blocks a legitimate large initial backfill. (The original draft
+  said `persister.saveAll`; that persister was replaced by `persistFindings`
+  in R-P2 — the one-big-transaction concern is unchanged.)
 
 ### 17.2 Design
 
@@ -708,16 +798,22 @@ Two remaining ways a large run perturbs the rest of the app:
   than live traffic rather than the shared `LDAPConnectionPool`. Config-gated;
   defaults to the shared pool when unset to avoid doubling idle connections.
 
-**Chunked enqueue.** Replace the single `saveAll` with a chunked loop
-(`ldapportal.reconciliation.enqueue-chunk-size`, default 500): each chunk
-commits in its own `REQUIRES_NEW` transaction via the persister, bounding WAL
-and lock footprint and letting the worker start draining the first chunk
-while later chunks are still being written. The `max-findings-per-run` cap is
-re-framed as a *soft* warning threshold for chunked applies (still a hard
-abort for the unreviewed AUTO path's safety), so a deliberate large backfill
-can proceed in bounded batches.
+**Chunked enqueue.** Split `ReconciliationFindingTxOps.persistFindings`'s
+single transaction into a chunked loop
+(`ldapportal.reconciliation.enqueue-chunk-size`, default 500): each chunk of
+findings + corrective events commits in its own `REQUIRES_NEW` transaction,
+bounding WAL and lock footprint and letting the worker start draining the
+first chunk while later chunks are still being written. Call
+`supersedeOpenForLink` **once** before the first chunk (not per chunk). Apply
+the same chunking to the operator `apply(applyAll=true, …)` path. The
+`max-findings-per-run` cap is re-framed as a *soft* warning threshold for
+chunked applies (still a hard abort for the unreviewed AUTO path's safety), so
+a deliberate large backfill can proceed in bounded batches.
 
 ### 17.3 Config
+
+All three are **new** in R-PP2 (the keys already in `application.yml` are
+listed in §0.3):
 
 ```
 ldapportal.reconciliation.read-concurrency-per-directory  (default 1)
