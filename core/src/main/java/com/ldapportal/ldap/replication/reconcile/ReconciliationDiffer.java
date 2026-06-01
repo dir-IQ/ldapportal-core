@@ -49,7 +49,7 @@ public final class ReconciliationDiffer {
 
     /** Outcome of a diff: surviving findings plus the run-summary counts. */
     public record DiffResult(
-            List<ReconciliationFinding> findings,
+            List<FindingCandidate> findings,
             int sourceCount,
             int targetCount,
             int missingCount,
@@ -67,7 +67,7 @@ public final class ReconciliationDiffer {
         for (ReconEntry t : targetEntries) targetByDn.put(normDn(t.dn()), t);
 
         Set<String> expectedTargetDns = new HashSet<>();
-        List<ReconciliationFinding> raw = new ArrayList<>();
+        List<FindingCandidate> raw = new ArrayList<>();
 
         // ── source-driven: MISSING_IN_TARGET + ATTRIBUTE_DRIFT ──────────────
         for (ReconEntry src : sourceEntries) {
@@ -83,13 +83,13 @@ public final class ReconciliationDiffer {
             if (target == null) {
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("attributes", expected);
-                raw.add(new ReconciliationFinding(ReconciliationFindingType.MISSING_IN_TARGET,
+                raw.add(new FindingCandidate(ReconciliationFindingType.MISSING_IN_TARGET,
                         ReplicationOperationType.ADD, src.dn(), targetDn, payload));
                 continue;
             }
             Map<String, Object> drift = computeDrift(expected, target.attributes());
             if (drift != null) {
-                raw.add(new ReconciliationFinding(ReconciliationFindingType.ATTRIBUTE_DRIFT,
+                raw.add(new FindingCandidate(ReconciliationFindingType.ATTRIBUTE_DRIFT,
                         ReplicationOperationType.MODIFY, src.dn(), targetDn, drift));
             }
         }
@@ -103,15 +103,15 @@ public final class ReconciliationDiffer {
                 if (expectedTargetDns.contains(normDn)) continue;
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("currentTarget", t.attributes());   // for UI / audit only
-                raw.add(new ReconciliationFinding(ReconciliationFindingType.EXTRA_IN_TARGET,
+                raw.add(new FindingCandidate(ReconciliationFindingType.EXTRA_IN_TARGET,
                         ReplicationOperationType.DELETE, null, t.dn(), payload));
             }
         }
 
         // ── shadow-suppression: drop findings the live queue is converging ──
-        List<ReconciliationFinding> findings = new ArrayList<>(raw.size());
+        List<FindingCandidate> findings = new ArrayList<>(raw.size());
         int suppressed = 0;
-        for (ReconciliationFinding f : raw) {
+        for (FindingCandidate f : raw) {
             if (undeliveredTargetDnsNormalized.contains(normDn(f.targetDn()))) {
                 suppressed++;
             } else {

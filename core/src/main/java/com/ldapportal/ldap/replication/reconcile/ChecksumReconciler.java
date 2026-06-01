@@ -93,7 +93,7 @@ public class ChecksumReconciler {
                 + removeSuppressed(extra, undeliveredTargetDnsNormalized);
 
         // ── Pass 2: hydrate only the discrepancies ──────────────────────────
-        List<ReconciliationFinding> findings = new ArrayList<>();
+        List<FindingCandidate> findings = new ArrayList<>();
         for (String n : missing) {
             ReconEntry src = readOps.readEntry(link.sourceDirectory(), sourceDnOf.get(n)).orElse(null);
             if (src == null) continue;                          // vanished between passes
@@ -101,7 +101,7 @@ public class ChecksumReconciler {
                     ReconciliationDiffer.stripExcluded(AttributeMapper.mapAttributes(src.attributes(), link));
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("attributes", expected);
-            findings.add(new ReconciliationFinding(ReconciliationFindingType.MISSING_IN_TARGET,
+            findings.add(new FindingCandidate(ReconciliationFindingType.MISSING_IN_TARGET,
                     ReplicationOperationType.ADD, src.dn(), targetDnFor.get(n), payload));
         }
         for (String n : drift) {
@@ -112,7 +112,7 @@ public class ChecksumReconciler {
                     ReconciliationDiffer.stripExcluded(AttributeMapper.mapAttributes(src.attributes(), link));
             Map<String, Object> payload = ReconciliationDiffer.computeDrift(expected, tgt.attributes());
             if (payload == null) continue;                      // digest false-positive — no real drift
-            findings.add(new ReconciliationFinding(ReconciliationFindingType.ATTRIBUTE_DRIFT,
+            findings.add(new FindingCandidate(ReconciliationFindingType.ATTRIBUTE_DRIFT,
                     ReplicationOperationType.MODIFY, src.dn(), targetDnFor.get(n), payload));
         }
         for (String n : extra) {
@@ -120,7 +120,7 @@ public class ChecksumReconciler {
             ReconEntry tgt = readOps.readEntry(link.targetDirectory(), tdn).orElse(null);
             Map<String, Object> payload = new LinkedHashMap<>();
             if (tgt != null) payload.put("currentTarget", tgt.attributes());
-            findings.add(new ReconciliationFinding(ReconciliationFindingType.EXTRA_IN_TARGET,
+            findings.add(new FindingCandidate(ReconciliationFindingType.EXTRA_IN_TARGET,
                     ReplicationOperationType.DELETE, null, tdn, payload));
         }
 
@@ -137,7 +137,7 @@ public class ChecksumReconciler {
         return before - normDns.size();
     }
 
-    private static int countType(List<ReconciliationFinding> findings, ReconciliationFindingType type) {
+    private static int countType(List<FindingCandidate> findings, ReconciliationFindingType type) {
         return (int) findings.stream().filter(f -> f.type() == type).count();
     }
 }

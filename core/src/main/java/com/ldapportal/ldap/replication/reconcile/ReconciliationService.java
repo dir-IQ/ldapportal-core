@@ -3,12 +3,7 @@ package com.ldapportal.ldap.replication.reconcile;
 
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.entity.enums.AuditAction;
-import com.ldapportal.entity.enums.ReconcileDeleteAction;
-import com.ldapportal.entity.enums.ReconcileMode;
 import com.ldapportal.entity.enums.ReconciliationRunTrigger;
-import com.ldapportal.entity.enums.ReplicationEnqueueSource;
-import com.ldapportal.ldap.replication.PendingReplicationEvent;
-import com.ldapportal.ldap.replication.ReplicationEventPersister;
 import com.ldapportal.ldap.replication.ReplicationLinkSnapshot;
 import com.ldapportal.ldap.replication.ReplicationReadOps;
 import com.ldapportal.ldap.replication.reconcile.ReconciliationDiffer.DiffResult;
@@ -55,13 +50,13 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ReconciliationService {
 
-    private final ReplicationReadOps        replicationReadOps;
-    private final ChecksumReconciler        checksumReconciler;
-    private final ReplicationEventPersister persister;
+    private final ReplicationReadOps         replicationReadOps;
+    private final ChecksumReconciler         checksumReconciler;
+    private final ReconciliationFindingTxOps findingTxOps;
     private final ReplicationEventRepository eventRepo;
     private final ReconciliationRunRepository runRepo;
-    private final ReconciliationTxOps       txOps;
-    private final AuditService              auditService;
+    private final ReconciliationTxOps        txOps;
+    private final AuditService               auditService;
 
     @Value("${ldapportal.reconciliation.max-findings-per-run:5000}")
     private int maxFindingsPerRun;
@@ -138,7 +133,11 @@ public class ReconciliationService {
                 return;
             }
 
-            int applied = autoApply(sr, linkId, diff);
+            // Persist every surviving finding; auto-apply (enqueue corrective
+            // events) those the mode / delete-action call for. Review-mode
+            // findings stay PROPOSED for the operator (R-P2).
+            int applied = findingTxOps.persistFindings(
+                    sr.runId(), linkId, diff.findings(), sr.mode(), sr.deleteAction());
             txOps.completeRun(sr.runId(), diff, applied);
             recordRunCompleted(linkId, trigger, principal, diff, applied, "COMPLETED");
             log.info("Reconciliation run {} for link {} completed: missing={} drift={} extra={} suppressed={} applied={}",
@@ -150,39 +149,6 @@ public class ReconciliationService {
         } finally {
             txOps.advanceSchedule(linkId, now);
         }
-    }
-
-    /**
-     * Enqueue corrective events for the findings the configuration auto-applies:
-     * missing/drift when mode is AUTO_CORRECT, extras when delete-action is AUTO.
-     * Review-mode findings are left for the operator (persisted in R-P2).
-     */
-    private int autoApply(StartedRun sr, UUID linkId, DiffResult diff) {
-        List<PendingReplicationEvent> pending = new ArrayList<>();
-        for (ReconciliationFinding f : diff.findings()) {
-            boolean apply = switch (f.type()) {
-                case MISSING_IN_TARGET, ATTRIBUTE_DRIFT -> sr.mode() == ReconcileMode.AUTO_CORRECT;
-                case EXTRA_IN_TARGET                     -> sr.deleteAction() == ReconcileDeleteAction.AUTO;
-            };
-            if (!apply) continue;
-            // source_dn is NOT NULL on the event; deletes have no source entry
-            // so we stamp the target DN there (it identifies nothing source-side).
-            String sourceDn = f.sourceDn() != null ? f.sourceDn() : f.targetDn();
-            pending.add(new PendingReplicationEvent(
-                    linkId, ReplicationEnqueueSource.RECONCILIATION, f.operation(),
-                    sourceDn, f.targetDn(), enqueuePayload(f)));
-        }
-        if (!pending.isEmpty()) persister.saveAll(pending);
-        return pending.size();
-    }
-
-    /** Strip UI-only keys ({@code before} / {@code currentTarget}) before enqueue. */
-    private static Map<String, Object> enqueuePayload(ReconciliationFinding f) {
-        return switch (f.operation()) {
-            case ADD       -> Map.of("attributes", f.payload().getOrDefault("attributes", Map.of()));
-            case MODIFY    -> Map.of("modifications", f.payload().getOrDefault("modifications", List.of()));
-            default        -> Map.of();   // DELETE — DN alone identifies the op
-        };
     }
 
     // ── audit ────────────────────────────────────────────────────────────────
