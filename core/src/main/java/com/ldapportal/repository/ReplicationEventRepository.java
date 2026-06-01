@@ -32,6 +32,20 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
     List<UUID> findLinkIdsWithClaimableEvents(@Param("now") OffsetDateTime now);
 
     /**
+     * Distinct target DNs for a link that still have an undelivered event
+     * (PENDING / IN_FLIGHT / FAILED). Reconciliation uses this to suppress
+     * findings the live queue is already mid-converging, so it never races
+     * the worker or double-enqueues a correction.
+     */
+    @Query("""
+        SELECT DISTINCT e.targetDn
+        FROM ReplicationEvent e
+        WHERE e.link.id = :linkId
+          AND e.status IN ('PENDING', 'IN_FLIGHT', 'FAILED')
+        """)
+    List<String> findUndeliveredTargetDns(@Param("linkId") UUID linkId);
+
+    /**
      * The earliest claimable event for a given link — the FIFO head.
      * Called from {@code ReplicationReadOps.earliestClaimableSnapshot},
      * which materialises the entity into a {@link ReplicationEventSnapshot}

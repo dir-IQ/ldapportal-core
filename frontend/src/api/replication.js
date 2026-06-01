@@ -16,3 +16,9 @@ export const listReplicationEvents = (linkId, params = {}) =>
 export const retryReplicationEvent       = (id) => client.post(`/superadmin/replication-events/${id}/retry`)
 export const skipReplicationEvent        = (id) => client.post(`/superadmin/replication-events/${id}/skip`)
 export const acknowledgeReplicationEvent = (id) => client.post(`/superadmin/replication-events/${id}/acknowledge`)
+
+// ── Reconciliation ───────────────────────────────────────────────────────────
+export const reconcileNow = (linkId) =>
+    client.post(`/superadmin/replication-links/${linkId}/reconcile`)
+export const listReconciliationRuns = (linkId, params = {}) =>
+    client.get(`/superadmin/replication-links/${linkId}/reconciliation-runs`, { params })

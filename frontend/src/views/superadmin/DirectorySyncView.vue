@@ -54,6 +54,7 @@
             <td class="px-4 py-3 text-right whitespace-nowrap">
               <ActionMenu :items="[
                 { label: 'View events', onClick: () => openEvents(link) },
+                { label: 'Reconcile now', onClick: () => reconcileNow(link) },
                 { label: 'Delete', onClick: () => confirmDelete(link), danger: true },
               ]">
                 <template #primary>
@@ -317,6 +318,7 @@ import { useNotificationStore } from '@/stores/notifications'
 import {
   listReplicationLinks, createReplicationLink, updateReplicationLink, deleteReplicationLink,
   listReplicationEvents, retryReplicationEvent, skipReplicationEvent, acknowledgeReplicationEvent,
+  reconcileNow as apiReconcileNow,
 } from '@/api/replication'
 import { listDirectories } from '@/api/directories'
 import PageContainer from '@/components/PageContainer.vue'
@@ -575,6 +577,15 @@ async function save() {
     notif.error(`Save failed: ${errMsg(e)}`)
   } finally {
     saving.value = false
+  }
+}
+
+async function reconcileNow(link: ReplicationLink) {
+  try {
+    await apiReconcileNow(link.id)
+    notif.success(`Reconciliation started for ${link.displayName}`)
+  } catch (e) {
+    notif.error(`Could not start reconciliation: ${errMsg(e)}`)
   }
 }
 

@@ -111,7 +111,9 @@ public enum AuditAction {
     REPLICATION_EVENT_ACKNOWLEDGED         ("replication.event_acknowledged"),
 
     // ── Replication reconciliation ─────────────────────────────────────────────
-    RECONCILIATION_CONFIG_UPDATED          ("reconciliation.config_updated");
+    RECONCILIATION_CONFIG_UPDATED          ("reconciliation.config_updated"),
+    RECONCILIATION_RUN_STARTED             ("reconciliation.run_started"),
+    RECONCILIATION_RUN_COMPLETED           ("reconciliation.run_completed");
 
     private final String dbValue;
 

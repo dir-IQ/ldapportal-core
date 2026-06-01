@@ -17,9 +17,15 @@ package com.ldapportal.entity.enums;
  *       coverage for out-of-band writes that the app intercept
  *       can't see. Not implemented in v1 — listed here so the
  *       schema doesn't need a migration when it lands.</li>
+ *   <li>{@link #RECONCILIATION} — a corrective event produced by the
+ *       periodic reconciliation engine (R-P1) after comparing the
+ *       link's source and target subtrees. Dispatched by the same
+ *       worker as any other event; the provenance lets the event log
+ *       distinguish reconciliation-originated corrections.</li>
  * </ul>
  */
 public enum ReplicationEnqueueSource {
     APP_INTERCEPT,
-    SOURCE_CHANGELOG
+    SOURCE_CHANGELOG,
+    RECONCILIATION
 }
