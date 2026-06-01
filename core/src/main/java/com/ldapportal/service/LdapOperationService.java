@@ -3,6 +3,7 @@ package com.ldapportal.service;
 
 import com.ldapportal.core.governance.MembershipGate;
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.ldap.validation.DnValidator;
 import com.ldapportal.auth.PermissionService;
 import com.ldapportal.dto.csv.BulkImportPreviewResult;
 import com.ldapportal.dto.csv.BulkImportRequest;
@@ -218,6 +219,7 @@ public class LdapOperationService {
                                         CreateEntryRequest req, UUID profileId) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, req.dn());
+        DnValidator.requireValidDn(req.dn(), dc.getDirectoryType());
 
         userService.createUser(dc, req.dn(), req.attributes(), profileId);
         LdapEntryResponse result = LdapEntryResponse.from(userService.getUser(dc, req.dn()));
@@ -346,6 +348,7 @@ public class LdapOperationService {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
         permissionService.requireDnWithinScope(principal, directoryId, req.newParentDn());
+        DnValidator.requireValidDn(req.newParentDn(), dc.getDirectoryType());
 
         userService.moveUser(dc, dn, req.newParentDn());
         auditService.record(principal, directoryId, AuditAction.USER_MOVE, dn,
@@ -433,6 +436,7 @@ public class LdapOperationService {
                                          CreateEntryRequest req) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, req.dn());
+        DnValidator.requireValidDn(req.dn(), dc.getDirectoryType());
 
         groupService.createGroup(dc, req.dn(), req.attributes());
         LdapEntryResponse result = LdapEntryResponse.from(groupService.getGroup(dc, req.dn()));

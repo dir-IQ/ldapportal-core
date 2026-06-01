@@ -142,6 +142,35 @@ class LdapOperationServiceTest {
         assertThat(resp.dn()).isEqualTo(dn);
     }
 
+    @Test
+    void createUser_malformedDn_throwsAndSkipsWrite() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        CreateEntryRequest req = new CreateEntryRequest(
+                "not a valid dn", Map.of("cn", List.of("Bob")));
+
+        assertThatThrownBy(() -> service.createUser(dirId, adminPrincipal(), req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid DN");
+
+        verify(userService, never()).createUser(any(), anyString(), any(), any());
+    }
+
+    @Test
+    void moveUser_malformedNewParentDn_throwsAndSkipsWrite() {
+        String dn = "cn=Bob,ou=Users,dc=example,dc=com";
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        assertThatThrownBy(() -> service.moveUser(dirId, adminPrincipal(), dn,
+                new MoveUserRequest("not a dn")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid DN");
+
+        verify(userService, never()).moveUser(any(), anyString(), anyString());
+    }
+
     // ── Group operations ──────────────────────────────────────────────────────
 
     @Test
@@ -153,6 +182,21 @@ class LdapOperationServiceTest {
         service.addGroupMember(dirId, adminPrincipal(), groupDn, "member", "cn=Alice,ou=Users");
 
         verify(groupService).addMember(dc, groupDn, "member", "cn=Alice,ou=Users", null);
+    }
+
+    @Test
+    void createGroup_malformedDn_throwsAndSkipsWrite() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        CreateEntryRequest req = new CreateEntryRequest(
+                "cn=Staff,ou", Map.of("cn", List.of("Staff")));
+
+        assertThatThrownBy(() -> service.createGroup(dirId, adminPrincipal(), req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid DN");
+
+        verify(groupService, never()).createGroup(any(), anyString(), any());
     }
 
     @Test
