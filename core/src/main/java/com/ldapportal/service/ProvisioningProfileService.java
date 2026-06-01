@@ -644,6 +644,39 @@ public class ProvisioningProfileService {
     }
 
     /**
+     * Rejects an attempt to modify attributes that the profile marks as
+     * non-editable on update or hidden, mirroring the edit-form field gating
+     * so an API caller cannot bypass it. System-computed attributes (those
+     * carrying a {@code computedExpression}) are exempt — they are set by the
+     * server, not the user. Attributes without a profile config are
+     * unrestricted.
+     *
+     * @param attributeNames the attribute names targeted by the modification
+     *                       (any operation, including DELETE)
+     */
+    @Transactional(readOnly = true)
+    public void assertAttributesEditableForUpdate(UUID profileId, Collection<String> attributeNames) {
+        if (attributeNames == null || attributeNames.isEmpty()) return;
+        Set<String> targeted = attributeNames.stream()
+                .filter(Objects::nonNull)
+                .map(s -> s.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toSet());
+
+        List<ProfileAttributeConfig> configs =
+                attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId);
+        for (ProfileAttributeConfig config : configs) {
+            if (!targeted.contains(config.getAttributeName().toLowerCase(Locale.ROOT))) continue;
+            boolean computed = config.getComputedExpression() != null
+                    && !config.getComputedExpression().isBlank();
+            if (computed) continue;
+            if (!config.isEditableOnUpdate() || config.isHidden()) {
+                throw new IllegalArgumentException(
+                        "Attribute [" + config.getAttributeName() + "] is not editable on update");
+            }
+        }
+    }
+
+    /**
      * Length / regex / allowed-values checks for a single attribute value.
      * Shared by {@link #validateAttributes} (create) and
      * {@link #validateModifiedAttributes} (update).

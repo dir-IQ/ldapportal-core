@@ -252,6 +252,7 @@ public class LdapOperationService {
             UUID profileId = updateProfileSvc.resolveProfileForDn(directoryId, dn)
                     .map(p -> p.getId()).orElse(null);
             if (profileId != null) {
+                updateProfileSvc.assertAttributesEditableForUpdate(profileId, modifiedAttributeNames(req));
                 updateProfileSvc.validateModifiedAttributes(profileId, modifiedAttributeValues(req));
             }
         }
@@ -813,6 +814,15 @@ public class LdapOperationService {
      * operations are excluded — removing values has no value-constraint to
      * validate.
      */
+    /** All attribute names targeted by an update, regardless of operation. */
+    private static java.util.Set<String> modifiedAttributeNames(UpdateEntryRequest req) {
+        java.util.Set<String> names = new java.util.LinkedHashSet<>();
+        for (AttributeModification m : req.modifications()) {
+            names.add(m.attribute());
+        }
+        return names;
+    }
+
     private static Map<String, List<String>> modifiedAttributeValues(UpdateEntryRequest req) {
         Map<String, List<String>> map = new java.util.LinkedHashMap<>();
         for (AttributeModification m : req.modifications()) {

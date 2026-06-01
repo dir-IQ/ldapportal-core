@@ -11,6 +11,7 @@ import com.ldapportal.dto.ldap.LdapEntryResponse;
 import com.ldapportal.dto.ldap.MoveUserRequest;
 import com.ldapportal.dto.ldap.UpdateEntryRequest;
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapBrowseService;
 import com.ldapportal.ldap.LdapGroupService;
@@ -192,6 +193,33 @@ class LdapOperationServiceTest {
                 .hasMessageContaining("is required");
 
         verify(userService, never()).createUser(any(), anyString(), any(), any());
+    }
+
+    @Test
+    void updateUser_nonEditableAttribute_throwsAndSkipsWrite() {
+        ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
+        UUID profileId = UUID.randomUUID();
+        String dn = "uid=jsmith,ou=people,dc=example,dc=com";
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        ProvisioningProfile profile = new ProvisioningProfile();
+        profile.setId(profileId);
+        when(ps.resolveProfileForDn(dirId, dn)).thenReturn(Optional.of(profile));
+        doThrow(new IllegalArgumentException(
+                "Attribute [employeeNumber] is not editable on update"))
+                .when(ps).assertAttributesEditableForUpdate(eq(profileId), any());
+
+        LdapOperationService svc = serviceWithProfile(ps);
+        UpdateEntryRequest req = new UpdateEntryRequest(List.of(
+                new AttributeModification(AttributeModification.Operation.REPLACE,
+                        "employeeNumber", List.of("999"))));
+
+        assertThatThrownBy(() -> svc.updateUser(dirId, adminPrincipal(), dn, req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not editable");
+
+        verify(userService, never()).updateUser(any(), anyString(), any());
     }
 
     // ── Group operations ──────────────────────────────────────────────────────

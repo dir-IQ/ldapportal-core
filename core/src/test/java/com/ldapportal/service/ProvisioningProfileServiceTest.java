@@ -227,4 +227,54 @@ class ProvisioningProfileServiceTest {
         assertThatCode(() -> service.validateModifiedAttributes(profileId, attrs))
                 .doesNotThrowAnyException();
     }
+
+    // ── assertAttributesEditableForUpdate (edit gating) ──────────────────────
+
+    @Test
+    void assertAttributesEditableForUpdate_rejectsNonEditableAttribute() {
+        ProfileAttributeConfig cfg = new ProfileAttributeConfig();
+        cfg.setAttributeName("employeeNumber");
+        cfg.setEditableOnUpdate(false);
+        given(attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(cfg));
+
+        assertThatThrownBy(() -> service.assertAttributesEditableForUpdate(
+                profileId, List.of("employeeNumber")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not editable on update");
+    }
+
+    @Test
+    void assertAttributesEditableForUpdate_rejectsHiddenAttribute() {
+        ProfileAttributeConfig cfg = new ProfileAttributeConfig();
+        cfg.setAttributeName("internalId");
+        cfg.setHidden(true);
+        given(attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(cfg));
+
+        // Case-insensitive match against the modified attribute name.
+        assertThatThrownBy(() -> service.assertAttributesEditableForUpdate(
+                profileId, List.of("INTERNALID")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not editable");
+    }
+
+    @Test
+    void assertAttributesEditableForUpdate_allowsEditableComputedAndUnconfigured() {
+        ProfileAttributeConfig editable = new ProfileAttributeConfig();
+        editable.setAttributeName("displayName"); // editableOnUpdate defaults to true
+
+        ProfileAttributeConfig computed = new ProfileAttributeConfig();
+        computed.setAttributeName("cn");
+        computed.setEditableOnUpdate(false);
+        computed.setComputedExpression("${givenName}+\" \"+${sn}"); // system-set, exempt
+
+        given(attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(editable, computed));
+
+        // displayName (editable), cn (computed → exempt), mail (no config) — all OK.
+        assertThatCode(() -> service.assertAttributesEditableForUpdate(
+                profileId, List.of("displayName", "cn", "mail")))
+                .doesNotThrowAnyException();
+    }
 }
