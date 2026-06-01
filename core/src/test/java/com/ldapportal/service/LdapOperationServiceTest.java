@@ -208,7 +208,7 @@ class LdapOperationServiceTest {
         when(ps.resolveProfileForDn(dirId, dn)).thenReturn(Optional.of(profile));
         doThrow(new IllegalArgumentException(
                 "Attribute [employeeNumber] is not editable on update"))
-                .when(ps).assertAttributesEditableForUpdate(eq(profileId), any());
+                .when(ps).validateModification(eq(profileId), any(), any());
 
         LdapOperationService svc = serviceWithProfile(ps);
         UpdateEntryRequest req = new UpdateEntryRequest(List.of(

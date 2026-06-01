@@ -225,6 +225,15 @@ public class LdapOperationService {
         // allowed-values) on the admin create path, mirroring the self-service
         // path. Defaults/computed values are already applied by the caller.
         ProvisioningProfileService createProfileSvc = profileServiceProvider.getIfAvailable();
+        // Callers that already resolved the profile pass it through; for any
+        // caller that didn't (e.g. the no-profile overload), resolve it from
+        // the target DN so validation runs regardless of entry point. This is
+        // the same resolution the controller/approval paths use, so an
+        // unprofiled OU still resolves to null and is correctly not validated.
+        if (createProfileSvc != null && profileId == null) {
+            profileId = createProfileSvc.resolveProfileForDn(directoryId, req.dn())
+                    .map(p -> p.getId()).orElse(null);
+        }
         if (createProfileSvc != null && profileId != null) {
             createProfileSvc.validateAttributes(profileId, req.attributes());
         }
@@ -252,8 +261,8 @@ public class LdapOperationService {
             UUID profileId = updateProfileSvc.resolveProfileForDn(directoryId, dn)
                     .map(p -> p.getId()).orElse(null);
             if (profileId != null) {
-                updateProfileSvc.assertAttributesEditableForUpdate(profileId, modifiedAttributeNames(req));
-                updateProfileSvc.validateModifiedAttributes(profileId, modifiedAttributeValues(req));
+                updateProfileSvc.validateModification(
+                        profileId, modifiedAttributeNames(req), modifiedAttributeValues(req));
             }
         }
 

@@ -62,4 +62,44 @@ describe('UserForm validation', () => {
     const wrapper = mountForm({ rdnValue: 'jsmith', attributes: { mail: 'a@b.com' } })
     expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(true)
   })
+
+  // The RDN field is disabled in edit mode, so a length/regex rule on the RDN
+  // attribute must not block edits to an entry whose RDN predates the rule.
+  const editTemplate = {
+    rdnAttribute: 'uid',
+    attributeConfigs: [
+      { attributeName: 'uid', inputType: 'TEXT', validationRegex: '^[0-9]+$', validationMessage: 'digits only' },
+      {
+        attributeName: 'mail',
+        editableOnUpdate: true,
+        inputType: 'TEXT',
+        validationRegex: '^[^@]+@[^@]+$',
+        validationMessage: 'Enter a valid email',
+      },
+    ],
+  }
+
+  function mountEdit(attributes: Record<string, unknown>) {
+    return mount(UserForm, {
+      props: {
+        data: { dn: 'uid=jsmith,ou=people,dc=x', attributes },
+        isEdit: true,
+        userTemplateConfig: editTemplate,
+        dirId: null,
+        profileId: null,
+      },
+    })
+  }
+
+  it('does not validate the immutable RDN in edit mode', () => {
+    // uid="jsmith" violates the RDN's ^[0-9]+$ rule, but the RDN is immutable
+    // on edit; with mail valid the form must still pass.
+    const wrapper = mountEdit({ uid: 'jsmith', mail: 'a@b.com' })
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(true)
+  })
+
+  it('still validates editable non-RDN fields in edit mode', () => {
+    const wrapper = mountEdit({ uid: 'jsmith', mail: 'not-an-email' })
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
+  })
 })

@@ -190,10 +190,10 @@ class ProvisioningProfileServiceTest {
                 .hasMessageContaining("validation pattern is invalid");
     }
 
-    // ── validateModifiedAttributes (update path) ─────────────────────────────
+    // ── validateModification (update path: edit-gating + value constraints) ──
 
     @Test
-    void validateModifiedAttributes_enforcesValueConstraints() {
+    void validateModification_enforcesValueConstraints() {
         ProfileAttributeConfig cfg = new ProfileAttributeConfig();
         cfg.setAttributeName("mail");
         cfg.setValidationRegex("^[^@]+@[^@]+$");
@@ -204,13 +204,13 @@ class ProvisioningProfileServiceTest {
         Map<String, List<String>> attrs = new HashMap<>();
         attrs.put("mail", List.of("not-an-email"));
 
-        assertThatThrownBy(() -> service.validateModifiedAttributes(profileId, attrs))
+        assertThatThrownBy(() -> service.validateModification(profileId, List.of("mail"), attrs))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must be an email");
     }
 
     @Test
-    void validateModifiedAttributes_doesNotEnforceRequiredOnCreate() {
+    void validateModification_doesNotEnforceRequiredOnCreate() {
         ProfileAttributeConfig required = new ProfileAttributeConfig();
         required.setAttributeName("uid");
         required.setRequiredOnCreate(true);
@@ -224,28 +224,26 @@ class ProvisioningProfileServiceTest {
         Map<String, List<String>> attrs = new HashMap<>();
         attrs.put("displayName", List.of("New Name"));
 
-        assertThatCode(() -> service.validateModifiedAttributes(profileId, attrs))
+        assertThatCode(() -> service.validateModification(profileId, List.of("displayName"), attrs))
                 .doesNotThrowAnyException();
     }
 
-    // ── assertAttributesEditableForUpdate (edit gating) ──────────────────────
-
     @Test
-    void assertAttributesEditableForUpdate_rejectsNonEditableAttribute() {
+    void validateModification_rejectsNonEditableAttribute() {
         ProfileAttributeConfig cfg = new ProfileAttributeConfig();
         cfg.setAttributeName("employeeNumber");
         cfg.setEditableOnUpdate(false);
         given(attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
                 .willReturn(List.of(cfg));
 
-        assertThatThrownBy(() -> service.assertAttributesEditableForUpdate(
-                profileId, List.of("employeeNumber")))
+        assertThatThrownBy(() -> service.validateModification(
+                profileId, List.of("employeeNumber"), Map.of()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("not editable on update");
     }
 
     @Test
-    void assertAttributesEditableForUpdate_rejectsHiddenAttribute() {
+    void validateModification_rejectsHiddenAttribute() {
         ProfileAttributeConfig cfg = new ProfileAttributeConfig();
         cfg.setAttributeName("internalId");
         cfg.setHidden(true);
@@ -253,14 +251,14 @@ class ProvisioningProfileServiceTest {
                 .willReturn(List.of(cfg));
 
         // Case-insensitive match against the modified attribute name.
-        assertThatThrownBy(() -> service.assertAttributesEditableForUpdate(
-                profileId, List.of("INTERNALID")))
+        assertThatThrownBy(() -> service.validateModification(
+                profileId, List.of("INTERNALID"), Map.of()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("not editable");
     }
 
     @Test
-    void assertAttributesEditableForUpdate_allowsEditableComputedAndUnconfigured() {
+    void validateModification_allowsEditableComputedAndUnconfigured() {
         ProfileAttributeConfig editable = new ProfileAttributeConfig();
         editable.setAttributeName("displayName"); // editableOnUpdate defaults to true
 
@@ -273,8 +271,8 @@ class ProvisioningProfileServiceTest {
                 .willReturn(List.of(editable, computed));
 
         // displayName (editable), cn (computed → exempt), mail (no config) — all OK.
-        assertThatCode(() -> service.assertAttributesEditableForUpdate(
-                profileId, List.of("displayName", "cn", "mail")))
+        assertThatCode(() -> service.validateModification(
+                profileId, List.of("displayName", "cn", "mail"), Map.of()))
                 .doesNotThrowAnyException();
     }
 }
