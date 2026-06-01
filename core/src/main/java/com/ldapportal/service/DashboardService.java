@@ -119,8 +119,14 @@ public class DashboardService {
             if (groupCount >= 0) totalGroups += groupCount;
             totalPending += pending;
 
+            // A disabled directory isn't probed, so reachability is unknown
+            // (null). For an enabled one, the user-count search above is the
+            // connectivity probe: a -1 means it threw (e.g. UnknownHost / pool
+            // creation failure), so the host is unreachable.
+            Boolean reachable = dc.isEnabled() ? userCount >= 0 : null;
+
             dirStats.add(new DirectoryStatDto(
-                    dc.getId().toString(), dc.getDisplayName(), dc.isEnabled(),
+                    dc.getId().toString(), dc.getDisplayName(), dc.isEnabled(), reachable,
                     userCount, groupCount, pending, gov.activeCampaigns(), gov.openSodViolations()));
         }
 

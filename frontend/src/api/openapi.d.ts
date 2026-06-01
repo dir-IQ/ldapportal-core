@@ -5565,6 +5565,7 @@ export interface components {
             id?: string;
             name?: string;
             enabled?: boolean;
+            reachable?: boolean | null;
             /** Format: int64 */
             userCount?: number;
             /** Format: int64 */
