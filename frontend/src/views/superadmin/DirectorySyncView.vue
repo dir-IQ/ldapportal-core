@@ -24,6 +24,7 @@
             <th class="px-4 py-3 text-left font-medium text-gray-500">Failed</th>
             <th class="px-4 py-3 text-left font-medium text-gray-500">Dead-lettered</th>
             <th class="px-4 py-3 text-left font-medium text-gray-500">Last delivered</th>
+            <th class="px-4 py-3 text-left font-medium text-gray-500">Reconciliation</th>
             <th class="px-4 py-3"></th>
           </tr>
         </thead>
@@ -50,6 +51,26 @@
             <td class="px-4 py-3 text-gray-600 text-xs">
               <RelativeTime v-if="link.lastDeliveredAt" :value="link.lastDeliveredAt" />
               <span v-else class="text-gray-400">—</span>
+            </td>
+            <td class="px-4 py-3 text-xs">
+              <template v-if="link.reconcileEnabled">
+                <button v-if="(link.openFindingCount ?? 0) > 0"
+                        @click="openRuns(link)"
+                        class="badge badge-amber hover:opacity-80"
+                        :title="`${link.openFindingCount} finding(s) awaiting review`">
+                  {{ link.openFindingCount }} to review
+                </button>
+                <div class="text-gray-500">
+                  <template v-if="link.reconcileLastRunAt">
+                    last <RelativeTime :value="link.reconcileLastRunAt" />
+                  </template>
+                  <template v-else-if="link.reconcileNextRunAt">
+                    next <RelativeTime :value="link.reconcileNextRunAt" />
+                  </template>
+                  <span v-else class="text-gray-400">scheduled</span>
+                </div>
+              </template>
+              <span v-else class="text-gray-400">off</span>
             </td>
             <td class="px-4 py-3 text-right whitespace-nowrap">
               <ActionMenu :items="[
@@ -528,6 +549,7 @@ interface ReplicationLink {
   reconcileIntervalSecs?: number | null
   reconcileNextRunAt?: string | null
   reconcileLastRunAt?: string | null
+  openFindingCount?: number
 }
 
 interface ReplicationEvent {

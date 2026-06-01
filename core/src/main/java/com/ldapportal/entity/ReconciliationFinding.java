@@ -19,6 +19,8 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.OnDelete;
+import org.hibernate.annotations.OnDeleteAction;
 import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
@@ -43,12 +45,17 @@ public class ReconciliationFinding {
     @Column(nullable = false, updatable = false)
     private UUID id;
 
+    // ON DELETE CASCADE mirrors V14 so the retention sweep's bulk run-delete
+    // takes resolved findings with it. Declared here too (not just in the
+    // migration) so the create-drop schema used by tests matches Flyway.
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "run_id", nullable = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     private ReconciliationRun run;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "link_id", nullable = false)
+    @OnDelete(action = OnDeleteAction.CASCADE)
     private ReplicationLink link;
 
     @Enumerated(EnumType.STRING)

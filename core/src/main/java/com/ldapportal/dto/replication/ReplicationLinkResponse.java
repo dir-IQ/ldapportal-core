@@ -40,6 +40,7 @@ public record ReplicationLinkResponse(
         ReconcileDeleteAction reconcileDeleteAction,
         OffsetDateTime reconcileNextRunAt,
         OffsetDateTime reconcileLastRunAt,
+        long openFindingCount,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt) {
 
@@ -79,15 +80,17 @@ public record ReplicationLinkResponse(
                 link.getReconcileDeleteAction(),
                 link.getReconcileNextRunAt(),
                 link.getReconcileLastRunAt(),
+                health.openFindingCount(),
                 link.getCreatedAt(),
                 link.getUpdatedAt());
     }
 
     /** Per-link aggregate counts + lag, computed by the service layer. */
     public record LinkHealth(long pendingCount, long failedCount,
-                              long deadLetteredCount, OffsetDateTime lastDeliveredAt) {
+                              long deadLetteredCount, OffsetDateTime lastDeliveredAt,
+                              long openFindingCount) {
         public static LinkHealth empty() {
-            return new LinkHealth(0L, 0L, 0L, null);
+            return new LinkHealth(0L, 0L, 0L, null, 0L);
         }
     }
 }

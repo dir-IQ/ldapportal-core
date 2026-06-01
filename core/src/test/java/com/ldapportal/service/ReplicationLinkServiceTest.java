@@ -37,6 +37,7 @@ class ReplicationLinkServiceTest {
 
     @Mock private ReplicationLinkRepository  linkRepo;
     @Mock private ReplicationEventRepository eventRepo;
+    @Mock private com.ldapportal.repository.ReconciliationFindingRepository findingRepo;
     @Mock private DirectoryConnectionRepository dirRepo;
     @Mock private AuditService               auditService;
     @InjectMocks private ReplicationLinkService service;
@@ -143,6 +144,9 @@ class ReplicationLinkServiceTest {
         when(eventRepo.findHealthRollup(any())).thenReturn(List.of(
                 new Object[]{ linkA.getId(), 3L, 1L, 0L, now },
                 new Object[]{ linkB.getId(), 0L, 0L, 2L, null }));
+        // Open reconciliation findings fold into the same health rollup.
+        when(findingRepo.countByLinkIdsAndStatus(any(), any())).thenReturn(List.<Object[]>of(
+                new Object[]{ linkA.getId(), 4L }));
 
         List<ReplicationLinkResponse> resp = service.listLinks();
 
@@ -151,8 +155,10 @@ class ReplicationLinkServiceTest {
         assertThat(a.pendingCount()).isEqualTo(3);
         assertThat(a.failedCount()).isEqualTo(1);
         assertThat(a.lastDeliveredAt()).isEqualTo(now);
+        assertThat(a.openFindingCount()).isEqualTo(4);
         assertThat(b.deadLetteredCount()).isEqualTo(2);
         assertThat(b.lastDeliveredAt()).isNull();
+        assertThat(b.openFindingCount()).isZero();
     }
 
     // ── audit emissions ──────────────────────────────────────────────────────

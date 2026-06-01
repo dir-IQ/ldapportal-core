@@ -1,7 +1,7 @@
 # Replication reconciliation — design plan
 
 - **Date:** 2026-05-31
-- **Status:** In progress (R-P0 + R-P1 shipped; performance hardening part 1 — R-PP1 — in progress, 2026-06-01).
+- **Status:** In progress (R-P0 + R-P1 + R-PP1 + R-P2 + R-P3 shipped; only performance hardening part 2 — R-PP2 — remains, 2026-06-01).
 - **Scope:** Periodic, operator-scheduled reconciliation between the
   source and target DITs of an existing **replication link**. Compares the
   replicated subtrees, classifies discrepancies, and either auto-corrects
@@ -499,10 +499,10 @@ later, out of core).
 |---|---|
 | **R-P0 — Config + schema** ✅ | Migration (§5), `ReplicationLink` fields + `EnqueueSource.RECONCILIATION`, request/response DTO additions, validation, UI config section (§9.1), audit `CONFIG_UPDATED`. No comparison yet. Tests: DTO round-trip, validation (interval floor, enabled-requires-schedule), migration. |
 | **R-P1 — Engine + scheduler + AUTO_CORRECT** ✅ | `ReconciliationReadOps` subtree read, `ReconciliationService` compare/classify, the `@Scheduled` sweeper + single-flight + catch-up (§6), `reconciliation_runs`, shadow-suppression, enqueue-as-event for auto-correct, `RUN_*` audit, **manual "Reconcile now"** endpoint + button. Tests (in-memory LDAP): missing→ADD, drift→MODIFY shape, extra gated by `delete_action` (IGNORE/REVIEW/AUTO), suppression vs a live event, catch-up math, single-flight, exclusion set, mapping rename/template parity with replication. |
-| **R-PP1 — Performance hardening, part 1** ⏳ *(now)* | Paged subtree reads + checksum/two-pass diff (§16). Bounds peak memory to O(N digests) and removes the hard server size-limit failure. Tests: digest equality/canonicalisation, two-pass classification (missing/drift/extra) against a faked paged reader, hydration-only-on-difference. |
-| **R-P2 — REVIEW mode + operator UI** | `reconciliation_findings` persistence, findings list/apply/dismiss endpoints (§8), the review modal + selective apply (§9.3), row surfacing (§9.2), `FINDING_APPLIED/DISMISSED` audit. Tests: MockMvc authz + selective apply count + status transitions; Vitest for the modal (mock api, pinia). |
-| **R-P3 — Retention + dashboard** | Retention sweep for runs/findings (mirror `ReplicationEventRetentionScheduler`), dashboard awareness item (§11), `auditLabels` entries. |
-| **R-PP2 — Performance hardening, part 2** *(final implementation phase)* | Throttled / dedicated reconciliation connection budget + chunked corrective-event enqueue (§17). Stops reconciliation scans from starving the live LDAP pools and bounds the enqueue transaction size. Tests: per-directory concurrency cap, chunk-boundary enqueue, pool-isolation. |
+| **R-PP1 — Performance hardening, part 1** ✅ | Paged subtree reads + checksum/two-pass diff (§16). Bounds peak memory to O(N digests) and removes the hard server size-limit failure. Tests: digest equality/canonicalisation, two-pass classification (missing/drift/extra) against a faked paged reader, hydration-only-on-difference. |
+| **R-P2 — REVIEW mode + operator UI** ✅ | `reconciliation_findings` persistence, findings list/apply/dismiss endpoints (§8), the review modal + selective apply (§9.3), row surfacing (§9.2), `FINDING_APPLIED/DISMISSED` audit. Tests: MockMvc authz + selective apply count + status transitions; Vitest for the modal (mock api, pinia). |
+| **R-P3 — Retention + dashboard** ✅ | Retention sweep for runs/findings (`ReconciliationRetentionScheduler`, mirroring `ReplicationEventRetentionScheduler`: a nightly age-keyed bulk delete sparing runs with open `PROPOSED` findings; findings cascade via the `run_id` FK, now also declared `@OnDelete` on the entity so the create-drop test schema matches Flyway), dashboard awareness item `RECONCILIATION_DRIFT_OPEN` (§11, gated by `DIRECTORY_SYNC`), per-row open-findings badge + next/last-run surfacing (§9.2, batched into `LinkHealth`), `auditLabels` entries. Tests: Mockito + JPA integration retention (cascade + spared-when-open), dashboard-filter, batched-badge count, scheduler test. |
+| **R-PP2 — Performance hardening, part 2** ⏳ *(now — final implementation phase)* | Throttled / dedicated reconciliation connection budget + chunked corrective-event enqueue (§17). Stops reconciliation scans from starving the live LDAP pools and bounds the enqueue transaction size. Tests: per-directory concurrency cap, chunk-boundary enqueue, pool-isolation. |
 | **Deferred (beyond MVP)** | MODIFY_DN/rename reconciliation; bidirectional; scripted attribute authority; per-link managed-attribute allow-list; EE alerting rule. |
 
 ## 13. Known limitations (accepted for v1)

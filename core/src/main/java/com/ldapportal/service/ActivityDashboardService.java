@@ -62,6 +62,7 @@ public class ActivityDashboardService {
     private final HrDashboardProvider hrDashboard;
     private final ReportJobHealthProvider reportJobHealth;
     private final com.ldapportal.repository.ReplicationEventRepository replicationEventRepo;
+    private final com.ldapportal.repository.ReconciliationFindingRepository reconciliationFindingRepo;
 
     @Transactional(readOnly = true)
     public ActivityDashboardResponse build(AuthPrincipal principal) {
@@ -337,6 +338,24 @@ public class ActivityDashboardService {
                     title,
                     "Target directory may be unreachable or write-throttled",
                     "/superadmin/directory-sync"));
+        }
+
+        // Reconciliation drift — links with PROPOSED (review-mode) findings
+        // awaiting an operator's apply/dismiss decision. Awareness, not a call
+        // to action: review-mode drift is expected, so this informs without
+        // raising an alarm. Auto-correct links don't accumulate open findings,
+        // so this primarily reflects review-mode links. Filtered out when
+        // DIRECTORY_SYNC entitlement is absent.
+        long driftLinks = reconciliationFindingRepo.countDistinctLinksByStatus(
+                com.ldapportal.entity.enums.ReconciliationFindingStatus.PROPOSED);
+        if (driftLinks > 0) {
+            String title = driftLinks == 1
+                    ? "Reconciliation found drift on 1 link"
+                    : "Reconciliation found drift on " + driftLinks + " links";
+            items.add(new AwarenessItem("RECONCILIATION_DRIFT_OPEN",
+                    title,
+                    "Review the suggested corrective actions",
+                    "/superadmin/directory-sync?findings=open"));
         }
 
         return items;

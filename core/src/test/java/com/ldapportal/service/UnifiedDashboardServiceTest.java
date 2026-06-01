@@ -193,19 +193,23 @@ class UnifiedDashboardServiceTest {
                 new AwarenessItem("REPLICATION_LAG_HIGH",
                         "Replication lag exceeds 5 minutes on 1 link",
                         "Target directory may be unreachable or write-throttled",
-                        "/superadmin/directory-sync"));
+                        "/superadmin/directory-sync"),
+                new AwarenessItem("RECONCILIATION_DRIFT_OPEN",
+                        "Reconciliation found drift on 1 link",
+                        "Review the suggested corrective actions",
+                        "/superadmin/directory-sync?findings=open"));
         when(activityDashboardService.build(superadmin)).thenReturn(
                 new ActivityDashboardResponse(actions, List.of(), awareness, metrics));
 
         UnifiedDashboardDto out = service.getDashboard(superadmin);
 
-        // Both replication items are filtered out — the rest pass through.
+        // All directory-sync items are filtered out — the rest pass through.
         assertThat(out.actions()).extracting(UnifiedDashboardDto.ActionItem::type)
                 .containsExactly("APPROVAL")
                 .doesNotContain("REPLICATION_DEAD_LETTERED");
         assertThat(out.awareness()).extracting(UnifiedDashboardDto.AwarenessItem::type)
                 .containsExactly("RECENT_CHANGES")
-                .doesNotContain("REPLICATION_LAG_HIGH");
+                .doesNotContain("REPLICATION_LAG_HIGH", "RECONCILIATION_DRIFT_OPEN");
     }
 
     // ── Admin dispatch ──────────────────────────────────────────────────────

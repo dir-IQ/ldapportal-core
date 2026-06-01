@@ -126,6 +126,15 @@ ldapportal:
       floor-days: ${REPLICATION_RETENTION_FLOOR_DAYS:30}
       cap-days:   ${REPLICATION_RETENTION_CAP_DAYS:90}
       cron:       ${REPLICATION_RETENTION_CRON:0 30 2 * * *}
+  reconciliation:
+    # Nightly retention sweep for reconciliation_runs (see
+    # ReconciliationRetentionScheduler / docs/plans). Deletes finished runs
+    # older than days whose findings are all resolved; runs still holding a
+    # PROPOSED finding are spared so pending review work is never discarded.
+    # Findings cascade-delete with their run (FK ON DELETE CASCADE).
+    retention:
+      days: ${RECONCILIATION_RETENTION_DAYS:90}
+      cron: ${RECONCILIATION_RETENTION_CRON:0 45 2 * * *}
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 # JSON format is configured in logback-spring.xml.

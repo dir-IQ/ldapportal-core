@@ -11,9 +11,11 @@ import com.ldapportal.entity.ReplicationLinkAttrMapping;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ReconcileDeleteAction;
 import com.ldapportal.entity.enums.ReconcileMode;
+import com.ldapportal.entity.enums.ReconciliationFindingStatus;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.DirectoryConnectionRepository;
+import com.ldapportal.repository.ReconciliationFindingRepository;
 import com.ldapportal.repository.ReplicationEventRepository;
 import com.ldapportal.repository.ReplicationLinkRepository;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +49,7 @@ public class ReplicationLinkService {
 
     private final ReplicationLinkRepository  linkRepo;
     private final ReplicationEventRepository eventRepo;
+    private final ReconciliationFindingRepository findingRepo;
     private final DirectoryConnectionRepository dirRepo;
     private final AuditService               auditService;
 
@@ -320,6 +323,14 @@ public class ReplicationLinkService {
     private Map<UUID, LinkHealth> healthByLinkId(List<ReplicationLink> links) {
         if (links.isEmpty()) return Map.of();
         List<UUID> ids = links.stream().map(ReplicationLink::getId).toList();
+
+        // Open (PROPOSED) reconciliation findings per link — one batched
+        // aggregate, same shape as the event health rollup.
+        Map<UUID, Long> openFindings = new HashMap<>();
+        for (Object[] row : findingRepo.countByLinkIdsAndStatus(ids, ReconciliationFindingStatus.PROPOSED)) {
+            openFindings.put((UUID) row[0], ((Number) row[1]).longValue());
+        }
+
         List<Object[]> rows = eventRepo.findHealthRollup(ids);
         Map<UUID, LinkHealth> result = new HashMap<>(rows.size());
         for (Object[] row : rows) {
@@ -328,7 +339,14 @@ public class ReplicationLinkService {
             long failed       = ((Number) row[2]).longValue();
             long deadLettered = ((Number) row[3]).longValue();
             OffsetDateTime lastDelivered = (OffsetDateTime) row[4];
-            result.put(linkId, new LinkHealth(pending, failed, deadLettered, lastDelivered));
+            result.put(linkId, new LinkHealth(pending, failed, deadLettered, lastDelivered,
+                    openFindings.getOrDefault(linkId, 0L)));
+        }
+        // A link with open findings but no events won't appear in the health
+        // rollup; fold those in so the badge still surfaces.
+        for (Map.Entry<UUID, Long> e : openFindings.entrySet()) {
+            result.computeIfAbsent(e.getKey(),
+                    id -> new LinkHealth(0L, 0L, 0L, null, e.getValue()));
         }
         return result;
     }

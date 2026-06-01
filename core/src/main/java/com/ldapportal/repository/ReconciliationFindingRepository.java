@@ -39,4 +39,31 @@ public interface ReconciliationFindingRepository extends JpaRepository<Reconcili
 
     /** Open-finding count for a link — backs the row badge / dashboard awareness. */
     long countByLinkIdAndStatus(UUID linkId, ReconciliationFindingStatus status);
+
+    /**
+     * Number of distinct links carrying at least one finding of {@code status}
+     * — backs the {@code RECONCILIATION_DRIFT_OPEN} dashboard awareness item
+     * ("drift found on N links"). One cheap aggregate rather than per-link
+     * counts.
+     */
+    @Query("""
+        SELECT COUNT(DISTINCT f.link.id) FROM ReconciliationFinding f
+         WHERE f.status = :status
+        """)
+    long countDistinctLinksByStatus(@Param("status") ReconciliationFindingStatus status);
+
+    /**
+     * Open-finding counts for a batch of links, as {@code [linkId, count]}
+     * rows — backs the per-row badge without an N+1 fetch (mirrors
+     * {@code ReplicationEventRepository.findHealthRollup}). Links with no
+     * open findings are simply absent from the result.
+     */
+    @Query("""
+        SELECT f.link.id, COUNT(f) FROM ReconciliationFinding f
+         WHERE f.link.id IN :linkIds
+           AND f.status = :status
+         GROUP BY f.link.id
+        """)
+    List<Object[]> countByLinkIdsAndStatus(@Param("linkIds") Collection<UUID> linkIds,
+                                           @Param("status") ReconciliationFindingStatus status);
 }
