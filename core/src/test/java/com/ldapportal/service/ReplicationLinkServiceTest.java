@@ -8,6 +8,8 @@ import com.ldapportal.dto.replication.ReplicationLinkResponse;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.enums.AuditAction;
+import com.ldapportal.entity.enums.ReconcileDeleteAction;
+import com.ldapportal.entity.enums.ReconcileMode;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.ReplicationEventRepository;
 import com.ldapportal.repository.ReplicationLinkRepository;
@@ -238,6 +240,140 @@ class ReplicationLinkServiceTest {
 
         verify(auditService).recordSystemEvent(
                 eq(principal), eq(AuditAction.REPLICATION_LINK_DELETED), any());
+    }
+
+    // ── reconciliation config (R-P0) ──────────────────────────────────────────
+
+    @Test
+    void create_withReconcileEnabled_setsNextRunAndAuditsConfig() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> {
+            ReplicationLink l = inv.getArgument(0);
+            l.setId(UUID.randomUUID());
+            return l;
+        });
+
+        OffsetDateTime firstRun = OffsetDateTime.now().plusHours(1);
+        ReplicationLinkResponse resp = service.createLink(principal, new ReplicationLinkRequest(
+                "Recon", source.getId(), target.getId(), null, null, true, false, List.of(),
+                true, ReconcileMode.AUTO_CORRECT, firstRun, 7200, ReconcileDeleteAction.AUTO));
+
+        assertThat(resp.reconcileEnabled()).isTrue();
+        assertThat(resp.reconcileMode()).isEqualTo(ReconcileMode.AUTO_CORRECT);
+        assertThat(resp.reconcileDeleteAction()).isEqualTo(ReconcileDeleteAction.AUTO);
+        assertThat(resp.reconcileIntervalSecs()).isEqualTo(7200);
+        // First-run drives the initial next-run pointer.
+        assertThat(resp.reconcileNextRunAt()).isEqualTo(firstRun);
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.RECONCILIATION_CONFIG_UPDATED), any());
+    }
+
+    @Test
+    void create_reconcileDisabled_defaultsToReviewAndNoConfigAudit() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> {
+            ReplicationLink l = inv.getArgument(0);
+            l.setId(UUID.randomUUID());
+            return l;
+        });
+
+        ReplicationLinkResponse resp = service.createLink(principal, new ReplicationLinkRequest(
+                "Plain", source.getId(), target.getId(), null, null, true, false, List.of()));
+
+        assertThat(resp.reconcileEnabled()).isFalse();
+        assertThat(resp.reconcileMode()).isEqualTo(ReconcileMode.REVIEW);
+        assertThat(resp.reconcileDeleteAction()).isEqualTo(ReconcileDeleteAction.REVIEW);
+        assertThat(resp.reconcileNextRunAt()).isNull();
+        verify(auditService, never()).recordSystemEvent(
+                eq(principal), eq(AuditAction.RECONCILIATION_CONFIG_UPDATED), any());
+    }
+
+    @Test
+    void create_reconcileEnabled_rejectsMissingFirstRun() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+
+        assertThatThrownBy(() -> service.createLink(principal, new ReplicationLinkRequest(
+                "Recon", source.getId(), target.getId(), null, null, true, false, List.of(),
+                true, ReconcileMode.REVIEW, null, 7200, ReconcileDeleteAction.REVIEW)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("reconcileFirstRunAt is required");
+    }
+
+    @Test
+    void create_reconcileEnabled_rejectsSubHourInterval() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+
+        assertThatThrownBy(() -> service.createLink(principal, new ReplicationLinkRequest(
+                "Recon", source.getId(), target.getId(), null, null, true, false, List.of(),
+                true, ReconcileMode.REVIEW, OffsetDateTime.now().plusHours(1), 1800, ReconcileDeleteAction.REVIEW)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("at least 3600");
+    }
+
+    @Test
+    void update_enablingReconcile_auditsConfigUpdatedAndSetsNextRun() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        ReplicationLink existing = link("Existing");
+        existing.setSourceDirectory(source);
+        existing.setTargetDirectory(target);
+        existing.setEnabled(true);  // already enabled, so no link-toggle audit noise
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        OffsetDateTime firstRun = OffsetDateTime.now().plusHours(2);
+        ReplicationLinkResponse resp = service.updateLink(principal, existing.getId(),
+                new ReplicationLinkRequest("Existing", source.getId(), target.getId(),
+                        null, null, true, false, List.of(),
+                        true, ReconcileMode.REVIEW, firstRun, 3600, ReconcileDeleteAction.REVIEW));
+
+        assertThat(resp.reconcileEnabled()).isTrue();
+        assertThat(resp.reconcileNextRunAt()).isEqualTo(firstRun);
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.RECONCILIATION_CONFIG_UPDATED), any());
+    }
+
+    @Test
+    void update_unrelatedEdit_preservesScheduleAndSkipsConfigAudit() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        OffsetDateTime firstRun = OffsetDateTime.now().minusMinutes(5);
+        OffsetDateTime nextRun = firstRun.plusHours(1);
+        ReplicationLink existing = link("OldName");
+        existing.setSourceDirectory(source);
+        existing.setTargetDirectory(target);
+        existing.setEnabled(true);
+        existing.setReconcileEnabled(true);
+        existing.setReconcileMode(ReconcileMode.REVIEW);
+        existing.setReconcileDeleteAction(ReconcileDeleteAction.REVIEW);
+        existing.setReconcileFirstRunAt(firstRun);
+        existing.setReconcileIntervalSecs(3600);
+        existing.setReconcileNextRunAt(nextRun);   // schedule already advanced once
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // Rename only — reconcile config resent unchanged.
+        ReplicationLinkResponse resp = service.updateLink(principal, existing.getId(),
+                new ReplicationLinkRequest("NewName", source.getId(), target.getId(),
+                        null, null, true, false, List.of(),
+                        true, ReconcileMode.REVIEW, firstRun, 3600, ReconcileDeleteAction.REVIEW));
+
+        // Running schedule preserved (next-run not reset to first-run).
+        assertThat(resp.reconcileNextRunAt()).isEqualTo(nextRun);
+        verify(auditService, never()).recordSystemEvent(
+                eq(principal), eq(AuditAction.RECONCILIATION_CONFIG_UPDATED), any());
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

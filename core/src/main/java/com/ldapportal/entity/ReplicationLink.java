@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.entity;
 
+import com.ldapportal.entity.enums.ReconcileDeleteAction;
+import com.ldapportal.entity.enums.ReconcileMode;
 import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -74,6 +78,38 @@ public class ReplicationLink {
     @OneToMany(mappedBy = "link", cascade = CascadeType.ALL, orphanRemoval = true,
                fetch = FetchType.LAZY)
     private List<ReplicationLinkAttrMapping> attributeMappings = new ArrayList<>();
+
+    // ── Periodic reconciliation config (R-P0) ────────────────────────────────
+    // Opt-in per link; off by default. See
+    // docs/plans/2026-05-31-replication-reconciliation-design.md §5.1.
+
+    @Column(name = "reconcile_enabled", nullable = false)
+    private boolean reconcileEnabled = false;
+
+    /** Resolution mode for missing/drift findings. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "reconcile_mode", nullable = false, length = 20)
+    private ReconcileMode reconcileMode = ReconcileMode.REVIEW;
+
+    /** Operator-chosen start of the first run; drives the initial next-run. */
+    @Column(name = "reconcile_first_run_at")
+    private OffsetDateTime reconcileFirstRunAt;
+
+    /** Repeat cadence in seconds. Floor of 3600 (1 hour) when enabled. */
+    @Column(name = "reconcile_interval_secs")
+    private Integer reconcileIntervalSecs;
+
+    /** Next due time the scheduler polls on; advanced by whole intervals. */
+    @Column(name = "reconcile_next_run_at")
+    private OffsetDateTime reconcileNextRunAt;
+
+    @Column(name = "reconcile_last_run_at")
+    private OffsetDateTime reconcileLastRunAt;
+
+    /** How EXTRA_IN_TARGET entries are resolved; independent of the mode. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "reconcile_delete_action", nullable = false, length = 20)
+    private ReconcileDeleteAction reconcileDeleteAction = ReconcileDeleteAction.REVIEW;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

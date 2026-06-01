@@ -145,6 +145,78 @@
             </button>
           </div>
         </details>
+
+        <!-- Reconciliation config (R-P0) ─────────────────────────────────── -->
+        <details class="border border-gray-200 rounded-lg">
+          <summary class="px-3 py-2 cursor-pointer text-sm text-gray-700 select-none">
+            Reconciliation
+            <span class="text-xs text-gray-400">
+              — {{ form.reconcileEnabled
+                    ? `${form.reconcileMode === 'AUTO_CORRECT' ? 'auto-correct' : 'review'}, every ${form.reconcileIntervalValue} ${form.reconcileIntervalUnit}`
+                    : 'off' }}
+            </span>
+          </summary>
+          <div class="p-3 space-y-3">
+            <p class="text-xs text-gray-500">
+              Periodically compares the target against the source and resolves drift the
+              live capture path can't see (out-of-band changes, missed writes, initial backfill).
+            </p>
+            <label class="flex items-center gap-2 text-sm text-gray-700">
+              <input type="checkbox" v-model="form.reconcileEnabled" :disabled="!form.enabled" class="rounded" />
+              Enable periodic reconciliation
+            </label>
+            <p v-if="!form.enabled" class="text-xs text-gray-400">Enable the link first to configure reconciliation.</p>
+
+            <div v-if="form.reconcileEnabled" class="space-y-3 pl-6">
+              <!-- Mode (missing / drift) -->
+              <div>
+                <span class="block text-sm font-medium text-gray-700 mb-1">Missing entries &amp; attribute drift</span>
+                <label class="flex items-center gap-2 text-sm text-gray-700">
+                  <input type="radio" value="REVIEW" v-model="form.reconcileMode" /> Review before applying
+                </label>
+                <label class="flex items-center gap-2 text-sm text-gray-700">
+                  <input type="radio" value="AUTO_CORRECT" v-model="form.reconcileMode" /> Correct automatically
+                </label>
+              </div>
+
+              <!-- Schedule -->
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">First run</label>
+                  <input type="datetime-local" v-model="form.reconcileFirstRunAt"
+                         class="input w-full" :required="form.reconcileEnabled" />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Repeat every</label>
+                  <div class="flex gap-2">
+                    <input type="number" min="1" v-model.number="form.reconcileIntervalValue"
+                           class="input w-24" :required="form.reconcileEnabled" />
+                    <select v-model="form.reconcileIntervalUnit" class="input">
+                      <option value="hours">hours</option>
+                      <option value="days">days</option>
+                    </select>
+                  </div>
+                  <p class="text-xs text-gray-400 mt-1">Minimum 1 hour.</p>
+                </div>
+              </div>
+
+              <!-- Extra-on-target (delete) action -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  Extra entries on the target (no source match)
+                </label>
+                <select v-model="form.reconcileDeleteAction" @change="onDeleteActionChange" class="input w-full">
+                  <option value="IGNORE">Leave alone</option>
+                  <option value="REVIEW">Review before deleting</option>
+                  <option value="AUTO">Delete automatically</option>
+                </select>
+                <p v-if="form.reconcileDeleteAction === 'AUTO'" class="text-xs text-red-600 mt-1">
+                  ⚠ Entries on the target with no source counterpart will be deleted automatically.
+                </p>
+              </div>
+            </div>
+          </div>
+        </details>
       </form>
 
       <template #footer>
@@ -254,6 +326,7 @@ import ActionMenu from '@/components/ActionMenu.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
+import { useConfirm } from '@/composables/useConfirm'
 import type { components } from '@/api/openapi'
 
 type Directory = components['schemas']['DirectoryConnectionResponse']
@@ -264,6 +337,10 @@ interface AttributeMapping {
   valueTemplate: string
 }
 
+type ReconcileMode = 'AUTO_CORRECT' | 'REVIEW'
+type ReconcileDeleteAction = 'IGNORE' | 'REVIEW' | 'AUTO'
+type IntervalUnit = 'hours' | 'days'
+
 interface ReplicationForm {
   displayName: string
   sourceDirectoryId: string
@@ -273,6 +350,14 @@ interface ReplicationForm {
   enabled: boolean
   autoCreateOnMissing: boolean
   attributeMappings: AttributeMapping[]
+  // Reconciliation config (R-P0). interval is held as value+unit in the
+  // form and serialized to reconcileIntervalSecs on save.
+  reconcileEnabled: boolean
+  reconcileMode: ReconcileMode
+  reconcileDeleteAction: ReconcileDeleteAction
+  reconcileFirstRunAt: string          // datetime-local string ('' when unset)
+  reconcileIntervalValue: number
+  reconcileIntervalUnit: IntervalUnit
 }
 
 // Row shapes from the (untyped) replication API; only the fields this
@@ -293,6 +378,13 @@ interface ReplicationLink {
   deadLetteredCount: number
   lastDeliveredAt?: string | null
   attributeMappings?: AttributeMapping[]
+  reconcileEnabled?: boolean
+  reconcileMode?: ReconcileMode
+  reconcileDeleteAction?: ReconcileDeleteAction
+  reconcileFirstRunAt?: string | null
+  reconcileIntervalSecs?: number | null
+  reconcileNextRunAt?: string | null
+  reconcileLastRunAt?: string | null
 }
 
 interface ReplicationEvent {
@@ -316,6 +408,20 @@ function errMsg(e: unknown, fallback = 'Something went wrong'): string {
 
 const notif = useNotificationStore()
 const router = useRouter()
+const confirm = useConfirm()
+
+// Choosing "Delete automatically" is destructive — make the operator
+// confirm, and revert to Review if they decline.
+async function onDeleteActionChange() {
+  if (form.value.reconcileDeleteAction !== 'AUTO') return
+  const ok = await confirm({
+    title: 'Delete extra target entries automatically?',
+    message: 'Reconciliation will permanently DELETE entries on the target that '
+      + 'have no counterpart on the source, without further review. This cannot be undone.',
+    confirmLabel: 'Yes, delete automatically',
+  })
+  if (!ok) form.value.reconcileDeleteAction = 'REVIEW'
+}
 
 const links     = ref<ReplicationLink[]>([])
 const directoryOptions = ref<Directory[]>([])
@@ -351,11 +457,43 @@ function emptyForm(): ReplicationForm {
     enabled: true,
     autoCreateOnMissing: false,
     attributeMappings: [],
+    reconcileEnabled: false,
+    reconcileMode: 'REVIEW',
+    reconcileDeleteAction: 'REVIEW',
+    reconcileFirstRunAt: '',
+    reconcileIntervalValue: 1,
+    reconcileIntervalUnit: 'days',
   }
 }
 
 function addMappingRow() {
   form.value.attributeMappings.push({ sourceAttr: '', targetAttr: '', valueTemplate: '' })
+}
+
+// ── reconciliation interval / datetime helpers ───────────────────────────────
+// Interval is stored in seconds on the backend; the form holds value+unit.
+function intervalToSecs(value: number, unit: IntervalUnit): number | null {
+  if (!value || value < 1) return null
+  return Math.round(value) * (unit === 'days' ? 86400 : 3600)
+}
+function secsToInterval(secs: number | null | undefined): { value: number; unit: IntervalUnit } {
+  if (!secs || secs < 3600) return { value: 1, unit: 'days' }
+  // Prefer days when the cadence is a whole number of days.
+  if (secs % 86400 === 0) return { value: secs / 86400, unit: 'days' }
+  return { value: Math.round(secs / 3600), unit: 'hours' }
+}
+// ISO ⇄ <input type="datetime-local"> ('YYYY-MM-DDTHH:mm' in local time).
+function toDateTimeLocal(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+function fromDateTimeLocal(s: string): string | null {
+  if (!s) return null
+  const d = new Date(s)
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
 }
 
 async function load() {
@@ -379,6 +517,7 @@ function openCreate() {
 
 function openEdit(link: ReplicationLink) {
   editing.value = link
+  const interval = secsToInterval(link.reconcileIntervalSecs)
   form.value = {
     displayName: link.displayName,
     sourceDirectoryId: link.sourceDirectoryId,
@@ -390,6 +529,12 @@ function openEdit(link: ReplicationLink) {
     attributeMappings: (link.attributeMappings ?? []).map(m => ({
       sourceAttr: m.sourceAttr, targetAttr: m.targetAttr, valueTemplate: m.valueTemplate ?? '',
     })),
+    reconcileEnabled: link.reconcileEnabled ?? false,
+    reconcileMode: link.reconcileMode ?? 'REVIEW',
+    reconcileDeleteAction: link.reconcileDeleteAction ?? 'REVIEW',
+    reconcileFirstRunAt: toDateTimeLocal(link.reconcileFirstRunAt),
+    reconcileIntervalValue: interval.value,
+    reconcileIntervalUnit: interval.unit,
   }
   showForm.value = true
 }
@@ -397,13 +542,25 @@ function openEdit(link: ReplicationLink) {
 async function save() {
   saving.value = true
   try {
+    const f = form.value
     const payload = {
-      ...form.value,
-      sourceBaseDn: form.value.sourceBaseDn || null,
-      targetBaseDn: form.value.targetBaseDn || null,
-      attributeMappings: form.value.attributeMappings
+      displayName: f.displayName,
+      sourceDirectoryId: f.sourceDirectoryId,
+      targetDirectoryId: f.targetDirectoryId,
+      enabled: f.enabled,
+      autoCreateOnMissing: f.autoCreateOnMissing,
+      sourceBaseDn: f.sourceBaseDn || null,
+      targetBaseDn: f.targetBaseDn || null,
+      attributeMappings: f.attributeMappings
         .filter(m => m.sourceAttr && m.targetAttr)
         .map(m => ({ ...m, valueTemplate: m.valueTemplate || null })),
+      // Reconciliation config. The backend ignores the schedule fields
+      // when reconcileEnabled is false, but we still round-trip them.
+      reconcileEnabled: f.reconcileEnabled,
+      reconcileMode: f.reconcileMode,
+      reconcileDeleteAction: f.reconcileDeleteAction,
+      reconcileFirstRunAt: fromDateTimeLocal(f.reconcileFirstRunAt),
+      reconcileIntervalSecs: intervalToSecs(f.reconcileIntervalValue, f.reconcileIntervalUnit),
     }
     if (editing.value) {
       await updateReplicationLink(editing.value.id, payload)
