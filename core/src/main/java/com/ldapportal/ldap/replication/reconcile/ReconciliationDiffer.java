@@ -57,6 +57,15 @@ public final class ReconciliationDiffer {
             int extraCount,
             int suppressedCount) {}
 
+    /**
+     * Whole-subtree in-memory diff. The production path is the streaming
+     * {@link ChecksumReconciler} (which reuses this class's
+     * {@link #computeDrift}, {@link #stripExcluded} and {@link #normDn}
+     * helpers); this method is retained deliberately as the <em>reference
+     * oracle</em> that {@code ChecksumReconcilerTest#parityWithPureDiffer}
+     * checks the streaming path against — not dead code. Keep its
+     * classification semantics in lock-step with {@code ChecksumReconciler}.
+     */
     public static DiffResult diff(ReplicationLinkSnapshot link,
                                   String targetBaseDn,
                                   List<ReconEntry> sourceEntries,
@@ -130,6 +139,19 @@ public final class ReconciliationDiffer {
      * Compare expected (source-authoritative) attrs against the target's
      * current values. Returns a MODIFY payload ({@code modifications} +
      * {@code before}) when any managed attribute differs, else null.
+     *
+     * <p><b>Asymmetric by design (additive / REPLACE-only):</b> only
+     * attributes the <em>source</em> manages are compared. A managed
+     * attribute present on the target but not the source is left alone —
+     * reconciliation never strips target attributes it didn't put there.
+     * Consequently {@link ReconciliationDigest}, which hashes the full
+     * managed set on each side, is a <em>conservative</em> pre-filter:
+     * equal digests guarantee no drift, but a target-only managed attribute
+     * makes the digests differ and forces a (cheap, BASE-scope) pass-2
+     * hydration that then finds nothing to correct. That over-hydration is
+     * bounded to genuinely out-of-band-modified target entries — under
+     * normal operation the target is written only by replication, so its
+     * managed attribute set tracks the source.
      */
     static Map<String, Object> computeDrift(Map<String, List<String>> expected,
                                             Map<String, List<String>> targetAttrs) {

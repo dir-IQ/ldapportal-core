@@ -106,6 +106,7 @@ public class ReconciliationService {
             ReplicationLinkSnapshot link = replicationReadOps.snapshotById(linkId).orElse(null);
             if (link == null) {
                 txOps.failRun(sr.runId(), "Replication link no longer exists");
+                recordRunFailed(linkId, trigger, principal, "Replication link no longer exists");
                 return;
             }
             String sourceBase = link.sourceBaseDn() != null
@@ -129,7 +130,7 @@ public class ReconciliationService {
                         + " findings exceed the safety cap of " + maxFindingsPerRun
                         + " — check the link's base-DN configuration";
                 txOps.failRun(sr.runId(), msg);
-                recordRunCompleted(linkId, trigger, principal, diff, 0, "ABORTED_SAFETY_CAP");
+                recordRunFailed(linkId, trigger, principal, msg);
                 return;
             }
 
@@ -146,6 +147,7 @@ public class ReconciliationService {
         } catch (RuntimeException ex) {
             log.error("Reconciliation run {} for link {} failed: {}", sr.runId(), linkId, ex.toString());
             txOps.failRun(sr.runId(), ex.toString());
+            recordRunFailed(linkId, trigger, principal, ex.toString());
         } finally {
             txOps.advanceSchedule(linkId, now);
         }
@@ -174,6 +176,15 @@ public class ReconciliationService {
         detail.put("suppressed", diff.suppressedCount());
         detail.put("autoApplied", applied);
         emit(AuditAction.RECONCILIATION_RUN_COMPLETED, detail, principal);
+    }
+
+    private void recordRunFailed(UUID linkId, ReconciliationRunTrigger trigger,
+                                 AuthPrincipal principal, String reason) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("linkId", linkId.toString());
+        detail.put("trigger", trigger.name());
+        detail.put("reason", reason);
+        emit(AuditAction.RECONCILIATION_RUN_FAILED, detail, principal);
     }
 
     private void emit(AuditAction action, Map<String, Object> detail, AuthPrincipal principal) {

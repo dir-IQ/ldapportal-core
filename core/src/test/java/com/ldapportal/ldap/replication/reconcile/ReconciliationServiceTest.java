@@ -2,6 +2,7 @@
 package com.ldapportal.ldap.replication.reconcile;
 
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ReconcileDeleteAction;
 import com.ldapportal.entity.enums.ReconcileMode;
 import com.ldapportal.entity.enums.ReconciliationFindingType;
@@ -119,5 +120,21 @@ class ReconciliationServiceTest {
         verify(txOps).failRun(eq(runId), anyString());
         verify(txOps, never()).completeRun(any(), any(), anyInt());
         verify(txOps).advanceSchedule(eq(linkId), any());
+        // The abort is audited as a failure, not silently swallowed.
+        verify(auditService).recordSystemEventNoActor(eq(AuditAction.RECONCILIATION_RUN_FAILED), any());
+    }
+
+    @Test
+    void compareThrowing_failsRun_auditsFailure_andStillAdvancesSchedule() {
+        when(checksumReconciler.reconcile(any(), anyString(), anyString(), any(), any()))
+                .thenThrow(new RuntimeException("target unreachable"));
+
+        service.execute(new StartedRun(runId, ReconcileMode.AUTO_CORRECT, ReconcileDeleteAction.REVIEW),
+                linkId, ReconciliationRunTrigger.SCHEDULED, null);
+
+        verify(txOps).failRun(eq(runId), anyString());
+        verify(txOps, never()).completeRun(any(), any(), anyInt());
+        verify(auditService).recordSystemEventNoActor(eq(AuditAction.RECONCILIATION_RUN_FAILED), any());
+        verify(txOps).advanceSchedule(eq(linkId), any());   // cadence never wedges on failure
     }
 }

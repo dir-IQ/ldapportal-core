@@ -2,6 +2,8 @@
 package com.ldapportal.controller.superadmin;
 
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.core.entitlement.Entitled;
+import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.dto.replication.FindingActionRequest;
 import com.ldapportal.dto.replication.ReconciliationFindingResponse;
 import com.ldapportal.dto.replication.ReconciliationRunResponse;
@@ -44,6 +46,7 @@ import java.util.UUID;
  */
 @RestController
 @PreAuthorize("hasRole('SUPERADMIN')")
+@Entitled(Entitlement.DIRECTORY_SYNC)   // feature is off (403) on unlicensed/community editions
 @RequiredArgsConstructor
 public class ReconciliationController {
 

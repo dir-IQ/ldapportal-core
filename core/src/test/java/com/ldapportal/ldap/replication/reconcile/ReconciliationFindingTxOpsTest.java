@@ -101,6 +101,16 @@ class ReconciliationFindingTxOpsTest {
     }
 
     @Test
+    void persist_supersedesPriorOpenFindingsForLink_beforeInserting() {
+        txOps.persistFindings(runId, linkId, List.of(missing("uid=b,dc=x")),
+                ReconcileMode.REVIEW, ReconcileDeleteAction.REVIEW);
+
+        // The fresh run retires earlier runs' still-open proposals for this
+        // link so they don't pile up / double-count for the same DN.
+        verify(findingRepo).supersedeOpenForLink(eq(linkId), any());
+    }
+
+    @Test
     void persist_extraHeldForReview_evenWhenAutoCorrect() {
         // AUTO_CORRECT applies missing/drift, but delete-action REVIEW holds extras.
         int applied = txOps.persistFindings(runId, linkId, List.of(extra("uid=z,dc=x")),

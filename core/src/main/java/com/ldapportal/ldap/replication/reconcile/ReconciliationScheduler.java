@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication.reconcile;
 
+import com.ldapportal.core.entitlement.Entitlement;
+import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.entity.enums.ReconciliationRunTrigger;
 import com.ldapportal.repository.ReplicationLinkRepository;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +29,7 @@ public class ReconciliationScheduler {
     private final ReplicationLinkRepository linkRepo;
     private final ReconciliationService     service;
     private final ReconciliationTxOps       txOps;
+    private final EntitlementService        entitlementService;
 
     /** A run claimed longer ago than this is presumed abandoned. Default 30 min. */
     @Value("${ldapportal.reconciliation.run-timeout-ms:1800000}")
@@ -35,6 +38,16 @@ public class ReconciliationScheduler {
     @Scheduled(fixedDelayString = "${ldapportal.reconciliation.sweep-ms:30000}")
     void sweep() {
         try {
+            // Edition gate, mirroring ReplicationEnqueuer: when DIRECTORY_SYNC
+            // isn't entitled (e.g. a commercial → community downgrade), the
+            // autonomous path must not keep enqueuing corrective writes —
+            // including deletes — against targets. The live capture path
+            // already pauses; reconciliation pauses here too. (Null in any
+            // direct-construction unit test → gate treated as open.)
+            if (entitlementService != null
+                    && !entitlementService.has(Entitlement.DIRECTORY_SYNC)) {
+                return;
+            }
             OffsetDateTime now = OffsetDateTime.now();
             for (UUID linkId : linkRepo.findReconcileDueIds(now)) {
                 try {

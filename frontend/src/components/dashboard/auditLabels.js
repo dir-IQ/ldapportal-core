@@ -76,6 +76,7 @@ export const ACTION_LABELS = {
   RECONCILIATION_CONFIG_UPDATED: 'Reconciliation settings updated',
   RECONCILIATION_RUN_STARTED: 'Reconciliation run started',
   RECONCILIATION_RUN_COMPLETED: 'Reconciliation run completed',
+  RECONCILIATION_RUN_FAILED: 'Reconciliation run failed',
   RECONCILIATION_FINDING_APPLIED: 'Reconciliation finding applied',
   RECONCILIATION_FINDING_DISMISSED: 'Reconciliation finding dismissed',
 }

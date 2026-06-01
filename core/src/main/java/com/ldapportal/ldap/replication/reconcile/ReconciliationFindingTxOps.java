@@ -62,6 +62,10 @@ public class ReconciliationFindingTxOps {
         ReconciliationRun run  = em.getReference(ReconciliationRun.class, runId);
         ReplicationLink    link = em.getReference(ReplicationLink.class, linkId);
         OffsetDateTime now = OffsetDateTime.now();
+        // This run is the fresh authoritative view: retire any still-open
+        // proposals from earlier runs of this link so they don't pile up
+        // (and double-count in the badge / dashboard) for the same DN.
+        findingRepo.supersedeOpenForLink(linkId, now);
         int applied = 0;
         for (FindingCandidate c : candidates) {
             ReconciliationFinding f = new ReconciliationFinding();

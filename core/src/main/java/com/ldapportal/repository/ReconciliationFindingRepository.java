@@ -7,10 +7,12 @@ import com.ldapportal.entity.enums.ReconciliationFindingType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
@@ -66,4 +68,23 @@ public interface ReconciliationFindingRepository extends JpaRepository<Reconcili
         """)
     List<Object[]> countByLinkIdsAndStatus(@Param("linkIds") Collection<UUID> linkIds,
                                            @Param("status") ReconciliationFindingStatus status);
+
+    /**
+     * Close out a link's still-open ({@code PROPOSED}) findings as
+     * {@code SUPERSEDED} — a newer run has replaced that view of the drift.
+     * Called at the start of persisting a fresh run's findings so an
+     * un-triaged review-mode link doesn't accumulate duplicate proposals
+     * for the same DN run after run (which would also inflate the row badge
+     * and the dashboard drift count). Already-resolved findings
+     * (AUTO_APPLIED / APPLIED / DISMISSED) are left untouched.
+     */
+    @Modifying
+    @Query("""
+        UPDATE ReconciliationFinding f
+           SET f.status = com.ldapportal.entity.enums.ReconciliationFindingStatus.SUPERSEDED,
+               f.resolvedAt = :now
+         WHERE f.link.id = :linkId
+           AND f.status = com.ldapportal.entity.enums.ReconciliationFindingStatus.PROPOSED
+        """)
+    int supersedeOpenForLink(@Param("linkId") UUID linkId, @Param("now") OffsetDateTime now);
 }

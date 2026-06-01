@@ -84,7 +84,7 @@ value, `RECONCILIATION` (§5.3) — forward-only, additive.
 | Concurrency | **Single-flight per link** via a `reconciliation_runs` row claimed CAS-style (mirrors `ReplicationWorker.tryClaim`); a second tick for a link already `RUNNING` is a no-op. | A subtree compare is heavy; never run two for one link. |
 | Catch-up after downtime | On run completion, advance `next_run_at` by whole `interval`s until it is **strictly in the future** (skip missed slots; never burst). | If the app was down for a day, the operator wants one reconcile now and the cadence resumed — not 48 back-to-back runs. |
 | Auth | **SUPERADMIN only** for config, manual trigger, and finding apply/dismiss — same as link CRUD and event ops in the predecessor. | Misapplied reconciliation can mass-delete a target. |
-| Edition gating | Behind the existing **`Entitlement.DIRECTORY_SYNC`**. | Reconciliation is part of directory sync; same gate, same editions. |
+| Edition gating | Behind the existing **`Entitlement.DIRECTORY_SYNC`**, enforced on **both** the HTTP surface (`@Entitled(DIRECTORY_SYNC)` on `ReconciliationController`) and the autonomous path (`ReconciliationScheduler.sweep` early-returns when the entitlement is absent, mirroring `ReplicationEnqueuer`). | Reconciliation is part of directory sync; same gate, same editions. The scheduler gate matters most: unlike link CRUD (whose downstream `ReplicationEnqueuer` already gates capture), reconciliation's corrective enqueue (`eventRepo.save`) has no other gate, so an ungated sweep would keep enqueuing corrective writes — including deletes — after a commercial→community downgrade. |
 | Out-of-scope (v1) | Bidirectional reconciliation; MODIFY_DN/rename reconciliation; structural schema diff; password reconciliation; reconciling entries outside the link's base-DN scope. | Keeps v1 shippable; each is a clean later addition. |
 
 ## 4. End-to-end flow
@@ -460,8 +460,11 @@ planned `REPLICATION_*`), recorded via
 
 - `RECONCILIATION_CONFIG_UPDATED` — enable/disable/mode/schedule change
   (detail: the changed fields).
-- `RECONCILIATION_RUN_STARTED` / `RECONCILIATION_RUN_COMPLETED` — detail
-  carries run id, trigger, and the count summary.
+- `RECONCILIATION_RUN_STARTED` / `RECONCILIATION_RUN_COMPLETED` /
+  `RECONCILIATION_RUN_FAILED` — detail carries link id, trigger, and (on
+  completion) the count summary or (on failure) the reason. A failing run is
+  audited, not just logged, so a perpetually-failing link (unreachable
+  target, base-DN typo tripping the safety cap) is visible in the audit log.
 - `RECONCILIATION_FINDING_AUTO_CORRECTED` — auto-correct mode applied a
   finding (detail: type + DN + event id).
 - `RECONCILIATION_FINDING_APPLIED` / `RECONCILIATION_FINDING_DISMISSED` —
@@ -488,6 +491,14 @@ Gated behind `Entitlement.DIRECTORY_SYNC`, via `UnifiedDashboardService`:
 - Optionally a `SummaryMetrics.reconciliationFindingsOpen` count card,
   amber when > 0. Auto-correct links won't accumulate open findings, so
   this primarily reflects review-mode links.
+
+> **Finding supersession.** Each fresh run, before persisting its findings,
+> flips the link's still-open (`PROPOSED`) findings from earlier runs to
+> `SUPERSEDED` (`ReconciliationFindingTxOps.persistFindings` →
+> `supersedeOpenForLink`). Without this, an un-triaged review-mode link would
+> grow a duplicate `PROPOSED` finding for the same DN every interval, double-
+> counting in the badge and this dashboard item. So the open count always
+> reflects the *latest* run's view, not a cumulative pile.
 
 No new EE alerting hook in v1 (the predecessor defers replication alerting
 to `ee/alerting` P4; a "reconciliation-drift-exceeds" rule would land there

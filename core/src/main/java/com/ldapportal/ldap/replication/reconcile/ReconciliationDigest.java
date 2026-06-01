@@ -49,7 +49,7 @@ public final class ReconciliationDigest {
         return sha256Hex(sb.toString());
     }
 
-    /** Append {@code <byteLen>:<token>} — length-prefixing removes delimiter ambiguity. */
+    /** Append {@code <charLen>:<token>} — length-prefixing removes delimiter ambiguity. */
     private static void token(StringBuilder sb, String token) {
         sb.append(token.length()).append(':').append(token);
     }

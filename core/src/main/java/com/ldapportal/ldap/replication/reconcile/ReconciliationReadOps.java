@@ -16,7 +16,6 @@ import com.unboundid.ldap.sdk.controls.SimplePagedResultsControl;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,26 +40,6 @@ import java.util.function.Consumer;
 public class ReconciliationReadOps {
 
     private final LdapConnectionFactory connectionFactory;
-
-    /**
-     * All entries at or under {@code baseDn}, with user attributes.
-     * Operational attributes are not requested (the differ excludes them
-     * anyway). Throws (via the factory) on any LDAP error.
-     */
-    public List<ReconEntry> readSubtree(DirectoryConnection dc, String baseDn) {
-        return connectionFactory.withConnectionUnreplicated(dc, iface -> {
-            SearchRequest req = new SearchRequest(
-                    baseDn, SearchScope.SUB,
-                    Filter.createPresenceFilter("objectClass"),
-                    "*");
-            SearchResult result = iface.search(req);
-            List<ReconEntry> entries = new ArrayList<>(result.getEntryCount());
-            for (SearchResultEntry e : result.getSearchEntries()) {
-                entries.add(toReconEntry(e));
-            }
-            return entries;
-        });
-    }
 
     /**
      * Stream every entry at or under {@code baseDn} to {@code consumer}, a
