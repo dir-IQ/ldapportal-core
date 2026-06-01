@@ -26,11 +26,11 @@
           Click the link to verify your email address and submit your request for approval.
         </p>
         <div class="bg-gray-50 rounded-lg p-4 text-sm text-gray-500">
-          <p>Your request ID: <code class="bg-gray-200 px-1.5 py-0.5 rounded text-xs">{{ submitResult.requestId }}</code></p>
+          <p>Your request ID: <code class="bg-gray-200 px-1.5 py-0.5 rounded text-xs">{{ submitResult?.requestId }}</code></p>
           <p class="mt-1">You can check the status of your request at any time.</p>
         </div>
         <div class="flex gap-3 justify-center pt-2">
-          <RouterLink :to="`/register/status/${submitResult.requestId}`" class="btn-secondary">Check Status</RouterLink>
+          <RouterLink :to="`/register/status/${submitResult?.requestId}`" class="btn-secondary">Check Status</RouterLink>
           <RouterLink to="/self-service/login" class="btn-primary">Back to Login</RouterLink>
         </div>
       </div>
@@ -73,7 +73,7 @@
               {{ sectionName === '_default' ? 'Account Details' : sectionName }}
             </h2>
 
-            <div :class="sectionFields.some(f => f.columnSpan < 6) ? 'grid grid-cols-6 gap-3' : 'space-y-3'">
+            <div :class="sectionFields.some(f => (f.columnSpan ?? 6) < 6) ? 'grid grid-cols-6 gap-3' : 'space-y-3'">
               <div v-for="field in sectionFields" :key="field.attributeName"
                 :style="{ gridColumn: `span ${field.columnSpan || 6}` }">
                 <label v-if="field.inputType !== 'BOOLEAN'" :for="`ss-register-field-${field.attributeName}`" class="block text-sm font-medium text-gray-700 mb-1">
@@ -85,7 +85,9 @@
 
                 <textarea v-if="field.inputType === 'TEXTAREA'"
                   :id="`ss-register-field-${field.attributeName}`"
-                  v-model="attributeValues[field.attributeName]" rows="2"
+                  :value="String(attributeValues[field.attributeName] ?? '')"
+                  @input="attributeValues[field.attributeName] = ($event.target as HTMLTextAreaElement).value"
+                  rows="2"
                   :required="field.required"
                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
 
@@ -182,7 +184,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
@@ -191,13 +193,31 @@ import {
   getRegistrationForm,
   submitRegistration,
 } from '@/api/selfservice'
+import { validateAttributes } from '@/utils/attributeValidation'
+
+interface RegistrationDirectory { id: string, displayName: string }
+interface RegistrationProfile { id: string, name: string, description?: string }
+interface RegistrationField {
+  attributeName: string
+  label: string
+  inputType?: string
+  required?: boolean
+  minLength?: number | null
+  maxLength?: number | null
+  validationRegex?: string | null
+  validationMessage?: string | null
+  allowedValues?: string | null
+  sectionName?: string | null
+  columnSpan?: number | null
+}
+interface SubmitResult { requestId?: string, [key: string]: unknown }
 
 const loading = ref(false)
 const loadingForm = ref(false)
-const regPasswordVisible = reactive({})
+const regPasswordVisible = reactive<Record<string, boolean>>({})
 const errorMsg = ref('')
 const submitted = ref(false)
-const submitResult = ref(null)
+const submitResult = ref<SubmitResult | null>(null)
 
 const formData = reactive({
   directoryId: '',
@@ -206,19 +226,19 @@ const formData = reactive({
   justification: '',
 })
 
-const directories = ref([])
-const profiles = ref([])
-const formFields = ref([])
-const attributeValues = reactive({})
-const fieldErrors = reactive({})
+const directories = ref<RegistrationDirectory[]>([])
+const profiles = ref<RegistrationProfile[]>([])
+const formFields = ref<RegistrationField[]>([])
+const attributeValues = reactive<Record<string, string | boolean>>({})
+const fieldErrors = reactive<Record<string, string>>({})
 
 const selectedProfileDesc = computed(() => {
   const p = profiles.value.find(p => p.id === formData.profileId)
   return p?.description || ''
 })
 
-const groupedFormFields = computed(() => {
-  const groups = {}
+const groupedFormFields = computed<Record<string, RegistrationField[]>>(() => {
+  const groups: Record<string, RegistrationField[]> = {}
   for (const field of formFields.value) {
     const section = field.sectionName || '_default'
     if (!groups[section]) groups[section] = []
@@ -257,7 +277,7 @@ async function onProfileChange() {
     const { data } = await getRegistrationForm(formData.profileId)
     formFields.value = data
     // Initialize attribute values
-    for (const field of data) {
+    for (const field of formFields.value) {
       if (field.inputType === 'BOOLEAN') {
         attributeValues[field.attributeName] = false
       } else {
@@ -265,43 +285,24 @@ async function onProfileChange() {
       }
     }
   } catch (e) {
-    errorMsg.value = e.response?.data?.detail || 'Failed to load form'
+    const err = e as { response?: { data?: { detail?: string } } }
+    errorMsg.value = err.response?.data?.detail || 'Failed to load form'
   } finally {
     loadingForm.value = false
   }
 }
 
-function parseAllowedValues(json) {
+function parseAllowedValues(json: string): string[] {
   try { return JSON.parse(json) } catch { return [] }
 }
 
-function validateFields() {
-  Object.keys(fieldErrors).forEach(k => delete fieldErrors[k])
-  let valid = true
-  for (const field of formFields.value) {
-    const val = attributeValues[field.attributeName]
-    const strVal = typeof val === 'boolean' ? (val ? 'TRUE' : 'FALSE') : (val || '')
-
-    if (field.required && !strVal) {
-      fieldErrors[field.attributeName] = `${field.label} is required`
-      valid = false
-      continue
-    }
-    if (!strVal) continue
-    if (field.minLength && strVal.length < field.minLength) {
-      fieldErrors[field.attributeName] = `Must be at least ${field.minLength} characters`
-      valid = false
-    }
-    if (field.maxLength && strVal.length > field.maxLength) {
-      fieldErrors[field.attributeName] = `Must be at most ${field.maxLength} characters`
-      valid = false
-    }
-    if (field.validationRegex && !new RegExp(field.validationRegex).test(strVal)) {
-      fieldErrors[field.attributeName] = field.validationMessage || 'Invalid format'
-      valid = false
-    }
-  }
-  return valid
+// Shared with the admin forms and SelfServiceProfileView; the server
+// (ProvisioningProfileService) re-validates authoritatively.
+function validateFields(): boolean {
+  for (const k of Object.keys(fieldErrors)) delete fieldErrors[k]
+  const errors = validateAttributes(formFields.value, name => attributeValues[name])
+  Object.assign(fieldErrors, errors)
+  return Object.keys(errors).length === 0
 }
 
 async function handleSubmit() {
@@ -311,13 +312,13 @@ async function handleSubmit() {
   loading.value = true
   try {
     // Build attributes map: { attrName: [value] }
-    const attributes = {}
+    const attributes: Record<string, string[]> = {}
     for (const field of formFields.value) {
       const val = attributeValues[field.attributeName]
       if (field.inputType === 'BOOLEAN') {
         attributes[field.attributeName] = [val ? 'TRUE' : 'FALSE']
       } else if (val) {
-        attributes[field.attributeName] = [val]
+        attributes[field.attributeName] = [val as string]
       }
     }
 
@@ -326,7 +327,8 @@ async function handleSubmit() {
     submitResult.value = data
     submitted.value = true
   } catch (e) {
-    errorMsg.value = e.response?.data?.detail || 'Registration failed. Please try again.'
+    const err = e as { response?: { data?: { detail?: string } } }
+    errorMsg.value = err.response?.data?.detail || 'Registration failed. Please try again.'
   } finally {
     loading.value = false
   }
