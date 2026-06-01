@@ -67,7 +67,9 @@
                   <template v-if="editing && field.editable">
                     <textarea v-if="field.inputType === 'TEXTAREA'"
                       :id="`ss-profile-field-${field.attributeName}`"
-                      v-model="editForm[field.attributeName]" rows="3"
+                      :value="String(editForm[field.attributeName] ?? '')"
+                      @input="editForm[field.attributeName] = ($event.target as HTMLTextAreaElement).value"
+                      rows="3"
                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
                     <select v-else-if="field.inputType === 'SELECT' && field.allowedValues"
                       :id="`ss-profile-field-${field.attributeName}`"
@@ -124,9 +126,31 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { getTemplate, getProfile, updateProfile } from '@/api/selfservice'
+import { validateAttributes } from '@/utils/attributeValidation'
+
+interface ProfileField {
+  attributeName: string
+  label: string
+  inputType?: string
+  editable?: boolean
+  required?: boolean
+  minLength?: number | null
+  maxLength?: number | null
+  validationRegex?: string | null
+  validationMessage?: string | null
+  allowedValues?: string | null
+  sectionName?: string | null
+  columnSpan?: number | null
+}
+interface TemplateData { fields?: ProfileField[] }
+interface ProfileData {
+  displayName?: string
+  dn?: string
+  attributes?: Record<string, string[]>
+}
 
 const loadingTemplate = ref(true)
 const loadingProfile = ref(true)
@@ -136,11 +160,11 @@ const saved = ref(false)
 const errorMsg = ref('')
 const saveError = ref('')
 
-const templateData = ref(null)
-const profileData = ref(null)
-const editForm = reactive({})
-const fieldErrors = reactive({})
-const profilePwdVisible = reactive({})
+const templateData = ref<TemplateData | null>(null)
+const profileData = ref<ProfileData | null>(null)
+const editForm = reactive<Record<string, string | boolean>>({})
+const fieldErrors = reactive<Record<string, string>>({})
+const profilePwdVisible = reactive<Record<string, boolean>>({})
 
 onMounted(async () => {
   try {
@@ -148,7 +172,8 @@ onMounted(async () => {
     templateData.value = tmpl.data
     profileData.value = prof.data
   } catch (e) {
-    errorMsg.value = e.response?.data?.detail || 'Failed to load profile'
+    const err = e as { response?: { data?: { detail?: string } } }
+    errorMsg.value = err.response?.data?.detail || 'Failed to load profile'
   } finally {
     loadingTemplate.value = false
     loadingProfile.value = false
@@ -165,9 +190,9 @@ const initials = computed(() => {
   return parts.map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?'
 })
 
-const groupedFields = computed(() => {
+const groupedFields = computed<Record<string, ProfileField[]>>(() => {
   if (!templateData.value?.fields) return {}
-  const groups = {}
+  const groups: Record<string, ProfileField[]> = {}
   for (const field of templateData.value.fields) {
     const section = field.sectionName || '_default'
     if (!groups[section]) groups[section] = []
@@ -176,7 +201,7 @@ const groupedFields = computed(() => {
   return groups
 })
 
-function getDisplayValue(field) {
+function getDisplayValue(field: ProfileField): string {
   if (!profileData.value?.attributes) return '-'
   const vals = profileData.value.attributes[field.attributeName]
   if (!vals || vals.length === 0) return '-'
@@ -186,7 +211,7 @@ function getDisplayValue(field) {
 
 function startEdit() {
   // Initialize edit form with current values
-  for (const field of templateData.value.fields) {
+  for (const field of templateData.value?.fields || []) {
     if (field.editable) {
       const vals = profileData.value?.attributes?.[field.attributeName]
       if (field.inputType === 'BOOLEAN') {
@@ -205,38 +230,18 @@ function cancelEdit() {
   saveError.value = ''
 }
 
-function parseAllowedValues(json) {
+function parseAllowedValues(json: string): string[] {
   try { return JSON.parse(json) } catch { return [] }
 }
 
-function validateFields() {
-  Object.keys(fieldErrors).forEach(k => delete fieldErrors[k])
-  let valid = true
-  for (const field of templateData.value.fields) {
-    if (!field.editable) continue
-    const value = editForm[field.attributeName]
-    const strVal = typeof value === 'boolean' ? (value ? 'TRUE' : 'FALSE') : (value || '')
-
-    if (field.required && !strVal) {
-      fieldErrors[field.attributeName] = `${field.label} is required`
-      valid = false
-      continue
-    }
-    if (!strVal) continue
-    if (field.minLength && strVal.length < field.minLength) {
-      fieldErrors[field.attributeName] = `Must be at least ${field.minLength} characters`
-      valid = false
-    }
-    if (field.maxLength && strVal.length > field.maxLength) {
-      fieldErrors[field.attributeName] = `Must be at most ${field.maxLength} characters`
-      valid = false
-    }
-    if (field.validationRegex && !new RegExp(field.validationRegex).test(strVal)) {
-      fieldErrors[field.attributeName] = field.validationMessage || 'Invalid format'
-      valid = false
-    }
-  }
-  return valid
+// Shared with the admin forms and RegisterView; the server
+// (ProvisioningProfileService) re-validates authoritatively.
+function validateFields(): boolean {
+  for (const k of Object.keys(fieldErrors)) delete fieldErrors[k]
+  const editable = (templateData.value?.fields || []).filter(f => f.editable)
+  const errors = validateAttributes(editable, name => editForm[name])
+  Object.assign(fieldErrors, errors)
+  return Object.keys(errors).length === 0
 }
 
 async function handleSave() {
@@ -247,14 +252,14 @@ async function handleSave() {
   saveError.value = ''
   try {
     // Build the update payload
-    const updates = {}
-    for (const field of templateData.value.fields) {
+    const updates: Record<string, string[]> = {}
+    for (const field of templateData.value?.fields || []) {
       if (!field.editable) continue
       const val = editForm[field.attributeName]
       if (field.inputType === 'BOOLEAN') {
         updates[field.attributeName] = [val ? 'TRUE' : 'FALSE']
       } else {
-        updates[field.attributeName] = val ? [val] : []
+        updates[field.attributeName] = val ? [val as string] : []
       }
     }
 
@@ -268,7 +273,8 @@ async function handleSave() {
     saved.value = true
     setTimeout(() => { saved.value = false }, 3000)
   } catch (e) {
-    saveError.value = e.response?.data?.detail || 'Failed to save changes'
+    const err = e as { response?: { data?: { detail?: string } } }
+    saveError.value = err.response?.data?.detail || 'Failed to save changes'
   } finally {
     saving.value = false
   }

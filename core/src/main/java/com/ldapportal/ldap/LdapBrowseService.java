@@ -5,6 +5,7 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
+import com.ldapportal.ldap.validation.DnValidator;
 import com.unboundid.asn1.ASN1OctetString;
 import com.unboundid.ldap.sdk.*;
 import com.unboundid.ldap.sdk.controls.SimplePagedResultsControl;
@@ -182,15 +183,7 @@ public class LdapBrowseService {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("Container creation is not supported for Entra ID directories");
         }
-        DN parsed;
-        try {
-            parsed = new DN(dn);
-        } catch (LDAPException e) {
-            throw new IllegalArgumentException("Invalid DN: " + dn, e);
-        }
-        if (parsed.isNullDN() || parsed.getRDNs().length == 0) {
-            throw new IllegalArgumentException("Cannot create container at empty DN");
-        }
+        DN parsed = DnValidator.parse(dn);
         RDN rdn = parsed.getRDN();
         String[] rdnAttrs  = rdn.getAttributeNames();
         String[] rdnValues = rdn.getAttributeValues();
@@ -306,6 +299,7 @@ public class LdapBrowseService {
      * Renames an entry (changes its RDN in place).
      */
     public void renameEntry(DirectoryConnection dc, String dn, String newRdn) {
+        DnValidator.requireValidRdn(newRdn, dc.getDirectoryType());
         connectionFactory.withConnection(dc, conn -> {
             LDAPResult result = conn.modifyDN(dn, newRdn, true);
             if (result.getResultCode() != ResultCode.SUCCESS) {

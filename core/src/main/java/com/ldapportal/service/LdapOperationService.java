@@ -3,6 +3,7 @@ package com.ldapportal.service;
 
 import com.ldapportal.core.governance.MembershipGate;
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.ldap.validation.DnValidator;
 import com.ldapportal.auth.PermissionService;
 import com.ldapportal.dto.csv.BulkImportPreviewResult;
 import com.ldapportal.dto.csv.BulkImportRequest;
@@ -218,6 +219,15 @@ public class LdapOperationService {
                                         CreateEntryRequest req, UUID profileId) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, req.dn());
+        DnValidator.requireValidDn(req.dn(), dc.getDirectoryType());
+
+        // Enforce the matched profile's attribute rules (required/length/regex/
+        // allowed-values) on the admin create path, mirroring the self-service
+        // path. Defaults/computed values are already applied by the caller.
+        ProvisioningProfileService createProfileSvc = profileServiceProvider.getIfAvailable();
+        if (createProfileSvc != null && profileId != null) {
+            createProfileSvc.validateAttributes(profileId, req.attributes());
+        }
 
         userService.createUser(dc, req.dn(), req.attributes(), profileId);
         LdapEntryResponse result = LdapEntryResponse.from(userService.getUser(dc, req.dn()));
@@ -232,6 +242,20 @@ public class LdapOperationService {
                                         String dn, UpdateEntryRequest req) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
+
+        // Enforce the matched profile's value rules (length/regex/allowed) on
+        // the attributes being modified. Required-on-create is intentionally
+        // NOT enforced here — an attribute absent from this update is not a
+        // missing-required error.
+        ProvisioningProfileService updateProfileSvc = profileServiceProvider.getIfAvailable();
+        if (updateProfileSvc != null) {
+            UUID profileId = updateProfileSvc.resolveProfileForDn(directoryId, dn)
+                    .map(p -> p.getId()).orElse(null);
+            if (profileId != null) {
+                updateProfileSvc.assertAttributesEditableForUpdate(profileId, modifiedAttributeNames(req));
+                updateProfileSvc.validateModifiedAttributes(profileId, modifiedAttributeValues(req));
+            }
+        }
 
         List<Modification> mods = toModifications(req);
         userService.updateUser(dc, dn, mods);
@@ -346,6 +370,7 @@ public class LdapOperationService {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
         permissionService.requireDnWithinScope(principal, directoryId, req.newParentDn());
+        DnValidator.requireValidDn(req.newParentDn(), dc.getDirectoryType());
 
         userService.moveUser(dc, dn, req.newParentDn());
         auditService.record(principal, directoryId, AuditAction.USER_MOVE, dn,
@@ -433,6 +458,7 @@ public class LdapOperationService {
                                          CreateEntryRequest req) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, req.dn());
+        DnValidator.requireValidDn(req.dn(), dc.getDirectoryType());
 
         groupService.createGroup(dc, req.dn(), req.attributes());
         LdapEntryResponse result = LdapEntryResponse.from(groupService.getGroup(dc, req.dn()));
@@ -780,6 +806,32 @@ public class LdapOperationService {
             throw new ResourceNotFoundException("DirectoryConnection", directoryId);
         }
         return dc;
+    }
+
+    /**
+     * Collects the attribute values being set (ADD/REPLACE with non-empty
+     * values) from an update request, keyed by attribute name. DELETE
+     * operations are excluded — removing values has no value-constraint to
+     * validate.
+     */
+    /** All attribute names targeted by an update, regardless of operation. */
+    private static java.util.Set<String> modifiedAttributeNames(UpdateEntryRequest req) {
+        java.util.Set<String> names = new java.util.LinkedHashSet<>();
+        for (AttributeModification m : req.modifications()) {
+            names.add(m.attribute());
+        }
+        return names;
+    }
+
+    private static Map<String, List<String>> modifiedAttributeValues(UpdateEntryRequest req) {
+        Map<String, List<String>> map = new java.util.LinkedHashMap<>();
+        for (AttributeModification m : req.modifications()) {
+            if (m.operation() != AttributeModification.Operation.DELETE
+                    && m.values() != null && !m.values().isEmpty()) {
+                map.put(m.attribute(), m.values());
+            }
+        }
+        return map;
     }
 
     private List<Modification> toModifications(UpdateEntryRequest req) {
