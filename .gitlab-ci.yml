@@ -1,0 +1,161 @@
+# Starter GitLab CI/CD pipeline for an internal fork of LDAPPortal.
+#
+# Mirrors the upstream GitHub Actions (.github/workflows/ci.yml +
+# ghcr-publish.yml). Adapt the commented hooks for your environment:
+#   - Maven mirror:  mount a ~/.m2/settings.xml (Nexus/Artifactory) or set
+#                    MAVEN_MIRROR; the test/package jobs use preinstalled `mvn`
+#                    (no wrapper bootstrap download).
+#   - npm registry:  commit a frontend/.npmrc with `registry=...`.
+#   - base images:   repoint the `image:`/`services:` refs below at your mirror.
+#   - runner:        the `publish` stage needs Docker-in-Docker (privileged) or
+#                    Kaniko if privileged runners aren't allowed.
+#
+# See docs/self-hosting-gitlab.md for the full guide.
+
+stages:
+  - test
+  - package
+  - publish
+
+variables:
+  # Keep the Maven local repo inside the project dir so it can be cached.
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+  MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress"
+  # Cache npm's content-addressable store (npm ci wipes node_modules, so cache
+  # the download cache instead).
+  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+
+# ── test stage ───────────────────────────────────────────────────────────────
+
+backend-test:
+  stage: test
+  image: maven:3.9-eclipse-temurin-21
+  cache:
+    key: maven-repo
+    paths:
+      - .m2/repository
+  script:
+    # Guardrail: every addons/ source file must keep its Apache-2.0 SPDX header.
+    - bash scripts/check-addons-license-headers.sh
+    # Backend tests use in-memory H2 (no Postgres needed). -T 1C parallelises
+    # across the reactor modules.
+    - mvn $MAVEN_CLI_OPTS -T 1C test
+  artifacts:
+    when: on_failure
+    paths:
+      - "**/target/surefire-reports/"
+    expire_in: 7 days
+
+# Shared setup for the frontend jobs.
+.frontend:
+  image: node:20
+  cache:
+    key: npm-cache
+    paths:
+      - .npm/
+  before_script:
+    - cd frontend
+    - npm ci --prefer-offline --no-audit --no-fund
+
+frontend-typecheck:
+  stage: test
+  extends: .frontend
+  script:
+    - npm run typecheck
+
+frontend-a11y-lint:
+  stage: test
+  extends: .frontend
+  script:
+    - npm run lint:a11y
+
+frontend-unit:
+  stage: test
+  extends: .frontend
+  script:
+    - npm run test:unit
+
+frontend-build:
+  stage: test
+  extends: .frontend
+  script:
+    - npm run build
+
+frontend-community-build:
+  stage: test
+  extends: .frontend
+  script:
+    # Build the Apache-2.0 community bundle and assert no commercial chunk leaks.
+    - npm run build:community
+    - npm run scan:community-bundle
+
+# ── package stage (tags only) ────────────────────────────────────────────────
+# Build the runnable JAR per edition. The backend Dockerfiles COPY this artifact
+# out of distribution/<edition>/target/, so it must exist before the image build.
+
+package-backend:
+  stage: package
+  image: maven:3.9-eclipse-temurin-21
+  cache:
+    key: maven-repo
+    paths:
+      - .m2/repository
+  parallel:
+    matrix:
+      - EDITION: [community, community-plus-isva]
+  script:
+    # -am builds the upstream modules: community -> core;
+    # community-plus-isva -> core + addons/isva. The distribution module's
+    # verify-no-ee-bytecode check keeps the JAR license-clean.
+    - mvn $MAVEN_CLI_OPTS -DskipTests -pl distribution/$EDITION -am clean package
+  artifacts:
+    paths:
+      - "distribution/$EDITION/target/*.jar"
+    expire_in: 1 day
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
+
+# ── publish stage (tags only) ────────────────────────────────────────────────
+# Build + push images to the project's GitLab Container Registry. Requires a
+# Docker-in-Docker (privileged) runner; swap for Kaniko if unavailable.
+
+.docker:
+  image: docker:27
+  services:
+    - docker:27-dind
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+
+publish-backend:
+  stage: publish
+  extends: .docker
+  parallel:
+    matrix:
+      - EDITION: [community, community-plus-isva]
+  needs:
+    - job: package-backend
+      artifacts: true
+  script:
+    # Build context is the repo root so the Dockerfile COPY can reach
+    # distribution/<edition>/target/.
+    - IMAGE="$CI_REGISTRY_IMAGE/ldapportal-$EDITION"
+    - docker build -f "docker/$EDITION/Dockerfile" -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" .
+    - docker push "$IMAGE:$CI_COMMIT_TAG"
+    - docker push "$IMAGE:latest"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
+
+publish-frontend:
+  stage: publish
+  extends: .docker
+  needs: []
+  script:
+    # Self-contained multi-stage npm build. Dockerfile.fly is the published
+    # variant (runtime backend resolution); the sibling Dockerfile is the
+    # compose-only variant with a hardcoded proxy_pass.
+    - IMAGE="$CI_REGISTRY_IMAGE/ldapportal-frontend"
+    - docker build -f frontend/Dockerfile.fly -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" frontend
+    - docker push "$IMAGE:$CI_COMMIT_TAG"
+    - docker push "$IMAGE:latest"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
