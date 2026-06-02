@@ -59,9 +59,8 @@ ways to grant it.
 
 `DIRECTORY_SYNC` comes from a signed license JWT:
 
-- The **BUSINESS** and **ENTERPRISE** edition baselines both include
-  `DIRECTORY_SYNC`; or issue any edition with `--addons DIRECTORY_SYNC`
-  (see `LicenseIssuer`).
+- Issue a signed license that includes `DIRECTORY_SYNC` — e.g. with
+  `--addons DIRECTORY_SYNC` (see `LicenseIssuer`).
 - Point the app at the JWT with `ldapportal.license.path`
   (env `LDAPPORTAL_LICENSE_PATH`).
 - The JWT must verify against the build's trust anchor,
@@ -93,8 +92,9 @@ feature-site changes. Properties of this path:
 
 - **Inert unless set** — no property, no effect.
 - **Allow-listed to open-source entitlements** — only `DIRECTORY_SYNC` may be
-  granted this way. Commercial/EE entitlements (`GOVERNANCE`, `HR_SYNC`, …)
-  are refused and logged, so it cannot unlock the paid edition bundles.
+  granted this way. Other licensed entitlements (`GOVERNANCE`, `HR_SYNC`, …)
+  are refused and logged, so it cannot grant anything but the open-source
+  feature.
 - **Not a signed license** — it logs a loud warning at startup and, unlike a
   license file, does not have to verify against any key.
 - **Independent of a license file** — the probe adds its entitlement *on top
