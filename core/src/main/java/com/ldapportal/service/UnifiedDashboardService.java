@@ -40,6 +40,8 @@ public class UnifiedDashboardService {
 
     private static final Set<String> COMPLIANCE_ACTION_TYPES = Set.of("REVIEW", "CAMPAIGN_OVERDUE");
     private static final Set<String> COMPLIANCE_AWARENESS_TYPES = Set.of("UPCOMING_DEADLINE");
+    private static final Set<String> DIRECTORY_SYNC_AWARENESS_TYPES =
+            Set.of("REPLICATION_LAG_HIGH", "RECONCILIATION_DRIFT_OPEN");
 
     @Transactional(readOnly = true)
     public UnifiedDashboardDto getDashboard(AuthPrincipal principal) {
@@ -145,7 +147,7 @@ public class UnifiedDashboardService {
     private static List<DirectoryStatDto> mapDirs(List<ComplianceDashboardDto.DirectoryStatDto> src) {
         if (src == null) return List.of();
         return src.stream().map(d -> new DirectoryStatDto(
-                d.id(), d.name(), d.enabled(),
+                d.id(), d.name(), d.enabled(), d.reachable(),
                 d.userCount(), d.groupCount(),
                 d.pendingApprovals(), d.activeCampaigns(), d.openSodViolations())).toList();
     }
@@ -153,7 +155,7 @@ public class UnifiedDashboardService {
     private static List<DirectoryStatDto> mapDirsAdmin(List<AdminDashboardDto.DirectoryStatDto> src) {
         if (src == null) return List.of();
         return src.stream().map(d -> new DirectoryStatDto(
-                d.id(), d.name(), d.enabled(),
+                d.id(), d.name(), d.enabled(), d.reachable(),
                 d.userCount(), d.groupCount(),
                 d.pendingApprovals(), d.activeCampaigns(), d.openSodViolations())).toList();
     }
@@ -203,7 +205,7 @@ public class UnifiedDashboardService {
         if (src == null) return List.of();
         return src.stream()
                 .filter(a -> complianceEnabled || !COMPLIANCE_AWARENESS_TYPES.contains(a.type()))
-                .filter(a -> directorySyncEnabled || !"REPLICATION_LAG_HIGH".equals(a.type()))
+                .filter(a -> directorySyncEnabled || !DIRECTORY_SYNC_AWARENESS_TYPES.contains(a.type()))
                 .map(a -> new AwarenessItem(a.type(), a.title(), a.detail(), a.link()))
                 .toList();
     }

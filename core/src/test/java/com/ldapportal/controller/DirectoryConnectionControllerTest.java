@@ -245,6 +245,38 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 .andExpect(status().isNoContent());
     }
 
+    // ── GET /{id}/status ──────────────────────────────────────────────────────
+
+    @Test
+    void status_reachable_returns200WithSuccessTrue() throws Exception {
+        given(directoryService.checkConnection(DIR_ID))
+                .willReturn(new TestConnectionResult(true, "Reachable", 12L));
+
+        mockMvc.perform(get(BASE_URL + "/" + DIR_ID + "/status")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
+
+    @Test
+    void status_unreachable_returns200WithSuccessFalse() throws Exception {
+        given(directoryService.checkConnection(DIR_ID))
+                .willReturn(new TestConnectionResult(false, "UnknownHostException", 5L));
+
+        mockMvc.perform(get(BASE_URL + "/" + DIR_ID + "/status")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.message").value("UnknownHostException"));
+    }
+
+    @Test
+    void status_adminRole_returns403() throws Exception {
+        mockMvc.perform(get(BASE_URL + "/" + DIR_ID + "/status")
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
     // ── POST /test ────────────────────────────────────────────────────────────
 
     @Test

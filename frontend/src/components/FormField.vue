@@ -13,8 +13,9 @@
         :placeholder="placeholder"
         :disabled="disabled"
         :required="required"
+        :aria-invalid="error ? 'true' : undefined"
         :autocomplete="effectiveAutocomplete"
-        @input="$emit('update:modelValue', $event.target.value)"
+        @input="$emit('update:modelValue', ($event.target as HTMLInputElement).value)"
         class="input block w-full"
       />
       <textarea
@@ -24,7 +25,8 @@
         :placeholder="placeholder"
         :disabled="disabled"
         :rows="rows"
-        @input="$emit('update:modelValue', $event.target.value)"
+        :aria-invalid="error ? 'true' : undefined"
+        @input="$emit('update:modelValue', ($event.target as HTMLTextAreaElement).value)"
         class="input block w-full"
       />
       <select
@@ -32,36 +34,57 @@
         :id="id"
         :value="modelValue"
         :disabled="disabled"
-        @change="$emit('update:modelValue', $event.target.value)"
+        :aria-invalid="error ? 'true' : undefined"
+        @change="$emit('update:modelValue', ($event.target as HTMLSelectElement).value)"
         class="input block w-full"
       >
         <option v-if="!modelValue" value="" disabled selected>Select…</option>
         <option v-for="opt in options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
       </select>
     </slot>
-    <p v-if="hint" class="mt-1 text-xs text-gray-500">{{ hint }}</p>
+    <p v-if="error" class="mt-1 text-xs text-red-500">{{ error }}</p>
+    <p v-else-if="hint" class="mt-1 text-xs text-gray-500">{{ hint }}</p>
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 
-const props = defineProps({
-  id:          { type: String, default: () => `field-${Math.random().toString(36).slice(2)}` },
-  label:       String,
-  type:        { type: String, default: 'text' },
-  modelValue:  { default: '' },
-  placeholder: String,
-  hint:        String,
-  disabled:    Boolean,
-  required:    Boolean,
-  rows:        { type: Number, default: 3 },
-  options:     { type: Array, default: () => [] }, // [{ value, label }]
+interface SelectOption {
+  value: string
+  label: string
+}
+
+const props = withDefaults(defineProps<{
+  id?: string
+  label?: string
+  type?: string
+  // String | Number so numeric fields (v-model.number) type-check; the
+  // input still round-trips the value as-is at runtime.
+  modelValue?: string | number
+  placeholder?: string
+  hint?: string
+  disabled?: boolean
+  required?: boolean
+  rows?: number
+  options?: SelectOption[]
+  // Inline validation error. When set, the control is marked invalid
+  // (aria-invalid + red border via the .input state style) and this message
+  // replaces the hint.
+  error?: string | null
   // Pass null (default) to use the type-aware fallback below. Pass a string
   // to override — e.g. 'current-password' on a login form.
-  autocomplete: { type: String, default: null },
+  autocomplete?: string | null
+}>(), {
+  id: () => `field-${Math.random().toString(36).slice(2)}`,
+  type: 'text',
+  modelValue: '',
+  rows: 3,
+  options: () => [],
+  error: null,
+  autocomplete: null,
 })
-defineEmits(['update:modelValue'])
+defineEmits<{ 'update:modelValue': [value: string] }>()
 
 // Password inputs default to 'new-password'. That's the well-supported trick
 // for disabling autofill of the user's saved login password into app config

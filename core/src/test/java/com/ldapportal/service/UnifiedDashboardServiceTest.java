@@ -193,19 +193,23 @@ class UnifiedDashboardServiceTest {
                 new AwarenessItem("REPLICATION_LAG_HIGH",
                         "Replication lag exceeds 5 minutes on 1 link",
                         "Target directory may be unreachable or write-throttled",
-                        "/superadmin/directory-sync"));
+                        "/superadmin/directory-sync"),
+                new AwarenessItem("RECONCILIATION_DRIFT_OPEN",
+                        "Reconciliation found drift on 1 link",
+                        "Review the suggested corrective actions",
+                        "/superadmin/directory-sync?findings=open"));
         when(activityDashboardService.build(superadmin)).thenReturn(
                 new ActivityDashboardResponse(actions, List.of(), awareness, metrics));
 
         UnifiedDashboardDto out = service.getDashboard(superadmin);
 
-        // Both replication items are filtered out — the rest pass through.
+        // All directory-sync items are filtered out — the rest pass through.
         assertThat(out.actions()).extracting(UnifiedDashboardDto.ActionItem::type)
                 .containsExactly("APPROVAL")
                 .doesNotContain("REPLICATION_DEAD_LETTERED");
         assertThat(out.awareness()).extracting(UnifiedDashboardDto.AwarenessItem::type)
                 .containsExactly("RECENT_CHANGES")
-                .doesNotContain("REPLICATION_LAG_HIGH");
+                .doesNotContain("REPLICATION_LAG_HIGH", "RECONCILIATION_DRIFT_OPEN");
     }
 
     // ── Admin dispatch ──────────────────────────────────────────────────────
@@ -265,7 +269,7 @@ class UnifiedDashboardServiceTest {
         var progress = List.of(new ComplianceDashboardDto.CampaignProgressDto(
                 "c1", "Q1 Review", "Corp LDAP", 10, 4, 40.0, false, "2026-05-01"));
         var dirs = List.of(new ComplianceDashboardDto.DirectoryStatDto(
-                "dir-1", "Corp LDAP", true, 100, 20, 5, 1, 7));
+                "dir-1", "Corp LDAP", true, true, 100, 20, 5, 1, 7));
         return new ComplianceDashboardDto(
                 100, 20, 5,
                 7, 42.0, 2, 0,
@@ -279,7 +283,7 @@ class UnifiedDashboardServiceTest {
         var progress = List.of(new AdminDashboardDto.CampaignProgressDto(
                 "c2", "Q2 Review", "Corp LDAP", 5, 1, 20.0, false, "2026-05-10"));
         var dirs = List.of(new AdminDashboardDto.DirectoryStatDto(
-                "dir-first", "Corp LDAP", true, 50, 10, 2, 2, 3));
+                "dir-first", "Corp LDAP", true, true, 50, 10, 2, 2, 3));
         var profiles = List.of(new AdminDashboardDto.ProfileStatDto(
                 "prof-a", "Engineering", "dir-first", "Corp LDAP",
                 "ADMIN", "ou=eng,dc=example,dc=com",

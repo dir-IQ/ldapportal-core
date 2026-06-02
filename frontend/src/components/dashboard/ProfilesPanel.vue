@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<script setup>
+<script setup lang="ts">
 /**
  * ProfilesPanel — admin dashboard panel that replaces DirectoriesPanel.
  *
@@ -14,14 +14,32 @@
  * table + empty-state row) so swapping between them at the dashboard
  * level doesn't produce visual jitter.
  */
-defineProps({
-  profiles: { type: Array, default: () => [] },
-  rowClickable: { type: Boolean, default: false },
+import EmptyState from '@/components/EmptyState.vue'
+
+/** One admin profile-role row, as merged by the dashboard service. */
+interface ProfileRole {
+  id: string
+  name: string
+  directoryName?: string | null
+  targetOuDn?: string | null
+  userCount: number
+  groupCount: number
+  pendingApprovals: number
+}
+
+withDefaults(defineProps<{
+  profiles?: ProfileRole[]
+  rowClickable?: boolean
+}>(), {
+  profiles: () => [],
+  rowClickable: false,
 })
-defineEmits(['rowClick'])
+defineEmits<{
+  rowClick: [ProfileRole]
+}>()
 
 /** Render "ou=eng,dc=example,dc=com" as "ou=eng" — the meaningful bit. */
-function shortenOu(dn) {
+function shortenOu(dn: string | null | undefined): string {
   if (!dn) return '—'
   const first = dn.split(',')[0]
   return first || dn
@@ -74,8 +92,8 @@ function shortenOu(dn) {
           </td>
         </tr>
         <tr v-if="!profiles.length">
-          <td colspan="5" class="px-5 py-8 text-center text-sm text-gray-500">
-            No profile roles assigned.
+          <td colspan="5">
+            <EmptyState icon="folder" title="No profile roles assigned." />
           </td>
         </tr>
       </tbody>

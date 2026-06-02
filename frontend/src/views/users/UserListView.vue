@@ -160,7 +160,7 @@
         <span v-if="profileConfig?.name" class="text-blue-600">{{ profileConfig.name }}</span>
         <span v-if="profileConfig?.name" class="text-gray-500 font-normal"> profile</span>
       </template>
-      <UserForm :data="form" :is-edit="!!editingDn" :user-template-config="profileConfig ?? undefined" :dir-id="dirId" :profile-id="selectedProfileId" @update="(v: UserFormState) => form = v" />
+      <UserForm ref="userFormRef" :data="form" :is-edit="!!editingDn" :user-template-config="profileConfig ?? undefined" :dir-id="dirId" :profile-id="selectedProfileId" @update="(v: UserFormState) => form = v" />
       <template #footer>
         <button @click="showModal = false" class="btn-neutral">Cancel</button>
         <button @click="save" :disabled="saving" class="btn-primary">{{ saving ? 'Saving…' : 'Save' }}</button>
@@ -597,6 +597,7 @@ const emptyForm = (): UserFormState => {
   }
 }
 const form = ref<UserFormState>(emptyForm())
+const userFormRef = ref<{ validate: () => boolean } | null>(null)
 
 function search() { limit.value = FETCH_LIMIT; load() }
 
@@ -754,6 +755,8 @@ async function openEdit(row: UserRow) {
 }
 
 async function save() {
+  // Gate on the form's own client-side validation (mirrors the server rules).
+  if (userFormRef.value && !userFormRef.value.validate()) return
   saving.value = true
   try {
     if (editingDn.value) {

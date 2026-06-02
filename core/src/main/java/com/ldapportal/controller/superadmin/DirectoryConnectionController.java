@@ -33,6 +33,7 @@ import java.util.UUID;
  *   PUT    /api/v1/superadmin/directories/{id}     — update
  *   DELETE /api/v1/superadmin/directories/{id}     — delete
  *   POST   /api/v1/superadmin/directories/{id}/evict-pool — evict LDAP pool
+ *   GET    /api/v1/superadmin/directories/{id}/status     — live reachability probe
  *   POST   /api/v1/superadmin/directories/test     — test (not persisted)
  * </pre>
  */
@@ -76,6 +77,11 @@ public class DirectoryConnectionController {
     public ResponseEntity<Void> evictPool(@PathVariable UUID id) {
         service.evictPool(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @GetMapping("/{id}/status")
+    public TestConnectionResult status(@PathVariable UUID id) {
+        return service.checkConnection(id);
     }
 
     @PostMapping("/test")

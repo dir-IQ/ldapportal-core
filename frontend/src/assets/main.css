@@ -151,6 +151,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 }
 .input:focus { box-shadow: 0 0 0 2px #334155; }
 .input:disabled { background-color: #f3f4f6; }
+.input[aria-invalid="true"] { border-color: #ef4444; }
+.input[aria-invalid="true"]:focus { box-shadow: 0 0 0 2px #ef4444; }
 
 .input-sm {
   border: 1px solid #e2e8f0;
@@ -330,6 +332,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 [data-theme="dark"] .input {
   background-color: #1f2937; color: #f3f4f6; border-color: #4b5563;
 }
+[data-theme="dark"] .input[aria-invalid="true"] { border-color: #f87171; }
 [data-theme="dark"] .input-sm {
   background-color: #1f2937; color: #f3f4f6; border-color: #4b5563;
 }

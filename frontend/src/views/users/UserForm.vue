@@ -81,6 +81,7 @@
                       :type="mapInputType(attr.inputType)"
                       required
                       :placeholder="attr.attributeName"
+                      :error="fieldErrors[attr.attributeName]"
                     />
                   </div>
                   <!-- Computed DN (shown after RDN when enabled) -->
@@ -108,9 +109,10 @@
                           :id="`uf-pw-${attr.attributeName}`"
                           :type="passwordVisible ? 'text' : 'password'"
                           :value="local.attributes[attr.attributeName]"
-                          @input="local.attributes[attr.attributeName] = $event.target.value"
+                          @input="local.attributes[attr.attributeName] = ($event.target as HTMLInputElement).value"
                           :required="attr.requiredOnCreate"
                           :disabled="!attr.editableOnCreate"
+                          :aria-invalid="fieldErrors[attr.attributeName] ? 'true' : undefined"
                           class="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 pr-8"
                         />
                         <button v-if="local.attributes[attr.attributeName]" type="button"
@@ -144,6 +146,7 @@
                         </svg>
                       </button>
                     </div>
+                    <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                   </div>
                   <!-- Regular field -->
                   <div
@@ -156,7 +159,7 @@
                       <DnPicker
                         :model-value="local.attributes[attr.attributeName]"
                         @update:model-value="v => { local.attributes[attr.attributeName] = v }"
-                        :directory-id="dirId"
+                        :directory-id="dirId ?? undefined"
                         :placeholder="'Select a DN'"
                         :superadmin="false"
                       />
@@ -172,6 +175,7 @@
                       :disabled="!attr.editableOnCreate"
                       :rows="attr.inputType === 'TEXTAREA' || attr.inputType === 'MULTI_VALUE' ? 3 : undefined"
                       :hint="attr.inputType === 'MULTI_VALUE' ? 'One value per line' : undefined"
+                      :error="fieldErrors[attr.attributeName]"
                     />
                   </div>
                 </template>
@@ -236,7 +240,7 @@
                       <label class="block text-sm font-medium text-gray-700 mb-1">{{ attr.customLabel || attr.attributeName }}</label>
                       <DnPicker
                         v-model="local.attributes[attr.attributeName]"
-                        :directory-id="dirId"
+                        :directory-id="dirId ?? undefined"
                         :placeholder="'Select a DN'"
                         :superadmin="false"
                         :disabled="!attr.editableOnUpdate"
@@ -252,6 +256,7 @@
                       :disabled="!attr.editableOnUpdate"
                       :rows="attr.inputType === 'TEXTAREA' || attr.inputType === 'MULTI_VALUE' ? 3 : undefined"
                       :hint="attr.inputType === 'MULTI_VALUE' ? 'One value per line' : undefined"
+                      :error="fieldErrors[attr.attributeName]"
                     />
                   </div>
                 </template>
@@ -372,7 +377,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { reactive, ref, watch, nextTick, computed, onMounted } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
@@ -384,19 +389,83 @@ import * as groupsApi from '@/api/groups'
 import { generatePassword } from '@/api/profiles'
 import { getIsvaConfig } from '@/api/isvaConfig'
 import { IVIA_ABBR } from '@/constants/productNames'
+import type { IsvaAccountStatus } from '@/api/isvaAccount'
+import { validateAttributeValue, type AttributeRules } from '@/utils/attributeValidation'
 
-const props = defineProps({
-  data: { type: Object, required: true },
-  isEdit: Boolean,
-  userTemplateConfig: { type: Object, default: null },
-  dirId: { type: String, default: null },
-  profileId: { type: String, default: null },
+/** A single profile attribute config. Only `attributeName` is guaranteed;
+ *  everything else is optional so a narrower caller shape stays assignable.
+ *  `rdn` is augmented at runtime by the section builders. */
+interface AttributeConfig {
+  attributeName: string
+  customLabel?: string | null
+  inputType?: string | null
+  requiredOnCreate?: boolean
+  editableOnCreate?: boolean
+  editableOnUpdate?: boolean
+  hidden?: boolean
+  minLength?: number | null
+  maxLength?: number | null
+  validationRegex?: string | null
+  validationMessage?: string | null
+  defaultValue?: string | null
+  computedExpression?: string | null
+  allowedValues?: string | null
+  columnSpan?: number | null
+  sectionName?: string | null
+  id?: string | number | null
+  rdn?: boolean
+}
+
+interface UserTemplateConfig {
+  name?: string | null
+  rdnAttribute?: string | null
+  showDnField?: boolean
+  objectClassNames?: string[]
+  attributeConfigs?: AttributeConfig[]
+}
+
+interface UserFormData {
+  dn?: string
+  parentDn?: string
+  rdnAttribute?: string
+  rdnValue?: string
+  attributes?: Record<string, unknown>
+  _pendingGroups?: Array<{ dn: string, memberAttr: string }>
+  [key: string]: unknown
+}
+
+interface GroupItem {
+  dn: string
+  cn: string
+  members: string[]
+  memberAttr: 'member' | 'uniqueMember' | 'memberUid'
+}
+
+interface Section {
+  name: string
+  fields: AttributeConfig[]
+}
+
+const props = withDefaults(defineProps<{
+  data: UserFormData
+  isEdit?: boolean
+  userTemplateConfig?: UserTemplateConfig | null
+  dirId?: string | null
+  profileId?: string | null
+}>(), {
+  isEdit: false,
+  userTemplateConfig: null,
+  dirId: null,
+  profileId: null,
 })
-const emit = defineEmits(['update'])
+const emit = defineEmits<{ update: [data: UserFormData] }>()
 
 const local = reactive({
   ...props.data,
-  attributes: { ...(props.data.attributes || {}) }
+  // Values reach UserForm already string-coerced (the parent joins LDAP
+  // multi-values with newlines before binding); typing them as strings lets
+  // the FormField v-model bindings type-check.
+  attributes: { ...(props.data.attributes || {}) } as Record<string, string>,
 })
 
 // Ensure SELECT fields have their defaultValue applied even if emptyForm() missed them
@@ -412,7 +481,7 @@ if (!props.isEdit && props.userTemplateConfig?.attributeConfigs) {
 const passwordVisible = ref(false)
 const generatingPassword = ref(false)
 
-async function doGeneratePassword(attrName) {
+async function doGeneratePassword(attrName: string) {
   if (!props.profileId) return
   generatingPassword.value = true
   try {
@@ -426,12 +495,12 @@ async function doGeneratePassword(attrName) {
   }
 }
 
-function copyPassword(attrName) {
+function copyPassword(attrName: string) {
   const val = local.attributes[attrName]
   if (val) navigator.clipboard.writeText(val)
 }
 
-const activeTab       = ref('attributes')
+const activeTab = ref<'attributes' | 'groups' | 'ivia'>('attributes')
 
 // ── IVIA tab gating + cached status snapshot ──────────────────────
 // The tab button is hidden unless: edit mode + addon present + the
@@ -441,7 +510,7 @@ const activeTab       = ref('attributes')
 // usable in non-UserForm contexts.
 const auth = useAuthStore()
 const iviaTabVisible = ref(false)
-const iviaStatus     = ref(null)
+const iviaStatus     = ref<IsvaAccountStatus | null>(null)
 
 async function checkIviaTabVisibility() {
   if (!props.isEdit || !props.dirId || !auth.isIsvaIntegrationEnabled) {
@@ -476,19 +545,19 @@ const headerEnabled = computed(() => {
 })
 
 const loadingGroups   = ref(false)
-const memberGroups    = ref([])
-const availableGroups = ref([])
+const memberGroups    = ref<GroupItem[]>([])
+const availableGroups = ref<GroupItem[]>([])
 const groupFilter     = ref('')
-const allGroups       = ref([])
-const pendingGroups   = ref([])
+const allGroups       = ref<GroupItem[]>([])
+const pendingGroups   = ref<GroupItem[]>([])
 
 const showExtraAttrs = ref(false)
 
 const HIDDEN_EDIT_ATTRS = new Set(['objectclass', 'objectClass', 'userpassword', 'userPassword', 'unicodePwd', 'unicodepwd'])
 
 /** Attributes to show in edit mode (excludes objectClass). */
-const editableAttributes = computed(() => {
-  const result = {}
+const editableAttributes = computed<Record<string, string>>(() => {
+  const result: Record<string, string> = {}
   for (const key of Object.keys(local.attributes)) {
     if (!HIDDEN_EDIT_ATTRS.has(key)) {
       result[key] = local.attributes[key]
@@ -507,12 +576,12 @@ const editFormAttributes = computed(() => {
 })
 
 /** Attributes present on the entry but NOT in the form config (edit mode overflow). */
-const extraEditAttributes = computed(() => {
+const extraEditAttributes = computed<Record<string, string>>(() => {
   if (!props.userTemplateConfig?.attributeConfigs) return {}
   const configuredNames = new Set(
     props.userTemplateConfig.attributeConfigs.map(a => a.attributeName.toLowerCase())
   )
-  const result = {}
+  const result: Record<string, string> = {}
   for (const key of Object.keys(local.attributes)) {
     if (!HIDDEN_EDIT_ATTRS.has(key) && !configuredNames.has(key.toLowerCase())) {
       result[key] = local.attributes[key]
@@ -521,7 +590,7 @@ const extraEditAttributes = computed(() => {
   return result
 })
 
-const INPUT_TYPE_MAP = {
+const INPUT_TYPE_MAP: Record<string, string> = {
   TEXT: 'text',
   TEXTAREA: 'textarea',
   PASSWORD: 'password',
@@ -534,8 +603,8 @@ const INPUT_TYPE_MAP = {
   HIDDEN_FIXED: 'hidden',
 }
 
-function mapInputType(inputType) {
-  return INPUT_TYPE_MAP[inputType] || 'text'
+function mapInputType(inputType?: string | null): string {
+  return INPUT_TYPE_MAP[inputType ?? ''] || 'text'
 }
 
 /**
@@ -553,25 +622,25 @@ function mapInputType(inputType) {
  *   3. Fallback to 3 (two-column row) when neither rule applies.
  */
 const FULL_WIDTH_INPUT_TYPES = new Set(['PASSWORD', 'TEXTAREA', 'MULTI_VALUE', 'DN_LOOKUP'])
-function effectiveColumnSpan(attr) {
-  if (FULL_WIDTH_INPUT_TYPES.has(attr.inputType)) return 6
+function effectiveColumnSpan(attr: AttributeConfig): number {
+  if (attr.inputType && FULL_WIDTH_INPUT_TYPES.has(attr.inputType)) return 6
   return attr.columnSpan || 3
 }
 
 /** Parse the allowedValues JSON string into FormField options. */
-function parseOptions(allowedValues) {
+function parseOptions(allowedValues?: string | null): Array<{ value: string, label: string }> {
   if (!allowedValues) return []
   try {
     const arr = JSON.parse(allowedValues)
     if (!Array.isArray(arr)) return []
-    return arr.map(v => ({ value: String(v), label: String(v) }))
+    return arr.map((v: unknown) => ({ value: String(v), label: String(v) }))
   } catch {
     return allowedValues.split(',').map(v => ({ value: v.trim(), label: v.trim() }))
   }
 }
 
 /** The attribute marked as RDN in the user form config. */
-const rdnAttr = computed(() => {
+const rdnAttr = computed<AttributeConfig | null>(() => {
   if (!props.userTemplateConfig?.attributeConfigs) return null
   const rdnName = props.userTemplateConfig.rdnAttribute
   return props.userTemplateConfig.attributeConfigs.find(a => a.attributeName === rdnName) || null
@@ -604,14 +673,14 @@ const createSections = computed(() => groupIntoSections(allVisibleAttributes.val
 /** Group edit-mode attributes into sections. */
 const editSections = computed(() => groupIntoSections(editFormAttributes.value))
 
-function groupIntoSections(attrs) {
-  const map = new Map()
+function groupIntoSections(attrs: AttributeConfig[]): Section[] {
+  const map = new Map<string, Section>()
   for (const attr of attrs) {
     const key = attr.sectionName || ''
     if (!map.has(key)) {
       map.set(key, { name: key, fields: [] })
     }
-    map.get(key).fields.push(attr)
+    map.get(key)!.fields.push(attr)
   }
   const result = Array.from(map.values())
   return result.length ? result : [{ name: '', fields: attrs }]
@@ -622,8 +691,8 @@ function groupIntoSections(attrs) {
  * references (${attr}), quoted string literals, concatenation operators (+),
  * and literal text.  No regex used for the concatenation handling.
  */
-function evaluateExpression(expr) {
-  const parts = []
+function evaluateExpression(expr: string): string {
+  const parts: string[] = []
   let i = 0
   while (i < expr.length) {
     if (expr[i] === '$' && expr[i + 1] === '{') {
@@ -666,8 +735,8 @@ function evaluateExpression(expr) {
  * so this recomputes only when a referenced source attribute changes —
  * no manual watcher, no reentrancy flag, no per-keystroke issues.
  */
-const computedAttrValues = computed(() => {
-  const result = {}
+const computedAttrValues = computed<Record<string, string>>(() => {
+  const result: Record<string, string> = {}
   if (!props.userTemplateConfig?.attributeConfigs || props.isEdit) return result
   for (const attr of props.userTemplateConfig.attributeConfigs) {
     if (!attr.computedExpression) continue
@@ -679,6 +748,64 @@ const computedAttrValues = computed(() => {
   }
   return result
 })
+
+// ── Client-side attribute validation ─────────────────────────────────────────
+// Mirrors ProvisioningProfileService's server-side rules (required / length /
+// regex) for instant field-level feedback. The server re-validates
+// authoritatively; this only gates the form submit and renders inline errors.
+const fieldErrors = reactive<Record<string, string>>({})
+
+function rulesFor(attr: AttributeConfig, forCreate: boolean): AttributeRules {
+  return {
+    attributeName: attr.attributeName,
+    label: attr.customLabel || attr.attributeName,
+    required: forCreate ? !!attr.requiredOnCreate : false,
+    minLength: attr.minLength ?? null,
+    maxLength: attr.maxLength ?? null,
+    validationRegex: attr.validationRegex ?? null,
+    validationMessage: attr.validationMessage ?? null,
+  }
+}
+
+/**
+ * Validate the visible, user-editable configured attributes. Populates
+ * {@link fieldErrors} and returns true when the form is valid. Exposed to the
+ * parent (UserListView) so it can gate the save. Returns true when the profile
+ * has no attribute template (the fallback path relies on native `required`).
+ */
+function validate(): boolean {
+  for (const k of Object.keys(fieldErrors)) delete fieldErrors[k]
+  const configs = props.userTemplateConfig?.attributeConfigs
+  if (!configs) return true
+
+  const forCreate = !props.isEdit
+  const rdnName = props.userTemplateConfig?.rdnAttribute
+  let ok = true
+  for (const attr of configs) {
+    if (attr.hidden || attr.computedExpression) continue
+    const isRdn = attr.attributeName === rdnName
+    // The RDN is immutable in edit mode (its field is disabled), so don't
+    // validate it there — a length/regex rule on the RDN attribute must not
+    // block edits to an existing entry whose RDN predates the rule.
+    if (isRdn && !forCreate) continue
+    // Skip fields the user can't edit in this mode (their value is fixed or
+    // server-managed) — except the RDN, which is always entered on create.
+    const editable = forCreate ? attr.editableOnCreate !== false : attr.editableOnUpdate !== false
+    if (!editable && !isRdn) continue
+
+    const value = isRdn && forCreate
+      ? local.rdnValue
+      : local.attributes[attr.attributeName]
+    const err = validateAttributeValue(rulesFor(attr, forCreate), value)
+    if (err) {
+      fieldErrors[attr.attributeName] = err
+      ok = false
+    }
+  }
+  return ok
+}
+
+defineExpose({ validate })
 
 let syncing = false
 watch(local, v => {
@@ -714,13 +841,13 @@ async function loadGroups() {
   }
   loadingGroups.value = true
   try {
-    const params = {}
+    const params: Record<string, string> = {}
     if (groupFilter.value.trim()) {
       params.filter = `(cn=*${groupFilter.value.trim()}*)`
     }
     const { data } = await groupsApi.searchGroups(props.dirId, params)
     const entries = Array.isArray(data) ? data : (data?.entries || [])
-    allGroups.value = entries.map(e => ({
+    allGroups.value = entries.map((e: { dn: string, attributes?: Record<string, string[] | undefined> }): GroupItem => ({
       dn: e.dn,
       cn: e.attributes?.cn?.[0] || '—',
       members: e.attributes?.member || e.attributes?.uniqueMember || e.attributes?.memberUid || [],
@@ -736,7 +863,7 @@ async function loadGroups() {
 
 function refreshMemberships() {
   if (props.isEdit) {
-    const userDn = local.dn
+    const userDn = local.dn || ''
     memberGroups.value = allGroups.value.filter(g =>
       g.members.some(m => m.toLowerCase() === userDn.toLowerCase())
     )
@@ -762,7 +889,7 @@ function searchAvailableGroups() {
   filterAvailableGroups()
 }
 
-async function addToGroup(group) {
+async function addToGroup(group: GroupItem) {
   if (props.isEdit) {
     // Edit mode: immediately persist the membership via API
     try {
@@ -774,7 +901,7 @@ async function addToGroup(group) {
         const notif = useNotificationStore()
         notif.success('Group member addition submitted for approval')
       } else {
-        group.members.push(local.dn)
+        group.members.push(local.dn || '')
       }
       refreshMemberships()
     } catch (e) {
@@ -788,20 +915,20 @@ async function addToGroup(group) {
   }
 }
 
-async function removeFromGroup(group) {
+async function removeFromGroup(group: GroupItem) {
   try {
     await groupsApi.removeGroupMember(props.dirId, group.dn, {
       memberAttribute: group.memberAttr,
       memberValue: local.dn,
     })
-    group.members = group.members.filter(m => m.toLowerCase() !== local.dn.toLowerCase())
+    group.members = group.members.filter(m => m.toLowerCase() !== (local.dn || '').toLowerCase())
     refreshMemberships()
   } catch (e) {
     // silent
   }
 }
 
-function removePendingGroup(group) {
+function removePendingGroup(group: GroupItem) {
   pendingGroups.value = pendingGroups.value.filter(g => g.dn !== group.dn)
   filterAvailableGroups()
   emitPendingGroups()
@@ -817,10 +944,10 @@ function emitPendingGroups() {
 onMounted(() => {
   // Initialize pending groups from profile group assignments passed via data
   if (props.data?._pendingGroups?.length) {
-    pendingGroups.value = props.data._pendingGroups.map(g => ({
+    pendingGroups.value = props.data._pendingGroups.map((g): GroupItem => ({
       dn: g.dn,
       cn: g.dn.split(',')[0] || g.dn,
-      memberAttr: g.memberAttr,
+      memberAttr: g.memberAttr as GroupItem['memberAttr'],
       members: [],
     }))
   }

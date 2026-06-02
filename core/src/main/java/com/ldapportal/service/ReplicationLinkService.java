@@ -9,9 +9,13 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.ReplicationLinkAttrMapping;
 import com.ldapportal.entity.enums.AuditAction;
+import com.ldapportal.entity.enums.ReconcileDeleteAction;
+import com.ldapportal.entity.enums.ReconcileMode;
+import com.ldapportal.entity.enums.ReconciliationFindingStatus;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.DirectoryConnectionRepository;
+import com.ldapportal.repository.ReconciliationFindingRepository;
 import com.ldapportal.repository.ReplicationEventRepository;
 import com.ldapportal.repository.ReplicationLinkRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +28,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+
+import static com.ldapportal.entity.enums.AuditAction.RECONCILIATION_CONFIG_UPDATED;
 
 /**
  * CRUD for replication links. Exposed via
@@ -42,8 +49,12 @@ public class ReplicationLinkService {
 
     private final ReplicationLinkRepository  linkRepo;
     private final ReplicationEventRepository eventRepo;
+    private final ReconciliationFindingRepository findingRepo;
     private final DirectoryConnectionRepository dirRepo;
     private final AuditService               auditService;
+
+    /** Floor on the reconciliation repeat interval — 1 hour. Mirrors the DB CHECK. */
+    private static final int RECONCILE_MIN_INTERVAL_SECS = 3600;
 
     @Transactional(readOnly = true)
     public List<ReplicationLinkResponse> listLinks() {
@@ -72,6 +83,9 @@ public class ReplicationLinkService {
                 link.getId(), link.getSourceDirectory().getDisplayName(),
                 link.getTargetDirectory().getDisplayName());
         auditService.recordSystemEvent(principal, AuditAction.REPLICATION_LINK_CREATED, auditDetail(link));
+        if (link.isReconcileEnabled()) {
+            auditService.recordSystemEvent(principal, RECONCILIATION_CONFIG_UPDATED, reconcileAuditDetail(link));
+        }
         return ReplicationLinkResponse.from(link, LinkHealth.empty());
     }
 
@@ -79,6 +93,7 @@ public class ReplicationLinkService {
     public ReplicationLinkResponse updateLink(AuthPrincipal principal, UUID id, ReplicationLinkRequest req) {
         ReplicationLink link = require(id);
         boolean wasEnabled = link.isEnabled();
+        String reconcileBefore = reconcileSignature(link);
         validateRequest(req, id);
         // Drop the existing mapping rows BEFORE staging the new ones,
         // not in the same flush. The mapping table has a composite PK
@@ -107,6 +122,12 @@ public class ReplicationLinkService {
                     ? AuditAction.REPLICATION_LINK_ENABLED
                     : AuditAction.REPLICATION_LINK_DISABLED;
             auditService.recordSystemEvent(principal, toggle, auditDetail(link));
+        }
+        // Record reconciliation-config changes distinctly so an operator
+        // reviewing "who turned reconciliation on / changed the schedule"
+        // doesn't have to diff the generic UPDATE detail map.
+        if (!reconcileSignature(link).equals(reconcileBefore)) {
+            auditService.recordSystemEvent(principal, RECONCILIATION_CONFIG_UPDATED, reconcileAuditDetail(link));
         }
 
         return ReplicationLinkResponse.from(link, health.getOrDefault(id, LinkHealth.empty()));
@@ -183,6 +204,23 @@ public class ReplicationLinkService {
                               + "events, not in v1. Disable or delete the reverse link first.");
                     });
         }
+        // Reconciliation schedule must be complete and sane when enabled —
+        // mirrors the DB CHECK so the operator gets a 400 instead of a 500.
+        if (req.reconcileEnabled()) {
+            if (req.reconcileFirstRunAt() == null) {
+                throw new IllegalArgumentException(
+                        "reconcileFirstRunAt is required when reconciliation is enabled");
+            }
+            if (req.reconcileIntervalSecs() == null) {
+                throw new IllegalArgumentException(
+                        "reconcileIntervalSecs is required when reconciliation is enabled");
+            }
+            if (req.reconcileIntervalSecs() < RECONCILE_MIN_INTERVAL_SECS) {
+                throw new IllegalArgumentException(
+                        "reconcileIntervalSecs must be at least " + RECONCILE_MIN_INTERVAL_SECS
+                      + " seconds (1 hour)");
+            }
+        }
     }
 
     private void applyRequest(ReplicationLink link, ReplicationLinkRequest req) {
@@ -193,6 +231,7 @@ public class ReplicationLinkService {
         link.setTargetBaseDn(blankToNull(req.targetBaseDn()));
         link.setEnabled(req.enabled());
         link.setAutoCreateOnMissing(req.autoCreateOnMissing());
+        applyReconcileConfig(link, req);
 
         // Attribute mappings: replace the whole list. orphanRemoval=true
         // on the @OneToMany makes JPA clean up removed rows.
@@ -207,6 +246,65 @@ public class ReplicationLinkService {
                 link.getAttributeMappings().add(m);
             }
         }
+    }
+
+    /**
+     * Apply the reconciliation config and (re)compute the next-run pointer.
+     * Recomputes {@code reconcileNextRunAt} when first enabling or when the
+     * operator changed the start time or cadence; otherwise the running
+     * schedule is preserved across unrelated edits. Disabling clears the
+     * pointer so the scheduler ignores the link (history is kept in
+     * {@code reconcileLastRunAt}).
+     */
+    private void applyReconcileConfig(ReplicationLink link, ReplicationLinkRequest req) {
+        boolean wasEnabled = link.isReconcileEnabled();
+        OffsetDateTime oldFirstRun = link.getReconcileFirstRunAt();
+        Integer oldInterval = link.getReconcileIntervalSecs();
+
+        link.setReconcileEnabled(req.reconcileEnabled());
+        link.setReconcileMode(req.reconcileMode() != null ? req.reconcileMode() : ReconcileMode.REVIEW);
+        link.setReconcileDeleteAction(
+                req.reconcileDeleteAction() != null ? req.reconcileDeleteAction() : ReconcileDeleteAction.REVIEW);
+        link.setReconcileFirstRunAt(req.reconcileFirstRunAt());
+        link.setReconcileIntervalSecs(req.reconcileIntervalSecs());
+
+        if (!req.reconcileEnabled()) {
+            link.setReconcileNextRunAt(null);
+            return;
+        }
+        boolean scheduleChanged = !wasEnabled
+                || !Objects.equals(oldFirstRun, req.reconcileFirstRunAt())
+                || !Objects.equals(oldInterval, req.reconcileIntervalSecs());
+        if (scheduleChanged || link.getReconcileNextRunAt() == null) {
+            link.setReconcileNextRunAt(req.reconcileFirstRunAt());
+        }
+    }
+
+    /**
+     * Operator-facing reconciliation config as a comparable signature.
+     * Excludes the derived next/last-run pointers so only intentional
+     * config edits trigger a {@code RECONCILIATION_CONFIG_UPDATED} audit.
+     */
+    private static String reconcileSignature(ReplicationLink l) {
+        return l.isReconcileEnabled()
+                + "|" + l.getReconcileMode()
+                + "|" + l.getReconcileFirstRunAt()
+                + "|" + l.getReconcileIntervalSecs()
+                + "|" + l.getReconcileDeleteAction();
+    }
+
+    private static Map<String, Object> reconcileAuditDetail(ReplicationLink link) {
+        Map<String, Object> detail = auditDetail(link);
+        detail.put("reconcileEnabled",      link.isReconcileEnabled());
+        detail.put("reconcileMode",         link.getReconcileMode().name());
+        detail.put("reconcileDeleteAction", link.getReconcileDeleteAction().name());
+        if (link.getReconcileIntervalSecs() != null) {
+            detail.put("reconcileIntervalSecs", link.getReconcileIntervalSecs());
+        }
+        if (link.getReconcileFirstRunAt() != null) {
+            detail.put("reconcileFirstRunAt", link.getReconcileFirstRunAt().toString());
+        }
+        return detail;
     }
 
     private DirectoryConnection requireDirectory(UUID id) {
@@ -225,6 +323,14 @@ public class ReplicationLinkService {
     private Map<UUID, LinkHealth> healthByLinkId(List<ReplicationLink> links) {
         if (links.isEmpty()) return Map.of();
         List<UUID> ids = links.stream().map(ReplicationLink::getId).toList();
+
+        // Open (PROPOSED) reconciliation findings per link — one batched
+        // aggregate, same shape as the event health rollup.
+        Map<UUID, Long> openFindings = new HashMap<>();
+        for (Object[] row : findingRepo.countByLinkIdsAndStatus(ids, ReconciliationFindingStatus.PROPOSED)) {
+            openFindings.put((UUID) row[0], ((Number) row[1]).longValue());
+        }
+
         List<Object[]> rows = eventRepo.findHealthRollup(ids);
         Map<UUID, LinkHealth> result = new HashMap<>(rows.size());
         for (Object[] row : rows) {
@@ -233,7 +339,14 @@ public class ReplicationLinkService {
             long failed       = ((Number) row[2]).longValue();
             long deadLettered = ((Number) row[3]).longValue();
             OffsetDateTime lastDelivered = (OffsetDateTime) row[4];
-            result.put(linkId, new LinkHealth(pending, failed, deadLettered, lastDelivered));
+            result.put(linkId, new LinkHealth(pending, failed, deadLettered, lastDelivered,
+                    openFindings.getOrDefault(linkId, 0L)));
+        }
+        // A link with open findings but no events won't appear in the health
+        // rollup; fold those in so the badge still surfaces.
+        for (Map.Entry<UUID, Long> e : openFindings.entrySet()) {
+            result.computeIfAbsent(e.getKey(),
+                    id -> new LinkHealth(0L, 0L, 0L, null, e.getValue()));
         }
         return result;
     }

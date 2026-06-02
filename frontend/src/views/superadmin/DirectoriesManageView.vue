@@ -3,7 +3,7 @@
   <PageContainer>
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900">LDAP Directories</h1>
+        <h1 class="text-2xl font-bold text-gray-900">Directory Connections</h1>
         <p class="text-sm text-gray-500 mt-1">Manage LDAP directory connections</p>
       </div>
       <button @click="openCreate" class="btn-primary">+ New Directory</button>
@@ -11,7 +11,7 @@
 
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <div v-if="loading" class="p-8 text-center text-gray-500 text-sm">Loading…</div>
-      <div v-else-if="dirs.length === 0" class="p-8 text-center text-gray-500 text-sm">No directories configured.</div>
+      <EmptyState v-else-if="dirs.length === 0" icon="folder" title="No directories configured." />
       <table v-else class="w-full text-sm">
         <thead class="bg-gray-50 border-b border-gray-100">
           <tr>
@@ -21,6 +21,7 @@
             <th class="px-4 py-3 text-left font-medium text-gray-500">SSL</th>
             <th class="px-4 py-3 text-left font-medium text-gray-500">Base DN</th>
             <th class="px-4 py-3 text-left font-medium text-gray-500">Enabled</th>
+            <th class="px-4 py-3 text-left font-medium text-gray-500">Status</th>
             <th class="px-4 py-3"></th>
           </tr>
         </thead>
@@ -46,6 +47,16 @@
             <td class="px-4 py-3">
               <span :class="d.enabled ? 'text-green-600' : 'text-gray-500'" class="text-xs font-medium">
                 {{ d.enabled ? 'Yes' : 'No' }}
+              </span>
+            </td>
+            <!-- Live reachability probe (not the `enabled` config flag): an
+                 enabled directory whose LDAP host is down reads red here, so
+                 this column never claims health the connection doesn't have.
+                 Mirrors the dashboard Directories panel dot. -->
+            <td class="px-4 py-3">
+              <span class="inline-flex items-center gap-1.5 text-xs font-medium" :title="statusOf(d).message">
+                <span class="w-2 h-2 rounded-full shrink-0" :class="STATUS_META[statusOf(d).state].dot" aria-hidden="true"></span>
+                <span :class="STATUS_META[statusOf(d).state].text">{{ STATUS_META[statusOf(d).state].label }}</span>
               </span>
             </td>
             <td class="px-4 py-3 text-right whitespace-nowrap">
@@ -203,34 +214,148 @@
   </PageContainer>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
-import { listDirectories, createDirectory, updateDirectory, deleteDirectory, testDirectory, evictPool } from '@/api/directories'
+import { listDirectories, createDirectory, updateDirectory, deleteDirectory, testDirectory, evictPool, getDirectoryStatus } from '@/api/directories'
 import { testEntraConnection } from '@/api/entra'
 import FormField from '@/components/FormField.vue'
 import AppModal from '@/components/AppModal.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import { IVIA_ABBR } from '@/constants/productNames'
 import PageContainer from '@/components/PageContainer.vue'
+import type { components } from '@/api/openapi'
+
+// The generated schema lags the backend (no IBM/Oracle directory types,
+// replication, or capabilities), so the form is a superset of the typed
+// request. Cast at the API boundary rather than narrowing the form.
+type DirectoryRequest = components['schemas']['DirectoryConnectionRequest']
+
+interface DirectoryForm {
+  directoryType: string
+  displayName: string
+  host: string
+  port: number | undefined
+  sslMode: string
+  trustAllCerts: boolean
+  bindDn: string
+  bindPassword: string
+  baseDn: string
+  pagingSize: number | undefined
+  poolMinSize: number | undefined
+  poolMaxSize: number | undefined
+  poolConnectTimeoutSeconds: number | undefined
+  poolResponseTimeoutSeconds: number | undefined
+  enableDisableAttribute: string
+  enableDisableValueType: string
+  enableValue: string
+  disableValue: string
+  enabled: boolean
+  replicationEnabled: boolean
+  selfServiceEnabled: boolean
+  selfServiceLoginAttribute: string
+  secondaryHost: string
+  secondaryPort: number | undefined
+  globalCatalogPort: number | undefined
+  tenantId: string
+  entraClientId: string
+  entraClientSecret: string
+  graphEndpoint: string
+}
+
+// Root-DSE probe result the directory list renders as a vendor chip.
+interface DirectoryCapabilities {
+  vendorName?: string | null
+  vendorVersion?: string | null
+  probedAt?: string | null
+  supportedControls?: string[] | null
+}
+
+// Row shape from the (untyped) directories API; only the fields this
+// view reads are modelled.
+interface DirectoryRow extends Partial<DirectoryForm> {
+  id: string
+  displayName: string
+  enabled: boolean
+  capabilities?: DirectoryCapabilities | null
+}
+
+interface TestResult {
+  success?: boolean
+  message?: string
+}
+
+// Per-row reachability state. 'checking' until the probe returns;
+// 'disabled' for rows we don't probe (the directory is intentionally off).
+type DirStatusState = 'checking' | 'reachable' | 'unreachable' | 'disabled'
+interface DirStatus { state: DirStatusState; message?: string }
+
+// Dot colour + label + text colour per state. Raw colour utilities (not the
+// .input/.btn project classes) are correct here — this is a status indicator,
+// not a form control, matching the dashboard Directories panel.
+const STATUS_META: Record<DirStatusState, { dot: string; text: string; label: string }> = {
+  checking:    { dot: 'bg-gray-300 animate-pulse',  text: 'text-gray-500', label: 'Checking…' },
+  reachable:   { dot: 'bg-green-500',               text: 'text-green-600', label: 'Online' },
+  unreachable: { dot: 'bg-red-500',                 text: 'text-red-600',   label: 'Unreachable' },
+  disabled:    { dot: 'border border-gray-400',     text: 'text-gray-500', label: 'Disabled' },
+}
+
+// Repo-standard axios/native error narrowing (see docs/frontend-conventions.md).
+function errMsg(e: unknown, fallback = 'Something went wrong'): string {
+  const err = e as { response?: { data?: { detail?: string } }; message?: string }
+  return err.response?.data?.detail || err.message || fallback
+}
 
 const notif = useNotificationStore()
 const auth = useAuthStore()
 
 const loading      = ref(false)
 const saving       = ref(false)
-const dirs         = ref([])
+const dirs         = ref<DirectoryRow[]>([])
 const showModal    = ref(false)
-const editing      = ref(null)
-const deleteTarget = ref(null)
+const editing      = ref<string | null>(null)
+const deleteTarget = ref<DirectoryRow | null>(null)
 const testLoading  = ref(false)
-const testResult   = ref(null)
+const testResult   = ref<TestResult | null>(null)
+const statusById   = ref<Record<string, DirStatus>>({})
 
-const form = ref(emptyForm())
+function statusOf(d: DirectoryRow): DirStatus {
+  return statusById.value[d.id] ?? { state: d.enabled ? 'checking' : 'disabled' }
+}
 
-function emptyForm() {
+/**
+ * Probe one stored directory's live reachability. Disabled directories are
+ * skipped (they're off by choice, not by failure). Runs independently per
+ * row so the table renders immediately and dots resolve as probes return —
+ * an unreachable host blocks only its own cell up to the LDAP timeout.
+ */
+async function probeStatus(d: DirectoryRow) {
+  if (!d.enabled) {
+    statusById.value[d.id] = { state: 'disabled' }
+    return
+  }
+  statusById.value[d.id] = { state: 'checking' }
+  try {
+    const { data } = await getDirectoryStatus(d.id)
+    statusById.value[d.id] = data.success
+      ? { state: 'reachable', message: data.message || 'Reachable' }
+      : { state: 'unreachable', message: data.message || 'Unreachable' }
+  } catch (e) {
+    statusById.value[d.id] = { state: 'unreachable', message: errMsg(e) }
+  }
+}
+
+function probeAll() {
+  statusById.value = {}
+  dirs.value.forEach(probeStatus)
+}
+
+const form = ref<DirectoryForm>(emptyForm())
+
+function emptyForm(): DirectoryForm {
   return {
     directoryType: 'GENERIC',
     displayName: '', host: '', port: 389, sslMode: 'NONE',
@@ -241,7 +366,7 @@ function emptyForm() {
     enableValue: '', disableValue: '', enabled: true,
     replicationEnabled: false,
     selfServiceEnabled: false, selfServiceLoginAttribute: 'uid',
-    secondaryHost: '', secondaryPort: null, globalCatalogPort: null,
+    secondaryHost: '', secondaryPort: undefined, globalCatalogPort: undefined,
     tenantId: '', entraClientId: '', entraClientSecret: '', graphEndpoint: '',
   }
 }
@@ -282,14 +407,14 @@ function applyPreset() {
 // is, we just didn't get a self-reported version." Returns '' only
 // when the probe didn't run or the server is generic enough that the
 // fallback wouldn't tell the operator anything new (GENERIC, ENTRA_ID).
-const TYPE_FALLBACK_LABEL = {
+const TYPE_FALLBACK_LABEL: Record<string, string> = {
   OPENLDAP:                 'OpenLDAP',
   ACTIVE_DIRECTORY:         'Active Directory',
   IBM_DIRECTORY_SERVER:     'IBM Directory Server',
   ORACLE_UNIFIED_DIRECTORY: 'Oracle Unified Directory',
 }
 
-function vendorBadge(d) {
+function vendorBadge(d: DirectoryRow) {
   const caps = d?.capabilities
   if (!caps) return ''
   const v = (caps.vendorName || '').trim()
@@ -300,13 +425,13 @@ function vendorBadge(d) {
   // Probe ran (caps is non-null) but server didn't advertise vendor info.
   // Use the directory-type label as the chip text for named types; skip
   // for GENERIC / ENTRA_ID where it would be redundant or wrong.
-  return TYPE_FALLBACK_LABEL[d?.directoryType] || ''
+  return TYPE_FALLBACK_LABEL[d?.directoryType ?? ''] || ''
 }
 
-function capabilitiesTooltip(d) {
+function capabilitiesTooltip(d: DirectoryRow) {
   const caps = d?.capabilities
   if (!caps) return ''
-  const lines = []
+  const lines: string[] = []
   if (caps.probedAt) lines.push(`Probed ${new Date(caps.probedAt).toLocaleString()}`)
   const ctrls = caps.supportedControls || []
   if (ctrls.length) lines.push(`Supported controls (${ctrls.length}):\n${ctrls.slice(0, 12).join('\n')}${ctrls.length > 12 ? '\n…' : ''}`)
@@ -317,9 +442,14 @@ async function load() {
   loading.value = true
   try {
     const { data } = await listDirectories()
-    dirs.value = data
+    // Runtime rows are richer than the stale generated schema (capabilities,
+    // replication, extra directory types); treat them as DirectoryRow.
+    dirs.value = data as DirectoryRow[]
+    // Kick off reachability probes (fire-and-forget; each cell fills in as
+    // its probe resolves). Not awaited so the table paints immediately.
+    probeAll()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     loading.value = false
   }
@@ -334,12 +464,12 @@ function openCreate() {
   showModal.value = true
 }
 
-function openEdit(d) {
+function openEdit(d: DirectoryRow) {
   editing.value = d.id
   form.value = {
     directoryType: d.directoryType || 'GENERIC',
-    displayName: d.displayName, host: d.host, port: d.port, sslMode: d.sslMode,
-    trustAllCerts: d.trustAllCerts, bindDn: d.bindDn, bindPassword: '', baseDn: d.baseDn,
+    displayName: d.displayName, host: d.host ?? '', port: d.port, sslMode: d.sslMode ?? 'NONE',
+    trustAllCerts: d.trustAllCerts ?? false, bindDn: d.bindDn ?? '', bindPassword: '', baseDn: d.baseDn ?? '',
     pagingSize: d.pagingSize, poolMinSize: d.poolMinSize, poolMaxSize: d.poolMaxSize,
     poolConnectTimeoutSeconds: d.poolConnectTimeoutSeconds,
     poolResponseTimeoutSeconds: d.poolResponseTimeoutSeconds,
@@ -351,8 +481,8 @@ function openEdit(d) {
     selfServiceEnabled: d.selfServiceEnabled || false,
     selfServiceLoginAttribute: d.selfServiceLoginAttribute || 'uid',
     secondaryHost: d.secondaryHost || '',
-    secondaryPort: d.secondaryPort || null,
-    globalCatalogPort: d.globalCatalogPort || null,
+    secondaryPort: d.secondaryPort || undefined,
+    globalCatalogPort: d.globalCatalogPort || undefined,
     tenantId: d.tenantId || '',
     entraClientId: d.entraClientId || '',
     entraClientSecret: '',
@@ -365,35 +495,38 @@ function openEdit(d) {
 async function save() {
   saving.value = true
   try {
-    const payload = { ...form.value }
+    const payload: Partial<DirectoryForm> = { ...form.value }
     if (editing.value && !payload.bindPassword) delete payload.bindPassword
     if (editing.value && !payload.entraClientSecret) delete payload.entraClientSecret
+    // Form is a superset of the (stale) generated request schema.
+    const requestBody = payload as unknown as DirectoryRequest
     if (editing.value) {
-      await updateDirectory(editing.value, payload)
+      await updateDirectory(editing.value, requestBody)
       notif.success('Directory updated')
     } else {
-      await createDirectory(payload)
+      await createDirectory(requestBody)
       notif.success('Directory created')
     }
     showModal.value = false
     await load()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     saving.value = false
   }
 }
 
-function confirmDelete(d) { deleteTarget.value = d }
+function confirmDelete(d: DirectoryRow) { deleteTarget.value = d }
 
 async function doDelete() {
+  if (!deleteTarget.value) return
   try {
     await deleteDirectory(deleteTarget.value.id)
     notif.success('Directory deleted')
     deleteTarget.value = null
     await load()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
     deleteTarget.value = null
   }
 }
@@ -402,7 +535,7 @@ async function doTest() {
   testLoading.value = true
   testResult.value = null
   try {
-    let data
+    let data: TestResult
     if (form.value.directoryType === 'ENTRA_ID') {
       const dirId = editing.value || '00000000-0000-0000-0000-000000000000'
       const res = await testEntraConnection(dirId, {
@@ -413,23 +546,23 @@ async function doTest() {
       })
       data = res.data
     } else {
-      const res = await testDirectory(form.value)
+      const res = await testDirectory(form.value as unknown as components['schemas']['TestConnectionRequest'])
       data = res.data
     }
     testResult.value = data
   } catch (e) {
-    testResult.value = { success: false, message: e.response?.data?.detail || e.message }
+    testResult.value = { success: false, message: errMsg(e) }
   } finally {
     testLoading.value = false
   }
 }
 
-async function doEvictPool(d) {
+async function doEvictPool(d: DirectoryRow) {
   try {
     await evictPool(d.id)
     notif.success('Connection pool evicted')
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   }
 }
 </script>

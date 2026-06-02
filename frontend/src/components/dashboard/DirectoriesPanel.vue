@@ -1,14 +1,19 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
 import type { components } from '@/api/openapi'
+import EmptyState from '@/components/EmptyState.vue'
 
 // Backend's DirectoryStatDto plus the `name` and `enabled` fields the
 // dashboard service merges in. All numeric fields are nullable per the
 // schema (Format: int64 with `?`), so each cell access has to be guarded.
+// `reachable` is the LDAP connectivity probe result for an enabled
+// directory (true/false), and null when the directory is disabled (so
+// no probe ran).
 type DirectoryStat = components['schemas']['DirectoryStatDto'] & {
   id: string
   name: string
   enabled: boolean
+  reachable?: boolean | null
 }
 
 withDefaults(defineProps<{
@@ -36,6 +41,25 @@ function formatCount(n: number | null | undefined): string {
   if (n == null || n < 0) return '—'
   return n.toLocaleString()
 }
+
+/**
+ * Status dot colour. `enabled` is only a config flag — an enabled
+ * directory whose LDAP host is unreachable must NOT read green, or the
+ * dashboard claims health it doesn't have. So: disabled → grey outline,
+ * enabled-but-unreachable → red, enabled-and-reachable → green. A null
+ * `reachable` (older payloads / not probed) falls back to green so the
+ * dot stays meaningful when the backend doesn't supply the probe result.
+ */
+function statusDotClass(dir: DirectoryStat): string {
+  if (!dir.enabled) return 'border border-gray-400'
+  return dir.reachable === false ? 'bg-red-500' : 'bg-green-500'
+}
+
+/** Short status word for screen-reader / aria labels. */
+function statusText(dir: DirectoryStat): string {
+  if (!dir.enabled) return 'disabled'
+  return dir.reachable === false ? 'unreachable' : 'enabled'
+}
 </script>
 
 <template>
@@ -53,9 +77,7 @@ function formatCount(n: number | null | undefined): string {
 
     <!-- Empty state lives outside the grid so the "No directories" message
          doesn't pretend to be a card. -->
-    <div v-if="!directories.length" class="px-5 py-8 text-center text-sm text-gray-500">
-      No directories configured.
-    </div>
+    <EmptyState v-if="!directories.length" icon="folder" title="No directories configured." />
 
     <!--
       Card grid replaces the prior <table>. The table layout cut metric
@@ -76,7 +98,7 @@ function formatCount(n: number | null | undefined): string {
         v-for="dir in directories"
         :key="dir.id"
         :type="rowClickable ? 'button' : undefined"
-        :aria-label="rowClickable ? `Open ${dir.name}, ${dir.enabled ? 'enabled' : 'disabled'}` : undefined"
+        :aria-label="rowClickable ? `Open ${dir.name}, ${statusText(dir)}` : undefined"
         class="text-left bg-gray-100 border border-gray-200 rounded-lg overflow-hidden transition-colors w-full"
         :class="rowClickable
           ? 'hover:bg-gray-200 hover:border-gray-300 cursor-pointer'
@@ -86,10 +108,11 @@ function formatCount(n: number | null | undefined): string {
         <!-- Header: status dot + name + chevron (chevron only when the
              whole card is clickable, since that's the affordance signal). -->
         <div class="px-3 py-2 border-b border-gray-200 flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full shrink-0" :class="dir.enabled ? 'bg-green-500' : 'border border-gray-400'" aria-hidden="true"></span>
+          <span class="w-2 h-2 rounded-full shrink-0" :class="statusDotClass(dir)" :title="statusText(dir)" aria-hidden="true"></span>
           <!-- Visually-hidden status text so screen readers announce
-               enabled/disabled — the coloured dot is decorative-only. -->
-          <span class="sr-only">{{ dir.enabled ? 'Enabled.' : 'Disabled.' }}</span>
+               enabled / disabled / unreachable — the coloured dot is
+               decorative-only. -->
+          <span class="sr-only">{{ statusText(dir) }}.</span>
           <span class="font-medium text-gray-900 truncate flex-1" :title="dir.name">{{ dir.name }}</span>
           <svg v-if="rowClickable" class="w-4 h-4 text-gray-500 shrink-0" fill="none" viewBox="0 0 20 20" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
             <path stroke-linecap="round" stroke-linejoin="round" d="M7 5l5 5-5 5" />

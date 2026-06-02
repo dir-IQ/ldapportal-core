@@ -8,7 +8,7 @@
 
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <div v-if="loading" class="p-8 text-center text-gray-500 text-sm">Loading…</div>
-      <div v-else-if="admins.length === 0" class="p-8 text-center text-gray-500 text-sm">No superadmins found.</div>
+      <EmptyState v-else-if="admins.length === 0" icon="users" title="No superadmins found." />
       <table v-else class="w-full text-sm">
         <thead class="bg-gray-50 border-b border-gray-100">
           <tr>
@@ -23,7 +23,7 @@
             <td class="px-4 py-3 text-gray-600">{{ admin.email ?? '—' }}</td>
             <td class="px-4 py-3 text-right">
               <button
-                v-if="admin.id !== auth.principal?.id"
+                v-if="admin.id !== currentUserId"
                 @click="confirmDelete(admin)"
                 class="text-red-500 hover:text-red-700 text-xs font-medium"
               >Delete</button>
@@ -56,25 +56,44 @@
   </PageContainer>
 </template>
 
-<script setup>
-import { ref, onMounted } from 'vue'
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notifications'
 import { listSuperadmins, createSuperadmin, deleteSuperadmin } from '@/api/superadmin'
+import type { components } from '@/api/openapi'
 import FormField from '@/components/FormField.vue'
 import AppModal from '@/components/AppModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import PageContainer from '@/components/PageContainer.vue'
+
+type Superadmin = components['schemas']['SuperadminResponse']
+
+interface CreateForm {
+  username: string
+  email: string
+  password: string
+}
+
+// Repo-standard axios/native error narrowing (see docs/frontend-conventions.md).
+function errMsg(e: unknown, fallback = 'Something went wrong'): string {
+  const err = e as { response?: { data?: { detail?: string } }; message?: string }
+  return err.response?.data?.detail || err.message || fallback
+}
 
 const auth  = useAuthStore()
 const notif = useNotificationStore()
 
+// auth store is plain JS (principal: ref(null)); narrow the bit we read.
+const currentUserId = computed(() => (auth.principal as { id?: string } | null)?.id ?? null)
+
 const loading      = ref(false)
 const saving       = ref(false)
-const admins       = ref([])
+const admins       = ref<Superadmin[]>([])
 const showModal    = ref(false)
-const deleteTarget = ref(null)
-const form         = ref({ username: '', email: '', password: '' })
+const deleteTarget = ref<Superadmin | null>(null)
+const form         = ref<CreateForm>({ username: '', email: '', password: '' })
 
 async function loadAdmins() {
   loading.value = true
@@ -82,7 +101,7 @@ async function loadAdmins() {
     const { data } = await listSuperadmins()
     admins.value = data
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     loading.value = false
   }
@@ -103,22 +122,23 @@ async function doCreate() {
     showModal.value = false
     await loadAdmins()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     saving.value = false
   }
 }
 
-function confirmDelete(admin) { deleteTarget.value = admin }
+function confirmDelete(admin: Superadmin) { deleteTarget.value = admin }
 
 async function doDelete() {
+  if (!deleteTarget.value?.id) return
   try {
     await deleteSuperadmin(deleteTarget.value.id)
     notif.success('Superadmin removed')
     deleteTarget.value = null
     await loadAdmins()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
     deleteTarget.value = null
   }
 }

@@ -73,6 +73,12 @@ export const ACTION_LABELS = {
   REPLICATION_EVENT_RETRIED_BY_OPERATOR: 'Replication event retried',
   REPLICATION_EVENT_SKIPPED_BY_OPERATOR: 'Replication event skipped',
   REPLICATION_EVENT_ACKNOWLEDGED: 'Replication event acknowledged',
+  RECONCILIATION_CONFIG_UPDATED: 'Reconciliation settings updated',
+  RECONCILIATION_RUN_STARTED: 'Reconciliation run started',
+  RECONCILIATION_RUN_COMPLETED: 'Reconciliation run completed',
+  RECONCILIATION_RUN_FAILED: 'Reconciliation run failed',
+  RECONCILIATION_FINDING_APPLIED: 'Reconciliation finding applied',
+  RECONCILIATION_FINDING_DISMISSED: 'Reconciliation finding dismissed',
 }
 
 // Fallback humanizer for any audit action not in the map above — keeps the

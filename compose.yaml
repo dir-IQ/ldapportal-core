@@ -5,7 +5,8 @@
 # testing:
 #
 #   OpenLDAP : openldap-primary, openldap-alternate
-#   OUD/OpenDJ: oud1-primary, oud1-alternate, oud2-primary, oud2-alternate
+#   OUD/OpenDJ: oud1-primary, oud1-alternate, oud2-primary, oud2-alternate,
+#               oud3-primary, oud3-alternate
 #   AD/Samba : ad-primary
 #
 # NO test data is bootstrapped — every directory comes up empty. The
@@ -26,6 +27,8 @@
 # | oud1-alternate     | 4389 / 4636            | dc=oud1,dc=example,dc=com     | cn=Directory Manager                             | admin      |
 # | oud2-primary       | 5389 / 5636            | dc=oud2,dc=example,dc=com     | cn=Directory Manager                             | admin      |
 # | oud2-alternate     | 6389 / 6636            | dc=oud2,dc=example,dc=com     | cn=Directory Manager                             | admin      |
+# | oud3-primary       | 8389 / 8636            | dc=oud3,dc=example,dc=com     | cn=Directory Manager                             | admin      |
+# | oud3-alternate     | 9389 / 9636            | dc=oud3,dc=example,dc=com     | cn=Directory Manager                             | admin      |
 # | ad-primary         | 7389 / 7636            | dc=samdom,dc=example,dc=com   | CN=Administrator,CN=Users,DC=samdom,DC=example,DC=com | Passw0rd!  |
 # | postgres           | 5432                   | db=ldapportal                 | ldapportal                                       | ldapportal |
 # | app (backend)      | 9090 -> 8080           | —                             | bootstrap superadmin (env-supplied)              | —          |
@@ -195,8 +198,9 @@ services:
 
   # ── OUD fixtures (OpenDJ) ──────────────────────────────────────────────────
   # OpenDJ as an Apache-2.0 stand-in for Oracle Unified Directory (same
-  # Sun ONE / ODSEE lineage). Two independent directories (oud1, oud2), each
-  # with a primary + alternate instance sharing that directory's base DN.
+  # Sun ONE / ODSEE lineage). Three independent directories (oud1, oud2,
+  # oud3), each with a primary + alternate instance sharing that directory's
+  # base DN.
   # IVIA/ISVA fixture schema loaded from the mounted schema LDIF; no data.
   oud1-primary:
     image: openidentityplatform/opendj:5.1.0-alpine
@@ -260,6 +264,36 @@ services:
       - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
     restart: unless-stopped
 
+  oud3-primary:
+    image: openidentityplatform/opendj:5.1.0-alpine
+    container_name: ldap-oud3-primary
+    ports:
+      - "8389:1389"
+      - "8636:1636"
+    environment:
+      BASE_DN: "dc=oud3,dc=example,dc=com"
+      ROOT_USER_DN: "cn=Directory Manager"
+      ROOT_PASSWORD: "admin"
+    volumes:
+      - oud3_primary_data:/opt/opendj/data
+      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
+    restart: unless-stopped
+
+  oud3-alternate:
+    image: openidentityplatform/opendj:5.1.0-alpine
+    container_name: ldap-oud3-alternate
+    ports:
+      - "9389:1389"
+      - "9636:1636"
+    environment:
+      BASE_DN: "dc=oud3,dc=example,dc=com"
+      ROOT_USER_DN: "cn=Directory Manager"
+      ROOT_PASSWORD: "admin"
+    volumes:
+      - oud3_alternate_data:/opt/opendj/data
+      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
+    restart: unless-stopped
+
   # ── Active Directory fixture (Samba AD DC) ─────────────────────────────────
   # Samba provisioned as an AD domain controller, exposing AD-compatible
   # LDAP. AD ships its own schema — no IVIA/ISVA schema is added here.
@@ -304,5 +338,7 @@ volumes:
   oud1_alternate_data:
   oud2_primary_data:
   oud2_alternate_data:
+  oud3_primary_data:
+  oud3_alternate_data:
   ad_primary_data:
   ad_primary_config:

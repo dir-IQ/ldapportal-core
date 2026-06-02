@@ -11,7 +11,7 @@
 
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
       <div v-if="loading" class="p-8 text-center text-gray-500 text-sm">Loading…</div>
-      <div v-else-if="sources.length === 0" class="p-8 text-center text-gray-500 text-sm">No audit data sources configured.</div>
+      <EmptyState v-else-if="sources.length === 0" icon="clipboard" title="No audit data sources configured." />
       <table v-else class="w-full text-sm">
         <thead class="bg-gray-50 border-b border-gray-100">
           <tr>
@@ -110,34 +110,67 @@
   </PageContainer>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { listAuditSources, createAuditSource, updateAuditSource, deleteAuditSource, testAuditSource } from '@/api/auditDataSources'
 import FormField from '@/components/FormField.vue'
 import AppModal from '@/components/AppModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import EmptyState from '@/components/EmptyState.vue'
 import PageContainer from '@/components/PageContainer.vue'
+
+interface AuditSourceForm {
+  displayName: string
+  host: string
+  port: number
+  sslMode: string
+  trustAllCerts: boolean
+  bindDn: string
+  bindPassword: string
+  changelogBaseDn: string
+  branchFilterDn: string
+  changelogFormat: string
+  enabled: boolean
+}
+
+// Row shape from the (untyped) audit-sources API; only the fields this
+// view reads are modelled.
+interface AuditSourceRow extends AuditSourceForm {
+  id: string
+}
+
+interface TestResult {
+  success: boolean
+  message: string
+  elapsedMs?: number | null
+}
+
+// Repo-standard axios/native error narrowing (see docs/frontend-conventions.md).
+function errMsg(e: unknown, fallback = 'Something went wrong'): string {
+  const err = e as { response?: { data?: { detail?: string } }; message?: string }
+  return err.response?.data?.detail || err.message || fallback
+}
 
 const notif = useNotificationStore()
 
 const loading      = ref(false)
 const saving       = ref(false)
-const sources      = ref([])
+const sources      = ref<AuditSourceRow[]>([])
 const showModal    = ref(false)
-const editing      = ref(null)
-const deleteTarget = ref(null)
+const editing      = ref<string | null>(null)
+const deleteTarget = ref<AuditSourceRow | null>(null)
 const testLoading  = ref(false)
-const testResult   = ref(null)
+const testResult   = ref<TestResult | null>(null)
 
-const form = ref(emptyForm())
+const form = ref<AuditSourceForm>(emptyForm())
 
-const formatLabels = {
+const formatLabels: Record<string, string> = {
   DSEE_CHANGELOG: 'DSEE',
   OPENLDAP_ACCESSLOG: 'accesslog',
 }
 
-function emptyForm() {
+function emptyForm(): AuditSourceForm {
   return {
     displayName: '', host: '', port: 389, sslMode: 'NONE',
     trustAllCerts: false, bindDn: '', bindPassword: '',
@@ -161,7 +194,7 @@ async function load() {
     const { data } = await listAuditSources()
     sources.value = data
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     loading.value = false
   }
@@ -176,7 +209,7 @@ function openCreate() {
   showModal.value = true
 }
 
-function openEdit(s) {
+function openEdit(s: AuditSourceRow) {
   editing.value = s.id
   testResult.value = null
   form.value = {
@@ -195,7 +228,7 @@ async function doTest() {
     const { data } = await testAuditSource(form.value)
     testResult.value = data
   } catch (e) {
-    testResult.value = { success: false, message: e.response?.data?.detail || e.message }
+    testResult.value = { success: false, message: errMsg(e) }
   } finally {
     testLoading.value = false
   }
@@ -204,7 +237,7 @@ async function doTest() {
 async function save() {
   saving.value = true
   try {
-    const payload = { ...form.value }
+    const payload: Partial<AuditSourceForm> = { ...form.value }
     if (editing.value && !payload.bindPassword) delete payload.bindPassword
     if (editing.value) {
       await updateAuditSource(editing.value, payload)
@@ -216,22 +249,23 @@ async function save() {
     showModal.value = false
     await load()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     saving.value = false
   }
 }
 
-function confirmDelete(s) { deleteTarget.value = s }
+function confirmDelete(s: AuditSourceRow) { deleteTarget.value = s }
 
 async function doDelete() {
+  if (!deleteTarget.value) return
   try {
     await deleteAuditSource(deleteTarget.value.id)
     notif.success('Audit source deleted')
     deleteTarget.value = null
     await load()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
     deleteTarget.value = null
   }
 }

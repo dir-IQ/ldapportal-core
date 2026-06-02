@@ -11,6 +11,7 @@ import com.ldapportal.dto.ldap.LdapEntryResponse;
 import com.ldapportal.dto.ldap.MoveUserRequest;
 import com.ldapportal.dto.ldap.UpdateEntryRequest;
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapBrowseService;
 import com.ldapportal.ldap.LdapGroupService;
@@ -40,6 +41,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.doThrow;
 
 @ExtendWith(MockitoExtension.class)
 class LdapOperationServiceTest {
@@ -142,6 +146,82 @@ class LdapOperationServiceTest {
         assertThat(resp.dn()).isEqualTo(dn);
     }
 
+    @Test
+    void createUser_malformedDn_throwsAndSkipsWrite() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        CreateEntryRequest req = new CreateEntryRequest(
+                "not a valid dn", Map.of("cn", List.of("Bob")));
+
+        assertThatThrownBy(() -> service.createUser(dirId, adminPrincipal(), req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid DN");
+
+        verify(userService, never()).createUser(any(), anyString(), any(), any());
+    }
+
+    @Test
+    void moveUser_malformedNewParentDn_throwsAndSkipsWrite() {
+        String dn = "cn=Bob,ou=Users,dc=example,dc=com";
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        assertThatThrownBy(() -> service.moveUser(dirId, adminPrincipal(), dn,
+                new MoveUserRequest("not a dn")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid DN");
+
+        verify(userService, never()).moveUser(any(), anyString(), anyString());
+    }
+
+    @Test
+    void createUser_profileValidationFailure_throwsAndSkipsWrite() {
+        ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
+        UUID profileId = UUID.randomUUID();
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        doThrow(new IllegalArgumentException("Attribute [mail] is required"))
+                .when(ps).validateAttributes(eq(profileId), any());
+
+        LdapOperationService svc = serviceWithProfile(ps);
+        CreateEntryRequest req = new CreateEntryRequest(
+                "uid=jsmith,ou=people,dc=example,dc=com", Map.of("cn", List.of("J")));
+
+        assertThatThrownBy(() -> svc.createUser(dirId, adminPrincipal(), req, profileId))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("is required");
+
+        verify(userService, never()).createUser(any(), anyString(), any(), any());
+    }
+
+    @Test
+    void updateUser_nonEditableAttribute_throwsAndSkipsWrite() {
+        ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
+        UUID profileId = UUID.randomUUID();
+        String dn = "uid=jsmith,ou=people,dc=example,dc=com";
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        ProvisioningProfile profile = new ProvisioningProfile();
+        profile.setId(profileId);
+        when(ps.resolveProfileForDn(dirId, dn)).thenReturn(Optional.of(profile));
+        doThrow(new IllegalArgumentException(
+                "Attribute [employeeNumber] is not editable on update"))
+                .when(ps).validateModification(eq(profileId), any(), any());
+
+        LdapOperationService svc = serviceWithProfile(ps);
+        UpdateEntryRequest req = new UpdateEntryRequest(List.of(
+                new AttributeModification(AttributeModification.Operation.REPLACE,
+                        "employeeNumber", List.of("999"))));
+
+        assertThatThrownBy(() -> svc.updateUser(dirId, adminPrincipal(), dn, req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not editable");
+
+        verify(userService, never()).updateUser(any(), anyString(), any());
+    }
+
     // ── Group operations ──────────────────────────────────────────────────────
 
     @Test
@@ -153,6 +233,21 @@ class LdapOperationServiceTest {
         service.addGroupMember(dirId, adminPrincipal(), groupDn, "member", "cn=Alice,ou=Users");
 
         verify(groupService).addMember(dc, groupDn, "member", "cn=Alice,ou=Users", null);
+    }
+
+    @Test
+    void createGroup_malformedDn_throwsAndSkipsWrite() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        CreateEntryRequest req = new CreateEntryRequest(
+                "cn=Staff,ou", Map.of("cn", List.of("Staff")));
+
+        assertThatThrownBy(() -> service.createGroup(dirId, adminPrincipal(), req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Invalid DN");
+
+        verify(groupService, never()).createGroup(any(), anyString(), any());
     }
 
     @Test
@@ -177,6 +272,18 @@ class LdapOperationServiceTest {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Builds a service whose ObjectProvider yields the given profile service. */
+    private LdapOperationService serviceWithProfile(ProvisioningProfileService ps) {
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<ProvisioningProfileService> provider =
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        lenient().when(provider.getIfAvailable()).thenReturn(ps);
+        return new LdapOperationService(
+                dirRepo, permissionService, browseService, userService, groupService,
+                schemaService, auditService, bulkUserService, bulkGroupService, csvTemplateService,
+                membershipGate, provider);
+    }
 
     private AuthPrincipal adminPrincipal() {
         return new AuthPrincipal(PrincipalType.ADMIN, adminId, "alice");

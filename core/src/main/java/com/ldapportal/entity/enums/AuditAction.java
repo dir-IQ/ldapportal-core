@@ -108,7 +108,15 @@ public enum AuditAction {
     REPLICATION_EVENT_DEAD_LETTERED        ("replication.event_dead_lettered"),
     REPLICATION_EVENT_RETRIED_BY_OPERATOR  ("replication.event_retried_by_operator"),
     REPLICATION_EVENT_SKIPPED_BY_OPERATOR  ("replication.event_skipped_by_operator"),
-    REPLICATION_EVENT_ACKNOWLEDGED         ("replication.event_acknowledged");
+    REPLICATION_EVENT_ACKNOWLEDGED         ("replication.event_acknowledged"),
+
+    // ── Replication reconciliation ─────────────────────────────────────────────
+    RECONCILIATION_CONFIG_UPDATED          ("reconciliation.config_updated"),
+    RECONCILIATION_RUN_STARTED             ("reconciliation.run_started"),
+    RECONCILIATION_RUN_COMPLETED           ("reconciliation.run_completed"),
+    RECONCILIATION_RUN_FAILED              ("reconciliation.run_failed"),
+    RECONCILIATION_FINDING_APPLIED         ("reconciliation.finding_applied"),
+    RECONCILIATION_FINDING_DISMISSED       ("reconciliation.finding_dismissed");
 
     private final String dbValue;
 

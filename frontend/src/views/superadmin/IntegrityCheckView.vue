@@ -40,9 +40,11 @@
         <span class="text-sm text-gray-600">{{ report.issues.length }} issue{{ report.issues.length !== 1 ? 's' : '' }} found</span>
       </div>
 
-      <div v-if="report.issues.length === 0" class="p-8 text-center text-sm text-gray-500">
-        No integrity issues found. Everything looks good!
-      </div>
+      <EmptyState
+        v-if="report.issues.length === 0"
+        icon="shield"
+        title="No integrity issues found. Everything looks good!"
+      />
 
       <template v-else>
         <!-- Group by issue type -->
@@ -84,23 +86,54 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
 import { checkIntegrity } from '@/api/browse'
 import DnPicker from '@/components/DnPicker.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import type { components } from '@/api/openapi'
+
+type Directory = components['schemas']['DirectoryConnectionResponse']
+
+interface IntegrityIssue {
+  type: string
+  dn: string
+  description: string
+}
+
+interface IntegrityReport {
+  issues: IntegrityIssue[]
+}
+
+interface IssueGroup {
+  type: string
+  issues: IntegrityIssue[]
+}
+
+interface CheckForm {
+  directoryId: string
+  baseDn: string
+  checks: string[]
+}
+
+// Repo-standard axios/native error narrowing (see docs/frontend-conventions.md).
+function errMsg(e: unknown, fallback = 'Something went wrong'): string {
+  const err = e as { response?: { data?: { detail?: string } }; message?: string }
+  return err.response?.data?.detail || err.message || fallback
+}
 
 const router = useRouter()
 const notif  = useNotificationStore()
 
-const directories = ref([])
+const directories = ref<Directory[]>([])
 const loadingDirs = ref(false)
 const running     = ref(false)
 const hasRun      = ref(false)
-const report      = ref({ issues: [] })
-const expandedGroups = ref(new Set())
+const report      = ref<IntegrityReport>({ issues: [] })
+const expandedGroups = ref<Set<string>>(new Set())
 
 const availableChecks = [
   { value: 'BROKEN_MEMBER',  label: 'Broken member references' },
@@ -108,24 +141,24 @@ const availableChecks = [
   { value: 'EMPTY_GROUP',    label: 'Empty groups (no members)' },
 ]
 
-const form = ref({
+const form = ref<CheckForm>({
   directoryId: '',
   baseDn: '',
   checks: ['BROKEN_MEMBER', 'ORPHANED_ENTRY', 'EMPTY_GROUP'],
 })
 
-const groupedIssues = computed(() => {
-  const groups = new Map()
+const groupedIssues = computed<IssueGroup[]>(() => {
+  const groups = new Map<string, IssueGroup>()
   for (const issue of report.value.issues) {
     if (!groups.has(issue.type)) {
       groups.set(issue.type, { type: issue.type, issues: [] })
     }
-    groups.get(issue.type).issues.push(issue)
+    groups.get(issue.type)!.issues.push(issue)
   }
   return [...groups.values()]
 })
 
-function typeLabel(type) {
+function typeLabel(type: string) {
   switch (type) {
     case 'BROKEN_MEMBER':  return 'Broken Member References'
     case 'ORPHANED_ENTRY': return 'Orphaned Entries'
@@ -134,7 +167,7 @@ function typeLabel(type) {
   }
 }
 
-function typeColor(type) {
+function typeColor(type: string) {
   switch (type) {
     case 'BROKEN_MEMBER':  return 'text-red-700'
     case 'ORPHANED_ENTRY': return 'text-amber-700'
@@ -143,7 +176,7 @@ function typeColor(type) {
   }
 }
 
-function toggleGroup(type) {
+function toggleGroup(type: string) {
   const s = new Set(expandedGroups.value)
   if (s.has(type)) s.delete(type)
   else s.add(type)
@@ -161,13 +194,13 @@ async function runCheck() {
     // Auto-expand all groups that have issues
     expandedGroups.value = new Set(groupedIssues.value.map(g => g.type))
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     running.value = false
   }
 }
 
-function goToBrowser(dn) {
+function goToBrowser(dn: string) {
   router.push({ path: '/superadmin/browser', query: { dn } })
 }
 
@@ -175,10 +208,10 @@ onMounted(async () => {
   loadingDirs.value = true
   try {
     const { data } = await listDirectories()
-    directories.value = data.filter(d => d.directoryType !== 'ENTRA_ID')
-    if (directories.value.length) form.value.directoryId = directories.value[0].id
+    directories.value = data.filter((d) => d.directoryType !== 'ENTRA_ID')
+    if (directories.value.length) form.value.directoryId = directories.value[0].id ?? ''
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     loadingDirs.value = false
   }

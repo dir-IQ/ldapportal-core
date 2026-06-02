@@ -83,6 +83,16 @@ public record UnifiedDashboardDto(
             String id,
             String name,
             boolean enabled,
+            /**
+             * LDAP connectivity probe result for an enabled directory:
+             * {@code true} reachable, {@code false} unreachable, {@code null}
+             * when not probed (the directory is disabled, so no probe ran).
+             *
+             * <p>Drives the dashboard status dot. {@code enabled} alone is a
+             * config flag — a directory can be enabled yet its LDAP host
+             * unreachable, in which case the dot must not read green.</p>
+             */
+            Boolean reachable,
             long userCount,
             long groupCount,
             long pendingApprovals,

@@ -618,61 +618,131 @@ public class ProvisioningProfileService {
 
             if (value == null || value.isBlank()) continue;
 
-            // Length checks
-            if (config.getMinLength() != null && value.length() < config.getMinLength()) {
-                throw new IllegalArgumentException(
-                        "Attribute [" + config.getAttributeName() + "] must be at least "
-                                + config.getMinLength() + " characters");
-            }
-            if (config.getMaxLength() != null && value.length() > config.getMaxLength()) {
-                throw new IllegalArgumentException(
-                        "Attribute [" + config.getAttributeName() + "] must be at most "
-                                + config.getMaxLength() + " characters");
-            }
+            validateValueConstraints(config, value);
+        }
+    }
 
-            // Regex check — guard against ReDoS by capping input length and
-            // catching PatternSyntaxException defensively. The pattern is
-            // also validated at config save time in saveAttributeConfigs.
-            if (config.getValidationRegex() != null && !config.getValidationRegex().isBlank()) {
-                if (value.length() > MAX_REGEX_INPUT_LENGTH) {
-                    throw new IllegalArgumentException(
-                            "Attribute [" + config.getAttributeName() + "] exceeds the "
-                                    + MAX_REGEX_INPUT_LENGTH + "-character limit for regex-validated fields");
-                }
-                boolean matches;
-                try {
-                    matches = Pattern.matches(config.getValidationRegex(), value);
-                } catch (PatternSyntaxException pse) {
-                    log.warn("Invalid validation regex for attribute [{}]; rejecting value: {}",
-                            config.getAttributeName(), pse.getDescription());
+    /**
+     * Validates a modification (update) against the profile's configs in a
+     * <strong>single</strong> config fetch: rejects edits to non-editable or
+     * hidden attributes, and checks value constraints (length / regex /
+     * allowed-values) on the attributes being set. {@code requiredOnCreate} is
+     * intentionally not enforced — an attribute absent from this update is not
+     * a missing-required error.
+     *
+     * @param modifiedNames  attribute names targeted by the update, any
+     *                       operation (including DELETE)
+     * @param modifiedValues attribute name → values being set (ADD/REPLACE only)
+     */
+    @Transactional(readOnly = true)
+    public void validateModification(UUID profileId,
+                                     Collection<String> modifiedNames,
+                                     Map<String, List<String>> modifiedValues) {
+        List<ProfileAttributeConfig> configs =
+                attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId);
+        assertEditable(configs, modifiedNames);
+        validateModifiedValues(configs, modifiedValues);
+    }
+
+    /**
+     * Rejects an attempt to modify attributes the profile marks non-editable on
+     * update or hidden, mirroring the edit-form field gating so an API caller
+     * cannot bypass it. System-computed attributes (carrying a
+     * {@code computedExpression}) are exempt — they are set by the server, not
+     * the user. Attributes without a profile config are unrestricted.
+     */
+    private void assertEditable(List<ProfileAttributeConfig> configs, Collection<String> attributeNames) {
+        if (attributeNames == null || attributeNames.isEmpty()) return;
+        Set<String> targeted = attributeNames.stream()
+                .filter(Objects::nonNull)
+                .map(s -> s.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toSet());
+        for (ProfileAttributeConfig config : configs) {
+            if (!targeted.contains(config.getAttributeName().toLowerCase(Locale.ROOT))) continue;
+            boolean computed = config.getComputedExpression() != null
+                    && !config.getComputedExpression().isBlank();
+            if (computed) continue;
+            if (!config.isEditableOnUpdate() || config.isHidden()) {
+                throw new IllegalArgumentException(
+                        "Attribute [" + config.getAttributeName() + "] is not editable on update");
+            }
+        }
+    }
+
+    /**
+     * Value-constraint checks (length / regex / allowed-values) for the
+     * attributes present in {@code attributes}. Does not enforce
+     * {@code requiredOnCreate} (update path).
+     */
+    private void validateModifiedValues(List<ProfileAttributeConfig> configs, Map<String, List<String>> attributes) {
+        for (ProfileAttributeConfig config : configs) {
+            List<String> values = attributes.get(config.getAttributeName());
+            String value = (values != null && !values.isEmpty()) ? values.get(0) : null;
+            if (value == null || value.isBlank()) continue; // not part of this modification
+            validateValueConstraints(config, value);
+        }
+    }
+
+    /**
+     * Length / regex / allowed-values checks for a single attribute value.
+     * Shared by {@link #validateAttributes} (create) and
+     * {@link #validateModification} (update).
+     */
+    private void validateValueConstraints(ProfileAttributeConfig config, String value) {
+        // Length checks
+        if (config.getMinLength() != null && value.length() < config.getMinLength()) {
+            throw new IllegalArgumentException(
+                    "Attribute [" + config.getAttributeName() + "] must be at least "
+                            + config.getMinLength() + " characters");
+        }
+        if (config.getMaxLength() != null && value.length() > config.getMaxLength()) {
+            throw new IllegalArgumentException(
+                    "Attribute [" + config.getAttributeName() + "] must be at most "
+                            + config.getMaxLength() + " characters");
+        }
+
+        // Regex check — guard against ReDoS by capping input length and
+        // catching PatternSyntaxException defensively. The pattern is
+        // also validated at config save time in saveAttributeConfigs.
+        if (config.getValidationRegex() != null && !config.getValidationRegex().isBlank()) {
+            if (value.length() > MAX_REGEX_INPUT_LENGTH) {
+                throw new IllegalArgumentException(
+                        "Attribute [" + config.getAttributeName() + "] exceeds the "
+                                + MAX_REGEX_INPUT_LENGTH + "-character limit for regex-validated fields");
+            }
+            boolean matches;
+            try {
+                matches = Pattern.matches(config.getValidationRegex(), value);
+            } catch (PatternSyntaxException pse) {
+                log.warn("Invalid validation regex for attribute [{}]; rejecting value: {}",
+                        config.getAttributeName(), pse.getDescription());
+                throw new IllegalArgumentException(
+                        "Attribute [" + config.getAttributeName()
+                                + "] cannot be validated: validation pattern is invalid");
+            }
+            if (!matches) {
+                String msg = config.getValidationMessage() != null
+                        ? config.getValidationMessage()
+                        : "Attribute [" + config.getAttributeName() + "] does not match the required format";
+                throw new IllegalArgumentException(msg);
+            }
+        }
+
+        // Allowed values check
+        if (config.getAllowedValues() != null && !config.getAllowedValues().isBlank()) {
+            try {
+                List<String> allowed = objectMapper.readValue(config.getAllowedValues(),
+                        objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+                if (!allowed.contains(value)) {
                     throw new IllegalArgumentException(
                             "Attribute [" + config.getAttributeName()
-                                    + "] cannot be validated: validation pattern is invalid");
+                                    + "] value is not in the allowed values list");
                 }
-                if (!matches) {
-                    String msg = config.getValidationMessage() != null
-                            ? config.getValidationMessage()
-                            : "Attribute [" + config.getAttributeName() + "] does not match the required format";
-                    throw new IllegalArgumentException(msg);
-                }
-            }
-
-            // Allowed values check
-            if (config.getAllowedValues() != null && !config.getAllowedValues().isBlank()) {
-                try {
-                    List<String> allowed = objectMapper.readValue(config.getAllowedValues(),
-                            objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
-                    if (!allowed.contains(value)) {
-                        throw new IllegalArgumentException(
-                                "Attribute [" + config.getAttributeName()
-                                        + "] value is not in the allowed values list");
-                    }
-                } catch (IllegalArgumentException iae) {
-                    throw iae;
-                } catch (Exception e) {
-                    log.warn("Failed to parse allowed values JSON for attribute [{}]: {}",
-                            config.getAttributeName(), e.getMessage());
-                }
+            } catch (IllegalArgumentException iae) {
+                throw iae;
+            } catch (Exception e) {
+                log.warn("Failed to parse allowed values JSON for attribute [{}]: {}",
+                        config.getAttributeName(), e.getMessage());
             }
         }
     }
