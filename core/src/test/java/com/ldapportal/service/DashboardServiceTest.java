@@ -187,6 +187,42 @@ class DashboardServiceTest {
 
         verify(userService, never()).searchUsers(any(), anyString(), any(), anyInt(), anyString());
         assertThat(result.directories().get(0).userCount()).isEqualTo(0);
+        // Disabled directories aren't probed, so reachability is unknown.
+        assertThat(result.directories().get(0).reachable()).isNull();
+    }
+
+    @Test
+    void getDashboard_enabledReachableDirectory_marksReachableTrue() {
+        stubCommon();
+
+        ComplianceDashboardDto result = service.getDashboard();
+
+        assertThat(result.directories().get(0).reachable()).isTrue();
+    }
+
+    @Test
+    void getDashboard_enabledButUnreachableDirectory_marksReachableFalse() {
+        // LDAP probe throws (e.g. UnknownHost / pool creation failure) — the
+        // directory is enabled but its host can't be reached.
+        when(dirRepo.findAll()).thenReturn(List.of(directory));
+        when(userService.searchUsers(eq(directory), anyString(), any(), anyInt(), anyString()))
+                .thenThrow(new RuntimeException("LDAP server unreachable"));
+        when(approvalRepo.countByDirectoryIdAndStatus(any(), any())).thenReturn(0L);
+        when(approvalRepo.findAllByStatus(any())).thenReturn(List.of());
+        when(governance.directoryCounts(any())).thenReturn(
+                new GovernanceDashboardProvider.DirectoryGovernanceCounts(0L, 0L));
+        when(governance.totalOpenSodViolations()).thenReturn(0L);
+        when(governance.activeCampaignProgress()).thenReturn(List.of());
+        when(governance.overdueCampaignsCount()).thenReturn(0L);
+        when(auditQueryService.query(any(), anyInt(), anyInt()))
+                .thenReturn(new PageImpl<>(List.of()));
+        when(reportJobHealthProvider.health()).thenReturn(ReportJobHealth.empty());
+
+        ComplianceDashboardDto result = service.getDashboard();
+
+        assertThat(result.directories().get(0).reachable()).isFalse();
+        // The failed probe still renders as an em-dash count downstream.
+        assertThat(result.directories().get(0).userCount()).isEqualTo(-1);
     }
 
     @Test

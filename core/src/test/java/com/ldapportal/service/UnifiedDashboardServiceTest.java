@@ -269,7 +269,7 @@ class UnifiedDashboardServiceTest {
         var progress = List.of(new ComplianceDashboardDto.CampaignProgressDto(
                 "c1", "Q1 Review", "Corp LDAP", 10, 4, 40.0, false, "2026-05-01"));
         var dirs = List.of(new ComplianceDashboardDto.DirectoryStatDto(
-                "dir-1", "Corp LDAP", true, 100, 20, 5, 1, 7));
+                "dir-1", "Corp LDAP", true, true, 100, 20, 5, 1, 7));
         return new ComplianceDashboardDto(
                 100, 20, 5,
                 7, 42.0, 2, 0,
@@ -283,7 +283,7 @@ class UnifiedDashboardServiceTest {
         var progress = List.of(new AdminDashboardDto.CampaignProgressDto(
                 "c2", "Q2 Review", "Corp LDAP", 5, 1, 20.0, false, "2026-05-10"));
         var dirs = List.of(new AdminDashboardDto.DirectoryStatDto(
-                "dir-first", "Corp LDAP", true, 50, 10, 2, 2, 3));
+                "dir-first", "Corp LDAP", true, true, 50, 10, 2, 2, 3));
         var profiles = List.of(new AdminDashboardDto.ProfileStatDto(
                 "prof-a", "Engineering", "dir-first", "Corp LDAP",
                 "ADMIN", "ou=eng,dc=example,dc=com",

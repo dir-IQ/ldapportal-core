@@ -67,6 +67,11 @@ public record ComplianceDashboardDto(
             String id,
             String name,
             boolean enabled,
+            /** LDAP connectivity probe result for an enabled directory:
+             *  {@code true} reachable, {@code false} unreachable, {@code null}
+             *  when not probed (directory disabled). Drives the dashboard
+             *  status dot — green only when enabled <em>and</em> reachable. */
+            Boolean reachable,
             long userCount,
             long groupCount,
             long pendingApprovals,

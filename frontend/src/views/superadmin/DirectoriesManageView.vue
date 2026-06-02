@@ -3,7 +3,7 @@
   <PageContainer>
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900">LDAP Directories</h1>
+        <h1 class="text-2xl font-bold text-gray-900">Directory Connections</h1>
         <p class="text-sm text-gray-500 mt-1">Manage LDAP directory connections</p>
       </div>
       <button @click="openCreate" class="btn-primary">+ New Directory</button>
@@ -21,6 +21,7 @@
             <th class="px-4 py-3 text-left font-medium text-gray-500">SSL</th>
             <th class="px-4 py-3 text-left font-medium text-gray-500">Base DN</th>
             <th class="px-4 py-3 text-left font-medium text-gray-500">Enabled</th>
+            <th class="px-4 py-3 text-left font-medium text-gray-500">Status</th>
             <th class="px-4 py-3"></th>
           </tr>
         </thead>
@@ -46,6 +47,16 @@
             <td class="px-4 py-3">
               <span :class="d.enabled ? 'text-green-600' : 'text-gray-500'" class="text-xs font-medium">
                 {{ d.enabled ? 'Yes' : 'No' }}
+              </span>
+            </td>
+            <!-- Live reachability probe (not the `enabled` config flag): an
+                 enabled directory whose LDAP host is down reads red here, so
+                 this column never claims health the connection doesn't have.
+                 Mirrors the dashboard Directories panel dot. -->
+            <td class="px-4 py-3">
+              <span class="inline-flex items-center gap-1.5 text-xs font-medium" :title="statusOf(d).message">
+                <span class="w-2 h-2 rounded-full shrink-0" :class="STATUS_META[statusOf(d).state].dot" aria-hidden="true"></span>
+                <span :class="STATUS_META[statusOf(d).state].text">{{ STATUS_META[statusOf(d).state].label }}</span>
               </span>
             </td>
             <td class="px-4 py-3 text-right whitespace-nowrap">
@@ -207,7 +218,7 @@
 import { ref, onMounted } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
-import { listDirectories, createDirectory, updateDirectory, deleteDirectory, testDirectory, evictPool } from '@/api/directories'
+import { listDirectories, createDirectory, updateDirectory, deleteDirectory, testDirectory, evictPool, getDirectoryStatus } from '@/api/directories'
 import { testEntraConnection } from '@/api/entra'
 import FormField from '@/components/FormField.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -277,6 +288,21 @@ interface TestResult {
   message?: string
 }
 
+// Per-row reachability state. 'checking' until the probe returns;
+// 'disabled' for rows we don't probe (the directory is intentionally off).
+type DirStatusState = 'checking' | 'reachable' | 'unreachable' | 'disabled'
+interface DirStatus { state: DirStatusState; message?: string }
+
+// Dot colour + label + text colour per state. Raw colour utilities (not the
+// .input/.btn project classes) are correct here — this is a status indicator,
+// not a form control, matching the dashboard Directories panel.
+const STATUS_META: Record<DirStatusState, { dot: string; text: string; label: string }> = {
+  checking:    { dot: 'bg-gray-300 animate-pulse',  text: 'text-gray-500', label: 'Checking…' },
+  reachable:   { dot: 'bg-green-500',               text: 'text-green-600', label: 'Online' },
+  unreachable: { dot: 'bg-red-500',                 text: 'text-red-600',   label: 'Unreachable' },
+  disabled:    { dot: 'border border-gray-400',     text: 'text-gray-500', label: 'Disabled' },
+}
+
 // Repo-standard axios/native error narrowing (see docs/frontend-conventions.md).
 function errMsg(e: unknown, fallback = 'Something went wrong'): string {
   const err = e as { response?: { data?: { detail?: string } }; message?: string }
@@ -294,6 +320,38 @@ const editing      = ref<string | null>(null)
 const deleteTarget = ref<DirectoryRow | null>(null)
 const testLoading  = ref(false)
 const testResult   = ref<TestResult | null>(null)
+const statusById   = ref<Record<string, DirStatus>>({})
+
+function statusOf(d: DirectoryRow): DirStatus {
+  return statusById.value[d.id] ?? { state: d.enabled ? 'checking' : 'disabled' }
+}
+
+/**
+ * Probe one stored directory's live reachability. Disabled directories are
+ * skipped (they're off by choice, not by failure). Runs independently per
+ * row so the table renders immediately and dots resolve as probes return —
+ * an unreachable host blocks only its own cell up to the LDAP timeout.
+ */
+async function probeStatus(d: DirectoryRow) {
+  if (!d.enabled) {
+    statusById.value[d.id] = { state: 'disabled' }
+    return
+  }
+  statusById.value[d.id] = { state: 'checking' }
+  try {
+    const { data } = await getDirectoryStatus(d.id)
+    statusById.value[d.id] = data.success
+      ? { state: 'reachable', message: data.message || 'Reachable' }
+      : { state: 'unreachable', message: data.message || 'Unreachable' }
+  } catch (e) {
+    statusById.value[d.id] = { state: 'unreachable', message: errMsg(e) }
+  }
+}
+
+function probeAll() {
+  statusById.value = {}
+  dirs.value.forEach(probeStatus)
+}
 
 const form = ref<DirectoryForm>(emptyForm())
 
@@ -387,6 +445,9 @@ async function load() {
     // Runtime rows are richer than the stale generated schema (capabilities,
     // replication, extra directory types); treat them as DirectoryRow.
     dirs.value = data as DirectoryRow[]
+    // Kick off reachability probes (fire-and-forget; each cell fills in as
+    // its probe resolves). Not awaited so the table paints immediately.
+    probeAll()
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
