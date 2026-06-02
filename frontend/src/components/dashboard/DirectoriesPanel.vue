@@ -70,7 +70,7 @@ function statusText(dir: DirectoryStat): string {
        decoupled from the viewport. Without @container, viewport-relative
        breakpoints (md:, xl:) would keep packing cards into a narrow
        panel column even on a wide screen. -->
-  <div class="@container bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+  <div id="dashboard-scope-panel" class="@container bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
     <div class="px-5 py-3 border-b border-gray-100">
       <h2 class="text-sm font-semibold text-gray-700">Directories</h2>
     </div>
