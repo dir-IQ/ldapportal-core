@@ -8,8 +8,9 @@ or rename an entry — is captured after it commits and replayed against each
 configured target, with optional DN and attribute mapping.
 
 > **Entitlement.** Replication requires the `DIRECTORY_SYNC` entitlement.
-> Without it, capture is inert: links can be configured but no events
-> accumulate. (Community builds run with it disabled.)
+> Without it the feature is hidden and capture is inert. It can be granted by
+> a signed license **or** a single config property — see
+> [Granting the `DIRECTORY_SYNC` entitlement](#granting-the-directory_sync-entitlement).
 
 > **Scope.** Replication captures writes made *through LDAP Portal*. Changes
 > made directly against the source directory by other clients are **not**
@@ -38,10 +39,94 @@ The two switches are deliberately different:
 
 Before a link will deliver:
 
-1. **`DIRECTORY_SYNC` entitled** and the **source directory's `Replication enabled`** toggle on (Directories → edit → *Replication enabled*).
+1. **`DIRECTORY_SYNC` entitled** (see [Granting the `DIRECTORY_SYNC` entitlement](#granting-the-directory_sync-entitlement)) and the **source directory's `Replication enabled`** toggle on (Directories → edit → *Replication enabled*).
 2. **Target reachable** with credentials that can write the target subtree.
 3. **Schema compatibility** — attributes/object classes replayed against the target must be accepted by its schema. Mismatches surface as `FAILED`/`DEAD_LETTERED` events with the target's error in *Last error*.
 4. **Mapping rules** defined where source and target differ in DN layout or attribute names (below).
+
+---
+
+## Granting the `DIRECTORY_SYNC` entitlement
+
+Replication is gated by the `DIRECTORY_SYNC` entitlement. The implementing
+code is Apache-2.0 and ships in **every** build, but the feature stays off
+until the entitlement is present — `directorySyncEnabled` is `false` in
+`/me`, the **Directory Sync** nav and the per-directory **Replication
+enabled** toggle are hidden, and the capture path is a no-op. There are two
+ways to grant it.
+
+### Option A — a signed license (production)
+
+`DIRECTORY_SYNC` comes from a signed license JWT:
+
+- Issue a signed license that includes `DIRECTORY_SYNC` — e.g. with
+  `--addons DIRECTORY_SYNC` (see `LicenseIssuer`).
+- Point the app at the JWT with `ldapportal.license.path`
+  (env `LDAPPORTAL_LICENSE_PATH`).
+- The JWT must verify against the build's trust anchor,
+  `core/src/main/resources/license/license-public-key.pem`. A license signed
+  by a key the build doesn't trust **fails verification and the app refuses
+  to start** (`License JWT failed verification: JWT signature does not
+  match…`). To self-sign, replace that public-key resource with your own and
+  rebuild, then sign with the matching private key.
+
+> **Gotcha.** If `ldapportal.license.path` is set, the file must exist and
+> verify, or startup fails loud. In Docker, a bind mount of a *missing* path
+> makes the engine create a **directory** there — which then fails to read as
+> a file. Don't set a license path unless you have a valid license file.
+
+### Option B — config self-host override (no license)
+
+For self-hosters who build from source and just want to switch the feature on
+without standing up a license-signing toolchain:
+
+```properties
+# env: LDAPPORTAL_ENTITLEMENTS_GRANT  (CSV)
+ldapportal.entitlements.grant=DIRECTORY_SYNC
+```
+
+Handled by `ConfiguredEntitlementsProbe`, which grants the listed entitlements
+through the same `AddonProbe` SPI a classpath addon uses — so it flows through
+the single entitlement chokepoint (`EntitlementService.has(...)`), with no
+feature-site changes. Properties of this path:
+
+- **Inert unless set** — no property, no effect.
+- **Allow-listed to open-source entitlements** — only `DIRECTORY_SYNC` may be
+  granted this way. Other licensed entitlements (`GOVERNANCE`, `HR_SYNC`, …)
+  are refused and logged, so it cannot grant anything but the open-source
+  feature.
+- **Not a signed license** — it logs a loud warning at startup and, unlike a
+  license file, does not have to verify against any key.
+- **Independent of a license file** — the probe adds its entitlement *on top
+  of* whatever base provider is active. So if you also set a (broken) license
+  path, the base provider still fails first. Use one mechanism or the other,
+  not both.
+
+The local dev stack (`compose.yaml`) defaults
+`LDAPPORTAL_ENTITLEMENTS_GRANT=DIRECTORY_SYNC`, so `docker compose up` enables
+replication out of the box; set it to empty in your `.env` for the pure
+community baseline.
+
+### Verifying it took
+
+```bash
+# Option B prints this at startup:
+docker compose logs app | grep -i "Granting entitlement"
+#   → Granting entitlement(s) [DIRECTORY_SYNC] via ldapportal.entitlements.grant …
+
+# /me reports the flag the UI gates on:
+curl -s localhost:9090/api/v1/me | grep -o '"directorySyncEnabled":[a-z]*'
+#   → "directorySyncEnabled":true
+```
+
+Once granted, the **Directory Sync** menu and the per-directory **Replication
+enabled** checkbox appear.
+
+> **Rebuild, don't just restart.** The `app` image bakes a **host-built**
+> JAR, so a `docker compose restart` (or `up` without `--build`) reuses the
+> old JAR and ignores backend changes. After changing entitlement config or
+> any backend code:
+> `./mvnw clean package -DskipTests && docker compose up -d --build app`.
 
 ---
 
