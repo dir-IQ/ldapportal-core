@@ -1,0 +1,377 @@
+# SPDX-License-Identifier: Apache-2.0
+# =============================================================================
+# LDIF Test Data — ISVA/IVIA account anomalies + replication divergence
+#   ALTERNATE side — load into the `oud1-alternate` fixture.  LINKED TOPOLOGY.
+#
+# Base DN : dc=oud1,dc=example,dc=com   (same suffix as the primary; the two
+#           instances are INDEPENDENT and do not replicate — divergence is
+#           simulated by loading this near-copy with deliberate differences).
+# Schema  : secUser (AUXILIARY) + secAuthorityInfo (STRUCTURAL), auto-loaded.
+#
+# Load (from repo root):
+#   docker exec -i ldap-oud1-alternate /opt/opendj/bin/ldapmodify \
+#     -h localhost -p 1389 -D 'cn=Directory Manager' -w admin \
+#     -a < testdata/oud-isva-alternate.ldif
+#
+# Sibling of oud-isva-primary.ldif (LINKED topology: demographic under
+# ou=people + paired secUser under secAuthority=Default,ou=management, joined
+# by secDN). Most entries match the primary verbatim; the DIVERGENCE markers
+# (R1–R7) below are the only intentional differences and are the substance of
+# the replication-issue test surface. The shared anomalies (orphan /
+# pwd-invalid / stale-pwd / partial / expiring-soon / dangling secUser) are
+# duplicated here unchanged so each instance is independently valid as an
+# anomaly dataset. See testdata/README-oud-isva-anomalies.md for the matrix.
+#
+# Reference "now" = 2026-06-02. userPassword == uid (local dev only).
+# =============================================================================
+
+# ── Containers ───────────────────────────────────────────────────────────────
+dn: ou=people,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: groups
+
+dn: ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: management
+
+dn: secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: secAuthorityInfo
+secAuthority: Default
+
+# =============================================================================
+# DEMOGRAPHIC ENTRIES  (ou=people — plain inetOrgPerson, no secUser overlay)
+# =============================================================================
+
+# ── alice.normal — DIVERGENCE R3: ATTRIBUTE CONFLICT. ───────────────────────
+# Same DN as the primary, but mail + title hold stale values → a conflicting
+# demographic modify that never converged.
+dn: uid=alice.normal,ou=people,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice.normal
+cn: Alice Normal
+sn: Normal
+givenName: Alice
+mail: alice.normal@old.example.com
+title: Engineer
+userPassword: alice.normal
+
+# ── bob.orphan — ORPHANED (linked). Identical to primary (no paired secUser). ─
+dn: uid=bob.orphan,ou=people,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: bob.orphan
+cn: Bob Orphan
+sn: Orphan
+givenName: Bob
+mail: bob.orphan@oud1.example.com
+userPassword: bob.orphan
+
+# ── carol.suspended — demographic identical; see R4 on her secUser below. ───
+dn: uid=carol.suspended,ou=people,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol.suspended
+cn: Carol Suspended
+sn: Suspended
+givenName: Carol
+mail: carol.suspended@oud1.example.com
+userPassword: carol.suspended
+
+# ── dan.expired — demographic identical; see R6 on his secUser below. ───────
+dn: uid=dan.expired,ou=people,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: dan.expired
+cn: Dan Expired
+sn: Expired
+givenName: Dan
+mail: dan.expired@oud1.example.com
+userPassword: dan.expired
+
+# ── erin.pwdinvalid — identical to primary. ─────────────────────────────────
+dn: uid=erin.pwdinvalid,ou=people,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: erin.pwdinvalid
+cn: Erin Pwdinvalid
+sn: Pwdinvalid
+givenName: Erin
+mail: erin.pwdinvalid@oud1.example.com
+userPassword: erin.pwdinvalid
+
+# ── frank.stalepwd — identical to primary. ──────────────────────────────────
+dn: uid=frank.stalepwd,ou=people,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: frank.stalepwd
+cn: Frank Stalepwd
+sn: Stalepwd
+givenName: Frank
+mail: frank.stalepwd@oud1.example.com
+userPassword: frank.stalepwd
+
+# ── grace.partial — identical to primary. ───────────────────────────────────
+dn: uid=grace.partial,ou=people,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: grace.partial
+cn: Grace Partial
+sn: Partial
+givenName: Grace
+mail: grace.partial@oud1.example.com
+userPassword: grace.partial
+
+# ── henry.expiringsoon — identical to primary. ──────────────────────────────
+dn: uid=henry.expiringsoon,ou=people,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: henry.expiringsoon
+cn: Henry Expiringsoon
+sn: Expiringsoon
+givenName: Henry
+mail: henry.expiringsoon@oud1.example.com
+userPassword: henry.expiringsoon
+
+# ── karen.dupe — demographic identical; see R7 (two secUsers) below. ────────
+dn: uid=karen.dupe,ou=people,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: karen.dupe
+cn: Karen Dupe
+sn: Dupe
+givenName: Karen
+mail: karen.dupe@oud1.example.com
+userPassword: karen.dupe
+
+# (DIVERGENCE R1: uid=liam.onlyprimary + its secUser are intentionally NOT
+#  present here — they exist only on the primary, modelling replication lag /
+#  a failed ADD.)
+
+# ── mona.onlyalternate — DIVERGENCE R2: EXTRA ON ALTERNATE. ─────────────────
+# Healthy linked identity (demographic + secUser) that exists only here → a
+# replica-only ghost the primary doesn't have (a delete that replicated to the
+# primary but not here, or an add that should never have landed). Also the
+# alternate-only member of cn=isva-admins (R5).
+dn: uid=mona.onlyalternate,ou=people,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: mona.onlyalternate
+cn: Mona Onlyalternate
+sn: Onlyalternate
+givenName: Mona
+mail: mona.onlyalternate@oud1.example.com
+userPassword: mona.onlyalternate
+
+# =============================================================================
+# PAIRED secUser ENTRIES  (secAuthority=Default,ou=management)
+# =============================================================================
+
+# alice.normal → HEALTHY (matches primary).
+dn: secUUID=alice-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: account
+objectClass: secUser
+uid: alice.normal
+secUUID: alice-uuid
+secDN: uid=alice.normal,ou=people,dc=oud1,dc=example,dc=com
+secLogin: alice.normal
+secAuthority: Default
+secAcctValid: TRUE
+secPwdValid: TRUE
+secValidUntil: 20300101000000Z
+secPwdLastChanged: 20260515000000Z
+
+# carol.suspended → DIVERGENCE R4: secAcctValid=TRUE here, FALSE on the primary
+# → the suspend was applied on one replica only; still LIVE on this side.
+dn: secUUID=carol-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: account
+objectClass: secUser
+uid: carol.suspended
+secUUID: carol-uuid
+secDN: uid=carol.suspended,ou=people,dc=oud1,dc=example,dc=com
+secLogin: carol.suspended
+secAuthority: Default
+secAcctValid: TRUE
+secPwdValid: TRUE
+secValidUntil: 20300101000000Z
+secPwdLastChanged: 20260510000000Z
+
+# dan.expired → DIVERGENCE R6: validUntil is 2030 here (valid) but 2025 on the
+# primary (expired) → a renew() that reached only one replica.
+dn: secUUID=dan-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: account
+objectClass: secUser
+uid: dan.expired
+secUUID: dan-uuid
+secDN: uid=dan.expired,ou=people,dc=oud1,dc=example,dc=com
+secLogin: dan.expired
+secAuthority: Default
+secAcctValid: TRUE
+secPwdValid: TRUE
+secValidUntil: 20300101000000Z
+secPwdLastChanged: 20240101000000Z
+
+# erin.pwdinvalid → PASSWORD INVALID (matches primary).
+dn: secUUID=erin-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: account
+objectClass: secUser
+uid: erin.pwdinvalid
+secUUID: erin-uuid
+secDN: uid=erin.pwdinvalid,ou=people,dc=oud1,dc=example,dc=com
+secLogin: erin.pwdinvalid
+secAuthority: Default
+secAcctValid: TRUE
+secPwdValid: FALSE
+secValidUntil: 20300101000000Z
+secPwdLastChanged: 20260101000000Z
+
+# frank.stalepwd → STALE PASSWORD (matches primary).
+dn: secUUID=frank-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: account
+objectClass: secUser
+uid: frank.stalepwd
+secUUID: frank-uuid
+secDN: uid=frank.stalepwd,ou=people,dc=oud1,dc=example,dc=com
+secLogin: frank.stalepwd
+secAuthority: Default
+secAcctValid: TRUE
+secPwdValid: TRUE
+secValidUntil: 20300101000000Z
+secPwdLastChanged: 20190101000000Z
+
+# grace.partial → MALFORMED secUser (matches primary): missing secLogin /
+# secAuthority / secAcctValid / secPwdValid.
+dn: secUUID=grace-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: account
+objectClass: secUser
+uid: grace.partial
+secUUID: grace-uuid
+secDN: uid=grace.partial,ou=people,dc=oud1,dc=example,dc=com
+secValidUntil: 20300101000000Z
+
+# henry.expiringsoon → EXPIRING SOON (matches primary).
+dn: secUUID=henry-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: account
+objectClass: secUser
+uid: henry.expiringsoon
+secUUID: henry-uuid
+secDN: uid=henry.expiringsoon,ou=people,dc=oud1,dc=example,dc=com
+secLogin: henry.expiringsoon
+secAuthority: Default
+secAcctValid: TRUE
+secPwdValid: TRUE
+secValidUntil: 20260605000000Z
+secPwdLastChanged: 20260520000000Z
+
+# karen.dupe → DIVERGENCE R7: TWO secUser entries (karen-1 AND karen-2) carry
+# secDN=<her DN>. IsvaLinkedUserLookup caps at 2, logs the "found N entries …
+# using the first" warning, and returns the first. Models a replication
+# conflict that minted a second secUser under a different secUUID.
+dn: secUUID=karen-1,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: account
+objectClass: secUser
+uid: karen.dupe
+secUUID: karen-1
+secDN: uid=karen.dupe,ou=people,dc=oud1,dc=example,dc=com
+secLogin: karen.dupe
+secAuthority: Default
+secAcctValid: TRUE
+secPwdValid: TRUE
+secValidUntil: 20300101000000Z
+secPwdLastChanged: 20260512000000Z
+
+dn: secUUID=karen-2,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: account
+objectClass: secUser
+uid: karen.dupe
+secUUID: karen-2
+secDN: uid=karen.dupe,ou=people,dc=oud1,dc=example,dc=com
+secLogin: karen.dupe
+secAuthority: Default
+secAcctValid: TRUE
+secPwdValid: TRUE
+secValidUntil: 20300101000000Z
+secPwdLastChanged: 20260101000000Z
+
+# (liam.onlyprimary's secUser is intentionally absent here — see R1 above.)
+
+# mona.onlyalternate → HEALTHY secUser, present only on this instance (R2).
+dn: secUUID=mona-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: account
+objectClass: secUser
+uid: mona.onlyalternate
+secUUID: mona-uuid
+secDN: uid=mona.onlyalternate,ou=people,dc=oud1,dc=example,dc=com
+secLogin: mona.onlyalternate
+secAuthority: Default
+secAcctValid: TRUE
+secPwdValid: TRUE
+secValidUntil: 20300101000000Z
+secPwdLastChanged: 20260519000000Z
+
+# ghost → DANGLING / REVERSE-ORPHAN secUser (matches primary).
+dn: secUUID=ghost-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: account
+objectClass: secUser
+uid: ghost
+secUUID: ghost-uuid
+secDN: uid=ghost,ou=people,dc=oud1,dc=example,dc=com
+secLogin: ghost
+secAuthority: Default
+secAcctValid: TRUE
+secPwdValid: TRUE
+secValidUntil: 20300101000000Z
+secPwdLastChanged: 20260101000000Z
+
+# =============================================================================
+# GROUP — membership skew (DIVERGENCE R5)
+# =============================================================================
+# Alternate members: alice.normal, mona.onlyalternate.
+#   → vs primary {alice.normal, dan.expired, liam.onlyprimary}: dan + liam are
+#     primary-only, mona is alternate-only.
+dn: cn=isva-admins,ou=groups,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: isva-admins
+description: ISVA administrators — membership intentionally skewed vs primary.
+uniqueMember: uid=alice.normal,ou=people,dc=oud1,dc=example,dc=com
+uniqueMember: uid=mona.onlyalternate,ou=people,dc=oud1,dc=example,dc=com
