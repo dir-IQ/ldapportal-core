@@ -258,9 +258,9 @@
       flex flex-col lets routed pages opt into "fill the remaining
       vertical space" via `flex-1 min-h-0` (used by DirectoryBrowserView's
       two-panel layout). Without this, h-full on the page resolves to
-      100% of <main> = 100vh, and the BreadcrumbNav/banner siblings push
-      the page below the viewport, triggering main's overflow-y-auto and
-      the page-internal panels extend below the visible area.
+      100% of <main> = 100vh, and the banner siblings push the page below
+      the viewport, triggering main's overflow-y-auto and the page-internal
+      panels extend below the visible area.
 
       Pages that don't use flex-1 (the natural-flow majority) continue
       to render at content height as flex items with `flex: 0 1 auto`.
@@ -278,7 +278,6 @@
         <button @click="reloadHard" class="underline hover:no-underline shrink-0">Reload now</button>
       </div>
       <LicenseExpirationBanner />
-      <BreadcrumbNav />
       <RouterView v-slot="{ Component, route }">
         <component :is="Component" :key="route.path" />
       </RouterView>
@@ -330,7 +329,6 @@ import { listCampaigns, getAlertSummary } from '@/ee'
 import KeyboardShortcutsHelp from '@/components/KeyboardShortcutsHelp.vue'
 import UserPreferencesDialog from '@/components/UserPreferencesDialog.vue'
 import NotificationBell from '@/components/NotificationBell.vue'
-import BreadcrumbNav from '@/components/BreadcrumbNav.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
 import LicenseExpirationBanner from '@/components/LicenseExpirationBanner.vue'
 import UpgradeModal from '@/components/UpgradeModal.vue'

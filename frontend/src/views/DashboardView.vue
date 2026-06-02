@@ -87,8 +87,11 @@ const recentActivity = computed(() => data.value?.recentActivity || [])
 const actions = computed(() => data.value?.actions || [])
 const suggestions = computed(() => data.value?.suggestions || [])
 const awareness = computed(() => data.value?.awareness || [])
+// Show the Report Jobs panel only when at least one scheduled report exists
+// (enabled or recently failed). With none defined both counts are 0, so the
+// panel is hidden rather than rendering an empty "0 enabled / 0 failed" card.
 const reportJobsAvailable = computed(() =>
-  data.value && (data.value.enabledReportJobs != null || data.value.failedReportJobs != null)
+  !!data.value && ((data.value.enabledReportJobs || 0) > 0 || (data.value.failedReportJobs || 0) > 0)
 )
 
 const openAlerts = computed(() => alertSummary.value.openCount ?? 0)
@@ -155,6 +158,10 @@ function onProfileClick(p) {
 function isMetricHiddenByFlag(id) {
   if (!complianceEnabled.value && COMPLIANCE_METRICS.has(id)) return true
   if (complianceEnabled.value && NON_COMPLIANCE_METRICS.has(id)) return true
+  // Alerts is an EE entitlement (ALERTING). Hide the card where it isn't
+  // granted so community doesn't show a perpetually-zero card whose click
+  // target (the EE-only /superadmin/alerts route) goes nowhere.
+  if (id === 'alerts' && !auth.isAlertingEnabled) return true
   return false
 }
 function isPanelHiddenByFlag(id) {
@@ -281,24 +288,22 @@ function panelLabel(id) {
   return PANEL_LABELS[id] || id
 }
 
-/**
- * Admin user/group count cards show "in scope" totals summed from the
- * per-profile Profiles panel below, rather than raw directory totals.
- * Relabel accordingly so the number's meaning is unambiguous.
- */
-const usersCardLabel = computed(() => isSuperadmin.value ? 'Total Users' : 'Users in scope')
-const groupsCardLabel = computed(() => isSuperadmin.value ? 'Total Groups' : 'Groups in scope')
-const usersCardSubtitle = computed(() => isSuperadmin.value
-  ? `Across ${directories.value.length} director${directories.value.length === 1 ? 'y' : 'ies'}`
-  : `Across ${profiles.value.length} profile${profiles.value.length === 1 ? '' : 's'}`)
-const groupsCardSubtitle = usersCardSubtitle
+// Directory-population summary strip (replaces the former Total Users /
+// Total Groups metric cards). For superadmins the counts are raw directory
+// totals across all connections; for admins they're "in scope" totals summed
+// from the per-profile Profiles panel below — relabelled so the number's
+// meaning is unambiguous. The scope figure is directories (superadmin) or
+// provisioning profiles (admin).
+const usersStatLabel = computed(() => isSuperadmin.value ? 'users' : 'users in scope')
+const groupsStatLabel = computed(() => isSuperadmin.value ? 'groups' : 'groups in scope')
+const scopeCount = computed(() => isSuperadmin.value ? directories.value.length : profiles.value.length)
+const scopeLabel = computed(() => {
+  const n = scopeCount.value
+  return isSuperadmin.value
+    ? `director${n === 1 ? 'y' : 'ies'}`
+    : `profile${n === 1 ? '' : 's'}`
+})
 function metricLabel(id) {
-  // Keep the edit-mode PanelWrapper label in sync with the visible card
-  // for the relabelled admin metrics (see usersCardLabel / groupsCardLabel).
-  if (!isSuperadmin.value) {
-    if (id === 'users') return usersCardLabel.value
-    if (id === 'groups') return groupsCardLabel.value
-  }
   return METRIC_LABELS[id] || id
 }
 
@@ -451,6 +456,18 @@ async function onReset() {
 
     <template v-else-if="metrics">
 
+      <!-- Directory-population summary. Compact inline strip carrying the
+           user / group totals (and directory/profile scope) that used to live
+           in the metric-card row, so the figures survive even when that row is
+           empty (e.g. community with alerting and compliance off). -->
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600 mb-6">
+        <span><span class="font-semibold text-gray-900">{{ (metrics.totalUsers ?? 0).toLocaleString() }}</span> {{ usersStatLabel }}</span>
+        <span aria-hidden="true" class="text-gray-300">·</span>
+        <span><span class="font-semibold text-gray-900">{{ (metrics.totalGroups ?? 0).toLocaleString() }}</span> {{ groupsStatLabel }}</span>
+        <span aria-hidden="true" class="text-gray-300">·</span>
+        <span><span class="font-semibold text-gray-900">{{ scopeCount.toLocaleString() }}</span> {{ scopeLabel }}</span>
+      </div>
+
       <!-- ── Top row: draggable metric cards ───────────────────────────────── -->
       <draggable
         v-if="layoutStore.editing"
@@ -499,21 +516,11 @@ async function onReset() {
               :severity="overdueSeverity(metrics.overdueCampaigns)"
               subtitle="Past deadline"
               @click="goAccessReviews" />
-            <MetricCard v-else-if="id === 'users'"
-              :label="usersCardLabel"
-              :value="(metrics.totalUsers ?? 0).toLocaleString()"
-              severity="gray"
-              :subtitle="usersCardSubtitle" />
-            <MetricCard v-else-if="id === 'groups'"
-              :label="groupsCardLabel"
-              :value="(metrics.totalGroups ?? 0).toLocaleString()"
-              severity="gray"
-              :subtitle="groupsCardSubtitle" />
           </PanelWrapper>
         </template>
       </draggable>
 
-      <div v-else class="grid gap-4 mb-6" :class="metricsGridClass">
+      <div v-else-if="visibleMetricIds.length" class="grid gap-4 mb-6" :class="metricsGridClass">
         <template v-for="id in visibleMetricIds" :key="id">
           <MetricCard v-if="id === 'alerts'"
             label="Active Alerts" :value="openAlerts" :severity="alertsSeverity()"
@@ -548,16 +555,6 @@ async function onReset() {
             label="Overdue Campaigns" :value="metrics.overdueCampaigns"
             :severity="overdueSeverity(metrics.overdueCampaigns)"
             subtitle="Past deadline" @click="goAccessReviews" />
-          <MetricCard v-else-if="id === 'users'"
-            :label="usersCardLabel"
-            :value="(metrics.totalUsers ?? 0).toLocaleString()"
-            severity="gray"
-            :subtitle="usersCardSubtitle" />
-          <MetricCard v-else-if="id === 'groups'"
-            :label="groupsCardLabel"
-            :value="(metrics.totalGroups ?? 0).toLocaleString()"
-            severity="gray"
-            :subtitle="groupsCardSubtitle" />
         </template>
       </div>
 
