@@ -47,7 +47,7 @@ function shortenOu(dn: string | null | undefined): string {
 </script>
 
 <template>
-  <div class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
+  <div id="dashboard-scope-panel" class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
     <div class="px-5 py-3 border-b border-gray-100">
       <h2 class="text-sm font-semibold text-gray-700">Profiles</h2>
     </div>
