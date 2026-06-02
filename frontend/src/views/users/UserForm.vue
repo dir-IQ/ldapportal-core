@@ -784,6 +784,10 @@ function validate(): boolean {
   for (const attr of configs) {
     if (attr.hidden || attr.computedExpression) continue
     const isRdn = attr.attributeName === rdnName
+    // The RDN is immutable in edit mode (its field is disabled), so don't
+    // validate it there — a length/regex rule on the RDN attribute must not
+    // block edits to an existing entry whose RDN predates the rule.
+    if (isRdn && !forCreate) continue
     // Skip fields the user can't edit in this mode (their value is fixed or
     // server-managed) — except the RDN, which is always entered on create.
     const editable = forCreate ? attr.editableOnCreate !== false : attr.editableOnUpdate !== false

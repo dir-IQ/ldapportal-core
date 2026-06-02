@@ -623,47 +623,40 @@ public class ProvisioningProfileService {
     }
 
     /**
-     * Validates the <em>value</em> constraints (length, regex, allowed-values)
-     * for the attributes present in {@code attributes}, against the profile's
-     * configs. Unlike {@link #validateAttributes}, this does <strong>not</strong>
-     * enforce {@code requiredOnCreate}: it is intended for the update/modify
-     * path, where an attribute that is simply not part of this modification
-     * must not be flagged as missing.
+     * Validates a modification (update) against the profile's configs in a
+     * <strong>single</strong> config fetch: rejects edits to non-editable or
+     * hidden attributes, and checks value constraints (length / regex /
+     * allowed-values) on the attributes being set. {@code requiredOnCreate} is
+     * intentionally not enforced — an attribute absent from this update is not
+     * a missing-required error.
+     *
+     * @param modifiedNames  attribute names targeted by the update, any
+     *                       operation (including DELETE)
+     * @param modifiedValues attribute name → values being set (ADD/REPLACE only)
      */
     @Transactional(readOnly = true)
-    public void validateModifiedAttributes(UUID profileId, Map<String, List<String>> attributes) {
+    public void validateModification(UUID profileId,
+                                     Collection<String> modifiedNames,
+                                     Map<String, List<String>> modifiedValues) {
         List<ProfileAttributeConfig> configs =
                 attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId);
-
-        for (ProfileAttributeConfig config : configs) {
-            List<String> values = attributes.get(config.getAttributeName());
-            String value = (values != null && !values.isEmpty()) ? values.get(0) : null;
-            if (value == null || value.isBlank()) continue; // not part of this modification
-            validateValueConstraints(config, value);
-        }
+        assertEditable(configs, modifiedNames);
+        validateModifiedValues(configs, modifiedValues);
     }
 
     /**
-     * Rejects an attempt to modify attributes that the profile marks as
-     * non-editable on update or hidden, mirroring the edit-form field gating
-     * so an API caller cannot bypass it. System-computed attributes (those
-     * carrying a {@code computedExpression}) are exempt — they are set by the
-     * server, not the user. Attributes without a profile config are
-     * unrestricted.
-     *
-     * @param attributeNames the attribute names targeted by the modification
-     *                       (any operation, including DELETE)
+     * Rejects an attempt to modify attributes the profile marks non-editable on
+     * update or hidden, mirroring the edit-form field gating so an API caller
+     * cannot bypass it. System-computed attributes (carrying a
+     * {@code computedExpression}) are exempt — they are set by the server, not
+     * the user. Attributes without a profile config are unrestricted.
      */
-    @Transactional(readOnly = true)
-    public void assertAttributesEditableForUpdate(UUID profileId, Collection<String> attributeNames) {
+    private void assertEditable(List<ProfileAttributeConfig> configs, Collection<String> attributeNames) {
         if (attributeNames == null || attributeNames.isEmpty()) return;
         Set<String> targeted = attributeNames.stream()
                 .filter(Objects::nonNull)
                 .map(s -> s.toLowerCase(Locale.ROOT))
                 .collect(Collectors.toSet());
-
-        List<ProfileAttributeConfig> configs =
-                attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId);
         for (ProfileAttributeConfig config : configs) {
             if (!targeted.contains(config.getAttributeName().toLowerCase(Locale.ROOT))) continue;
             boolean computed = config.getComputedExpression() != null
@@ -677,9 +670,23 @@ public class ProvisioningProfileService {
     }
 
     /**
+     * Value-constraint checks (length / regex / allowed-values) for the
+     * attributes present in {@code attributes}. Does not enforce
+     * {@code requiredOnCreate} (update path).
+     */
+    private void validateModifiedValues(List<ProfileAttributeConfig> configs, Map<String, List<String>> attributes) {
+        for (ProfileAttributeConfig config : configs) {
+            List<String> values = attributes.get(config.getAttributeName());
+            String value = (values != null && !values.isEmpty()) ? values.get(0) : null;
+            if (value == null || value.isBlank()) continue; // not part of this modification
+            validateValueConstraints(config, value);
+        }
+    }
+
+    /**
      * Length / regex / allowed-values checks for a single attribute value.
      * Shared by {@link #validateAttributes} (create) and
-     * {@link #validateModifiedAttributes} (update).
+     * {@link #validateModification} (update).
      */
     private void validateValueConstraints(ProfileAttributeConfig config, String value) {
         // Length checks
