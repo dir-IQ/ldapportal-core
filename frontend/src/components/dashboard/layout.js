@@ -17,8 +17,6 @@ export const METRIC_IDS = Object.freeze({
   CAMPAIGN:  'campaign',
   APPROVALS: 'approvals',
   OVERDUE:   'overdue',
-  USERS:     'users',
-  GROUPS:    'groups',
 })
 
 // Panels + metric cards that only make sense when Compliance is enabled.
@@ -31,13 +29,10 @@ export const COMPLIANCE_METRICS = new Set([
   METRIC_IDS.CAMPAIGN,
   METRIC_IDS.OVERDUE,
 ])
-// Metric cards that only render when Compliance is disabled — they stand in
-// for the compliance-only cards above so the top row always has useful
-// content in both modes.
-export const NON_COMPLIANCE_METRICS = new Set([
-  METRIC_IDS.USERS,
-  METRIC_IDS.GROUPS,
-])
+// Metric cards that only render when Compliance is disabled. (Empty since the
+// former Total Users / Total Groups stand-ins moved to the dashboard's
+// directory-population summary strip — see DashboardView.)
+export const NON_COMPLIANCE_METRICS = new Set([])
 
 // Human labels (used for the edit-mode visibility toggle tooltip).
 export const PANEL_LABELS = Object.freeze({
@@ -56,25 +51,20 @@ export const METRIC_LABELS = Object.freeze({
   [METRIC_IDS.CAMPAIGN]:  'Campaign Completion',
   [METRIC_IDS.APPROVALS]: 'Pending Approvals',
   [METRIC_IDS.OVERDUE]:   'Overdue Campaigns',
-  [METRIC_IDS.USERS]:     'Total Users',
-  [METRIC_IDS.GROUPS]:    'Total Groups',
 })
 
 export const DEFAULT_LAYOUT = Object.freeze({
   version: 1,
   metricCards: Object.freeze({
-    // Order includes both compliance and non-compliance metrics; the view's
-    // feature-flag filter hides the ones that don't belong in the current
-    // mode. Users / Groups sit at the end so they slot in alongside Alerts
-    // and Approvals when compliance is off.
+    // The view's feature-flag filter hides metrics that don't belong in the
+    // current mode (compliance-only cards when compliance is off; Alerts when
+    // the ALERTING entitlement isn't granted).
     order: Object.freeze([
       METRIC_IDS.ALERTS,
       METRIC_IDS.SOD,
       METRIC_IDS.CAMPAIGN,
       METRIC_IDS.APPROVALS,
       METRIC_IDS.OVERDUE,
-      METRIC_IDS.USERS,
-      METRIC_IDS.GROUPS,
     ]),
     hidden: Object.freeze([]),
   }),
