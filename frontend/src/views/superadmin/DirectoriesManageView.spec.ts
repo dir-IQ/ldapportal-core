@@ -96,4 +96,20 @@ describe('DirectoriesManageView status column', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('Unreachable')
   })
+
+  it('renders directories alphabetically by display name, regardless of API order', async () => {
+    api.listDirectories.mockResolvedValue({
+      data: [
+        { ...dir('z', true), displayName: 'Zebra' },
+        { ...dir('a', true), displayName: 'apple' },
+        { ...dir('m', true), displayName: 'Mango' },
+      ],
+    })
+    const wrapper = mount(DirectoriesManageView, { global: { stubs } })
+    await flushPromises()
+
+    const names = wrapper.findAll('tbody tr td:first-child').map((c) => c.text().trim())
+    // Case-insensitive: "apple" sorts before "Mango" before "Zebra".
+    expect(names).toEqual(['apple', 'Mango', 'Zebra'])
+  })
 })

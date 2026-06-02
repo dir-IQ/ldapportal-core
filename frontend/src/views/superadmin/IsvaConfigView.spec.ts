@@ -20,6 +20,7 @@ const hoisted = vi.hoisted(() => ({
   notifSuccess: vi.fn(),
   notifError: vi.fn(),
   confirmFn: vi.fn().mockResolvedValue(true),
+  getDirectory: vi.fn().mockResolvedValue({ data: { displayName: 'Acme LDAP' } }),
 }))
 
 vi.mock('vue-router', () => ({
@@ -36,6 +37,11 @@ vi.mock('@/api/isvaConfig', () => ({
   getIsvaUiOptions: hoisted.getIsvaUiOptions,
   upsertIsvaConfig: hoisted.upsertIsvaConfig,
   probeIsvaConfig: hoisted.probeIsvaConfig,
+}))
+
+// The view fetches the directory's display name for its heading.
+vi.mock('@/api/directories', () => ({
+  getDirectory: hoisted.getDirectory,
 }))
 
 // useNotificationStore is Pinia-backed and the tests don't install a
@@ -99,6 +105,15 @@ beforeEach(() => {
 })
 
 describe('IsvaConfigView topology exposure', () => {
+  it('shows the configured directory name in the heading', async () => {
+    hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['LINKED'] } })
+    hoisted.getIsvaConfig.mockRejectedValue(notFound)
+
+    const wrapper = await mountView()
+
+    expect(wrapper.find('h1').text()).toBe('IBM Verify Identity Access integration - Acme LDAP')
+  })
+
   it('hides the selector and pins the mode when only linked is exposed', async () => {
     hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['LINKED'] } })
     hoisted.getIsvaConfig.mockRejectedValue(notFound)

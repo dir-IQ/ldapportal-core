@@ -16,6 +16,7 @@ import {
   type IsvaGroupMemberTarget,
   type IsvaDemographicDeleteMode,
 } from '@/api/isvaConfig'
+import { getDirectory } from '@/api/directories'
 import { IVIA_NAME, IVIA_ABBR } from '@/constants/productNames'
 import { useNotificationStore } from '@/stores/notifications'
 import { useConfirm } from '@/composables/useConfirm'
@@ -23,6 +24,9 @@ import { useConfirm } from '@/composables/useConfirm'
 const route = useRoute()
 const router = useRouter()
 const directoryId = computed(() => route.params.id as string)
+// Display name of the directory this page configures, shown in the
+// heading. Empty until the fetch resolves (or if it fails).
+const directoryName = ref('')
 const notif = useNotificationStore()
 const confirm = useConfirm()
 
@@ -118,13 +122,18 @@ onMounted(async () => {
   // Fetch UI options (global, cached) and the per-directory config in
   // parallel. UI options determine the fresh-config default mode and
   // whether the selector shows; a failed options fetch keeps [LINKED].
-  const [optsRes, cfgRes] = await Promise.allSettled([
+  const [optsRes, cfgRes, dirRes] = await Promise.allSettled([
     getIsvaUiOptions(),
     getIsvaConfig(directoryId.value),
+    getDirectory(directoryId.value),
   ])
 
   if (optsRes.status === 'fulfilled' && optsRes.value.data.exposedTopologyModes?.length) {
     exposedModes.value = optsRes.value.data.exposedTopologyModes
+  }
+
+  if (dirRes.status === 'fulfilled') {
+    directoryName.value = dirRes.value.data.displayName ?? ''
   }
 
   if (cfgRes.status === 'fulfilled') {
@@ -258,7 +267,7 @@ function extractErrorMessage(e: unknown, fallback: string): string {
 <template>
   <!-- Bottom padding leaves room for the sticky action bar so the
        last form fields aren't covered when the bar is up. -->
-  <div class="max-w-3xl mx-auto p-6 pb-28 space-y-6">
+  <div class="max-w-3xl p-6 pb-28 space-y-6">
     <!-- Header + back button. Back is plain navigation; the route
          guard intercepts if the form is dirty. -->
     <header>
@@ -266,7 +275,9 @@ function extractErrorMessage(e: unknown, fallback: string): string {
         @click="router.push('/superadmin/directories')"
         class="text-sm text-blue-600 hover:text-blue-700 mb-1"
       >&larr; Back to directories</button>
-      <h1 class="text-xl font-semibold text-gray-900">{{ IVIA_NAME }} integration</h1>
+      <h1 class="text-xl font-semibold text-gray-900">
+        {{ IVIA_NAME }} integration{{ directoryName ? ` - ${directoryName}` : '' }}
+      </h1>
       <p class="text-sm text-gray-500">
         Configure the {{ IVIA_ABBR }} full-mode write-path overlay for this directory.
       </p>
