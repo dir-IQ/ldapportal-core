@@ -147,7 +147,7 @@ public class UnifiedDashboardService {
     private static List<DirectoryStatDto> mapDirs(List<ComplianceDashboardDto.DirectoryStatDto> src) {
         if (src == null) return List.of();
         return src.stream().map(d -> new DirectoryStatDto(
-                d.id(), d.name(), d.enabled(),
+                d.id(), d.name(), d.enabled(), d.reachable(),
                 d.userCount(), d.groupCount(),
                 d.pendingApprovals(), d.activeCampaigns(), d.openSodViolations())).toList();
     }
@@ -155,7 +155,7 @@ public class UnifiedDashboardService {
     private static List<DirectoryStatDto> mapDirsAdmin(List<AdminDashboardDto.DirectoryStatDto> src) {
         if (src == null) return List.of();
         return src.stream().map(d -> new DirectoryStatDto(
-                d.id(), d.name(), d.enabled(),
+                d.id(), d.name(), d.enabled(), d.reachable(),
                 d.userCount(), d.groupCount(),
                 d.pendingApprovals(), d.activeCampaigns(), d.openSodViolations())).toList();
     }

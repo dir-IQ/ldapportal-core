@@ -56,6 +56,7 @@ public class DirectoryConnectionService {
     private final LdapConnectionFactory          connectionFactory;
     private final ApplicationEventPublisher      eventPublisher;
     private final com.ldapportal.core.entitlement.UsageLimitService usageLimitService;
+    private final com.ldapportal.directory.DirectoryProviderRegistry providerRegistry;
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -191,6 +192,27 @@ public class DirectoryConnectionService {
             long ms = Duration.between(start, Instant.now()).toMillis();
             return new TestConnectionResult(false, ex.getMessage(), ms);
         }
+    }
+
+    /**
+     * Probe live connectivity of a <em>stored</em> directory using its saved
+     * credentials. Unlike {@link #testConnection(TestConnectionRequest)} —
+     * which validates an unsaved form before persisting — this resolves the
+     * directory by id and delegates to the type-appropriate
+     * {@link com.ldapportal.directory.DirectoryProvider}, so it works
+     * uniformly for LDAP and Entra. Drives the per-row status dot on the
+     * Directory Connections page (and mirrors the dashboard's reachability
+     * signal). Never throws on connectivity failure — the failure is the
+     * result, returned as {@code success=false} with the provider's message.
+     */
+    public TestConnectionResult checkConnection(UUID id) {
+        DirectoryConnection dc = require(id);
+        Instant start = Instant.now();
+        String error = providerRegistry.getProvider(dc).testConnection(dc);
+        long ms = Duration.between(start, Instant.now()).toMillis();
+        return error == null
+                ? new TestConnectionResult(true, "Reachable", ms)
+                : new TestConnectionResult(false, error, ms);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

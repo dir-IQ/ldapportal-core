@@ -42,3 +42,8 @@ export const testDirectory = (data: TestConnectionRequest): Promise<AxiosRespons
 
 export const evictPool = (id: string): Promise<AxiosResponse<void>> =>
   apiPost(`/api/v1/superadmin/directories/${id}/evict-pool` as '/api/v1/superadmin/directories/{id}/evict-pool');
+
+// Live reachability probe for a stored directory (uses its saved
+// credentials). success=true → reachable. Drives the per-row status dot.
+export const getDirectoryStatus = (id: string): Promise<AxiosResponse<TestConnectionResult>> =>
+  apiGet(`/api/v1/superadmin/directories/${id}/status` as '/api/v1/superadmin/directories/{id}/status');

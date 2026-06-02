@@ -104,8 +104,13 @@ public class AdminDashboardService {
             totalActiveCampaigns += gov.activeCampaigns();
             totalSodViolations += gov.openSodViolations();
 
+            // null when disabled (not probed); otherwise the directory-wide
+            // user search above doubles as the connectivity probe — -1 means
+            // it threw, so the LDAP host is unreachable.
+            Boolean reachable = dc.isEnabled() ? userCount >= 0 : null;
+
             dirStats.add(new DirectoryStatDto(
-                    dc.getId().toString(), dc.getDisplayName(), dc.isEnabled(),
+                    dc.getId().toString(), dc.getDisplayName(), dc.isEnabled(), reachable,
                     userCount, groupCount, pending, gov.activeCampaigns(), gov.openSodViolations()));
         }
 
