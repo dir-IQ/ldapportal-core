@@ -3,8 +3,12 @@
 #
 # Same elements as testdata/isva-schema-openldap.ldif, expressed in
 # OpenDJ's native subschema-entry format (the form config/schema/*.ldif
-# files take). Mounted into the oud1-*/oud2-* fixtures via the image's
-# schema bootstrap; OpenDJ loads config/schema/*.ldif at startup.
+# files take). Mounted into the oud* fixtures at
+# /opt/opendj/bootstrap/config/schema/ — the image copies that directory
+# into the instance's template/config/schema *before* setup, so the
+# schema is present from first boot. (The image's other bootstrap dir,
+# /opt/opendj/bootstrap/schema/, runs files through ldapmodify after
+# setup and needs changetype:modify LDIF — not this entry form.)
 #
 # Private-arc OIDs (1.3.6.1.4.1.99999.*) — fixture only, not IBM's
 # registered OIDs. The app keys on attribute/objectClass NAMES, not OIDs.

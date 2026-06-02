@@ -214,9 +214,12 @@ services:
       ROOT_PASSWORD: "admin"
     volumes:
       - oud1_primary_data:/opt/opendj/data
-      # ISVA fixture schema (OpenDJ subschema form). See the file header
-      # for the manual config/schema fallback if not auto-imported.
-      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
+      # ISVA fixture schema (OpenDJ subschema form). bootstrap/config/schema
+      # is copied into the instance's template/config/schema *before* setup,
+      # so the schema exists from first boot. (bootstrap/schema, by contrast,
+      # is fed to ldapmodify after setup and needs changetype:modify LDIF —
+      # not this entry form.) See the file header for the manual fallback.
+      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/config/schema/99-isva.ldif:ro
     restart: unless-stopped
 
   oud1-alternate:
@@ -231,7 +234,7 @@ services:
       ROOT_PASSWORD: "admin"
     volumes:
       - oud1_alternate_data:/opt/opendj/data
-      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
+      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/config/schema/99-isva.ldif:ro
     restart: unless-stopped
 
   oud2-primary:
@@ -246,7 +249,7 @@ services:
       ROOT_PASSWORD: "admin"
     volumes:
       - oud2_primary_data:/opt/opendj/data
-      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
+      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/config/schema/99-isva.ldif:ro
     restart: unless-stopped
 
   oud2-alternate:
@@ -261,7 +264,7 @@ services:
       ROOT_PASSWORD: "admin"
     volumes:
       - oud2_alternate_data:/opt/opendj/data
-      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
+      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/config/schema/99-isva.ldif:ro
     restart: unless-stopped
 
   oud3-primary:
@@ -276,7 +279,7 @@ services:
       ROOT_PASSWORD: "admin"
     volumes:
       - oud3_primary_data:/opt/opendj/data
-      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
+      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/config/schema/99-isva.ldif:ro
     restart: unless-stopped
 
   oud3-alternate:
@@ -291,7 +294,7 @@ services:
       ROOT_PASSWORD: "admin"
     volumes:
       - oud3_alternate_data:/opt/opendj/data
-      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/schema/99-isva.ldif:ro
+      - ./testdata/isva-schema-opendj.ldif:/opt/opendj/bootstrap/config/schema/99-isva.ldif:ro
     restart: unless-stopped
 
   # ── Active Directory fixture (Samba AD DC) ─────────────────────────────────

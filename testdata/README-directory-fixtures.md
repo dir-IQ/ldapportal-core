@@ -75,7 +75,7 @@ docker exec ldap-oud1-primary \
 ```
 
 **Manual fallback** — OpenDJ loads every `config/schema/*.ldif` at boot,
-so if `bootstrap/schema` wasn't honoured:
+so if the `bootstrap/config/schema` copy wasn't honoured:
 
 ```bash
 docker cp testdata/isva-schema-opendj.ldif \
