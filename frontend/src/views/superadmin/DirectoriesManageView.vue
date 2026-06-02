@@ -204,12 +204,18 @@
       </form>
     </AppModal>
 
-    <!-- Delete confirm -->
+    <!-- Delete confirm. ConfirmDialog only renders when model-value is true
+         and closes via update:model-value — passing neither leaves the dialog
+         invisible (the delete action silently did nothing). -->
     <ConfirmDialog
       v-if="deleteTarget"
+      :model-value="true"
+      title="Delete directory"
       :message="`Delete directory '${deleteTarget.displayName}'? All associated profiles and configuration will be removed.`"
+      danger
+      confirm-label="Delete"
       @confirm="doDelete"
-      @cancel="deleteTarget = null"
+      @update:model-value="deleteTarget = null"
     />
   </PageContainer>
 </template>
@@ -444,7 +450,11 @@ async function load() {
     const { data } = await listDirectories()
     // Runtime rows are richer than the stale generated schema (capabilities,
     // replication, extra directory types); treat them as DirectoryRow.
-    dirs.value = data as DirectoryRow[]
+    // Present alphabetically by display name (case-insensitive) so the list
+    // order is stable rather than however the API happened to return it.
+    dirs.value = (data as DirectoryRow[])
+      .slice()
+      .sort((a, b) => a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' }))
     // Kick off reachability probes (fire-and-forget; each cell fills in as
     // its probe resolves). Not awaited so the table paints immediately.
     probeAll()
