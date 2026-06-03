@@ -46,6 +46,46 @@ public class LdifService {
     // ── Import ────────────────────────────────────────────────────────────────
 
     /**
+     * One parsed LDIF record, or a parse error captured at {@code rowNumber}
+     * (1-based). Shared by the apply path and the preview so both classify and
+     * execute the <em>exact same</em> records — no parser drift.
+     */
+    public record ParsedRecord(int rowNumber, LDIFRecord record, String parseError) {
+        public boolean isError() { return parseError != null; }
+    }
+
+    /**
+     * Parse an LDIF stream into ordered records, capturing per-record parse
+     * errors (RFC 2849) inline rather than aborting. A fatal, non-recoverable
+     * parse error stops the stream (mirroring the previous loop's
+     * {@code mayContinueReading()} behaviour).
+     */
+    public List<ParsedRecord> parse(InputStream ldifContent) {
+        List<ParsedRecord> records = new ArrayList<>();
+        int row = 0;
+        try (LDIFReader reader = new LDIFReader(ldifContent)) {
+            while (true) {
+                LDIFRecord record;
+                try {
+                    record = reader.readLDIFRecord();
+                } catch (LDIFException e) {
+                    row++;
+                    records.add(new ParsedRecord(row, null,
+                            "Parse error at line " + e.getDataLines() + ": " + e.getMessage()));
+                    if (!e.mayContinueReading()) break;
+                    continue;
+                }
+                if (record == null) break; // end of stream
+                row++;
+                records.add(new ParsedRecord(row, record, null));
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        return records;
+    }
+
+    /**
      * Imports LDIF content into the directory.
      *
      * <p>Supports both content records (plain entries → add) and change records
@@ -55,89 +95,109 @@ public class LdifService {
      * @param dc              directory connection
      * @param ldifContent     raw LDIF byte stream
      * @param conflict        how to handle entries that already exist
-     * @param dryRun          if true, validate only — do not apply changes
+     * @param dryRun          if true, parse/validate only — do not apply changes.
+     *                        Prefer the preview flow ({@code LdifPreviewService});
+     *                        this shallow dry-run is retained for compatibility.
      * @return aggregate result with per-entry error details
      */
     public LdifImportResult importLdif(DirectoryConnection dc,
                                        InputStream ldifContent,
                                        ConflictHandling conflict,
                                        boolean dryRun) {
-        return connectionFactory.withConnection(dc, conn -> {
-            int added = 0, updated = 0, skipped = 0, failed = 0;
+        List<ParsedRecord> records = parse(ldifContent);
+        if (dryRun) {
+            int skipped = 0, failed = 0;
             List<LdifImportError> errors = new ArrayList<>();
+            for (ParsedRecord pr : records) {
+                if (pr.isError()) {
+                    failed++;
+                    errors.add(new LdifImportError(null, pr.parseError()));
+                } else {
+                    skipped++;
+                }
+            }
+            log.info("LDIF dry-run complete: parsed={}, parseErrors={}", skipped, failed);
+            return new LdifImportResult(0, 0, skipped, failed, errors);
+        }
+        return applyParsedRecords(dc, records, conflict);
+    }
 
-            try (LDIFReader reader = new LDIFReader(ldifContent)) {
-                LDIFRecord record;
-                while (true) {
-                    try {
-                        record = reader.readLDIFRecord();
-                    } catch (LDIFException e) {
-                        failed++;
-                        errors.add(new LdifImportError(null,
-                                "Parse error at line " + e.getDataLines() + ": " + e.getMessage()));
-                        if (!e.mayContinueReading()) break;
-                        continue;
+    /**
+     * Execute pre-parsed records against the directory. Used by the preview's
+     * apply step so the operator applies the exact records they previewed
+     * (no re-upload, no re-parse).
+     */
+    public LdifImportResult applyParsedRecords(DirectoryConnection dc,
+                                               List<ParsedRecord> records,
+                                               ConflictHandling conflict) {
+        return connectionFactory.withConnection(dc, conn -> applyParsed(records, conn, conflict));
+    }
+
+    private LdifImportResult applyParsed(List<ParsedRecord> records,
+                                         FullLDAPInterface conn,
+                                         ConflictHandling conflict) {
+        int added = 0, updated = 0, skipped = 0, failed = 0;
+        List<LdifImportError> errors = new ArrayList<>();
+
+        for (ParsedRecord pr : records) {
+            if (pr.isError()) {
+                failed++;
+                errors.add(new LdifImportError(null, pr.parseError()));
+                continue;
+            }
+            LDIFRecord record = pr.record();
+            String dn = record.getDN();
+            try {
+                if (record instanceof LDIFChangeRecord changeRecord) {
+                    changeRecord.processChange(conn);
+                    // Count change records as "added" for simplicity;
+                    // delete/modify are lumped into "updated"
+                    if (changeRecord instanceof com.unboundid.ldif.LDIFAddChangeRecord) {
+                        added++;
+                    } else {
+                        updated++;
                     }
-                    if (record == null) break; // end of stream
-
-                    String dn = record.getDN();
+                } else if (record instanceof Entry entry) {
                     try {
-                        if (record instanceof LDIFChangeRecord changeRecord) {
-                            if (dryRun) { skipped++; continue; }
-                            changeRecord.processChange(conn);
-                            // Count change records as "added" for simplicity;
-                            // delete/modify are lumped into "updated"
-                            if (changeRecord instanceof com.unboundid.ldif.LDIFAddChangeRecord) {
-                                added++;
-                            } else {
-                                updated++;
-                            }
-                        } else if (record instanceof Entry entry) {
-                            if (dryRun) { skipped++; continue; }
-                            try {
-                                conn.add(entry);
-                                added++;
-                            } catch (LDAPException ex) {
-                                if (ex.getResultCode() == ResultCode.ENTRY_ALREADY_EXISTS) {
-                                    switch (conflict) {
-                                        case OVERWRITE -> {
-                                            // Replace all attributes from the LDIF entry
-                                            List<Modification> mods = new ArrayList<>();
-                                            for (Attribute attr : entry.getAttributes()) {
-                                                if (attr.getBaseName().equalsIgnoreCase("objectClass")) continue;
-                                                mods.add(new Modification(
-                                                        ModificationType.REPLACE,
-                                                        attr.getBaseName(),
-                                                        attr.getValues()));
-                                            }
-                                            if (!mods.isEmpty()) {
-                                                conn.modify(dn, mods);
-                                            }
-                                            updated++;
-                                        }
-                                        case SKIP, PROMPT -> {
-                                            skipped++;
-                                        }
+                        conn.add(entry);
+                        added++;
+                    } catch (LDAPException ex) {
+                        if (ex.getResultCode() == ResultCode.ENTRY_ALREADY_EXISTS) {
+                            switch (conflict) {
+                                case OVERWRITE -> {
+                                    // Replace all attributes from the LDIF entry
+                                    List<Modification> mods = new ArrayList<>();
+                                    for (Attribute attr : entry.getAttributes()) {
+                                        if (attr.getBaseName().equalsIgnoreCase("objectClass")) continue;
+                                        mods.add(new Modification(
+                                                ModificationType.REPLACE,
+                                                attr.getBaseName(),
+                                                attr.getValues()));
                                     }
-                                } else {
-                                    throw ex;
+                                    if (!mods.isEmpty()) {
+                                        conn.modify(dn, mods);
+                                    }
+                                    updated++;
+                                }
+                                case SKIP, PROMPT -> {
+                                    skipped++;
                                 }
                             }
+                        } else {
+                            throw ex;
                         }
-                    } catch (LDAPException ex) {
-                        failed++;
-                        errors.add(new LdifImportError(dn, ex.getMessage()));
-                        log.warn("LDIF import failed for dn='{}': {}", dn, ex.getMessage());
                     }
                 }
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
+            } catch (LDAPException ex) {
+                failed++;
+                errors.add(new LdifImportError(dn, ex.getMessage()));
+                log.warn("LDIF import failed for dn='{}': {}", dn, ex.getMessage());
             }
+        }
 
-            log.info("LDIF import complete: added={}, updated={}, skipped={}, failed={}",
-                    added, updated, skipped, failed);
-            return new LdifImportResult(added, updated, skipped, failed, errors);
-        });
+        log.info("LDIF import complete: added={}, updated={}, skipped={}, failed={}",
+                added, updated, skipped, failed);
+        return new LdifImportResult(added, updated, skipped, failed, errors);
     }
 
     // ── Export ────────────────────────────────────────────────────────────────
