@@ -4,8 +4,11 @@ package com.ldapportal.controller.superadmin;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.core.entitlement.Entitled;
 import com.ldapportal.core.entitlement.Entitlement;
+import com.ldapportal.dto.replication.ChangelogTestResult;
 import com.ldapportal.dto.replication.ReplicationLinkResponse;
 import com.ldapportal.dto.replication.RewindChangelogRequest;
+import com.ldapportal.dto.replication.TestChangelogRequest;
+import com.ldapportal.service.ChangelogTestService;
 import com.ldapportal.service.ReplicationLinkService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +30,8 @@ import java.util.UUID;
  *   POST /api/v1/superadmin/replication-links/{id}/changelog/reseed     — cursor → re-seed from current head
  *   POST /api/v1/superadmin/replication-links/{id}/changelog/rewind     — cursor → operator-supplied changeNumber
  *   POST /api/v1/superadmin/replication-links/{id}/changelog/re-enable  — clear a degraded health/error, retry
+ *   POST /api/v1/superadmin/replication-links/{id}/test-changelog       — probe an existing link's source
+ *   POST /api/v1/superadmin/replication-links/test-changelog            — pre-save probe (request body)
  * </pre>
  *
  * <p>Force-reconcile lives on {@code ReconciliationController} as
@@ -39,6 +44,7 @@ import java.util.UUID;
 public class ChangelogRemediationController {
 
     private final ReplicationLinkService service;
+    private final ChangelogTestService   testService;
 
     @PostMapping("/api/v1/superadmin/replication-links/{id}/changelog/reseed")
     public ReplicationLinkResponse reseed(@AuthenticationPrincipal AuthPrincipal principal,
@@ -57,5 +63,18 @@ public class ChangelogRemediationController {
     public ReplicationLinkResponse reEnable(@AuthenticationPrincipal AuthPrincipal principal,
                                             @PathVariable UUID id) {
         return service.reEnableChangelogPoll(principal, id);
+    }
+
+    /** Probe an existing link's source changelog (§7A.11). */
+    @PostMapping("/api/v1/superadmin/replication-links/{id}/test-changelog")
+    public ChangelogTestResult testChangelog(@PathVariable UUID id) {
+        ReplicationLinkResponse link = service.getLink(id);   // 404 if the link doesn't exist
+        return testService.test(link.sourceDirectoryId(), link.changelogBaseDn());
+    }
+
+    /** Pre-save probe of a source directory's changelog before a link exists. */
+    @PostMapping("/api/v1/superadmin/replication-links/test-changelog")
+    public ChangelogTestResult testChangelog(@Valid @RequestBody TestChangelogRequest req) {
+        return testService.test(req.sourceDirectoryId(), req.changelogBaseDn());
     }
 }

@@ -24,9 +24,15 @@
   live capture (enqueuer ADD + worker delivery-time MODIFY/MODIFY_DN), and the
   reconciliation protect-set (`ReconciliationDiffer` + `ChecksumReconciler`
   tombstone excluded source DNs so their target copies are never EXTRA/deleted)
-  — plus the filter-change re-trigger (§7B.5). C4 (test-changelog endpoint,
-  frontend) not started. Design also carries the §7A / §7B hardening and the
-  RF-1..4 review findings — 2026-06-03).
+  — plus the filter-change re-trigger (§7B.5). C4 backend landed: the
+  `test-changelog` capability probe (§7A.11 — `ChangelogTestService` hard-fails
+  when the root DSE lacks `first/lastChangeNumber`; existing-link +
+  pre-save endpoints on `ChangelogRemediationController`) and the frontend API
+  client (`testReplicationChangelog`, remediation calls). **Remaining:** the
+  `DirectorySyncView.vue` UI (capture-mode selector, changelog + exclude-filter
+  fields, Test-changelog button, lag/health badge, remediation controls) +
+  `DirectorySyncView.spec.ts` — needs the frontend toolchain (npm). Design also
+  carries the §7A / §7B hardening and the RF-1..4 review findings — 2026-06-03).
 - **Suggested branch:** `feat/changelog-replication` (already cut; this doc
   lives on it).
 - **Scope:** Add a second **capture mode** to an existing replication link.

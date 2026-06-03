@@ -30,3 +30,20 @@ export const dismissReconciliationFindings = (runId, body) =>
     client.post(`/superadmin/reconciliation-runs/${runId}/findings/dismiss`, body)
 export const getOpenFindingCount = (linkId) =>
     client.get(`/superadmin/replication-links/${linkId}/reconciliation-findings/open-count`)
+
+// ── Changelog capture: test + operator remediation ───────────────────────────
+// Probe an existing link's source changelog (root DSE first/lastChangeNumber +
+// changelog base DN readability). Returns ChangelogTestResult.
+export const testReplicationChangelog = (linkId) =>
+    client.post(`/superadmin/replication-links/${linkId}/test-changelog`)
+// Pre-save probe: body = { sourceDirectoryId, changelogBaseDn? }.
+export const testReplicationChangelogPreSave = (body) =>
+    client.post('/superadmin/replication-links/test-changelog', body)
+
+// Remediation (cursor reseed/rewind, re-enable). Each returns the updated link.
+export const reseedChangelogCursor = (linkId) =>
+    client.post(`/superadmin/replication-links/${linkId}/changelog/reseed`)
+export const rewindChangelogCursor = (linkId, changeNumber) =>
+    client.post(`/superadmin/replication-links/${linkId}/changelog/rewind`, { changeNumber })
+export const reEnableChangelog = (linkId) =>
+    client.post(`/superadmin/replication-links/${linkId}/changelog/re-enable`)
