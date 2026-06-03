@@ -8,6 +8,7 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
+import com.unboundid.ldap.sdk.ResultCode;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResult;
 import com.unboundid.ldap.sdk.SearchScope;
@@ -118,6 +119,16 @@ public class IsvaConfigProbeService {
      * Search for at least one secUser entry under the base. We cap
      * the search at 1 result — "exists" is the question; "how
      * many" isn't part of the probe contract.
+     *
+     * <p>The cap is the subtlety: a directory with <em>more than
+     * one</em> secUser answers a {@code sizeLimit=1} search by
+     * returning the first entry and then a
+     * {@link ResultCode#SIZE_LIMIT_EXCEEDED} result code, which the
+     * UnboundID SDK surfaces as an {@link LDAPException}. That is
+     * <b>proof the entry exists</b>, not a failure — so we treat
+     * SIZE_LIMIT_EXCEEDED as "found". (Before this was handled, any
+     * directory that actually had users — the normal case — reported
+     * "no sample secUser found", the exact opposite of the truth.)</p>
      */
     private boolean sampleSecUserExists(DirectoryConnection dir,
                                           String baseDn,
@@ -133,6 +144,10 @@ public class IsvaConfigProbeService {
                 SearchResult result = conn.search(req);
                 return result.getEntryCount() > 0;
             } catch (LDAPException e) {
+                if (e.getResultCode() == ResultCode.SIZE_LIMIT_EXCEEDED) {
+                    // Hit the cap → at least one secUser is present.
+                    return true;
+                }
                 warnings.add("secUser sample search errored: " + e.getMessage());
                 return false;
             }

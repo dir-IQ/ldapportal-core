@@ -116,19 +116,6 @@ public class UserController {
                     directoryId, profile.get().getId(), req.dn(), principal);
         }
 
-        // Apply the profile's effective group assignments (own groups +
-        // additional + auto-include) to the new user. Previously this
-        // was handled client-side by UserListView, which left the bulk
-        // import, approval-approved, and direct-API paths missing the
-        // group memberships the profile declared. Doing it server-side
-        // here (and in ApprovalWorkflowService.executeUserCreate for
-        // the approval path) makes the behaviour consistent across
-        // all entry points.
-        if (profile.isPresent()) {
-            profileService.applyGroupAssignmentsToUser(
-                    directoryId, profile.get().getId(), req.dn(), principal);
-        }
-
         // Email password to user if profile is configured for it
         if (profile.isPresent() && profile.get().isEmailPasswordToUser()) {
             Map<String, List<String>> attrs = req.attributes();

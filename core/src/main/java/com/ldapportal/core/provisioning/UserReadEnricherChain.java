@@ -31,6 +31,21 @@ import java.util.List;
  * <p>The chain itself is a fold: {@code enrichers.foldLeft(input,
  * (acc, e) -> e.enrichBatch(dir, acc))}. Output size always equals
  * input size — enrichers may not filter or reorder, only augment.</p>
+ *
+ * <p><b>Fault isolation.</b> Enrichment is augmentation, not the
+ * read itself, so a misbehaving enricher must not fail the whole
+ * read. If an enricher throws, the chain logs a warning and
+ * carries the accumulator forward <em>unenriched by that
+ * enricher</em> — the user sees the underlying entries (just
+ * without that enricher's extra attributes) rather than an error.
+ * This matters because an enricher like the ISVA linked-mode
+ * joined-read issues its own LDAP search, which can fail
+ * independently of the demographic read (e.g. a mis-configured
+ * management-DIT base DN that resolves to {@code NO_SUCH_OBJECT}).
+ * We deliberately keep the accumulator rather than substituting a
+ * "blank" enrichment: marking every user orphaned/needs-repair on
+ * a transient failure would be misleading and potentially mask
+ * real account state.</p>
  */
 @Component
 @Slf4j
@@ -64,7 +79,12 @@ public class UserReadEnricherChain {
         }
         LdapUser current = user;
         for (UserReadEnricher enricher : enrichers) {
-            current = enricher.enrich(dir, current);
+            try {
+                current = enricher.enrich(dir, current);
+            } catch (RuntimeException ex) {
+                warnEnricherFailed(enricher, dir, ex);
+                // keep `current` — this enricher contributes nothing
+            }
         }
         return current;
     }
@@ -81,7 +101,12 @@ public class UserReadEnricherChain {
         }
         List<LdapUser> current = users;
         for (UserReadEnricher enricher : enrichers) {
-            current = enricher.enrichBatch(dir, current);
+            try {
+                current = enricher.enrichBatch(dir, current);
+            } catch (RuntimeException ex) {
+                warnEnricherFailed(enricher, dir, ex);
+                // keep `current` — this enricher contributes nothing
+            }
         }
         return current;
     }
@@ -89,5 +114,27 @@ public class UserReadEnricherChain {
     /** True iff at least one enricher is registered. */
     public boolean hasEnrichers() {
         return !enrichers.isEmpty();
+    }
+
+    /**
+     * Log a skipped enricher at WARN (concise, operator-actionable —
+     * names the enricher, the directory, and the cause) with the full
+     * stack trace at DEBUG so routine misconfigurations don't spam
+     * stack traces into the warn log.
+     */
+    private void warnEnricherFailed(UserReadEnricher enricher,
+                                    DirectoryConnection dir, RuntimeException ex) {
+        log.warn("UserReadEnricher {} failed on directory '{}'; "
+                        + "returning entries unenriched by it: {}",
+                enricher.getClass().getSimpleName(), directoryLabel(dir), ex.toString());
+        log.debug("UserReadEnricher failure detail", ex);
+    }
+
+    /** Human-readable directory identifier for logs; null-tolerant. */
+    private String directoryLabel(DirectoryConnection dir) {
+        if (dir == null) {
+            return "(none)";
+        }
+        return dir.getDisplayName() != null ? dir.getDisplayName() : String.valueOf(dir.getId());
     }
 }

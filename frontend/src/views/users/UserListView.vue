@@ -21,10 +21,10 @@
           per-row Edit action is the right tool. Showing it with 1 selected
           was just noise.
         -->
-        <button v-if="bulkSelectActive" @click="openBulkUpdate" class="btn-secondary">
+        <button v-if="bulkSelectActive && can.bulkUpdate" @click="openBulkUpdate" class="btn-secondary">
           Bulk Update ({{ selectedDns.size }})
         </button>
-        <button @click="openCreate" class="btn-primary">+ New User</button>
+        <button v-if="can.create" @click="openCreate" class="btn-primary">+ New User</button>
       </div>
     </div>
 
@@ -61,6 +61,7 @@
     >
       <template #toolbar>
         <button
+          v-if="can.exportCsv"
           @click="doExportUsers"
           :disabled="exporting"
           class="btn-secondary text-xs"
@@ -106,15 +107,15 @@
                     :inline-threshold="2"
                     :items="[
           { label: (row as unknown as UserRow).enabled !== false ? 'Disable' : 'Enable', onClick: () => toggleEnabled(row as unknown as UserRow),
-            variant: (row as unknown as UserRow).enabled !== false ? 'warning' : 'success' },
-          { label: 'Reset password', onClick: () => openResetPassword(row as unknown as UserRow) },
-          { label: 'Move',            onClick: () => openMove(row as unknown as UserRow) },
-          { label: 'Run playbook',    onClick: () => openPlaybookRun(row as unknown as UserRow) },
+            variant: (row as unknown as UserRow).enabled !== false ? 'warning' : 'success', hidden: !can.enableDisable },
+          { label: 'Reset password', onClick: () => openResetPassword(row as unknown as UserRow), hidden: !can.resetPassword },
+          { label: 'Move',            onClick: () => openMove(row as unknown as UserRow), hidden: !can.move },
+          { label: 'Run playbook',    onClick: () => openPlaybookRun(row as unknown as UserRow), hidden: !can.runPlaybook },
           { label: 'View history',    onClick: () => { timelineTarget = row as unknown as UserRow; showTimeline = true }, variant: 'neutral' },
-          { label: 'Delete',          onClick: () => confirmDelete(row as unknown as UserRow), danger: true },
+          { label: 'Delete',          onClick: () => confirmDelete(row as unknown as UserRow), danger: true, hidden: !can.delete },
         ]">
           <template #primary="{ disabled }">
-            <button @click="openEdit(row as unknown as UserRow)" :disabled="disabled" class="btn-secondary btn-compact">Edit</button>
+            <button v-if="can.edit" @click="openEdit(row as unknown as UserRow)" :disabled="disabled" class="btn-secondary btn-compact">Edit</button>
           </template>
         </ActionMenu>
       </template>
@@ -354,6 +355,7 @@ import * as groupsApi from '@/api/groups'
 import { exportCsv as exportUsersCsv } from '@/api/csvTemplates'
 import { listProfiles, getProfile } from '@/api/profiles'
 import { listEnabled as listEnabledPlaybooks, previewPlaybook, executePlaybook, rollbackExecution } from '@/api/playbooks'
+import { usePermissions } from '@/composables/usePermissions'
 import ResultsTable from '@/components/ResultsTable.vue'
 import LdapFilterBuilder from '@/components/LdapFilterBuilder.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
@@ -423,6 +425,26 @@ const route  = useRoute()
 const notif  = useNotificationStore()
 const auth   = useAuthStore()
 const { loading, call } = useApi()
+
+// Feature gating for the action surface. Mirrors the backend
+// @RequiresFeature checks on UserController so admins only see the
+// verbs they're actually granted (the server still enforces; this just
+// avoids showing actions that would 403). The effective feature set
+// comes from /auth/me — superadmins get every feature, admins get their
+// base-role defaults + overrides — so gating on hasFeature never hides an
+// action the caller can actually perform.
+const { hasFeature } = usePermissions()
+const can = computed(() => ({
+  create:        hasFeature('user.create'),
+  edit:          hasFeature('user.edit'),
+  delete:        hasFeature('user.delete'),
+  move:          hasFeature('user.move'),
+  resetPassword: hasFeature('user.reset_password'),
+  enableDisable: hasFeature('user.enable_disable'),
+  bulkUpdate:    hasFeature('bulk.attribute_update'),
+  exportCsv:     hasFeature('bulk.export'),
+  runPlaybook:   hasFeature('playbook.execute'),
+}))
 
 /**
  * True iff the row carries the IsvaUserReadEnricher's
