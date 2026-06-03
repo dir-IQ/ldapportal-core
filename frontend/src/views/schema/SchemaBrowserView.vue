@@ -56,7 +56,7 @@
         <div v-else-if="detailLoading" class="text-sm text-gray-500 mt-8 text-center">Loading…</div>
         <div v-else-if="detail" class="bg-white border border-gray-200 rounded-xl p-5">
           <h2 class="text-lg font-semibold text-gray-900 font-mono mb-1">{{ selected }}</h2>
-          <p v-if="detail.oid" class="text-xs text-gray-500 font-mono mb-4">{{ detail.oid }}</p>
+          <p v-if="detail.oid" class="text-[13px] text-gray-500 font-mono mb-4">{{ detail.oid }}</p>
           <div v-else class="mb-3"></div>
 
           <!-- Object class detail -->
@@ -66,7 +66,7 @@
               <div class="flex flex-wrap gap-1">
                 <button v-for="a in detail.required" :key="a"
                   @click="navigateToAttribute(a)"
-                  class="text-xs bg-red-50 text-red-700 rounded px-2 py-0.5 font-mono hover:bg-red-100 hover:underline cursor-pointer transition-colors inline-flex items-center gap-0.5">{{ a }}<svg class="w-2.5 h-2.5 opacity-40" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 1h7v7M11 1 5 7"/></svg></button>
+                  class="text-[13px] bg-red-50 text-red-700 rounded px-2 py-0.5 font-mono hover:bg-red-100 hover:underline cursor-pointer transition-colors inline-flex items-center gap-0.5">{{ a }}<svg class="w-2.5 h-2.5 opacity-40" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 1h7v7M11 1 5 7"/></svg></button>
               </div>
             </div>
             <div v-if="detail.optional?.length">
@@ -74,7 +74,7 @@
               <div class="flex flex-wrap gap-1">
                 <button v-for="a in detail.optional" :key="a"
                   @click="navigateToAttribute(a)"
-                  class="text-xs bg-gray-100 text-gray-700 rounded px-2 py-0.5 font-mono hover:bg-gray-200 hover:underline cursor-pointer transition-colors inline-flex items-center gap-0.5">{{ a }}<svg class="w-2.5 h-2.5 opacity-40" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 1h7v7M11 1 5 7"/></svg></button>
+                  class="text-[13px] bg-gray-100 text-gray-700 rounded px-2 py-0.5 font-mono hover:bg-gray-200 hover:underline cursor-pointer transition-colors inline-flex items-center gap-0.5">{{ a }}<svg class="w-2.5 h-2.5 opacity-40" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 1h7v7M11 1 5 7"/></svg></button>
               </div>
             </div>
             <div v-if="!detail.required?.length && !detail.optional?.length" class="text-sm text-gray-500">
@@ -88,7 +88,7 @@
               <tbody class="divide-y divide-gray-50">
                 <tr v-for="[k, v] in detailRows" :key="k" class="py-2">
                   <td class="py-2 pr-4 text-xs font-semibold text-gray-500 uppercase tracking-wider w-40">{{ k }}</td>
-                  <td class="py-2 text-gray-800 font-mono text-xs">{{ v }}</td>
+                  <td class="py-2 text-gray-800 font-mono text-[13px]">{{ v }}</td>
                 </tr>
               </tbody>
             </table>

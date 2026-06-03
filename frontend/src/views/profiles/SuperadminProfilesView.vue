@@ -1308,7 +1308,7 @@ function toggleApprover(accountId: string) {
                     <input type="checkbox"
                       :checked="attrPickerSelection.includes(attr)"
                       @change="toggleAttrPickerSelection(attr)" />
-                    <span class="font-mono text-xs">{{ attr }}</span>
+                    <span class="font-mono text-[13px]">{{ attr }}</span>
                   </label>
                 </div>
                 <button class="btn-primary text-sm mt-2" :disabled="attrPickerSelection.length === 0" @click="addSelectedAttributes">

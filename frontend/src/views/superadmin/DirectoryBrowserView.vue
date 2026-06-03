@@ -148,8 +148,8 @@
               </thead>
               <tbody class="divide-y divide-gray-50">
                 <tr v-for="[attr, values] in sortedAttributes" :key="attr">
-                  <td class="py-2 pr-4 text-gray-600 font-mono text-xs align-top">{{ attr }}</td>
-                  <td class="py-2 text-gray-900 font-mono text-xs">
+                  <td class="py-2 pr-4 text-gray-600 font-mono text-[13px] align-top">{{ attr }}</td>
+                  <td class="py-2 text-gray-900 font-mono text-[13px]">
                     <div v-for="(val, i) in values" :key="i" class="break-all">{{ formatValue(val) }}</div>
                   </td>
                 </tr>
