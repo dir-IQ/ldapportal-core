@@ -109,6 +109,7 @@ public class ReplicationLinkService {
         ReplicationLink link = require(id);
         boolean wasEnabled = link.isEnabled();
         ReplicationCaptureMode captureBefore = link.getCaptureMode();
+        String excludeFilterBefore = link.getExcludeFilter();
         String reconcileBefore = reconcileSignature(link);
         validateRequest(req, id);
         // Drop the existing mapping rows BEFORE staging the new ones,
@@ -146,6 +147,16 @@ public class ReplicationLinkService {
             auditService.recordSystemEvent(principal, RECONCILIATION_CONFIG_UPDATED, reconcileAuditDetail(link));
         }
         afterCaptureModeSwitch(principal, link, captureBefore);
+        // §7B.5: changing the exclude filter changes the replicated set —
+        // converge the target via a one-off reconcile (after commit). Skip if a
+        // capture-mode switch already scheduled one (single-flight collapses
+        // duplicates anyway), and only for an enabled link.
+        boolean captureChanged = link.getCaptureMode() != captureBefore;
+        if (!captureChanged && link.isEnabled()
+                && !Objects.equals(link.getExcludeFilter(), excludeFilterBefore)) {
+            UUID linkId = link.getId();
+            afterCommit(() -> triggerSeamReconcile(linkId, principal));
+        }
 
         return ReplicationLinkResponse.from(link, health.getOrDefault(id, LinkHealth.empty()));
     }

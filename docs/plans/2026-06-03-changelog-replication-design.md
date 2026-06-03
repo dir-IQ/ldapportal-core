@@ -18,7 +18,13 @@
   endpoint) + STALLED sweep (§7A.7). **Deferred:** `AlertSummaryProvider`
   dashboard tiles (the alert SPI is implemented in `ee`, out of this repo — the
   signal already rides the new audit actions → SIEM), dedicated bounded poll
-  connection (§7A.10). C3X (exclude filter §7B) and C4 (test-changelog endpoint,
+  connection (§7A.10). C3X (exclude filter §7B) landed: `ReplicationScopeFilter`
+  (parsed/cached `Filter`, fail-open) applied identically by all three paths —
+  changelog poller (ADD inline, MODIFY/MODIFY_DN re-read, DELETE propagates),
+  live capture (enqueuer ADD + worker delivery-time MODIFY/MODIFY_DN), and the
+  reconciliation protect-set (`ReconciliationDiffer` + `ChecksumReconciler`
+  tombstone excluded source DNs so their target copies are never EXTRA/deleted)
+  — plus the filter-change re-trigger (§7B.5). C4 (test-changelog endpoint,
   frontend) not started. Design also carries the §7A / §7B hardening and the
   RF-1..4 review findings — 2026-06-03).
 - **Suggested branch:** `feat/changelog-replication` (already cut; this doc

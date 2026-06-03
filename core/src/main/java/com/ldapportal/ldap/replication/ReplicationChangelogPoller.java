@@ -26,6 +26,7 @@ import com.ldapportal.repository.ReplicationLinkRepository;
 import com.ldapportal.service.AuditService;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.DN;
+import com.unboundid.ldap.sdk.Entry;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.LDAPSearchException;
 import com.unboundid.ldap.sdk.RootDSE;
@@ -288,7 +289,8 @@ public class ReplicationChangelogPoller {
             long cn = entry.getAttributeValueAsLong("changeNumber");
             try {
                 Optional<ChangelogChange> extracted = strategy.extractChange(entry);
-                if (extracted.isPresent() && !isPortalOwnWrite(entry, source)) {
+                if (extracted.isPresent() && !isPortalOwnWrite(entry, source)
+                        && !isExcluded(snap, extracted.get(), source)) {
                     ChangelogChange change = extracted.get();
                     String targetDn = DnMapper.map(change.sourceDn(), snap);
                     if (targetDn != null) {
@@ -299,6 +301,7 @@ public class ReplicationChangelogPoller {
                     }
                     // targetDn == null → out of scope for this link; skip + advance.
                 }
+                // excluded by the scope filter, or portal's own write → skip + advance.
                 // empty extract → non-replicable entry; skip + advance.
                 lastProcessed = cn;
             } catch (ChangelogParseException pe) {
@@ -441,6 +444,36 @@ public class ReplicationChangelogPoller {
             return new DN(creators).equals(new DN(bindDn));
         } catch (LDAPException e) {
             return creators.equalsIgnoreCase(bindDn);
+        }
+    }
+
+    /**
+     * Exclude-filter gate (§7B.2). For an ADD the full attributes are in hand;
+     * for MODIFY / MODIFY_DN the changelog carries only a delta, so re-read the
+     * full source entry (gated to exclude-configured links — zero cost
+     * otherwise). DELETE always propagates (§7B.3). Fail-open: if the re-read
+     * fails, don't exclude (reconciliation is the backstop).
+     */
+    @SuppressWarnings("unchecked")
+    private boolean isExcluded(ReplicationLinkSnapshot snap, ChangelogChange change, DirectoryConnection source) {
+        if (!ReplicationScopeFilter.hasExcludeFilter(snap)) return false;
+        return switch (change.operation()) {
+            case ADD -> ReplicationScopeFilter.isExcluded(snap, change.sourceDn(),
+                    (Map<String, List<String>>) change.rawPayload().getOrDefault("attributes", Map.of()));
+            case MODIFY, MODIFY_DN -> {
+                Entry src = readSourceEntry(source, change.sourceDn());
+                yield src != null && ReplicationScopeFilter.isExcluded(snap, src);
+            }
+            case DELETE -> false;   // deletes always propagate
+        };
+    }
+
+    private Entry readSourceEntry(DirectoryConnection source, String dn) {
+        try {
+            return connectionFactory.withConnectionUnreplicated(source, conn -> conn.getEntry(dn));
+        } catch (RuntimeException ex) {
+            log.warn("Exclude-filter source re-read failed for {} — not excluding: {}", dn, ex.toString());
+            return null;
         }
     }
 

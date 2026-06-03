@@ -192,6 +192,34 @@ class ReplicationChangelogPollerTest {
     }
 
     @Test
+    void excludedAdd_isSkipped_cursorAdvances() {
+        // §7B: an ADD whose full attributes match the exclude filter is not
+        // replicated; the cursor still advances. ADD is evaluated inline (no
+        // re-read).
+        claim(0L, null, ChangelogHealth.HEALTHY, "(objectClass=computer)");
+        stubRead(1L, List.of(
+                changelogEntry(1, "add", "cn=ws1,dc=src,dc=com", "objectClass: computer\ncn: ws1\n", null)));
+
+        poller.pollLink(LINK);
+
+        verify(persister, never()).saveAll(any());
+        verify(txOps).advance(eq(LINK), eq(0L), eq(1L), eq(1L), eq(ChangelogHealth.HEALTHY), any());
+    }
+
+    @Test
+    void nonExcludedAdd_underFilter_isReplicated() {
+        claim(0L, null, ChangelogHealth.HEALTHY, "(objectClass=computer)");
+        stubRead(1L, List.of(
+                changelogEntry(1, "add", "uid=alice,dc=src,dc=com", "objectClass: inetOrgPerson\nuid: alice\n", null)));
+        when(eventRepo.findExistingChangelogNumbers(eq(LINK), any())).thenReturn(List.of());
+
+        poller.pollLink(LINK);
+
+        verify(persister).saveAll(any());
+        verify(txOps).advance(eq(LINK), eq(0L), eq(1L), eq(1L), eq(ChangelogHealth.HEALTHY), any());
+    }
+
+    @Test
     void noNewEntries_recordsObservationNotAdvance() {
         claim(5L);
         stubRead(5L, List.of());
@@ -262,10 +290,14 @@ class ReplicationChangelogPollerTest {
     }
 
     private void claim(Long cursor, String sourceBaseDn) {
-        claim(cursor, sourceBaseDn, ChangelogHealth.HEALTHY);
+        claim(cursor, sourceBaseDn, ChangelogHealth.HEALTHY, null);
     }
 
     private void claim(Long cursor, String sourceBaseDn, ChangelogHealth health) {
+        claim(cursor, sourceBaseDn, health, null);
+    }
+
+    private void claim(Long cursor, String sourceBaseDn, ChangelogHealth health, String excludeFilter) {
         when(txOps.tryClaim(eq(LINK), any(), any()))
                 .thenReturn(Optional.of(new ClaimedPoll(
                         ChangelogFormat.DSEE_CHANGELOG, "cn=changelog", cursor, health)));
@@ -276,7 +308,7 @@ class ReplicationChangelogPollerTest {
         src.setBaseDn("dc=src,dc=com");
         ReplicationLinkSnapshot snap = new ReplicationLinkSnapshot(
                 LINK, "cl-link", src, new DirectoryConnection(), sourceBaseDn, sourceBaseDn,
-                true, false, com.ldapportal.entity.enums.ReplicationCaptureMode.CHANGELOG, null, List.of());
+                true, false, com.ldapportal.entity.enums.ReplicationCaptureMode.CHANGELOG, excludeFilter, List.of());
         when(readOps.snapshotById(LINK)).thenReturn(Optional.of(snap));
         this.source = src;
     }

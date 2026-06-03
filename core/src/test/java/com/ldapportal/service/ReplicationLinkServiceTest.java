@@ -609,6 +609,31 @@ class ReplicationLinkServiceTest {
         verify(linkRepo, never()).reseedChangelogCursor(any());
     }
 
+    @Test
+    void update_changingExcludeFilter_retriggersReconcile() {
+        // §7B.5: editing the exclude filter changes the replicated set, so the
+        // target must converge via a one-off reconcile (capture mode unchanged).
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        ReplicationLink existing = changelogLink();
+        existing.setSourceDirectory(source);
+        existing.setTargetDirectory(target);
+        existing.setExcludeFilter(null);
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateLink(principal, existing.getId(), new ReplicationLinkRequest(
+                "Changelog", source.getId(), target.getId(), null, null, true, false, List.of(),
+                false, null, null, null, null,
+                ReplicationCaptureMode.CHANGELOG, ChangelogFormat.DSEE_CHANGELOG, "cn=changelog",
+                "(objectClass=computer)"));   // new filter, capture mode unchanged
+
+        verify(reconciliationService).trigger(eq(existing.getId()),
+                eq(com.ldapportal.entity.enums.ReconciliationRunTrigger.MANUAL), eq(principal));
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private ReplicationLink changelogLink() {

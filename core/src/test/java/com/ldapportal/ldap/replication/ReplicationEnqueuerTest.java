@@ -187,6 +187,22 @@ class ReplicationEnqueuerTest {
         verify(persister, never()).saveAll(any());
     }
 
+    @Test
+    void excludedAdd_isNotEnqueued() {
+        // §7B: an ADD whose full attributes match the link's exclude filter is
+        // dropped at enqueue (the live path evaluates ADD inline).
+        UUID source = UUID.randomUUID();
+        ReplicationLinkSnapshot link = new ReplicationLinkSnapshot(
+                UUID.randomUUID(), "L", null, null, null, null, true, false,
+                ReplicationCaptureMode.APP_INTERCEPT, "(objectClass=computer)", List.of());
+        when(readOps.snapshotsForSource(source)).thenReturn(List.of(link));
+
+        enqueuer.enqueue(source, CapturedWrite.add("cn=ws1,dc=corp",
+                List.of(new Attribute("objectClass", "computer"), new Attribute("cn", "ws1"))));
+
+        verify(persister, never()).saveAll(any());
+    }
+
     private static ReplicationLinkSnapshot link(String sourceBaseDn, String targetBaseDn) {
         return new ReplicationLinkSnapshot(
                 UUID.randomUUID(), "test-link",

@@ -6,7 +6,9 @@ import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.core.observability.CorrelationContext;
 import com.ldapportal.entity.enums.ReplicationCaptureMode;
 import com.ldapportal.entity.enums.ReplicationEnqueueSource;
+import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.unboundid.ldap.sdk.Attribute;
+import com.unboundid.ldap.sdk.Entry;
 import com.unboundid.ldap.sdk.Modification;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -134,6 +136,15 @@ public class ReplicationEnqueuer {
         }
         String targetDn = DnMapper.map(write.dn(), link);
         if (targetDn == null) {
+            return null;
+        }
+        // Exclude-filter gate (§7B.2) for the live path: an ADD carries the full
+        // entry, so evaluate inline. MODIFY / MODIFY_DN carry only a delta and
+        // are evaluated at delivery time (the worker re-reads source); DELETE
+        // always propagates.
+        if (write.operation() == ReplicationOperationType.ADD
+                && ReplicationScopeFilter.hasExcludeFilter(link)
+                && ReplicationScopeFilter.isExcluded(link, new Entry(write.dn(), write.attributes()))) {
             return null;
         }
         // Convert the captured write to the shared raw payload shape, then map

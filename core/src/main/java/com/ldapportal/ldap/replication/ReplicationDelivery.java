@@ -2,6 +2,7 @@
 package com.ldapportal.ldap.replication;
 
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.unboundid.ldap.sdk.LDAPException;
@@ -65,6 +66,19 @@ public class ReplicationDelivery {
     public DeliveryResult deliver(ReplicationEventSnapshot event) {
         ReplicationLinkSnapshot link = event.link();
         DirectoryConnection target = link.targetDirectory();
+        // Exclude-filter gate at delivery time (§7B.2): the live capture path
+        // can't evaluate exclusion for a partial-change op (MODIFY / MODIFY_DN)
+        // — it only has the delta. Re-read the full source entry here (the
+        // worker already does this for auto-create) and, if excluded, settle as
+        // a no-op so the target copy is never touched ("excluded ⇒ invisible").
+        // ADD was already gated at capture; DELETE always propagates (§7B.3).
+        if (ReplicationScopeFilter.hasExcludeFilter(link)
+                && (event.operation() == ReplicationOperationType.MODIFY
+                    || event.operation() == ReplicationOperationType.MODIFY_DN)
+                && isExcludedAtDelivery(event, link)) {
+            log.debug("Skipping excluded {} for {} (exclude filter)", event.operation(), event.sourceDn());
+            return DeliveryResult.ok();
+        }
         try {
             return switch (event.operation()) {
                 case ADD       -> deliverAdd(event, target);
@@ -83,6 +97,20 @@ public class ReplicationDelivery {
             // entirely until process restart.
             ResultCode rc = (ex.getCause() instanceof LDAPException le) ? le.getResultCode() : null;
             return DeliveryResult.fail(rc, ex.getMessage());
+        }
+    }
+
+    /** Re-read the source entry and test the link's exclude filter; fail-open on read error. */
+    private boolean isExcludedAtDelivery(ReplicationEventSnapshot event, ReplicationLinkSnapshot link) {
+        try {
+            SearchResultEntry src = connectionFactory.withConnectionUnreplicated(
+                    link.sourceDirectory(), conn -> conn.getEntry(event.sourceDn()));
+            return src != null && ReplicationScopeFilter.isExcluded(link, src);
+        } catch (Exception ex) {
+            // Source gone or unreachable → don't exclude; the normal delivery
+            // path (and its NO_SUCH_OBJECT handling) takes over. Reconciliation
+            // is the backstop for any transient divergence.
+            return false;
         }
     }
 
