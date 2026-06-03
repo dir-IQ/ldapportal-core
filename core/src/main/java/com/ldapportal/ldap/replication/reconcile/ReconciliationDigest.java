@@ -30,13 +30,25 @@ public final class ReconciliationDigest {
 
     private ReconciliationDigest() {}
 
-    /** SHA-256 hex digest of the managed attributes in {@code attrs}. */
+    /** SHA-256 hex digest of the managed attributes, schema-less (caseIgnore default). */
     public static String digest(Map<String, List<String>> attrs) {
+        return digest(attrs, ValueNormalizer.DEFAULT);
+    }
+
+    /**
+     * SHA-256 hex digest of the managed attributes in {@code attrs}, with
+     * each value canonicalised through {@code normalizer} so equal-under-
+     * matching-rule values (case, DN formatting) hash identically. Must use
+     * the same {@code normalizer} on both sides for the index comparison to
+     * be meaningful — see {@link ChecksumReconciler}.
+     */
+    public static String digest(Map<String, List<String>> attrs, ValueNormalizer normalizer) {
         Map<String, List<String>> managed = ReconciliationDiffer.stripExcluded(attrs);
         // Sorted by lower-cased name for case-insensitive, order-independent canonicalisation.
         TreeMap<String, List<String>> canon = new TreeMap<>();
         for (Map.Entry<String, List<String>> e : managed.entrySet()) {
-            List<String> values = new ArrayList<>(e.getValue());
+            List<String> values = new ArrayList<>(e.getValue().size());
+            for (String v : e.getValue()) values.add(normalizer.canonical(e.getKey(), v));
             values.sort(String::compareTo);
             canon.put(e.getKey().toLowerCase(Locale.ROOT), values);
         }
