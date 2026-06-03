@@ -62,6 +62,7 @@ public class ReplicationEventPersister {
             e.setTargetDn(p.targetDn());
             e.setStatus(ReplicationEventStatus.PENDING);
             e.setPayload(p.payload());
+            e.setSourceChangeNumber(p.sourceChangeNumber());
             eventRepo.save(e);
         }
     }

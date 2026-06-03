@@ -4,6 +4,7 @@ package com.ldapportal.ldap.replication;
 import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.core.observability.CorrelationContext;
+import com.ldapportal.entity.enums.ReplicationCaptureMode;
 import com.ldapportal.entity.enums.ReplicationEnqueueSource;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
@@ -125,76 +126,69 @@ public class ReplicationEnqueuer {
     private PendingReplicationEvent buildEvent(ReplicationLinkSnapshot link,
                                                  CapturedWrite write,
                                                  UUID correlationId) {
+        // A CHANGELOG-capture link is fed by the changelog poller, not the live
+        // wrapper. Capturing the app's own write here too would double-enqueue
+        // it (once by the interceptor, once by the poller) — see design §6.4.
+        if (link.captureMode() == ReplicationCaptureMode.CHANGELOG) {
+            return null;
+        }
         String targetDn = DnMapper.map(write.dn(), link);
         if (targetDn == null) {
             return null;
         }
+        // Convert the captured write to the shared raw payload shape, then map
+        // it through the same ReplicationPayloadMapper the changelog poller uses
+        // so both capture paths produce byte-identical queue rows (§6.3).
+        Map<String, Object> payload = ReplicationPayloadMapper.buildMappedPayload(
+                write.operation(), rawPayload(write), link, correlationId);
         return new PendingReplicationEvent(
                 link.id(),
                 ReplicationEnqueueSource.APP_INTERCEPT,
                 write.operation(),
                 write.dn(),
                 targetDn,
-                buildPayload(write, link, correlationId));
+                payload);
     }
 
-    private Map<String, Object> buildPayload(CapturedWrite write, ReplicationLinkSnapshot link,
-                                             UUID correlationId) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        // Source-side trace id travels on the payload so dispatch-side audit
-        // rows can pivot back to the originating operation's audit rows.
-        if (correlationId != null) {
-            payload.put(ReplicationPayloadCodec.CORRELATION_ID, correlationId.toString());
-        }
+    /**
+     * Convert a {@link CapturedWrite} (UnboundID {@code Attribute[]} /
+     * {@code Modification[]}) into the pre-mapping raw payload shape the
+     * {@link ReplicationPayloadMapper} consumes — identical to what the OUD
+     * changelog parser emits.
+     */
+    private Map<String, Object> rawPayload(CapturedWrite write) {
+        Map<String, Object> raw = new LinkedHashMap<>();
         switch (write.operation()) {
-            case ADD -> payload.put("attributes", mappedAddAttributes(write.attributes(), link));
-            case MODIFY -> payload.put("modifications", mappedModifications(write.modifications(), link));
-            case DELETE -> { /* empty payload — DN alone identifies the operation */ }
+            case ADD -> {
+                Map<String, List<String>> attrs = new LinkedHashMap<>();
+                for (Attribute a : write.attributes()) {
+                    attrs.put(a.getName(), Arrays.asList(a.getValues()));
+                }
+                raw.put("attributes", attrs);
+            }
+            case MODIFY -> {
+                List<Map<String, Object>> mods = new ArrayList<>();
+                for (Modification m : write.modifications()) {
+                    Map<String, Object> entry = new LinkedHashMap<>();
+                    entry.put("type", m.getModificationType().getName().toUpperCase());
+                    entry.put("name", m.getAttributeName());
+                    // getValues() is null for the "delete the whole attribute"
+                    // form — keep the same null → List.of() contract the parser
+                    // uses so JSONB stays clean and the mapper doesn't NPE.
+                    String[] values = m.getValues();
+                    entry.put("values", values == null ? List.of() : Arrays.asList(values));
+                    mods.add(entry);
+                }
+                raw.put("modifications", mods);
+            }
+            case DELETE -> { /* empty */ }
             case MODIFY_DN -> {
                 CapturedWrite.ModifyDnParts m = write.modifyDn();
-                payload.put("newRdn", m.newRdn());
-                payload.put("deleteOldRdn", m.deleteOldRdn());
-                payload.put("newSuperiorDn", m.newSuperiorDn());
+                raw.put("newRdn", m.newRdn());
+                raw.put("deleteOldRdn", m.deleteOldRdn());
+                raw.put("newSuperiorDn", m.newSuperiorDn());
             }
         }
-        return payload;
-    }
-
-    private Map<String, List<String>> mappedAddAttributes(List<Attribute> source,
-                                                           ReplicationLinkSnapshot link) {
-        Map<String, List<String>> raw = new LinkedHashMap<>();
-        for (Attribute a : source) {
-            raw.put(a.getName(), Arrays.asList(a.getValues()));
-        }
-        return AttributeMapper.mapAttributes(raw, link);
-    }
-
-    private List<Map<String, Object>> mappedModifications(List<Modification> source,
-                                                            ReplicationLinkSnapshot link) {
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (Modification m : source) {
-            AttributeMapper.Mapping mapping = AttributeMapper.mappingFor(m.getAttributeName(), link);
-            Map<String, Object> entry = new LinkedHashMap<>();
-            entry.put("type", m.getModificationType().getName().toUpperCase());
-            entry.put("name", mapping.targetAttr());
-            // m.getValues() returns null (not an empty array) for the
-            // "delete the entire attribute" form — new Modification(
-            // DELETE, "attrName") with no values. Without this guard
-            // a values.length deref NPE-s, the enqueuer's outer
-            // try/catch swallows it, and the source-side write
-            // silently never replicates.
-            String[] values = m.getValues();
-            List<String> transformed = values == null
-                    ? List.of()
-                    : new ArrayList<>(values.length);
-            if (values != null) {
-                for (String v : values) {
-                    transformed.add(mapping.valueTransform().apply(v));
-                }
-            }
-            entry.put("values", transformed);
-            out.add(entry);
-        }
-        return out;
+        return raw;
     }
 }

@@ -5,6 +5,8 @@ import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResultEntry;
 import com.unboundid.ldap.sdk.SearchScope;
+import com.unboundid.ldap.sdk.controls.ServerSideSortRequestControl;
+import com.unboundid.ldap.sdk.controls.SortKey;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
@@ -70,6 +72,16 @@ public class DseeChangelogStrategy implements ChangelogStrategy {
                 filter,
                 ATTRIBUTES);
         req.setSizeLimit(sizeLimit);
+
+        // Cursor (poller) path: ask the server to sort by changeNumber ascending
+        // so a size-limited page is the LOWEST N entries, never an arbitrary
+        // subset — otherwise advancing the cursor past the page max could skip
+        // unreceived lower entries. Non-critical: a server that can't sort
+        // returns the changelog in its natural (append) order, which is already
+        // changeNumber-ascending, and the poller sorts in-memory as a backstop.
+        if (hasAfter) {
+            req.addControl(new ServerSideSortRequestControl(false, new SortKey("changeNumber")));
+        }
         return req;
     }
 

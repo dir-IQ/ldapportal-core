@@ -178,6 +178,23 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
     long countByStatus(ReplicationEventStatus status);
 
     /**
+     * Which of the given source change numbers are already enqueued for this
+     * link. The changelog poller's exactly-once pre-check (§6.5): events whose
+     * {@code source_change_number} is already present (a crash-replay or a
+     * concurrent double-poll re-read) are filtered out before persisting. The
+     * partial unique index {@code replication_events_changelog_dedup} is the
+     * ultimate backstop for the rare race the pre-check misses.
+     */
+    @Query("""
+        SELECT e.sourceChangeNumber FROM ReplicationEvent e
+        WHERE e.link.id = :linkId
+          AND e.enqueueSource = com.ldapportal.entity.enums.ReplicationEnqueueSource.SOURCE_CHANGELOG
+          AND e.sourceChangeNumber IN :numbers
+        """)
+    List<Long> findExistingChangelogNumbers(@Param("linkId") UUID linkId,
+                                            @Param("numbers") java.util.Collection<Long> numbers);
+
+    /**
      * Reset events stuck in IN_FLIGHT for longer than the given
      * threshold back to PENDING so the worker picks them up again.
      * Used by {@link ReplicationWorker#resetStaleInFlight()}; without

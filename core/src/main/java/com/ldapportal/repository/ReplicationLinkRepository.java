@@ -3,6 +3,7 @@ package com.ldapportal.repository;
 
 import com.ldapportal.entity.ReplicationLink;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -79,4 +80,111 @@ public interface ReplicationLinkRepository extends JpaRepository<ReplicationLink
            AND l.reconcileNextRunAt <= :now
         """)
     List<UUID> findReconcileDueIds(@Param("now") OffsetDateTime now);
+
+    // ── Changelog capture poller (C3) ─────────────────────────────────────────
+
+    /** IDs of enabled, CHANGELOG-capture links. Backs the poller sweep. */
+    @Query("""
+        SELECT l.id FROM ReplicationLink l
+         WHERE l.enabled = true
+           AND l.captureMode = com.ldapportal.entity.enums.ReplicationCaptureMode.CHANGELOG
+        """)
+    List<UUID> findChangelogCaptureLinkIds();
+
+    /**
+     * DB-backed single-flight lease (HA): stamp {@code changelog_poll_claimed_at}
+     * iff the link is an enabled CHANGELOG link and the lease is free or stale.
+     * Returns 1 to the winner, 0 to losers — mirrors {@code ReconciliationTxOps}.
+     */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogPollClaimedAt = :now
+         WHERE l.id = :id
+           AND l.enabled = true
+           AND l.captureMode = com.ldapportal.entity.enums.ReplicationCaptureMode.CHANGELOG
+           AND (l.changelogPollClaimedAt IS NULL OR l.changelogPollClaimedAt < :staleCutoff)
+        """)
+    int claimChangelogPoll(@Param("id") UUID id,
+                           @Param("now") OffsetDateTime now,
+                           @Param("staleCutoff") OffsetDateTime staleCutoff);
+
+    /** Release a held poll lease (in a finally after the poll completes). */
+    @Modifying
+    @Query("UPDATE ReplicationLink l SET l.changelogPollClaimedAt = null WHERE l.id = :id")
+    void releaseChangelogPoll(@Param("id") UUID id);
+
+    /** Reclaim leases orphaned by a crash; returns the number released. */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogPollClaimedAt = null
+         WHERE l.changelogPollClaimedAt IS NOT NULL
+           AND l.changelogPollClaimedAt < :threshold
+        """)
+    int resetStaleChangelogPolls(@Param("threshold") OffsetDateTime threshold);
+
+    /**
+     * First-run seed: set the cursor to the current source head without
+     * emitting events, only while it is still null (idempotent under replay).
+     */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogLastChangeNumber = :head,
+               l.changelogSourceLastChangeNumber = :head,
+               l.changelogLastPolledAt = :now,
+               l.changelogLastError = null,
+               l.changelogLastErrorAt = null
+         WHERE l.id = :id AND l.changelogLastChangeNumber IS NULL
+        """)
+    int seedChangelogCursor(@Param("id") UUID id,
+                            @Param("head") long head,
+                            @Param("now") OffsetDateTime now);
+
+    /**
+     * Compare-and-set cursor advance: only advances when the stored cursor
+     * still equals {@code expected}, so a stale poller (or a concurrent
+     * operator edit) can't clobber a newer cursor. Returns 1 on success.
+     */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogLastChangeNumber = :newCursor,
+               l.changelogSourceLastChangeNumber = :head,
+               l.changelogLastPolledAt = :now,
+               l.changelogLastError = null,
+               l.changelogLastErrorAt = null
+         WHERE l.id = :id AND l.changelogLastChangeNumber = :expected
+        """)
+    int advanceChangelogCursor(@Param("id") UUID id,
+                               @Param("expected") long expected,
+                               @Param("newCursor") long newCursor,
+                               @Param("head") long head,
+                               @Param("now") OffsetDateTime now);
+
+    /** No new entries this poll: refresh the observed head + poll timestamp. */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogSourceLastChangeNumber = :head,
+               l.changelogLastPolledAt = :now
+         WHERE l.id = :id
+        """)
+    void recordChangelogPollObservation(@Param("id") UUID id,
+                                        @Param("head") long head,
+                                        @Param("now") OffsetDateTime now);
+
+    /** Record a poll/parse/connection error string for operator diagnosis. */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogLastError = :error,
+               l.changelogLastErrorAt = :now,
+               l.changelogLastPolledAt = :now
+         WHERE l.id = :id
+        """)
+    void recordChangelogPollError(@Param("id") UUID id,
+                                  @Param("error") String error,
+                                  @Param("now") OffsetDateTime now);
 }
