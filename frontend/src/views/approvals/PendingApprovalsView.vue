@@ -101,8 +101,8 @@
           <template v-if="!isOwnRequest(selectedApproval)">
             <button v-if="!editMode && isEditablePayload(selectedApproval)"
               @click="startEdit(selectedApproval)" class="btn-secondary">Edit</button>
-            <button v-if="!editMode" @click="handleApprove(selectedApproval); detailModal = false" class="px-4 py-2 rounded-lg text-green-600 bg-green-50 hover:bg-green-100 font-medium">Approve</button>
-            <button v-if="!editMode" @click="detailModal = false; openReject(selectedApproval)" class="px-4 py-2 rounded-lg text-red-600 bg-red-50 hover:bg-red-100 font-medium">Reject</button>
+            <button v-if="!editMode" @click="handleApprove(selectedApproval); detailModal = false" class="btn-success-soft">Approve</button>
+            <button v-if="!editMode" @click="detailModal = false; openReject(selectedApproval)" class="btn-danger-soft">Reject</button>
           </template>
           <span v-else class="text-sm text-gray-500 italic">You cannot approve or reject your own request</span>
         </div>
@@ -114,12 +114,12 @@
       <div class="space-y-4">
         <p class="text-sm text-gray-600">Please provide a reason for rejecting this request.</p>
         <textarea v-model="rejectReason" rows="3" aria-label="Rejection reason"
-          class="w-full border border-gray-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          class="input w-full"
           placeholder="Enter rejection reason..."></textarea>
         <div class="flex gap-2 justify-end">
           <button @click="rejectModal = false" class="btn-neutral">Cancel</button>
           <button @click="handleReject" :disabled="!rejectReason.trim()"
-            class="px-4 py-2 rounded-lg text-red-600 bg-red-50 hover:bg-red-100 font-medium disabled:opacity-50">
+            class="btn-danger-soft">
             Reject
           </button>
         </div>
@@ -137,33 +137,61 @@
   </div>
 </template>
 
-<script setup>
-import { ref, reactive, onMounted, watch } from 'vue'
+<script setup lang="ts">
+import { ref, reactive, computed, onMounted, watch } from 'vue'
+import type { Ref, ComputedRef } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useNotificationStore } from '@/stores/notifications'
 import { useApi } from '@/composables/useApi'
 import { useDirectoryPicker } from '@/composables/useDirectoryPicker'
 import { listPendingApprovals, approveRequest, rejectRequest, updateApprovalPayload } from '@/api/approvals'
+import type { components } from '@/api/openapi'
 import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import AppModal from '@/components/AppModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
 
+type PendingApproval = components['schemas']['PendingApprovalResponse']
+
+interface DirectoryOption {
+  id: string
+  displayName?: string
+  name?: string
+}
+
+interface EditPayloadForm {
+  dn: string
+  attributes: Record<string, string[]>
+}
+
+function errMsg(e: unknown, fallback = 'Something went wrong'): string {
+  const detail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+  return detail || (e instanceof Error ? e.message : fallback)
+}
+
 const auth = useAuthStore()
 const { loading, call } = useApi()
 const notif = useNotificationStore()
-const { dirId, directories, selectedDir, loadingDirs, showPicker } = useDirectoryPicker({ ldapOnly: true })
+// useDirectoryPicker is plain JS; annotate the slice we consume so the
+// template's directory option fields stay strictly typed.
+const { dirId, directories, selectedDir, loadingDirs, showPicker } = useDirectoryPicker({ ldapOnly: true }) as {
+  dirId: ComputedRef<string>
+  directories: Ref<DirectoryOption[]>
+  selectedDir: Ref<string>
+  loadingDirs: Ref<boolean>
+  showPicker: ComputedRef<boolean>
+}
 
-const approvals = ref([])
-const selectedApproval = ref(null)
+const approvals = ref<PendingApproval[]>([])
+const selectedApproval = ref<PendingApproval | null>(null)
 const detailModal = ref(false)
 const rejectModal = ref(false)
 const rejectReason = ref('')
 const confirmApprove = ref(false)
-const approvalToAction = ref(null)
+const approvalToAction = ref<PendingApproval | null>(null)
 const editMode = ref(false)
-const editPayload = reactive({ dn: '', attributes: {} })
+const editPayload = reactive<EditPayloadForm>({ dn: '', attributes: {} })
 const savingPayload = ref(false)
 
 const cols = [
@@ -174,23 +202,20 @@ const cols = [
   { key: 'actions', label: '' }
 ]
 
-function fmtDate(val) {
-  if (!val) return ''
-  return new Date(val).toLocaleString()
-}
-
-function formatType(type) {
-  const labels = {
+function formatType(type: string | undefined): string {
+  if (!type) return ''
+  const labels: Record<string, string> = {
     USER_CREATE: 'User Create',
     BULK_IMPORT: 'Bulk Import',
     USER_MOVE: 'User Move',
     GROUP_MEMBER_ADD: 'Group Member Add',
     SELF_REGISTRATION: 'Self-Registration',
+    PLAYBOOK_EXECUTE: 'Playbook Execution',
   }
   return labels[type] || type
 }
 
-function statusClass(status) {
+function statusClass(status: string | undefined): string {
   const base = 'px-2 py-0.5 rounded-full text-xs font-medium'
   switch (status) {
     case 'PENDING': return base + ' bg-yellow-100 text-yellow-800'
@@ -200,7 +225,8 @@ function statusClass(status) {
   }
 }
 
-function formatPayload(payload) {
+function formatPayload(payload: string | undefined): string {
+  if (!payload) return ''
   try {
     return JSON.stringify(JSON.parse(payload), null, 2)
   } catch {
@@ -208,28 +234,29 @@ function formatPayload(payload) {
   }
 }
 
-function isOwnRequest(approval) {
-  return auth.principal?.id === approval.requestedBy
+function isOwnRequest(approval: PendingApproval): boolean {
+  const myId = (auth.principal as { id?: string } | null)?.id
+  return !!myId && myId === approval.requestedBy
 }
 
-function openDetail(approval) {
+function openDetail(approval: PendingApproval): void {
   selectedApproval.value = approval
   editMode.value = false
   detailModal.value = true
 }
 
-function isEditablePayload(approval) {
-  return ['USER_CREATE', 'SELF_REGISTRATION'].includes(approval.requestType)
+function isEditablePayload(approval: PendingApproval): boolean {
+  return ['USER_CREATE', 'SELF_REGISTRATION'].includes(approval.requestType ?? '')
 }
 
-function startEdit(approval) {
+function startEdit(approval: PendingApproval): void {
   try {
-    const parsed = JSON.parse(approval.payload)
+    const parsed = JSON.parse(approval.payload ?? '{}')
     editPayload.dn = parsed.dn || ''
     // Deep copy attributes so edits don't mutate the original
-    const attrs = {}
+    const attrs: Record<string, string[]> = {}
     for (const [key, val] of Object.entries(parsed.attributes || {})) {
-      attrs[key] = Array.isArray(val) ? [...val] : [val]
+      attrs[key] = Array.isArray(val) ? [...val] : [val as string]
     }
     editPayload.attributes = attrs
     editMode.value = true
@@ -239,11 +266,12 @@ function startEdit(approval) {
   }
 }
 
-async function savePayload() {
+async function savePayload(): Promise<void> {
+  if (!selectedApproval.value) return
   savingPayload.value = true
   try {
     // Remove attributes with no value
-    const cleanAttrs = {}
+    const cleanAttrs: Record<string, string[]> = {}
     for (const [key, vals] of Object.entries(editPayload.attributes)) {
       const filtered = vals.filter(v => v != null && v !== '')
       if (filtered.length > 0) cleanAttrs[key] = filtered
@@ -259,26 +287,27 @@ async function savePayload() {
     if (idx >= 0) approvals.value[idx] = data
     editMode.value = false
   } catch (e) {
-    notif.error(e.response?.data?.detail || 'Failed to save changes')
+    notif.error(errMsg(e, 'Failed to save changes'))
   } finally {
     savingPayload.value = false
   }
 }
 
-function openReject(approval) {
+function openReject(approval: PendingApproval): void {
   approvalToAction.value = approval
   rejectReason.value = ''
   rejectModal.value = true
 }
 
-function handleApprove(approval) {
+function handleApprove(approval: PendingApproval): void {
   approvalToAction.value = approval
   confirmApprove.value = true
 }
 
-async function doApprove() {
+async function doApprove(): Promise<void> {
   confirmApprove.value = false
-  const res = await call(() => approveRequest(dirId.value, approvalToAction.value.id))
+  if (!approvalToAction.value) return
+  const res = await call(() => approveRequest(dirId.value, approvalToAction.value!.id))
   if (res?.data?.provisionError) {
     // Provisioning failed — reload list and open detail to show the error
     await loadApprovals()
@@ -291,15 +320,19 @@ async function doApprove() {
   }
 }
 
-async function handleReject() {
+async function handleReject(): Promise<void> {
   rejectModal.value = false
-  await call(() => rejectRequest(dirId.value, approvalToAction.value.id, rejectReason.value), { successMsg: 'Request rejected' })
+  if (!approvalToAction.value) return
+  await call(() => rejectRequest(dirId.value, approvalToAction.value!.id, rejectReason.value), { successMsg: 'Request rejected' })
   await loadApprovals()
 }
 
-const canAct = !auth.isSuperadmin
+// Anyone who can reach this feature-gated view may act on requests —
+// superadmins included. The backend independently enforces approver
+// scoping and the no-self-approval rule, so this is purely a UX gate.
+const canAct = computed(() => auth.isLoggedIn)
 
-async function loadApprovals() {
+async function loadApprovals(): Promise<void> {
   if (!dirId.value) { approvals.value = []; return }
   const res = await call(() => listPendingApprovals(dirId.value))
   approvals.value = res.data
