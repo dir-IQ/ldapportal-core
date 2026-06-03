@@ -33,12 +33,12 @@ public class ChangelogPollTxOps {
     private static final int ERROR_MAX = 4000;
 
     /** What {@link #tryClaim} hands back so the poller runs without re-reading the link. */
-    public record ClaimedPoll(ChangelogFormat format, String baseDn, Long cursor) {}
+    public record ClaimedPoll(ChangelogFormat format, String baseDn, Long cursor, ChangelogHealth health) {}
 
     /**
      * Acquire the single-flight poll lease for a link and, if won, return its
-     * changelog config + cursor. Empty when another tick/instance holds the
-     * lease or the link is no longer an enabled CHANGELOG link.
+     * changelog config + cursor + current health. Empty when another tick/instance
+     * holds the lease or the link is no longer an enabled CHANGELOG link.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public Optional<ClaimedPoll> tryClaim(UUID linkId, OffsetDateTime now, OffsetDateTime staleCutoff) {
@@ -47,8 +47,8 @@ public class ChangelogPollTxOps {
         }
         return linkRepo.findById(linkId)
                 .filter(l -> l.getCaptureMode() == ReplicationCaptureMode.CHANGELOG)
-                .map(l -> new ClaimedPoll(
-                        l.getChangelogFormat(), l.getChangelogBaseDn(), l.getChangelogLastChangeNumber()));
+                .map(l -> new ClaimedPoll(l.getChangelogFormat(), l.getChangelogBaseDn(),
+                        l.getChangelogLastChangeNumber(), l.getChangelogHealth()));
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

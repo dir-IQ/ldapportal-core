@@ -392,6 +392,11 @@ public class ReplicationLinkService {
                              : AuditAction.REPLICATION_CHANGELOG_CAPTURE_DISABLED,
                 auditDetail(link));
 
+        // Don't reconcile a disabled link: its corrective events wouldn't be
+        // delivered now and would pile up to flood the target when it's later
+        // enabled. The seam only exists while replication is actually active.
+        if (!link.isEnabled()) return;
+
         UUID linkId = link.getId();
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {

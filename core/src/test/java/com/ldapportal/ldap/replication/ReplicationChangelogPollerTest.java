@@ -220,6 +220,20 @@ class ReplicationChangelogPollerTest {
     }
 
     @Test
+    void alreadyCursorReset_isSkipped_noReadNoAuditStorm() {
+        // A link already flagged CURSOR_RESET must stay halted silently — no
+        // changelog read, no repeated audit/SIEM (the storm fix).
+        claim(100L, null, ChangelogHealth.CURSOR_RESET);
+
+        poller.pollLink(LINK);
+
+        verify(connectionFactory, never()).withConnectionUnreplicated(any(), any());
+        verify(txOps, never()).markCursorReset(any(), anyLong(), any());
+        verify(auditService, never()).recordSystemEventNoActor(any(), any());
+        verify(txOps).release(LINK);   // lease still released
+    }
+
+    @Test
     void gap_fastForwardsAndTriggersReconcile() {
         // §7A.1: entries trimmed before we read them (cursor+1 < firstChangeNumber).
         claim(10L);
@@ -248,8 +262,13 @@ class ReplicationChangelogPollerTest {
     }
 
     private void claim(Long cursor, String sourceBaseDn) {
+        claim(cursor, sourceBaseDn, ChangelogHealth.HEALTHY);
+    }
+
+    private void claim(Long cursor, String sourceBaseDn, ChangelogHealth health) {
         when(txOps.tryClaim(eq(LINK), any(), any()))
-                .thenReturn(Optional.of(new ClaimedPoll(ChangelogFormat.DSEE_CHANGELOG, "cn=changelog", cursor)));
+                .thenReturn(Optional.of(new ClaimedPoll(
+                        ChangelogFormat.DSEE_CHANGELOG, "cn=changelog", cursor, health)));
         DirectoryConnection src = new DirectoryConnection();
         src.setId(UUID.randomUUID());
         src.setDisplayName("Source");

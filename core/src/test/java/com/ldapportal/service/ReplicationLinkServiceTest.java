@@ -503,6 +503,52 @@ class ReplicationLinkServiceTest {
         assertThat(existing.getChangelogPollClaimedAt()).isNull();
     }
 
+    @Test
+    void create_enabledChangelogLink_triggersSeamReconcile() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> {
+            ReplicationLink l = inv.getArgument(0);
+            l.setId(UUID.randomUUID());
+            return l;
+        });
+
+        service.createLink(principal, changelogRequest(
+                source, target, ChangelogFormat.DSEE_CHANGELOG, "cn=changelog", null));
+
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_CHANGELOG_CAPTURE_ENABLED), any());
+        verify(reconciliationService).trigger(
+                any(), eq(com.ldapportal.entity.enums.ReconciliationRunTrigger.MANUAL), eq(principal));
+    }
+
+    @Test
+    void create_disabledChangelogLink_auditsButDoesNotReconcile() {
+        // A disabled link must not auto-reconcile — corrective events would pile
+        // up and flood the target when it's later enabled.
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> {
+            ReplicationLink l = inv.getArgument(0);
+            l.setId(UUID.randomUUID());
+            return l;
+        });
+
+        service.createLink(principal, new ReplicationLinkRequest(
+                "Disabled CL", source.getId(), target.getId(), null, null,
+                false, false, List.of(),          // enabled = false
+                false, null, null, null, null,
+                ReplicationCaptureMode.CHANGELOG, ChangelogFormat.DSEE_CHANGELOG, "cn=changelog", null));
+
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_CHANGELOG_CAPTURE_ENABLED), any());
+        verify(reconciliationService, never()).trigger(any(), any(), any());
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private ReplicationLinkRequest changelogRequest(DirectoryConnection source, DirectoryConnection target,

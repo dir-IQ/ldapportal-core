@@ -200,6 +200,12 @@ public class ReplicationChangelogPoller {
     }
 
     private void doPoll(UUID linkId, ClaimedPoll cp, OffsetDateTime now) {
+        // A cursor-reset link is halted until an operator reseeds (which clears
+        // the health and the cursor — e.g. the capture-mode toggle). Skip it
+        // entirely: re-detecting + re-auditing every poll would storm the audit
+        // log / SIEM, and re-reading the changelog is wasted work.
+        if (cp.health() == ChangelogHealth.CURSOR_RESET) return;
+
         ReplicationLinkSnapshot snap = readOps.snapshotById(linkId).orElse(null);
         if (snap == null) return;
         DirectoryConnection source = snap.sourceDirectory();
