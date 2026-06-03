@@ -100,6 +100,38 @@ class UserReadEnricherChainTest {
     }
 
     @Test
+    void enricherThrows_isIsolated_readDoesNotFail() {
+        // A joined-read enricher (e.g. ISVA linked-mode) can throw on its
+        // own LDAP failure. That must NOT fail the whole read — the page
+        // comes back, just without that enricher's attributes.
+        UserReadEnricherChain chain = new UserReadEnricherChain(
+                List.of(throwingEnricher("secUser batch lookup errored")));
+
+        List<LdapUser> got = chain.enrichBatch(dc, List.of(alice));
+
+        assertThat(got).hasSize(1);
+        assertThat(got.get(0).getFirstValue("cn")).isEqualTo("Alice");
+        // Single-user path is equally protected.
+        assertThat(chain.enrich(dc, alice).getDn()).isEqualTo("uid=alice,dc=x");
+    }
+
+    @Test
+    void oneEnricherThrows_survivingEnrichersStillApply() {
+        // first augments, second throws, third augments — the failure is
+        // isolated and the surviving enrichers' work is preserved.
+        UserReadEnricherChain chain = new UserReadEnricherChain(List.of(
+                taggingEnricher("isva.orphaned", "false"),
+                throwingEnricher("boom"),
+                taggingEnricher("vendor.audit", "checked")));
+
+        LdapUser got = chain.enrich(dc, alice);
+
+        assertThat(got.getFirstValue("isva.orphaned")).isEqualTo("false");
+        assertThat(got.getFirstValue("vendor.audit")).isEqualTo("checked");
+        assertThat(got.getFirstValue("cn")).isEqualTo("Alice");
+    }
+
+    @Test
     void hasEnrichers_reflectsState() {
         assertThat(new UserReadEnricherChain(List.of()).hasEnrichers()).isFalse();
         assertThat(new UserReadEnricherChain(
@@ -121,6 +153,14 @@ class UserReadEnricherChainTest {
                     return new LdapUser(u.getDn(), augmented);
                 })
                 .toList();
+    }
+
+    /** An enricher that always fails — stands in for a joined-read whose
+     * own LDAP search errors (e.g. a mis-configured management-DIT base). */
+    private static UserReadEnricher throwingEnricher(String message) {
+        return (dir, users) -> {
+            throw new RuntimeException(message);
+        };
     }
 
     private static DirectoryConnection directoryConnection() {
