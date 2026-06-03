@@ -40,7 +40,7 @@
           :key="rowKey ? row[rowKey] : i"
           class="hover:bg-gray-50 transition-colors cursor-pointer"
           :class="{
-            'bg-blue-50': selectable && isSelected(row),
+            'bg-blue-50': (selectable && isSelected(row)) || (highlightKey !== undefined && row[rowKey] === highlightKey),
             // Keyboard-only focus ring (focus-visible semantics): the
             // styled element (the row) isn't the focus target (the
             // wrapper div is), so we can't use the native :focus-visible
@@ -92,6 +92,8 @@ const props = withDefaults(defineProps<{
   emptyIcon?: string
   selectable?: boolean
   selectedKeys?: Set<unknown>
+  /** When set, the row whose rowKey equals this value is highlighted (e.g. an open detail row). */
+  highlightKey?: unknown
 }>(), {
   rows: () => [],
   rowKey: 'id',

@@ -7,11 +7,16 @@
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">LDIF File</label>
           <div
+            role="button"
+            tabindex="0"
+            aria-label="Choose or drop an LDIF file"
             :class="[
               'border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors',
               dragging ? 'border-blue-400 bg-blue-50' : 'border-gray-300 hover:border-gray-400',
             ]"
             @click="fileInput?.click()"
+            @keydown.enter.prevent="fileInput?.click()"
+            @keydown.space.prevent="fileInput?.click()"
             @dragover.prevent="dragging = true"
             @dragleave.prevent="dragging = false"
             @drop.prevent="onDrop"
@@ -26,7 +31,7 @@
               <button @click.stop="file = null" class="text-xs text-red-500 hover:text-red-700 mt-1">Remove</button>
             </div>
           </div>
-          <input ref="fileInput" type="file" accept=".ldif" class="hidden" @change="onFileSelect" />
+          <input ref="fileInput" type="file" accept=".ldif" class="hidden" aria-label="LDIF file" @change="onFileSelect" />
         </div>
 
         <div>
@@ -48,7 +53,7 @@
           <span class="chip chip-green">Add <b>{{ summary.countsByOp.add.toLocaleString() }}</b></span>
           <span class="chip chip-amber">Modify <b>{{ summary.countsByOp.modify.toLocaleString() }}</b></span>
           <span class="chip chip-red">Delete <b>{{ summary.countsByOp.delete.toLocaleString() }}</b></span>
-          <span v-if="summary.countsByOp.moddn" class="chip chip-purple">Move <b>{{ summary.countsByOp.moddn }}</b></span>
+          <span class="chip chip-blue">Move <b>{{ summary.countsByOp.moddn.toLocaleString() }}</b></span>
           <span class="chip chip-gray">Skip <b>{{ summary.countsByOp.skip.toLocaleString() }}</b></span>
           <span class="chip chip-gray">·</span>
           <span class="chip chip-amber" title="Rows with warnings">⚠ <b>{{ summary.warningCount.toLocaleString() }}</b></span>
@@ -72,6 +77,7 @@
 
         <!-- Rows -->
         <DataTable :columns="cols" :rows="rows" row-key="rowNumber" :loading="loadingPage"
+                   :highlight-key="selectedRowNumber ?? undefined"
                    empty-text="No matching records" empty-icon="folder" @row-click="openRow">
           <template #cell-op="{ row }">
             <span class="badge" :class="opClass(row.op)">{{ row.op }}</span>
@@ -91,13 +97,13 @@
             </span>
           </template>
           <template #cell-issues="{ row }">
-            <span v-for="(iss, i) in row.issues" :key="i" :title="iss.message" class="mr-1">{{ issueIcon(iss) }}</span>
+            <span v-for="(iss, i) in row.issues" :key="i" :title="iss.message" :aria-label="iss.code" role="img" class="mr-1">{{ issueIcon(iss) }}</span>
           </template>
         </DataTable>
 
         <!-- Pager -->
         <div class="flex items-center justify-between text-xs text-gray-500">
-          <span>Showing {{ rows.length }} of {{ totalFiltered.toLocaleString() }}</span>
+          <span>Showing {{ rangeStart.toLocaleString() }}–{{ rangeEnd.toLocaleString() }} of {{ totalFiltered.toLocaleString() }}</span>
           <div class="flex items-center gap-2">
             <button @click="changePage(page - 1)" :disabled="page === 0 || loadingPage" class="btn-sm">Prev</button>
             <span>Page {{ page + 1 }} / {{ totalPages }}</span>
@@ -182,6 +188,7 @@ import { ref, computed, watch } from 'vue'
 import AppModal from '@/components/AppModal.vue'
 import DataTable from '@/components/DataTable.vue'
 import { useNotificationStore } from '@/stores/notifications'
+import { useConfirm } from '@/composables/useConfirm'
 import { previewLdif, getLdifPreviewPage, getLdifPreviewRow, applyLdifPreview } from '@/api/browse'
 
 interface PreviewIssue { severity: string; code: string; message: string }
@@ -218,14 +225,12 @@ interface PreviewRowDetail {
 interface ImportError { dn: string | null; message: string }
 interface ImportResult { added: number; updated: number; skipped: number; failed: number; errors: ImportError[] }
 
-const props = defineProps<{ modelValue: boolean; directoryId: string }>()
-const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void; (e: 'imported'): void }>()
+const props = defineProps<{ directoryId: string }>()
+const emit = defineEmits<{ (e: 'imported'): void }>()
+const visible = defineModel<boolean>({ default: false })
 
 const notif = useNotificationStore()
-
-const visible = ref(props.modelValue)
-watch(() => props.modelValue, v => { visible.value = v })
-watch(visible, v => { emit('update:modelValue', v) })
+const confirm = useConfirm()
 
 const PAGE_SIZE = 50
 
@@ -271,6 +276,8 @@ const phase = computed<'pick' | 'preview' | 'applied'>(() =>
   applyResult.value ? 'applied' : summary.value ? 'preview' : 'pick')
 
 const totalPages = computed(() => Math.max(1, Math.ceil(totalFiltered.value / PAGE_SIZE)))
+const rangeStart = computed(() => (totalFiltered.value === 0 ? 0 : page.value * PAGE_SIZE + 1))
+const rangeEnd = computed(() => page.value * PAGE_SIZE + rows.value.length)
 
 // Records that an Import would actually act on (everything except skips/errors).
 const applicableCount = computed(() => {
@@ -278,7 +285,7 @@ const applicableCount = computed(() => {
   return c ? c.add + c.modify + c.delete + c.moddn : 0
 })
 
-watch(() => props.modelValue, (open) => {
+watch(visible, (open) => {
   if (open) reset()
 })
 
@@ -299,16 +306,25 @@ function reset() {
   applyResult.value = null
 }
 
+function setFile(f: File | null | undefined) {
+  if (!f) return
+  if (!f.name.toLowerCase().endsWith('.ldif')) {
+    error.value = 'Only .ldif files are accepted'
+    return
+  }
+  error.value = ''
+  file.value = f
+}
+
 function onFileSelect(e: Event) {
-  const selected = (e.target as HTMLInputElement).files?.[0]
-  if (selected) file.value = selected
-  ;(e.target as HTMLInputElement).value = ''
+  const input = e.target as HTMLInputElement
+  setFile(input.files?.[0])
+  input.value = '' // allow re-selecting the same file
 }
 
 function onDrop(e: DragEvent) {
   dragging.value = false
-  const dropped = e.dataTransfer?.files?.[0]
-  if (dropped && dropped.name.endsWith('.ldif')) file.value = dropped
+  setFile(e.dataTransfer?.files?.[0])
 }
 
 function formatFileSize(bytes: number): string {
@@ -326,6 +342,12 @@ async function doPreview() {
   if (!file.value) return
   error.value = ''
   busy.value = true
+  // Clear any view state carried over from a previous preview / Back.
+  search.value = ''
+  page.value = 0
+  totalFiltered.value = 0
+  selectedRowNumber.value = null
+  detail.value = null
   try {
     const { data } = await previewLdif(props.directoryId, file.value, conflictHandling.value)
     const s = data as PreviewSummary
@@ -348,8 +370,10 @@ async function doPreview() {
   }
 }
 
+let pageSeq = 0
 async function loadPage(targetPage: number) {
   if (!previewId.value) return
+  const seq = ++pageSeq
   loadingPage.value = true
   try {
     const { data } = await getLdifPreviewPage(props.directoryId, previewId.value, {
@@ -358,14 +382,15 @@ async function loadPage(targetPage: number) {
       page: targetPage,
       size: PAGE_SIZE,
     })
+    if (seq !== pageSeq) return // superseded by a newer filter/search/page request
     const p = data as PreviewPage
     rows.value = p.rows
     totalFiltered.value = p.totalFiltered
     page.value = p.page
   } catch (e) {
-    error.value = errMsg(e)
+    if (seq === pageSeq) error.value = errMsg(e)
   } finally {
-    loadingPage.value = false
+    if (seq === pageSeq) loadingPage.value = false
   }
 }
 
@@ -387,21 +412,38 @@ function changePage(target: number) {
   loadPage(target)
 }
 
+let detailSeq = 0
 async function openRow(row: PreviewRow) {
   selectedRowNumber.value = row.rowNumber
   detail.value = null
   loadingDetail.value = true
+  const seq = ++detailSeq
   try {
     const { data } = await getLdifPreviewRow(props.directoryId, previewId.value, row.rowNumber)
+    if (seq !== detailSeq) return // a different row was opened meanwhile
     detail.value = data as PreviewRowDetail
   } catch (e) {
-    error.value = errMsg(e)
+    if (seq === detailSeq) error.value = errMsg(e)
   } finally {
-    loadingDetail.value = false
+    if (seq === detailSeq) loadingDetail.value = false
   }
 }
 
 async function doApply() {
+  // Importing change records with `changetype: delete` removes entries — make
+  // the destructive part explicit before anything is written.
+  const deletes = summary.value?.countsByOp.delete ?? 0
+  if (deletes > 0) {
+    const ok = await confirm({
+      title: 'Apply destructive import?',
+      message: `This import will permanently DELETE ${deletes.toLocaleString()} `
+        + `${deletes === 1 ? 'entry' : 'entries'} from the directory, alongside the other `
+        + 'changes. This cannot be undone.',
+      confirmLabel: 'Import & delete',
+      danger: true,
+    })
+    if (!ok) return
+  }
   error.value = ''
   busy.value = true
   try {
@@ -427,6 +469,10 @@ function back() {
   summary.value = null
   previewId.value = ''
   rows.value = []
+  page.value = 0
+  totalFiltered.value = 0
+  filter.value = 'ALL'
+  search.value = ''
   selectedRowNumber.value = null
   detail.value = null
   error.value = ''
@@ -460,6 +506,6 @@ function issueIcon(iss: PreviewIssue): string {
 .chip-green { @apply bg-green-100 text-green-800; }
 .chip-amber { @apply bg-amber-100 text-amber-800; }
 .chip-red { @apply bg-red-100 text-red-800; }
-.chip-purple { @apply bg-purple-100 text-purple-800; }
+.chip-blue { @apply bg-blue-100 text-blue-800; }
 .chip-gray { @apply bg-gray-100 text-gray-600; }
 </style>

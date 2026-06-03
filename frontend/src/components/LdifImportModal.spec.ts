@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   getLdifPreviewPage: vi.fn(),
   getLdifPreviewRow: vi.fn(),
   applyLdifPreview: vi.fn(),
+  confirm: vi.fn().mockResolvedValue(true),
 }))
 
 vi.mock('@/api/browse', () => ({
@@ -22,6 +23,8 @@ vi.mock('@/api/browse', () => ({
   getLdifPreviewRow: api.getLdifPreviewRow,
   applyLdifPreview: api.applyLdifPreview,
 }))
+
+vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => api.confirm }))
 
 import LdifImportModal from './LdifImportModal.vue'
 
@@ -80,6 +83,7 @@ describe('LdifImportModal preview flow', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    api.confirm.mockResolvedValue(true)
     api.previewLdif.mockResolvedValue({ data: summary() })
     api.getLdifPreviewPage.mockResolvedValue({ data: { rows: [], page: 0, size: 50, totalFiltered: 0 } })
     api.getLdifPreviewRow.mockResolvedValue({
@@ -134,6 +138,26 @@ describe('LdifImportModal preview flow', () => {
     expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1')
     expect(wrapper.emitted('imported')).toBeTruthy()
     expect(wrapper.text()).toContain('Import Results')
+  })
+
+  it('confirms before applying a destructive (delete) import', async () => {
+    api.previewLdif.mockResolvedValue({
+      data: summary({ countsByOp: { add: 1, modify: 0, delete: 2, moddn: 0, skip: 0, error: 0 } }),
+    })
+    const wrapper = mountModal()
+    await toPreview(wrapper)
+
+    // Declined → nothing applied.
+    api.confirm.mockResolvedValueOnce(false)
+    await byText(wrapper, 'Import (3)')[0].trigger('click')
+    await flushPromises()
+    expect(api.confirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true }))
+    expect(api.applyLdifPreview).not.toHaveBeenCalled()
+
+    // Confirmed → applied.
+    await byText(wrapper, 'Import (3)')[0].trigger('click')
+    await flushPromises()
+    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1')
   })
 
   it('defaults to the Errors filter when the upload has parse errors', async () => {
