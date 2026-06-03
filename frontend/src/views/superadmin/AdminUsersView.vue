@@ -81,10 +81,15 @@
           hint="Used to log in. Cannot be changed after creation." />
         <FormField label="Display name" v-model="form.displayName" placeholder="Optional" />
         <FormField label="Email" v-model="form.email" type="email" placeholder="Optional" />
-        <FormField label="Role" v-model="form.role" type="select" required
+        <FormField label="Role" v-model="form.role" type="select" required :disabled="!!editing"
           :options="[{ value: 'ADMIN', label: 'Admin' }, { value: 'SUPERADMIN', label: 'Superadmin' }]"
-          hint="Superadmins have full platform access. Admins have profile-scoped permissions." />
-        <FormField label="Auth type" v-model="form.authType" type="select" required
+          :hint="editing
+            ? 'Role cannot be changed after creation.'
+            : 'Superadmins have full platform access. Admins have profile-scoped permissions.'" />
+        <!-- Auth type is admin-only: superadmins are LOCAL-only (created via
+             the dedicated superadmin endpoint), so the selector is hidden and
+             LOCAL is forced for that role. -->
+        <FormField v-if="form.role === 'ADMIN'" label="Auth type" v-model="form.authType" type="select" required
           :options="authTypeOptions"
           hint="LOCAL uses a portal password. LDAP authenticates against the configured LDAP directory. OIDC authenticates via SSO. WEBSEAL trusts the iv-user header from IBM Verify Identity Access. Only methods configured in Settings are shown." />
         <FormField v-if="form.authType === 'LOCAL'" label="Password" v-model="form.password" type="password"
@@ -179,13 +184,13 @@
       <template #footer>
         <!-- Footer is consistent across tabs so the operator can fill
              Details, switch to Permissions, and commit from there
-             without a forced trip back. save() already routes
-             correctly per (editing × role): edit re-PUTs account
-             details (perms are inline-saved as the operator
-             interacts); create+ADMIN posts account + draft perms
-             atomically via createAdminWithPermissions; create+SUPERADMIN
-             posts just the account (the Permissions tab is hidden for
-             SUPERADMIN anyway). -->
+             without a forced trip back. save() routes per (editing ×
+             role): ADMIN rows use the /admins endpoints (edit re-PUTs
+             account details with perms inline-saved as the operator
+             interacts; create posts account + draft perms atomically via
+             createAdminWithPermissions). SUPERADMIN rows use the dedicated
+             /superadmins endpoints (which carry the last-active /
+             last-LOCAL guards) — the Permissions tab is hidden for them. -->
         <button @click="showForm = false" class="btn-neutral">Cancel</button>
         <button
           @click="save"
@@ -219,7 +224,6 @@ import { useNotificationStore } from '@/stores/notifications'
 import { useSettingsStore } from '@/stores/settings'
 import {
   listAdmins,
-  createAdmin,
   createAdminWithPermissions,
   updateAdmin,
   deleteAdmin,
@@ -231,6 +235,16 @@ import {
   setFeaturePermissions,
   clearFeaturePermission,
 } from '@/api/adminPermissions'
+// SUPERADMIN rows are managed through the dedicated superadmin endpoints
+// (which carry the last-active / last-LOCAL break-glass guards). The
+// /admins endpoints 404 on superadmin rows by design, so this view routes
+// by role.
+import {
+  createSuperadmin,
+  updateSuperadmin,
+  resetSuperadminPassword,
+  deleteSuperadmin,
+} from '@/api/superadmin'
 import { listAllProfiles } from '@/api/profiles'
 import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
@@ -395,8 +409,11 @@ function switchTab(key: 'details' | 'permissions'): void {
 // profile-scoped). Fall back to Details so the modal body isn't
 // empty.
 watch(() => form.value.role, (role) => {
-  if (role !== 'ADMIN' && activeTab.value === 'permissions') {
-    activeTab.value = 'details'
+  if (role === 'SUPERADMIN') {
+    if (activeTab.value === 'permissions') activeTab.value = 'details'
+    // Superadmins are created LOCAL-only via the dedicated endpoint; force
+    // LOCAL on create. On edit the auth type is fixed and not submitted.
+    if (!editing.value) form.value.authType = 'LOCAL'
   }
 })
 
@@ -489,7 +506,21 @@ async function save(): Promise<void> {
   if (!form.value.username.trim()) return
   saving.value = true
   try {
-    if (editing.value) {
+    if (editing.value && form.value.role === 'SUPERADMIN') {
+      // SUPERADMIN edit routes to the superadmin endpoints, which enforce
+      // the last-active / last-LOCAL guards. Update accepts only display
+      // name / email / active; a password change (LOCAL only) goes through
+      // the dedicated reset endpoint.
+      await updateSuperadmin(editing.value, {
+        displayName: form.value.displayName,
+        email: form.value.email,
+        active: form.value.active,
+      })
+      if (form.value.authType === 'LOCAL' && form.value.password) {
+        await resetSuperadminPassword(editing.value, { newPassword: form.value.password })
+      }
+      notif.success('Superadmin updated')
+    } else if (editing.value) {
       await updateAdmin(editing.value, form.value)
       notif.success('Admin user updated')
     } else if (form.value.role === 'ADMIN') {
@@ -509,9 +540,15 @@ async function save(): Promise<void> {
       })
       notif.success('Admin user created')
     } else {
-      // SUPERADMIN create — no profile/feature scoping applies.
-      await createAdmin(form.value)
-      notif.success('Admin user created')
+      // SUPERADMIN create — LOCAL-only with a password, via the dedicated
+      // endpoint (no profile/feature scoping applies to superadmins).
+      await createSuperadmin({
+        username: form.value.username,
+        password: form.value.password,
+        displayName: form.value.displayName,
+        email: form.value.email,
+      })
+      notif.success('Superadmin created')
     }
 
     // Profile-less reminder. ADMINs without at least one profile
@@ -547,8 +584,15 @@ function confirmDelete(row: AdminRow): void {
 async function doDelete(): Promise<void> {
   if (!deleteTarget.value) return
   try {
-    await deleteAdmin(deleteTarget.value.id)
-    notif.success('Admin user deleted')
+    // Route by role: superadmin deletes go through the superadmin endpoint
+    // so the last-active / last-LOCAL break-glass guards apply.
+    if (deleteTarget.value.role === 'SUPERADMIN') {
+      await deleteSuperadmin(deleteTarget.value.id)
+      notif.success('Superadmin deleted')
+    } else {
+      await deleteAdmin(deleteTarget.value.id)
+      notif.success('Admin user deleted')
+    }
     await load()
   } catch (e) {
     notif.error(errMsg(e))
