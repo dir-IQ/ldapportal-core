@@ -15,7 +15,7 @@
             <option v-for="p in allProfiles" :key="p.id" :value="p.id">{{ p.name }}</option>
           </select>
         </div>
-        <button @click="openCreate" class="btn-primary">+ New Group</button>
+        <button v-if="can.createDelete" @click="openCreate" class="btn-primary">+ New Group</button>
       </div>
     </div>
 
@@ -53,6 +53,7 @@
     >
       <template #toolbar>
         <button
+          v-if="can.exportCsv"
           @click="doExportGroups"
           :disabled="exporting"
           class="btn-secondary text-xs"
@@ -69,11 +70,11 @@
       </template>
       <template #cell-actions="{ row }">
         <ActionMenu :items="[
-          { label: 'Members', onClick: () => openMembers(row as unknown as GroupRow) },
-          { label: 'Delete',  onClick: () => confirmDelete(row as unknown as GroupRow), danger: true },
+          { label: 'Members', onClick: () => openMembers(row as unknown as GroupRow), hidden: !can.manageMembers },
+          { label: 'Delete',  onClick: () => confirmDelete(row as unknown as GroupRow), danger: true, hidden: !can.createDelete },
         ]">
           <template #primary>
-            <button @click="openEdit(row as unknown as GroupRow)" class="btn-secondary btn-compact">Edit</button>
+            <button v-if="can.edit" @click="openEdit(row as unknown as GroupRow)" class="btn-secondary btn-compact">Edit</button>
           </template>
         </ActionMenu>
       </template>
@@ -147,6 +148,10 @@
         <label for="gl-bulk-members" class="block text-xs font-medium text-gray-600 mb-1">Add multiple members (one DN per line)</label>
         <textarea id="gl-bulk-members" v-model="bulkMemberDns" rows="4" placeholder="cn=Alice,ou=Users,dc=example,dc=com&#10;cn=Bob,ou=Users,dc=example,dc=com"
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2"></textarea>
+        <p v-if="bulkInvalidLines.length" class="mb-2 text-xs text-amber-700">
+          {{ bulkInvalidLines.length }} line{{ bulkInvalidLines.length === 1 ? '' : 's' }} don't look like a DN
+          (expected e.g. <span class="font-mono">cn=Alice,ou=Users,dc=example,dc=com</span>) — they'll be sent as-is and may fail.
+        </p>
         <div v-if="bulkResult" class="mb-2 p-2 rounded-lg text-xs" :class="bulkResult.failed ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-green-50 border border-green-200 text-green-800'">
           Added {{ bulkResult.added }}, failed {{ bulkResult.failed }}.
           <ul v-if="bulkResult.errors?.length" class="mt-1 list-disc pl-4">
@@ -180,6 +185,7 @@ import { useApi, downloadBlob } from '@/composables/useApi'
 import * as groupsApi from '@/api/groups'
 import { exportGroupCsv } from '@/api/csvTemplates'
 import { listProfiles } from '@/api/profiles'
+import { usePermissions } from '@/composables/usePermissions'
 import ResultsTable from '@/components/ResultsTable.vue'
 import LdapFilterBuilder from '@/components/LdapFilterBuilder.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
@@ -232,6 +238,21 @@ const route = useRoute()
 const notif = useNotificationStore()
 const { loading, call } = useApi()
 
+// Feature gating for the action surface. Mirrors the backend
+// @RequiresFeature checks on GroupController so an admin only sees the
+// verbs they're granted (the server still enforces; this just avoids
+// showing actions that would 403). The effective feature set comes from
+// /auth/me — superadmins get every feature, admins their base-role
+// defaults + overrides — so gating never hides an action the caller can
+// actually perform.
+const { hasFeature } = usePermissions()
+const can = computed(() => ({
+  createDelete:  hasFeature('group.create_delete'),
+  edit:          hasFeature('group.edit'),
+  manageMembers: hasFeature('group.manage_members'),
+  exportCsv:     hasFeature('bulk.export'),
+}))
+
 const dirId         = route.params.dirId as string
 const groups        = ref<GroupRow[]>([])
 // Cap-hit signal — directory had at least FETCH_LIMIT matching
@@ -279,12 +300,46 @@ const createForm    = ref<CreateForm>({ parentDn: '', cn: '', objectClass: 'grou
 const editForm      = ref({ owner: '', description: '' })
 const editingDn     = ref<string | null>(null)
 
+/**
+ * Escape an RDN attribute value per RFC 4514 so a group name containing
+ * DN-special characters (comma, +, ", \, <, >, ;, =, leading/trailing
+ * space, leading #) produces a valid DN rather than a malformed one.
+ * The attribute value itself (sent in `attributes.cn`) stays unescaped —
+ * only the copy embedded in the DN needs escaping.
+ */
+function escapeRdnValue(v: string): string {
+  return v
+    .replace(/([\\,+"<>;=])/g, '\\$1')
+    .replace(/^([ #])/, '\\$1')
+    .replace(/ $/, '\\ ')
+}
+
+// `cn` is the RDN attribute for every group objectClass this app
+// supports (groupOfNames / groupOfUniqueNames / posixGroup / group /
+// groupOfURLs all key on cn), so the RDN type is fixed; only the value
+// is variable and must be escaped.
 const computedGroupDn = computed(() => {
   const cn = createForm.value.cn?.trim()
   const base = createForm.value.parentDn
   if (!cn || !base) return ''
-  return `cn=${cn},${base}`
+  return `cn=${escapeRdnValue(cn)},${base}`
 })
+
+// Bulk member values target the group's member / uniqueMember attribute,
+// which are DN-valued — flag lines that don't look like a DN so typos
+// (e.g. a pasted bare username) are caught before the round-trip. Soft
+// warning only: the lines are still submitted, since the heuristic can't
+// be authoritative.
+function looksLikeDn(s: string): boolean {
+  return /=/.test(s) && /,/.test(s)
+}
+const bulkInvalidLines = computed(() =>
+  bulkMemberDns.value
+    .split('\n')
+    .map(s => s.trim())
+    .filter(Boolean)
+    .filter(line => !looksLikeDn(line)),
+)
 
 // Curated default-visible attributes for group lists. See the
 // matching block in UserListView.vue for the full rationale —
