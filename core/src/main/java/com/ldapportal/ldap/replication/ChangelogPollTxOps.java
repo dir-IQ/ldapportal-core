@@ -101,7 +101,16 @@ public class ChangelogPollTxOps {
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void recordError(UUID linkId, String error, OffsetDateTime now) {
-        linkRepo.recordChangelogPollError(linkId,
-                error == null ? null : error.substring(0, Math.min(error.length(), ERROR_MAX)), now);
+        linkRepo.recordChangelogPollError(linkId, truncate(error), now);
+    }
+
+    /** Disable the link after a non-self-healing config error (§7A.7). */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void disableForConfigError(UUID linkId, String error, OffsetDateTime now) {
+        linkRepo.disableChangelogForConfigError(linkId, truncate(error), now);
+    }
+
+    private static String truncate(String error) {
+        return error == null ? null : error.substring(0, Math.min(error.length(), ERROR_MAX));
     }
 }

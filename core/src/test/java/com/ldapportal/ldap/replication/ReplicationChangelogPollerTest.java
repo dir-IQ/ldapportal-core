@@ -270,12 +270,64 @@ class ReplicationChangelogPollerTest {
 
         poller.pollLink(LINK);
 
+        verify(reconciliationService).trigger(eq(LINK), eq(ReconciliationRunTrigger.MANUAL), any());
         verify(txOps).markGap(eq(LINK), eq(10L), eq(499L), eq(2000L), any());
         verify(auditService).recordSystemEventNoActor(
                 eq(AuditAction.REPLICATION_CHANGELOG_GAP_DETECTED), anyMap());
-        verify(reconciliationService).trigger(eq(LINK), eq(ReconciliationRunTrigger.MANUAL), any());
         verify(txOps, never()).advance(any(), anyLong(), anyLong(), anyLong(), any(), any());
         verify(persister, never()).saveAll(any());
+    }
+
+    @Test
+    void gap_reconcileTriggerFails_doesNotFastForwardOrAudit() {
+        // If the gap-recovery reconcile can't be triggered, leave the cursor so
+        // the next poll re-detects and retries — never skip the span unrepaired.
+        claim(10L);
+        stubReadWithFirst(2000L, 500L, List.of());
+        when(reconciliationService.trigger(any(), any(), any()))
+                .thenThrow(new RuntimeException("reconciliation DB unavailable"));
+
+        poller.pollLink(LINK);
+
+        verify(txOps, never()).markGap(any(), anyLong(), anyLong(), anyLong(), any());
+        verify(auditService, never()).recordSystemEventNoActor(
+                eq(AuditAction.REPLICATION_CHANGELOG_GAP_DETECTED), anyMap());
+        verify(txOps, never()).advance(any(), anyLong(), anyLong(), anyLong(), any(), any());
+    }
+
+    @Test
+    void configError_disablesLink_notTransientRecord() {
+        claim(0L);
+        when(connectionFactory.withConnectionUnreplicated(eq(source), any()))
+                .thenThrow(new RuntimeException("LDAP bind failed: invalid credentials"));
+
+        poller.pollLink(LINK);
+
+        verify(txOps).disableForConfigError(eq(LINK), any(), any());
+        verify(txOps, never()).recordError(any(), any(), any());
+        verify(txOps).release(LINK);
+    }
+
+    @Test
+    void transientError_recordsError_notDisable() {
+        claim(0L);
+        when(connectionFactory.withConnectionUnreplicated(eq(source), any()))
+                .thenThrow(new RuntimeException("connection reset by peer"));
+
+        poller.pollLink(LINK);
+
+        verify(txOps).recordError(eq(LINK), any(), any());
+        verify(txOps, never()).disableForConfigError(any(), any(), any());
+    }
+
+    @Test
+    void alreadyDisabledConfigError_isSkipped_noRead() {
+        claim(0L, null, ChangelogHealth.DISABLED_CONFIG_ERROR);
+
+        poller.pollLink(LINK);
+
+        verify(connectionFactory, never()).withConnectionUnreplicated(any(), any());
+        verify(txOps).release(LINK);
     }
 
     // ── helpers ─────────────────────────────────────────────────────────────

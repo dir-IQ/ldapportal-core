@@ -634,6 +634,30 @@ class ReplicationLinkServiceTest {
                 eq(com.ldapportal.entity.enums.ReconciliationRunTrigger.MANUAL), eq(principal));
     }
 
+    @Test
+    void update_enablingChangelogLink_triggersSeamReconcile() {
+        // §7A.8: enabling a previously-disabled link converges the target via a
+        // one-off reconcile (capture mode unchanged, no filter change).
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        ReplicationLink existing = changelogLink();
+        existing.setSourceDirectory(source);
+        existing.setTargetDirectory(target);
+        existing.setEnabled(false);   // was disabled
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateLink(principal, existing.getId(), new ReplicationLinkRequest(
+                "Changelog", source.getId(), target.getId(), null, null, true, false, List.of(),  // enabled now
+                false, null, null, null, null,
+                ReplicationCaptureMode.CHANGELOG, ChangelogFormat.DSEE_CHANGELOG, "cn=changelog", null));
+
+        verify(reconciliationService).trigger(eq(existing.getId()),
+                eq(com.ldapportal.entity.enums.ReconciliationRunTrigger.MANUAL), eq(principal));
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private ReplicationLink changelogLink() {

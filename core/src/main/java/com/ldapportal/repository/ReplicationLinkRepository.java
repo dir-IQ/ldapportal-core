@@ -230,6 +230,25 @@ public interface ReplicationLinkRepository extends JpaRepository<ReplicationLink
                                   @Param("error") String error,
                                   @Param("now") OffsetDateTime now);
 
+    /**
+     * Disable polling after a config-class error (bad bind / invalid DN /
+     * unreadable changelog base) — these don't self-heal, so the poller stops
+     * touching the link (it skips DISABLED_CONFIG_ERROR) until an operator fixes
+     * the config and hits re-enable. Surfaced via health + lastError (§7A.7).
+     */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogHealth = com.ldapportal.entity.enums.ChangelogHealth.DISABLED_CONFIG_ERROR,
+               l.changelogLastError = :error,
+               l.changelogLastErrorAt = :now,
+               l.changelogLastPolledAt = :now
+         WHERE l.id = :id
+        """)
+    void disableChangelogForConfigError(@Param("id") UUID id,
+                                        @Param("error") String error,
+                                        @Param("now") OffsetDateTime now);
+
     // ── Operator remediation (§7A.12) ─────────────────────────────────────────
 
     /**

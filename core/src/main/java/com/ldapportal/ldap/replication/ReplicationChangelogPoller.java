@@ -212,19 +212,37 @@ public class ReplicationChangelogPoller {
         try {
             doPoll(linkId, claim.get(), now);
         } catch (RuntimeException ex) {
-            log.warn("Changelog poll error for link {}: {}", linkId, ex.toString());
-            txOps.recordError(linkId, ex.toString(), now);
+            if (isConfigError(ex)) {
+                // A non-self-healing config/credential error: stop polling the
+                // link (DISABLED_CONFIG_ERROR) until an operator fixes it and
+                // re-enables — retrying every tick would just churn + audit-spam.
+                log.error("Changelog polling disabled for link {} (config error): {}", linkId, ex.toString());
+                txOps.disableForConfigError(linkId, ex.toString(), now);
+            } else {
+                log.warn("Changelog poll error for link {}: {}", linkId, ex.toString());
+                txOps.recordError(linkId, ex.toString(), now);
+            }
         } finally {
             txOps.release(linkId);
         }
     }
 
+    private static boolean isConfigError(Throwable ex) {
+        String msg = ex.getMessage();
+        if (msg == null) return false;
+        String lower = msg.toLowerCase(Locale.ROOT);
+        return lower.contains("invalid dn")
+                || lower.contains("invalid credentials")
+                || lower.contains("no such object");
+    }
+
     private void doPoll(UUID linkId, ClaimedPoll cp, OffsetDateTime now) {
-        // A cursor-reset link is halted until an operator reseeds (which clears
-        // the health and the cursor — e.g. the capture-mode toggle). Skip it
-        // entirely: re-detecting + re-auditing every poll would storm the audit
-        // log / SIEM, and re-reading the changelog is wasted work.
-        if (cp.health() == ChangelogHealth.CURSOR_RESET) return;
+        // Halted states wait for an operator: CURSOR_RESET needs a reseed (or
+        // capture-mode toggle); DISABLED_CONFIG_ERROR needs a config fix +
+        // re-enable. Skip entirely — re-detecting/re-auditing every poll would
+        // storm the audit log / SIEM, and re-reading the changelog is wasted.
+        if (cp.health() == ChangelogHealth.CURSOR_RESET
+                || cp.health() == ChangelogHealth.DISABLED_CONFIG_ERROR) return;
 
         ReplicationLinkSnapshot snap = readOps.snapshotById(linkId).orElse(null);
         if (snap == null) return;
@@ -263,19 +281,21 @@ public class ReplicationChangelogPoller {
             return;
         }
 
-        // §7A.1 gap: entries were trimmed before we read them. Fast-forward past
-        // the lost span and let reconciliation repair it; never a silent skip.
+        // §7A.1 gap: entries were trimmed before we read them. The lost span is
+        // repaired by reconciliation, so trigger that FIRST and only fast-forward
+        // the cursor once a reconcile is durably running — otherwise a failed
+        // trigger would skip the span with nothing to repair it. On trigger
+        // failure we leave the cursor; the next poll re-detects the gap and
+        // retries (audit fires only when we actually fast-forward, so no storm).
         Long first = page.firstChangeNumber();
         if (first != null && cursor + 1 < first) {
             long fastForward = first - 1;
-            if (txOps.markGap(linkId, cursor, fastForward, head, now)) {
+            if (triggerReconcile(linkId) && txOps.markGap(linkId, cursor, fastForward, head, now)) {
                 audit(AuditAction.REPLICATION_CHANGELOG_GAP_DETECTED,
                         detail(linkId, "cursor", cursor, "firstChangeNumber", first,
                                 "fastForwardedTo", fastForward));
                 log.error("Changelog gap for link {}: cursor {} below firstChangeNumber {} — "
-                        + "fast-forwarding to {} and triggering reconciliation",
-                        linkId, cursor, first, fastForward);
-                triggerReconcile(linkId);
+                        + "fast-forwarded to {}, reconciliation triggered", linkId, cursor, first, fastForward);
             }
             return;
         }
@@ -366,13 +386,18 @@ public class ReplicationChangelogPoller {
         return Math.max(0L, head - cursor) > lagThreshold ? ChangelogHealth.LAGGING : ChangelogHealth.HEALTHY;
     }
 
-    private void triggerReconcile(UUID linkId) {
+    /** @return true if a reconcile is now running (started, or already in progress); false if the trigger threw. */
+    private boolean triggerReconcile(UUID linkId) {
         try {
             // MANUAL fires independent of reconcileEnabled — a changelog link can
             // use capture without periodic reconciliation yet still get repaired.
+            // An empty result means a run is already in progress, which still
+            // repairs the gap — so either way the repair is durably underway.
             reconciliationService.trigger(linkId, ReconciliationRunTrigger.MANUAL, null);
+            return true;
         } catch (RuntimeException ex) {
             log.error("Gap-recovery reconciliation trigger failed for link {}: {}", linkId, ex.toString());
+            return false;
         }
     }
 

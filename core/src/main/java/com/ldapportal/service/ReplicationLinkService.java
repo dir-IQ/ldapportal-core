@@ -147,13 +147,15 @@ public class ReplicationLinkService {
             auditService.recordSystemEvent(principal, RECONCILIATION_CONFIG_UPDATED, reconcileAuditDetail(link));
         }
         afterCaptureModeSwitch(principal, link, captureBefore);
-        // §7B.5: changing the exclude filter changes the replicated set —
-        // converge the target via a one-off reconcile (after commit). Skip if a
-        // capture-mode switch already scheduled one (single-flight collapses
-        // duplicates anyway), and only for an enabled link.
+        // Converge the target via a one-off reconcile (after commit) when the
+        // replicated set changes without a capture-mode switch (which already
+        // schedules one): the link was just ENABLED (§7A.8 — "enabling a link in
+        // either mode auto-triggers") or its exclude filter changed (§7B.5).
+        // Single-flight collapses any overlap; only for an enabled link.
         boolean captureChanged = link.getCaptureMode() != captureBefore;
-        if (!captureChanged && link.isEnabled()
-                && !Objects.equals(link.getExcludeFilter(), excludeFilterBefore)) {
+        boolean justEnabled    = !wasEnabled && link.isEnabled();
+        boolean filterChanged  = !Objects.equals(link.getExcludeFilter(), excludeFilterBefore);
+        if (!captureChanged && link.isEnabled() && (justEnabled || filterChanged)) {
             UUID linkId = link.getId();
             afterCommit(() -> triggerSeamReconcile(linkId, principal));
         }
