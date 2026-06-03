@@ -105,6 +105,13 @@ public final class OudChangelogChangeParser {
                         "Malformed 'changes' LDIF on add changeLogEntry: " + e.getMessage(), e);
             }
         }
+        // A real add always carries at least objectClass; an attribute-less add
+        // would produce an invalid target write. Treat it as a poison entry so
+        // the poller dead-letters it rather than emitting a broken operation.
+        if (attributes.isEmpty()) {
+            throw new ChangelogParseException(
+                    "Add changeLogEntry carries no attributes in 'changes'", null);
+        }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("attributes", attributes);
         return payload;
@@ -142,15 +149,28 @@ public final class OudChangelogChangeParser {
                 modifications.add(mod);
             }
         }
+        // A real modify records at least one modification; an empty one would
+        // be a no-op the server rejects. Dead-letter rather than emit it.
+        if (modifications.isEmpty()) {
+            throw new ChangelogParseException(
+                    "Modify changeLogEntry carries no modifications in 'changes'", null);
+        }
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("modifications", modifications);
         return payload;
     }
 
     private static Map<String, Object> parseModifyDn(SearchResultEntry entry) {
+        String newRdn = entry.getAttributeValue("newRDN");
+        // newRDN is mandatory for a rename/move; without it the operation is
+        // meaningless (a rename-to-null). Dead-letter rather than emit it.
+        if (newRdn == null || newRdn.isBlank()) {
+            throw new ChangelogParseException(
+                    "Modrdn changeLogEntry is missing newRDN", null);
+        }
         String newSuperior = entry.getAttributeValue("newSuperior");
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("newRdn", entry.getAttributeValue("newRDN"));
+        payload.put("newRdn", newRdn);
         payload.put("deleteOldRdn", parseBoolean(entry.getAttributeValue("deleteOldRDN")));
         payload.put("newSuperiorDn",
                 (newSuperior == null || newSuperior.isBlank()) ? null : newSuperior);
@@ -161,8 +181,13 @@ public final class OudChangelogChangeParser {
 
     /**
      * Split an LDIF blob into lines for the UnboundID decoder. Preserves
-     * leading spaces (LDIF line folding) but normalises CRLF and drops trailing
-     * blank lines (an LDIF record terminator we don't want mid-decode).
+     * leading spaces (LDIF line folding) and normalises CRLF, but drops every
+     * zero-length line — leading, interior, or trailing. We always feed a
+     * <b>single</b> LDIF record to the decoder, so a blank line is never a
+     * meaningful record separator here; left in place, the decoder treats one
+     * as a record terminator and throws. Dropping them makes parsing resilient
+     * to stray newlines without changing the decoded result. (A whitespace-only
+     * line is a folding continuation, not blank, so it is kept.)
      */
     private static List<String> splitLdifLines(String blob) {
         if (blob == null || blob.isBlank()) {
@@ -171,16 +196,24 @@ public final class OudChangelogChangeParser {
         String[] raw = blob.split("\n", -1);
         List<String> lines = new ArrayList<>(raw.length);
         for (String r : raw) {
-            lines.add(r.endsWith("\r") ? r.substring(0, r.length() - 1) : r);
-        }
-        while (!lines.isEmpty() && lines.get(lines.size() - 1).isEmpty()) {
-            lines.remove(lines.size() - 1);
+            String line = r.endsWith("\r") ? r.substring(0, r.length() - 1) : r;
+            if (!line.isEmpty()) {
+                lines.add(line);
+            }
         }
         return lines;
     }
 
-    /** OUD writes {@code TRUE}/{@code FALSE}; treat {@code TRUE}/{@code 1} as true. */
+    /**
+     * Parse an LDAP changelog boolean. OUD writes {@code TRUE}/{@code FALSE};
+     * the draft-good-ldap-changelog format uses {@code 1}/{@code 0}. Trim first
+     * so a stray surrounding space doesn't silently read as false.
+     */
     private static boolean parseBoolean(String value) {
-        return "TRUE".equalsIgnoreCase(value) || "1".equals(value);
+        if (value == null) {
+            return false;
+        }
+        String v = value.trim();
+        return "TRUE".equalsIgnoreCase(v) || "1".equals(v);
     }
 }
