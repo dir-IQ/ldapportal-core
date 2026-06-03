@@ -157,6 +157,30 @@ class ReplicationChangelogPollerTest {
     }
 
     @Test
+    void nonNumericChangeNumber_isSkipped_doesNotWedgeLink() {
+        // A present-but-non-numeric changeNumber must not NPE the sort/loop and
+        // wedge the link — it's filtered out; the valid entry still processes.
+        claim(0L);
+        SearchResultEntry bad = new SearchResultEntry("changeNumber=x,cn=changelog",
+                new Attribute[]{
+                        new Attribute("changeNumber", "not-a-number"),
+                        new Attribute("changeType", "delete"),
+                        new Attribute("targetDN", "uid=bad,dc=src,dc=com")});
+        stubRead(7L, List.of(
+                bad,
+                changelogEntry(7, "delete", "uid=ok,dc=src,dc=com", null, null)));
+        when(eventRepo.findExistingChangelogNumbers(eq(LINK), any())).thenReturn(List.of());
+
+        poller.pollLink(LINK);
+
+        ArgumentCaptor<List<PendingReplicationEvent>> cap = captor();
+        verify(persister).saveAll(cap.capture());
+        assertThat(cap.getValue()).singleElement()
+                .satisfies(e -> assertThat(e.sourceChangeNumber()).isEqualTo(7L));
+        verify(txOps).advance(eq(LINK), eq(0L), eq(7L), eq(7L), any());
+    }
+
+    @Test
     void noNewEntries_recordsObservationNotAdvance() {
         claim(5L);
         stubRead(5L, List.of());                      // head == cursor, nothing new

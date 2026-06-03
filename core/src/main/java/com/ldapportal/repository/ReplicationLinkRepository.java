@@ -96,7 +96,7 @@ public interface ReplicationLinkRepository extends JpaRepository<ReplicationLink
      * iff the link is an enabled CHANGELOG link and the lease is free or stale.
      * Returns 1 to the winner, 0 to losers — mirrors {@code ReconciliationTxOps}.
      */
-    @Modifying
+    @Modifying(clearAutomatically = true)
     @Query("""
         UPDATE ReplicationLink l
            SET l.changelogPollClaimedAt = :now

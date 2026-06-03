@@ -279,18 +279,27 @@ public class ReplicationChangelogPoller {
             try {
                 result = iface.search(strategy.buildSearchRequest(ctx, maxPerPoll));
             } catch (LDAPSearchException se) {
-                // SIZE_LIMIT_EXCEEDED returns the lowest N (server-side sorted);
-                // take the partial page and continue from its max next poll.
+                // SIZE_LIMIT_EXCEEDED returns the lowest N (server-side sorted /
+                // natural append order); take the partial page and continue from
+                // its max next poll. Warn so a sustained backlog is visible — the
+                // multi-page catch-up budget is a C3R refinement.
+                log.warn("Changelog page truncated for source [{}] ({} entries, more pending) — "
+                                + "draining incrementally", source.getDisplayName(), maxPerPoll);
                 result = se.getSearchResult();
             }
             return new PollPage(head, new ArrayList<>(result.getSearchEntries()));
         });
     }
 
-    /** Entries with a changeNumber strictly above the cursor, in ascending order. */
+    /** Entries with a (parseable) changeNumber strictly above the cursor, ascending. */
     private static List<SearchResultEntry> ascendingByChangeNumber(List<SearchResultEntry> entries, long cursor) {
+        // Filter on getAttributeValueAsLong (not getAttributeValue): a present
+        // but non-numeric changeNumber returns null here, and unboxing it in the
+        // > comparison or the comparator would NPE and wedge the link. A
+        // malformed entry is skipped (reconciliation re-derives it) rather than
+        // stalling the whole link.
         return entries.stream()
-                .filter(e -> e.getAttributeValue("changeNumber") != null)
+                .filter(e -> e.getAttributeValueAsLong("changeNumber") != null)
                 .filter(e -> e.getAttributeValueAsLong("changeNumber") > cursor)
                 .sorted(Comparator.comparingLong(e -> e.getAttributeValueAsLong("changeNumber")))
                 .toList();
