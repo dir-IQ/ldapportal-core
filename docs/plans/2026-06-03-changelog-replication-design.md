@@ -1,15 +1,20 @@
 # Changelog-driven replication — design plan
 
 - **Date:** 2026-06-03
-- **Status:** In progress (Phase C1 landed — `V15` schema, `capture_mode` /
-  changelog / liveness / lease / health columns + `source_change_number` dedup
-  index, `ReplicationCaptureMode` + `ChangelogHealth` enums, entity + snapshot
-  fields, DTO plumbing, and service validation (mode exclusivity, format
-  rejection, exclude-filter parse). C2+ not started. Design also carries
-  reliability/observability hardening (§7A), exclude-filter scoping (§7B), and
-  a 2nd correctness/perf review (findings RF-1 cursor wording, RF-2 worker FIFO
-  tiebreak, RF-3 real `source_change_number` column, RF-4 bounded poller
-  executor) — 2026-06-03).
+- **Status:** In progress (Phases C1–C2 landed. C1: `V15` schema,
+  `capture_mode` / changelog / liveness / lease / health columns +
+  `source_change_number` dedup index, `ReplicationCaptureMode` +
+  `ChangelogHealth` enums, entity + snapshot fields, DTO plumbing, service
+  validation. C2: generalized the `ChangelogStrategy` SPI onto a neutral
+  `ChangelogReadContext` (audit reader + `AuditDataSourceService` migrated),
+  added the `extractChange` → `ChangelogChange` method, the DSEE incremental
+  `changeNumber` clause, and the `OudChangelogChangeParser` (add / modify /
+  delete / modrdn, base64, folded lines, whole-attr delete, options/`;binary`)
+  with `ChangelogParseException` for poison entries. C3+ not started. Design
+  also carries reliability/observability hardening (§7A), exclude-filter
+  scoping (§7B), and a 2nd correctness/perf review (findings RF-1 cursor
+  wording, RF-2 worker FIFO tiebreak, RF-3 real `source_change_number` column,
+  RF-4 bounded poller executor) — 2026-06-03).
 - **Suggested branch:** `feat/changelog-replication` (already cut; this doc
   lives on it).
 - **Scope:** Add a second **capture mode** to an existing replication link.

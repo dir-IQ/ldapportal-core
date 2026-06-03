@@ -7,6 +7,7 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.exception.LdapConnectionException;
 import com.ldapportal.ldap.changelog.AccesslogStrategy;
+import com.ldapportal.ldap.changelog.ChangelogReadContext;
 import com.ldapportal.ldap.changelog.ChangelogStrategy;
 import com.ldapportal.ldap.changelog.DirSyncChangelogStrategy;
 import com.ldapportal.ldap.changelog.DseeChangelogStrategy;
@@ -172,7 +173,12 @@ public class LdapChangelogReader {
                 .toList();
 
         try (LDAPConnection conn = openConnection(src)) {
-            SearchRequest searchReq = strategy.buildSearchRequest(src, MAX_CHANGELOG_ENTRIES_PER_POLL);
+            // The audit path passes afterChangeNumber = null: it scans the
+            // changelog each poll and dedups via the audit_events table rather
+            // than advancing a cursor (the replication poller, C3, passes one).
+            ChangelogReadContext ctx = new ChangelogReadContext(
+                    src.getChangelogBaseDn(), src.getBranchFilterDn(), null);
+            SearchRequest searchReq = strategy.buildSearchRequest(ctx, MAX_CHANGELOG_ENTRIES_PER_POLL);
 
             // For AD DirSync: attach the DirSync control with the persisted cookie
             if (src.getChangelogFormat() == com.ldapportal.entity.enums.ChangelogFormat.AD_DIRSYNC) {

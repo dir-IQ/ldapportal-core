@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.changelog;
 
-import com.ldapportal.entity.AuditDataSource;
-import com.ldapportal.entity.enums.ChangelogFormat;
+import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResultEntry;
@@ -12,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -23,8 +23,8 @@ class DseeChangelogStrategyTest {
 
     @Test
     void buildSearchRequest_noFilter() throws Exception {
-        AuditDataSource src = newSource("cn=changelog", null);
-        SearchRequest req = strategy.buildSearchRequest(src, 100);
+        ChangelogReadContext ctx = newContext("cn=changelog", null, null);
+        SearchRequest req = strategy.buildSearchRequest(ctx, 100);
 
         assertThat(req.getBaseDN()).isEqualTo("cn=changelog");
         assertThat(req.getScope()).isEqualTo(SearchScope.ONE);
@@ -34,11 +34,56 @@ class DseeChangelogStrategyTest {
 
     @Test
     void buildSearchRequest_withBranchFilter() throws Exception {
-        AuditDataSource src = newSource("cn=changelog", "ou=users,dc=example,dc=com");
-        SearchRequest req = strategy.buildSearchRequest(src, 50);
+        ChangelogReadContext ctx = newContext("cn=changelog", "ou=users,dc=example,dc=com", null);
+        SearchRequest req = strategy.buildSearchRequest(ctx, 50);
 
         assertThat(req.getFilter().toString())
                 .isEqualTo("(&(objectClass=changeLogEntry)(targetDN=ou=users,dc=example,dc=com*))");
+    }
+
+    @Test
+    void buildSearchRequest_withCursor_addsIncrementalChangeNumberClause() throws Exception {
+        // Poller path: afterChangeNumber = cursor → search changeNumber > cursor
+        // (i.e. >= cursor + 1). The exclusive cursor becomes an inclusive +1.
+        ChangelogReadContext ctx = newContext("cn=changelog", null, 41L);
+        SearchRequest req = strategy.buildSearchRequest(ctx, 500);
+
+        assertThat(req.getFilter().toString())
+                .isEqualTo("(&(objectClass=changeLogEntry)(changeNumber>=42))");
+    }
+
+    @Test
+    void buildSearchRequest_withCursorAndBranch_combinesBothClauses() throws Exception {
+        ChangelogReadContext ctx = newContext("cn=changelog", "ou=users,dc=example,dc=com", 100L);
+        SearchRequest req = strategy.buildSearchRequest(ctx, 500);
+
+        assertThat(req.getFilter().toString()).isEqualTo(
+                "(&(objectClass=changeLogEntry)(changeNumber>=101)(targetDN=ou=users,dc=example,dc=com*))");
+    }
+
+    // ── extractChange (delegates to OudChangelogChangeParser) ─────────────────
+
+    @Test
+    void extractChange_delegatesToParser_forModify() {
+        SearchResultEntry entry = entry(
+                new Attribute("changeType", "modify"),
+                new Attribute("targetDN", "uid=john,ou=users,dc=test"),
+                new Attribute("changes", "replace: mail\nmail: new@test.com\n-"));
+
+        Optional<ChangelogChange> change = strategy.extractChange(entry);
+
+        assertThat(change).isPresent();
+        assertThat(change.get().operation()).isEqualTo(ReplicationOperationType.MODIFY);
+        assertThat(change.get().sourceDn()).isEqualTo("uid=john,ou=users,dc=test");
+    }
+
+    @Test
+    void extractChange_emptyForUnknownChangeType() {
+        SearchResultEntry entry = entry(
+                new Attribute("changeType", "bogus"),
+                new Attribute("targetDN", "uid=john,ou=users,dc=test"));
+
+        assertThat(strategy.extractChange(entry)).isEmpty();
     }
 
     // ── extractEntryId ───────────────────────────────────────────────────────
@@ -180,12 +225,8 @@ class DseeChangelogStrategyTest {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private static AuditDataSource newSource(String baseDn, String branchFilterDn) {
-        AuditDataSource src = new AuditDataSource();
-        src.setChangelogBaseDn(baseDn);
-        src.setBranchFilterDn(branchFilterDn);
-        src.setChangelogFormat(ChangelogFormat.DSEE_CHANGELOG);
-        return src;
+    private static ChangelogReadContext newContext(String baseDn, String branchFilterDn, Long afterChangeNumber) {
+        return new ChangelogReadContext(baseDn, branchFilterDn, afterChangeNumber);
     }
 
     private static SearchResultEntry entry(Attribute... attrs) {

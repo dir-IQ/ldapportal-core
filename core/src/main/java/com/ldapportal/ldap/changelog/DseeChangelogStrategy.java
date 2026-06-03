@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.changelog;
 
-import com.ldapportal.entity.AuditDataSource;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResultEntry;
@@ -17,6 +16,7 @@ import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoField;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Strategy for Oracle DSEE / UnboundID-style {@code cn=changelog} entries
@@ -43,14 +43,29 @@ public class DseeChangelogStrategy implements ChangelogStrategy {
                     .toFormatter();
 
     @Override
-    public SearchRequest buildSearchRequest(AuditDataSource src, int sizeLimit) throws LDAPException {
-        String filter = "(objectClass=changeLogEntry)";
-        if (src.getBranchFilterDn() != null && !src.getBranchFilterDn().isBlank()) {
-            filter = "(&(objectClass=changeLogEntry)(targetDN=" + src.getBranchFilterDn() + "*))";
+    public SearchRequest buildSearchRequest(ChangelogReadContext ctx, int sizeLimit) throws LDAPException {
+        boolean hasBranch = ctx.branchFilterDn() != null && !ctx.branchFilterDn().isBlank();
+        boolean hasAfter = ctx.afterChangeNumber() != null;
+
+        String filter;
+        if (!hasBranch && !hasAfter) {
+            filter = "(objectClass=changeLogEntry)";
+        } else {
+            StringBuilder sb = new StringBuilder("(&(objectClass=changeLogEntry)");
+            // Incremental query for the poller: changeNumber > cursor, i.e.
+            // >= cursor + 1. OUD indexes changeNumber, so this is efficient.
+            if (hasAfter) {
+                sb.append("(changeNumber>=").append(ctx.afterChangeNumber() + 1).append(')');
+            }
+            if (hasBranch) {
+                sb.append("(targetDN=").append(ctx.branchFilterDn()).append("*)");
+            }
+            sb.append(')');
+            filter = sb.toString();
         }
 
         SearchRequest req = new SearchRequest(
-                src.getChangelogBaseDn(),
+                ctx.changelogBaseDn(),
                 SearchScope.ONE,
                 filter,
                 ATTRIBUTES);
@@ -90,6 +105,11 @@ public class DseeChangelogStrategy implements ChangelogStrategy {
     @Override
     public boolean isRecordable(SearchResultEntry entry) {
         return true; // cn=changelog only contains completed write operations
+    }
+
+    @Override
+    public Optional<ChangelogChange> extractChange(SearchResultEntry entry) {
+        return OudChangelogChangeParser.parse(entry);
     }
 
     static OffsetDateTime parseGeneralizedTime(String value) {

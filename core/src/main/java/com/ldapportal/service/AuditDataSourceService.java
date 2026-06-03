@@ -11,6 +11,7 @@ import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapChangelogReader;
 import com.ldapportal.ldap.SslHelper;
 import com.ldapportal.ldap.changelog.AccesslogStrategy;
+import com.ldapportal.ldap.changelog.ChangelogReadContext;
 import com.ldapportal.ldap.changelog.ChangelogStrategy;
 import com.ldapportal.ldap.changelog.DseeChangelogStrategy;
 import com.ldapportal.repository.AuditDataSourceRepository;
@@ -113,12 +114,10 @@ public class AuditDataSourceService {
                     // and that the configured format returns results
                     ChangelogStrategy strategy = req.changelogFormat() == ChangelogFormat.OPENLDAP_ACCESSLOG
                             ? new AccesslogStrategy() : new DseeChangelogStrategy();
-                    AuditDataSource probe = new AuditDataSource();
-                    probe.setChangelogBaseDn(changelogDn);
-                    probe.setChangelogFormat(req.changelogFormat());
-                    probe.setBranchFilterDn(req.branchFilterDn());
+                    ChangelogReadContext ctx =
+                            new ChangelogReadContext(changelogDn, req.branchFilterDn(), null);
                     try {
-                        SearchRequest verifyReq = strategy.buildSearchRequest(probe, 1);
+                        SearchRequest verifyReq = strategy.buildSearchRequest(ctx, 1);
                         conn.search(verifyReq);
                     } catch (LDAPException ex) {
                         return new TestConnectionResult(false,

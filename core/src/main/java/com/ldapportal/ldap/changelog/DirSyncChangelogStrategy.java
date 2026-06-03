@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.changelog;
 
-import com.ldapportal.entity.AuditDataSource;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResultEntry;
@@ -19,7 +18,7 @@ import java.util.Map;
  * <p>DirSync returns entries that have changed since the last cookie. Unlike
  * changelog-based strategies, the search is against the live directory tree
  * (not a separate changelog container). The cookie must be persisted between
- * polls via {@link AuditDataSource#getDirsyncCookie()}.</p>
+ * polls via {@code AuditDataSource#getDirsyncCookie()}.</p>
  *
  * <p>Note: The DirSync control itself is handled by the caller
  * ({@code LdapChangelogReader}). This strategy provides the search request
@@ -34,9 +33,9 @@ public class DirSyncChangelogStrategy implements ChangelogStrategy {
     };
 
     @Override
-    public SearchRequest buildSearchRequest(AuditDataSource src, int sizeLimit) throws LDAPException {
+    public SearchRequest buildSearchRequest(ChangelogReadContext ctx, int sizeLimit) throws LDAPException {
         // DirSync searches against the directory root, not a changelog container
-        String baseDn = src.getChangelogBaseDn() != null ? src.getChangelogBaseDn() : "";
+        String baseDn = ctx.changelogBaseDn() != null ? ctx.changelogBaseDn() : "";
         SearchRequest req = new SearchRequest(
                 baseDn,
                 SearchScope.SUB,
