@@ -1,20 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
+import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.core.entitlement.Edition;
 import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.core.entitlement.License;
 import com.ldapportal.core.entitlement.LicenseProvider;
+import com.ldapportal.dto.replication.ReplicationLinkResponse;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.ReplicationEvent;
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.ReplicationLinkAttrMapping;
+import com.ldapportal.entity.enums.ChangelogFormat;
+import com.ldapportal.entity.enums.ChangelogHealth;
 import com.ldapportal.entity.enums.DirectoryType;
+import com.ldapportal.entity.enums.ReplicationCaptureMode;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.ReplicationEventRepository;
 import com.ldapportal.repository.ReplicationLinkRepository;
+import com.ldapportal.service.ReplicationLinkService;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
@@ -103,6 +110,7 @@ class ReplicationPersistenceIntegrationTest {
     @Autowired private ReplicationLinkRepository  linkRepo;
     @Autowired private ReplicationEventRepository eventRepo;
     @Autowired private DirectoryConnectionRepository dirRepo;
+    @Autowired private ReplicationLinkService     linkService;
     @Autowired private TransactionTemplate        txTemplate;
 
     private UUID sourceDirId;
@@ -245,7 +253,55 @@ class ReplicationPersistenceIntegrationTest {
         assertThat(ev.getDeliveredAt()).isNull();
     }
 
+    @Test
+    void reseedChangelogCursor_nullsCursor_withoutLazyInitException() {
+        // Regression: the remediation methods build the audit detail (which
+        // reads the LAZY source/target directories) AFTER a
+        // clearAutomatically @Modifying query detaches the entity — a
+        // LazyInitializationException against a real DB that the mock-based
+        // unit tests (POJO links, no-op repo) cannot see. Disabled link so the
+        // after-commit reconcile doesn't fire an LDAP run.
+        UUID linkId = saveChangelogLink();
+        AuthPrincipal principal = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "root");
+
+        ReplicationLinkResponse resp = linkService.reseedChangelogCursor(principal, linkId);
+
+        assertThat(resp.captureMode()).isEqualTo(ReplicationCaptureMode.CHANGELOG);
+        ReplicationLink reloaded = linkRepo.findById(linkId).orElseThrow();
+        assertThat(reloaded.getChangelogLastChangeNumber()).isNull();
+        assertThat(reloaded.getChangelogHealth()).isEqualTo(ChangelogHealth.HEALTHY);
+    }
+
+    @Test
+    void rewindChangelogCursor_setsCursor_withoutLazyInitException() {
+        UUID linkId = saveChangelogLink();
+        AuthPrincipal principal = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "root");
+
+        linkService.rewindChangelogCursor(principal, linkId, 42L);
+
+        ReplicationLink reloaded = linkRepo.findById(linkId).orElseThrow();
+        assertThat(reloaded.getChangelogLastChangeNumber()).isEqualTo(42L);
+        assertThat(reloaded.getChangelogHealth()).isEqualTo(ChangelogHealth.HEALTHY);
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    /** A committed, disabled CHANGELOG link in CURSOR_RESET with an advanced cursor. */
+    private UUID saveChangelogLink() {
+        return txTemplate.execute(tx -> {
+            ReplicationLink link = new ReplicationLink();
+            link.setDisplayName("cl-link");
+            link.setSourceDirectory(dirRepo.findById(sourceDirId).orElseThrow());
+            link.setTargetDirectory(dirRepo.findById(targetDirId).orElseThrow());
+            link.setEnabled(false);
+            link.setCaptureMode(ReplicationCaptureMode.CHANGELOG);
+            link.setChangelogFormat(ChangelogFormat.DSEE_CHANGELOG);
+            link.setChangelogBaseDn("cn=changelog");
+            link.setChangelogLastChangeNumber(500L);
+            link.setChangelogHealth(ChangelogHealth.CURSOR_RESET);
+            return linkRepo.save(link).getId();
+        });
+    }
 
     /**
      * Persist a link with one attribute-mapping rule (mail→email)

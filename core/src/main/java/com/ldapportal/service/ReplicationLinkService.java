@@ -161,12 +161,16 @@ public class ReplicationLinkService {
     @Transactional
     public ReplicationLinkResponse reseedChangelogCursor(AuthPrincipal principal, UUID id) {
         ReplicationLink link = requireChangelogLink(id);
+        // Materialise the audit detail BEFORE the clearAutomatically @Modifying
+        // query below: that query calls EntityManager.clear(), detaching `link`
+        // and its LAZY sourceDirectory/targetDirectory proxies — reading them
+        // afterwards would throw LazyInitializationException.
+        Map<String, Object> detail = remediationDetail(link, "reseed", null);
+        boolean enabled = link.isEnabled();
         linkRepo.reseedChangelogCursor(id);
-        auditService.recordSystemEvent(principal, AuditAction.REPLICATION_CHANGELOG_REMEDIATED,
-                remediationDetail(link, "reseed", null));
-        if (link.isEnabled()) {
-            UUID linkId = link.getId();
-            afterCommit(() -> triggerSeamReconcile(linkId, principal));
+        auditService.recordSystemEvent(principal, AuditAction.REPLICATION_CHANGELOG_REMEDIATED, detail);
+        if (enabled) {
+            afterCommit(() -> triggerSeamReconcile(id, principal));
         }
         return getLink(id);
     }
@@ -178,9 +182,9 @@ public class ReplicationLinkService {
             throw new IllegalArgumentException("changeNumber must be >= 0");
         }
         ReplicationLink link = requireChangelogLink(id);
+        Map<String, Object> detail = remediationDetail(link, "rewind", target);   // before clear (see reseed)
         linkRepo.rewindChangelogCursor(id, target);
-        auditService.recordSystemEvent(principal, AuditAction.REPLICATION_CHANGELOG_REMEDIATED,
-                remediationDetail(link, "rewind", target));
+        auditService.recordSystemEvent(principal, AuditAction.REPLICATION_CHANGELOG_REMEDIATED, detail);
         return getLink(id);
     }
 
@@ -188,9 +192,9 @@ public class ReplicationLinkService {
     @Transactional
     public ReplicationLinkResponse reEnableChangelogPoll(AuthPrincipal principal, UUID id) {
         ReplicationLink link = requireChangelogLink(id);
+        Map<String, Object> detail = remediationDetail(link, "re-enable", null);  // before clear (see reseed)
         linkRepo.clearChangelogHealthError(id);
-        auditService.recordSystemEvent(principal, AuditAction.REPLICATION_CHANGELOG_REMEDIATED,
-                remediationDetail(link, "re-enable", null));
+        auditService.recordSystemEvent(principal, AuditAction.REPLICATION_CHANGELOG_REMEDIATED, detail);
         return getLink(id);
     }
 
