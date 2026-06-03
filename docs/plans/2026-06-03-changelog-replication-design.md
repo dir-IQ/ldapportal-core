@@ -1,7 +1,8 @@
 # Changelog-driven replication — design plan
 
 - **Date:** 2026-06-03
-- **Status:** Not started (design only, 2026-06-03).
+- **Status:** Not started (design only; reliability/observability hardening
+  pass applied — see §7A, 2026-06-03).
 - **Suggested branch:** `feat/changelog-replication` (already cut; this doc
   lives on it).
 - **Scope:** Add a second **capture mode** to an existing replication link.
@@ -91,7 +92,15 @@ ALTER TABLE replication_links
   ADD COLUMN capture_mode              VARCHAR(20)  NOT NULL DEFAULT 'APP_INTERCEPT',
   ADD COLUMN changelog_format          VARCHAR(25),
   ADD COLUMN changelog_base_dn         VARCHAR(500),
-  ADD COLUMN changelog_last_change_number BIGINT,
+  ADD COLUMN changelog_last_change_number BIGINT,          -- cursor (high-water mark)
+  -- ── liveness / health surfacing (see §7A) ──
+  ADD COLUMN changelog_source_last_change_number BIGINT,   -- last observed source head; lag = this − cursor
+  ADD COLUMN changelog_last_polled_at      TIMESTAMPTZ,
+  ADD COLUMN changelog_last_error          TEXT,
+  ADD COLUMN changelog_last_error_at       TIMESTAMPTZ,
+  ADD COLUMN changelog_health              VARCHAR(24) NOT NULL DEFAULT 'HEALTHY',
+  -- ── DB-backed single-flight lease for HA (mirror ReconciliationTxOps, §7A.5) ──
+  ADD COLUMN changelog_poll_claimed_at     TIMESTAMPTZ,
   ADD CONSTRAINT replication_links_capture_mode_check
       CHECK (capture_mode IN ('APP_INTERCEPT','CHANGELOG')),
   -- changelog_format constrained to the v1-supported value; widen when
@@ -145,8 +154,19 @@ in it), do **not** replay the entire changelog history. On the link's first
 poll where `changelogLastChangeNumber IS NULL`, seed the cursor to the
 **current max `changeNumber`** in the source and persist it without emitting
 events. Existing entries are brought into parity by an initial reconciliation
-run (or an operator-triggered initial load) — the same bootstrap story the
+run (auto-triggered on the mode switch, §7A.8) — the same bootstrap story the
 `APP_INTERCEPT` path already relies on. Document this in the UI help text.
+
+**Cursor writes are CAS, never a full-entity save.** `ReplicationLink` has no
+`@Version`; advancing the cursor with `repo.save(link)` would clobber a
+concurrent operator edit (and vice-versa) and is unsafe across instances.
+Advance through a dedicated
+`UPDATE replication_links SET changelog_last_change_number = :new,
+changelog_last_polled_at = now() WHERE id = :id AND
+changelog_last_change_number IS NOT DISTINCT FROM :expected` (compare-and-set).
+This is the `ChangelogCursorStore` seam (§8) and keeps the int→cookie swap for
+AD local. **The cursor is `changeNumber`-based, not time-based — immune to
+clock skew between portal and directory; treat that as a deliberate property.**
 
 ---
 
@@ -289,9 +309,15 @@ public void pollAll() { … }
   must not flow after a commercial→community downgrade).
 - Select links where `enabled = true AND capture_mode = 'CHANGELOG'`
   (new `ReplicationLinkRepository.findChangelogCaptureLinkIds()`).
-- Per-link **single-flight** guard + per-link consecutive-failure backoff and
-  config-error disable — copy the proven shape from `LdapChangelogReader`
-  (`ConcurrentMap<UUID,Integer>` + `Set<UUID> configErrors`).
+- Per-link **single-flight** guard. **DB-backed, not in-JVM** — a
+  `ConcurrentMap` is unsafe once the portal runs >1 instance (two pollers
+  double-process the same link). Mirror `ReconciliationTxOps.tryStart`: claim
+  via `UPDATE … SET changelog_poll_claimed_at = now() WHERE id = :id AND
+  (changelog_poll_claimed_at IS NULL OR changelog_poll_claimed_at < :staleCutoff)`
+  returning rows-affected; release in a `finally`. A companion stale-claim
+  sweep (like the worker's `resetStaleInFlight`) recovers leases orphaned by a
+  crash. Per-link consecutive-failure backoff + config-error disable follow the
+  proven `LdapChangelogReader` shape.
 - Wrap each link's poll in `CorrelationContext.withCorrelation(...)` so
   emitted events share a trace id (consistent with the rest of the system).
 
@@ -301,27 +327,46 @@ public void pollAll() { … }
 2. Open the **source** directory connection via `LdapConnectionFactory`
    (the link's `sourceDirectory`). Reads don't trigger capture, so no
    `unreplicated` wrapper is required — but use the read-only path.
-3. First-run seed if `changelogLastChangeNumber == null` (§2.1): set cursor =
-   `max(changeNumber)`, persist, return.
-4. Build `ChangelogReadContext(changelogBaseDn, link.sourceBaseDn,
-   cursor)` and the strategy's incremental search; cap at
-   `MAX_CHANGES_PER_POLL` (e.g. 500), ordered by `changeNumber` ascending.
-5. For each entry, in `changeNumber` order:
-   - `strategy.extractChange(entry)` → `ChangelogChange` (skip if empty).
+3. **Read the source head** from the root DSE (`firstChangeNumber`,
+   `lastChangeNumber` — OUD/DSEE publish both; access via `conn.getRootDSE()`
+   as `LdapCapabilityProbeService` already does). Persist `lastChangeNumber`
+   into `changelog_source_last_change_number` (drives the lag gauge, §7A).
+   Run the **gap / reset guards (§7A.1–.2) before reading any entries**:
+   - `lastChangeNumber < cursor` ⇒ **cursor reset** (source restored/reinit) →
+     alert, set health `CURSOR_RESET`, do **not** advance, await operator
+     reseed.
+   - `cursor + 1 < firstChangeNumber` ⇒ **gap** (entries trimmed before we read
+     them) → alert, set health `GAP_DETECTED`, auto-trigger reconciliation,
+     then fast-forward the cursor to `firstChangeNumber − 1` so the stream
+     resumes (reconciliation repairs the skipped span).
+4. First-run seed if `changelogLastChangeNumber == null` (§2.1): set cursor =
+   `lastChangeNumber`, persist, return.
+5. Build `ChangelogReadContext(changelogBaseDn, link.sourceBaseDn,
+   cursor)` and the strategy's incremental search, ordered by `changeNumber`
+   ascending. **Catch-up budget, not a hard cap:** drain successive pages
+   (e.g. 500/page) within a per-poll wall-clock budget
+   (`ldapportal.replication.changelog.poll-budget-ms`, default ~10s) until
+   caught up or the budget elapses — so a large backlog after downtime
+   recovers in minutes, not hours. A hard 500/poll cap at a 30s interval drains
+   only 1k/min.
+6. For each entry, in `changeNumber` order:
+   - `strategy.extractChange(entry)` → `ChangelogChange`.
+     **Poison-entry policy (§7A.3):** if parsing throws, **do not** silently
+     skip and **do not** wedge the link. Persist a `DEAD_LETTERED`
+     `replication_event` carrying the raw changelog entry + the parse error
+     (recoverable + audited), emit `REPLICATION_CHANGELOG_ENTRY_DEAD_LETTERED`,
+     then continue past it (reconciliation also re-derives that DN). Empty
+     `extractChange` for a non-recordable entry is a normal skip.
    - `DnMapper.map(sourceDn, link)` → target DN; `null` ⇒ out of scope, skip
-     (but still advance the cursor past it).
-   - Map the payload's attributes/modifications via `AttributeMapper`
-     (factor the enqueuer's `mappedAddAttributes`/`mappedModifications` into a
-     shared `ReplicationPayloadMapper` so both call sites use one
-     implementation — see §6.3).
-   - Build a `PendingReplicationEvent` with
-     `enqueueSource = SOURCE_CHANGELOG`.
-6. `persister.saveAll(pending)` then **advance the cursor** to the highest
-   `changeNumber` processed — in that order, so a crash between persist and
-   cursor-advance replays a bounded prefix. Idempotency: re-enqueuing the same
-   `changeNumber` is harmless because the target write is effectively
-   idempotent (MODIFY/REPLACE, ADD-with-auto-create), and a tighter guard can
-   key on `(link_id, source changeNumber)` if needed (see §6.5).
+     (still advance the cursor past it).
+   - Map via the shared `ReplicationPayloadMapper` (§6.3).
+   - Stamp `sourceChangeNumber` into the payload (ordering + dedup key, §6.5).
+   - Build a `PendingReplicationEvent` with `enqueueSource = SOURCE_CHANGELOG`.
+7. `persister.saveAll(pending)` then **CAS-advance the cursor** (§2.1) to the
+   **highest contiguously-processed `changeNumber`** — never the highest *seen*
+   (a mid-page connection drop must resume from the last good one, not leave a
+   hole). Persist-before-advance means a crash in between replays a bounded
+   prefix; the §6.5 dedup index makes that replay exactly-once.
 
 ### 6.3 Shared payload mapping (small refactor)
 
@@ -340,15 +385,28 @@ the app's own writes (that's the whole point of "exclusive"). Add
 to a `CHANGELOG` link's source would be enqueued twice (once by the
 interceptor, once by the poller).
 
-### 6.5 Idempotency hardening (optional, recommend including)
+### 6.5 Exactly-once dedup (MANDATORY)
 
-To make replay strictly exactly-once at the queue, add a partial unique index
-on `replication_events (link_id, (payload->>'sourceChangeNumber'))` for
-`SOURCE_CHANGELOG` rows, and stamp `sourceChangeNumber` into the payload. The
-persister already swallows nothing here, so the cleaner route is a
-`findMaxSourceChangeNumberForLink` check folded into the cursor read. Keep this
-behind a flag if it complicates the v1 persister; the bounded-replay +
-idempotent-delivery story (§6.2.6) is correct without it.
+Replay is **not** harmless in general: a `MODIFY` of the form `add: member=X`
+applied twice duplicates/errors, and a replayed `ADD` hits
+`entryAlreadyExists`. "Idempotent delivery" only covers REPLACE/auto-create
+shapes — not the additive/delete modification forms OUD emits. So the dedup
+guard is a **correctness requirement, not hygiene**.
+
+Stamp `sourceChangeNumber` into every `SOURCE_CHANGELOG` payload and add a
+partial unique index so the queue itself enforces exactly-once even under
+crash-replay, concurrent pollers, or a stale-lease double-claim:
+
+```sql
+CREATE UNIQUE INDEX replication_events_changelog_dedup
+  ON replication_events (link_id, ((payload->>'sourceChangeNumber')))
+  WHERE enqueue_source = 'SOURCE_CHANGELOG';
+```
+
+The persister must treat a unique-violation on this index as a **benign skip**
+(already enqueued), not an error — i.e. insert-if-absent semantics for these
+rows. This is what lets §6.2 safely persist-then-advance and lets the DB-backed
+lease (§6.1) be advisory rather than perfect.
 
 ---
 
@@ -363,15 +421,22 @@ in the *same* `replication_events` queue, so reconciliation's existing
 (`findUndeliveredTargetDns`) already accounts for in-flight changelog events —
 no change needed.
 
-Two gaps reconciliation explicitly covers, so we don't have to:
+Reconciliation is the **repair** path, but it must not be the *only* line of
+defence — a scheduled reconcile may be an hour away, and "we silently dropped
+changes until someone noticed drift" is exactly the failure this feature must
+not have. So the poller **actively detects** the two danger conditions and
+triggers repair immediately rather than waiting:
 
 - **Changelog trim window.** If the poller is down longer than OUD's changelog
-  retention (`cn=changelog` purges old `changeLogEntry`s), the cursor can point
-  past the oldest surviving entry → missed changes. The next reconciliation run
-  detects and repairs the drift. Document the operational requirement: poll
-  interval ≪ changelog retention.
+  retention (`cn=changelog` purges old `changeLogEntry`s), the cursor points
+  past the oldest surviving entry → missed changes. **Detected each poll** via
+  the root-DSE `firstChangeNumber` guard (§6.2.3 / §7A.1): on detection, alert,
+  auto-trigger reconciliation, and resume — never a silent skip. Still document
+  the operational requirement (poll interval ≪ changelog retention) so the gap
+  path stays rare.
 - **Initial state.** Changelog only carries changes from the seed point
-  forward; reconciliation (or initial load) seeds pre-existing entries (§2.1).
+  forward; reconciliation (auto-triggered on mode switch, §7A.8) seeds
+  pre-existing entries (§2.1).
 
 ### 7.2 Loop safety
 
@@ -385,6 +450,111 @@ Two gaps reconciliation explicitly covers, so we don't have to:
   `creatorsName` equals the link's bind DN (the portal's own writes) — the
   attribute is already read by `DseeChangelogStrategy`. Recommend implementing
   the `creatorsName` filter since it's nearly free and prevents the foot-gun.
+
+---
+
+## 7A. Reliability & observability hardening (must-have for v1)
+
+Replication must be **trustworthy** and **loud when wrong**. The guiding
+principle: *never lose a change silently, and surface every degradation through
+the existing alert pipeline within one poll interval — not on a dashboard
+someone has to remember to open.* The items below are v1 acceptance criteria,
+not nice-to-haves.
+
+### 7A.1 Gap detection (no silent skip on changelog trim)
+Each poll reads the root-DSE `firstChangeNumber`. `cursor + 1 < firstChangeNumber`
+⇒ entries were trimmed before we read them. Action: set health `GAP_DETECTED`,
+emit `REPLICATION_CHANGELOG_GAP_DETECTED` (audit → SIEM → alert), auto-trigger a
+reconciliation run for the link, fast-forward the cursor to
+`firstChangeNumber − 1`, resume. The skipped span is repaired by reconciliation;
+the operator is told it happened.
+
+### 7A.2 Cursor-reset detection (no silent stall on source restore)
+`lastChangeNumber < cursor` ⇒ the source changelog was reinitialized
+(backup restore, server rebuild). Without this check the cursor never matches
+again and replication stalls **with zero errors** — the nastiest failure mode.
+Action: set health `CURSOR_RESET`, emit `REPLICATION_CHANGELOG_CURSOR_RESET`,
+**stop advancing**, and require an explicit operator reseed (a deliberate,
+audited decision — auto-reseeding could replay or skip an entire DIT).
+
+### 7A.3 Poison-entry policy (flow + no loss + audit)
+A single unparseable `changes` blob must neither silently advance past the entry
+(loss) nor wedge the link forever (availability). Policy: **dead-letter the raw
+entry** as a `DEAD_LETTERED` `replication_event` (raw attributes + parse error in
+the payload), emit `REPLICATION_CHANGELOG_ENTRY_DEAD_LETTERED`, continue.
+Recoverable, audited, and reconciliation re-derives that DN anyway. Operators get
+the existing dead-letter retry/skip controls.
+
+### 7A.4 Exactly-once
+Mandatory dedup index + insert-if-absent persister semantics (§6.5). Makes
+crash-replay, concurrent pollers, and stale-lease double-claims safe.
+
+### 7A.5 HA single-flight
+DB-backed lease + stale-claim sweep (§6.1), not an in-JVM map. Safe across
+multiple portal instances.
+
+### 7A.6 Cursor integrity
+CAS advance to the highest *contiguously*-processed `changeNumber` (§2.1, §6.2.7).
+No lost updates vs. operator edits; no holes on mid-page failures.
+
+### 7A.7 Liveness surfacing — *lag is the headline signal*
+Per-link, persisted and exposed on `ReplicationLinkResponse` + the Directory
+Sync dashboard row:
+
+| Field | Meaning |
+|---|---|
+| `changelogHealth` | `HEALTHY` / `LAGGING` / `STALLED` / `GAP_DETECTED` / `CURSOR_RESET` / `DISABLED_CONFIG_ERROR` |
+| **lag** = `sourceLastChangeNumber − cursor` | how many source changes are un-replicated — the primary at-a-glance health number |
+| `changelogLastPolledAt` | liveness; `STALLED` if stale beyond N intervals |
+| `changelogLastError` / `…At` | last poll/parse/connection error, for fast diagnosis |
+
+Health transitions: `LAGGING` when lag or oldest-undelivered age exceeds a
+configurable threshold; `STALLED` when `lastPolledAt` is older than N×interval
+while the source head advanced. Surface a `lastDeliveredAt`/`pending`/`failed`/
+`deadLettered` rollup too — `LinkHealth` already computes these for the worker;
+reuse it.
+
+### 7A.8 Mode-switch seam closure
+Flipping `APP_INTERCEPT`↔`CHANGELOG` (or enabling a link in either mode) leaves a
+race window where a write is caught by neither path. On every capture-mode
+transition, `ReplicationLinkService` **auto-triggers a reconciliation run** to
+close the seam, and resets the cursor so the new mode re-seeds cleanly. Switching
+*away* from `CHANGELOG` first lets the queue drain.
+
+### 7A.9 Alert-pipeline wiring (reach people, not screens)
+Route every degradation through what already exists rather than inventing a
+channel:
+- **New `AuditAction`s:** `REPLICATION_CHANGELOG_GAP_DETECTED`,
+  `…_CURSOR_RESET`, `…_POLL_DISABLED`, `…_ENTRY_DEAD_LETTERED`,
+  `…_CAPTURE_ENABLED` / `…_CAPTURE_DISABLED`. Audit rows export to **SIEM**
+  through the existing `AuditService` path automatically.
+- **Dashboard alert counts:** extend the `AlertSummaryProvider` /
+  `AlertingDashboardProvider` surfacing (as reconciliation drift already does via
+  `RECONCILIATION_DRIFT_OPEN`) with a changelog-lag / stalled-link signal so
+  unhealthy links roll into the critical/high alert tiles.
+- **Metrics:** the repo ships **no Micrometer** today, so v1 does **not** add a
+  metrics dependency — surfacing rides audit + SIEM + dashboard. If a metrics
+  stack lands later, expose `replication_changelog_lag` (gauge per link),
+  poll duration, and parse-failure counters; noted so it's a clean add.
+
+### 7A.10 Connection isolation
+Poll the changelog over a **dedicated, bounded-timeout** connection — not the
+source directory's shared live pool — so a hung or slow changelog read can't
+starve interactive traffic. Mirror `LdapChangelogReader`'s short-lived
+connection with explicit connect/response timeouts.
+
+### 7A.11 Config-time validation (fail before enabling, not after)
+`test-changelog` (§9) must verify, and refuse to enable otherwise: `cn=changelog`
+is readable, `changeNumber` is present on entries, **and** the root DSE exposes
+`firstChangeNumber`/`lastChangeNumber` (without them, gap/reset detection is
+blind — hard-fail with a clear message). Warn if the configured poll interval is
+not comfortably below the server's changelog retention where discoverable.
+
+### 7A.12 Operator remediation controls (act fast)
+Beyond the existing event retry/skip/acknowledge, add per-link actions:
+**reseed cursor to now**, **rewind cursor to N**, **force reconcile**,
+**re-enable after config error**. Each is audited. These turn a 2 a.m. incident
+into a one-click recovery instead of a DB surgery.
 
 ---
 
@@ -415,8 +585,9 @@ read/advance through one place to keep that swap cheap.
 
 - **DTOs** (`dto/replication/ReplicationLinkRequest` + `…Response`): add
   `captureMode`, `changelogFormat`, `changelogBaseDn`. Response also exposes
-  read-only `changelogLastChangeNumber` (operator visibility into cursor
-  progress).
+  read-only health surface (§7A.7): `changelogLastChangeNumber`,
+  `changelogSourceLastChangeNumber`, derived **`lag`**, `changelogHealth`,
+  `changelogLastPolledAt`, `changelogLastError`/`…At`.
 - **Validation** (`ReplicationLinkService`):
   - `captureMode` required; default `APP_INTERCEPT`.
   - If `CHANGELOG`: `changelogFormat` must be `DSEE_CHANGELOG` (v1) — reject
@@ -430,9 +601,17 @@ read/advance through one place to keep that swap cheap.
   `POST /api/v1/superadmin/replication-links/{id}/test-changelog` (and a
   pre-save variant taking a request body, mirroring
   `AuditDataSourceService.testConnection`): opens the source connection,
-  confirms `changelogBaseDn` is readable, returns the current max
-  `changeNumber` + elapsed ms. `@PreAuthorize("hasRole('SUPERADMIN')")` +
-  `@Entitled(DIRECTORY_SYNC)` to match the rest of Directory Sync.
+  confirms `changelogBaseDn` is readable, `changeNumber` is present, **and the
+  root DSE exposes `first/lastChangeNumber`** (§7A.11 — hard-fail otherwise),
+  returns current head + elapsed ms.
+- **Remediation endpoints** (§7A.12), all `@PreAuthorize SUPERADMIN` +
+  `@Entitled(DIRECTORY_SYNC)`, all audited:
+  `…/{id}/changelog/reseed` (cursor → current head),
+  `…/{id}/changelog/rewind` (cursor → operator-supplied N),
+  `…/{id}/reconcile` (force; reuse existing reconcile trigger),
+  `…/{id}/changelog/re-enable` (clear config-error disable).
+- All Directory-Sync endpoints stay `@PreAuthorize("hasRole('SUPERADMIN')")` +
+  `@Entitled(DIRECTORY_SYNC)`.
 
 ---
 
@@ -448,10 +627,18 @@ read/advance through one place to keep that swap cheap.
   same auto-default UX `AuditSourcesView.vue` uses), and a **Test changelog**
   button wired to the new endpoint (reuse the audit-source test-result display:
   success/failure + elapsed ms + current max changeNumber).
-- Show read-only **cursor progress** (`changelogLastChangeNumber`) on the link
-  row / detail so operators can confirm the poller is advancing.
-- Help text: explains exclusivity, the seed-from-now behavior, and that
-  reconciliation remains the backstop.
+- **Health-first row surfacing (§7A.7):** a **lag** number + a colored
+  `changelogHealth` badge (`HEALTHY`/`LAGGING`/`STALLED`/`GAP_DETECTED`/
+  `CURSOR_RESET`/`DISABLED_CONFIG_ERROR`) on each link row, plus
+  `lastPolledAt` and last-error tooltip — so a degraded link is obvious at a
+  glance, not buried. Unhealthy links also roll into the dashboard alert tiles
+  (§7A.9).
+- **Remediation controls (§7A.12)** on the link/detail: *Reseed to now*,
+  *Rewind to…*, *Force reconcile*, *Re-enable* — wired to the §9 endpoints with
+  confirm dialogs, so recovery is one click.
+- Help text: explains exclusivity, the seed-from-now behavior, that
+  reconciliation remains the backstop, and what each health state means / how to
+  act on it.
 - Conventions: `<script setup lang="ts">`, project utility classes
   (`.input`/`.btn-*`), Pinia notification store for results, spec updates in
   `DirectorySyncView.spec.ts`, `api/replication.js` gains
@@ -476,8 +663,20 @@ read/advance through one place to keep that swap cheap.
 - **MockMvc:** link create/update validation (mode exclusivity, format
   rejection), `test-changelog` authz/shape, enqueuer-skip for `CHANGELOG`
   links.
+- **Reliability scenarios (§7A) — first-class tests, not afterthoughts:**
+  - gap detected (`cursor+1 < firstChangeNumber`) → alert audit + reconcile
+    triggered + cursor fast-forwarded.
+  - cursor reset (`lastChangeNumber < cursor`) → halts, alerts, no advance.
+  - poison entry → dead-lettered with raw payload, stream continues.
+  - exactly-once: replaying the same `changeNumber` (crash sim / double poll)
+    inserts no duplicate (dedup index).
+  - HA lease: two concurrent `pollAll()` invocations process each link once.
+  - cursor CAS: concurrent operator edit + cursor advance both persist (no lost
+    update).
+  - lag/health transitions: `HEALTHY → LAGGING → STALLED` thresholds.
 - **Frontend:** `DirectorySyncView.spec.ts` — mode toggle reveals fields,
-  format restriction, test-changelog call + result rendering.
+  format restriction, test-changelog call + result rendering, **lag/health
+  badge + remediation controls** render and call the right endpoints.
 
 ---
 
@@ -485,30 +684,41 @@ read/advance through one place to keep that swap cheap.
 
 | Phase | Content | Est. |
 |---|---|---|
-| **C1** | Schema (`V15`), entity/enum, snapshot field, DTO+service plumbing & validation | ~3 days |
+| **C1** | Schema (`V15`: capture/changelog cols **+ liveness/lease/health cols**, dedup index), entity/enum, snapshot field, DTO+service plumbing & validation | ~3–4 days |
 | **C2** | Generalize `ChangelogStrategy` (neutral context) + `extractChange` SPI + `OudChangelogChangeParser` + tests | ~5–6 days |
-| **C3** | `ReplicationChangelogPoller` (poll, seed, cursor, single-flight, backoff, entitlement) + `ReplicationPayloadMapper` extract + enqueuer skip + `creatorsName` loop guard | ~5 days |
-| **C4** | `test-changelog` endpoint, frontend modal + cursor surfacing, docs, integration/MockMvc/Vitest | ~4 days |
+| **C3** | `ReplicationChangelogPoller` (poll, seed, **catch-up budget**, CAS cursor, **DB lease + stale sweep**, backoff, entitlement) + `ReplicationPayloadMapper` extract + enqueuer skip + `creatorsName` loop guard | ~5 days |
+| **C3R** | **Reliability/observability (§7A):** gap + reset detection, poison dead-letter, exactly-once dedup wiring, health state machine + lag, `AlertSummaryProvider`/SIEM/audit-action wiring, mode-switch auto-reconcile, operator remediation controls | ~5 days |
+| **C4** | `test-changelog` (incl. root-DSE capability check), frontend modal + lag/health surfacing + remediation controls, docs, integration/MockMvc/Vitest (incl. §7A scenarios) | ~5 days |
 
-**≈ 3.5–4 weeks** for the OUD MVP. OpenLDAP `extractChange` is a later
-~1-week add behind the same SPI; AD `DirSync` is a larger follow-on (cursor
-model + state-not-ops semantics, §8).
+**≈ 4.5–5 weeks** for a *production-hardened* OUD MVP (the §7A work is the
+delta over the earlier ~3.5–4w estimate, and is what makes the feature
+trustworthy). OpenLDAP `extractChange` is a later ~1-week add behind the same
+SPI; AD `DirSync` is a larger follow-on (cursor model + state-not-ops
+semantics, §8).
 
 ---
 
 ## 13. Open questions / call-outs
 
-1. **Cursor uniqueness hardening (§6.5)** — ship the partial unique index in
-   v1, or rely on bounded-replay + idempotent delivery? Recommend the index if
-   the persister can surface a conflict cleanly; otherwise defer.
-2. **Per-source vs. per-link cursor** — this plan uses **per-link** (simplest,
+*Resolved by the §7A hardening pass: exactly-once dedup is now **mandatory**
+(§6.5), not optional; the `creatorsName` loop guard is **in v1** (§7.2); gap
+detection is **active**, not reconciliation-only (§7A.1).* Remaining:
+
+1. **Per-source vs. per-link cursor** — this plan uses **per-link** (simplest,
    matches per-link scope/mapping/mode). Two `CHANGELOG` links sharing a source
    each scan `cn=changelog` independently. If that redundancy matters at scale,
    a later optimization can share one source-level reader fanning out to links
    — out of scope for v1.
-3. **`creatorsName` loop guard** — recommended in v1 (§7.2). Confirm the
-   portal's source bind DN is the value OUD records as `creatorsName` for
-   portal-originated writes (it is, but worth a smoke check against a real OUD).
+2. **`creatorsName` reliability smoke check** — confirm the portal's source bind
+   DN is the value OUD records as `creatorsName` for portal-originated writes
+   (expected, but verify against a real OUD before trusting the loop guard).
+3. **Root-DSE `firstChangeNumber`/`lastChangeNumber` on the target OUD build** —
+   gap/reset detection (§7A.1–.2) depends on them. Confirmed standard for OUD;
+   `test-changelog` (§7A.11) hard-fails config if absent, so a non-conforming
+   server can't be silently enabled.
+4. **Lag/stall thresholds** — pick sensible defaults for `LAGGING`/`STALLED`
+   (e.g. lag > 1000 or oldest-undelivered > 5 min; stalled > 3× interval) and
+   make them configurable. Operator-tunable per environment.
 
 ---
 
@@ -516,12 +726,13 @@ model + state-not-ops semantics, §8).
 
 | Area | Lives in |
 |---|---|
-| Schema | `db/migration/core/V15__replication_changelog_capture.sql` |
-| Entity / enums | `entity/ReplicationLink` (+fields), `entity/enums/ReplicationCaptureMode`; reuse `ChangelogFormat` |
+| Schema | `db/migration/core/V15__replication_changelog_capture.sql` (capture + changelog + **liveness/lease/health** cols, **dedup index**) |
+| Entity / enums | `entity/ReplicationLink` (+fields incl. health/lag), `entity/enums/ReplicationCaptureMode`, `…/ChangelogHealth`; reuse `ChangelogFormat`; new `AuditAction.REPLICATION_CHANGELOG_*` |
 | SPI | `ldap/changelog/ChangelogStrategy` (`ChangelogReadContext`, `extractChange`), `ChangelogChange`, `OudChangelogChangeParser`; `DseeChangelogStrategy.extractChange` |
-| Poller | `ldap/replication/ReplicationChangelogPoller`, `ReplicationPayloadMapper` |
+| Poller | `ldap/replication/ReplicationChangelogPoller` (gap/reset/poison guards, catch-up budget), `ReplicationPayloadMapper`, `ChangelogCursorStore` (CAS), `ChangelogPollLease` (DB single-flight + stale sweep) |
 | Enqueuer | `ReplicationEnqueuer` (skip CHANGELOG), `ReplicationLinkSnapshot` (+captureMode) |
-| Repo | `ReplicationLinkRepository.findChangelogCaptureLinkIds`, cursor read/advance |
-| API | `ReplicationLinkController.test-changelog`; `ReplicationLinkRequest/Response` fields; `ReplicationLinkService` validation |
-| Frontend | `views/superadmin/DirectorySyncView.vue`, `api/replication.js`, `DirectorySyncView.spec.ts` |
+| Repo | `ReplicationLinkRepository`: `findChangelogCaptureLinkIds`, CAS cursor advance, lease claim/release/stale-reset; dedup-aware persister insert-if-absent |
+| Health / alerts | health state machine on `ReplicationLinkResponse` + `LinkHealth` reuse; `AlertSummaryProvider`/`AlertingDashboardProvider` lag signal; SIEM via `AuditService` |
+| API | `ReplicationLinkController`: `test-changelog`, remediation (`reseed`/`rewind`/`force-reconcile`/`re-enable`); `ReplicationLinkRequest/Response` fields; `ReplicationLinkService` validation + mode-switch auto-reconcile |
+| Frontend | `views/superadmin/DirectorySyncView.vue` (lag/health badge, remediation controls), `api/replication.js`, `DirectorySyncView.spec.ts` |
 | Docs | this file; update `docs/directory-replication.md` |
