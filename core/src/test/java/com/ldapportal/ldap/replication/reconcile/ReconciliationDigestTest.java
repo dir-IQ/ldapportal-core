@@ -36,6 +36,14 @@ class ReconciliationDigestTest {
     }
 
     @Test
+    void valueCaseDifference_hashesEqual() {
+        // caseIgnore default: values differing only in case are not drift.
+        String a = ReconciliationDigest.digest(Map.of("cn", List.of("Ann"), "mail", List.of("A@X.COM")));
+        String b = ReconciliationDigest.digest(Map.of("cn", List.of("ann"), "mail", List.of("a@x.com")));
+        assertThat(a).isEqualTo(b);
+    }
+
+    @Test
     void managedValueChange_changesDigest() {
         String a = ReconciliationDigest.digest(Map.of("cn", List.of("Ann")));
         String b = ReconciliationDigest.digest(Map.of("cn", List.of("Bob")));

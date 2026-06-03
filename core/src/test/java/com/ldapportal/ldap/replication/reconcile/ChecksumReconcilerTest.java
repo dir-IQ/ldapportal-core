@@ -124,6 +124,22 @@ class ChecksumReconcilerTest {
     }
 
     @Test
+    void caseOnlyValueDifference_isNotDrift() {
+        // Same entry, cn differing only in case — the schema-aware (here
+        // schema-less caseIgnore default, since readOps is mocked) comparison
+        // must not report it as drift on the production two-pass path.
+        stubStream(sourceDir, List.of(e("uid=a,dc=x", "Ann")));
+        stubStream(targetDir, List.of(e("uid=a,dc=x", "ann")));
+        stubReadEntry(sourceDir, e("uid=a,dc=x", "Ann"));
+        stubReadEntry(targetDir, e("uid=a,dc=x", "ann"));
+
+        DiffResult r = run(ReconcileDeleteAction.REVIEW, Set.of());
+
+        assertThat(r.driftCount()).isZero();
+        assertThat(r.findings()).isEmpty();
+    }
+
+    @Test
     void extraInTarget_gatedAndHydratedForUi() {
         var extra = e("uid=z,dc=x", "Zed");
         stubStream(sourceDir, List.of(e("uid=a,dc=x", "Ann")));
