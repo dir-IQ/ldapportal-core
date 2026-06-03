@@ -287,8 +287,8 @@
           <tbody class="divide-y divide-gray-50">
             <tr v-for="e in events" :key="e.id">
               <td class="px-2 py-1"><RelativeTime :value="e.enqueuedAt" /></td>
-              <td class="px-2 py-1 font-mono text-[10px]">{{ e.operation }}</td>
-              <td class="px-2 py-1 font-mono text-[10px] truncate max-w-xs" :title="e.targetDn">
+              <td class="px-2 py-1 font-mono text-[13px]">{{ e.operation }}</td>
+              <td class="px-2 py-1 font-mono text-[13px] truncate max-w-xs" :title="e.targetDn">
                 {{ e.targetDn }}
               </td>
               <td class="px-2 py-1">
@@ -371,93 +371,177 @@
     </AppModal>
 
     <!-- Findings review modal ──────────────────────────────────────────── -->
-    <AppModal v-model="showFindings" :title="`Findings — ${runsLink?.displayName ?? ''}`"
-              size="xl" fixed-height="min(720px, 88vh)">
-      <div class="space-y-3">
-        <!-- Run summary chips -->
-        <div v-if="findingsRun" class="flex flex-wrap items-center gap-2 text-xs">
-          <span class="badge badge-gray">Source {{ findingsRun.sourceEntryCount ?? '—' }}</span>
-          <span class="badge badge-gray">Target {{ findingsRun.targetEntryCount ?? '—' }}</span>
-          <span class="badge badge-blue">Missing {{ findingsRun.missingCount }}</span>
-          <span class="badge badge-amber">Drift {{ findingsRun.driftCount }}</span>
-          <span class="badge badge-red">Extra {{ findingsRun.extraCount }}</span>
-          <span class="badge badge-gray">Suppressed {{ findingsRun.suppressedCount }}</span>
+    <AppModal v-model="showFindings" size="xl" fixed-height="min(720px, 88vh)">
+      <template #title>
+        <div>
+          <div class="text-lg font-semibold text-gray-900">Reconciliation findings — {{ runsLink?.displayName ?? '' }}</div>
+          <div v-if="findingsRun" class="text-xs font-normal text-gray-500 mt-0.5">
+            Run #{{ findingsRun.id.slice(0, 4) }} · {{ findingsRun.trigger === 'MANUAL' ? 'Manual' : 'Scheduled' }}
+            <template v-if="findingsRun.finishedAt"> · completed <RelativeTime :value="findingsRun.finishedAt" /></template>
+            <template v-if="runsLink?.sourceBaseDn || runsLink?.targetBaseDn">
+              · source <span class="font-mono">{{ runsLink?.sourceBaseDn || '—' }}</span>
+              → <span class="font-mono">{{ runsLink?.targetBaseDn || '—' }}</span>
+            </template>
+          </div>
         </div>
-        <!-- Toolbar -->
-        <div class="flex items-center gap-2 text-sm">
-          <label class="text-gray-700">Status</label>
-          <select v-model="findingStatusFilter" @change="loadFindings" class="input">
-            <option value="PROPOSED">Proposed</option>
-            <option value="">All</option>
-            <option value="AUTO_APPLIED">Auto-applied</option>
-            <option value="APPLIED">Applied</option>
-            <option value="DISMISSED">Dismissed</option>
-          </select>
-          <label class="text-gray-700">Type</label>
-          <select v-model="findingTypeFilter" @change="loadFindings" class="input">
-            <option value="">All</option>
-            <option value="MISSING_IN_TARGET">Missing</option>
-            <option value="ATTRIBUTE_DRIFT">Drift</option>
-            <option value="EXTRA_IN_TARGET">Extra</option>
-          </select>
-          <button @click="loadFindings" class="btn-secondary btn-compact text-xs">Refresh</button>
-          <div class="flex-1"></div>
-          <span class="text-xs text-gray-500">{{ selectedFindings.size }} selected</span>
-          <button @click="dismissSelectedFindings" :disabled="applyingFindings || selectedFindings.size === 0"
-                  class="btn-secondary btn-compact text-xs">Dismiss selected</button>
-          <button @click="applySelectedFindings" :disabled="applyingFindings || selectedFindings.size === 0"
-                  class="btn-primary btn-compact text-xs">Apply selected</button>
+      </template>
+
+      <div class="flex flex-col h-full min-h-0">
+        <!-- Pinned header: summary chips + toolbar (stay put while the table scrolls) -->
+        <div class="shrink-0 space-y-3 pb-3 border-b border-gray-100">
+          <!-- Run summary chips -->
+          <div v-if="findingsRun" class="flex flex-wrap items-center gap-2 text-xs">
+            <span class="badge badge-gray">Source {{ findingsRun.sourceEntryCount != null ? findingsRun.sourceEntryCount.toLocaleString() : '—' }}</span>
+            <span class="badge badge-gray">Target {{ findingsRun.targetEntryCount != null ? findingsRun.targetEntryCount.toLocaleString() : '—' }}</span>
+            <span class="w-px h-4 bg-gray-200 mx-1" aria-hidden="true"></span>
+            <span class="badge badge-blue gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-blue-600"></span>Missing {{ findingsRun.missingCount }}</span>
+            <span class="badge badge-amber gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>Drift {{ findingsRun.driftCount }}</span>
+            <span class="badge badge-red gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-red-600"></span>Extra {{ findingsRun.extraCount }}</span>
+            <span class="badge badge-gray gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>Suppressed {{ findingsRun.suppressedCount }}</span>
+          </div>
+          <!-- Toolbar -->
+          <div class="flex items-center gap-2 text-sm">
+            <label class="text-gray-700">Status</label>
+            <select v-model="findingStatusFilter" @change="loadFindings" class="input-sm" aria-label="Filter by status">
+              <option value="PROPOSED">Proposed</option>
+              <option value="">All</option>
+              <option value="AUTO_APPLIED">Auto-applied</option>
+              <option value="APPLIED">Applied</option>
+              <option value="DISMISSED">Dismissed</option>
+            </select>
+            <label class="text-gray-700">Type</label>
+            <select v-model="findingTypeFilter" @change="loadFindings" class="input-sm" aria-label="Filter by type">
+              <option value="">All</option>
+              <option value="MISSING_IN_TARGET">Missing</option>
+              <option value="ATTRIBUTE_DRIFT">Drift</option>
+              <option value="EXTRA_IN_TARGET">Extra</option>
+            </select>
+            <button @click="loadFindings" class="btn-secondary btn-compact text-xs">↻ Refresh</button>
+            <div class="flex-1"></div>
+            <span class="text-xs text-gray-500">{{ selectedFindings.size }} selected</span>
+            <button @click="dismissSelectedFindings" :disabled="applyingFindings || selectedFindings.size === 0"
+                    class="btn-secondary btn-compact text-xs">Dismiss selected</button>
+            <button @click="applySelectedFindings" :disabled="applyingFindings || selectedFindings.size === 0"
+                    class="btn-primary btn-compact text-xs">Apply selected</button>
+          </div>
         </div>
 
-        <div v-if="loadingFindings" class="text-center text-gray-500 py-4 text-sm">Loading…</div>
-        <EmptyState v-else-if="findings.length === 0" icon="shield" title="No findings for this filter." />
-        <table v-else class="w-full text-xs">
-          <thead class="bg-gray-50 text-gray-500">
-            <tr>
-              <th class="px-2 py-1 w-8">
-                <input type="checkbox" :checked="allProposedSelected" @change="toggleAllFindings"
-                       :disabled="proposedFindings.length === 0" aria-label="Select all proposed" />
-              </th>
-              <th class="text-left px-2 py-1">Type</th>
-              <th class="text-left px-2 py-1">Source DN</th>
-              <th class="text-left px-2 py-1">Target DN</th>
-              <th class="text-left px-2 py-1">Action</th>
-              <th class="px-2 py-1"></th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-50">
-            <template v-for="f in findings" :key="f.id">
-              <tr class="hover:bg-gray-50" :class="{ 'bg-blue-50': selectedFindings.has(f.id) }">
-                <td class="px-2 py-1">
-                  <input type="checkbox" :checked="selectedFindings.has(f.id)" @change="toggleFinding(f.id)"
-                         :disabled="f.status !== 'PROPOSED'" :aria-label="`Select ${f.targetDn}`" />
-                </td>
-                <td class="px-2 py-1">
-                  <span class="badge" :class="{ 'badge-blue': f.findingType === 'MISSING_IN_TARGET', 'badge-amber': f.findingType === 'ATTRIBUTE_DRIFT', 'badge-red': f.findingType === 'EXTRA_IN_TARGET' }">
-                    {{ f.findingType === 'MISSING_IN_TARGET' ? 'Missing' : f.findingType === 'ATTRIBUTE_DRIFT' ? 'Drift' : 'Extra' }}
-                  </span>
-                </td>
-                <td class="px-2 py-1 font-mono text-[10px] truncate max-w-xs" :title="f.sourceDn || ''">{{ f.sourceDn || '—' }}</td>
-                <td class="px-2 py-1 font-mono text-[10px] truncate max-w-xs" :title="f.targetDn">{{ f.targetDn }}</td>
-                <td class="px-2 py-1">
-                  <span class="badge badge-gray">{{ f.suggestedOp }}</span>
-                  <span v-if="f.status !== 'PROPOSED'" class="ml-1 text-[10px] text-gray-400">{{ f.status }}</span>
-                </td>
-                <td class="px-2 py-1 text-right">
-                  <button @click="toggleExpand(f.id)" class="text-gray-500 hover:text-gray-700">{{ expandedFindings.has(f.id) ? '▾' : '▸' }}</button>
-                </td>
+        <!-- Scrollable findings table -->
+        <div class="flex-1 overflow-y-auto min-h-0 pt-3">
+          <div v-if="loadingFindings" class="text-center text-gray-500 py-4 text-sm">Loading…</div>
+          <EmptyState v-else-if="findings.length === 0" icon="shield" title="No findings for this filter." />
+          <table v-else class="w-full text-xs">
+            <thead class="bg-gray-50 text-gray-500 sticky top-0 z-10">
+              <tr>
+                <th class="px-2 py-1.5 w-8">
+                  <input type="checkbox" :checked="allProposedSelected" @change="toggleAllFindings"
+                         :disabled="proposedFindings.length === 0" aria-label="Select all proposed" />
+                </th>
+                <th class="text-left px-2 py-1.5">Type</th>
+                <th class="text-left px-2 py-1.5">Source DN</th>
+                <th class="text-left px-2 py-1.5">Target DN</th>
+                <th class="text-left px-2 py-1.5">Suggested action</th>
+                <th class="px-2 py-1.5"></th>
               </tr>
-              <tr v-if="expandedFindings.has(f.id)" :key="f.id + '-d'">
-                <td colspan="6" class="px-2 py-2 bg-gray-50">
-                  <ul class="pl-8 space-y-0.5">
-                    <li v-for="(line, i) in findingChanges(f)" :key="i" class="font-mono text-[11px] text-gray-600">{{ line }}</li>
-                  </ul>
-                </td>
-              </tr>
-            </template>
-          </tbody>
-        </table>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+              <template v-for="f in findings" :key="f.id">
+                <tr class="hover:bg-gray-50" :class="{ 'bg-blue-50': selectedFindings.has(f.id) }">
+                  <td class="px-2 py-1.5 align-top">
+                    <input type="checkbox" :checked="selectedFindings.has(f.id)" @change="toggleFinding(f.id)"
+                           :disabled="f.status !== 'PROPOSED'" :aria-label="`Select ${f.targetDn}`" />
+                  </td>
+                  <td class="px-2 py-1.5 align-top">
+                    <span class="badge" :class="{ 'badge-blue': f.findingType === 'MISSING_IN_TARGET', 'badge-amber': f.findingType === 'ATTRIBUTE_DRIFT', 'badge-red': f.findingType === 'EXTRA_IN_TARGET' }">
+                      {{ f.findingType === 'MISSING_IN_TARGET' ? 'Missing' : f.findingType === 'ATTRIBUTE_DRIFT' ? 'Drift' : 'Extra' }}
+                    </span>
+                  </td>
+                  <td class="px-2 py-1.5 font-mono text-[11px] truncate max-w-xs align-top" :title="f.sourceDn || ''">{{ f.sourceDn || '—' }}</td>
+                  <td class="px-2 py-1.5 font-mono text-[11px] truncate max-w-xs align-top" :title="f.targetDn">{{ f.targetDn }}</td>
+                  <td class="px-2 py-1.5 align-top">
+                    <span class="badge" :class="opBadgeClass(f.suggestedOp)">{{ f.suggestedOp }}</span>
+                    <div v-if="opNote(f)" class="text-[10px] text-gray-400 mt-0.5">{{ opNote(f) }}</div>
+                    <div v-if="f.status !== 'PROPOSED'" class="text-[10px] text-gray-400 mt-0.5">
+                      {{ f.status }}
+                      <button v-if="f.eventId" @click="openEventLog" class="text-blue-600 hover:underline ml-0.5">event ↗</button>
+                    </div>
+                  </td>
+                  <td class="px-2 py-1.5 text-right align-top">
+                    <button @click="toggleExpand(f.id)" class="text-gray-500 hover:text-gray-700"
+                            :aria-label="expandedFindings.has(f.id) ? 'Collapse' : 'Expand'">{{ expandedFindings.has(f.id) ? '▾' : '▸' }}</button>
+                  </td>
+                </tr>
+                <tr v-if="expandedFindings.has(f.id)" :key="f.id + '-d'">
+                  <td colspan="6" class="px-2 py-3 pl-12 bg-gray-50">
+                    <!-- MISSING_IN_TARGET: attributes that would be added -->
+                    <template v-if="f.findingType === 'MISSING_IN_TARGET'">
+                      <h4 class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Attributes to add on target</h4>
+                      <div class="space-y-1">
+                        <div v-for="a in missingAttrs(f)" :key="a.k" class="text-[13px]">
+                          <span class="text-green-700 font-bold mr-1.5">+</span>
+                          <span class="font-semibold text-gray-700">{{ a.k }}:</span>
+                          <span class="font-mono text-gray-600 ml-1">{{ a.v }}</span>
+                        </div>
+                      </div>
+                    </template>
+
+                    <!-- ATTRIBUTE_DRIFT: current target vs expected source -->
+                    <template v-else-if="f.findingType === 'ATTRIBUTE_DRIFT'">
+                      <h4 class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Attribute drift — current target vs expected (source)</h4>
+                      <table class="border border-gray-200 rounded-lg overflow-hidden text-[13px]">
+                        <thead>
+                          <tr class="bg-gray-100 text-gray-600 text-left">
+                            <th class="px-3 py-1.5 font-semibold">Attribute</th>
+                            <th class="px-3 py-1.5 font-semibold">Current (target)</th>
+                            <th class="px-3 py-1.5 font-semibold">Expected (source)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr v-for="row in driftRows(f)" :key="row.name" class="border-t border-gray-100">
+                            <td class="px-3 py-1.5 font-semibold text-gray-700">{{ row.name }}</td>
+                            <td class="px-3 py-1.5 bg-red-50">
+                              <span v-if="row.current" class="font-mono text-red-700 line-through">{{ row.current }}</span>
+                              <span v-else class="font-mono text-gray-400">— (absent)</span>
+                            </td>
+                            <td class="px-3 py-1.5 bg-green-50">
+                              <span class="font-mono text-green-700">{{ row.expected }}</span>
+                            </td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </template>
+
+                    <!-- EXTRA_IN_TARGET: target entry that would be deleted -->
+                    <template v-else>
+                      <h4 class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Target entry with no source counterpart — would be deleted</h4>
+                      <div class="space-y-1">
+                        <div v-for="a in extraAttrs(f)" :key="a.k" class="text-[13px]">
+                          <span class="font-semibold text-gray-700">{{ a.k }}:</span>
+                          <span class="font-mono text-gray-600 ml-1">{{ a.v }}</span>
+                        </div>
+                      </div>
+                      <div class="flex gap-2 items-start bg-red-50 border border-red-100 rounded-lg px-3 py-2 mt-3 text-[12px] text-red-700 max-w-xl">
+                        <span aria-hidden="true">⚠</span>
+                        <span><b>Destructive.</b> This entry exists on the target but not the source. Applying will issue a
+                          <b>DELETE</b> against the target.<template v-if="runsLink?.reconcileDeleteAction === 'REVIEW'">
+                          This link's deletion policy is <b>Review before deleting</b>, so it was not applied automatically.</template></span>
+                      </div>
+                    </template>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
       </div>
+
+      <template #footer>
+        <div class="w-full flex items-center justify-between text-xs text-gray-500">
+          <span>{{ findingsFooter }}</span>
+          <span v-if="findingsRun">Applied findings link to their
+            <button @click="openEventLog" class="text-blue-600 hover:underline font-medium">event log</button> ↗</span>
+        </div>
+      </template>
     </AppModal>
 
     <ConfirmDialog v-if="deleteTarget"
@@ -903,18 +987,64 @@ async function dismissSelectedFindings() {
 }
 
 /** Compact human description of a finding's diff for the expanded row. */
-function findingChanges(f: ReconFinding): string[] {
-  if (f.findingType === 'MISSING_IN_TARGET') {
-    const attrs = (f.detail.attributes ?? {}) as Record<string, string[]>
-    return Object.keys(attrs).map(k => `+ ${k}`)
-  }
+// Op badge tint mirrors the operation's blast radius: ADD is additive
+// (green), MODIFY in-place (amber), DELETE destructive (red).
+function opBadgeClass(op: string): string {
+  if (op === 'ADD') return 'badge-green'
+  if (op === 'MODIFY') return 'badge-amber'
+  if (op === 'DELETE') return 'badge-red'
+  return 'badge-gray'
+}
+
+// Sub-label under the op badge: how many attrs drifted, or why a delete
+// is still sitting in the queue.
+function opNote(f: ReconFinding): string {
   if (f.findingType === 'ATTRIBUTE_DRIFT') {
-    const mods = (f.detail.modifications ?? []) as Array<{ name: string; values: string[] }>
-    const before = (f.detail.before ?? {}) as Record<string, string[]>
-    return mods.map(m => `${m.name}: ${(before[m.name] ?? []).join(', ') || '—'} → ${m.values.join(', ')}`)
+    const n = ((f.detail.modifications ?? []) as unknown[]).length
+    return `${n} attribute${n === 1 ? '' : 's'} differ${n === 1 ? 's' : ''}`
   }
+  if (f.findingType === 'EXTRA_IN_TARGET' && f.suggestedOp === 'DELETE'
+      && runsLink.value?.reconcileDeleteAction === 'REVIEW') {
+    return 'held for review'
+  }
+  return ''
+}
+
+// Expanded-diff data, shaped per finding type from the detail JSONB.
+function missingAttrs(f: ReconFinding): Array<{ k: string; v: string }> {
+  const attrs = (f.detail.attributes ?? {}) as Record<string, string[]>
+  return Object.keys(attrs).map(k => ({ k, v: (attrs[k] ?? []).join(', ') }))
+}
+function driftRows(f: ReconFinding): Array<{ name: string; current: string; expected: string }> {
+  const mods = (f.detail.modifications ?? []) as Array<{ name: string; values: string[] }>
+  const before = (f.detail.before ?? {}) as Record<string, string[]>
+  return mods.map(m => ({
+    name: m.name,
+    current: (before[m.name] ?? []).join(', '),
+    expected: (m.values ?? []).join(', '),
+  }))
+}
+function extraAttrs(f: ReconFinding): Array<{ k: string; v: string }> {
   const cur = (f.detail.currentTarget ?? {}) as Record<string, string[]>
-  return Object.keys(cur).map(k => `${k}: ${cur[k].join(', ')}`)
+  return Object.keys(cur).map(k => ({ k, v: (cur[k] ?? []).join(', ') }))
+}
+
+const findingsFooter = computed(() => {
+  const shown = findings.value.length
+  const status = findingStatusFilter.value
+  const label = status === 'PROPOSED' ? 'proposed ' : status ? status.toLowerCase().replace('_', '-') + ' ' : ''
+  let s = `Showing ${shown} ${label}finding${shown === 1 ? '' : 's'}`
+  const suppressed = findingsRun.value?.suppressedCount ?? 0
+  if (suppressed > 0) s += ` · ${suppressed} suppressed`
+  return s
+})
+
+// The findings list and the event log are sibling modals; jump from one
+// to the other for the same link rather than stacking dialogs.
+function openEventLog() {
+  if (!runsLink.value) return
+  showFindings.value = false
+  openEvents(runsLink.value)
 }
 
 function confirmDelete(link: ReplicationLink) { deleteTarget.value = link }

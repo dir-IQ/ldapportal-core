@@ -62,7 +62,7 @@
           </div>
 
           <div class="px-5 py-3 border-t border-gray-200 shrink-0">
-            <div v-if="pickerSelectedDn" class="text-xs font-mono text-gray-600 mb-2 break-all">{{ pickerSelectedDn }}</div>
+            <div v-if="pickerSelectedDn" class="text-[13px] font-mono text-gray-600 mb-2 break-all">{{ pickerSelectedDn }}</div>
             <div class="flex justify-end gap-2">
               <button @click="showPicker = false" class="btn-neutral">Cancel</button>
               <button

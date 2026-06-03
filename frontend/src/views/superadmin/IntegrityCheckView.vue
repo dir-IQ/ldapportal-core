@@ -72,7 +72,7 @@
               </thead>
               <tbody class="divide-y divide-gray-50">
                 <tr v-for="(issue, i) in group.issues" :key="i" class="hover:bg-blue-50">
-                  <td class="py-2 px-5 font-mono text-xs text-blue-600 break-all cursor-pointer" @click="goToBrowser(issue.dn)">
+                  <td class="py-2 px-5 font-mono text-[13px] text-blue-600 break-all cursor-pointer" @click="goToBrowser(issue.dn)">
                     {{ issue.dn }}
                   </td>
                   <td class="py-2 px-5 text-xs text-gray-600 break-all">{{ issue.description }}</td>

@@ -191,7 +191,7 @@
           >Export LDIF</button>
         </template>
         <template #cell-dn="{ value }">
-          <span class="font-mono text-blue-600 break-all">{{ value }}</span>
+          <span class="font-mono text-[13px] text-blue-600 break-all">{{ value }}</span>
         </template>
       </ResultsTable>
 
@@ -229,7 +229,7 @@
                of edit first, then export. -->
         </template>
         <template #cell-dn="{ value }">
-          <span class="font-mono text-blue-600 break-all">{{ value }}</span>
+          <span class="font-mono text-[13px] text-blue-600 break-all">{{ value }}</span>
         </template>
       </EditableResultsTable>
     </div>
@@ -248,7 +248,7 @@
             <tbody>
               <tr v-for="(values, attr) in selectedEntry.attributes" :key="attr" class="border-b border-gray-100">
                 <td class="py-2 pr-4 font-medium text-gray-600 align-top whitespace-nowrap">{{ attr }}</td>
-                <td class="py-2 font-mono text-xs text-gray-800 break-all">
+                <td class="py-2 font-mono text-[13px] text-gray-800 break-all">
                   <div v-for="(v, i) in values" :key="i">{{ v }}</div>
                   <div v-if="attr === 'userAccountControl' && values.length" class="mt-1 flex flex-wrap gap-1">
                     <span v-for="flag in decodeUAC(values[0])" :key="flag"
@@ -278,7 +278,7 @@
               <div v-if="entryGroups.length === 0" class="text-sm text-gray-500">Not a member of any groups.</div>
               <div v-else class="space-y-1 max-h-48 overflow-y-auto">
                 <div v-for="g in entryGroups" :key="g.dn"
-                  class="font-mono text-xs text-gray-700 bg-gray-50 rounded px-3 py-1.5 break-all">
+                  class="font-mono text-[13px] text-gray-700 bg-gray-50 rounded px-3 py-1.5 break-all">
                   <span class="font-medium text-gray-900">{{ g.cn || '' }}</span>
                   <span v-if="g.cn" class="text-gray-500 ml-1">—</span>
                   {{ g.dn }}

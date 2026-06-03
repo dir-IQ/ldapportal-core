@@ -277,7 +277,7 @@
     <!-- Activity Timeline modal -->
     <AppModal v-model="showTimeline" title="Activity History" size="lg">
       <div v-if="timelineTarget" class="mb-3">
-        <p class="text-xs font-mono text-gray-500 break-all">{{ timelineTarget.dn }}</p>
+        <p class="text-[13px] font-mono text-gray-500 break-all">{{ timelineTarget.dn }}</p>
       </div>
       <EntryTimeline v-if="timelineTarget" :directory-id="dirId" :target-dn="timelineTarget.dn" />
       <template #footer>

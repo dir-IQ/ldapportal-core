@@ -15,7 +15,7 @@
               <div v-if="entry.mail" class="text-[10px] text-gray-500 truncate">{{ entry.mail }}</div>
             </div>
           </div>
-          <div class="text-[10px] font-mono text-gray-500 truncate mb-2" :title="dn">{{ dn }}</div>
+          <div class="text-[13px] font-mono text-gray-500 truncate mb-2" :title="dn">{{ dn }}</div>
           <div v-if="entry.groups && entry.groups.length" class="flex flex-wrap gap-1">
             <span v-for="g in entry.groups.slice(0, 5)" :key="g"
                   class="bg-gray-100 text-gray-600 text-[10px] px-1.5 py-0.5 rounded">{{ g }}</span>
