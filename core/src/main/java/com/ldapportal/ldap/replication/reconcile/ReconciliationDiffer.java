@@ -72,6 +72,22 @@ public final class ReconciliationDiffer {
                                   List<ReconEntry> targetEntries,
                                   Set<String> undeliveredTargetDnsNormalized,
                                   ReconcileDeleteAction deleteAction) {
+        return diff(link, targetBaseDn, sourceEntries, targetEntries,
+                undeliveredTargetDnsNormalized, deleteAction, ValueNormalizer.DEFAULT);
+    }
+
+    /**
+     * Whole-subtree diff that compares attribute values through
+     * {@code normalizer} (the target schema's matching rules) so case- and
+     * DN-formatting-only differences are not reported as drift.
+     */
+    public static DiffResult diff(ReplicationLinkSnapshot link,
+                                  String targetBaseDn,
+                                  List<ReconEntry> sourceEntries,
+                                  List<ReconEntry> targetEntries,
+                                  Set<String> undeliveredTargetDnsNormalized,
+                                  ReconcileDeleteAction deleteAction,
+                                  ValueNormalizer normalizer) {
         Map<String, ReconEntry> targetByDn = new HashMap<>();
         for (ReconEntry t : targetEntries) targetByDn.put(normDn(t.dn()), t);
 
@@ -96,7 +112,7 @@ public final class ReconciliationDiffer {
                         ReplicationOperationType.ADD, src.dn(), targetDn, payload));
                 continue;
             }
-            Map<String, Object> drift = computeDrift(expected, target.attributes());
+            Map<String, Object> drift = computeDrift(expected, target.attributes(), normalizer);
             if (drift != null) {
                 raw.add(new FindingCandidate(ReconciliationFindingType.ATTRIBUTE_DRIFT,
                         ReplicationOperationType.MODIFY, src.dn(), targetDn, drift));
@@ -155,13 +171,26 @@ public final class ReconciliationDiffer {
      */
     static Map<String, Object> computeDrift(Map<String, List<String>> expected,
                                             Map<String, List<String>> targetAttrs) {
+        return computeDrift(expected, targetAttrs, ValueNormalizer.DEFAULT);
+    }
+
+    /**
+     * As {@link #computeDrift(Map, Map)}, but values are compared after
+     * canonicalisation through {@code normalizer} (the target schema's
+     * matching rules). The MODIFY payload still records the <em>raw</em>
+     * source ({@code values}) and target ({@code before}) values so the UI
+     * shows the real strings.
+     */
+    static Map<String, Object> computeDrift(Map<String, List<String>> expected,
+                                            Map<String, List<String>> targetAttrs,
+                                            ValueNormalizer normalizer) {
         Map<String, List<String>> targetCi = caseInsensitive(targetAttrs);
         List<Map<String, Object>> mods = new ArrayList<>();
         Map<String, List<String>> before = new LinkedHashMap<>();
         for (Map.Entry<String, List<String>> e : expected.entrySet()) {
             List<String> want = e.getValue();
             List<String> have = targetCi.get(e.getKey().toLowerCase(Locale.ROOT));
-            if (!sameValues(want, have)) {
+            if (!sameValues(want, have, e.getKey(), normalizer)) {
                 Map<String, Object> mod = new LinkedHashMap<>();
                 mod.put("type", "REPLACE");
                 mod.put("name", e.getKey());
@@ -195,11 +224,21 @@ public final class ReconciliationDiffer {
         return ci;
     }
 
-    /** Order-independent value-set comparison. */
-    private static boolean sameValues(List<String> a, List<String> b) {
-        Set<String> sa = a == null ? Set.of() : new HashSet<>(a);
-        Set<String> sb = b == null ? Set.of() : new HashSet<>(b);
-        return sa.equals(sb);
+    /**
+     * Order-independent value-set comparison under the attribute's matching
+     * rule: each value is canonicalised through {@code normalizer} before the
+     * set comparison, so case- and DN-formatting-only differences are equal.
+     */
+    private static boolean sameValues(List<String> a, List<String> b,
+                                      String attrName, ValueNormalizer normalizer) {
+        return canonicalSet(a, attrName, normalizer).equals(canonicalSet(b, attrName, normalizer));
+    }
+
+    private static Set<String> canonicalSet(List<String> values, String attrName, ValueNormalizer normalizer) {
+        if (values == null) return Set.of();
+        Set<String> out = new HashSet<>();
+        for (String v : values) out.add(normalizer.canonical(attrName, v));
+        return out;
     }
 
     /** Canonical DN for keying / comparison; falls back to lower-case on parse failure. */

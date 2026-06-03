@@ -13,7 +13,9 @@ import com.unboundid.ldap.sdk.SearchResult;
 import com.unboundid.ldap.sdk.SearchResultEntry;
 import com.unboundid.ldap.sdk.SearchScope;
 import com.unboundid.ldap.sdk.controls.SimplePagedResultsControl;
+import com.unboundid.ldap.sdk.schema.Schema;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
@@ -37,6 +39,7 @@ import java.util.function.Consumer;
  */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class ReconciliationReadOps {
 
     private final LdapConnectionFactory connectionFactory;
@@ -91,6 +94,23 @@ public class ReconciliationReadOps {
                 throw ex;
             }
         });
+    }
+
+    /**
+     * Read {@code dc}'s subschema, used to drive matching-rule-aware value
+     * comparison ({@link ValueNormalizer}). Best-effort: a schema-read
+     * failure must not fail the run, so it logs and returns empty, leaving
+     * the caller to fall back to case-insensitive defaults.
+     */
+    public Optional<Schema> readSchema(DirectoryConnection dc) {
+        try {
+            return connectionFactory.withConnectionUnreplicated(dc,
+                    iface -> Optional.ofNullable(iface.getSchema()));
+        } catch (RuntimeException ex) {
+            log.warn("Reconciliation: schema unavailable for directory {} — comparing values "
+                    + "with case-insensitive defaults ({})", dc.getId(), ex.getMessage());
+            return Optional.empty();
+        }
     }
 
     private static ReconEntry toReconEntry(SearchResultEntry e) {

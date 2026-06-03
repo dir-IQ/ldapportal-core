@@ -93,6 +93,35 @@ class ReconciliationDifferTest {
     }
 
     @Test
+    void caseOnlyValueDifference_isNotDrift() {
+        // cn/mail use case-insensitive matching; a case-only difference is
+        // not real drift and must not be reported (the default normalizer).
+        var link = identityLink();
+        var src = List.of(entry("uid=a,dc=x", Map.of("cn", List.of("Ann"), "mail", List.of("A.User@X.COM"))));
+        var tgt = List.of(entry("uid=a,dc=x", Map.of("cn", List.of("ann"), "mail", List.of("a.user@x.com"))));
+        DiffResult r = diff(link, null, src, tgt, ReconcileDeleteAction.REVIEW);
+        assertThat(r.findings()).isEmpty();
+    }
+
+    @Test
+    void dnValuedAttribute_formattingOnlyDifference_isNotDrift_underSchema() throws Exception {
+        // 'member' is DN-syntax (distinguishedNameMatch): the same DN written
+        // with different spacing/case is equal. Case-folding alone can't see
+        // this — only the schema-aware normalizer (matching rule) can.
+        var link = identityLink();
+        var src = List.of(entry("cn=g,dc=x", Map.of("member", List.of("UID=Bob, DC=X"))));
+        var tgt = List.of(entry("cn=g,dc=x", Map.of("member", List.of("uid=bob,dc=x"))));
+
+        // Default (case-fold) normalizer keeps the post-comma space → looks like drift.
+        assertThat(diff(link, null, src, tgt, ReconcileDeleteAction.REVIEW).driftCount()).isEqualTo(1);
+
+        // Schema-aware normalizer DN-normalizes both sides → no drift.
+        var schemaNorm = ValueNormalizer.forSchema(com.unboundid.ldap.sdk.schema.Schema.getDefaultStandardSchema());
+        DiffResult r = ReconciliationDiffer.diff(link, null, src, tgt, Set.of(), ReconcileDeleteAction.REVIEW, schemaNorm);
+        assertThat(r.findings()).isEmpty();
+    }
+
+    @Test
     void extraInTarget_gatedByDeleteAction() {
         var link = identityLink();
         var src = List.of(entry("uid=a,dc=x", Map.of("cn", List.of("Ann"))));

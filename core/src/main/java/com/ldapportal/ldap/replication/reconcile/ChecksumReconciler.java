@@ -45,6 +45,15 @@ public class ChecksumReconciler {
                                 Set<String> undeliveredTargetDnsNormalized,
                                 ReconcileDeleteAction deleteAction) {
 
+        // Compare values through the TARGET schema's matching rules (both the
+        // source-mapped "expected" and the actual target attrs live in the
+        // target namespace), so case- and DN-formatting-only differences are
+        // not mis-classified as drift. Best-effort: falls back to a
+        // case-insensitive default if the target schema can't be read.
+        ValueNormalizer norm = readOps.readSchema(link.targetDirectory())
+                .map(ValueNormalizer::forSchema)
+                .orElse(ValueNormalizer.DEFAULT);
+
         // ── Pass 1: stream both sides into compact digest indexes ───────────
         Map<String, String> expectedDigest = new HashMap<>();   // normTargetDn -> digest
         Map<String, String> sourceDnOf     = new HashMap<>();   // normTargetDn -> source DN (to re-read)
@@ -55,7 +64,7 @@ public class ChecksumReconciler {
             String targetDn = DnMapper.map(src.dn(), link);
             if (targetDn == null) return;                       // out of scope for this link
             String n = ReconciliationDiffer.normDn(targetDn);
-            expectedDigest.put(n, ReconciliationDigest.digest(AttributeMapper.mapAttributes(src.attributes(), link)));
+            expectedDigest.put(n, ReconciliationDigest.digest(AttributeMapper.mapAttributes(src.attributes(), link), norm));
             sourceDnOf.put(n, src.dn());
             targetDnFor.put(n, targetDn);
         });
@@ -66,7 +75,7 @@ public class ChecksumReconciler {
         readOps.streamSubtree(link.targetDirectory(), targetBase, pageSize, t -> {
             targetCount[0]++;
             String n = ReconciliationDiffer.normDn(t.dn());
-            actualDigest.put(n, ReconciliationDigest.digest(t.attributes()));
+            actualDigest.put(n, ReconciliationDigest.digest(t.attributes(), norm));
             targetDnOf.put(n, t.dn());
         });
 
@@ -110,7 +119,7 @@ public class ChecksumReconciler {
             if (src == null || tgt == null) continue;
             Map<String, List<String>> expected =
                     ReconciliationDiffer.stripExcluded(AttributeMapper.mapAttributes(src.attributes(), link));
-            Map<String, Object> payload = ReconciliationDiffer.computeDrift(expected, tgt.attributes());
+            Map<String, Object> payload = ReconciliationDiffer.computeDrift(expected, tgt.attributes(), norm);
             if (payload == null) continue;                      // digest false-positive — no real drift
             findings.add(new FindingCandidate(ReconciliationFindingType.ATTRIBUTE_DRIFT,
                     ReplicationOperationType.MODIFY, src.dn(), targetDnFor.get(n), payload));
