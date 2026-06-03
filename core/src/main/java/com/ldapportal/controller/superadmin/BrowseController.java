@@ -7,6 +7,9 @@ import com.ldapportal.dto.ldap.CreateEntryRequest;
 import com.ldapportal.dto.ldap.IntegrityReport;
 import com.ldapportal.dto.ldap.IntegrityReport.IssueType;
 import com.ldapportal.dto.ldap.LdifImportResult;
+import com.ldapportal.dto.ldap.LdifPreviewPage;
+import com.ldapportal.dto.ldap.LdifPreviewRowDetail;
+import com.ldapportal.dto.ldap.LdifPreviewSummary;
 import com.ldapportal.dto.ldap.MoveEntryRequest;
 import com.ldapportal.dto.ldap.RenameEntryRequest;
 import com.ldapportal.dto.ldap.UpdateEntryRequest;
@@ -20,6 +23,7 @@ import com.ldapportal.ldap.LdapBrowseService.BrowseResult;
 import com.ldapportal.ldap.LdapBrowseService.SearchEntry;
 import com.ldapportal.ldap.LdapSchemaService;
 import com.ldapportal.ldap.LdapSchemaService.ObjectClassAttributes;
+import com.ldapportal.ldap.LdifPreviewService;
 import com.ldapportal.ldap.LdifService;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.service.AuditService;
@@ -64,6 +68,7 @@ public class BrowseController {
     private final LdapBrowseService browseService;
     private final LdapSchemaService schemaService;
     private final LdifService ldifService;
+    private final LdifPreviewService ldifPreviewService;
     private final IntegrityCheckService integrityCheckService;
     private final AuditService auditService;
     private final DirectoryConnectionRepository dirRepo;
@@ -253,6 +258,62 @@ public class BrowseController {
                        "skipped", result.skipped(),
                        "failed", result.failed(),
                        "dryRun", dryRun));
+
+        return result;
+    }
+
+    // ── LDIF Import Preview ───────────────────────────────────────────────────
+    // Parse + classify an upload (read-only) into a stateful, paged preview,
+    // then apply the exact previewed records. Supersedes the count-only dry-run.
+
+    @PostMapping("/import/ldif/preview")
+    public LdifPreviewSummary previewLdif(@PathVariable UUID directoryId,
+                                          @AuthenticationPrincipal AuthPrincipal principal,
+                                          @RequestParam("file") MultipartFile file,
+                                          @RequestParam(defaultValue = "SKIP") ConflictHandling conflictHandling)
+            throws IOException {
+        DirectoryConnection dc = loadDirectory(directoryId);
+        return ldifPreviewService.createPreview(dc, file.getInputStream(), conflictHandling, principal.id());
+    }
+
+    @GetMapping("/import/ldif/preview/{previewId}")
+    public LdifPreviewPage previewPage(@PathVariable UUID directoryId,
+                                       @PathVariable UUID previewId,
+                                       @AuthenticationPrincipal AuthPrincipal principal,
+                                       @RequestParam(required = false) String op,
+                                       @RequestParam(required = false) String q,
+                                       @RequestParam(defaultValue = "0") int page,
+                                       @RequestParam(defaultValue = "50") int size) {
+        loadDirectory(directoryId);
+        return ldifPreviewService.page(previewId, principal.id(), op, q, page, size);
+    }
+
+    @GetMapping("/import/ldif/preview/{previewId}/row/{rowNumber}")
+    public LdifPreviewRowDetail previewRow(@PathVariable UUID directoryId,
+                                           @PathVariable UUID previewId,
+                                           @PathVariable int rowNumber,
+                                           @AuthenticationPrincipal AuthPrincipal principal) {
+        loadDirectory(directoryId);
+        return ldifPreviewService.rowDetail(previewId, principal.id(), rowNumber);
+    }
+
+    @PostMapping("/import/ldif/preview/{previewId}/apply")
+    public LdifImportResult applyPreview(@PathVariable UUID directoryId,
+                                         @PathVariable UUID previewId,
+                                         @AuthenticationPrincipal AuthPrincipal principal) {
+        DirectoryConnection dc = loadDirectory(directoryId);
+        // Apply the records exactly as previewed, with the conflict mode the
+        // preview was computed under (so the outcome matches what was shown).
+        ConflictHandling conflict = ldifPreviewService.conflictOf(previewId, principal.id());
+        LdifImportResult result = ldifPreviewService.apply(previewId, principal.id(), dc);
+
+        auditService.record(principal, directoryId, AuditAction.LDIF_IMPORT, dc.getBaseDn(),
+                Map.of("added", result.added(),
+                       "updated", result.updated(),
+                       "skipped", result.skipped(),
+                       "failed", result.failed(),
+                       "conflictHandling", conflict.name(),
+                       "source", "preview"));
 
         return result;
     }
