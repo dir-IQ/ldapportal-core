@@ -190,5 +190,45 @@ class ChecksumReconcilerTest {
         assertThat(checksum.missingCount()).isEqualTo(pure.missingCount()).isEqualTo(1);
         assertThat(checksum.driftCount()).isEqualTo(pure.driftCount()).isEqualTo(1);
         assertThat(checksum.extraCount()).isEqualTo(pure.extraCount()).isEqualTo(1);
+        // Compare WHICH DNs got which finding, not just the counts — a mis-keyed
+        // protect-set could keep the counts equal while protecting the wrong DN.
+        assertThat(findingKeys(checksum)).isEqualTo(findingKeys(pure));
+    }
+
+    @Test
+    void excludeFilter_protectSet_parityWithDiffer_onProductionPath() {
+        // §7B.4 on the PRODUCTION (ChecksumReconciler) path: an excluded source
+        // entry's target copy must be protected (never EXTRA); a true orphan
+        // still EXTRA. Asserted by exact finding identity against the differ.
+        link = new ReplicationLinkSnapshot(UUID.randomUUID(), "L", sourceDir, targetDir,
+                null, null, true, false,
+                com.ldapportal.entity.enums.ReplicationCaptureMode.CHANGELOG, "(cn=Excluded)", List.of());
+
+        List<ReconEntry> source = new ArrayList<>(List.of(
+                e("uid=a,dc=x", "Ann"),         // included, parity
+                e("cn=ex,dc=x", "Excluded")));  // excluded by (cn=Excluded)
+        List<ReconEntry> target = new ArrayList<>(List.of(
+                e("uid=a,dc=x", "Ann"),
+                e("cn=ex,dc=x", "Excluded"),    // excluded copy → must be protected
+                e("uid=z,dc=x", "Zed")));       // no source → EXTRA
+        stubStream(sourceDir, source);
+        stubStream(targetDir, target);
+        source.forEach(s -> stubReadEntry(sourceDir, s));
+        target.forEach(t -> stubReadEntry(targetDir, t));
+
+        DiffResult checksum = run(ReconcileDeleteAction.AUTO, Set.of());
+        DiffResult pure = ReconciliationDiffer.diff(link, "dc=x", source, target, Set.of(), ReconcileDeleteAction.AUTO);
+
+        assertThat(findingKeys(checksum)).isEqualTo(findingKeys(pure));
+        // Only the true orphan is EXTRA; the excluded copy is protected.
+        assertThat(findingKeys(checksum))
+                .containsExactly(ReconciliationFindingType.EXTRA_IN_TARGET + ":uid=z,dc=x");
+        assertThat(checksum.findings()).noneMatch(f -> "cn=ex,dc=x".equals(f.targetDn()));
+    }
+
+    private static Set<String> findingKeys(DiffResult r) {
+        return r.findings().stream()
+                .map(f -> f.type() + ":" + f.targetDn())
+                .collect(java.util.stream.Collectors.toSet());
     }
 }
