@@ -482,6 +482,7 @@ class ReplicationLinkServiceTest {
         existing.setChangelogBaseDn("cn=changelog");
         existing.setChangelogLastChangeNumber(4242L);
         existing.setChangelogSourceLastChangeNumber(4250L);
+        existing.setChangelogPollClaimedAt(OffsetDateTime.now());  // a poll lease held under the old mode
         when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
         when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
         when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
@@ -496,6 +497,9 @@ class ReplicationLinkServiceTest {
         assertThat(resp.captureMode()).isEqualTo(ReplicationCaptureMode.APP_INTERCEPT);
         assertThat(resp.changelogLastChangeNumber()).isNull();
         assertThat(resp.changelogSourceLastChangeNumber()).isNull();
+        // The poll lease is released too, so a later switch back isn't blocked
+        // by a stale claim (not exposed on the response — assert on the entity).
+        assertThat(existing.getChangelogPollClaimedAt()).isNull();
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

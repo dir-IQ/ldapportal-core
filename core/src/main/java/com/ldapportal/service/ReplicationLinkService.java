@@ -17,12 +17,12 @@ import com.ldapportal.entity.enums.ReconciliationFindingStatus;
 import com.ldapportal.entity.enums.ReplicationCaptureMode;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.exception.ResourceNotFoundException;
-import com.unboundid.ldap.sdk.Filter;
-import com.unboundid.ldap.sdk.LDAPException;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.ReconciliationFindingRepository;
 import com.ldapportal.repository.ReplicationEventRepository;
 import com.ldapportal.repository.ReplicationLinkRepository;
+import com.unboundid.ldap.sdk.Filter;
+import com.unboundid.ldap.sdk.LDAPException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -351,12 +351,15 @@ public class ReplicationLinkService {
 
         if (previous != mode) {
             // Re-seed cleanly under the new mode: drop the cursor + observed
-            // head and clear any stale health/error from the prior mode.
+            // head, clear any stale health/error from the prior mode, and
+            // release any poll lease so the re-enabled link isn't blocked by a
+            // stale claim until the poller's stale-claim sweep runs.
             link.setChangelogLastChangeNumber(null);
             link.setChangelogSourceLastChangeNumber(null);
             link.setChangelogLastPolledAt(null);
             link.setChangelogLastError(null);
             link.setChangelogLastErrorAt(null);
+            link.setChangelogPollClaimedAt(null);
             link.setChangelogHealth(ChangelogHealth.HEALTHY);
         }
     }
