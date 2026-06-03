@@ -110,6 +110,9 @@ public class ReplicationChangelogPoller {
     /** Lag (source head − cursor) above this flags the link LAGGING. */
     @Value("${ldapportal.replication.changelog.lag-threshold:1000}")
     private long lagThreshold;
+    /** A link not polled within this window is flagged STALLED. */
+    @Value("${ldapportal.replication.changelog.stalled-after-ms:180000}")
+    private long stalledAfterMs;
 
     private ExecutorService executor;
 
@@ -169,6 +172,22 @@ public class ReplicationChangelogPoller {
             if (reset > 0) log.warn("Released {} stale changelog poll lease(s)", reset);
         } catch (RuntimeException ex) {
             log.error("Stale changelog-lease sweep failed: {}", ex.toString());
+        }
+    }
+
+    /**
+     * Flag links not polled within {@code stalledAfterMs} as STALLED (§7A.7) —
+     * e.g. when the bounded pool can't keep up with the link count. Self-clears
+     * on the next successful poll; never overrides GAP/RESET/config-error health.
+     */
+    @Scheduled(fixedDelayString = "${ldapportal.replication.changelog.stalled-sweep-ms:60000}")
+    void markStalledLinks() {
+        try {
+            OffsetDateTime threshold = OffsetDateTime.now().minus(Duration.ofMillis(stalledAfterMs));
+            int stalled = txOps.markStalled(threshold);
+            if (stalled > 0) log.warn("Flagged {} changelog link(s) STALLED (not polled recently)", stalled);
+        } catch (RuntimeException ex) {
+            log.error("Changelog STALLED sweep failed: {}", ex.toString());
         }
     }
 

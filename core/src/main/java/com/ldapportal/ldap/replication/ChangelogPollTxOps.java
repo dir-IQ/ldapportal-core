@@ -62,6 +62,12 @@ public class ChangelogPollTxOps {
         return linkRepo.resetStaleChangelogPolls(threshold);
     }
 
+    /** Flag links not polled since {@code threshold} as STALLED (§7A.7); returns the count. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public int markStalled(OffsetDateTime threshold) {
+        return linkRepo.markStalledChangelogLinks(threshold);
+    }
+
     /** First-run seed (only while the cursor is still null). */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void seed(UUID linkId, long head, OffsetDateTime now) {

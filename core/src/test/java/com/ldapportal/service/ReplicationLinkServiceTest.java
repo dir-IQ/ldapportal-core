@@ -549,7 +549,76 @@ class ReplicationLinkServiceTest {
         verify(reconciliationService, never()).trigger(any(), any(), any());
     }
 
+    // ── changelog operator remediation (§7A.12) ───────────────────────────────
+
+    @Test
+    void reseed_dropsCursor_audits_andTriggersReconcile() {
+        ReplicationLink link = changelogLink();
+        when(linkRepo.findById(link.getId())).thenReturn(Optional.of(link));
+
+        service.reseedChangelogCursor(principal, link.getId());
+
+        verify(linkRepo).reseedChangelogCursor(link.getId());
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_CHANGELOG_REMEDIATED), any());
+        verify(reconciliationService).trigger(
+                eq(link.getId()), eq(com.ldapportal.entity.enums.ReconciliationRunTrigger.MANUAL), eq(principal));
+    }
+
+    @Test
+    void rewind_setsCursorToTarget_audits() {
+        ReplicationLink link = changelogLink();
+        when(linkRepo.findById(link.getId())).thenReturn(Optional.of(link));
+
+        service.rewindChangelogCursor(principal, link.getId(), 4242L);
+
+        verify(linkRepo).rewindChangelogCursor(link.getId(), 4242L);
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_CHANGELOG_REMEDIATED), any());
+    }
+
+    @Test
+    void rewind_rejectsNegativeChangeNumber() {
+        // Negative-guard fires before any lookup.
+        assertThatThrownBy(() -> service.rewindChangelogCursor(principal, UUID.randomUUID(), -1L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(">= 0");
+        verify(linkRepo, never()).rewindChangelogCursor(any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void reEnable_clearsHealthError_audits() {
+        ReplicationLink link = changelogLink();
+        when(linkRepo.findById(link.getId())).thenReturn(Optional.of(link));
+
+        service.reEnableChangelogPoll(principal, link.getId());
+
+        verify(linkRepo).clearChangelogHealthError(link.getId());
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_CHANGELOG_REMEDIATED), any());
+    }
+
+    @Test
+    void remediation_rejectsNonChangelogLink() {
+        ReplicationLink link = link("App-Intercept");   // captureMode APP_INTERCEPT
+        when(linkRepo.findById(link.getId())).thenReturn(Optional.of(link));
+
+        assertThatThrownBy(() -> service.reseedChangelogCursor(principal, link.getId()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not a changelog-capture link");
+        verify(linkRepo, never()).reseedChangelogCursor(any());
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    private ReplicationLink changelogLink() {
+        ReplicationLink link = link("Changelog");
+        link.setCaptureMode(ReplicationCaptureMode.CHANGELOG);
+        link.setChangelogFormat(ChangelogFormat.DSEE_CHANGELOG);
+        link.setChangelogBaseDn("cn=changelog");
+        link.setEnabled(true);
+        return link;
+    }
 
     private ReplicationLinkRequest changelogRequest(DirectoryConnection source, DirectoryConnection target,
                                                     ChangelogFormat format, String baseDn, String excludeFilter) {

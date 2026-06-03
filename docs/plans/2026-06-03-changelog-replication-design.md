@@ -12,12 +12,15 @@
   payload (§7A.3), `changelogHealth` state machine + lag (HEALTHY/LAGGING/
   GAP_DETECTED/CURSOR_RESET; §7A.7), new `REPLICATION_CHANGELOG_*` audit actions
   (§7A.9), mode-switch auto-reconcile via after-commit hook (§7A.8), and the RF-2
-  worker FIFO `source_change_number` tiebreak. **Deferred** (C3R-followups):
-  operator remediation endpoints (§7A.12 — cursor-reset is recoverable today via
-  the capture-mode toggle), `AlertSummaryProvider` dashboard tiles + STALLED
-  transition (§7A.7/.9), dedicated bounded poll connection (§7A.10). C3X (exclude
-  filter §7B) and C4 (test-changelog endpoint, frontend) not started. Design also
-  carries the §7A / §7B hardening and the RF-1..4 review findings — 2026-06-03).
+  worker FIFO `source_change_number` tiebreak. C3R-followups: operator
+  remediation endpoints (§7A.12 — `reseed` / `rewind` / `re-enable` on
+  `ChangelogRemediationController`, force-reconcile reuses the reconcile
+  endpoint) + STALLED sweep (§7A.7). **Deferred:** `AlertSummaryProvider`
+  dashboard tiles (the alert SPI is implemented in `ee`, out of this repo — the
+  signal already rides the new audit actions → SIEM), dedicated bounded poll
+  connection (§7A.10). C3X (exclude filter §7B) and C4 (test-changelog endpoint,
+  frontend) not started. Design also carries the §7A / §7B hardening and the
+  RF-1..4 review findings — 2026-06-03).
 - **Suggested branch:** `feat/changelog-replication` (already cut; this doc
   lives on it).
 - **Scope:** Add a second **capture mode** to an existing replication link.

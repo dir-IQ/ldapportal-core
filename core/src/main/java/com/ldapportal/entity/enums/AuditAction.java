@@ -116,6 +116,7 @@ public enum AuditAction {
     REPLICATION_CHANGELOG_ENTRY_DEAD_LETTERED  ("replication.changelog_entry_dead_lettered"),
     REPLICATION_CHANGELOG_CAPTURE_ENABLED      ("replication.changelog_capture_enabled"),
     REPLICATION_CHANGELOG_CAPTURE_DISABLED     ("replication.changelog_capture_disabled"),
+    REPLICATION_CHANGELOG_REMEDIATED           ("replication.changelog_remediated"),
 
     // ── Replication reconciliation ─────────────────────────────────────────────
     RECONCILIATION_CONFIG_UPDATED          ("reconciliation.config_updated"),

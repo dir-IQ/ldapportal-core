@@ -229,4 +229,69 @@ public interface ReplicationLinkRepository extends JpaRepository<ReplicationLink
     void recordChangelogPollError(@Param("id") UUID id,
                                   @Param("error") String error,
                                   @Param("now") OffsetDateTime now);
+
+    // ── Operator remediation (§7A.12) ─────────────────────────────────────────
+
+    /**
+     * Reseed: drop the cursor so the next poll re-seeds from the current source
+     * head (no history replay), and clear health/error/lease. Recovers a
+     * CURSOR_RESET link without a capture-mode toggle.
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogLastChangeNumber = null,
+               l.changelogSourceLastChangeNumber = null,
+               l.changelogLastPolledAt = null,
+               l.changelogPollClaimedAt = null,
+               l.changelogHealth = com.ldapportal.entity.enums.ChangelogHealth.HEALTHY,
+               l.changelogLastError = null,
+               l.changelogLastErrorAt = null
+         WHERE l.id = :id
+        """)
+    int reseedChangelogCursor(@Param("id") UUID id);
+
+    /** Rewind: set the cursor to an operator-supplied changeNumber and reset health. */
+    @Modifying(clearAutomatically = true)
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogLastChangeNumber = :target,
+               l.changelogHealth = com.ldapportal.entity.enums.ChangelogHealth.HEALTHY,
+               l.changelogLastError = null,
+               l.changelogLastErrorAt = null
+         WHERE l.id = :id
+        """)
+    int rewindChangelogCursor(@Param("id") UUID id, @Param("target") long target);
+
+    /** Re-enable: clear a degraded health/error + lease and retry from the current cursor. */
+    @Modifying(clearAutomatically = true)
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogHealth = com.ldapportal.entity.enums.ChangelogHealth.HEALTHY,
+               l.changelogLastError = null,
+               l.changelogLastErrorAt = null,
+               l.changelogPollClaimedAt = null
+         WHERE l.id = :id
+        """)
+    int clearChangelogHealthError(@Param("id") UUID id);
+
+    /**
+     * STALLED detection (§7A.7): flag enabled CHANGELOG links not polled since
+     * {@code threshold}. Only flips a HEALTHY/LAGGING link (never overrides
+     * GAP_DETECTED / CURSOR_RESET / DISABLED_CONFIG_ERROR); a never-polled link
+     * (null {@code changelogLastPolledAt}) is awaiting its first poll, not stalled.
+     * Clears automatically on the next successful poll.
+     */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogHealth = com.ldapportal.entity.enums.ChangelogHealth.STALLED
+         WHERE l.enabled = true
+           AND l.captureMode = com.ldapportal.entity.enums.ReplicationCaptureMode.CHANGELOG
+           AND l.changelogLastPolledAt IS NOT NULL
+           AND l.changelogLastPolledAt < :threshold
+           AND l.changelogHealth IN (com.ldapportal.entity.enums.ChangelogHealth.HEALTHY,
+                                     com.ldapportal.entity.enums.ChangelogHealth.LAGGING)
+        """)
+    int markStalledChangelogLinks(@Param("threshold") OffsetDateTime threshold);
 }

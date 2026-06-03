@@ -150,6 +150,80 @@ public class ReplicationLinkService {
         return ReplicationLinkResponse.from(link, health.getOrDefault(id, LinkHealth.empty()));
     }
 
+    // ── Changelog operator remediation (§7A.12) ───────────────────────────────
+
+    /**
+     * Reseed: drop the cursor so the next poll re-seeds from the current source
+     * head (no history replay). Recovers a CURSOR_RESET / wedged link. A
+     * follow-up reconciliation is fired (after commit) to bring pre-existing
+     * entries into parity, mirroring the mode-switch seam (§2.1 / §7A.8).
+     */
+    @Transactional
+    public ReplicationLinkResponse reseedChangelogCursor(AuthPrincipal principal, UUID id) {
+        ReplicationLink link = requireChangelogLink(id);
+        linkRepo.reseedChangelogCursor(id);
+        auditService.recordSystemEvent(principal, AuditAction.REPLICATION_CHANGELOG_REMEDIATED,
+                remediationDetail(link, "reseed", null));
+        if (link.isEnabled()) {
+            UUID linkId = link.getId();
+            afterCommit(() -> triggerSeamReconcile(linkId, principal));
+        }
+        return getLink(id);
+    }
+
+    /** Rewind: set the cursor to an operator-supplied changeNumber (e.g. to re-process a span). */
+    @Transactional
+    public ReplicationLinkResponse rewindChangelogCursor(AuthPrincipal principal, UUID id, long target) {
+        if (target < 0) {
+            throw new IllegalArgumentException("changeNumber must be >= 0");
+        }
+        ReplicationLink link = requireChangelogLink(id);
+        linkRepo.rewindChangelogCursor(id, target);
+        auditService.recordSystemEvent(principal, AuditAction.REPLICATION_CHANGELOG_REMEDIATED,
+                remediationDetail(link, "rewind", target));
+        return getLink(id);
+    }
+
+    /** Re-enable: clear a degraded health/error and retry from the current cursor. */
+    @Transactional
+    public ReplicationLinkResponse reEnableChangelogPoll(AuthPrincipal principal, UUID id) {
+        ReplicationLink link = requireChangelogLink(id);
+        linkRepo.clearChangelogHealthError(id);
+        auditService.recordSystemEvent(principal, AuditAction.REPLICATION_CHANGELOG_REMEDIATED,
+                remediationDetail(link, "re-enable", null));
+        return getLink(id);
+    }
+
+    private ReplicationLink requireChangelogLink(UUID id) {
+        ReplicationLink link = require(id);
+        if (link.getCaptureMode() != ReplicationCaptureMode.CHANGELOG) {
+            throw new IllegalArgumentException(
+                    "Link " + id + " is not a changelog-capture link; remediation does not apply");
+        }
+        return link;
+    }
+
+    private static Map<String, Object> remediationDetail(ReplicationLink link, String operation, Long target) {
+        Map<String, Object> detail = auditDetail(link);
+        detail.put("remediation", operation);
+        if (target != null) detail.put("targetChangeNumber", target);
+        return detail;
+    }
+
+    /** Run a callback after the current tx commits (so a reconcile sees the persisted state). */
+    private void afterCommit(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    action.run();
+                }
+            });
+        } else {
+            action.run();
+        }
+    }
+
     @Transactional
     public void deleteLink(AuthPrincipal principal, UUID id) {
         ReplicationLink link = require(id);
@@ -398,17 +472,7 @@ public class ReplicationLinkService {
         if (!link.isEnabled()) return;
 
         UUID linkId = link.getId();
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    triggerSeamReconcile(linkId, principal);
-                }
-            });
-        } else {
-            // No active tx (e.g. a unit test): fire directly.
-            triggerSeamReconcile(linkId, principal);
-        }
+        afterCommit(() -> triggerSeamReconcile(linkId, principal));
     }
 
     private void triggerSeamReconcile(UUID linkId, AuthPrincipal principal) {
