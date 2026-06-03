@@ -9,81 +9,57 @@
       <button @click="openCreate" class="btn-primary">+ New Directory</button>
     </div>
 
-    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
-      <div v-if="loading" class="p-8 text-center text-gray-500 text-sm">Loading…</div>
-      <EmptyState v-else-if="dirs.length === 0" icon="folder" title="No directories configured." />
-      <table v-else class="w-full text-sm">
-        <thead class="bg-gray-50 border-b border-gray-100">
-          <tr>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Name</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Host</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Port</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">SSL</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Base DN</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Enabled</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-            <th class="px-4 py-3"></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-50">
-          <tr v-for="d in dirs" :key="d.id" class="hover:bg-gray-50">
-            <td class="px-4 py-3 font-medium text-gray-900">
-              <div>{{ d.displayName }}</div>
-              <!-- Vendor / version badge from the root-DSE probe.
-                   Hidden when the probe hasn't run or returned no
-                   vendor field (e.g. OpenDJ omits vendorName). Tooltip
-                   lists the supported control OIDs so an operator can
-                   spot-check what the server actually advertises. -->
-              <div
-                v-if="vendorBadge(d)"
-                class="mt-0.5 inline-flex items-center text-[10px] font-normal text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded"
-                :title="capabilitiesTooltip(d)"
-              >{{ vendorBadge(d) }}</div>
-            </td>
-            <td class="px-4 py-3 text-gray-600">{{ d.host }}</td>
-            <td class="px-4 py-3 text-gray-600">{{ d.port }}</td>
-            <td class="px-4 py-3 text-gray-600">{{ d.sslMode }}</td>
-            <td class="px-4 py-3 text-gray-600">{{ d.baseDn }}</td>
-            <td class="px-4 py-3">
-              <span :class="d.enabled ? 'text-green-600' : 'text-gray-500'" class="text-xs font-medium">
-                {{ d.enabled ? 'Yes' : 'No' }}
-              </span>
-            </td>
-            <!-- Live reachability probe (not the `enabled` config flag): an
-                 enabled directory whose LDAP host is down reads red here, so
-                 this column never claims health the connection doesn't have.
-                 Mirrors the dashboard Directories panel dot. -->
-            <td class="px-4 py-3">
-              <span class="inline-flex items-center gap-1.5 text-xs font-medium" :title="statusOf(d).message">
-                <span class="w-2 h-2 rounded-full shrink-0" :class="STATUS_META[statusOf(d).state].dot" aria-hidden="true"></span>
-                <span :class="STATUS_META[statusOf(d).state].text">{{ STATUS_META[statusOf(d).state].label }}</span>
-              </span>
-            </td>
-            <td class="px-4 py-3 text-right whitespace-nowrap">
-              <ActionMenu :items="[
-                { label: 'Discover',   onClick: () => $router.push(`/superadmin/directories/${d.id}/discover`),
-                  hidden: !d.enabled || d.directoryType === 'ENTRA_ID' },
-                { label: 'Browse',     onClick: () => $router.push(`/superadmin/entra/${d.id}`),
-                  hidden: d.directoryType !== 'ENTRA_ID' },
-                { label: `${IVIA_ABBR} integration`,
-                  onClick: () => $router.push(`/superadmin/directories/${d.id}/isva-config`),
-                  // Hide when the addon's entitlement isn't granted
-                  // (community + commercial-without-addon) AND when the
-                  // directory is Entra (ISVA doesn't run on Entra anyway).
-                  hidden: !auth.isIsvaIntegrationEnabled || d.directoryType === 'ENTRA_ID' },
-                { label: 'Evict pool', onClick: () => doEvictPool(d),
-                  hidden: d.directoryType === 'ENTRA_ID' },
-                { label: 'Delete',     onClick: () => confirmDelete(d), danger: true },
-              ]">
-                <template #primary>
-                  <button @click="openEdit(d)" class="btn-secondary btn-compact">Edit</button>
-                </template>
-              </ActionMenu>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <DataTable :columns="dirCols" :rows="dirs" :loading="loading" row-key="id"
+               empty-text="No directories configured.">
+      <template #cell-displayName="{ row }">
+        <div class="font-medium text-gray-900">{{ row.displayName }}</div>
+        <!-- Vendor / version badge from the root-DSE probe. Hidden when
+             the probe hasn't run or returned no vendor field (e.g. OpenDJ
+             omits vendorName). Tooltip lists the supported control OIDs so
+             an operator can spot-check what the server advertises. -->
+        <div
+          v-if="vendorBadge(row)"
+          class="mt-0.5 inline-flex items-center text-[10px] font-normal text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded"
+          :title="capabilitiesTooltip(row)"
+        >{{ vendorBadge(row) }}</div>
+      </template>
+      <template #cell-enabled="{ row }">
+        <span :class="row.enabled ? 'text-green-600' : 'text-gray-500'" class="text-xs font-medium">
+          {{ row.enabled ? 'Yes' : 'No' }}
+        </span>
+      </template>
+      <!-- Live reachability probe (not the `enabled` config flag): an
+           enabled directory whose LDAP host is down reads red here, so this
+           column never claims health the connection doesn't have. Mirrors
+           the dashboard Directories panel dot. -->
+      <template #cell-status="{ row }">
+        <span class="inline-flex items-center gap-1.5 text-xs font-medium" :title="statusOf(row).message">
+          <span class="w-2 h-2 rounded-full shrink-0" :class="STATUS_META[statusOf(row).state].dot" aria-hidden="true"></span>
+          <span :class="STATUS_META[statusOf(row).state].text">{{ STATUS_META[statusOf(row).state].label }}</span>
+        </span>
+      </template>
+      <template #actions="{ row }">
+        <ActionMenu :items="[
+          { label: 'Discover',   onClick: () => $router.push(`/superadmin/directories/${row.id}/discover`),
+            hidden: !row.enabled || row.directoryType === 'ENTRA_ID' },
+          { label: 'Browse',     onClick: () => $router.push(`/superadmin/entra/${row.id}`),
+            hidden: row.directoryType !== 'ENTRA_ID' },
+          { label: `${IVIA_ABBR} integration`,
+            onClick: () => $router.push(`/superadmin/directories/${row.id}/isva-config`),
+            // Hide when the addon's entitlement isn't granted
+            // (community + commercial-without-addon) AND when the
+            // directory is Entra (ISVA doesn't run on Entra anyway).
+            hidden: !auth.isIsvaIntegrationEnabled || row.directoryType === 'ENTRA_ID' },
+          { label: 'Evict pool', onClick: () => doEvictPool(row),
+            hidden: row.directoryType === 'ENTRA_ID' },
+          { label: 'Delete',     onClick: () => confirmDelete(row), danger: true },
+        ]">
+          <template #primary>
+            <button @click="openEdit(row)" class="btn-secondary btn-compact">Edit</button>
+          </template>
+        </ActionMenu>
+      </template>
+    </DataTable>
 
     <!-- Create/Edit modal -->
     <AppModal v-model="showModal" :title="editing ? 'Edit Directory' : 'New Directory'" size="lg">
@@ -230,7 +206,7 @@ import FormField from '@/components/FormField.vue'
 import AppModal from '@/components/AppModal.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
-import EmptyState from '@/components/EmptyState.vue'
+import DataTable from '@/components/DataTable.vue'
 import { IVIA_ABBR } from '@/constants/productNames'
 import PageContainer from '@/components/PageContainer.vue'
 import type { components } from '@/api/openapi'
@@ -314,6 +290,19 @@ function errMsg(e: unknown, fallback = 'Something went wrong'): string {
   const err = e as { response?: { data?: { detail?: string } }; message?: string }
   return err.response?.data?.detail || err.message || fallback
 }
+
+// Columns for the shared DataTable. Host / Port / SSL / Base DN render with
+// the default cell; Name, Enabled and Status use named cell slots, and the
+// row verbs live in the `actions` slot.
+const dirCols = [
+  { key: 'displayName', label: 'Name' },
+  { key: 'host', label: 'Host' },
+  { key: 'port', label: 'Port' },
+  { key: 'sslMode', label: 'SSL' },
+  { key: 'baseDn', label: 'Base DN' },
+  { key: 'enabled', label: 'Enabled' },
+  { key: 'status', label: 'Status' },
+]
 
 const notif = useNotificationStore()
 const auth = useAuthStore()
