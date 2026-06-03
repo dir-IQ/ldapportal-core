@@ -128,6 +128,54 @@ describe('DirectorySyncView reconciliation findings', () => {
     expect(api.notifSuccess).toHaveBeenCalled()
   })
 
+  // Drives history → review for a single finding of the given shape.
+  async function openFindingsWith(f: Record<string, unknown>) {
+    api.getReconciliationFindings.mockResolvedValue({ data: { content: [f] } })
+    const wrapper = mount(DirectorySyncView, { global: { stubs } })
+    await flushPromises()
+    byText(wrapper, 'Reconciliation history')[0].trigger('click')
+    await flushPromises()
+    byText(wrapper, 'Review findings')[0].trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  it('warns on a destructive Extra/DELETE finding and shows attribute values', async () => {
+    const wrapper = await openFindingsWith({
+      id: 'f-x', findingType: 'EXTRA_IN_TARGET', suggestedOp: 'DELETE',
+      sourceDn: null, targetDn: 'uid=tmp,dc=x',
+      detail: { currentTarget: { cn: ['Temp Account'], mail: ['tmp@x'] } },
+      status: 'PROPOSED', eventId: null,
+    })
+
+    // The link's REVIEW delete policy surfaces as a row note, no expand needed.
+    expect(wrapper.text()).toContain('held for review')
+
+    // Expand → destructive warning + the entry's actual attribute values.
+    byText(wrapper, '▸')[0].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('would be deleted')
+    expect(wrapper.text()).toContain('Destructive.')
+    expect(wrapper.text()).toContain('Temp Account')
+  })
+
+  it('renders a current-vs-expected table for an attribute-drift finding', async () => {
+    const wrapper = await openFindingsWith({
+      id: 'f-d', findingType: 'ATTRIBUTE_DRIFT', suggestedOp: 'MODIFY',
+      sourceDn: 'uid=a,dc=x', targetDn: 'uid=a,dc=x',
+      detail: { modifications: [{ name: 'mail', values: ['a@new'] }], before: { mail: ['a@old'] } },
+      status: 'PROPOSED', eventId: null,
+    })
+
+    expect(wrapper.text()).toContain('1 attribute differs')
+
+    byText(wrapper, '▸')[0].trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('Current (target)')
+    expect(wrapper.text()).toContain('a@old')
+    expect(wrapper.text()).toContain('a@new')
+  })
+
   it('triggers reconcile now from the row action', async () => {
     api.reconcileNow.mockResolvedValue({ data: { runId: 'run-9' } })
     const wrapper = mount(DirectorySyncView, { global: { stubs } })
