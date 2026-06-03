@@ -2,7 +2,10 @@
 
 - **Date:** 2026-06-03
 - **Status:** Not started (design only; reliability/observability hardening
-  pass applied — see §7A, 2026-06-03).
+  (§7A), exclude-filter scoping (§7B), and a 2nd correctness/perf review
+  (findings RF-1 cursor wording, RF-2 worker FIFO tiebreak, RF-3 real
+  `source_change_number` column, RF-4 bounded poller executor) applied —
+  2026-06-03).
 - **Suggested branch:** `feat/changelog-replication` (already cut; this doc
   lives on it).
 - **Scope:** Add a second **capture mode** to an existing replication link.
@@ -76,8 +79,10 @@
 | `OudChangelogChangeParser` — parse the `changes` LDIF blob into UnboundID `Attribute[]`/`Modification[]` | §5 — **the genuinely new, highest-risk work** |
 | `ReplicationChangelogPoller` — scheduled, per-link, cursor-advancing | §6 |
 | Enqueuer must **skip** `CHANGELOG`-mode links (avoid double-capture) | §6.4 |
-| DTO/service/controller fields + "test changelog" endpoint | §9 |
-| Frontend: capture-mode selector + changelog fields in the link modal | §10 |
+| **Exclude filter** — per-link RFC 4515 filter, applied identically by all three paths via one `ReplicationScopeFilter` helper | §7B |
+| **Reliability/observability layer** — gap/reset detection, poison dead-letter, exactly-once dedup, HA lease, health/lag surfacing, alert wiring, remediation controls | §7A |
+| DTO/service/controller fields + "test changelog" + remediation endpoints | §9 |
+| Frontend: capture-mode selector, changelog + exclude-filter fields, health/lag badge | §10 |
 
 ---
 
@@ -93,6 +98,8 @@ ALTER TABLE replication_links
   ADD COLUMN changelog_format          VARCHAR(25),
   ADD COLUMN changelog_base_dn         VARCHAR(500),
   ADD COLUMN changelog_last_change_number BIGINT,          -- cursor (high-water mark)
+  -- ── scope: exclude filter (see §7B) ──
+  ADD COLUMN exclude_filter            VARCHAR(2000),       -- RFC 4515; entries matching are NOT replicated
   -- ── liveness / health surfacing (see §7A) ──
   ADD COLUMN changelog_source_last_change_number BIGINT,   -- last observed source head; lag = this − cursor
   ADD COLUMN changelog_last_polled_at      TIMESTAMPTZ,
@@ -116,6 +123,16 @@ ALTER TABLE replication_links
         (capture_mode = 'CHANGELOG'     AND changelog_format IS NOT NULL
                                          AND changelog_base_dn IS NOT NULL)
       );
+
+-- Real ordering/dedup key on the queue, set only for SOURCE_CHANGELOG rows.
+-- Preferred over a JSONB functional index: smaller, faster, and it doubles as
+-- the worker's FIFO tiebreak (§6.5 / review finding RF-2).
+ALTER TABLE replication_events
+  ADD COLUMN source_change_number BIGINT;
+
+CREATE UNIQUE INDEX replication_events_changelog_dedup
+  ON replication_events (link_id, source_change_number)
+  WHERE enqueue_source = 'SOURCE_CHANGELOG';
 ```
 
 Entity changes — `entity/ReplicationLink.java`:
@@ -135,14 +152,24 @@ private String changelogBaseDn;                   // default 'cn=changelog' (set
 /** Cursor / high-water mark: highest changeNumber already enqueued. */
 @Column(name = "changelog_last_change_number")
 private Long changelogLastChangeNumber;
+
+/**
+ * Optional RFC 4515 filter. An entry within the replicated DIT that
+ * MATCHES this filter is excluded from replication entirely (never
+ * created, modified, or deleted on the target). Null = replicate the
+ * whole DIT. Applies to BOTH capture modes and reconciliation (§7B).
+ */
+@Column(name = "exclude_filter", length = 2000)
+private String excludeFilter;
 ```
 
 New enum `entity/enums/ReplicationCaptureMode.java` → `{ APP_INTERCEPT, CHANGELOG }`.
 Reuse the existing `ChangelogFormat` enum (already has `DSEE_CHANGELOG` =
 the OUD format); v1 validation rejects every value but `DSEE_CHANGELOG`.
 
-Add `captureMode` to `ReplicationLinkSnapshot` (needed by the enqueuer skip in
-§6.4 and by the poller).
+Add `captureMode` **and `excludeFilter`** to `ReplicationLinkSnapshot` (the
+enqueuer skip in §6.4, the poller, and scope-filter evaluation in §7B all read
+them off the snapshot).
 
 ### 2.1 Cursor semantics & first-run seeding
 
@@ -309,6 +336,12 @@ public void pollAll() { … }
   must not flow after a commercial→community downgrade).
 - Select links where `enabled = true AND capture_mode = 'CHANGELOG'`
   (new `ReplicationLinkRepository.findChangelogCaptureLinkIds()`).
+- **Dispatch per-link polls on a bounded executor** (mirror
+  `ReconciliationService`'s fixed daemon pool, `pool-size` configurable, default
+  2–4), not serially on the single `@Scheduled` thread (review finding RF-4): a
+  link doing a multi-page catch-up drain (§6.2.5) must not block every other
+  link's poll for the whole scheduler tick. The DB lease keeps each link
+  single-flight across both this pool and other instances.
 - Per-link **single-flight** guard. **DB-backed, not in-JVM** — a
   `ConcurrentMap` is unsafe once the portal runs >1 instance (two pollers
   double-process the same link). Mirror `ReconciliationTxOps.tryStart`: claim
@@ -359,14 +392,24 @@ public void pollAll() { … }
      `extractChange` for a non-recordable entry is a normal skip.
    - `DnMapper.map(sourceDn, link)` → target DN; `null` ⇒ out of scope, skip
      (still advance the cursor past it).
+   - **Exclude-filter gate (§7B):** if the link has an `excludeFilter` and the
+     entry is excluded, skip (advance cursor past it). For `add` the full entry
+     is in `changes` → evaluate in-memory; for `modify`/`modrdn` re-read the
+     source entry; `delete` always propagates (idempotent no-op, §7B.3).
    - Map via the shared `ReplicationPayloadMapper` (§6.3).
-   - Stamp `sourceChangeNumber` into the payload (ordering + dedup key, §6.5).
+   - Set `sourceChangeNumber` on the event (real column, §6.5) — ordering +
+     dedup key.
    - Build a `PendingReplicationEvent` with `enqueueSource = SOURCE_CHANGELOG`.
 7. `persister.saveAll(pending)` then **CAS-advance the cursor** (§2.1) to the
-   **highest contiguously-processed `changeNumber`** — never the highest *seen*
-   (a mid-page connection drop must resume from the last good one, not leave a
-   hole). Persist-before-advance means a crash in between replays a bounded
-   prefix; the §6.5 dedup index makes that replay exactly-once.
+   **highest `changeNumber` successfully processed in ascending order, stopping
+   at the first failure** — never the highest *seen*. (Process strictly in
+   ascending `changeNumber`; a mid-page connection drop or a per-entry error
+   halts advancement at the last good one so nothing is skipped. Numeric gaps in
+   the source sequence — a rolled-back op leaves a hole — are normal and do
+   **not** stall advancement; "stop at first failure" means first *processing*
+   failure, not first numeric gap.) Persist-before-advance means a crash in
+   between replays a bounded prefix; the §6.5 dedup index makes that replay
+   exactly-once.
 
 ### 6.3 Shared payload mapping (small refactor)
 
@@ -393,20 +436,28 @@ applied twice duplicates/errors, and a replayed `ADD` hits
 shapes — not the additive/delete modification forms OUD emits. So the dedup
 guard is a **correctness requirement, not hygiene**.
 
-Stamp `sourceChangeNumber` into every `SOURCE_CHANGELOG` payload and add a
-partial unique index so the queue itself enforces exactly-once even under
-crash-replay, concurrent pollers, or a stale-lease double-claim:
+Set `source_change_number` (a **real `BIGINT` column**, §2 — preferred over a
+JSONB functional index: smaller, faster, and reusable as the FIFO tiebreak
+below) on every `SOURCE_CHANGELOG` event, with the partial unique index from §2
+enforcing exactly-once even under crash-replay, concurrent pollers, or a
+stale-lease double-claim.
 
-```sql
-CREATE UNIQUE INDEX replication_events_changelog_dedup
-  ON replication_events (link_id, ((payload->>'sourceChangeNumber')))
-  WHERE enqueue_source = 'SOURCE_CHANGELOG';
-```
+The persister must treat a unique-violation on `replication_events_changelog_dedup`
+as a **benign skip** (already enqueued), not an error — insert-if-absent
+semantics for these rows (e.g. `ON CONFLICT DO NOTHING` on the native insert).
+This is what lets §6.2 safely persist-then-advance and lets the DB-backed lease
+(§6.1) be advisory rather than perfect.
 
-The persister must treat a unique-violation on this index as a **benign skip**
-(already enqueued), not an error — i.e. insert-if-absent semantics for these
-rows. This is what lets §6.2 safely persist-then-advance and lets the DB-backed
-lease (§6.1) be advisory rather than perfect.
+**Worker FIFO ordering fix (review finding RF-2).** The existing claim query
+`ReplicationEventRepository.findEarliestClaimableForLink` orders by
+`enqueuedAt ASC` **only**. A changelog poll batch-inserts many events sharing a
+near-identical `enqueued_at`, so ties are resolved nondeterministically — the
+worker could deliver a `MODIFY` before the `ADD` of the same DN, corrupting the
+target. Add `source_change_number` as a deterministic tiebreak:
+`ORDER BY e.enqueuedAt ASC, e.sourceChangeNumber ASC NULLS FIRST`
+(NULLS FIRST keeps `APP_INTERCEPT` rows, which have no source number, ordering
+exactly as today). This is a one-line change to shared worker code — gate it
+behind the existing worker/`ReplicationWorker` tests.
 
 ---
 
@@ -494,8 +545,10 @@ DB-backed lease + stale-claim sweep (§6.1), not an in-JVM map. Safe across
 multiple portal instances.
 
 ### 7A.6 Cursor integrity
-CAS advance to the highest *contiguously*-processed `changeNumber` (§2.1, §6.2.7).
-No lost updates vs. operator edits; no holes on mid-page failures.
+CAS advance to the highest `changeNumber` successfully processed in ascending
+order, stopping at the first *processing* failure (§2.1, §6.2.7) — numeric gaps
+from rolled-back ops are normal and don't stall. No lost updates vs. operator
+edits; no holes on mid-page failures.
 
 ### 7A.7 Liveness surfacing — *lag is the headline signal*
 Per-link, persisted and exposed on `ReplicationLinkResponse` + the Directory
@@ -517,9 +570,14 @@ reuse it.
 ### 7A.8 Mode-switch seam closure
 Flipping `APP_INTERCEPT`↔`CHANGELOG` (or enabling a link in either mode) leaves a
 race window where a write is caught by neither path. On every capture-mode
-transition, `ReplicationLinkService` **auto-triggers a reconciliation run** to
-close the seam, and resets the cursor so the new mode re-seeds cleanly. Switching
-*away* from `CHANGELOG` first lets the queue drain.
+transition, `ReplicationLinkService` **auto-triggers a one-off `MANUAL`
+reconciliation run** to close the seam, and resets the cursor so the new mode
+re-seeds cleanly. The run is `MANUAL`-trigger, so it fires **independent of
+`reconcileEnabled`** (a link can use changelog capture without opting into
+periodic reconciliation, yet still get the seam closed). Same for the gap-/
+reset-recovery reconciles in §7A.1–.2. Switching *away* from `CHANGELOG` first
+lets the queue drain. (Also re-trigger when the **exclude filter changes**,
+§7B.5 — a widened/narrowed filter changes the replicated set.)
 
 ### 7A.9 Alert-pipeline wiring (reach people, not screens)
 Route every degradation through what already exists rather than inventing a
@@ -558,6 +616,119 @@ into a one-click recovery instead of a DB surgery.
 
 ---
 
+## 7B. Replication scope: include-DIT + exclude-filter
+
+A link's replicated set is now **`sourceBaseDn` (the DIT to replicate) minus an
+optional `excludeFilter` (entries within it to skip)**. The filter is a standard
+RFC 4515 LDAP filter string; an entry that **matches** it is excluded from
+replication entirely — never created, modified, or deleted on the target.
+Example: `(|(objectClass=computer)(employeeType=contractor)(ou:dn:=Service Accounts))`.
+
+The cardinal rule: **exclusion is evaluated at exactly one logical place and
+applied identically by all three paths** (live capture, changelog capture,
+reconciliation). If the paths disagreed, one would add an entry the other
+proposes to delete — perpetual flapping. Centralize it in a single helper:
+
+```java
+// ldap/replication/ReplicationScopeFilter
+boolean isExcluded(ReplicationLinkSnapshot link, Entry sourceEntry);   // full entry in hand
+boolean hasExcludeFilter(ReplicationLinkSnapshot link);
+```
+
+backed by a parsed, cached `com.unboundid.ldap.sdk.Filter` (parse once per
+snapshot, not per entry). Evaluation is `filter.matchesEntry(entry)` — **purely
+in-memory, no LDAP round-trip for the match itself**; the only cost is obtaining
+the full entry when a path doesn't already have it.
+
+### 7B.1 The semantic: excluded ⇒ invisible (not "delete it")
+Excluding an entry means replication **ignores** it: it is neither added,
+modified, nor deleted on the target, and **any pre-existing target copy is left
+untouched** (e.g. an entry replicated before the filter was added, or created
+independently on the target). This is the least-surprising semantic and the one
+that composes cleanly with reconciliation (§7B.4). "Exclude" is not "delete."
+
+### 7B.2 The hard part: partial change information
+The filter references *entry state*, but capture paths often see only a *delta*:
+
+| Op | Info available | How exclusion is evaluated |
+|---|---|---|
+| `ADD` (live or changelog) | full attributes | evaluate in-memory — cheap, no read |
+| `MODIFY` / `MODIFY_DN` | only the delta | **re-read the full source entry** and evaluate (only when the link has an exclude filter) |
+| `DELETE` | DN only; entry already gone | **do not evaluate — always propagate** (§7B.3) |
+
+Re-reads are gated to exclude-configured links, so links without a filter pay
+**zero** extra cost (the common case). For the **live `APP_INTERCEPT` path**, to
+keep the synchronous write hot-path free of an LDAP read, partial-change
+exclusion is evaluated at **delivery time** in the worker (which already re-reads
+source for `autoCreateOnMissing`) rather than in the enqueuer; the changelog
+poller, being a background job, evaluates inline. Either way the *same*
+`ReplicationScopeFilter` is the authority, and reconciliation (§7B.4) is the
+backstop that repairs any transient divergence.
+
+*Optimization (note for later, not v1):* if every attribute the filter
+references is present in the modification, evaluate without a re-read. v1 keeps
+it simple and always re-reads on filtered links.
+
+### 7B.3 Deletes always propagate
+A `DELETE` can't be filter-evaluated (the entry is gone) and doesn't need to be:
+delivering a delete for an entry the target doesn't have is a harmless
+`NO_SUCH_OBJECT` no-op (already swallowed by delivery). So deletes flow
+unconditionally. Corner: an entry replicated *before* it became excluded, then
+deleted at source, has its stale target copy removed — which is the desirable
+outcome, not a violation of §7B.1.
+
+### 7B.4 Reconciliation must honor the filter on BOTH sides
+Reconciliation is where a naive implementation would **delete every excluded
+entry's target copy** (excluded from the source-derived "expected" set ⇒
+classified `EXTRA_IN_TARGET` ⇒ proposed `DELETE`). To preserve §7B.1, the
+differ/`ChecksumReconciler` get a *protect-set*:
+
+- **Source pass:** evaluate `excludeFilter` against each full source entry
+  (source attribute names). Included → drives `MISSING_IN_TARGET`/`DRIFT` as
+  today. Excluded → **record its mapped target DN as a tombstone** in the index
+  (present-but-excluded), contributing no expected ADD/MODIFY.
+- **Target pass (`EXTRA_IN_TARGET`):** a target DN is `EXTRA` only if it is in
+  **neither** the included-source set **nor** the excluded tombstone set. Excluded
+  entries' target copies are thus skipped, never deleted. Only target entries
+  with *no* source counterpart at all remain `EXTRA`.
+
+This makes the live, changelog, and reconciliation views of "what's in scope"
+identical, which is what stops add/delete flapping. Note the filter is written
+in **source** attribute terms and only ever evaluated against **source** entries
+(the protect-set is keyed by mapped target DN), so attribute renaming
+(`AttributeMapper`) doesn't confuse it.
+
+**Read cost:** the source subtree read can no longer be narrowed server-side by
+`(!(excludeFilter))` — we must *see* excluded entries to protect their target
+copies — so excluded entries are read and matched in-memory (one `matchesEntry`
+per source entry; negligible beside the digest hashing already done per entry).
+The source read must also **request any attributes the filter references** (derive
+them from `Filter` + union with the managed set) so evaluation isn't blind.
+
+### 7B.5 Changing the filter re-triggers reconciliation
+Editing `excludeFilter` changes the replicated set: widening it should let
+newly-excluded entries' target copies be left alone (no action), narrowing it
+should bring newly-included entries into target. `ReplicationLinkService`
+auto-triggers a `MANUAL` reconciliation on any `excludeFilter` change (§7A.8) so
+the target converges to the new scope on a defined schedule rather than only as
+incidental future changes happen to touch those entries.
+
+### 7B.6 Validation
+Parse with `Filter.create(excludeFilter)` at config time; reject unparseable
+filters with `IllegalArgumentException` (→ 400). Document that evaluation is
+offline (`matchesEntry`): standard presence/equality/substring/AND/OR/NOT and
+`:dn:` work; server-side-only extensible matching rules may not — validate and
+warn if such elements are present.
+
+### 7B.7 Tests
+`ReplicationScopeFilterTest` (matches/non-match, `:dn:`, multi-clause, attrs
+absent from a modify → re-read path); poller + enqueuer skip excluded ADDs;
+delivery-time exclusion for live MODIFY; **reconciliation protect-set**: an
+excluded entry present in target is *not* proposed `EXTRA`/DELETE, while a truly
+orphaned target entry still is; filter-change re-triggers reconciliation.
+
+---
+
 ## 8. Extensibility (OpenLDAP / AD later)
 
 The SPI shape makes later servers additive:
@@ -584,18 +755,23 @@ read/advance through one place to keep that swap cheap.
 ## 9. API & service (Phase C4, backend)
 
 - **DTOs** (`dto/replication/ReplicationLinkRequest` + `…Response`): add
-  `captureMode`, `changelogFormat`, `changelogBaseDn`. Response also exposes
-  read-only health surface (§7A.7): `changelogLastChangeNumber`,
-  `changelogSourceLastChangeNumber`, derived **`lag`**, `changelogHealth`,
-  `changelogLastPolledAt`, `changelogLastError`/`…At`.
+  `captureMode`, `changelogFormat`, `changelogBaseDn`, **`excludeFilter`**.
+  Response also exposes read-only health surface (§7A.7):
+  `changelogLastChangeNumber`, `changelogSourceLastChangeNumber`, derived
+  **`lag`**, `changelogHealth`, `changelogLastPolledAt`,
+  `changelogLastError`/`…At`.
 - **Validation** (`ReplicationLinkService`):
   - `captureMode` required; default `APP_INTERCEPT`.
   - If `CHANGELOG`: `changelogFormat` must be `DSEE_CHANGELOG` (v1) — reject
     others with `IllegalArgumentException` ("changelog capture supports OUD /
     cn=changelog only in this version"); `changelogBaseDn` required (default
     `cn=changelog` if blank). If `APP_INTERCEPT`: null out changelog fields.
-  - Switching modes resets the cursor (`changelogLastChangeNumber = null`) so a
-    newly-enabled `CHANGELOG` link re-seeds (§2.1).
+  - **`excludeFilter` (if present):** parse via `Filter.create(...)`, reject
+    unparseable with `IllegalArgumentException` (§7B.6); applies to either
+    capture mode.
+  - Switching capture modes resets the cursor (`changelogLastChangeNumber =
+    null`) so a newly-enabled `CHANGELOG` link re-seeds (§2.1); changing
+    `excludeFilter` re-triggers reconciliation (§7B.5).
   - Emit the existing `AuditAction.REPLICATION_*` config-update audit.
 - **Test-changelog endpoint** on `ReplicationLinkController`:
   `POST /api/v1/superadmin/replication-links/{id}/test-changelog` (and a
@@ -627,6 +803,10 @@ read/advance through one place to keep that swap cheap.
   same auto-default UX `AuditSourcesView.vue` uses), and a **Test changelog**
   button wired to the new endpoint (reuse the audit-source test-result display:
   success/failure + elapsed ms + current max changeNumber).
+- **Scope fields** (both capture modes): the existing source/target base-DN
+  inputs (the DIT to replicate) plus a new **Exclude filter** input — an
+  RFC 4515 filter for entries to skip (§7B), with a short helper example and
+  client-side non-blank-parses hint; server validates authoritatively.
 - **Health-first row surfacing (§7A.7):** a **lag** number + a colored
   `changelogHealth` badge (`HEALTHY`/`LAGGING`/`STALLED`/`GAP_DETECTED`/
   `CURSOR_RESET`/`DISABLED_CONFIG_ERROR`) on each link row, plus
@@ -661,8 +841,16 @@ read/advance through one place to keep that swap cheap.
   UnboundID `InMemoryDirectoryServer` seeded with `changeLogEntry`s if feasible,
   else mock the strategy output.
 - **MockMvc:** link create/update validation (mode exclusivity, format
-  rejection), `test-changelog` authz/shape, enqueuer-skip for `CHANGELOG`
-  links.
+  rejection, **exclude-filter parse rejection**), `test-changelog` authz/shape,
+  enqueuer-skip for `CHANGELOG` links.
+- **Exclude filter (§7B.7):** `ReplicationScopeFilterTest`; excluded ADDs
+  skipped on both capture paths; delivery-time exclusion for live MODIFY;
+  **reconciliation protect-set** — excluded entry present in target is *not*
+  proposed `EXTRA`/DELETE while a truly orphaned target entry still is;
+  filter-change re-triggers reconciliation.
+- **Worker ordering (RF-2):** a batch of changelog events with equal
+  `enqueued_at` is delivered in `source_change_number` order (ADD before its
+  MODIFY).
 - **Reliability scenarios (§7A) — first-class tests, not afterthoughts:**
   - gap detected (`cursor+1 < firstChangeNumber`) → alert audit + reconcile
     triggered + cursor fast-forwarded.
@@ -687,11 +875,13 @@ read/advance through one place to keep that swap cheap.
 | **C1** | Schema (`V15`: capture/changelog cols **+ liveness/lease/health cols**, dedup index), entity/enum, snapshot field, DTO+service plumbing & validation | ~3–4 days |
 | **C2** | Generalize `ChangelogStrategy` (neutral context) + `extractChange` SPI + `OudChangelogChangeParser` + tests | ~5–6 days |
 | **C3** | `ReplicationChangelogPoller` (poll, seed, **catch-up budget**, CAS cursor, **DB lease + stale sweep**, backoff, entitlement) + `ReplicationPayloadMapper` extract + enqueuer skip + `creatorsName` loop guard | ~5 days |
-| **C3R** | **Reliability/observability (§7A):** gap + reset detection, poison dead-letter, exactly-once dedup wiring, health state machine + lag, `AlertSummaryProvider`/SIEM/audit-action wiring, mode-switch auto-reconcile, operator remediation controls | ~5 days |
-| **C4** | `test-changelog` (incl. root-DSE capability check), frontend modal + lag/health surfacing + remediation controls, docs, integration/MockMvc/Vitest (incl. §7A scenarios) | ~5 days |
+| **C3R** | **Reliability/observability (§7A) + worker ordering fix (RF-2):** gap + reset detection, poison dead-letter, exactly-once dedup wiring (real `source_change_number` column + FIFO tiebreak), health state machine + lag, `AlertSummaryProvider`/SIEM/audit-action wiring, mode-switch auto-reconcile, operator remediation controls | ~5 days |
+| **C3X** | **Exclude filter (§7B):** `ReplicationScopeFilter` helper, ADD/MODIFY/MODIFY_DN/DELETE handling across live + changelog, delivery-time eval for live partial changes, **reconciliation protect-set** (differ + `ChecksumReconciler`), filter-change re-reconcile, validation, tests | ~4 days |
+| **C4** | `test-changelog` (incl. root-DSE capability check), frontend modal + exclude-filter field + lag/health surfacing + remediation controls, docs, integration/MockMvc/Vitest (incl. §7A + §7B scenarios) | ~5 days |
 
-**≈ 4.5–5 weeks** for a *production-hardened* OUD MVP (the §7A work is the
-delta over the earlier ~3.5–4w estimate, and is what makes the feature
+**≈ 5.5–6 weeks** for a *production-hardened* OUD MVP with exclude-filter scoping
+(the §7A reliability layer and §7B exclude filter are the deltas over the
+original ~3.5–4w detection/transport estimate, and are what make the feature
 trustworthy). OpenLDAP `extractChange` is a later ~1-week add behind the same
 SPI; AD `DirSync` is a larger follow-on (cursor model + state-not-ops
 semantics, §8).
@@ -719,6 +909,17 @@ detection is **active**, not reconciliation-only (§7A.1).* Remaining:
 4. **Lag/stall thresholds** — pick sensible defaults for `LAGGING`/`STALLED`
    (e.g. lag > 1000 or oldest-undelivered > 5 min; stalled > 3× interval) and
    make them configurable. Operator-tunable per environment.
+5. **Exclude-filter semantic** — this plan fixes "excluded ⇒ invisible" (never
+   add/modify/delete the target copy, leave pre-existing copies untouched;
+   §7B.1). The alternative — "excluded ⇒ remove from target" — was rejected as
+   surprising and harder to reason about. Confirm the invisible semantic matches
+   operator expectations before build; it's the one decision in §7B that's a
+   product call rather than a correctness constraint.
+6. **Live-path partial-change exclusion at delivery time** (§7B.2) adds a
+   source re-read per MODIFY *on exclude-configured links only*. Acceptable for
+   v1 (re-read already happens for `autoCreateOnMissing`); revisit with the
+   "filter references only modified attrs ⇒ no re-read" optimization if it shows
+   up in profiling.
 
 ---
 
@@ -730,7 +931,10 @@ detection is **active**, not reconciliation-only (§7A.1).* Remaining:
 | Entity / enums | `entity/ReplicationLink` (+fields incl. health/lag), `entity/enums/ReplicationCaptureMode`, `…/ChangelogHealth`; reuse `ChangelogFormat`; new `AuditAction.REPLICATION_CHANGELOG_*` |
 | SPI | `ldap/changelog/ChangelogStrategy` (`ChangelogReadContext`, `extractChange`), `ChangelogChange`, `OudChangelogChangeParser`; `DseeChangelogStrategy.extractChange` |
 | Poller | `ldap/replication/ReplicationChangelogPoller` (gap/reset/poison guards, catch-up budget), `ReplicationPayloadMapper`, `ChangelogCursorStore` (CAS), `ChangelogPollLease` (DB single-flight + stale sweep) |
-| Enqueuer | `ReplicationEnqueuer` (skip CHANGELOG), `ReplicationLinkSnapshot` (+captureMode) |
+| Enqueuer | `ReplicationEnqueuer` (skip CHANGELOG), `ReplicationLinkSnapshot` (+captureMode, +excludeFilter) |
+| Scope filter | `ldap/replication/ReplicationScopeFilter` (parsed/cached UnboundID `Filter`, `isExcluded`); used by enqueuer/delivery, poller, and reconciliation (§7B) |
+| Reconciliation | protect-set in `ReconciliationDiffer` + `ChecksumReconciler` (excluded source DN → tombstone, skipped from `EXTRA`); source read requests filter-referenced attrs |
+| Queue | `replication_events.source_change_number` column + partial unique dedup index; `findEarliestClaimableForLink` ORDER BY tiebreak (RF-2); persister `ON CONFLICT DO NOTHING` |
 | Repo | `ReplicationLinkRepository`: `findChangelogCaptureLinkIds`, CAS cursor advance, lease claim/release/stale-reset; dedup-aware persister insert-if-absent |
 | Health / alerts | health state machine on `ReplicationLinkResponse` + `LinkHealth` reuse; `AlertSummaryProvider`/`AlertingDashboardProvider` lag signal; SIEM via `AuditService` |
 | API | `ReplicationLinkController`: `test-changelog`, remediation (`reseed`/`rewind`/`force-reconcile`/`re-enable`); `ReplicationLinkRequest/Response` fields; `ReplicationLinkService` validation + mode-switch auto-reconcile |
