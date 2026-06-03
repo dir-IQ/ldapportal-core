@@ -110,6 +110,13 @@ public enum AuditAction {
     REPLICATION_EVENT_SKIPPED_BY_OPERATOR  ("replication.event_skipped_by_operator"),
     REPLICATION_EVENT_ACKNOWLEDGED         ("replication.event_acknowledged"),
 
+    // ── Changelog-driven replication capture (C3R) ─────────────────────────────
+    REPLICATION_CHANGELOG_GAP_DETECTED         ("replication.changelog_gap_detected"),
+    REPLICATION_CHANGELOG_CURSOR_RESET         ("replication.changelog_cursor_reset"),
+    REPLICATION_CHANGELOG_ENTRY_DEAD_LETTERED  ("replication.changelog_entry_dead_lettered"),
+    REPLICATION_CHANGELOG_CAPTURE_ENABLED      ("replication.changelog_capture_enabled"),
+    REPLICATION_CHANGELOG_CAPTURE_DISABLED     ("replication.changelog_capture_disabled"),
+
     // ── Replication reconciliation ─────────────────────────────────────────────
     RECONCILIATION_CONFIG_UPDATED          ("reconciliation.config_updated"),
     RECONCILIATION_RUN_STARTED             ("reconciliation.run_started"),

@@ -14,9 +14,11 @@ import com.ldapportal.entity.enums.ChangelogHealth;
 import com.ldapportal.entity.enums.ReconcileDeleteAction;
 import com.ldapportal.entity.enums.ReconcileMode;
 import com.ldapportal.entity.enums.ReconciliationFindingStatus;
+import com.ldapportal.entity.enums.ReconciliationRunTrigger;
 import com.ldapportal.entity.enums.ReplicationCaptureMode;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.exception.ResourceNotFoundException;
+import com.ldapportal.ldap.replication.reconcile.ReconciliationService;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.ReconciliationFindingRepository;
 import com.ldapportal.repository.ReplicationEventRepository;
@@ -27,6 +29,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
@@ -57,6 +61,7 @@ public class ReplicationLinkService {
     private final ReconciliationFindingRepository findingRepo;
     private final DirectoryConnectionRepository dirRepo;
     private final AuditService               auditService;
+    private final ReconciliationService      reconciliationService;
 
     /** Floor on the reconciliation repeat interval — 1 hour. Mirrors the DB CHECK. */
     private static final int RECONCILE_MIN_INTERVAL_SECS = 3600;
@@ -85,6 +90,7 @@ public class ReplicationLinkService {
     public ReplicationLinkResponse createLink(AuthPrincipal principal, ReplicationLinkRequest req) {
         validateRequest(req, null);
         ReplicationLink link = new ReplicationLink();
+        ReplicationCaptureMode captureBefore = link.getCaptureMode();
         applyRequest(link, req);
         link = linkRepo.save(link);
         log.info("Replication link created: {} ({} → {})",
@@ -94,6 +100,7 @@ public class ReplicationLinkService {
         if (link.isReconcileEnabled()) {
             auditService.recordSystemEvent(principal, RECONCILIATION_CONFIG_UPDATED, reconcileAuditDetail(link));
         }
+        afterCaptureModeSwitch(principal, link, captureBefore);
         return ReplicationLinkResponse.from(link, LinkHealth.empty());
     }
 
@@ -101,6 +108,7 @@ public class ReplicationLinkService {
     public ReplicationLinkResponse updateLink(AuthPrincipal principal, UUID id, ReplicationLinkRequest req) {
         ReplicationLink link = require(id);
         boolean wasEnabled = link.isEnabled();
+        ReplicationCaptureMode captureBefore = link.getCaptureMode();
         String reconcileBefore = reconcileSignature(link);
         validateRequest(req, id);
         // Drop the existing mapping rows BEFORE staging the new ones,
@@ -137,6 +145,7 @@ public class ReplicationLinkService {
         if (!reconcileSignature(link).equals(reconcileBefore)) {
             auditService.recordSystemEvent(principal, RECONCILIATION_CONFIG_UPDATED, reconcileAuditDetail(link));
         }
+        afterCaptureModeSwitch(principal, link, captureBefore);
 
         return ReplicationLinkResponse.from(link, health.getOrDefault(id, LinkHealth.empty()));
     }
@@ -361,6 +370,47 @@ public class ReplicationLinkService {
             link.setChangelogLastErrorAt(null);
             link.setChangelogPollClaimedAt(null);
             link.setChangelogHealth(ChangelogHealth.HEALTHY);
+        }
+    }
+
+    /**
+     * Close the capture-mode seam (§7A.8). Flipping {@code APP_INTERCEPT} ↔
+     * {@code CHANGELOG} (or creating a link directly in CHANGELOG) leaves a
+     * window where a write is caught by neither path. On the transition: audit
+     * the capture enable/disable and fire a one-off {@code MANUAL} reconciliation
+     * to converge the target. The reconcile is registered to run <b>after this
+     * transaction commits</b> — otherwise the run, in its own {@code REQUIRES_NEW}
+     * tx, couldn't see the not-yet-committed link.
+     */
+    private void afterCaptureModeSwitch(AuthPrincipal principal, ReplicationLink link,
+                                        ReplicationCaptureMode before) {
+        if (link.getCaptureMode() == before) return;
+
+        boolean nowChangelog = link.getCaptureMode() == ReplicationCaptureMode.CHANGELOG;
+        auditService.recordSystemEvent(principal,
+                nowChangelog ? AuditAction.REPLICATION_CHANGELOG_CAPTURE_ENABLED
+                             : AuditAction.REPLICATION_CHANGELOG_CAPTURE_DISABLED,
+                auditDetail(link));
+
+        UUID linkId = link.getId();
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    triggerSeamReconcile(linkId, principal);
+                }
+            });
+        } else {
+            // No active tx (e.g. a unit test): fire directly.
+            triggerSeamReconcile(linkId, principal);
+        }
+    }
+
+    private void triggerSeamReconcile(UUID linkId, AuthPrincipal principal) {
+        try {
+            reconciliationService.trigger(linkId, ReconciliationRunTrigger.MANUAL, principal);
+        } catch (RuntimeException ex) {
+            log.error("Capture-switch reconciliation trigger failed for link {}: {}", linkId, ex.toString());
         }
     }
 

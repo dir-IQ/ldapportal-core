@@ -65,6 +65,12 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
      * {@code LazyInitializationException} once the read tx commits,
      * and the auto-create path inside delivery would permanently
      * fail for any link with rules configured.
+     *
+     * <p>Tiebreak on {@code sourceChangeNumber} (RF-2): a changelog poll
+     * batch-inserts many events sharing a near-identical {@code enqueued_at},
+     * so ordering by {@code enqueuedAt} alone is nondeterministic and could
+     * deliver a MODIFY before the ADD of the same DN. {@code NULLS FIRST}
+     * keeps APP_INTERCEPT rows (no source number) ordering exactly as before.
      */
     @Query("""
         SELECT e FROM ReplicationEvent e
@@ -75,7 +81,7 @@ public interface ReplicationEventRepository extends JpaRepository<ReplicationEve
         WHERE e.link.id = :linkId
           AND e.status IN ('PENDING', 'FAILED')
           AND (e.nextAttemptAt IS NULL OR e.nextAttemptAt <= :now)
-        ORDER BY e.enqueuedAt ASC
+        ORDER BY e.enqueuedAt ASC, e.sourceChangeNumber ASC NULLS FIRST
         LIMIT 1
         """)
     java.util.Optional<ReplicationEvent> findEarliestClaimableForLink(

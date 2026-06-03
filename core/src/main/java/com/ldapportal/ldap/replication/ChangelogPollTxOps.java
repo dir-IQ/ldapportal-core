@@ -2,6 +2,7 @@
 package com.ldapportal.ldap.replication;
 
 import com.ldapportal.entity.enums.ChangelogFormat;
+import com.ldapportal.entity.enums.ChangelogHealth;
 import com.ldapportal.entity.enums.ReplicationCaptureMode;
 import com.ldapportal.repository.ReplicationLinkRepository;
 import lombok.RequiredArgsConstructor;
@@ -67,16 +68,29 @@ public class ChangelogPollTxOps {
         linkRepo.seedChangelogCursor(linkId, head, now);
     }
 
-    /** CAS cursor advance; returns true when this poller still owned the cursor. */
+    /** CAS cursor advance with computed health; returns true when this poller still owned the cursor. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public boolean advance(UUID linkId, long expected, long newCursor, long head, OffsetDateTime now) {
-        return linkRepo.advanceChangelogCursor(linkId, expected, newCursor, head, now) == 1;
+    public boolean advance(UUID linkId, long expected, long newCursor, long head,
+                           ChangelogHealth health, OffsetDateTime now) {
+        return linkRepo.advanceChangelogCursor(linkId, expected, newCursor, head, health, now) == 1;
     }
 
-    /** No new entries: just refresh the observed head + poll timestamp. */
+    /** No new entries: refresh the observed head, health + poll timestamp. */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void observe(UUID linkId, long head, OffsetDateTime now) {
-        linkRepo.recordChangelogPollObservation(linkId, head, now);
+    public void observe(UUID linkId, long head, ChangelogHealth health, OffsetDateTime now) {
+        linkRepo.recordChangelogPollObservation(linkId, head, health, now);
+    }
+
+    /** Gap recovery: CAS fast-forward the cursor past the trimmed span (§7A.1). */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean markGap(UUID linkId, long expected, long fastForward, long head, OffsetDateTime now) {
+        return linkRepo.markChangelogGap(linkId, expected, fastForward, head, now) == 1;
+    }
+
+    /** Cursor-reset: flag CURSOR_RESET without advancing (§7A.2). */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markCursorReset(UUID linkId, long head, OffsetDateTime now) {
+        linkRepo.markChangelogCursorReset(linkId, head, now);
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)

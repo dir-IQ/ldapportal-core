@@ -5,8 +5,12 @@ import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.core.observability.CorrelationContext;
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ChangelogFormat;
+import com.ldapportal.entity.enums.ChangelogHealth;
+import com.ldapportal.entity.enums.ReconciliationRunTrigger;
 import com.ldapportal.entity.enums.ReplicationEnqueueSource;
+import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.changelog.AccesslogStrategy;
 import com.ldapportal.ldap.changelog.ChangelogChange;
@@ -16,8 +20,11 @@ import com.ldapportal.ldap.changelog.ChangelogStrategy;
 import com.ldapportal.ldap.changelog.DirSyncChangelogStrategy;
 import com.ldapportal.ldap.changelog.DseeChangelogStrategy;
 import com.ldapportal.ldap.replication.ChangelogPollTxOps.ClaimedPoll;
+import com.ldapportal.ldap.replication.reconcile.ReconciliationService;
 import com.ldapportal.repository.ReplicationEventRepository;
 import com.ldapportal.repository.ReplicationLinkRepository;
+import com.ldapportal.service.AuditService;
+import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.LDAPSearchException;
@@ -35,9 +42,12 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -65,10 +75,14 @@ import java.util.concurrent.Executors;
  * replay (§6.5). <b>Cursor:</b> CAS-advanced to the highest changeNumber
  * processed, so a mid-poll failure replays only a bounded, de-duplicated prefix.
  *
- * <p>Gap / cursor-reset detection, poison dead-lettering, the health state
- * machine, and the exclude filter are the C3R / C3X hardening layers; this
- * class is the C3 core. On a parse failure it logs and skips past the entry
- * (reconciliation re-derives it) rather than wedging the link.
+ * <p><b>Reliability (§7A):</b> each poll reads the source's {@code first/last
+ * ChangeNumber} from the root DSE and guards two danger conditions before
+ * draining — a <b>cursor reset</b> ({@code lastChangeNumber < cursor}; halt +
+ * flag {@code CURSOR_RESET}) and a <b>gap</b> ({@code cursor+1 <
+ * firstChangeNumber}; fast-forward + flag {@code GAP_DETECTED} + trigger
+ * reconciliation). A poison entry is <b>dead-lettered</b> with its raw content,
+ * not silently skipped. Per-link {@code changelogHealth} + lag is refreshed
+ * every poll. The exclude filter is the C3X layer.
  */
 @Component
 @RequiredArgsConstructor
@@ -81,6 +95,8 @@ public class ReplicationChangelogPoller {
     private final ReplicationEventPersister  persister;
     private final LdapConnectionFactory      connectionFactory;
     private final ChangelogPollTxOps         txOps;
+    private final ReconciliationService      reconciliationService;
+    private final AuditService               auditService;
     /** May be null in direct-construction unit tests → entitlement gate treated as open. */
     private final EntitlementService         entitlementService;
 
@@ -91,6 +107,9 @@ public class ReplicationChangelogPoller {
     /** A poll lease older than this is presumed orphaned by a crash. */
     @Value("${ldapportal.replication.changelog.lease-timeout-ms:300000}")
     private long leaseTimeoutMs;
+    /** Lag (source head − cursor) above this flags the link LAGGING. */
+    @Value("${ldapportal.replication.changelog.lag-threshold:1000}")
+    private long lagThreshold;
 
     private ExecutorService executor;
 
@@ -189,8 +208,8 @@ public class ReplicationChangelogPoller {
         PollPage page = readPage(source, strategy, cp, snap.sourceBaseDn());
 
         if (page.head() == null) {
-            // Without a source head we can neither seed nor track lag. The C3R
-            // test-changelog capability check hard-fails this at config time.
+            // Without a source head we can neither seed, track lag, nor detect
+            // gap/reset. The C3R test-changelog check hard-fails this at config time.
             txOps.recordError(linkId, "source root DSE exposes no lastChangeNumber", now);
             return;
         }
@@ -205,8 +224,39 @@ public class ReplicationChangelogPoller {
         }
         long cursor = cp.cursor();
 
+        // §7A.2 cursor reset: the source head is below our cursor — the changelog
+        // was reinitialized (restore / rebuild). Halt with zero advancement (the
+        // nastiest failure mode: replication stalls with no errors) until an
+        // operator reseeds (or toggles capture mode, which re-seeds).
+        if (head < cursor) {
+            txOps.markCursorReset(linkId, head, now);
+            audit(AuditAction.REPLICATION_CHANGELOG_CURSOR_RESET,
+                    detail(linkId, "cursor", cursor, "sourceHead", head));
+            log.error("Changelog cursor reset for link {}: source head {} < cursor {} — "
+                    + "halting until reseed", linkId, head, cursor);
+            return;
+        }
+
+        // §7A.1 gap: entries were trimmed before we read them. Fast-forward past
+        // the lost span and let reconciliation repair it; never a silent skip.
+        Long first = page.firstChangeNumber();
+        if (first != null && cursor + 1 < first) {
+            long fastForward = first - 1;
+            if (txOps.markGap(linkId, cursor, fastForward, head, now)) {
+                audit(AuditAction.REPLICATION_CHANGELOG_GAP_DETECTED,
+                        detail(linkId, "cursor", cursor, "firstChangeNumber", first,
+                                "fastForwardedTo", fastForward));
+                log.error("Changelog gap for link {}: cursor {} below firstChangeNumber {} — "
+                        + "fast-forwarding to {} and triggering reconciliation",
+                        linkId, cursor, first, fastForward);
+                triggerReconcile(linkId);
+            }
+            return;
+        }
+
         UUID correlationId = CorrelationContext.currentOrEphemeral();
         List<PendingReplicationEvent> pending = new ArrayList<>();
+        List<PoisonEntry> poison = new ArrayList<>();
         long lastProcessed = cursor;
 
         for (SearchResultEntry entry : ascendingByChangeNumber(page.entries(), cursor)) {
@@ -227,52 +277,99 @@ public class ReplicationChangelogPoller {
                 // empty extract → non-replicable entry; skip + advance.
                 lastProcessed = cn;
             } catch (ChangelogParseException pe) {
-                // Don't wedge the link on a poison entry; skip past it. C3R
-                // upgrades this to a dead-letter. Reconciliation re-derives the DN.
-                log.error("Changelog parse failed for link {} changeNumber {}: {} — skipping",
-                        linkId, cn, pe.getMessage());
+                // §7A.3 poison policy: dead-letter the raw entry (recoverable +
+                // audited) rather than silently skip it or wedge the link. Only
+                // if it's in scope; an out-of-scope poison DN isn't ours to keep.
+                String poisonSourceDn = entry.getAttributeValue("targetDN");
+                String poisonTargetDn = poisonSourceDn == null ? null : DnMapper.map(poisonSourceDn, snap);
+                if (poisonTargetDn != null) {
+                    poison.add(new PoisonEntry(cn, operationFor(entry), poisonSourceDn, poisonTargetDn,
+                            rawEntryPayload(entry, pe.getMessage()), pe.getMessage()));
+                }
                 lastProcessed = cn;
             }
         }
 
-        persistDeduplicated(linkId, pending);
+        persistDeduplicated(linkId, pending, poison);
 
+        ChangelogHealth health = healthFor(head, lastProcessed);
         if (lastProcessed > cursor) {
             // Persist-before-advance: a crash here replays a bounded, de-duplicated
             // prefix. CAS guards against a stale lease / concurrent operator edit.
-            if (!txOps.advance(linkId, cursor, lastProcessed, head, now)) {
+            if (!txOps.advance(linkId, cursor, lastProcessed, head, health, now)) {
                 log.warn("Changelog cursor CAS lost for link {} (expected {}); will retry next poll",
                         linkId, cursor);
             }
         } else {
-            txOps.observe(linkId, head, now);
+            txOps.observe(linkId, head, health, now);
         }
     }
 
-    /** Exactly-once: drop already-enqueued change numbers, then persist the rest. */
-    private void persistDeduplicated(UUID linkId, List<PendingReplicationEvent> pending) {
-        if (pending.isEmpty()) return;
-        List<Long> numbers = pending.stream().map(PendingReplicationEvent::sourceChangeNumber).toList();
+    /**
+     * Exactly-once: drop already-enqueued change numbers (crash replay /
+     * concurrent re-read), then persist fresh PENDING events and dead-letter
+     * fresh poison entries.
+     */
+    private void persistDeduplicated(UUID linkId, List<PendingReplicationEvent> pending,
+                                     List<PoisonEntry> poison) {
+        if (pending.isEmpty() && poison.isEmpty()) return;
+        List<Long> numbers = new ArrayList<>(pending.size() + poison.size());
+        pending.forEach(p -> numbers.add(p.sourceChangeNumber()));
+        poison.forEach(p -> numbers.add(p.cn()));
         Set<Long> already = new HashSet<>(eventRepo.findExistingChangelogNumbers(linkId, numbers));
+
         List<PendingReplicationEvent> fresh = pending.stream()
                 .filter(p -> !already.contains(p.sourceChangeNumber()))
                 .toList();
         if (!fresh.isEmpty()) persister.saveAll(fresh);
+
+        for (PoisonEntry p : poison) {
+            if (already.contains(p.cn())) continue;
+            persister.saveDeadLetteredChangelogEvent(
+                    linkId, p.operation(), p.sourceDn(), p.targetDn(), p.payload(), p.cn(), p.error());
+            audit(AuditAction.REPLICATION_CHANGELOG_ENTRY_DEAD_LETTERED,
+                    detail(linkId, "sourceChangeNumber", p.cn(), "sourceDn", p.sourceDn(), "error", p.error()));
+            log.error("Dead-lettered poison changelog entry for link {} changeNumber {}: {}",
+                    linkId, p.cn(), p.error());
+        }
     }
+
+    private ChangelogHealth healthFor(long head, long cursor) {
+        return Math.max(0L, head - cursor) > lagThreshold ? ChangelogHealth.LAGGING : ChangelogHealth.HEALTHY;
+    }
+
+    private void triggerReconcile(UUID linkId) {
+        try {
+            // MANUAL fires independent of reconcileEnabled — a changelog link can
+            // use capture without periodic reconciliation yet still get repaired.
+            reconciliationService.trigger(linkId, ReconciliationRunTrigger.MANUAL, null);
+        } catch (RuntimeException ex) {
+            log.error("Gap-recovery reconciliation trigger failed for link {}: {}", linkId, ex.toString());
+        }
+    }
+
+    private void audit(AuditAction action, Map<String, Object> detail) {
+        auditService.recordSystemEventNoActor(action, detail);
+    }
+
+    /** A poison entry awaiting dead-letter (in DN scope), captured during the drain. */
+    private record PoisonEntry(long cn, ReplicationOperationType operation, String sourceDn,
+                               String targetDn, Map<String, Object> payload, String error) {}
 
     // ── LDAP read ───────────────────────────────────────────────────────────────
 
-    /** What one poll read off the source: the current head and this page's entries. */
-    private record PollPage(Long head, List<SearchResultEntry> entries) {}
+    /** What one poll read off the source: the head, the oldest surviving entry, and the page. */
+    private record PollPage(Long head, Long firstChangeNumber, List<SearchResultEntry> entries) {}
 
     private PollPage readPage(DirectoryConnection source, ChangelogStrategy strategy,
                               ClaimedPoll cp, String branchFilterDn) {
         return connectionFactory.withConnectionUnreplicated(source, iface -> {
             RootDSE dse = iface.getRootDSE();
             Long head = dse == null ? null : dse.getAttributeValueAsLong("lastChangeNumber");
+            Long first = dse == null ? null : dse.getAttributeValueAsLong("firstChangeNumber");
             if (head == null || cp.cursor() == null) {
                 // No head, or first-run seed: no entry read needed.
-                return new PollPage(head, List.of());
+                return new PollPage(head, first, List.of());
             }
             ChangelogReadContext ctx = new ChangelogReadContext(cp.baseDn(), branchFilterDn, cp.cursor());
             SearchResult result;
@@ -287,7 +384,7 @@ public class ReplicationChangelogPoller {
                                 + "draining incrementally", source.getDisplayName(), maxPerPoll);
                 result = se.getSearchResult();
             }
-            return new PollPage(head, new ArrayList<>(result.getSearchEntries()));
+            return new PollPage(head, first, new ArrayList<>(result.getSearchEntries()));
         });
     }
 
@@ -320,5 +417,39 @@ public class ReplicationChangelogPoller {
         } catch (LDAPException e) {
             return creators.equalsIgnoreCase(bindDn);
         }
+    }
+
+    /** Best-effort operation for a poison entry's forensic dead-letter row (changeType is readable). */
+    private static ReplicationOperationType operationFor(SearchResultEntry entry) {
+        String changeType = entry.getAttributeValue("changeType");
+        if (changeType == null) return ReplicationOperationType.MODIFY;
+        return switch (changeType.toLowerCase(Locale.ROOT)) {
+            case "add" -> ReplicationOperationType.ADD;
+            case "delete" -> ReplicationOperationType.DELETE;
+            case "modrdn", "moddn" -> ReplicationOperationType.MODIFY_DN;
+            default -> ReplicationOperationType.MODIFY;
+        };
+    }
+
+    /** Raw changelog entry + parse error, for the dead-letter row's forensic payload. */
+    private static Map<String, Object> rawEntryPayload(SearchResultEntry entry, String error) {
+        Map<String, List<String>> attrs = new LinkedHashMap<>();
+        for (Attribute a : entry.getAttributes()) {
+            attrs.put(a.getName(), Arrays.asList(a.getValues()));
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("rawAttributes", attrs);
+        payload.put("parseError", error == null ? "" : error);
+        return payload;
+    }
+
+    /** Build an audit detail map, tolerating null values (Map.of does not). */
+    private static Map<String, Object> detail(UUID linkId, Object... kv) {
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("linkId", linkId.toString());
+        for (int i = 0; i + 1 < kv.length; i += 2) {
+            detail.put(String.valueOf(kv[i]), kv[i + 1] == null ? "" : kv[i + 1]);
+        }
+        return detail;
     }
 }

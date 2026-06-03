@@ -134,6 +134,7 @@ public interface ReplicationLinkRepository extends JpaRepository<ReplicationLink
            SET l.changelogLastChangeNumber = :head,
                l.changelogSourceLastChangeNumber = :head,
                l.changelogLastPolledAt = :now,
+               l.changelogHealth = com.ldapportal.entity.enums.ChangelogHealth.HEALTHY,
                l.changelogLastError = null,
                l.changelogLastErrorAt = null
          WHERE l.id = :id AND l.changelogLastChangeNumber IS NULL
@@ -153,6 +154,7 @@ public interface ReplicationLinkRepository extends JpaRepository<ReplicationLink
            SET l.changelogLastChangeNumber = :newCursor,
                l.changelogSourceLastChangeNumber = :head,
                l.changelogLastPolledAt = :now,
+               l.changelogHealth = :health,
                l.changelogLastError = null,
                l.changelogLastErrorAt = null
          WHERE l.id = :id AND l.changelogLastChangeNumber = :expected
@@ -161,19 +163,59 @@ public interface ReplicationLinkRepository extends JpaRepository<ReplicationLink
                                @Param("expected") long expected,
                                @Param("newCursor") long newCursor,
                                @Param("head") long head,
+                               @Param("health") com.ldapportal.entity.enums.ChangelogHealth health,
                                @Param("now") OffsetDateTime now);
 
-    /** No new entries this poll: refresh the observed head + poll timestamp. */
+    /** No new entries this poll: refresh the observed head, health + poll timestamp. */
     @Modifying
     @Query("""
         UPDATE ReplicationLink l
            SET l.changelogSourceLastChangeNumber = :head,
-               l.changelogLastPolledAt = :now
+               l.changelogLastPolledAt = :now,
+               l.changelogHealth = :health
          WHERE l.id = :id
         """)
     void recordChangelogPollObservation(@Param("id") UUID id,
                                         @Param("head") long head,
+                                        @Param("health") com.ldapportal.entity.enums.ChangelogHealth health,
                                         @Param("now") OffsetDateTime now);
+
+    /**
+     * Gap recovery (§7A.1): entries were trimmed before we read them. CAS
+     * fast-forward the cursor past the trimmed span (to {@code firstChangeNumber
+     * − 1}) and flag {@code GAP_DETECTED}; reconciliation repairs the skip.
+     */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogLastChangeNumber = :fastForward,
+               l.changelogSourceLastChangeNumber = :head,
+               l.changelogLastPolledAt = :now,
+               l.changelogHealth = com.ldapportal.entity.enums.ChangelogHealth.GAP_DETECTED
+         WHERE l.id = :id AND l.changelogLastChangeNumber = :expected
+        """)
+    int markChangelogGap(@Param("id") UUID id,
+                         @Param("expected") long expected,
+                         @Param("fastForward") long fastForward,
+                         @Param("head") long head,
+                         @Param("now") OffsetDateTime now);
+
+    /**
+     * Cursor-reset detection (§7A.2): the source head is below our cursor — the
+     * changelog was reinitialized. Flag {@code CURSOR_RESET} and <b>do not</b>
+     * advance; an operator reseed (or capture-mode toggle) is required.
+     */
+    @Modifying
+    @Query("""
+        UPDATE ReplicationLink l
+           SET l.changelogSourceLastChangeNumber = :head,
+               l.changelogLastPolledAt = :now,
+               l.changelogHealth = com.ldapportal.entity.enums.ChangelogHealth.CURSOR_RESET
+         WHERE l.id = :id
+        """)
+    void markChangelogCursorReset(@Param("id") UUID id,
+                                  @Param("head") long head,
+                                  @Param("now") OffsetDateTime now);
 
     /** Record a poll/parse/connection error string for operator diagnosis. */
     @Modifying

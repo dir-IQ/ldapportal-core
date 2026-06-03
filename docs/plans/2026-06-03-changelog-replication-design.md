@@ -1,20 +1,23 @@
 # Changelog-driven replication — design plan
 
 - **Date:** 2026-06-03
-- **Status:** In progress (Phases C1–C3 landed. C1: `V15` schema + enums +
-  DTO/validation. C2: generalized `ChangelogStrategy` SPI + `OudChangelogChangeParser`.
-  C3: `ReplicationPayloadMapper` (shared by enqueuer + poller so both capture
-  paths emit byte-identical rows), enqueuer skip for CHANGELOG links (§6.4),
-  `ReplicationChangelogPoller` (entitlement gate, bounded pool, DB poll lease +
-  stale sweep via `ChangelogPollTxOps`, first-run seed, CAS cursor advance,
-  exactly-once via `source_change_number` pre-check + partial unique index,
-  `creatorsName` loop guard), and the server-side sort on the incremental query
-  so size-limited pages stay ascending. C3R (gap/reset detection, poison
-  dead-letter, health state machine + lag, alert wiring, mode-switch
-  auto-reconcile, remediation controls) and C3X (exclude filter) not started —
-  the poller currently logs+skips a poison entry rather than dead-lettering it.
-  Design also carries the §7A / §7B hardening and the RF-1..4 review findings —
-  2026-06-03).
+- **Status:** In progress (Phases C1–C3 + C3R-core landed. C1: `V15` schema +
+  enums + DTO/validation. C2: generalized `ChangelogStrategy` SPI +
+  `OudChangelogChangeParser`. C3: `ReplicationPayloadMapper` (shared by enqueuer
+  + poller), enqueuer skip for CHANGELOG links (§6.4), `ReplicationChangelogPoller`
+  (entitlement gate, bounded pool, DB poll lease + stale sweep, first-run seed,
+  CAS cursor advance, exactly-once dedup, `creatorsName` loop guard, server-side
+  sort). C3R-core: gap detection + fast-forward + gap-recovery reconcile (§7A.1),
+  cursor-reset detection + halt (§7A.2), poison → `DEAD_LETTERED` event with raw
+  payload (§7A.3), `changelogHealth` state machine + lag (HEALTHY/LAGGING/
+  GAP_DETECTED/CURSOR_RESET; §7A.7), new `REPLICATION_CHANGELOG_*` audit actions
+  (§7A.9), mode-switch auto-reconcile via after-commit hook (§7A.8), and the RF-2
+  worker FIFO `source_change_number` tiebreak. **Deferred** (C3R-followups):
+  operator remediation endpoints (§7A.12 — cursor-reset is recoverable today via
+  the capture-mode toggle), `AlertSummaryProvider` dashboard tiles + STALLED
+  transition (§7A.7/.9), dedicated bounded poll connection (§7A.10). C3X (exclude
+  filter §7B) and C4 (test-changelog endpoint, frontend) not started. Design also
+  carries the §7A / §7B hardening and the RF-1..4 review findings — 2026-06-03).
 - **Suggested branch:** `feat/changelog-replication` (already cut; this doc
   lives on it).
 - **Scope:** Add a second **capture mode** to an existing replication link.

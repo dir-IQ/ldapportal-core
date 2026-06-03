@@ -3,7 +3,9 @@ package com.ldapportal.ldap.replication;
 
 import com.ldapportal.entity.ReplicationEvent;
 import com.ldapportal.entity.ReplicationLink;
+import com.ldapportal.entity.enums.ReplicationEnqueueSource;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
+import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.ldapportal.repository.ReplicationEventRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -13,6 +15,8 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * Sibling bean that owns the {@code @Transactional(REQUIRES_NEW)}
@@ -65,5 +69,30 @@ public class ReplicationEventPersister {
             e.setSourceChangeNumber(p.sourceChangeNumber());
             eventRepo.save(e);
         }
+    }
+
+    /**
+     * Persist a poison changelog entry directly as {@code DEAD_LETTERED} (§7A.3):
+     * the {@code changes} blob couldn't be reconstructed, so rather than silently
+     * skip (loss) or wedge the link, the raw entry + parse error land as a
+     * recoverable, audited dead letter the operator can retry/skip. Carries
+     * {@code source_change_number} so the dedup index keeps it exactly-once.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void saveDeadLetteredChangelogEvent(UUID linkId, ReplicationOperationType operation,
+                                               String sourceDn, String targetDn,
+                                               Map<String, Object> payload, Long sourceChangeNumber,
+                                               String error) {
+        ReplicationEvent e = new ReplicationEvent();
+        e.setLink(em.getReference(ReplicationLink.class, linkId));
+        e.setEnqueueSource(ReplicationEnqueueSource.SOURCE_CHANGELOG);
+        e.setOperation(operation);
+        e.setSourceDn(sourceDn);
+        e.setTargetDn(targetDn);
+        e.setStatus(ReplicationEventStatus.DEAD_LETTERED);
+        e.setPayload(payload);
+        e.setSourceChangeNumber(sourceChangeNumber);
+        e.setLastError(error);
+        eventRepo.save(e);
     }
 }

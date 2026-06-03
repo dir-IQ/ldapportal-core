@@ -42,6 +42,7 @@ class ReplicationLinkServiceTest {
     @Mock private com.ldapportal.repository.ReconciliationFindingRepository findingRepo;
     @Mock private DirectoryConnectionRepository dirRepo;
     @Mock private AuditService               auditService;
+    @Mock private com.ldapportal.ldap.replication.reconcile.ReconciliationService reconciliationService;
     @InjectMocks private ReplicationLinkService service;
 
     private final AuthPrincipal principal =
