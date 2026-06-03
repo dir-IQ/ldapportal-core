@@ -3,6 +3,7 @@ package com.ldapportal.ldap.replication;
 
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.LDAPException;
+import com.unboundid.ldap.sdk.RDN;
 
 /**
  * Translates a source-side DN to the target-side DN for a given
@@ -69,6 +70,27 @@ public final class DnMapper {
             // signal as "out of scope for this link" — the enqueuer
             // already handles that case.
             return null;
+        }
+    }
+
+    /**
+     * The DN an entry ends up at after a {@code MODIFY_DN}: {@code newRdn} under
+     * {@code newSuperiorDn} (a move) or under its old parent (a plain rename).
+     * Used to <b>re-read the moved entry</b> — e.g. for exclude-filter
+     * evaluation — since it no longer exists at its pre-move DN. Returns
+     * {@code oldDn} unchanged if the parts can't be parsed (fail-open).
+     */
+    public static String afterModifyDn(String oldDn, String newRdn, String newSuperiorDn) {
+        if (newRdn == null || newRdn.isBlank()) return oldDn;
+        try {
+            DN parent = (newSuperiorDn != null && !newSuperiorDn.isBlank())
+                    ? new DN(newSuperiorDn) : new DN(oldDn).getParent();
+            if (parent == null || parent.isNullDN()) {
+                return new DN(new RDN(newRdn)).toString();
+            }
+            return new DN(new RDN(newRdn), parent).toString();
+        } catch (LDAPException ex) {
+            return oldDn;
         }
     }
 }

@@ -27,6 +27,32 @@ class DnMapperTest {
         assertThat(mapped).isEqualTo("uid=alice,ou=people,dc=tgt,dc=com");
     }
 
+    // ── afterModifyDn (post-rename/move DN, for exclude-filter re-read) ────────
+
+    @Test
+    void afterModifyDn_rename_keepsParent() throws Exception {
+        assertThat(new DN(DnMapper.afterModifyDn("uid=jane,ou=people,dc=x", "uid=janet", null)))
+                .isEqualTo(new DN("uid=janet,ou=people,dc=x"));
+    }
+
+    @Test
+    void afterModifyDn_move_usesNewSuperior() throws Exception {
+        assertThat(new DN(DnMapper.afterModifyDn("uid=jane,ou=old,dc=x", "uid=jane", "ou=new,dc=x")))
+                .isEqualTo(new DN("uid=jane,ou=new,dc=x"));
+    }
+
+    @Test
+    void afterModifyDn_missingNewRdn_returnsOldDn() {
+        assertThat(DnMapper.afterModifyDn("uid=jane,ou=people,dc=x", null, null))
+                .isEqualTo("uid=jane,ou=people,dc=x");
+    }
+
+    @Test
+    void afterModifyDn_unparseable_returnsOldDn() {
+        assertThat(DnMapper.afterModifyDn("not a dn", "uid=x", "also not a dn"))
+                .isEqualTo("not a dn");
+    }
+
     @Test
     void baseDnSubstitution_dnIsBase_returnsTargetBase() {
         // Edge case: the source DN IS the base. The mapped target is

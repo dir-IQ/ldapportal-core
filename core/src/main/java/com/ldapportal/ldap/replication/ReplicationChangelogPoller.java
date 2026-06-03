@@ -453,6 +453,12 @@ public class ReplicationChangelogPoller {
      * full source entry (gated to exclude-configured links — zero cost
      * otherwise). DELETE always propagates (§7B.3). Fail-open: if the re-read
      * fails, don't exclude (reconciliation is the backstop).
+     *
+     * <p>For MODIFY_DN the entry has already moved at the source, so re-read its
+     * post-move DN, not the (now-vacated) pre-move DN. The re-read requests user
+     * attributes only ({@code getEntry}'s default); a filter on an operational
+     * attribute therefore evaluates as not-excluded — a documented v1 limitation
+     * the reconciliation read shares (so the two paths agree, no flapping).
      */
     @SuppressWarnings("unchecked")
     private boolean isExcluded(ReplicationLinkSnapshot snap, ChangelogChange change, DirectoryConnection source) {
@@ -460,8 +466,15 @@ public class ReplicationChangelogPoller {
         return switch (change.operation()) {
             case ADD -> ReplicationScopeFilter.isExcluded(snap, change.sourceDn(),
                     (Map<String, List<String>>) change.rawPayload().getOrDefault("attributes", Map.of()));
-            case MODIFY, MODIFY_DN -> {
+            case MODIFY -> {
                 Entry src = readSourceEntry(source, change.sourceDn());
+                yield src != null && ReplicationScopeFilter.isExcluded(snap, src);
+            }
+            case MODIFY_DN -> {
+                String movedDn = DnMapper.afterModifyDn(change.sourceDn(),
+                        (String) change.rawPayload().get("newRdn"),
+                        (String) change.rawPayload().get("newSuperiorDn"));
+                Entry src = readSourceEntry(source, movedDn);
                 yield src != null && ReplicationScopeFilter.isExcluded(snap, src);
             }
             case DELETE -> false;   // deletes always propagate

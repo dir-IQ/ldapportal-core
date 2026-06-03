@@ -72,6 +72,11 @@ public class ReplicationDelivery {
         // worker already does this for auto-create) and, if excluded, settle as
         // a no-op so the target copy is never touched ("excluded ⇒ invisible").
         // ADD was already gated at capture; DELETE always propagates (§7B.3).
+        //
+        // The gate is provenance-blind but safe: reconciliation already
+        // suppresses excluded entries (its protect-set never proposes a MODIFY
+        // for one), so this never silently drops a reconciliation correction in
+        // steady state — both sides read the same (user) attributes and agree.
         if (ReplicationScopeFilter.hasExcludeFilter(link)
                 && (event.operation() == ReplicationOperationType.MODIFY
                     || event.operation() == ReplicationOperationType.MODIFY_DN)
@@ -100,11 +105,19 @@ public class ReplicationDelivery {
         }
     }
 
-    /** Re-read the source entry and test the link's exclude filter; fail-open on read error. */
+    /**
+     * Re-read the source entry and test the link's exclude filter; fail-open on
+     * read error. For MODIFY_DN the entry has moved, so re-read its post-move DN.
+     */
     private boolean isExcludedAtDelivery(ReplicationEventSnapshot event, ReplicationLinkSnapshot link) {
+        String sourceDn = event.operation() == ReplicationOperationType.MODIFY_DN
+                ? DnMapper.afterModifyDn(event.sourceDn(),
+                        (String) event.payload().get("newRdn"),
+                        (String) event.payload().get("newSuperiorDn"))
+                : event.sourceDn();
         try {
             SearchResultEntry src = connectionFactory.withConnectionUnreplicated(
-                    link.sourceDirectory(), conn -> conn.getEntry(event.sourceDn()));
+                    link.sourceDirectory(), conn -> conn.getEntry(sourceDn));
             return src != null && ReplicationScopeFilter.isExcluded(link, src);
         } catch (Exception ex) {
             // Source gone or unreachable → don't exclude; the normal delivery
