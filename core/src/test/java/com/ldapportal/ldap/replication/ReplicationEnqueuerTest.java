@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.replication;
 
+import com.ldapportal.entity.enums.ReplicationCaptureMode;
 import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
@@ -17,6 +18,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -167,6 +169,38 @@ class ReplicationEnqueuerTest {
 
         // Must not throw.
         enqueuer.enqueue(source, CapturedWrite.delete("uid=alice,dc=corp"));
+    }
+
+    @Test
+    void changelogCaptureLink_isSkipped_noDoubleCapture() {
+        // A CHANGELOG-mode link is fed by the poller; the live wrapper must
+        // NOT also capture the app's own write to its source (§6.4), or the
+        // write would be enqueued twice.
+        UUID source = UUID.randomUUID();
+        ReplicationLinkSnapshot link = new ReplicationLinkSnapshot(
+                UUID.randomUUID(), "cl-link", null, null, null, null, true, false,
+                ReplicationCaptureMode.CHANGELOG, null, List.of());
+        when(readOps.snapshotsForSource(source)).thenReturn(List.of(link));
+
+        enqueuer.enqueue(source, CapturedWrite.delete("uid=alice,dc=corp"));
+
+        verify(persister, never()).saveAll(any());
+    }
+
+    @Test
+    void excludedAdd_isNotEnqueued() {
+        // §7B: an ADD whose full attributes match the link's exclude filter is
+        // dropped at enqueue (the live path evaluates ADD inline).
+        UUID source = UUID.randomUUID();
+        ReplicationLinkSnapshot link = new ReplicationLinkSnapshot(
+                UUID.randomUUID(), "L", null, null, null, null, true, false,
+                ReplicationCaptureMode.APP_INTERCEPT, "(objectClass=computer)", List.of());
+        when(readOps.snapshotsForSource(source)).thenReturn(List.of(link));
+
+        enqueuer.enqueue(source, CapturedWrite.add("cn=ws1,dc=corp",
+                List.of(new Attribute("objectClass", "computer"), new Attribute("cn", "ws1"))));
+
+        verify(persister, never()).saveAll(any());
     }
 
     private static ReplicationLinkSnapshot link(String sourceBaseDn, String targetBaseDn) {

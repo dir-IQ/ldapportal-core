@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.dto.replication;
 
+import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.ReconcileDeleteAction;
 import com.ldapportal.entity.enums.ReconcileMode;
+import com.ldapportal.entity.enums.ReplicationCaptureMode;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -30,6 +32,14 @@ import java.util.UUID;
  * the service requires {@code reconcileFirstRunAt} and
  * {@code reconcileIntervalSecs} (≥ 3600). {@code reconcileMode} and
  * {@code reconcileDeleteAction} default to {@code REVIEW} when omitted.
+ *
+ * <p>The {@code captureMode} / {@code changelog*} / {@code excludeFilter}
+ * fields configure changelog-driven capture (default {@code APP_INTERCEPT}).
+ * When {@code CHANGELOG}, the service requires {@code changelogFormat}
+ * ({@code DSEE_CHANGELOG} in v1) and defaults {@code changelogBaseDn} to
+ * {@code cn=changelog}; for {@code APP_INTERCEPT} the changelog fields are
+ * nulled out. {@code excludeFilter}, if present, must be a parseable RFC 4515
+ * filter and applies to either capture mode.
  */
 public record ReplicationLinkRequest(
         @NotBlank @Size(max = 255) String displayName,
@@ -44,7 +54,11 @@ public record ReplicationLinkRequest(
         ReconcileMode reconcileMode,
         OffsetDateTime reconcileFirstRunAt,
         Integer reconcileIntervalSecs,
-        ReconcileDeleteAction reconcileDeleteAction) {
+        ReconcileDeleteAction reconcileDeleteAction,
+        ReplicationCaptureMode captureMode,
+        ChangelogFormat changelogFormat,
+        @Size(max = 500) String changelogBaseDn,
+        @Size(max = 2000) String excludeFilter) {
 
     public record AttributeMappingRequest(
             @NotBlank @Size(max = 255) String sourceAttr,
@@ -52,8 +66,25 @@ public record ReplicationLinkRequest(
             @Size(max = 2000) String valueTemplate) {}
 
     /**
+     * Back-compat constructor for callers (and tests) predating changelog
+     * capture — defaults capture to {@code APP_INTERCEPT} with no changelog
+     * config or exclude filter.
+     */
+    public ReplicationLinkRequest(String displayName, UUID sourceDirectoryId, UUID targetDirectoryId,
+                                  String sourceBaseDn, String targetBaseDn, boolean enabled,
+                                  boolean autoCreateOnMissing, List<AttributeMappingRequest> attributeMappings,
+                                  boolean reconcileEnabled, ReconcileMode reconcileMode,
+                                  OffsetDateTime reconcileFirstRunAt, Integer reconcileIntervalSecs,
+                                  ReconcileDeleteAction reconcileDeleteAction) {
+        this(displayName, sourceDirectoryId, targetDirectoryId, sourceBaseDn, targetBaseDn, enabled,
+                autoCreateOnMissing, attributeMappings, reconcileEnabled, reconcileMode, reconcileFirstRunAt,
+                reconcileIntervalSecs, reconcileDeleteAction, null, null, null, null);
+    }
+
+    /**
      * Back-compat constructor for callers (and tests) predating the
-     * reconciliation fields — defaults reconciliation to disabled.
+     * reconciliation fields — defaults reconciliation to disabled and capture
+     * to {@code APP_INTERCEPT}.
      */
     public ReplicationLinkRequest(String displayName, UUID sourceDirectoryId, UUID targetDirectoryId,
                                   String sourceBaseDn, String targetBaseDn, boolean enabled,

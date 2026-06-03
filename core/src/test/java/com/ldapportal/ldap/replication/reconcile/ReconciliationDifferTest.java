@@ -30,6 +30,37 @@ class ReconciliationDifferTest {
                 null, null, null, null, true, false, List.of());
     }
 
+    // Identity-mapping link with an exclude filter (§7B).
+    private ReplicationLinkSnapshot excludeLink(String filter) {
+        return new ReplicationLinkSnapshot(UUID.randomUUID(), "L", null, null, null, null,
+                true, false, com.ldapportal.entity.enums.ReplicationCaptureMode.CHANGELOG, filter, List.of());
+    }
+
+    @org.junit.jupiter.api.Test
+    void excludedSourceEntry_presentInTarget_isProtectedFromExtraDelete() {
+        // §7B.4 protect-set: an excluded source entry's target copy must NOT be
+        // classified EXTRA (and deleted); a truly orphaned target entry still is.
+        ReplicationLinkSnapshot link = excludeLink("(objectClass=computer)");
+        List<ReconEntry> source = List.of(
+                entry("cn=ws1,dc=x", Map.of("objectClass", List.of("computer"))),    // excluded
+                entry("uid=alice,dc=x", Map.of("objectClass", List.of("person"))));  // included, in parity
+        List<ReconEntry> target = List.of(
+                entry("cn=ws1,dc=x", Map.of("objectClass", List.of("computer"))),    // excluded copy → protect
+                entry("uid=alice,dc=x", Map.of("objectClass", List.of("person"))),
+                entry("uid=orphan,dc=x", Map.of("objectClass", List.of("person")))); // no source → EXTRA
+
+        DiffResult r = ReconciliationDiffer.diff(link, "dc=x", source, target,
+                Set.of(), ReconcileDeleteAction.AUTO);
+
+        List<String> extra = r.findings().stream()
+                .filter(f -> f.type() == ReconciliationFindingType.EXTRA_IN_TARGET)
+                .map(FindingCandidate::targetDn)
+                .toList();
+        assertThat(extra).containsExactly("uid=orphan,dc=x");
+        // The excluded entry is also never proposed MISSING/DRIFT.
+        assertThat(r.findings()).noneMatch(f -> "cn=ws1,dc=x".equals(f.targetDn()));
+    }
+
     private ReplicationLinkSnapshot link(String sourceBase, String targetBase,
                                          List<AttrMappingSnapshot> mappings) {
         return new ReplicationLinkSnapshot(UUID.randomUUID(), "L",

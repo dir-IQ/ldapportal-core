@@ -7,6 +7,7 @@ import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.ldapportal.ldap.replication.AttributeMapper;
 import com.ldapportal.ldap.replication.DnMapper;
 import com.ldapportal.ldap.replication.ReplicationLinkSnapshot;
+import com.ldapportal.ldap.replication.ReplicationScopeFilter;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.LDAPException;
 
@@ -92,6 +93,9 @@ public final class ReconciliationDiffer {
         for (ReconEntry t : targetEntries) targetByDn.put(normDn(t.dn()), t);
 
         Set<String> expectedTargetDns = new HashSet<>();
+        // Protect-set (§7B.4): target DNs of excluded source entries — present
+        // but invisible, so never proposed EXTRA/DELETE. Matched on source attrs.
+        Set<String> excludedTombstones = new HashSet<>();
         List<FindingCandidate> raw = new ArrayList<>();
 
         // ── source-driven: MISSING_IN_TARGET + ATTRIBUTE_DRIFT ──────────────
@@ -99,6 +103,10 @@ public final class ReconciliationDiffer {
             String targetDn = DnMapper.map(src.dn(), link);
             if (targetDn == null) continue;        // out of scope for this link
             String normTarget = normDn(targetDn);
+            if (ReplicationScopeFilter.isExcluded(link, src.dn(), src.attributes())) {
+                excludedTombstones.add(normTarget);   // present-but-excluded; no expected ADD/MODIFY
+                continue;
+            }
             expectedTargetDns.add(normTarget);
 
             Map<String, List<String>> expected =
@@ -126,6 +134,7 @@ public final class ReconciliationDiffer {
                 String normDn = normDn(t.dn());
                 if (normDn.equals(normBase)) continue;        // never delete the base entry
                 if (expectedTargetDns.contains(normDn)) continue;
+                if (excludedTombstones.contains(normDn)) continue;   // protected: excluded entry's copy
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("currentTarget", t.attributes());   // for UI / audit only
                 raw.add(new FindingCandidate(ReconciliationFindingType.EXTRA_IN_TARGET,
