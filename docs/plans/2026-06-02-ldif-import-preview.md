@@ -1,7 +1,7 @@
 # LDIF import preview — implementation plan
 
 - **Date:** 2026-06-02
-- **Status:** Not started (planning, 2026-06-02).
+- **Status:** Shipped (v1 backend + frontend preview flow; deferred tiers in §7 remain, 2026-06-03).
 - **Scope:** Replace the count-only "dry run" of LDIF import with a real
   **preview** — a per-entry view of what *would* change (add / modify /
   delete / skip), with conflict-against-directory detection, DN-syntax and

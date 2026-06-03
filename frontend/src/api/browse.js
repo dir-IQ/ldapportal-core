@@ -42,6 +42,26 @@ export const importLdif = (dirId, file, conflictHandling = 'SKIP', dryRun = fals
   })
 }
 
+// ── LDIF import preview ─────────────────────────────────────────────────────
+
+export const previewLdif = (dirId, file, conflictHandling = 'SKIP') => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return client.post(`${base(dirId)}/import/ldif/preview`, formData, {
+    params: { conflictHandling },
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
+export const getLdifPreviewPage = (dirId, previewId, params) =>
+  client.get(`${base(dirId)}/import/ldif/preview/${previewId}`, { params })
+
+export const getLdifPreviewRow = (dirId, previewId, rowNumber) =>
+  client.get(`${base(dirId)}/import/ldif/preview/${previewId}/row/${rowNumber}`)
+
+export const applyLdifPreview = (dirId, previewId) =>
+  client.post(`${base(dirId)}/import/ldif/preview/${previewId}/apply`)
+
 export const checkIntegrity = (dirId, baseDn, checks) =>
   client.post(`${base(dirId)}/integrity-check`, null, {
     params: { baseDn: baseDn || undefined, checks: checks.join(',') },
