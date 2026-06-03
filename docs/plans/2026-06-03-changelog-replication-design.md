@@ -729,6 +729,71 @@ orphaned target entry still is; filter-change re-triggers reconciliation.
 
 ---
 
+## 7C. HA / multi-instance deployment
+
+The portal deploys as **N identical backends behind a load balancer**, all
+running the same `@Scheduled` pollers against **one shared Postgres**. There is
+**no leader election and no ShedLock** anywhere in the app — coordination is done
+entirely through **DB-level optimistic claims**, and this feature follows that
+established idiom (`ReplicationWorker.tryClaim`, `ReconciliationTxOps.tryStart`).
+The shared DB is the synchronization substrate; nothing requires sticky sessions
+or extra cluster infra.
+
+### 7C.1 Per-component behavior under N instances
+
+| Component | Runs on | Coordination |
+|---|---|---|
+| **Live capture** (`ReplicationEnqueuer`) | the one instance that handled the write | inherently safe — each write happens on exactly one node, captured there |
+| **Changelog poller** (new) | all N tick; **one** processes a given link per cycle | **DB lease** (§6.1): CAS `UPDATE … SET changelog_poll_claimed_at WHERE id=? AND (claim NULL OR stale)`; losers update 0 rows and no-op cheaply |
+| **Worker delivery** (existing) | all N drain | per-event `tryClaim` CAS `PENDING→IN_FLIGHT`; per-link FIFO ⇒ one node holds a link's head at a time ⇒ **ordering preserved across instances** |
+| **Reconciliation** (existing) | all N tick | `tryStart` unique "one RUNNING run per link" → `DataIntegrityViolationException` race-catch |
+| **Retention sweeps** (existing) | all N tick | delete-by-age is idempotent; concurrent runs race harmlessly |
+
+Links naturally **spread across instances** — whichever node wins each link's
+lease does that link's work — so polling load self-balances without a
+partitioning scheme.
+
+### 7C.2 Defense in depth (why a lease race can't double-apply)
+
+The lease is the *primary* guard, but correctness does **not** depend on it being
+perfect. Three independent layers mean even a simultaneous double-claim is
+harmless:
+
+1. **DB poll lease** — normally only one node polls a link per cycle.
+2. **Exactly-once dedup index** (§6.5) — if two nodes both build events for the
+   same `changeNumber`, the `(link_id, source_change_number)` unique index +
+   insert-if-absent collapses them to one queue row.
+3. **Per-event `IN_FLIGHT` claim** (existing worker) — only one node delivers a
+   given event; **and** LDAP delivery is largely idempotent (REPLACE,
+   delete-as-no-op, auto-create-on-missing).
+
+So the worst case of a lease race is a little wasted work, never a duplicate or
+out-of-order write. Same logic protects the **cursor**: CAS advance (§2.1) means
+a stale node's write fails the `WHERE last_change_number = :expected` guard and
+is discarded — no lost update.
+
+### 7C.3 Two HA refinements to bake in
+
+- **Use DB-server time for lease/stale comparisons.** Compute the stale cutoff in
+  SQL (`changelog_poll_claimed_at < now() - :interval`) rather than passing an
+  app-computed timestamp, so NTP skew between backends can't cause false
+  reclaims. (The existing worker/reconciler pass app-time with generous
+  10-/30-minute thresholds; matching that is acceptable, but DB-time is strictly
+  safer and nearly free here.)
+- **Jitter the poller's initial delay** (e.g. `initial-delay + random(0..interval)`
+  per instance) so N backends don't fire claim attempts in lockstep — turns a
+  thundering-herd of CAS attempts into a spread. Minor, but trivial.
+
+### 7C.4 What this means operationally
+Rolling restarts and autoscaling are safe: a node dying mid-poll leaves a lease
+that the **stale-claim sweep** reclaims (mirrors the worker's
+`resetStaleInFlight`), and a node dying mid-delivery leaves an `IN_FLIGHT` event
+the existing stale-reset returns to `PENDING`. No manual intervention, no split
+brain — the shared DB is always the single source of truth for "who owns what
+right now."
+
+---
+
 ## 8. Extensibility (OpenLDAP / AD later)
 
 The SPI shape makes later servers additive:
