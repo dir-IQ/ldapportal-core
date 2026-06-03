@@ -287,8 +287,8 @@
           <tbody class="divide-y divide-gray-50">
             <tr v-for="e in events" :key="e.id">
               <td class="px-2 py-1"><RelativeTime :value="e.enqueuedAt" /></td>
-              <td class="px-2 py-1 font-mono text-[10px]">{{ e.operation }}</td>
-              <td class="px-2 py-1 font-mono text-[10px] truncate max-w-xs" :title="e.targetDn">
+              <td class="px-2 py-1 font-mono text-[13px]">{{ e.operation }}</td>
+              <td class="px-2 py-1 font-mono text-[13px] truncate max-w-xs" :title="e.targetDn">
                 {{ e.targetDn }}
               </td>
               <td class="px-2 py-1">

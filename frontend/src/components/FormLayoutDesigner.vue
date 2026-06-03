@@ -155,7 +155,7 @@
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-1.5">
                     <span class="text-sm font-medium text-gray-800 truncate">{{ field.customLabel || field.attributeName }}</span>
-                    <span class="text-[10px] font-mono text-gray-500" v-if="field.customLabel">{{ field.attributeName }}</span>
+                    <span class="text-[13px] font-mono text-gray-500" v-if="field.customLabel">{{ field.attributeName }}</span>
                     <span class="text-[10px] bg-amber-100 text-amber-700 rounded px-1 font-medium">RDN</span>
                     <span class="text-red-400 text-xs">*</span>
                   </div>
@@ -215,7 +215,7 @@
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-1.5">
                     <span class="text-sm font-medium text-gray-800 truncate">{{ field.customLabel || field.attributeName }}</span>
-                    <span class="text-[10px] font-mono text-gray-500" v-if="field.customLabel">{{ field.attributeName }}</span>
+                    <span class="text-[13px] font-mono text-gray-500" v-if="field.customLabel">{{ field.attributeName }}</span>
                     <span v-if="field.requiredOnCreate" class="text-red-400 text-xs">*</span>
                   </div>
                   <div class="text-[10px] text-gray-500">{{ field.inputType }}</div>

@@ -96,7 +96,7 @@
           class="w-full text-left px-4 py-3 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors"
         >
           <span class="font-medium text-gray-900 text-sm">{{ p.name }}</span>
-          <span v-if="p.targetOuDn" class="text-xs text-gray-500 ml-2 font-mono">{{ p.targetOuDn }}</span>
+          <span v-if="p.targetOuDn" class="text-[13px] text-gray-500 ml-2 font-mono">{{ p.targetOuDn }}</span>
         </button>
       </div>
       <template #footer>
