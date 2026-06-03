@@ -4,6 +4,7 @@ package com.ldapportal.ldap.replication;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.ReplicationLinkAttrMapping;
+import com.ldapportal.entity.enums.ReplicationCaptureMode;
 
 import java.util.List;
 import java.util.UUID;
@@ -47,7 +48,26 @@ public record ReplicationLinkSnapshot(
         String targetBaseDn,
         boolean enabled,
         boolean autoCreateOnMissing,
+        ReplicationCaptureMode captureMode,
+        String excludeFilter,
         List<AttrMappingSnapshot> attributeMappings) {
+
+    /**
+     * Back-compat constructor predating changelog capture — defaults
+     * {@code captureMode} to {@code APP_INTERCEPT} and {@code excludeFilter}
+     * to null. Keeps the many test fixtures that build a snapshot positionally
+     * compiling unchanged.
+     */
+    public ReplicationLinkSnapshot(UUID id, String displayName,
+                                   DirectoryConnection sourceDirectory,
+                                   DirectoryConnection targetDirectory,
+                                   String sourceBaseDn, String targetBaseDn,
+                                   boolean enabled, boolean autoCreateOnMissing,
+                                   List<AttrMappingSnapshot> attributeMappings) {
+        this(id, displayName, sourceDirectory, targetDirectory, sourceBaseDn, targetBaseDn,
+                enabled, autoCreateOnMissing, ReplicationCaptureMode.APP_INTERCEPT, null,
+                attributeMappings);
+    }
 
     public record AttrMappingSnapshot(String sourceAttr,
                                        String targetAttr,
@@ -78,6 +98,8 @@ public record ReplicationLinkSnapshot(
                 link.getTargetBaseDn(),
                 link.isEnabled(),
                 link.isAutoCreateOnMissing(),
+                link.getCaptureMode(),
+                link.getExcludeFilter(),
                 link.getAttributeMappings().stream()
                         .map(AttrMappingSnapshot::from)
                         .toList());

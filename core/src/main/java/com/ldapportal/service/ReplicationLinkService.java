@@ -9,11 +9,16 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.ReplicationLinkAttrMapping;
 import com.ldapportal.entity.enums.AuditAction;
+import com.ldapportal.entity.enums.ChangelogFormat;
+import com.ldapportal.entity.enums.ChangelogHealth;
 import com.ldapportal.entity.enums.ReconcileDeleteAction;
 import com.ldapportal.entity.enums.ReconcileMode;
 import com.ldapportal.entity.enums.ReconciliationFindingStatus;
+import com.ldapportal.entity.enums.ReplicationCaptureMode;
 import com.ldapportal.entity.enums.ReplicationEventStatus;
 import com.ldapportal.exception.ResourceNotFoundException;
+import com.unboundid.ldap.sdk.Filter;
+import com.unboundid.ldap.sdk.LDAPException;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.ReconciliationFindingRepository;
 import com.ldapportal.repository.ReplicationEventRepository;
@@ -55,6 +60,9 @@ public class ReplicationLinkService {
 
     /** Floor on the reconciliation repeat interval — 1 hour. Mirrors the DB CHECK. */
     private static final int RECONCILE_MIN_INTERVAL_SECS = 3600;
+
+    /** Default changelog base DN when CHANGELOG capture is enabled without one. */
+    private static final String DEFAULT_CHANGELOG_BASE_DN = "cn=changelog";
 
     @Transactional(readOnly = true)
     public List<ReplicationLinkResponse> listLinks() {
@@ -164,6 +172,7 @@ public class ReplicationLinkService {
         detail.put("targetDirectoryId",   link.getTargetDirectory().getId().toString());
         detail.put("targetDirectoryName", link.getTargetDirectory().getDisplayName());
         detail.put("enabled",             link.isEnabled());
+        detail.put("captureMode",         link.getCaptureMode().name());
         return detail;
     }
 
@@ -221,6 +230,38 @@ public class ReplicationLinkService {
                       + " seconds (1 hour)");
             }
         }
+        validateChangelogCapture(req);
+    }
+
+    /**
+     * Changelog-capture + exclude-filter validation (§9). Mirrors the DB
+     * CHECK constraints so the operator gets a 400 instead of a 500:
+     * CHANGELOG mode requires a {@code changelogFormat}, and v1 supports only
+     * {@code DSEE_CHANGELOG} (OUD / cn=changelog). The exclude filter, if
+     * present, must parse as an RFC 4515 filter — it applies to either mode.
+     */
+    private void validateChangelogCapture(ReplicationLinkRequest req) {
+        ReplicationCaptureMode mode = req.captureMode() != null
+                ? req.captureMode() : ReplicationCaptureMode.APP_INTERCEPT;
+        if (mode == ReplicationCaptureMode.CHANGELOG) {
+            if (req.changelogFormat() == null) {
+                throw new IllegalArgumentException(
+                        "changelogFormat is required when captureMode is CHANGELOG");
+            }
+            if (req.changelogFormat() != ChangelogFormat.DSEE_CHANGELOG) {
+                throw new IllegalArgumentException(
+                        "changelog capture supports OUD / cn=changelog only in this version "
+                      + "(changelogFormat must be DSEE_CHANGELOG)");
+            }
+        }
+        if (req.excludeFilter() != null && !req.excludeFilter().isBlank()) {
+            try {
+                Filter.create(req.excludeFilter());
+            } catch (LDAPException e) {
+                throw new IllegalArgumentException(
+                        "excludeFilter is not a valid RFC 4515 filter: " + e.getMessage());
+            }
+        }
     }
 
     private void applyRequest(ReplicationLink link, ReplicationLinkRequest req) {
@@ -232,6 +273,7 @@ public class ReplicationLinkService {
         link.setEnabled(req.enabled());
         link.setAutoCreateOnMissing(req.autoCreateOnMissing());
         applyReconcileConfig(link, req);
+        applyChangelogConfig(link, req);
 
         // Attribute mappings: replace the whole list. orphanRemoval=true
         // on the @OneToMany makes JPA clean up removed rows.
@@ -277,6 +319,45 @@ public class ReplicationLinkService {
                 || !Objects.equals(oldInterval, req.reconcileIntervalSecs());
         if (scheduleChanged || link.getReconcileNextRunAt() == null) {
             link.setReconcileNextRunAt(req.reconcileFirstRunAt());
+        }
+    }
+
+    /**
+     * Apply the changelog-capture config. CHANGELOG mode stores the format and
+     * a base DN (defaulted to {@code cn=changelog}); APP_INTERCEPT nulls the
+     * changelog config out. The {@code excludeFilter} applies to either mode.
+     *
+     * <p>Switching capture modes <b>resets the cursor and health</b> so a
+     * newly-enabled CHANGELOG link re-seeds from the current source head
+     * rather than replaying history (§2.1); the seam between the old and new
+     * mode is closed by a reconciliation run (§7A.8, wired in a later phase).
+     */
+    private void applyChangelogConfig(ReplicationLink link, ReplicationLinkRequest req) {
+        ReplicationCaptureMode previous = link.getCaptureMode();
+        ReplicationCaptureMode mode = req.captureMode() != null
+                ? req.captureMode() : ReplicationCaptureMode.APP_INTERCEPT;
+
+        link.setCaptureMode(mode);
+        link.setExcludeFilter(blankToNull(req.excludeFilter()));
+
+        if (mode == ReplicationCaptureMode.CHANGELOG) {
+            link.setChangelogFormat(req.changelogFormat());
+            String baseDn = blankToNull(req.changelogBaseDn());
+            link.setChangelogBaseDn(baseDn != null ? baseDn : DEFAULT_CHANGELOG_BASE_DN);
+        } else {
+            link.setChangelogFormat(null);
+            link.setChangelogBaseDn(null);
+        }
+
+        if (previous != mode) {
+            // Re-seed cleanly under the new mode: drop the cursor + observed
+            // head and clear any stale health/error from the prior mode.
+            link.setChangelogLastChangeNumber(null);
+            link.setChangelogSourceLastChangeNumber(null);
+            link.setChangelogLastPolledAt(null);
+            link.setChangelogLastError(null);
+            link.setChangelogLastErrorAt(null);
+            link.setChangelogHealth(ChangelogHealth.HEALTHY);
         }
     }
 
