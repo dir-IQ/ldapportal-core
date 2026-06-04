@@ -7,6 +7,7 @@ import com.ldapportal.entity.enums.ReplicationOperationType;
 import com.ldapportal.ldap.replication.AttributeMapper;
 import com.ldapportal.ldap.replication.DnMapper;
 import com.ldapportal.ldap.replication.ReplicationLinkSnapshot;
+import com.ldapportal.ldap.replication.ReplicationScopeFilter;
 import com.ldapportal.ldap.replication.reconcile.ReconciliationDiffer.DiffResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -58,12 +60,21 @@ public class ChecksumReconciler {
         Map<String, String> expectedDigest = new HashMap<>();   // normTargetDn -> digest
         Map<String, String> sourceDnOf     = new HashMap<>();   // normTargetDn -> source DN (to re-read)
         Map<String, String> targetDnFor    = new HashMap<>();   // normTargetDn -> original (mapped) target DN
+        // Protect-set (§7B.4): mapped target DNs of source entries the exclude
+        // filter hides. They contribute no expected ADD/MODIFY, but their target
+        // copies must NOT be classified EXTRA (and deleted) — "excluded ⇒
+        // invisible", not "delete it". Filter is matched on SOURCE attributes.
+        Set<String> excludedTombstones = new HashSet<>();
         int[] sourceCount = {0};
         readOps.streamSubtree(link.sourceDirectory(), sourceBase, pageSize, src -> {
             sourceCount[0]++;
             String targetDn = DnMapper.map(src.dn(), link);
             if (targetDn == null) return;                       // out of scope for this link
             String n = ReconciliationDiffer.normDn(targetDn);
+            if (ReplicationScopeFilter.isExcluded(link, src.dn(), src.attributes())) {
+                excludedTombstones.add(n);                      // present-but-excluded
+                return;
+            }
             expectedDigest.put(n, ReconciliationDigest.digest(AttributeMapper.mapAttributes(src.attributes(), link), norm));
             sourceDnOf.put(n, src.dn());
             targetDnFor.put(n, targetDn);
@@ -92,6 +103,7 @@ public class ChecksumReconciler {
         if (deleteAction != ReconcileDeleteAction.IGNORE) {
             for (String n : targetDnOf.keySet()) {
                 if (n.equals(normBase)) continue;               // never delete the base entry
+                if (excludedTombstones.contains(n)) continue;   // protected: excluded source entry's copy
                 if (!expectedDigest.containsKey(n)) extra.add(n);
             }
         }

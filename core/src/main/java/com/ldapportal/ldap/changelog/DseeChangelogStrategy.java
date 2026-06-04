@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.changelog;
 
-import com.ldapportal.entity.AuditDataSource;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResultEntry;
 import com.unboundid.ldap.sdk.SearchScope;
+import com.unboundid.ldap.sdk.controls.ServerSideSortRequestControl;
+import com.unboundid.ldap.sdk.controls.SortKey;
 import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDateTime;
@@ -17,6 +18,7 @@ import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoField;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Strategy for Oracle DSEE / UnboundID-style {@code cn=changelog} entries
@@ -43,18 +45,43 @@ public class DseeChangelogStrategy implements ChangelogStrategy {
                     .toFormatter();
 
     @Override
-    public SearchRequest buildSearchRequest(AuditDataSource src, int sizeLimit) throws LDAPException {
-        String filter = "(objectClass=changeLogEntry)";
-        if (src.getBranchFilterDn() != null && !src.getBranchFilterDn().isBlank()) {
-            filter = "(&(objectClass=changeLogEntry)(targetDN=" + src.getBranchFilterDn() + "*))";
+    public SearchRequest buildSearchRequest(ChangelogReadContext ctx, int sizeLimit) throws LDAPException {
+        boolean hasBranch = ctx.branchFilterDn() != null && !ctx.branchFilterDn().isBlank();
+        boolean hasAfter = ctx.afterChangeNumber() != null;
+
+        String filter;
+        if (!hasBranch && !hasAfter) {
+            filter = "(objectClass=changeLogEntry)";
+        } else {
+            StringBuilder sb = new StringBuilder("(&(objectClass=changeLogEntry)");
+            // Incremental query for the poller: changeNumber > cursor, i.e.
+            // >= cursor + 1. OUD indexes changeNumber, so this is efficient.
+            if (hasAfter) {
+                sb.append("(changeNumber>=").append(ctx.afterChangeNumber() + 1).append(')');
+            }
+            if (hasBranch) {
+                sb.append("(targetDN=").append(ctx.branchFilterDn()).append("*)");
+            }
+            sb.append(')');
+            filter = sb.toString();
         }
 
         SearchRequest req = new SearchRequest(
-                src.getChangelogBaseDn(),
+                ctx.changelogBaseDn(),
                 SearchScope.ONE,
                 filter,
                 ATTRIBUTES);
         req.setSizeLimit(sizeLimit);
+
+        // Cursor (poller) path: ask the server to sort by changeNumber ascending
+        // so a size-limited page is the LOWEST N entries, never an arbitrary
+        // subset — otherwise advancing the cursor past the page max could skip
+        // unreceived lower entries. Non-critical: a server that can't sort
+        // returns the changelog in its natural (append) order, which is already
+        // changeNumber-ascending, and the poller sorts in-memory as a backstop.
+        if (hasAfter) {
+            req.addControl(new ServerSideSortRequestControl(false, new SortKey("changeNumber")));
+        }
         return req;
     }
 
@@ -90,6 +117,11 @@ public class DseeChangelogStrategy implements ChangelogStrategy {
     @Override
     public boolean isRecordable(SearchResultEntry entry) {
         return true; // cn=changelog only contains completed write operations
+    }
+
+    @Override
+    public Optional<ChangelogChange> extractChange(SearchResultEntry entry) {
+        return OudChangelogChangeParser.parse(entry);
     }
 
     static OffsetDateTime parseGeneralizedTime(String value) {

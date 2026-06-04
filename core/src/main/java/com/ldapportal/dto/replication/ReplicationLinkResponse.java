@@ -3,8 +3,11 @@ package com.ldapportal.dto.replication;
 
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.ReplicationLinkAttrMapping;
+import com.ldapportal.entity.enums.ChangelogFormat;
+import com.ldapportal.entity.enums.ChangelogHealth;
 import com.ldapportal.entity.enums.ReconcileDeleteAction;
 import com.ldapportal.entity.enums.ReconcileMode;
+import com.ldapportal.entity.enums.ReplicationCaptureMode;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -41,6 +44,19 @@ public record ReplicationLinkResponse(
         OffsetDateTime reconcileNextRunAt,
         OffsetDateTime reconcileLastRunAt,
         long openFindingCount,
+        // ── Changelog capture config + read-only health surface (§7A.7) ──
+        ReplicationCaptureMode captureMode,
+        ChangelogFormat changelogFormat,
+        String changelogBaseDn,
+        String excludeFilter,
+        Long changelogLastChangeNumber,
+        Long changelogSourceLastChangeNumber,
+        /** Un-replicated source changes = source head − cursor; null until both are known. */
+        Long changelogLag,
+        ChangelogHealth changelogHealth,
+        OffsetDateTime changelogLastPolledAt,
+        String changelogLastError,
+        OffsetDateTime changelogLastErrorAt,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt) {
 
@@ -81,8 +97,27 @@ public record ReplicationLinkResponse(
                 link.getReconcileNextRunAt(),
                 link.getReconcileLastRunAt(),
                 health.openFindingCount(),
+                link.getCaptureMode(),
+                link.getChangelogFormat(),
+                link.getChangelogBaseDn(),
+                link.getExcludeFilter(),
+                link.getChangelogLastChangeNumber(),
+                link.getChangelogSourceLastChangeNumber(),
+                lag(link),
+                link.getChangelogHealth(),
+                link.getChangelogLastPolledAt(),
+                link.getChangelogLastError(),
+                link.getChangelogLastErrorAt(),
                 link.getCreatedAt(),
                 link.getUpdatedAt());
+    }
+
+    /** Lag = source head − cursor, or null until both ends are known. */
+    private static Long lag(ReplicationLink link) {
+        Long head = link.getChangelogSourceLastChangeNumber();
+        Long cursor = link.getChangelogLastChangeNumber();
+        if (head == null || cursor == null) return null;
+        return Math.max(0L, head - cursor);
     }
 
     /** Per-link aggregate counts + lag, computed by the service layer. */

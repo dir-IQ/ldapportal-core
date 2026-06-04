@@ -15,6 +15,10 @@ import java.util.UUID;
  * — no entity reference crosses the non-transactional boundary into
  * the persister's tx, and no LAZY collection access is possible from
  * here.
+ *
+ * <p>{@code sourceChangeNumber} is the source {@code changeNumber} for
+ * {@code SOURCE_CHANGELOG} events (the exactly-once dedup key); {@code null}
+ * for the live {@code APP_INTERCEPT} path.
  */
 public record PendingReplicationEvent(
         UUID linkId,
@@ -22,4 +26,13 @@ public record PendingReplicationEvent(
         ReplicationOperationType operation,
         String sourceDn,
         String targetDn,
-        Map<String, Object> payload) {}
+        Map<String, Object> payload,
+        Long sourceChangeNumber) {
+
+    /** Live-capture convenience: no source change number (APP_INTERCEPT). */
+    public PendingReplicationEvent(UUID linkId, ReplicationEnqueueSource enqueueSource,
+                                   ReplicationOperationType operation, String sourceDn,
+                                   String targetDn, Map<String, Object> payload) {
+        this(linkId, enqueueSource, operation, sourceDn, targetDn, payload, null);
+    }
+}

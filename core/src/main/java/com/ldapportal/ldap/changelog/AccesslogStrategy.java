@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.changelog;
 
-import com.ldapportal.entity.AuditDataSource;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResultEntry;
@@ -55,18 +54,18 @@ public class AccesslogStrategy implements ChangelogStrategy {
                     .toFormatter();
 
     @Override
-    public SearchRequest buildSearchRequest(AuditDataSource src, int sizeLimit) throws LDAPException {
+    public SearchRequest buildSearchRequest(ChangelogReadContext ctx, int sizeLimit) throws LDAPException {
         String filter;
-        if (src.getBranchFilterDn() != null && !src.getBranchFilterDn().isBlank()) {
+        if (ctx.branchFilterDn() != null && !ctx.branchFilterDn().isBlank()) {
             // Filter to entries whose reqDN ends with the branch filter DN
             filter = "(&(objectClass=auditWriteObject)(reqResult=0)"
-                    + "(reqDN=*" + src.getBranchFilterDn() + "))";
+                    + "(reqDN=*" + ctx.branchFilterDn() + "))";
         } else {
             filter = "(&(objectClass=auditWriteObject)(reqResult=0))";
         }
 
         SearchRequest req = new SearchRequest(
-                src.getChangelogBaseDn(),
+                ctx.changelogBaseDn(),
                 SearchScope.ONE,
                 filter,
                 ATTRIBUTES);

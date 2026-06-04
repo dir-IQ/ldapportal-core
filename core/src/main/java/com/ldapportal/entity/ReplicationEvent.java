@@ -80,6 +80,16 @@ public class ReplicationEvent {
     @Column(nullable = false, columnDefinition = "jsonb")
     private Map<String, Object> payload;
 
+    /**
+     * Source {@code changeNumber} for {@code SOURCE_CHANGELOG} events; NULL
+     * otherwise. Doubles as the exactly-once dedup key (partial unique index
+     * {@code replication_events_changelog_dedup}) and the worker's FIFO
+     * tiebreak when many changelog rows share a near-identical
+     * {@code enqueued_at} (review finding RF-2).
+     */
+    @Column(name = "source_change_number")
+    private Long sourceChangeNumber;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private ReplicationEventStatus status = ReplicationEventStatus.PENDING;

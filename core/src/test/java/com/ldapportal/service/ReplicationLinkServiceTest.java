@@ -8,8 +8,10 @@ import com.ldapportal.dto.replication.ReplicationLinkResponse;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.ReplicationLink;
 import com.ldapportal.entity.enums.AuditAction;
+import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.ReconcileDeleteAction;
 import com.ldapportal.entity.enums.ReconcileMode;
+import com.ldapportal.entity.enums.ReplicationCaptureMode;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.ReplicationEventRepository;
 import com.ldapportal.repository.ReplicationLinkRepository;
@@ -40,6 +42,7 @@ class ReplicationLinkServiceTest {
     @Mock private com.ldapportal.repository.ReconciliationFindingRepository findingRepo;
     @Mock private DirectoryConnectionRepository dirRepo;
     @Mock private AuditService               auditService;
+    @Mock private com.ldapportal.ldap.replication.reconcile.ReconciliationService reconciliationService;
     @InjectMocks private ReplicationLinkService service;
 
     private final AuthPrincipal principal =
@@ -382,7 +385,297 @@ class ReplicationLinkServiceTest {
                 eq(principal), eq(AuditAction.RECONCILIATION_CONFIG_UPDATED), any());
     }
 
+    // ── changelog capture config (C1) ──────────────────────────────────────────
+
+    @Test
+    void create_changelogMode_defaultsBaseDnAndExposesConfig() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> {
+            ReplicationLink l = inv.getArgument(0);
+            l.setId(UUID.randomUUID());
+            return l;
+        });
+
+        ReplicationLinkResponse resp = service.createLink(principal, changelogRequest(
+                source, target, ChangelogFormat.DSEE_CHANGELOG, "  ", null));  // blank base DN
+
+        assertThat(resp.captureMode()).isEqualTo(ReplicationCaptureMode.CHANGELOG);
+        assertThat(resp.changelogFormat()).isEqualTo(ChangelogFormat.DSEE_CHANGELOG);
+        // Blank base DN defaults to cn=changelog.
+        assertThat(resp.changelogBaseDn()).isEqualTo("cn=changelog");
+        // No poll has run yet, so cursor / head / lag are unknown.
+        assertThat(resp.changelogLastChangeNumber()).isNull();
+        assertThat(resp.changelogLag()).isNull();
+    }
+
+    @Test
+    void create_changelogMode_rejectsMissingFormat() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+
+        assertThatThrownBy(() -> service.createLink(principal,
+                changelogRequest(source, target, null, "cn=changelog", null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("changelogFormat is required");
+    }
+
+    @Test
+    void create_changelogMode_rejectsUnsupportedFormat() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+
+        assertThatThrownBy(() -> service.createLink(principal,
+                changelogRequest(source, target, ChangelogFormat.OPENLDAP_ACCESSLOG, "cn=changelog", null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("DSEE_CHANGELOG");
+    }
+
+    @Test
+    void create_rejectsUnparseableExcludeFilter() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+
+        assertThatThrownBy(() -> service.createLink(principal,
+                changelogRequest(source, target, ChangelogFormat.DSEE_CHANGELOG, "cn=changelog", "(((not a filter")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("excludeFilter is not a valid");
+    }
+
+    @Test
+    void create_appIntercept_nullsChangelogConfig() {
+        // Even if a client sends changelog config alongside APP_INTERCEPT, it
+        // must be nulled out (the DB CHECK forbids it on APP_INTERCEPT rows).
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> {
+            ReplicationLink l = inv.getArgument(0);
+            l.setId(UUID.randomUUID());
+            return l;
+        });
+
+        ReplicationLinkResponse resp = service.createLink(principal, new ReplicationLinkRequest(
+                "App", source.getId(), target.getId(), null, null, true, false, List.of(),
+                false, null, null, null, null,
+                ReplicationCaptureMode.APP_INTERCEPT, ChangelogFormat.DSEE_CHANGELOG, "cn=changelog", null));
+
+        assertThat(resp.captureMode()).isEqualTo(ReplicationCaptureMode.APP_INTERCEPT);
+        assertThat(resp.changelogFormat()).isNull();
+        assertThat(resp.changelogBaseDn()).isNull();
+    }
+
+    @Test
+    void update_switchingCaptureMode_resetsCursor() {
+        // An existing CHANGELOG link with an advanced cursor; switching it to
+        // APP_INTERCEPT must reset the cursor and health so a later switch
+        // back re-seeds cleanly (§2.1).
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        ReplicationLink existing = link("Changelog Link");
+        existing.setSourceDirectory(source);
+        existing.setTargetDirectory(target);
+        existing.setCaptureMode(ReplicationCaptureMode.CHANGELOG);
+        existing.setChangelogFormat(ChangelogFormat.DSEE_CHANGELOG);
+        existing.setChangelogBaseDn("cn=changelog");
+        existing.setChangelogLastChangeNumber(4242L);
+        existing.setChangelogSourceLastChangeNumber(4250L);
+        existing.setChangelogPollClaimedAt(OffsetDateTime.now());  // a poll lease held under the old mode
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        ReplicationLinkResponse resp = service.updateLink(principal, existing.getId(),
+                new ReplicationLinkRequest("Changelog Link", source.getId(), target.getId(),
+                        null, null, true, false, List.of(),
+                        false, null, null, null, null,
+                        ReplicationCaptureMode.APP_INTERCEPT, null, null, null));
+
+        assertThat(resp.captureMode()).isEqualTo(ReplicationCaptureMode.APP_INTERCEPT);
+        assertThat(resp.changelogLastChangeNumber()).isNull();
+        assertThat(resp.changelogSourceLastChangeNumber()).isNull();
+        // The poll lease is released too, so a later switch back isn't blocked
+        // by a stale claim (not exposed on the response — assert on the entity).
+        assertThat(existing.getChangelogPollClaimedAt()).isNull();
+    }
+
+    @Test
+    void create_enabledChangelogLink_triggersSeamReconcile() {
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> {
+            ReplicationLink l = inv.getArgument(0);
+            l.setId(UUID.randomUUID());
+            return l;
+        });
+
+        service.createLink(principal, changelogRequest(
+                source, target, ChangelogFormat.DSEE_CHANGELOG, "cn=changelog", null));
+
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_CHANGELOG_CAPTURE_ENABLED), any());
+        verify(reconciliationService).trigger(
+                any(), eq(com.ldapportal.entity.enums.ReconciliationRunTrigger.MANUAL), eq(principal));
+    }
+
+    @Test
+    void create_disabledChangelogLink_auditsButDoesNotReconcile() {
+        // A disabled link must not auto-reconcile — corrective events would pile
+        // up and flood the target when it's later enabled.
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> {
+            ReplicationLink l = inv.getArgument(0);
+            l.setId(UUID.randomUUID());
+            return l;
+        });
+
+        service.createLink(principal, new ReplicationLinkRequest(
+                "Disabled CL", source.getId(), target.getId(), null, null,
+                false, false, List.of(),          // enabled = false
+                false, null, null, null, null,
+                ReplicationCaptureMode.CHANGELOG, ChangelogFormat.DSEE_CHANGELOG, "cn=changelog", null));
+
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_CHANGELOG_CAPTURE_ENABLED), any());
+        verify(reconciliationService, never()).trigger(any(), any(), any());
+    }
+
+    // ── changelog operator remediation (§7A.12) ───────────────────────────────
+
+    @Test
+    void reseed_dropsCursor_audits_andTriggersReconcile() {
+        ReplicationLink link = changelogLink();
+        when(linkRepo.findById(link.getId())).thenReturn(Optional.of(link));
+
+        service.reseedChangelogCursor(principal, link.getId());
+
+        verify(linkRepo).reseedChangelogCursor(link.getId());
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_CHANGELOG_REMEDIATED), any());
+        verify(reconciliationService).trigger(
+                eq(link.getId()), eq(com.ldapportal.entity.enums.ReconciliationRunTrigger.MANUAL), eq(principal));
+    }
+
+    @Test
+    void rewind_setsCursorToTarget_audits() {
+        ReplicationLink link = changelogLink();
+        when(linkRepo.findById(link.getId())).thenReturn(Optional.of(link));
+
+        service.rewindChangelogCursor(principal, link.getId(), 4242L);
+
+        verify(linkRepo).rewindChangelogCursor(link.getId(), 4242L);
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_CHANGELOG_REMEDIATED), any());
+    }
+
+    @Test
+    void rewind_rejectsNegativeChangeNumber() {
+        // Negative-guard fires before any lookup.
+        assertThatThrownBy(() -> service.rewindChangelogCursor(principal, UUID.randomUUID(), -1L))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(">= 0");
+        verify(linkRepo, never()).rewindChangelogCursor(any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void reEnable_clearsHealthError_audits() {
+        ReplicationLink link = changelogLink();
+        when(linkRepo.findById(link.getId())).thenReturn(Optional.of(link));
+
+        service.reEnableChangelogPoll(principal, link.getId());
+
+        verify(linkRepo).clearChangelogHealthError(link.getId());
+        verify(auditService).recordSystemEvent(
+                eq(principal), eq(AuditAction.REPLICATION_CHANGELOG_REMEDIATED), any());
+    }
+
+    @Test
+    void remediation_rejectsNonChangelogLink() {
+        ReplicationLink link = link("App-Intercept");   // captureMode APP_INTERCEPT
+        when(linkRepo.findById(link.getId())).thenReturn(Optional.of(link));
+
+        assertThatThrownBy(() -> service.reseedChangelogCursor(principal, link.getId()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not a changelog-capture link");
+        verify(linkRepo, never()).reseedChangelogCursor(any());
+    }
+
+    @Test
+    void update_changingExcludeFilter_retriggersReconcile() {
+        // §7B.5: editing the exclude filter changes the replicated set, so the
+        // target must converge via a one-off reconcile (capture mode unchanged).
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        ReplicationLink existing = changelogLink();
+        existing.setSourceDirectory(source);
+        existing.setTargetDirectory(target);
+        existing.setExcludeFilter(null);
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateLink(principal, existing.getId(), new ReplicationLinkRequest(
+                "Changelog", source.getId(), target.getId(), null, null, true, false, List.of(),
+                false, null, null, null, null,
+                ReplicationCaptureMode.CHANGELOG, ChangelogFormat.DSEE_CHANGELOG, "cn=changelog",
+                "(objectClass=computer)"));   // new filter, capture mode unchanged
+
+        verify(reconciliationService).trigger(eq(existing.getId()),
+                eq(com.ldapportal.entity.enums.ReconciliationRunTrigger.MANUAL), eq(principal));
+    }
+
+    @Test
+    void update_enablingChangelogLink_triggersSeamReconcile() {
+        // §7A.8: enabling a previously-disabled link converges the target via a
+        // one-off reconcile (capture mode unchanged, no filter change).
+        DirectoryConnection source = directory("Source");
+        DirectoryConnection target = directory("Target");
+        ReplicationLink existing = changelogLink();
+        existing.setSourceDirectory(source);
+        existing.setTargetDirectory(target);
+        existing.setEnabled(false);   // was disabled
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(dirRepo.findById(source.getId())).thenReturn(Optional.of(source));
+        when(dirRepo.findById(target.getId())).thenReturn(Optional.of(target));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateLink(principal, existing.getId(), new ReplicationLinkRequest(
+                "Changelog", source.getId(), target.getId(), null, null, true, false, List.of(),  // enabled now
+                false, null, null, null, null,
+                ReplicationCaptureMode.CHANGELOG, ChangelogFormat.DSEE_CHANGELOG, "cn=changelog", null));
+
+        verify(reconciliationService).trigger(eq(existing.getId()),
+                eq(com.ldapportal.entity.enums.ReconciliationRunTrigger.MANUAL), eq(principal));
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    private ReplicationLink changelogLink() {
+        ReplicationLink link = link("Changelog");
+        link.setCaptureMode(ReplicationCaptureMode.CHANGELOG);
+        link.setChangelogFormat(ChangelogFormat.DSEE_CHANGELOG);
+        link.setChangelogBaseDn("cn=changelog");
+        link.setEnabled(true);
+        return link;
+    }
+
+    private ReplicationLinkRequest changelogRequest(DirectoryConnection source, DirectoryConnection target,
+                                                    ChangelogFormat format, String baseDn, String excludeFilter) {
+        return new ReplicationLinkRequest(
+                "Changelog", source.getId(), target.getId(), null, null, true, false, List.of(),
+                false, null, null, null, null,
+                ReplicationCaptureMode.CHANGELOG, format, baseDn, excludeFilter);
+    }
 
     private DirectoryConnection directory(String displayName) {
         DirectoryConnection dc = new DirectoryConnection();

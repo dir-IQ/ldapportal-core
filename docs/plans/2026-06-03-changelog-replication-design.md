@@ -1,11 +1,38 @@
 # Changelog-driven replication — design plan
 
 - **Date:** 2026-06-03
-- **Status:** Not started (design only; reliability/observability hardening
-  (§7A), exclude-filter scoping (§7B), and a 2nd correctness/perf review
-  (findings RF-1 cursor wording, RF-2 worker FIFO tiebreak, RF-3 real
-  `source_change_number` column, RF-4 bounded poller executor) applied —
-  2026-06-03).
+- **Status:** In progress (Phases C1–C3 + C3R-core landed. C1: `V15` schema +
+  enums + DTO/validation. C2: generalized `ChangelogStrategy` SPI +
+  `OudChangelogChangeParser`. C3: `ReplicationPayloadMapper` (shared by enqueuer
+  + poller), enqueuer skip for CHANGELOG links (§6.4), `ReplicationChangelogPoller`
+  (entitlement gate, bounded pool, DB poll lease + stale sweep, first-run seed,
+  CAS cursor advance, exactly-once dedup, `creatorsName` loop guard, server-side
+  sort). C3R-core: gap detection + fast-forward + gap-recovery reconcile (§7A.1),
+  cursor-reset detection + halt (§7A.2), poison → `DEAD_LETTERED` event with raw
+  payload (§7A.3), `changelogHealth` state machine + lag (HEALTHY/LAGGING/
+  GAP_DETECTED/CURSOR_RESET; §7A.7), new `REPLICATION_CHANGELOG_*` audit actions
+  (§7A.9), mode-switch auto-reconcile via after-commit hook (§7A.8), and the RF-2
+  worker FIFO `source_change_number` tiebreak. C3R-followups: operator
+  remediation endpoints (§7A.12 — `reseed` / `rewind` / `re-enable` on
+  `ChangelogRemediationController`, force-reconcile reuses the reconcile
+  endpoint) + STALLED sweep (§7A.7). **Deferred:** `AlertSummaryProvider`
+  dashboard tiles (the alert SPI is implemented in `ee`, out of this repo — the
+  signal already rides the new audit actions → SIEM), dedicated bounded poll
+  connection (§7A.10). C3X (exclude filter §7B) landed: `ReplicationScopeFilter`
+  (parsed/cached `Filter`, fail-open) applied identically by all three paths —
+  changelog poller (ADD inline, MODIFY/MODIFY_DN re-read, DELETE propagates),
+  live capture (enqueuer ADD + worker delivery-time MODIFY/MODIFY_DN), and the
+  reconciliation protect-set (`ReconciliationDiffer` + `ChecksumReconciler`
+  tombstone excluded source DNs so their target copies are never EXTRA/deleted)
+  — plus the filter-change re-trigger (§7B.5). C4 backend landed: the
+  `test-changelog` capability probe (§7A.11 — `ChangelogTestService` hard-fails
+  when the root DSE lacks `first/lastChangeNumber`; existing-link +
+  pre-save endpoints on `ChangelogRemediationController`) and the frontend API
+  client (`testReplicationChangelog`, remediation calls). **Remaining:** the
+  `DirectorySyncView.vue` UI (capture-mode selector, changelog + exclude-filter
+  fields, Test-changelog button, lag/health badge, remediation controls) +
+  `DirectorySyncView.spec.ts` — needs the frontend toolchain (npm). Design also
+  carries the §7A / §7B hardening and the RF-1..4 review findings — 2026-06-03).
 - **Suggested branch:** `feat/changelog-replication` (already cut; this doc
   lives on it).
 - **Scope:** Add a second **capture mode** to an existing replication link.

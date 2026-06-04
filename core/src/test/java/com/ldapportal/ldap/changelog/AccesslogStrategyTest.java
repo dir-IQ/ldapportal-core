@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.changelog;
 
-import com.ldapportal.entity.AuditDataSource;
-import com.ldapportal.entity.enums.ChangelogFormat;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResultEntry;
@@ -23,8 +21,8 @@ class AccesslogStrategyTest {
 
     @Test
     void buildSearchRequest_noFilter() throws Exception {
-        AuditDataSource src = newSource("cn=accesslog", null);
-        SearchRequest req = strategy.buildSearchRequest(src, 200);
+        ChangelogReadContext ctx = newContext("cn=accesslog", null);
+        SearchRequest req = strategy.buildSearchRequest(ctx, 200);
 
         assertThat(req.getBaseDN()).isEqualTo("cn=accesslog");
         assertThat(req.getScope()).isEqualTo(SearchScope.ONE);
@@ -35,8 +33,8 @@ class AccesslogStrategyTest {
 
     @Test
     void buildSearchRequest_withBranchFilter() throws Exception {
-        AuditDataSource src = newSource("cn=accesslog", "ou=users,dc=example,dc=com");
-        SearchRequest req = strategy.buildSearchRequest(src, 100);
+        ChangelogReadContext ctx = newContext("cn=accesslog", "ou=users,dc=example,dc=com");
+        SearchRequest req = strategy.buildSearchRequest(ctx, 100);
 
         assertThat(req.getFilter().toString())
                 .isEqualTo("(&(objectClass=auditWriteObject)(reqResult=0)(reqDN=*ou=users,dc=example,dc=com))");
@@ -213,12 +211,8 @@ class AccesslogStrategyTest {
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private static AuditDataSource newSource(String baseDn, String branchFilterDn) {
-        AuditDataSource src = new AuditDataSource();
-        src.setChangelogBaseDn(baseDn);
-        src.setBranchFilterDn(branchFilterDn);
-        src.setChangelogFormat(ChangelogFormat.OPENLDAP_ACCESSLOG);
-        return src;
+    private static ChangelogReadContext newContext(String baseDn, String branchFilterDn) {
+        return new ChangelogReadContext(baseDn, branchFilterDn, null);
     }
 
     private static SearchResultEntry entry(Attribute... attrs) {
