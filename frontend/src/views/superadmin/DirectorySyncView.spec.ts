@@ -56,7 +56,7 @@ vi.mock('@/stores/notifications', () => ({
 
 vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(true) }))
 
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => ({ query: {} }) }))
 
 import DirectorySyncView from './DirectorySyncView.vue'
 
