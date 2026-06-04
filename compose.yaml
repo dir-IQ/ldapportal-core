@@ -111,6 +111,16 @@ services:
       # Security — these MUST be supplied; no defaults for secrets
       ENCRYPTION_KEY:                  ${ENCRYPTION_KEY}
       JWT_SECRET:                      ${JWT_SECRET}
+      # This dev stack is served over plain HTTP (http://localhost:9080), so
+      # the JWT cookie must NOT carry the Secure attribute. Safari refuses to
+      # store Secure cookies on http://localhost (Chrome/Firefox have a
+      # localhost secure-context exception; Safari does not) — the session is
+      # silently dropped and the first authenticated request (e.g. the setup
+      # wizard's complete-setup on "Skip") 401s and bounces you to /login.
+      # Defaults false for local HTTP; production over HTTPS keeps the app
+      # default of true (application.yml). Override in .env if you front this
+      # stack with TLS.
+      COOKIE_SECURE:                   ${COOKIE_SECURE:-false}
       # Bootstrap superadmin (only active when no permanent superadmin exists)
       BOOTSTRAP_SUPERADMIN_USERNAME:   ${BOOTSTRAP_SUPERADMIN_USERNAME:-superadmin}
       BOOTSTRAP_SUPERADMIN_PASSWORD:   ${BOOTSTRAP_SUPERADMIN_PASSWORD}
