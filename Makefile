@@ -18,6 +18,19 @@
 
 .PHONY: redeploy redeploy-fast redeploy-frontend package-backend logs down help
 
+# The Maven wrapper depends on the shell make runs RECIPES in — which is NOT
+# your interactive shell. GNU Make on Windows runs recipes through cmd.exe by
+# default, and crucially it IGNORES the environment's SHELL — so even when you
+# launch make from Git Bash, recipes still run in cmd.exe, which can't execute
+# the ./mvnw shell script ("'.' is not recognized…") and needs the mvnw.cmd
+# batch wrapper. Key off the actual recipe shell ($(SHELL)): cmd.exe → mvnw.cmd;
+# any POSIX shell (Linux/macOS/WSL, or a make configured to use sh) → ./mvnw.
+ifeq ($(findstring cmd.exe,$(SHELL)),cmd.exe)
+  MVNW := mvnw.cmd
+else
+  MVNW := ./mvnw
+endif
+
 # Default — print available targets.
 help:  ## Show this help.
 	@grep -hE '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | sort | awk -F'[:#][:#]?' '{printf "  \033[36m%-22s\033[0m %s\n", $$1, $$NF}'
@@ -57,7 +70,7 @@ redeploy-frontend:  ## Rebuild + recreate just the frontend container.
 # you actually want to verify behaviour.
 package-backend:  ## Rebuild backend JAR (skips tests).
 	@echo "==> Building backend JAR (skipping tests)..."
-	./mvnw -DskipTests -q package
+	$(MVNW) -DskipTests -q package
 
 logs:  ## Tail logs of the app container.
 	docker compose logs -f app
