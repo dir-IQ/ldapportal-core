@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <Teleport to="body">
-    <div v-if="modelValue" class="fixed inset-0 z-40 flex items-center justify-center bg-black/40"
+    <div v-if="modelValue" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/40"
          @click.self="$emit('update:modelValue', false)"
          role="dialog" aria-modal="true" :aria-labelledby="titleId">
       <div ref="panelRef" class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
