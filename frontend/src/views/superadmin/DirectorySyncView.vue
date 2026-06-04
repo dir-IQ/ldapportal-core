@@ -20,6 +20,7 @@
             <th class="px-4 py-3 text-left font-medium text-gray-500">Name</th>
             <th class="px-4 py-3 text-left font-medium text-gray-500">Source → Target</th>
             <th class="px-4 py-3 text-left font-medium text-gray-500">Status</th>
+            <th class="px-4 py-3 text-left font-medium text-gray-500">Capture</th>
             <th class="px-4 py-3 text-left font-medium text-gray-500">Pending</th>
             <th class="px-4 py-3 text-left font-medium text-gray-500">Failed</th>
             <th class="px-4 py-3 text-left font-medium text-gray-500">Dead-lettered</th>
@@ -38,6 +39,22 @@
               <span :class="link.enabled ? 'text-green-600' : 'text-gray-500'" class="text-xs font-medium">
                 {{ link.enabled ? 'Enabled' : 'Disabled' }}
               </span>
+            </td>
+            <td class="px-4 py-3 text-xs">
+              <template v-if="link.captureMode === 'CHANGELOG'">
+                <span :class="healthBadgeClass(link.changelogHealth)"
+                      :title="link.changelogLastError || 'Source changelog capture'">
+                  {{ healthLabel(link.changelogHealth) }}
+                </span>
+                <div class="text-gray-500 mt-0.5">
+                  <span v-if="link.changelogLag != null">lag {{ link.changelogLag }}</span>
+                  <span v-else class="text-gray-400">changelog</span>
+                  <template v-if="link.changelogLastPolledAt">
+                    · polled <RelativeTime :value="link.changelogLastPolledAt" />
+                  </template>
+                </div>
+              </template>
+              <span v-else class="text-gray-400">app writes</span>
             </td>
             <td class="px-4 py-3 text-gray-600">{{ link.pendingCount }}</td>
             <td class="px-4 py-3"
@@ -73,12 +90,7 @@
               <span v-else class="text-gray-400">off</span>
             </td>
             <td class="px-4 py-3 text-right whitespace-nowrap">
-              <ActionMenu :items="[
-                { label: 'View events', onClick: () => openEvents(link) },
-                { label: 'Reconcile now', onClick: () => reconcileNow(link) },
-                { label: 'Reconciliation history', onClick: () => openRuns(link) },
-                { label: 'Delete', onClick: () => confirmDelete(link), danger: true },
-              ]">
+              <ActionMenu :items="rowActions(link)">
                 <template #primary>
                   <button @click="openEdit(link)" class="btn-secondary btn-compact">Edit</button>
                 </template>
@@ -129,6 +141,86 @@
             <input type="checkbox" v-model="form.autoCreateOnMissing" class="rounded" />
             Auto-create on missing target
           </label>
+        </div>
+
+        <!-- Capture mode (C4) ────────────────────────────────────────────── -->
+        <div class="border border-gray-200 rounded-lg p-3 space-y-3">
+          <span class="block text-sm font-medium text-gray-700">Capture mode</span>
+          <p class="text-xs text-gray-500">
+            How source changes are detected — exclusive per link. A link captures via the
+            portal’s own writes <em>or</em> the source’s changelog, not both.
+          </p>
+          <label class="flex items-start gap-2 text-sm text-gray-700">
+            <input type="radio" value="APP_INTERCEPT" v-model="form.captureMode" class="mt-0.5" />
+            <span>
+              <span class="font-medium">App writes</span> <span class="text-gray-400">(default)</span>
+              <span class="block text-xs text-gray-500">
+                Replicate changes the portal makes. Out-of-band writes (native consoles, scripts,
+                other tools) are caught only by reconciliation.
+              </span>
+            </span>
+          </label>
+          <label class="flex items-start gap-2 text-sm text-gray-700">
+            <input type="radio" value="CHANGELOG" v-model="form.captureMode" class="mt-0.5" />
+            <span>
+              <span class="font-medium">Source changelog</span>
+              <span class="block text-xs text-gray-500">
+                Poll the source directory’s external changelog, capturing every change regardless of
+                origin. OUD (cn=changelog) only in this version.
+              </span>
+            </span>
+          </label>
+
+          <div v-if="form.captureMode === 'CHANGELOG'" class="pl-6 space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Changelog format</label>
+                <select v-model="form.changelogFormat" class="input w-full">
+                  <option value="DSEE_CHANGELOG">OUD (cn=changelog)</option>
+                  <option value="OPENLDAP_ACCESSLOG" disabled>OpenLDAP accesslog (coming soon)</option>
+                  <option value="AD_DIRSYNC" disabled>Active Directory DirSync (coming soon)</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Changelog base DN</label>
+                <input v-model="form.changelogBaseDn" placeholder="cn=changelog" class="input w-full" />
+              </div>
+            </div>
+            <div class="flex items-center gap-3">
+              <button type="button" @click="doTestChangelog"
+                      :disabled="changelogTesting || !form.sourceDirectoryId"
+                      class="btn-secondary text-sm">
+                {{ changelogTesting ? 'Testing…' : 'Test changelog' }}
+              </button>
+              <span v-if="!form.sourceDirectoryId" class="text-xs text-gray-400">Select a source directory first.</span>
+            </div>
+            <div v-if="changelogTest"
+                 :class="changelogTest.reachable
+                   ? 'bg-green-50 border-green-200 text-green-800'
+                   : 'bg-red-50 border-red-200 text-red-700'"
+                 class="border rounded-lg px-3 py-2 text-sm">
+              {{ changelogTest.reachable ? '✓' : '✕' }} {{ changelogTest.message }}
+              <span v-if="changelogTest.elapsedMs != null" class="text-xs opacity-70">({{ changelogTest.elapsedMs }}ms)</span>
+              <span v-if="changelogTest.currentHead != null" class="block text-xs opacity-80">
+                current head changeNumber {{ changelogTest.currentHead }}<span
+                  v-if="changelogTest.firstChangeNumber != null">, first {{ changelogTest.firstChangeNumber }}</span>
+              </span>
+            </div>
+            <p class="text-xs text-gray-500">
+              On save, capture seeds from the current changelog head — existing entries aren’t
+              replayed; reconciliation backfills them. Switching capture mode resets the cursor.
+            </p>
+          </div>
+        </div>
+
+        <!-- Exclude filter (both capture modes) ──────────────────────────── -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Exclude filter (optional)</label>
+          <input v-model="form.excludeFilter" placeholder="(objectClass=computer)" class="input w-full" />
+          <p class="text-xs mt-1" :class="excludeFilterHint ? 'text-amber-600' : 'text-gray-400'">
+            {{ excludeFilterHint
+              || 'RFC 4515 filter for source entries to skip — applies to capture and reconciliation. Validated on save.' }}
+          </p>
         </div>
 
         <details class="border border-gray-200 rounded-lg">
@@ -246,6 +338,30 @@
         <button @click="showForm = false" class="btn-secondary">Cancel</button>
         <button @click="save" :disabled="saving" class="btn-primary">
           {{ saving ? 'Saving…' : 'Save' }}
+        </button>
+      </template>
+    </AppModal>
+
+    <!-- Rewind changelog cursor modal ──────────────────────────────────── -->
+    <AppModal v-model="showRewind" title="Rewind changelog cursor" size="sm">
+      <div class="space-y-3">
+        <p class="text-sm text-gray-600">
+          Set the cursor for <span class="font-medium">{{ rewindLink?.displayName }}</span> back to a
+          changeNumber. The next poll resumes from that number + 1, re-delivering later changes.
+        </p>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">changeNumber</label>
+          <input type="number" min="0" v-model.number="rewindValue" class="input w-full" />
+          <p class="text-xs text-gray-400 mt-1">
+            Current cursor: {{ rewindLink?.changelogLastChangeNumber ?? '—' }}
+          </p>
+        </div>
+      </div>
+      <template #footer>
+        <button @click="showRewind = false" class="btn-secondary">Cancel</button>
+        <button @click="doRewind" :disabled="rewindSaving || rewindValue == null || rewindValue < 0"
+                class="btn-primary">
+          {{ rewindSaving ? 'Rewinding…' : 'Rewind' }}
         </button>
       </template>
     </AppModal>
@@ -556,7 +672,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import {
@@ -565,6 +681,8 @@ import {
   reconcileNow as apiReconcileNow,
   listReconciliationRuns, getReconciliationFindings,
   applyReconciliationFindings, dismissReconciliationFindings,
+  testReplicationChangelog, testReplicationChangelogPreSave,
+  reseedChangelogCursor, rewindChangelogCursor, reEnableChangelog,
 } from '@/api/replication'
 import { listDirectories } from '@/api/directories'
 import PageContainer from '@/components/PageContainer.vue'
@@ -588,6 +706,20 @@ interface AttributeMapping {
 type ReconcileMode = 'AUTO_CORRECT' | 'REVIEW'
 type ReconcileDeleteAction = 'IGNORE' | 'REVIEW' | 'AUTO'
 type IntervalUnit = 'hours' | 'days'
+type CaptureMode = 'APP_INTERCEPT' | 'CHANGELOG'
+// v1 accepts DSEE_CHANGELOG only; the other formats are surfaced disabled.
+type ChangelogFormat = 'DSEE_CHANGELOG' | 'OPENLDAP_ACCESSLOG' | 'AD_DIRSYNC'
+type ChangelogHealth =
+  | 'HEALTHY' | 'LAGGING' | 'STALLED'
+  | 'GAP_DETECTED' | 'CURSOR_RESET' | 'DISABLED_CONFIG_ERROR'
+
+interface ChangelogTestResult {
+  reachable: boolean
+  message: string
+  elapsedMs?: number | null
+  currentHead?: number | null
+  firstChangeNumber?: number | null
+}
 
 interface ReplicationForm {
   displayName: string
@@ -606,6 +738,12 @@ interface ReplicationForm {
   reconcileFirstRunAt: string          // datetime-local string ('' when unset)
   reconcileIntervalValue: number
   reconcileIntervalUnit: IntervalUnit
+  // Changelog capture (C4). changelogFormat/baseDn only apply when
+  // captureMode === 'CHANGELOG'; excludeFilter applies to both modes.
+  captureMode: CaptureMode
+  changelogFormat: ChangelogFormat
+  changelogBaseDn: string
+  excludeFilter: string
 }
 
 // Row shapes from the (untyped) replication API; only the fields this
@@ -634,6 +772,16 @@ interface ReplicationLink {
   reconcileNextRunAt?: string | null
   reconcileLastRunAt?: string | null
   openFindingCount?: number
+  // Changelog capture (read-only surfacing).
+  captureMode?: CaptureMode
+  changelogFormat?: ChangelogFormat | null
+  changelogBaseDn?: string | null
+  excludeFilter?: string | null
+  changelogLastChangeNumber?: number | null
+  changelogLag?: number | null
+  changelogHealth?: ChangelogHealth
+  changelogLastPolledAt?: string | null
+  changelogLastError?: string | null
 }
 
 interface ReplicationEvent {
@@ -741,6 +889,10 @@ function emptyForm(): ReplicationForm {
     reconcileFirstRunAt: '',
     reconcileIntervalValue: 1,
     reconcileIntervalUnit: 'days',
+    captureMode: 'APP_INTERCEPT',
+    changelogFormat: 'DSEE_CHANGELOG',
+    changelogBaseDn: 'cn=changelog',
+    excludeFilter: '',
   }
 }
 
@@ -790,6 +942,7 @@ async function load() {
 function openCreate() {
   editing.value = null
   form.value = emptyForm()
+  changelogTest.value = null
   showForm.value = true
 }
 
@@ -813,7 +966,12 @@ function openEdit(link: ReplicationLink) {
     reconcileFirstRunAt: toDateTimeLocal(link.reconcileFirstRunAt),
     reconcileIntervalValue: interval.value,
     reconcileIntervalUnit: interval.unit,
+    captureMode: link.captureMode ?? 'APP_INTERCEPT',
+    changelogFormat: (link.changelogFormat as ChangelogFormat) ?? 'DSEE_CHANGELOG',
+    changelogBaseDn: link.changelogBaseDn ?? 'cn=changelog',
+    excludeFilter: link.excludeFilter ?? '',
   }
+  changelogTest.value = null
   showForm.value = true
 }
 
@@ -839,6 +997,12 @@ async function save() {
       reconcileDeleteAction: f.reconcileDeleteAction,
       reconcileFirstRunAt: fromDateTimeLocal(f.reconcileFirstRunAt),
       reconcileIntervalSecs: intervalToSecs(f.reconcileIntervalValue, f.reconcileIntervalUnit),
+      // Changelog capture. The backend nulls the changelog* fields itself when
+      // captureMode is APP_INTERCEPT, but we send them explicitly for clarity.
+      captureMode: f.captureMode,
+      changelogFormat: f.captureMode === 'CHANGELOG' ? f.changelogFormat : null,
+      changelogBaseDn: f.captureMode === 'CHANGELOG' ? (f.changelogBaseDn || null) : null,
+      excludeFilter: f.excludeFilter || null,
     }
     if (editing.value) {
       await updateReplicationLink(editing.value.id, payload)
@@ -854,6 +1018,159 @@ async function save() {
   } finally {
     saving.value = false
   }
+}
+
+// ── Changelog capture: pre-save probe + exclude-filter hint ──────────────────
+const changelogTest    = ref<ChangelogTestResult | null>(null)
+const changelogTesting = ref(false)
+
+// The probe reflects source + base DN; drop a stale result when they change.
+watch(
+  () => [form.value.sourceDirectoryId, form.value.captureMode, form.value.changelogBaseDn],
+  () => { changelogTest.value = null },
+)
+
+async function doTestChangelog() {
+  if (!form.value.sourceDirectoryId) return
+  changelogTesting.value = true
+  changelogTest.value = null
+  try {
+    const { data } = await testReplicationChangelogPreSave({
+      sourceDirectoryId: form.value.sourceDirectoryId,
+      changelogBaseDn: form.value.changelogBaseDn || undefined,
+    })
+    changelogTest.value = data
+  } catch (e) {
+    changelogTest.value = { reachable: false, message: errMsg(e) }
+  } finally {
+    changelogTesting.value = false
+  }
+}
+
+// Soft client-side hint only — the server validates the RFC 4515 filter
+// authoritatively on save.
+function parensBalanced(s: string): boolean {
+  let depth = 0
+  for (const ch of s) {
+    if (ch === '(') depth++
+    else if (ch === ')') { depth--; if (depth < 0) return false }
+  }
+  return depth === 0
+}
+const excludeFilterHint = computed(() => {
+  const v = form.value.excludeFilter.trim()
+  if (!v) return ''
+  if (!v.startsWith('(') || !v.endsWith(')') || !parensBalanced(v)) {
+    return "Looks off — an RFC 4515 filter is parenthesized, e.g. (objectClass=computer)."
+  }
+  return ''
+})
+
+// ── Changelog health badge (row surfacing, §7A.7) ────────────────────────────
+function healthBadgeClass(h?: ChangelogHealth): string {
+  switch (h) {
+    case 'HEALTHY':            return 'badge badge-green'
+    case 'LAGGING':
+    case 'STALLED':            return 'badge badge-amber'
+    case 'GAP_DETECTED':
+    case 'CURSOR_RESET':
+    case 'DISABLED_CONFIG_ERROR': return 'badge badge-red'
+    default:                   return 'badge badge-gray'
+  }
+}
+function healthLabel(h?: ChangelogHealth): string {
+  return (h ?? 'HEALTHY').replace(/_/g, ' ').toLowerCase()
+}
+
+// ── Operator remediation (§7A.12) ────────────────────────────────────────────
+async function testChangelogRow(link: ReplicationLink) {
+  try {
+    const { data } = await testReplicationChangelog(link.id)
+    if (data.reachable) {
+      notif.success(`Changelog reachable — head ${data.currentHead ?? '?'} (${data.elapsedMs ?? '?'}ms)`)
+    } else {
+      notif.error(`Changelog unreachable: ${data.message}`)
+    }
+  } catch (e) {
+    notif.error(`Test failed: ${errMsg(e)}`)
+  }
+}
+
+async function reseedCursor(link: ReplicationLink) {
+  const ok = await confirm({
+    title: 'Reseed cursor to current head?',
+    message: 'The cursor jumps to the changelog’s current head. Changes before now are '
+      + 'skipped on this path — periodic reconciliation remains the backstop that backfills them.',
+    confirmLabel: 'Reseed to now',
+  })
+  if (!ok) return
+  try {
+    await reseedChangelogCursor(link.id)
+    notif.success('Cursor reseeded to current head')
+    await load()
+  } catch (e) {
+    notif.error(`Reseed failed: ${errMsg(e)}`)
+  }
+}
+
+async function reEnableLink(link: ReplicationLink) {
+  const ok = await confirm({
+    title: 'Re-enable changelog polling?',
+    message: 'Clears the degraded health / last error and resumes polling from the current cursor.',
+    confirmLabel: 'Re-enable',
+  })
+  if (!ok) return
+  try {
+    await reEnableChangelog(link.id)
+    notif.success('Changelog polling re-enabled')
+    await load()
+  } catch (e) {
+    notif.error(`Re-enable failed: ${errMsg(e)}`)
+  }
+}
+
+// Rewind cursor modal
+const showRewind   = ref(false)
+const rewindLink   = ref<ReplicationLink | null>(null)
+const rewindValue  = ref<number | null>(null)
+const rewindSaving = ref(false)
+function openRewind(link: ReplicationLink) {
+  rewindLink.value  = link
+  rewindValue.value = link.changelogLastChangeNumber ?? 0
+  showRewind.value  = true
+}
+async function doRewind() {
+  if (!rewindLink.value || rewindValue.value == null || rewindValue.value < 0) return
+  rewindSaving.value = true
+  try {
+    await rewindChangelogCursor(rewindLink.value.id, rewindValue.value)
+    notif.success(`Cursor rewound to ${rewindValue.value}`)
+    showRewind.value = false
+    await load()
+  } catch (e) {
+    notif.error(`Rewind failed: ${errMsg(e)}`)
+  } finally {
+    rewindSaving.value = false
+  }
+}
+
+// Per-row action menu — changelog remediation surfaces only for CHANGELOG links.
+function rowActions(link: ReplicationLink): { label: string; onClick: () => void; danger?: boolean }[] {
+  const items: { label: string; onClick: () => void; danger?: boolean }[] = [
+    { label: 'View events', onClick: () => openEvents(link) },
+    { label: 'Reconcile now', onClick: () => reconcileNow(link) },
+    { label: 'Reconciliation history', onClick: () => openRuns(link) },
+  ]
+  if (link.captureMode === 'CHANGELOG') {
+    items.push(
+      { label: 'Test changelog', onClick: () => testChangelogRow(link) },
+      { label: 'Reseed to now', onClick: () => reseedCursor(link) },
+      { label: 'Rewind to…', onClick: () => openRewind(link) },
+      { label: 'Re-enable', onClick: () => reEnableLink(link) },
+    )
+  }
+  items.push({ label: 'Delete', onClick: () => confirmDelete(link), danger: true })
+  return items
 }
 
 async function reconcileNow(link: ReplicationLink) {

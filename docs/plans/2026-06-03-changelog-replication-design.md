@@ -28,11 +28,14 @@
   `test-changelog` capability probe (§7A.11 — `ChangelogTestService` hard-fails
   when the root DSE lacks `first/lastChangeNumber`; existing-link +
   pre-save endpoints on `ChangelogRemediationController`) and the frontend API
-  client (`testReplicationChangelog`, remediation calls). **Remaining:** the
-  `DirectorySyncView.vue` UI (capture-mode selector, changelog + exclude-filter
-  fields, Test-changelog button, lag/health badge, remediation controls) +
-  `DirectorySyncView.spec.ts` — needs the frontend toolchain (npm). Design also
-  carries the §7A / §7B hardening and the RF-1..4 review findings — 2026-06-03).
+  client (`testReplicationChangelog`, remediation calls). C4 frontend landed
+  (2026-06-04): the `DirectorySyncView.vue` UI — capture-mode selector,
+  changelog format/base-DN fields, exclude-filter field, pre-save Test-changelog
+  button, per-row lag + `changelogHealth` badge, and Reseed/Rewind/Re-enable
+  remediation actions — plus `DirectorySyncView.spec.ts` coverage (run with the
+  frontend toolchain: `npm run test:unit && npm run typecheck`). **Remaining:**
+  the §7A / §7B hardening and the RF-1..4 review findings tracked below —
+  2026-06-03).
 - **Suggested branch:** `feat/changelog-replication` (already cut; this doc
   lives on it).
 - **Scope:** Add a second **capture mode** to an existing replication link.

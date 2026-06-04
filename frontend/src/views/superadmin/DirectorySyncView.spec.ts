@@ -18,6 +18,11 @@ const api = vi.hoisted(() => ({
   getReconciliationFindings: vi.fn(),
   applyReconciliationFindings: vi.fn(),
   dismissReconciliationFindings: vi.fn(),
+  testReplicationChangelog: vi.fn(),
+  testReplicationChangelogPreSave: vi.fn(),
+  reseedChangelogCursor: vi.fn(),
+  rewindChangelogCursor: vi.fn(),
+  reEnableChangelog: vi.fn(),
   notifSuccess: vi.fn(),
   notifError: vi.fn(),
 }))
@@ -36,6 +41,11 @@ vi.mock('@/api/replication', () => ({
   getReconciliationFindings: api.getReconciliationFindings,
   applyReconciliationFindings: api.applyReconciliationFindings,
   dismissReconciliationFindings: api.dismissReconciliationFindings,
+  testReplicationChangelog: api.testReplicationChangelog,
+  testReplicationChangelogPreSave: api.testReplicationChangelogPreSave,
+  reseedChangelogCursor: api.reseedChangelogCursor,
+  rewindChangelogCursor: api.rewindChangelogCursor,
+  reEnableChangelog: api.reEnableChangelog,
 }))
 
 vi.mock('@/api/directories', () => ({ listDirectories: vi.fn().mockResolvedValue({ data: [] }) }))
@@ -185,5 +195,93 @@ describe('DirectorySyncView reconciliation findings', () => {
     await flushPromises()
 
     expect(api.reconcileNow).toHaveBeenCalledWith('link-1')
+  })
+})
+
+function changelogLink(overrides: Record<string, unknown> = {}) {
+  return {
+    ...link(),
+    id: 'link-cl', displayName: 'OUD → DR',
+    captureMode: 'CHANGELOG', changelogFormat: 'DSEE_CHANGELOG', changelogBaseDn: 'cn=changelog',
+    changelogHealth: 'LAGGING', changelogLag: 42, changelogLastChangeNumber: 100,
+    changelogLastPolledAt: new Date().toISOString(),
+    reconcileEnabled: false,
+    ...overrides,
+  }
+}
+
+describe('DirectorySyncView changelog capture (C4)', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('surfaces capture mode + health on the row', async () => {
+    api.listReplicationLinks.mockResolvedValue({ data: [changelogLink(), link()] })
+    const wrapper = mount(DirectorySyncView, { global: { stubs } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('lagging')   // changelogHealth label
+    expect(wrapper.text()).toContain('lag 42')
+    expect(wrapper.text()).toContain('app writes') // the APP_INTERCEPT link
+  })
+
+  it('shows changelog remediation actions only for changelog links', async () => {
+    api.listReplicationLinks.mockResolvedValue({ data: [changelogLink()] })
+    const wrapper = mount(DirectorySyncView, { global: { stubs } })
+    await flushPromises()
+
+    const labels = wrapper.findAll('.am-item').map(b => b.text())
+    expect(labels).toEqual(expect.arrayContaining(['Reseed to now', 'Rewind to…', 'Re-enable', 'Test changelog']))
+  })
+
+  it('hides changelog remediation actions for app-intercept links', async () => {
+    api.listReplicationLinks.mockResolvedValue({ data: [link()] })
+    const wrapper = mount(DirectorySyncView, { global: { stubs } })
+    await flushPromises()
+
+    const labels = wrapper.findAll('.am-item').map(b => b.text())
+    expect(labels).not.toContain('Reseed to now')
+  })
+
+  it('re-enables a degraded link from the row action', async () => {
+    api.listReplicationLinks.mockResolvedValue({ data: [changelogLink({ changelogHealth: 'DISABLED_CONFIG_ERROR' })] })
+    api.reEnableChangelog.mockResolvedValue({ data: {} })
+    const wrapper = mount(DirectorySyncView, { global: { stubs } })
+    await flushPromises()
+
+    byText(wrapper, 'Re-enable')[0].trigger('click')
+    await flushPromises()
+    expect(api.reEnableChangelog).toHaveBeenCalledWith('link-cl')
+  })
+
+  it('probes the changelog from the row action and reports success', async () => {
+    api.listReplicationLinks.mockResolvedValue({ data: [changelogLink()] })
+    api.testReplicationChangelog.mockResolvedValue({ data: { reachable: true, message: 'ok', elapsedMs: 12, currentHead: 100 } })
+    const wrapper = mount(DirectorySyncView, { global: { stubs } })
+    await flushPromises()
+
+    byText(wrapper, 'Test changelog')[0].trigger('click')
+    await flushPromises()
+    expect(api.testReplicationChangelog).toHaveBeenCalledWith('link-cl')
+    expect(api.notifSuccess).toHaveBeenCalled()
+  })
+
+  it('reveals changelog config — with v1 format restriction — when Source changelog is selected', async () => {
+    api.listReplicationLinks.mockResolvedValue({ data: [] })
+    const wrapper = mount(DirectorySyncView, { global: { stubs } })
+    await flushPromises()
+
+    byText(wrapper, '+ New Replication Link')[0].trigger('click')
+    await flushPromises()
+    // Hidden under the default APP_INTERCEPT mode.
+    expect(wrapper.find('input[placeholder="cn=changelog"]').exists()).toBe(false)
+
+    const changelogRadio = wrapper.findAll('input[type="radio"]')
+      .find(r => (r.element as HTMLInputElement).value === 'CHANGELOG')!
+    await changelogRadio.setValue()
+
+    expect(wrapper.find('input[placeholder="cn=changelog"]').exists()).toBe(true)
+    // Only OUD/DSEE is selectable in v1; the other formats are disabled.
+    expect((wrapper.find('option[value="DSEE_CHANGELOG"]').element as HTMLOptionElement).disabled).toBe(false)
+    expect((wrapper.find('option[value="OPENLDAP_ACCESSLOG"]').element as HTMLOptionElement).disabled).toBe(true)
+    expect((wrapper.find('option[value="AD_DIRSYNC"]').element as HTMLOptionElement).disabled).toBe(true)
   })
 })
