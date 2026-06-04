@@ -673,7 +673,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import {
   listReplicationLinks, createReplicationLink, updateReplicationLink, deleteReplicationLink,
@@ -834,6 +834,7 @@ function errMsg(e: unknown, fallback = 'Something went wrong'): string {
 
 const notif = useNotificationStore()
 const router = useRouter()
+const route = useRoute()
 const confirm = useConfirm()
 
 // Choosing "Delete automatically" is destructive — make the operator
@@ -1442,7 +1443,16 @@ function statusClass(status: string) {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  // Deep link from the dashboard "Reconciliation found drift" awareness item
+  // (?findings=open): open the reconciliation runs for the first link that has
+  // open findings, so the operator lands on the drift instead of a bare list.
+  if (route.query.findings === 'open') {
+    const drifted = links.value.find(l => (l.openFindingCount ?? 0) > 0)
+    if (drifted) openRuns(drifted)
+  }
+})
 </script>
 
 <style scoped>
