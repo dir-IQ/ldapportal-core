@@ -368,7 +368,7 @@
 
     <!-- Event log modal ────────────────────────────────────────────────── -->
     <AppModal v-model="showEvents" :title="`Events — ${eventsLink?.displayName ?? ''}`"
-              size="xl" fixed-height="min(720px, 85vh)">
+              size="xl" fixed-height="min(720px, 85vh)" movable>
       <div class="space-y-3">
         <div class="flex gap-3 items-center text-sm">
           <label class="text-gray-700">Status:</label>

@@ -13,9 +13,16 @@
           accessibility — wired in useDialogA11y, not here).
         -->
         <div class="fixed inset-0 bg-black/40" />
-        <div ref="panelRef" :class="['relative bg-white rounded-xl shadow-xl w-full', sizeClass]">
-          <!-- Header -->
-          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+        <!-- Panel is a flex column: header/footer are fixed, the body flexes
+             and scrolls. This lets fixedHeight (and a future resize) size the
+             whole panel while the body reflows into the remaining space. -->
+        <div ref="panelRef"
+             :class="['relative bg-white rounded-xl shadow-xl w-full flex flex-col overflow-hidden', sizeClass]"
+             :style="panelStyle">
+          <!-- Header (doubles as the drag handle when `movable`) -->
+          <div :class="['flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0',
+                        movable ? 'cursor-move select-none' : '']"
+               @pointerdown="onHandlePointerDown">
             <h2 :id="titleId" class="text-lg font-semibold text-gray-900">
               <slot name="title">{{ title }}</slot>
             </h2>
@@ -23,11 +30,11 @@
                     class="text-gray-500 hover:text-gray-600 text-xl leading-none transition-colors">&#215;</button>
           </div>
           <!-- Body -->
-          <div class="px-6 py-4 overflow-y-auto" :style="{ height: fixedHeight || undefined, maxHeight: fixedHeight ? undefined : '80vh' }">
+          <div class="px-6 py-4 overflow-y-auto flex-1 min-h-0">
             <slot />
           </div>
           <!-- Footer -->
-          <div v-if="$slots.footer" class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
+          <div v-if="$slots.footer" class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3 shrink-0">
             <slot name="footer" />
           </div>
         </div>
@@ -39,6 +46,7 @@
 <script setup lang="ts">
 import { computed, ref, useId } from 'vue'
 import { useDialogA11y } from '@/composables/useDialogA11y'
+import { useDraggableModal } from '@/composables/useDraggableModal'
 
 const props = withDefaults(
   defineProps<{
@@ -46,8 +54,11 @@ const props = withDefaults(
     title?: string
     size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl'
     fixedHeight?: string
+    /** Opt-in: drag the header to reposition the modal. Off by default, and
+     *  ignored on narrow viewports (phones keep modals put). */
+    movable?: boolean
   }>(),
-  { modelValue: false, title: '', size: 'md', fixedHeight: '' },
+  { modelValue: false, title: '', size: 'md', fixedHeight: '', movable: false },
 )
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 
@@ -58,6 +69,24 @@ useDialogA11y({
   isOpen: () => props.modelValue,
   containerRef: panelRef,
   onClose: () => emit('update:modelValue', false),
+})
+
+const { offset, onHandlePointerDown } = useDraggableModal({
+  panelRef,
+  enabled: () => props.movable && window.innerWidth >= 640,
+  isOpen: () => props.modelValue,
+})
+
+// Height comes from fixedHeight (or a viewport cap); the drag offset is applied
+// as a transform — but only once moved, so the open/close scale transition
+// (which also animates `transform`) is left alone for the common case.
+const panelStyle = computed(() => {
+  const style: Record<string, string> = props.fixedHeight
+    ? { height: props.fixedHeight }
+    : { maxHeight: '90vh' }
+  const { x, y } = offset.value
+  if (x || y) style.transform = `translate(${x}px, ${y}px)`
+  return style
 })
 
 const sizeClass = computed(

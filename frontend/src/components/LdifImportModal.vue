@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
-  <AppModal v-model="visible" title="Import LDIF" size="2xl" fixed-height="min(760px, 90vh)">
+  <AppModal v-model="visible" title="Import LDIF" size="2xl" fixed-height="min(760px, 90vh)" movable>
     <div class="space-y-3">
       <!-- ── Step 1: pick file + conflict mode ───────────────────────────── -->
       <template v-if="phase === 'pick'">
