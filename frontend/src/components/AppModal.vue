@@ -44,7 +44,7 @@ const props = withDefaults(
   defineProps<{
     modelValue?: boolean
     title?: string
-    size?: 'sm' | 'md' | 'lg' | 'xl'
+    size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl'
     fixedHeight?: string
   }>(),
   { modelValue: false, title: '', size: 'md', fixedHeight: '' },
@@ -67,6 +67,7 @@ const sizeClass = computed(
       md: 'max-w-lg',
       lg: 'max-w-2xl',
       xl: 'max-w-4xl',
+      '2xl': 'max-w-6xl',
     })[props.size] || 'max-w-lg',
 )
 </script>
