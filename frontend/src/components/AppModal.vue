@@ -37,6 +37,18 @@
           <div v-if="$slots.footer" class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3 shrink-0">
             <slot name="footer" />
           </div>
+          <!-- Resize grip (SE corner). Hidden below sm so phones keep modals
+               fixed-size. aria-hidden: keyboard resize is intentionally deferred
+               and the modal is fully usable without it. -->
+          <div v-if="resizable"
+               class="hidden sm:block absolute bottom-1 right-1 w-3.5 h-3.5 cursor-nwse-resize text-gray-300 hover:text-gray-500"
+               aria-hidden="true"
+               @pointerdown="onResizePointerDown">
+            <svg viewBox="0 0 12 12" class="w-full h-full" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round">
+              <path d="M11 5 L5 11 M11 9 L9 11" />
+            </svg>
+          </div>
         </div>
       </div>
     </Transition>
@@ -57,8 +69,10 @@ const props = withDefaults(
     /** Opt-in: drag the header to reposition the modal. Off by default, and
      *  ignored on narrow viewports (phones keep modals put). */
     movable?: boolean
+    /** Opt-in: drag the SE corner to resize. Off by default; ignored below sm. */
+    resizable?: boolean
   }>(),
-  { modelValue: false, title: '', size: 'md', fixedHeight: '', movable: false },
+  { modelValue: false, title: '', size: 'md', fixedHeight: '', movable: false, resizable: false },
 )
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 
@@ -71,19 +85,29 @@ useDialogA11y({
   onClose: () => emit('update:modelValue', false),
 })
 
-const { offset, onHandlePointerDown } = useDraggableModal({
+const { offset, size, onHandlePointerDown, onResizePointerDown } = useDraggableModal({
   panelRef,
-  enabled: () => props.movable && window.innerWidth >= 640,
+  movable: () => props.movable && window.innerWidth >= 640,
+  resizable: () => props.resizable && window.innerWidth >= 640,
   isOpen: () => props.modelValue,
 })
 
-// Height comes from fixedHeight (or a viewport cap); the drag offset is applied
-// as a transform — but only once moved, so the open/close scale transition
-// (which also animates `transform`) is left alone for the common case.
+// Sizing precedence: an explicit drag-resize wins (and drops the max-w/max-h
+// caps); otherwise fixedHeight, else a viewport cap. The drag offset is applied
+// as a transform — but only once moved/resized, so the open/close scale
+// transition (which also animates `transform`) is left alone in the common case.
 const panelStyle = computed(() => {
-  const style: Record<string, string> = props.fixedHeight
-    ? { height: props.fixedHeight }
-    : { maxHeight: '90vh' }
+  const style: Record<string, string> = {}
+  if (size.value) {
+    style.width = `${size.value.w}px`
+    style.height = `${size.value.h}px`
+    style.maxWidth = 'none'
+    style.maxHeight = 'none'
+  } else if (props.fixedHeight) {
+    style.height = props.fixedHeight
+  } else {
+    style.maxHeight = '90vh'
+  }
   const { x, y } = offset.value
   if (x || y) style.transform = `translate(${x}px, ${y}px)`
   return style

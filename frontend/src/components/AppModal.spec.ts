@@ -52,4 +52,14 @@ describe('AppModal', () => {
     expect(document.body.querySelector('.cursor-move')).toBeFalsy()
     b.unmount()
   })
+
+  it('renders a resize grip only when resizable', () => {
+    const a = mountModal({ resizable: true })
+    expect(document.body.querySelector('.cursor-nwse-resize')).toBeTruthy()
+    a.unmount()
+
+    const b = mountModal({ resizable: false })
+    expect(document.body.querySelector('.cursor-nwse-resize')).toBeFalsy()
+    b.unmount()
+  })
 })
