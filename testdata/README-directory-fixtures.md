@@ -84,9 +84,10 @@ docker cp testdata/isva-schema-opendj-linked.ldif \
 docker restart ldap-oud1-primary
 ```
 
-(Repeat the `-linked` variant for `oud1-alternate`; use
+(Repeat the `-linked` variant for the other LINKED-topology fixtures
+`oud1-alternate`, `oud2-primary`, `oud2-alternate`; use
 `testdata/isva-schema-opendj-inline.ldif` — AUXILIARY secUser — for the inline
-fixtures `oud2-primary`, `oud2-alternate`, `oud3-primary`, `oud3-alternate`.)
+fixtures `oud3-primary`, `oud3-alternate`.)
 
 ## Active Directory (`ad-primary`)
 

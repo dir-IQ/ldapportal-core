@@ -229,8 +229,8 @@ services:
       # so the schema exists from first boot. (bootstrap/schema, by contrast,
       # is fed to ldapmodify after setup and needs changetype:modify LDIF —
       # not this entry form.) See the file header for the manual fallback.
-      # oud1 runs LINKED topology (standalone secUser entries), so it uses the
-      # STRUCTURAL-secUser variant; oud2/oud3 use the AUXILIARY inline variant.
+      # oud1 and oud2 run LINKED topology (standalone secUser entries), so they
+      # use the STRUCTURAL-secUser variant; oud3 uses the AUXILIARY inline variant.
       - ./testdata/isva-schema-opendj-linked.ldif:/opt/opendj/bootstrap/config/schema/99-isva.ldif:ro
     restart: unless-stopped
 
@@ -261,7 +261,7 @@ services:
       ROOT_PASSWORD: "admin"
     volumes:
       - oud2_primary_data:/opt/opendj/data
-      - ./testdata/isva-schema-opendj-inline.ldif:/opt/opendj/bootstrap/config/schema/99-isva.ldif:ro
+      - ./testdata/isva-schema-opendj-linked.ldif:/opt/opendj/bootstrap/config/schema/99-isva.ldif:ro
     restart: unless-stopped
 
   oud2-alternate:
@@ -276,7 +276,7 @@ services:
       ROOT_PASSWORD: "admin"
     volumes:
       - oud2_alternate_data:/opt/opendj/data
-      - ./testdata/isva-schema-opendj-inline.ldif:/opt/opendj/bootstrap/config/schema/99-isva.ldif:ro
+      - ./testdata/isva-schema-opendj-linked.ldif:/opt/opendj/bootstrap/config/schema/99-isva.ldif:ro
     restart: unless-stopped
 
   oud3-primary:
