@@ -55,6 +55,26 @@ public class ApplicationSettings {
     private boolean superadminBypassApproval = false;
 
     /**
+     * Global master switch for admin-initiated approval workflows (user/group
+     * create / move / delete, bulk import, group membership, playbook execute).
+     * When false those operations proceed immediately, regardless of any
+     * per-profile {@code requireApproval} setting — which is preserved untouched
+     * and resumes if this is turned back on. Defaults true so existing installs
+     * keep the behaviour they had at upgrade time.
+     */
+    @Column(name = "approvals_enabled", nullable = false)
+    private boolean approvalsEnabled = true;
+
+    /**
+     * Independent switch for self-service registration approval. When false,
+     * verified self-registrations are provisioned without an approval step.
+     * Kept separate from {@link #approvalsEnabled} so the two security postures
+     * can be configured independently. Defaults true.
+     */
+    @Column(name = "self_registration_approval_enabled", nullable = false)
+    private boolean selfRegistrationApprovalEnabled = true;
+
+    /**
      * When true, the Directory Search results table shows an "Edit
      * results" toggle that switches eligible cells into editable
      * inputs (the Phase 1 inline-edit feature). When false the

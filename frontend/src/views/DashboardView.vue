@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 // Lazy-load vuedraggable (+ its sortablejs dependency) — it's only rendered
@@ -18,7 +18,7 @@ import {
 
 import MetricCard from '@/components/dashboard/MetricCard.vue'
 import PanelWrapper from '@/components/dashboard/PanelWrapper.vue'
-import ApprovalAgingPanel from '@/components/dashboard/ApprovalAgingPanel.vue'
+import ApprovalAgingBar from '@/components/dashboard/ApprovalAgingBar.vue'
 import { CampaignProgressPanel } from '@/ee'
 import DirectoriesPanel from '@/components/dashboard/DirectoriesPanel.vue'
 import ProfilesPanel from '@/components/dashboard/ProfilesPanel.vue'
@@ -29,9 +29,67 @@ import RecentActivityPanel from '@/components/dashboard/RecentActivityPanel.vue'
 import ReportJobsPanel from '@/components/dashboard/ReportJobsPanel.vue'
 import AllClearPanel from '@/components/dashboard/AllClearPanel.vue'
 
+interface DashboardMetrics {
+  pendingApprovals?: number
+  openSodViolations?: number
+  campaignCompletionPercent?: number | null
+  activeCampaigns?: number
+  overdueCampaigns?: number
+  totalUsers?: number
+  totalGroups?: number
+}
+interface AlertSummary { openCount: number, criticalCount: number, highCount: number }
+interface LayoutShape {
+  metricCards: { order: string[], hidden: string[] }
+  columns: { col1: string[], col2: string[], col3: string[] }
+  panelsHidden: string[]
+}
+interface LayoutStoreShape {
+  active: LayoutShape
+  draft: LayoutShape | null
+  editing: boolean
+  load: () => void
+  startEdit: () => void
+  cancelEdit: () => void
+  save: () => void
+  reset: () => void
+  isPanelHidden: (id: string) => boolean
+  togglePanelHidden: (id: string) => void
+  isMetricHidden: (id: string) => boolean
+  toggleMetricHidden: (id: string) => void
+}
+interface ApprovalAging {
+  lessThan24h?: number
+  oneToThreeDays?: number
+  threeToSevenDays?: number
+  moreThanSevenDays?: number
+}
+interface DashboardData {
+  complianceEnabled?: boolean
+  metrics?: DashboardMetrics | null
+  alertSummary?: AlertSummary
+  approvalAging?: ApprovalAging | null
+  approvalsConfigured?: boolean
+  enabledReportJobs?: number
+  failedReportJobs?: number
+  firstDirectoryId?: string | null
+  // Collections are passed straight through to child panels that validate
+  // their own (typed) props; the server payload is dynamically shaped, so
+  // these stay loosely typed rather than duplicating each panel's interface.
+  directories?: any[]
+  profiles?: any[]
+  campaignProgress?: any[]
+  recentActivity?: any[]
+  actions?: any[]
+  suggestions?: any[]
+  awareness?: any[]
+}
+
 const router = useRouter()
 const auth = useAuthStore()
-const layoutStore = useDashboardLayoutStore()
+// The dashboard-layout store is plain JS; cast to the shape this view uses so
+// the layout/draft accesses below type-check without annotating the store.
+const layoutStore = useDashboardLayoutStore() as unknown as LayoutStoreShape
 const confirm = useConfirm()
 
 // Two-phase loading: `initialLoad` gates the skeleton (so periodic refreshes
@@ -39,9 +97,9 @@ const confirm = useConfirm()
 // Refresh button's spinner + label show feedback.
 const initialLoad = ref(true)
 const loading = ref(false)
-const error = ref(null)
-const data = ref(null)
-let refreshTimer = null
+const error = ref<string | null>(null)
+const data = ref<DashboardData | null>(null)
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const isSuperadmin = computed(() => auth.isSuperadmin)
 // Compliance flag now comes from the unified payload (server-side truth)
@@ -81,7 +139,10 @@ const approvalsConfigured = computed(() => !!data.value?.approvalsConfigured)
  * so those items are still reachable.
  */
 const showApprovalsUI = computed(() =>
-  approvalsConfigured.value || (metrics.value?.pendingApprovals ?? 0) > 0
+  // Globally gated: when both approval master switches are off, the approval
+  // widgets are hidden entirely. Otherwise the existing "configured or has
+  // residual pending" rule applies.
+  auth.isAnyApprovalEnabled && (approvalsConfigured.value || (metrics.value?.pendingApprovals ?? 0) > 0)
 )
 const recentActivity = computed(() => data.value?.recentActivity || [])
 const actions = computed(() => data.value?.actions || [])
@@ -97,10 +158,10 @@ const reportJobsAvailable = computed(() =>
 const openAlerts = computed(() => alertSummary.value.openCount ?? 0)
 
 // ── Severity helpers ───────────────────────────────────────────────────────
-function sodSeverity(n) { if (n == null) return 'gray'; return n === 0 ? 'green' : n <= 5 ? 'yellow' : 'red' }
-function campaignSeverity(p) { if (p == null) return 'gray'; return p >= 90 ? 'green' : p >= 50 ? 'yellow' : 'red' }
-function overdueSeverity(n) { if (n == null) return 'gray'; return n === 0 ? 'green' : 'red' }
-function approvalsSeverity(n) { if (n == null) return 'gray'; return n === 0 ? 'green' : n > 10 ? 'red' : 'yellow' }
+function sodSeverity(n?: number | null) { if (n == null) return 'gray'; return n === 0 ? 'green' : n <= 5 ? 'yellow' : 'red' }
+function campaignSeverity(p?: number | null) { if (p == null) return 'gray'; return p >= 90 ? 'green' : p >= 50 ? 'yellow' : 'red' }
+function overdueSeverity(n?: number | null) { if (n == null) return 'gray'; return n === 0 ? 'green' : 'red' }
+function approvalsSeverity(n?: number | null) { if (n == null) return 'gray'; return n === 0 ? 'green' : n > 10 ? 'red' : 'yellow' }
 function alertsSeverity() {
   const a = alertSummary.value
   if (a.criticalCount > 0) return 'red'
@@ -114,7 +175,7 @@ const showAllClear = computed(() =>
 )
 
 // ── Navigation helpers ─────────────────────────────────────────────────────
-function firstDirectoryId() {
+function firstDirectoryId(): string | null {
   return data.value?.firstDirectoryId || directories.value[0]?.id || null
 }
 function goAlerts() { if (isSuperadmin.value) router.push('/superadmin/alerts') }
@@ -130,14 +191,15 @@ function goApprovals() {
   if (isSuperadmin.value) return router.push('/superadmin/approvals')
   const d = firstDirectoryId(); if (d) router.push(`/directories/${d}/approvals`)
 }
-const recentActivityViewAll = computed(() => {
+const recentActivityViewAll = computed<string | undefined>(() => {
   if (isSuperadmin.value) return '/superadmin/audit-log'
-  const d = firstDirectoryId(); return d ? `/directories/${d}/audit` : null
+  const d = firstDirectoryId(); return d ? `/directories/${d}/audit` : undefined
 })
-const reportJobsLink = computed(() => isSuperadmin.value ? '/superadmin/reports' : null)
-function onDirectoryClick(dir) {
-  if (!dir?.id) return
-  router.push(`/directories/${dir.id}/users`)
+const reportJobsLink = computed<string | undefined>(() => isSuperadmin.value ? '/superadmin/reports' : undefined)
+function onDirectoryClick(dir?: unknown) {
+  const id = (dir as { id?: string } | undefined)?.id
+  if (!id) return
+  router.push(`/directories/${id}/users`)
 }
 /**
  * Clicking a profile row deep-links to that profile's directory Users
@@ -145,9 +207,10 @@ function onDirectoryClick(dir) {
  * right directory is the most useful next step and keeps the click
  * behaviour parallel to the Directories panel.
  */
-function onProfileClick(p) {
-  if (!p?.directoryId) return
-  router.push(`/directories/${p.directoryId}/users`)
+function onProfileClick(p?: unknown) {
+  const dirId = (p as { directoryId?: string } | undefined)?.directoryId
+  if (!dirId) return
+  router.push(`/directories/${dirId}/users`)
 }
 
 // ── Layout wiring (edit mode + render lists) ───────────────────────────────
@@ -155,17 +218,17 @@ function onProfileClick(p) {
 // panels and metric cards in/out, but the column structure stays constant
 // so users and code don't have to deal with a mode-switch.
 
-function isMetricHiddenByFlag(id) {
-  if (!complianceEnabled.value && COMPLIANCE_METRICS.has(id)) return true
-  if (complianceEnabled.value && NON_COMPLIANCE_METRICS.has(id)) return true
+function isMetricHiddenByFlag(id: string) {
+  if (!complianceEnabled.value && (COMPLIANCE_METRICS as Set<string>).has(id)) return true
+  if (complianceEnabled.value && (NON_COMPLIANCE_METRICS as Set<string>).has(id)) return true
   // Alerts is an EE entitlement (ALERTING). Hide the card where it isn't
   // granted so community doesn't show a perpetually-zero card whose click
   // target (the EE-only /superadmin/alerts route) goes nowhere.
   if (id === 'alerts' && !auth.isAlertingEnabled) return true
   return false
 }
-function isPanelHiddenByFlag(id) {
-  return !complianceEnabled.value && COMPLIANCE_PANELS.has(id)
+function isPanelHiddenByFlag(id: string) {
+  return !complianceEnabled.value && (COMPLIANCE_PANELS as Set<string>).has(id)
 }
 
 /**
@@ -177,7 +240,7 @@ function isPanelHiddenByFlag(id) {
  * card as an explicit inbox-clear signal. Only applied outside edit
  * mode — editors need to see every tile.
  */
-function isMetricHiddenByEmptyData(id) {
+function isMetricHiddenByEmptyData(id: string) {
   if (id === 'approvals') return !showApprovalsUI.value
   return false
 }
@@ -211,15 +274,18 @@ const metricsGridClass = computed(() => {
 // the proxy's setter reconstructs the full array, keeping flag-hidden items
 // at their saved positions so they re-appear in the same slot when the
 // feature is re-enabled.
-function visibleColumnProxy(col) {
-  return computed({
+function visibleColumnProxy(col: 'col1' | 'col2' | 'col3') {
+  return computed<string[]>({
     get() {
-      if (!layoutStore.draft) return []
-      return layoutStore.draft.columns[col].filter(id => !isPanelHiddenByFlag(id))
+      const draft = layoutStore.draft
+      if (!draft) return []
+      return draft.columns[col].filter(id => !isPanelHiddenByFlag(id))
     },
     set(newVisibleOrder) {
-      layoutStore.draft.columns[col] = mergePreservingHidden(
-        layoutStore.draft.columns[col],
+      const draft = layoutStore.draft
+      if (!draft) return
+      draft.columns[col] = mergePreservingHidden(
+        draft.columns[col],
         newVisibleOrder,
         isPanelHiddenByFlag,
       )
@@ -227,14 +293,17 @@ function visibleColumnProxy(col) {
   })
 }
 
-const metricsEditProxy = computed({
+const metricsEditProxy = computed<string[]>({
   get() {
-    if (!layoutStore.draft) return []
-    return layoutStore.draft.metricCards.order.filter(id => !isMetricHiddenByFlag(id))
+    const draft = layoutStore.draft
+    if (!draft) return []
+    return draft.metricCards.order.filter(id => !isMetricHiddenByFlag(id))
   },
   set(newOrder) {
-    layoutStore.draft.metricCards.order = mergePreservingHidden(
-      layoutStore.draft.metricCards.order,
+    const draft = layoutStore.draft
+    if (!draft) return
+    draft.metricCards.order = mergePreservingHidden(
+      draft.metricCards.order,
       newOrder,
       isMetricHiddenByFlag,
     )
@@ -250,8 +319,8 @@ const col3Edit = visibleColumnProxy('col3')
  * flag-hidden items pinned at their original indices (clamped to the new
  * length if they'd fall off the end).
  */
-function mergePreservingHidden(fullOld, newVisible, isHiddenFn) {
-  const hidden = []
+function mergePreservingHidden(fullOld: string[], newVisible: string[], isHiddenFn: (id: string) => boolean): string[] {
+  const hidden: { idx: number, id: string }[] = []
   fullOld.forEach((id, i) => { if (isHiddenFn(id)) hidden.push({ idx: i, id }) })
   const total = newVisible.length + hidden.length
   const out = new Array(total)
@@ -267,7 +336,7 @@ function mergePreservingHidden(fullOld, newVisible, isHiddenFn) {
 // Panels per column to render. In edit mode we keep user-hidden panels visible
 // (dimmed) so they can be un-hidden; we also keep feature-flag-disabled panels
 // visible with a note. Outside edit mode we suppress them.
-function panelIdsForColumn(col) {
+function panelIdsForColumn(col: 'col1' | 'col2' | 'col3') {
   const ids = layoutStore.active.columns[col] || []
   const userHidden = new Set(layoutStore.active.panelsHidden)
   return ids.filter(id => {
@@ -280,12 +349,12 @@ const col1Ids = computed(() => panelIdsForColumn('col1'))
 const col2Ids = computed(() => panelIdsForColumn('col2'))
 const col3Ids = computed(() => panelIdsForColumn('col3'))
 
-function panelLabel(id) {
+function panelLabel(id: string) {
   // The 'directories' slot renders ProfilesPanel for admins and
   // DirectoriesPanel for superadmins — keep the edit-mode label in sync
   // so the drag handle and hide-toggle tooltip match what's visible.
   if (id === 'directories' && !isSuperadmin.value) return 'Profiles'
-  return PANEL_LABELS[id] || id
+  return PANEL_LABELS[id as keyof typeof PANEL_LABELS] || id
 }
 
 // Directory-population summary strip (replaces the former Total Users /
@@ -303,8 +372,8 @@ const scopeLabel = computed(() => {
     ? `director${n === 1 ? 'y' : 'ies'}`
     : `profile${n === 1 ? '' : 's'}`
 })
-function metricLabel(id) {
-  return METRIC_LABELS[id] || id
+function metricLabel(id: string) {
+  return METRIC_LABELS[id as keyof typeof METRIC_LABELS] || id
 }
 
 // Scroll the Directories/Profiles panel into view when the scope stat chip
@@ -328,14 +397,15 @@ async function load() {
     data.value = res.data
     error.value = null
   } catch (e) {
-    error.value = e.response?.data?.detail || e.message || 'Failed to load dashboard'
+    const err = e as { response?: { data?: { detail?: string } }, message?: string }
+    error.value = err.response?.data?.detail || err.message || 'Failed to load dashboard'
   } finally {
     loading.value = false
     initialLoad.value = false
   }
 }
 
-async function dismiss(key) {
+async function dismiss(key: string) {
   try {
     await dismissSuggestion(key)
     if (data.value?.suggestions) {
@@ -531,7 +601,7 @@ async function onReset() {
       <draggable
         v-if="layoutStore.editing"
         v-model="metricsEditProxy"
-        :item-key="(el) => el"
+        :item-key="(el: string) => el"
         handle=".panel-drag-handle"
         :animation="150"
         class="grid gap-4 mb-6"
@@ -553,7 +623,7 @@ async function onReset() {
             </MetricCard>
             <MetricCard v-else-if="id === 'sod'"
               label="Open SoD Violations"
-              :value="metrics.openSodViolations"
+              :value="metrics.openSodViolations ?? 0"
               :severity="sodSeverity(metrics.openSodViolations)"
               subtitle="Click to view violations"
               @click="goSodViolations" />
@@ -565,13 +635,14 @@ async function onReset() {
               @click="goAccessReviews" />
             <MetricCard v-else-if="id === 'approvals'"
               label="Pending Approvals"
-              :value="metrics.pendingApprovals"
+              :value="metrics.pendingApprovals ?? 0"
               :severity="approvalsSeverity(metrics.pendingApprovals)"
-              subtitle="Click to review"
-              @click="goApprovals" />
+              @click="goApprovals">
+              <template #subtitle><ApprovalAgingBar :aging="approvalAging" /></template>
+            </MetricCard>
             <MetricCard v-else-if="id === 'overdue'"
               label="Overdue Campaigns"
-              :value="metrics.overdueCampaigns"
+              :value="metrics.overdueCampaigns ?? 0"
               :severity="overdueSeverity(metrics.overdueCampaigns)"
               subtitle="Past deadline"
               @click="goAccessReviews" />
@@ -590,7 +661,7 @@ async function onReset() {
             </template>
           </MetricCard>
           <MetricCard v-else-if="id === 'sod'"
-            label="Open SoD Violations" :value="metrics.openSodViolations"
+            label="Open SoD Violations" :value="metrics.openSodViolations ?? 0"
             :severity="sodSeverity(metrics.openSodViolations)"
             subtitle="Click to view violations" @click="goSodViolations" />
           <MetricCard v-else-if="id === 'campaign'"
@@ -607,11 +678,12 @@ async function onReset() {
             unconditional so the layout can still be managed.
           -->
           <MetricCard v-else-if="id === 'approvals' && showApprovalsUI"
-            label="Pending Approvals" :value="metrics.pendingApprovals"
-            :severity="approvalsSeverity(metrics.pendingApprovals)"
-            subtitle="Click to review" @click="goApprovals" />
+            label="Pending Approvals" :value="metrics.pendingApprovals ?? 0"
+            :severity="approvalsSeverity(metrics.pendingApprovals)" @click="goApprovals">
+            <template #subtitle><ApprovalAgingBar :aging="approvalAging" /></template>
+          </MetricCard>
           <MetricCard v-else-if="id === 'overdue'"
-            label="Overdue Campaigns" :value="metrics.overdueCampaigns"
+            label="Overdue Campaigns" :value="metrics.overdueCampaigns ?? 0"
             :severity="overdueSeverity(metrics.overdueCampaigns)"
             subtitle="Past deadline" @click="goAccessReviews" />
         </template>
@@ -626,7 +698,7 @@ async function onReset() {
         <draggable
           v-if="layoutStore.editing"
           v-model="col1Edit"
-          :item-key="(el) => el"
+          :item-key="(el: string) => el"
           handle=".panel-drag-handle"
           group="dashboard-panels"
           :animation="150"
@@ -636,8 +708,7 @@ async function onReset() {
             <PanelWrapper :label="panelLabel(id)" :editing="true"
                           :hidden="layoutStore.isPanelHidden(id)"
                           @toggle-hide="layoutStore.togglePanelHidden(id)">
-              <ApprovalAgingPanel v-if="id === 'approval-aging'" :aging="approvalAging" />
-              <DirectoriesPanel v-else-if="id === 'directories' && isSuperadmin"
+              <DirectoriesPanel v-if="id === 'directories' && isSuperadmin"
                 :directories="directories"
                 :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
                 row-clickable @row-click="onDirectoryClick" />
@@ -647,8 +718,8 @@ async function onReset() {
               <RecentActivityPanel v-else-if="id === 'recent-activity'"
                 :events="recentActivity" :view-all-to="recentActivityViewAll" />
               <ReportJobsPanel v-else-if="id === 'report-jobs'"
-                :enabled="data.enabledReportJobs || 0"
-                :failed="data.failedReportJobs || 0"
+                :enabled="data?.enabledReportJobs || 0"
+                :failed="data?.failedReportJobs || 0"
                 :to="reportJobsLink" />
               <CampaignProgressPanel v-else-if="id === 'campaign-progress'" :campaigns="campaignProgress" />
               <AwarenessPanel v-else-if="id === 'awareness'" :awareness="awareness" />
@@ -660,8 +731,7 @@ async function onReset() {
         </draggable>
         <div v-else class="space-y-6">
           <template v-for="id in col1Ids" :key="id">
-            <ApprovalAgingPanel v-if="id === 'approval-aging' && showApprovalsUI" :aging="approvalAging" />
-            <DirectoriesPanel v-else-if="id === 'directories' && isSuperadmin"
+            <DirectoriesPanel v-if="id === 'directories' && isSuperadmin"
               :directories="directories"
               :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
               row-clickable @row-click="onDirectoryClick" />
@@ -671,8 +741,8 @@ async function onReset() {
             <RecentActivityPanel v-else-if="id === 'recent-activity'"
               :events="recentActivity" :view-all-to="recentActivityViewAll" />
             <ReportJobsPanel v-else-if="id === 'report-jobs' && reportJobsAvailable"
-              :enabled="data.enabledReportJobs || 0"
-              :failed="data.failedReportJobs || 0"
+              :enabled="data?.enabledReportJobs || 0"
+              :failed="data?.failedReportJobs || 0"
               :to="reportJobsLink" />
             <CampaignProgressPanel v-else-if="id === 'campaign-progress'" :campaigns="campaignProgress" />
             <AwarenessPanel v-else-if="id === 'awareness'" :awareness="awareness" />
@@ -686,7 +756,7 @@ async function onReset() {
         <draggable
           v-if="layoutStore.editing"
           v-model="col2Edit"
-          :item-key="(el) => el"
+          :item-key="(el: string) => el"
           handle=".panel-drag-handle"
           group="dashboard-panels"
           :animation="150"
@@ -696,8 +766,7 @@ async function onReset() {
             <PanelWrapper :label="panelLabel(id)" :editing="true"
                           :hidden="layoutStore.isPanelHidden(id)"
                           @toggle-hide="layoutStore.togglePanelHidden(id)">
-              <ApprovalAgingPanel v-if="id === 'approval-aging'" :aging="approvalAging" />
-              <DirectoriesPanel v-else-if="id === 'directories' && isSuperadmin"
+              <DirectoriesPanel v-if="id === 'directories' && isSuperadmin"
                 :directories="directories"
                 :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
                 row-clickable @row-click="onDirectoryClick" />
@@ -707,8 +776,8 @@ async function onReset() {
               <RecentActivityPanel v-else-if="id === 'recent-activity'"
                 :events="recentActivity" :view-all-to="recentActivityViewAll" />
               <ReportJobsPanel v-else-if="id === 'report-jobs'"
-                :enabled="data.enabledReportJobs || 0"
-                :failed="data.failedReportJobs || 0"
+                :enabled="data?.enabledReportJobs || 0"
+                :failed="data?.failedReportJobs || 0"
                 :to="reportJobsLink" />
               <CampaignProgressPanel v-else-if="id === 'campaign-progress'" :campaigns="campaignProgress" />
               <AwarenessPanel v-else-if="id === 'awareness'" :awareness="awareness" />
@@ -722,7 +791,6 @@ async function onReset() {
           <template v-for="id in col2Ids" :key="id">
             <CampaignProgressPanel v-if="id === 'campaign-progress'" :campaigns="campaignProgress" />
             <AwarenessPanel v-else-if="id === 'awareness'" :awareness="awareness" />
-            <ApprovalAgingPanel v-else-if="id === 'approval-aging' && showApprovalsUI" :aging="approvalAging" />
             <DirectoriesPanel v-else-if="id === 'directories' && isSuperadmin"
               :directories="directories"
               :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
@@ -733,8 +801,8 @@ async function onReset() {
             <RecentActivityPanel v-else-if="id === 'recent-activity'"
               :events="recentActivity" :view-all-to="recentActivityViewAll" />
             <ReportJobsPanel v-else-if="id === 'report-jobs' && reportJobsAvailable"
-              :enabled="data.enabledReportJobs || 0"
-              :failed="data.failedReportJobs || 0"
+              :enabled="data?.enabledReportJobs || 0"
+              :failed="data?.failedReportJobs || 0"
               :to="reportJobsLink" />
             <ActionRequiredPanel v-else-if="id === 'action-required' && actions.length" :actions="actions" />
             <SuggestedConfigurationPanel v-else-if="id === 'suggested-config' && suggestions.length"
@@ -746,7 +814,7 @@ async function onReset() {
         <draggable
           v-if="layoutStore.editing"
           v-model="col3Edit"
-          :item-key="(el) => el"
+          :item-key="(el: string) => el"
           handle=".panel-drag-handle"
           group="dashboard-panels"
           :animation="150"
@@ -759,7 +827,6 @@ async function onReset() {
               <ActionRequiredPanel v-if="id === 'action-required'" :actions="actions" />
               <SuggestedConfigurationPanel v-else-if="id === 'suggested-config'"
                 :suggestions="suggestions" @dismiss="dismiss" />
-              <ApprovalAgingPanel v-else-if="id === 'approval-aging'" :aging="approvalAging" />
               <DirectoriesPanel v-else-if="id === 'directories' && isSuperadmin"
                 :directories="directories"
                 :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
@@ -770,8 +837,8 @@ async function onReset() {
               <RecentActivityPanel v-else-if="id === 'recent-activity'"
                 :events="recentActivity" :view-all-to="recentActivityViewAll" />
               <ReportJobsPanel v-else-if="id === 'report-jobs'"
-                :enabled="data.enabledReportJobs || 0"
-                :failed="data.failedReportJobs || 0"
+                :enabled="data?.enabledReportJobs || 0"
+                :failed="data?.failedReportJobs || 0"
                 :to="reportJobsLink" />
               <CampaignProgressPanel v-else-if="id === 'campaign-progress'" :campaigns="campaignProgress" />
               <AwarenessPanel v-else-if="id === 'awareness'" :awareness="awareness" />
@@ -783,7 +850,6 @@ async function onReset() {
             <ActionRequiredPanel v-if="id === 'action-required' && actions.length" :actions="actions" />
             <SuggestedConfigurationPanel v-else-if="id === 'suggested-config' && suggestions.length"
               :suggestions="suggestions" @dismiss="dismiss" />
-            <ApprovalAgingPanel v-else-if="id === 'approval-aging' && showApprovalsUI" :aging="approvalAging" />
             <DirectoriesPanel v-else-if="id === 'directories' && isSuperadmin"
               :directories="directories"
               :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
@@ -794,8 +860,8 @@ async function onReset() {
             <RecentActivityPanel v-else-if="id === 'recent-activity'"
               :events="recentActivity" :view-all-to="recentActivityViewAll" />
             <ReportJobsPanel v-else-if="id === 'report-jobs' && reportJobsAvailable"
-              :enabled="data.enabledReportJobs || 0"
-              :failed="data.failedReportJobs || 0"
+              :enabled="data?.enabledReportJobs || 0"
+              :failed="data?.failedReportJobs || 0"
               :to="reportJobsLink" />
             <CampaignProgressPanel v-else-if="id === 'campaign-progress'" :campaigns="campaignProgress" />
             <AwarenessPanel v-else-if="id === 'awareness'" :awareness="awareness" />

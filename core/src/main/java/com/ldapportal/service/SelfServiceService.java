@@ -369,8 +369,12 @@ public class SelfServiceService {
         regReq.setEmailVerified(true);
         regReq.setVerificationToken(null);
 
-        // Check if approval is required
-        boolean approvalRequired = profileService.isApprovalRequired(regReq.getProfileId());
+        // Check if approval is required. Gated by the global self-registration
+        // approval switch: when off, verified registrations are provisioned
+        // immediately even if the matched profile requests approval (the
+        // per-profile setting is preserved, just overridden).
+        boolean approvalRequired = approvalWorkflowService.selfRegistrationApprovalEnabled()
+                && profileService.isApprovalRequired(regReq.getProfileId());
         if (approvalRequired) {
             regReq.setStatus(RegistrationStatus.PENDING_APPROVAL);
 

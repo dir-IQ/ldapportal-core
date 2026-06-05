@@ -512,8 +512,12 @@ watch(currentDirId, async (newDirId) => {
  * workflow that need draining. Same gate as the dashboard's
  * showApprovalsUI computed.
  */
+// Hidden entirely when approvals are globally disabled (both master switches
+// off). When enabled, the existing "configured or has pending" rule applies.
+// The superadmin Approvals entry stays reachable regardless, so in-flight
+// requests can always be drained.
 const showApprovalsNav = computed(() =>
-  approvalsConfigured.value || pendingCount.value > 0
+  auth.isAnyApprovalEnabled && (approvalsConfigured.value || pendingCount.value > 0)
 )
 
 // Load active review count for badge. Skip the call entirely when the

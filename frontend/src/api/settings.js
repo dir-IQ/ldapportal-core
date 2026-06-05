@@ -19,3 +19,7 @@ export const testSiem = () =>
 
 export const siemBackfill = (from, to) =>
   client.post('/settings/siem/backfill', null, { params: { from, to } })
+
+/** Total pending approval requests across all directories (superadmin). */
+export const getPendingApprovalsCount = () =>
+  client.get('/settings/pending-approvals-count')
