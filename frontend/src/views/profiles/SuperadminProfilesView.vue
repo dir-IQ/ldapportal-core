@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
 import {
   listAllProfiles, createProfile, updateProfile, deleteProfile, cloneProfile,
   getApprovalConfig, setApprovalConfig, getApprovers, setApprovers,
@@ -152,6 +153,7 @@ const profileCols = [
 ]
 
 const notif = useNotificationStore()
+const auth = useAuthStore()
 const confirm = useConfirm()
 
 const loading = ref(false)
@@ -1607,9 +1609,17 @@ function toggleApprover(accountId: string) {
             </label>
           </fieldset>
 
-          <!-- Approvals -->
+          <!-- Approvals. Hidden when approvals are globally disabled — the
+               profile's saved approval config is preserved (we don't clear
+               `approval`), just not editable while the master switch is off. -->
           <fieldset class="border border-gray-300 rounded-lg p-3 space-y-3">
             <legend class="text-sm font-semibold text-gray-800 px-1">Approvals</legend>
+            <p v-if="!auth.isApprovalsEnabled" class="text-xs text-gray-500">
+              Approvals are globally disabled in Settings → User/Group Edits. This
+              profile's approval settings are preserved but inactive until approvals
+              are re-enabled.
+            </p>
+            <template v-else>
             <label class="flex items-center gap-2 text-sm font-medium">
               <input type="checkbox" v-model="approval.requireApproval" /> Require approval for user creation
             </label>
@@ -1639,6 +1649,7 @@ function toggleApprover(accountId: string) {
                 </div>
               </div>
             </div>
+            </template>
           </fieldset>
 
           <!-- Per-profile IVIA exemption — self-gates on addon presence

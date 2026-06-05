@@ -61,6 +61,7 @@ interface RouteMetaFlags {
   requiresCompliance?: boolean
   requiresAlerting?: boolean
   requiresHr?: boolean
+  requiresApprovals?: boolean
 }
 
 const router = useRouter()
@@ -150,6 +151,9 @@ const commands = computed<Command[]>(() => {
     if (meta.requiresAlerting && !auth.isAlertingEnabled) continue
     // ...and HR_SYNC.
     if (meta.requiresHr && !auth.isHrEnabled) continue
+    // ...and the global approvals master switch (directory-scoped approvals
+    // route only; the superadmin queue stays reachable to drain in-flight).
+    if (meta.requiresApprovals && !auth.isAnyApprovalEnabled) continue
 
     // For directory-scoped routes, substitute the current dirId
     if (path.includes(':dirId')) {

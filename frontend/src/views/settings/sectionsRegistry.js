@@ -59,7 +59,7 @@ export const SECTIONS = [
     id: 'approval',
     label: 'User/Group Edits',
     icon: iconPath('check'),
-    fields: ['directorySearchInlineEditEnabled'],
+    fields: ['directorySearchInlineEditEnabled', 'approvalsEnabled', 'selfRegistrationApprovalEnabled'],
     component: UserGroupEditsSection,
   },
   {
