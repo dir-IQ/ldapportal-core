@@ -78,12 +78,16 @@ docker exec ldap-oud1-primary \
 so if the `bootstrap/config/schema` copy wasn't honoured:
 
 ```bash
-docker cp testdata/isva-schema-opendj.ldif \
+# oud1 runs LINKED topology → STRUCTURAL-secUser variant
+docker cp testdata/isva-schema-opendj-linked.ldif \
   ldap-oud1-primary:/opt/opendj/config/schema/99-isva.ldif
 docker restart ldap-oud1-primary
 ```
 
-(Repeat for `oud1-alternate`, `oud2-primary`, `oud2-alternate`.)
+(Repeat the `-linked` variant for the other LINKED-topology fixtures
+`oud1-alternate`, `oud2-primary`, `oud2-alternate`; use
+`testdata/isva-schema-opendj-inline.ldif` — AUXILIARY secUser — for the inline
+fixtures `oud3-primary`, `oud3-alternate`.)
 
 ## Active Directory (`ad-primary`)
 

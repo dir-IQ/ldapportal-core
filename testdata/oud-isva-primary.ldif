@@ -7,8 +7,8 @@
 #           BASE_DN env var before this LDIF is imported — so this file starts
 #           at the OU layer, like oud-bootstrap.ldif; do NOT add the suffix here
 #           or the 5.x setup aborts on "Entry Already Exists (68)").
-# Schema  : secUser (AUXILIARY) + secAuthorityInfo (STRUCTURAL) from
-#           testdata/isva-schema-opendj.ldif, auto-loaded at first boot.
+# Schema  : secUser (STRUCTURAL) + secAuthorityInfo (STRUCTURAL) from
+#           testdata/isva-schema-opendj-linked.ldif, auto-loaded at first boot.
 #
 # Load (from repo root):
 #   docker exec -i ldap-oud1-primary /opt/opendj/bin/ldapmodify \
@@ -31,10 +31,13 @@
 # matrix (R1–R7) and the anomaly catalogue are in
 # testdata/README-oud-isva-anomalies.md.
 #
-# secUser is AUXILIARY in this fixture schema (IBM ships it STRUCTURAL), so
-# each management-DIT secUser leaf is layered on the structural `account`
-# class to stay valid in real OpenDJ/OUD. The app keys on the secUser
-# objectClass NAME + the secDN back-reference, not on the structural class.
+# secUser is STRUCTURAL in this fixture schema (as IBM ships it), so each
+# management-DIT secUser leaf is a standalone `objectClass: top` + `secUser`
+# entry — identical in shape to what the app's linked-grant writes. (Earlier
+# revisions used the AUXILIARY schema and layered secUser on a structural
+# `account` class; that workaround is gone now that the linked schema is
+# structural.) The app keys on the secUser objectClass NAME + the secDN
+# back-reference, not on the structural class.
 #
 # Generalized-time values are UTC (yyyyMMddHHmmssZ). Reference "now" for this
 # dataset is 2026-06-02, so 20250101000000Z is "expired", 20300101... is
@@ -228,9 +231,7 @@ userPassword: liam.onlyprimary
 # alice.normal → HEALTHY: acctValid, pwdValid, far-future validUntil.
 dn: secUUID=alice-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: alice.normal
 secUUID: alice-uuid
 secDN: uid=alice.normal,ou=people,dc=oud1,dc=example,dc=com
 secLogin: alice.normal
@@ -243,9 +244,7 @@ secPwdLastChanged: 20260515000000Z
 # carol.suspended → SUSPENDED: secAcctValid=FALSE, validUntil still future.
 dn: secUUID=carol-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: carol.suspended
 secUUID: carol-uuid
 secDN: uid=carol.suspended,ou=people,dc=oud1,dc=example,dc=com
 secLogin: carol.suspended
@@ -258,9 +257,7 @@ secPwdLastChanged: 20260510000000Z
 # dan.expired → EXPIRED: secAcctValid=TRUE but validUntil in the past.
 dn: secUUID=dan-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: dan.expired
 secUUID: dan-uuid
 secDN: uid=dan.expired,ou=people,dc=oud1,dc=example,dc=com
 secLogin: dan.expired
@@ -273,9 +270,7 @@ secPwdLastChanged: 20240101000000Z
 # erin.pwdinvalid → PASSWORD INVALID: account valid, secPwdValid=FALSE.
 dn: secUUID=erin-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: erin.pwdinvalid
 secUUID: erin-uuid
 secDN: uid=erin.pwdinvalid,ou=people,dc=oud1,dc=example,dc=com
 secLogin: erin.pwdinvalid
@@ -288,9 +283,7 @@ secPwdLastChanged: 20260101000000Z
 # frank.stalepwd → STALE PASSWORD: fully valid, secPwdLastChanged in 2019.
 dn: secUUID=frank-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: frank.stalepwd
 secUUID: frank-uuid
 secDN: uid=frank.stalepwd,ou=people,dc=oud1,dc=example,dc=com
 secLogin: frank.stalepwd
@@ -307,9 +300,7 @@ secPwdLastChanged: 20190101000000Z
 # distinct from a clean orphan.
 dn: secUUID=grace-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: grace.partial
 secUUID: grace-uuid
 secDN: uid=grace.partial,ou=people,dc=oud1,dc=example,dc=com
 secValidUntil: 20300101000000Z
@@ -317,9 +308,7 @@ secValidUntil: 20300101000000Z
 # henry.expiringsoon → EXPIRING SOON: validUntil ~3 days out from 2026-06-02.
 dn: secUUID=henry-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: henry.expiringsoon
 secUUID: henry-uuid
 secDN: uid=henry.expiringsoon,ou=people,dc=oud1,dc=example,dc=com
 secLogin: henry.expiringsoon
@@ -333,9 +322,7 @@ secPwdLastChanged: 20260520000000Z
 # secUUID=karen-2 with the same secDN (R7 duplicate).
 dn: secUUID=karen-1,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: karen.dupe
 secUUID: karen-1
 secDN: uid=karen.dupe,ou=people,dc=oud1,dc=example,dc=com
 secLogin: karen.dupe
@@ -348,9 +335,7 @@ secPwdLastChanged: 20260512000000Z
 # liam.onlyprimary → HEALTHY secUser, present only on this instance (R1).
 dn: secUUID=liam-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: liam.onlyprimary
 secUUID: liam-uuid
 secDN: uid=liam.onlyprimary,ou=people,dc=oud1,dc=example,dc=com
 secLogin: liam.onlyprimary
@@ -366,9 +351,7 @@ secPwdLastChanged: 20260518000000Z
 # secUser with no live secDN target. Identical on both sides.
 dn: secUUID=ghost-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: ghost
 secUUID: ghost-uuid
 secDN: uid=ghost,ou=people,dc=oud1,dc=example,dc=com
 secLogin: ghost
