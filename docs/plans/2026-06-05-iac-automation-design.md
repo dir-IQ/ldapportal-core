@@ -1,7 +1,8 @@
 # IaC automation for LDAPPortal configuration — design plan
 
 - **Date:** 2026-06-05
-- **Status:** Not started (design drafted, 2026-06-05).
+- **Status:** In progress (Phase 0 API hardening shipped; Phase 1 Ansible/REST
+  docs shipped — see `docs/iac/`; Phase 2 bootstrap file not started, 2026-06-05).
 - **Scope:** Let operators declare LDAPPortal's *own* configuration —
   directories + base DNs, admin accounts + permissions, vendor
   integrations (ISVA), and API tokens / licensing — as
