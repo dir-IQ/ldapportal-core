@@ -52,6 +52,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
     DirectoryConnectionResponse sampleResponse() {
         return new DirectoryConnectionResponse(
                 DIR_ID,
+                "corp-ldap",                        // slug
                 com.ldapportal.entity.enums.DirectoryType.GENERIC, // directoryType
                 "Corp LDAP",                        // displayName
                 "ldap.example.com",                 // host
@@ -84,7 +85,9 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 null,                               // capabilities
                 OffsetDateTime.now(),               // createdAt
                 OffsetDateTime.now(),               // updatedAt
-                false);                             // replicationEnabled
+                false,                              // replicationEnabled
+                true,                               // bindPasswordSet
+                false);                             // entraClientSecretSet
     }
 
     DirectoryConnectionRequest validRequest() {
@@ -97,7 +100,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 false, null, null, null, null,
                 List.of(), List.of(),
                 null, null, null, null,
-                false);
+                false, null);
     }
 
     // ── GET list ──────────────────────────────────────────────────────────────
@@ -151,7 +154,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 false, null, null, null, null,
                 List.of(), List.of(),
                 null, null, null, null,
-                false);
+                false, null);
 
         mockMvc.perform(post(BASE_URL)
                         .with(authentication(superadminAuth()))
@@ -171,7 +174,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 false, null, null, null, null,
                 List.of(), List.of(),
                 null, null, null, null,
-                false);
+                false, null);
 
         mockMvc.perform(post(BASE_URL)
                         .with(authentication(superadminAuth()))
@@ -213,6 +216,57 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                         .content(objectMapper.writeValueAsString(validRequest())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(DIR_ID.toString()));
+    }
+
+    // ── PUT /by-slug/{slug} (idempotent upsert) ─────────────────────────────────
+
+    @Test
+    void upsertBySlug_newDirectory_returns201() throws Exception {
+        given(directoryService.upsertBySlug(eq("corp-ldap"), any()))
+                .willReturn(new DirectoryConnectionService.UpsertOutcome(sampleResponse(), true));
+
+        mockMvc.perform(put(BASE_URL + "/by-slug/corp-ldap")
+                        .with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validRequest())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.slug").value("corp-ldap"))
+                .andExpect(jsonPath("$.bindPasswordSet").value(true))
+                .andExpect(jsonPath("$.entraClientSecretSet").value(false));
+    }
+
+    @Test
+    void upsertBySlug_existingDirectory_returns200() throws Exception {
+        given(directoryService.upsertBySlug(eq("corp-ldap"), any()))
+                .willReturn(new DirectoryConnectionService.UpsertOutcome(sampleResponse(), false));
+
+        mockMvc.perform(put(BASE_URL + "/by-slug/corp-ldap")
+                        .with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validRequest())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.slug").value("corp-ldap"));
+    }
+
+    @Test
+    void upsertBySlug_invalidSlug_returns400() throws Exception {
+        given(directoryService.upsertBySlug(eq("Bad_Slug"), any()))
+                .willThrow(new IllegalArgumentException("slug must be lowercase alphanumeric segments"));
+
+        mockMvc.perform(put(BASE_URL + "/by-slug/Bad_Slug")
+                        .with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validRequest())))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void upsertBySlug_adminRole_returns403() throws Exception {
+        mockMvc.perform(put(BASE_URL + "/by-slug/corp-ldap")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validRequest())))
+                .andExpect(status().isForbidden());
     }
 
     // ── DELETE /{id} ──────────────────────────────────────────────────────────

@@ -41,7 +41,9 @@ import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Service
 @Slf4j
@@ -70,6 +72,29 @@ public class DirectoryConnectionService {
 
     @Transactional
     public DirectoryConnectionResponse createDirectory(DirectoryConnectionRequest req) {
+        return doCreateDirectory(resolveSlug(req.slug(), req.displayName()), req);
+    }
+
+    /**
+     * Idempotent create-or-update keyed by the stable IaC slug (§4.1). When
+     * a directory with the given slug exists it is updated in place (full
+     * replace, secrets preserved when omitted); otherwise a new directory is
+     * created with exactly that slug. The {@code created} flag lets the
+     * controller map to 201 vs 200 so automation can report drift accurately.
+     */
+    @Transactional
+    public UpsertOutcome upsertBySlug(String slug, DirectoryConnectionRequest req) {
+        String normalized = normalizeSlug(slug);
+        return dirRepo.findBySlug(normalized)
+                .map(existing -> new UpsertOutcome(updateDirectory(existing.getId(), req), false))
+                .orElseGet(() -> new UpsertOutcome(doCreateDirectory(normalized, req), true));
+    }
+
+    /** Result of an idempotent upsert: the saved view plus whether a row was created. */
+    public record UpsertOutcome(DirectoryConnectionResponse response, boolean created) {
+    }
+
+    private DirectoryConnectionResponse doCreateDirectory(String slug, DirectoryConnectionRequest req) {
         // License cap check — fires before any real work so a 402 is
         // reported back to the caller without side effects. The count is
         // read inside this @Transactional so a concurrent create that
@@ -81,6 +106,7 @@ public class DirectoryConnectionService {
                 dirRepo.count());
 
         DirectoryConnection dc = new DirectoryConnection();
+        dc.setSlug(slug);
         applyRequest(dc, req);
 
         if (req.directoryType() == com.ldapportal.entity.enums.DirectoryType.ENTRA_ID) {
@@ -295,6 +321,60 @@ public class DirectoryConnectionService {
     private DirectoryConnection require(UUID id) {
         return dirRepo.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("DirectoryConnection", id));
+    }
+
+    // ── Slug (IaC external key) helpers ────────────────────────────────────────
+
+    private static final Pattern SLUG_PATTERN =
+            Pattern.compile("^[a-z0-9]+(?:-[a-z0-9]+)*$");
+
+    /**
+     * Validate and normalize a caller-supplied slug (path segment on the
+     * upsert endpoint). Lowercased and trimmed; rejected with a 400-class
+     * {@link IllegalArgumentException} if it isn't a clean
+     * hyphen-separated alphanumeric token of at most 100 chars.
+     */
+    private String normalizeSlug(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalArgumentException("slug is required");
+        }
+        String s = raw.trim().toLowerCase(Locale.ROOT);
+        if (s.length() > 100 || !SLUG_PATTERN.matcher(s).matches()) {
+            throw new IllegalArgumentException(
+                    "slug must be lowercase alphanumeric segments separated by single hyphens "
+                            + "(max 100 chars): " + raw);
+        }
+        return s;
+    }
+
+    /**
+     * Resolve the slug for a plain create: use the caller's value when
+     * supplied (validated), otherwise derive one from the display name and
+     * append a numeric suffix until it's unique. Keeps {@code POST} creates
+     * backward-compatible (no slug in the body) while still producing a
+     * stable key the IaC upsert can target later.
+     */
+    private String resolveSlug(String requested, String displayName) {
+        String base = (requested != null && !requested.isBlank())
+                ? normalizeSlug(requested)
+                : slugify(displayName);
+        String candidate = base;
+        int n = 2;
+        while (dirRepo.findBySlug(candidate).isPresent()) {
+            candidate = base + "-" + n++;
+        }
+        return candidate;
+    }
+
+    private String slugify(String displayName) {
+        String base = displayName == null ? "" : displayName
+                .trim().toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("(^-+)|(-+$)", "");
+        if (base.length() > 100) {
+            base = base.substring(0, 100).replaceAll("-+$", "");
+        }
+        return base.isEmpty() ? "directory" : base;
     }
 
     // ── One-shot SSL connection for test ──────────────────────────────────────

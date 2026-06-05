@@ -29,6 +29,19 @@ public class DirectoryConnection {
     @Column(nullable = false, updatable = false)
     private UUID id;
 
+    /**
+     * Stable, immutable, URL-safe external identifier for IaC tooling.
+     * Unlike {@link #displayName} — which operators may rename freely — the
+     * slug is the key automation upserts against across runs
+     * (PUT /api/v1/superadmin/directories/by-slug/{slug}). Set once at
+     * creation and never updated ({@code updatable = false}); a unique index
+     * enforces one row per slug. When a row is persisted without an explicit
+     * slug (legacy code paths, tests), {@link #ensureSlug()} derives one so
+     * the NOT NULL + UNIQUE invariant always holds.
+     */
+    @Column(name = "slug", nullable = false, updatable = false, length = 100)
+    private String slug;
+
     @Column(name = "display_name", nullable = false)
     private String displayName;
 
@@ -193,4 +206,24 @@ public class DirectoryConnection {
     @UpdateTimestamp
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    /**
+     * Safety net guaranteeing the NOT NULL slug invariant for any persist
+     * path that didn't set one explicitly (the API create path resolves a
+     * clean, collision-checked slug up front; this covers everything else).
+     * Derives a base from {@link #displayName} and appends a short random
+     * suffix so an auto-generated slug can't collide with the unique index.
+     */
+    @PrePersist
+    void ensureSlug() {
+        if (slug == null || slug.isBlank()) {
+            String base = displayName == null ? "" : displayName
+                    .trim().toLowerCase(java.util.Locale.ROOT)
+                    .replaceAll("[^a-z0-9]+", "-")
+                    .replaceAll("(^-+)|(-+$)", "");
+            if (base.isEmpty()) base = "directory";
+            if (base.length() > 80) base = base.substring(0, 80).replaceAll("-+$", "");
+            slug = base + "-" + UUID.randomUUID().toString().substring(0, 8);
+        }
+    }
 }

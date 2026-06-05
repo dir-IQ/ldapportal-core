@@ -27,14 +27,15 @@ import java.util.UUID;
  * Directory connection management.
  *
  * <pre>
- *   GET    /api/v1/superadmin/directories          — list
- *   POST   /api/v1/superadmin/directories          — create
- *   GET    /api/v1/superadmin/directories/{id}     — get
- *   PUT    /api/v1/superadmin/directories/{id}     — update
- *   DELETE /api/v1/superadmin/directories/{id}     — delete
+ *   GET    /api/v1/superadmin/directories               — list
+ *   POST   /api/v1/superadmin/directories               — create
+ *   GET    /api/v1/superadmin/directories/{id}          — get
+ *   PUT    /api/v1/superadmin/directories/{id}          — update
+ *   PUT    /api/v1/superadmin/directories/by-slug/{slug} — idempotent upsert (IaC)
+ *   DELETE /api/v1/superadmin/directories/{id}          — delete
  *   POST   /api/v1/superadmin/directories/{id}/evict-pool — evict LDAP pool
  *   GET    /api/v1/superadmin/directories/{id}/status     — live reachability probe
- *   POST   /api/v1/superadmin/directories/test     — test (not persisted)
+ *   POST   /api/v1/superadmin/directories/test          — test (not persisted)
  * </pre>
  */
 @RestController
@@ -65,6 +66,23 @@ public class DirectoryConnectionController {
     public DirectoryConnectionResponse update(@PathVariable UUID id,
                                               @Valid @RequestBody DirectoryConnectionRequest req) {
         return service.updateDirectory(id, req);
+    }
+
+    /**
+     * Idempotent create-or-update keyed by the stable IaC slug. Re-applying
+     * the same declaration converges to identical state; returns 201 on the
+     * first apply (resource created) and 200 on subsequent applies (updated
+     * in place). The slug is immutable, so this never renames an existing
+     * directory's key.
+     */
+    @PutMapping("/by-slug/{slug}")
+    public ResponseEntity<DirectoryConnectionResponse> upsertBySlug(
+            @PathVariable String slug,
+            @Valid @RequestBody DirectoryConnectionRequest req) {
+        DirectoryConnectionService.UpsertOutcome outcome = service.upsertBySlug(slug, req);
+        return ResponseEntity
+                .status(outcome.created() ? HttpStatus.CREATED : HttpStatus.OK)
+                .body(outcome.response());
     }
 
     @DeleteMapping("/{id}")

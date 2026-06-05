@@ -20,6 +20,9 @@ public interface DirectoryConnectionRepository extends JpaRepository<DirectoryCo
 
     Optional<DirectoryConnection> findByUserRepositoryTrue();
 
+    /** Resolve a directory by its stable IaC external key. */
+    Optional<DirectoryConnection> findBySlug(String slug);
+
     List<DirectoryConnection> findAllByAuditDataSourceId(UUID auditDataSourceId);
 
     /**
