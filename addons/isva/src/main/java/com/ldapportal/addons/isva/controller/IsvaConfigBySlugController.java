@@ -8,8 +8,10 @@ import com.ldapportal.addons.isva.service.IsvaConfigService;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.core.entitlement.Entitled;
 import com.ldapportal.core.entitlement.Entitlement;
+import com.ldapportal.web.ETagSupport;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -18,6 +20,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -50,16 +53,20 @@ public class IsvaConfigBySlugController {
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMIN', 'SUPERADMIN')")
     public ResponseEntity<IsvaConfigDto> get(@PathVariable String slug) {
-        return ResponseEntity.ok(service.get(service.resolveDirectoryIdBySlug(slug)));
+        IsvaConfigDto dto = service.get(service.resolveDirectoryIdBySlug(slug));
+        return ResponseEntity.ok().eTag(ETagSupport.format(dto.version())).body(dto);
     }
 
     @PutMapping
     @PreAuthorize("hasRole('SUPERADMIN')")
     public ResponseEntity<IsvaConfigDto> upsert(
             @PathVariable String slug,
+            @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @AuthenticationPrincipal AuthPrincipal principal,
             @Valid @RequestBody UpsertIsvaConfigRequest req) {
-        return ResponseEntity.ok(service.upsert(service.resolveDirectoryIdBySlug(slug), req, principal));
+        IsvaConfigDto dto = service.upsert(
+                service.resolveDirectoryIdBySlug(slug), req, principal, ETagSupport.parseIfMatch(ifMatch));
+        return ResponseEntity.ok().eTag(ETagSupport.format(dto.version())).body(dto);
     }
 
     @PostMapping("/probe")

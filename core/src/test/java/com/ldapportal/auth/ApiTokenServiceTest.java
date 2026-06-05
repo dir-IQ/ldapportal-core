@@ -327,6 +327,7 @@ class ApiTokenServiceTest {
         existing.setDescription("old");
         when(repository.findAllByNameAndRevokedAtIsNull("ci-terraform"))
                 .thenReturn(java.util.List.of(existing));
+        when(repository.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
         Instant newExpiry = Instant.now().plus(90, ChronoUnit.DAYS);
         var principal = new AuthPrincipal(PrincipalType.SUPERADMIN, creator.getId(), "alice");
@@ -337,10 +338,28 @@ class ApiTokenServiceTest {
         assertThat(result.plaintext()).isNull();
         assertThat(existing.getDescription()).isEqualTo("new desc");
         assertThat(existing.getExpiresAt()).isEqualTo(newExpiry);
-        // No new secret minted on update — secret-bearing save path untouched.
+        // No new secret minted on update — the create (insert) path is untouched;
+        // the metadata change is flushed so the response ETag is current.
         verify(repository, org.mockito.Mockito.never()).save(any());
+        verify(repository).saveAndFlush(existing);
         verify(auditService).recordSystemEvent(any(), org.mockito.ArgumentMatchers.eq(
                 AuditAction.API_TOKEN_UPDATED), any());
+    }
+
+    @Test
+    void upsertByName_staleIfMatch_throwsPreconditionFailed() {
+        ApiToken existing = newStoredToken(new byte[]{1, 2, 3},
+                Instant.now().plus(10, ChronoUnit.DAYS));
+        existing.setVersion(3L);
+        when(repository.findAllByNameAndRevokedAtIsNull("ci-terraform"))
+                .thenReturn(java.util.List.of(existing));
+
+        var principal = new AuthPrincipal(PrincipalType.SUPERADMIN, creator.getId(), "alice");
+        assertThatThrownBy(() -> service.upsertByName(
+                "ci-terraform", "x", Instant.now().plus(30, ChronoUnit.DAYS),
+                creator, principal, 1L))
+                .isInstanceOf(com.ldapportal.exception.PreconditionFailedException.class);
+        verify(repository, org.mockito.Mockito.never()).saveAndFlush(any());
     }
 
     @Test
