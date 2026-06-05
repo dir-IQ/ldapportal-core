@@ -5,6 +5,7 @@ import com.ldapportal.core.entitlement.EntitlementMissingException;
 import com.ldapportal.core.entitlement.LimitExceededException;
 import com.ldapportal.exception.TooManyRequestsException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -30,7 +31,10 @@ import java.util.stream.Collectors;
  *   <li>402 — feature not licensed ({@link EntitlementMissingException})</li>
  *   <li>403 — access denied ({@link AccessDeniedException})</li>
  *   <li>404 — resource not found ({@link ResourceNotFoundException})</li>
- *   <li>409 — duplicate/conflict ({@link ConflictException})</li>
+ *   <li>409 — duplicate/conflict ({@link ConflictException}), DB unique-constraint
+ *       violation ({@link DataIntegrityViolationException}), and lost-update
+ *       ({@link ObjectOptimisticLockingFailureException})</li>
+ *   <li>412 — failed {@code If-Match} precondition ({@link PreconditionFailedException})</li>
  *   <li>500 — everything else</li>
  * </ul>
  * </p>
@@ -123,6 +127,21 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleOptimisticLock(ObjectOptimisticLockingFailureException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,
                 "The resource was modified by another request; please reload and retry");
+    }
+
+    /**
+     * Unique-constraint (and other integrity) violations — e.g. two concurrent
+     * creates racing on a directory slug or admin username. Without this they
+     * fall through to the generic 500; a 409 tells the caller it's a conflict
+     * to retry/reconcile, not a server fault. The specific cause is logged for
+     * operators but kept out of the response so no SQL detail leaks.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ProblemDetail handleDataIntegrity(DataIntegrityViolationException ex) {
+        log.warn("Data integrity violation: {}",
+                ex.getMostSpecificCause().getMessage());
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,
+                "The request conflicts with an existing resource (a unique constraint was violated)");
     }
 
     @ExceptionHandler(PreconditionFailedException.class)
