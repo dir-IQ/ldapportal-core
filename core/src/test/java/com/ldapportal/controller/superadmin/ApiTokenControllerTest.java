@@ -8,6 +8,7 @@ import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.controller.BaseControllerTest;
 import com.ldapportal.dto.apitoken.CreateApiTokenRequest;
+import com.ldapportal.dto.apitoken.UpsertApiTokenRequest;
 import com.ldapportal.entity.Account;
 import com.ldapportal.entity.ApiToken;
 import com.ldapportal.entity.enums.AccountRole;
@@ -28,6 +29,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -36,6 +38,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -158,6 +161,82 @@ class ApiTokenControllerTest extends BaseControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isBadRequest());
+    }
+
+    // ── Upsert by name (IaC) ────────────────────────────────────────────────────
+
+    @Test
+    void upsertByName_newToken_returns201WithPlaintext() throws Exception {
+        ApiToken stored = newStored();
+        when(apiTokenService.upsertByName(eq("ci-terraform"), any(), any(Instant.class),
+                eq(creator), any(AuthPrincipal.class)))
+                .thenReturn(new ApiTokenService.UpsertResult(stored, "ldap_pat_newpt", true));
+        UpsertApiTokenRequest req = new UpsertApiTokenRequest(
+                "CI provisioning", Instant.now().plus(30, ChronoUnit.DAYS));
+
+        mockMvc.perform(put("/api/v1/superadmin/api-tokens/by-name/ci-terraform")
+                        .with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.plaintext").value("ldap_pat_newpt"))
+                .andExpect(jsonPath("$.token.name").value("ci-terraform"));
+    }
+
+    @Test
+    void upsertByName_existingToken_returns200WithoutPlaintext() throws Exception {
+        ApiToken stored = newStored();
+        when(apiTokenService.upsertByName(eq("ci-terraform"), any(), any(Instant.class),
+                eq(creator), any(AuthPrincipal.class)))
+                .thenReturn(new ApiTokenService.UpsertResult(stored, null, false));
+        UpsertApiTokenRequest req = new UpsertApiTokenRequest(
+                "updated desc", Instant.now().plus(30, ChronoUnit.DAYS));
+
+        mockMvc.perform(put("/api/v1/superadmin/api-tokens/by-name/ci-terraform")
+                        .with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.token.name").value("ci-terraform"))
+                .andExpect(jsonPath("$.plaintext").value(nullValue()));
+    }
+
+    @Test
+    void upsertByName_ambiguousName_returns409() throws Exception {
+        when(apiTokenService.upsertByName(eq("dup"), any(), any(Instant.class),
+                eq(creator), any(AuthPrincipal.class)))
+                .thenThrow(new ConflictException("Multiple active API tokens are named [dup]"));
+        UpsertApiTokenRequest req = new UpsertApiTokenRequest(
+                null, Instant.now().plus(30, ChronoUnit.DAYS));
+
+        mockMvc.perform(put("/api/v1/superadmin/api-tokens/by-name/dup")
+                        .with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void upsertByName_pastExpiry_returns400() throws Exception {
+        String body = String.format("""
+                {"description":null,"expiresAt":"%s"}
+                """, Instant.now().minus(1, ChronoUnit.DAYS));
+        mockMvc.perform(put("/api/v1/superadmin/api-tokens/by-name/x")
+                        .with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void upsertByName_asApiTokenCaller_returns403() throws Exception {
+        UpsertApiTokenRequest req = new UpsertApiTokenRequest(
+                null, Instant.now().plus(30, ChronoUnit.DAYS));
+        mockMvc.perform(put("/api/v1/superadmin/api-tokens/by-name/x")
+                        .with(authentication(apiTokenAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isForbidden());
     }
 
     // ── List ──────────────────────────────────────────────────────────────────

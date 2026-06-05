@@ -5,6 +5,7 @@ import com.ldapportal.entity.Account;
 import com.ldapportal.entity.ApiToken;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.AuditAction;
+import com.ldapportal.exception.ConflictException;
 import com.ldapportal.repository.ApiTokenRepository;
 import com.ldapportal.service.AuditService;
 import org.junit.jupiter.api.BeforeEach;
@@ -298,6 +299,76 @@ class ApiTokenServiceTest {
                 account.getRole() == AccountRole.SUPERADMIN
                         ? PrincipalType.SUPERADMIN : PrincipalType.ADMIN,
                 account.getId(), account.getUsername());
+    }
+
+    // ── upsertByName (IaC) ──────────────────────────────────────────────────────
+
+    @Test
+    void upsertByName_noActiveToken_createsAndReturnsPlaintext() {
+        when(repository.findAllByNameAndRevokedAtIsNull("ci-terraform"))
+                .thenReturn(java.util.List.of());
+        when(repository.save(any(ApiToken.class))).thenAnswer(ApiTokenServiceTest::saveWithGeneratedId);
+
+        var principal = new AuthPrincipal(PrincipalType.SUPERADMIN, creator.getId(), "alice");
+        ApiTokenService.UpsertResult result = service.upsertByName(
+                "ci-terraform", "CI provisioning",
+                Instant.now().plus(30, ChronoUnit.DAYS), creator, principal);
+
+        assertThat(result.created()).isTrue();
+        assertThat(result.plaintext()).startsWith("ldap_pat_");
+        verify(auditService).recordSystemEvent(any(), org.mockito.ArgumentMatchers.eq(
+                AuditAction.API_TOKEN_CREATED), any());
+    }
+
+    @Test
+    void upsertByName_existingToken_updatesMetadataWithoutNewSecret() {
+        ApiToken existing = newStoredToken(new byte[]{1, 2, 3},
+                Instant.now().plus(10, ChronoUnit.DAYS));
+        existing.setDescription("old");
+        when(repository.findAllByNameAndRevokedAtIsNull("ci-terraform"))
+                .thenReturn(java.util.List.of(existing));
+
+        Instant newExpiry = Instant.now().plus(90, ChronoUnit.DAYS);
+        var principal = new AuthPrincipal(PrincipalType.SUPERADMIN, creator.getId(), "alice");
+        ApiTokenService.UpsertResult result = service.upsertByName(
+                "ci-terraform", "new desc", newExpiry, creator, principal);
+
+        assertThat(result.created()).isFalse();
+        assertThat(result.plaintext()).isNull();
+        assertThat(existing.getDescription()).isEqualTo("new desc");
+        assertThat(existing.getExpiresAt()).isEqualTo(newExpiry);
+        // No new secret minted on update — secret-bearing save path untouched.
+        verify(repository, org.mockito.Mockito.never()).save(any());
+        verify(auditService).recordSystemEvent(any(), org.mockito.ArgumentMatchers.eq(
+                AuditAction.API_TOKEN_UPDATED), any());
+    }
+
+    @Test
+    void upsertByName_multipleActiveTokens_throwsConflict() {
+        when(repository.findAllByNameAndRevokedAtIsNull("dup"))
+                .thenReturn(java.util.List.of(
+                        newStoredToken(new byte[]{1}, Instant.now().plus(1, ChronoUnit.DAYS)),
+                        newStoredToken(new byte[]{2}, Instant.now().plus(1, ChronoUnit.DAYS))));
+
+        var principal = new AuthPrincipal(PrincipalType.SUPERADMIN, creator.getId(), "alice");
+        assertThatThrownBy(() -> service.upsertByName(
+                "dup", null, Instant.now().plus(30, ChronoUnit.DAYS), creator, principal))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("Multiple active");
+    }
+
+    @Test
+    void upsertByName_updateWithPastExpiry_throwsIllegalArgument() {
+        ApiToken existing = newStoredToken(new byte[]{1, 2, 3},
+                Instant.now().plus(10, ChronoUnit.DAYS));
+        when(repository.findAllByNameAndRevokedAtIsNull("ci-terraform"))
+                .thenReturn(java.util.List.of(existing));
+
+        var principal = new AuthPrincipal(PrincipalType.SUPERADMIN, creator.getId(), "alice");
+        assertThatThrownBy(() -> service.upsertByName(
+                "ci-terraform", "x", Instant.now().minus(1, ChronoUnit.DAYS), creator, principal))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must be in the future");
     }
 
     private ApiToken newStoredToken(byte[] hash, Instant expiresAt) {
