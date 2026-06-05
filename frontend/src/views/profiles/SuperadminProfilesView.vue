@@ -1110,12 +1110,16 @@ watch(() => profile.value.selfRegistrationAllowed, (allowed) => {
   if (!allowed && layoutMode.value === 'registration') layoutMode.value = 'admin'
 })
 
-// Fixed modal height based on attribute count so switching tabs doesn't resize
+// Fixed modal height based on attribute count so switching tabs doesn't resize.
+// The floor is sized so the General panel — the tallest in the initial
+// 'new profile' state (name, description, directory, target OU DN, object
+// classes, flags), where attributeConfigs is still empty — fits without a
+// scrollbar. Operators can drag-resize from there. Capped at 88vh.
 const modalHeight = computed(() => {
   const count = profile.value.attributeConfigs.length
-  if (count <= 6) return '50vh'
-  if (count <= 12) return '60vh'
-  return '70vh'
+  if (count <= 6) return '78vh'
+  if (count <= 12) return '84vh'
+  return '90vh'
 })
 
 const modalTabs = [
@@ -1169,7 +1173,7 @@ function toggleApprover(accountId: string) {
     </DataTable>
 
     <!-- Create/Edit Modal -->
-    <AppModal v-model="showModal" size="xl" :fixedHeight="modalHeight">
+    <AppModal v-model="showModal" size="xl" :fixedHeight="modalHeight" movable resizable>
       <template #title>
         <span>{{ editing ? 'Edit Profile' : 'Create Profile' }}</span>
         <span v-if="editing && profile.name" class="text-gray-500 font-normal"> — </span>
@@ -1199,12 +1203,6 @@ function toggleApprover(accountId: string) {
 
         <!-- General Tab -->
         <div v-if="modalTab === 'general'" class="space-y-4">
-          <div v-if="!editing">
-            <label for="sp-directory" class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
-            <select id="sp-directory" v-model="selectedDirId" class="input w-full">
-              <option v-for="d in directories" :key="d.id" :value="d.id">{{ d.displayName }}</option>
-            </select>
-          </div>
           <div>
             <label for="sp-name" class="block text-sm font-medium text-gray-700 mb-1">Name</label>
             <input id="sp-name" v-model="profile.name" class="input w-full" placeholder="e.g. Full-Time Engineer" />
@@ -1212,6 +1210,12 @@ function toggleApprover(accountId: string) {
           <div>
             <label for="sp-description" class="block text-sm font-medium text-gray-700 mb-1">Description</label>
             <textarea id="sp-description" v-model="profile.description" class="input w-full" rows="2"></textarea>
+          </div>
+          <div v-if="!editing">
+            <label for="sp-directory" class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
+            <select id="sp-directory" v-model="selectedDirId" class="input w-full">
+              <option v-for="d in directories" :key="d.id" :value="d.id">{{ d.displayName }}</option>
+            </select>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Target OU DN</label>
