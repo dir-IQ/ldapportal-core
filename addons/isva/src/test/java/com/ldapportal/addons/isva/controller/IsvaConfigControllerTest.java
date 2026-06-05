@@ -72,6 +72,7 @@ class IsvaConfigControllerTest {
     void get_returnsDto_whenConfigExists() {
         VendorIntegrationIsvaConfig cfg = new VendorIntegrationIsvaConfig();
         cfg.setDirectoryConnectionId(directoryId);
+        cfg.setVersion(0L);
         cfg.setEnabled(true);
         cfg.setTopologyMode(IsvaTopologyMode.INLINE);
         when(configRepo.findById(directoryId)).thenReturn(Optional.of(cfg));
@@ -106,15 +107,15 @@ class IsvaConfigControllerTest {
     @Test
     void upsert_inlineMode_createsRowWithDefaults() {
         when(configRepo.findById(directoryId)).thenReturn(Optional.empty());
-        when(configRepo.save(any(VendorIntegrationIsvaConfig.class)))
-                .thenAnswer(inv -> inv.getArgument(0));
+        when(configRepo.saveAndFlush(any(VendorIntegrationIsvaConfig.class)))
+                .thenAnswer(IsvaConfigControllerTest::saveAnswer);
 
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 null, null, null, null);
 
-        IsvaConfigDto body = controller.upsert(directoryId, principal, req).getBody();
+        IsvaConfigDto body = controller.upsert(directoryId, null, principal, req).getBody();
 
         assertThat(body).isNotNull();
         assertThat(body.enabled()).isTrue();
@@ -127,8 +128,8 @@ class IsvaConfigControllerTest {
     @Test
     void upsert_linkedMode_populatesLinkedFields() {
         when(configRepo.findById(directoryId)).thenReturn(Optional.empty());
-        when(configRepo.save(any(VendorIntegrationIsvaConfig.class)))
-                .thenAnswer(inv -> inv.getArgument(0));
+        when(configRepo.saveAndFlush(any(VendorIntegrationIsvaConfig.class)))
+                .thenAnswer(IsvaConfigControllerTest::saveAnswer);
 
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.LINKED, "Default",
@@ -138,7 +139,7 @@ class IsvaConfigControllerTest {
                 IsvaGroupMemberTarget.DEMOGRAPHIC_DN,
                 IsvaDemographicDeleteMode.LEAVE);
 
-        IsvaConfigDto body = controller.upsert(directoryId, principal, req).getBody();
+        IsvaConfigDto body = controller.upsert(directoryId, null, principal, req).getBody();
 
         assertThat(body).isNotNull();
         assertThat(body.topologyMode()).isEqualTo(IsvaTopologyMode.LINKED);
@@ -155,7 +156,7 @@ class IsvaConfigControllerTest {
                 "   ",   // blank → invalid
                 "secUUID", null, null);
 
-        assertThatThrownBy(() -> controller.upsert(directoryId, principal, req))
+        assertThatThrownBy(() -> controller.upsert(directoryId, null, principal, req))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("managementDitBaseDn is required");
     }
@@ -170,21 +171,21 @@ class IsvaConfigControllerTest {
         existing.setTopologyMode(IsvaTopologyMode.LINKED);
         existing.setManagementDitBaseDn("secAuthority=Default,o=acme,c=us");
         when(configRepo.findById(directoryId)).thenReturn(Optional.of(existing));
-        when(configRepo.save(any(VendorIntegrationIsvaConfig.class)))
-                .thenAnswer(inv -> inv.getArgument(0));
+        when(configRepo.saveAndFlush(any(VendorIntegrationIsvaConfig.class)))
+                .thenAnswer(IsvaConfigControllerTest::saveAnswer);
 
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 null, null, null, null);
 
-        IsvaConfigDto body = controller.upsert(directoryId, principal, req).getBody();
+        IsvaConfigDto body = controller.upsert(directoryId, null, principal, req).getBody();
         assertThat(body).isNotNull();
         assertThat(body.managementDitBaseDn()).isNull();
 
         ArgumentCaptor<VendorIntegrationIsvaConfig> captor =
                 ArgumentCaptor.forClass(VendorIntegrationIsvaConfig.class);
-        verify(configRepo).save(captor.capture());
+        verify(configRepo).saveAndFlush(captor.capture());
         assertThat(captor.getValue().getManagementDitBaseDn()).isNull();
     }
 
@@ -197,7 +198,7 @@ class IsvaConfigControllerTest {
                 100, IsvaDeletePolicy.DISABLE, true,
                 null, null, null, null);
 
-        assertThatThrownBy(() -> controller.upsert(directoryId, principal, req))
+        assertThatThrownBy(() -> controller.upsert(directoryId, null, principal, req))
                 .isInstanceOf(ResourceNotFoundException.class);
     }
 
@@ -206,8 +207,8 @@ class IsvaConfigControllerTest {
         // Blank string in the request is more confusing than NULL on
         // the DB side — controller normalises.
         when(configRepo.findById(directoryId)).thenReturn(Optional.empty());
-        when(configRepo.save(any(VendorIntegrationIsvaConfig.class)))
-                .thenAnswer(inv -> inv.getArgument(0));
+        when(configRepo.saveAndFlush(any(VendorIntegrationIsvaConfig.class)))
+                .thenAnswer(IsvaConfigControllerTest::saveAnswer);
 
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "  ",
@@ -216,8 +217,8 @@ class IsvaConfigControllerTest {
 
         ArgumentCaptor<VendorIntegrationIsvaConfig> captor =
                 ArgumentCaptor.forClass(VendorIntegrationIsvaConfig.class);
-        controller.upsert(directoryId, principal, req);
-        verify(configRepo).save(captor.capture());
+        controller.upsert(directoryId, null, principal, req);
+        verify(configRepo).saveAndFlush(captor.capture());
         assertThat(captor.getValue().getSecAuthority()).isNull();
     }
 
@@ -227,6 +228,7 @@ class IsvaConfigControllerTest {
     void probe_delegates_andReturnsResult() {
         VendorIntegrationIsvaConfig cfg = new VendorIntegrationIsvaConfig();
         cfg.setDirectoryConnectionId(directoryId);
+        cfg.setVersion(0L);
         cfg.setTopologyMode(IsvaTopologyMode.LINKED);
         cfg.setManagementDitBaseDn("secAuthority=Default,o=x,c=y");
         when(configRepo.findById(directoryId)).thenReturn(Optional.of(cfg));
@@ -269,6 +271,7 @@ class IsvaConfigControllerTest {
 
         VendorIntegrationIsvaConfig cfg = new VendorIntegrationIsvaConfig();
         cfg.setDirectoryConnectionId(directoryId);
+        cfg.setVersion(0L);
         cfg.setEnabled(true);
         cfg.setTopologyMode(IsvaTopologyMode.INLINE);
         when(configRepo.findById(directoryId)).thenReturn(Optional.of(cfg));
@@ -285,15 +288,15 @@ class IsvaConfigControllerTest {
         dir.setId(directoryId);
         when(directoryRepo.findBySlug("corp-ldap")).thenReturn(Optional.of(dir));
         when(configRepo.findById(directoryId)).thenReturn(Optional.empty());
-        when(configRepo.save(any(VendorIntegrationIsvaConfig.class)))
-                .thenAnswer(inv -> inv.getArgument(0));
+        when(configRepo.saveAndFlush(any(VendorIntegrationIsvaConfig.class)))
+                .thenAnswer(IsvaConfigControllerTest::saveAnswer);
 
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 null, null, null, null);
 
-        IsvaConfigDto body = bySlugController.upsert("corp-ldap", principal, req).getBody();
+        IsvaConfigDto body = bySlugController.upsert("corp-ldap", null, principal, req).getBody();
 
         assertThat(body).isNotNull();
         assertThat(body.enabled()).isTrue();
@@ -301,7 +304,7 @@ class IsvaConfigControllerTest {
 
         ArgumentCaptor<VendorIntegrationIsvaConfig> captor =
                 ArgumentCaptor.forClass(VendorIntegrationIsvaConfig.class);
-        verify(configRepo).save(captor.capture());
+        verify(configRepo).saveAndFlush(captor.capture());
         assertThat(captor.getValue().getDirectoryConnectionId()).isEqualTo(directoryId);
     }
 
@@ -312,5 +315,48 @@ class IsvaConfigControllerTest {
         assertThatThrownBy(() -> bySlugController.get("nope"))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("slug [nope]");
+    }
+
+    // ── concurrency (ETag / If-Match) ─────────────────────────────────────────
+
+    @Test
+    void get_carriesVersionETag() {
+        VendorIntegrationIsvaConfig cfg = new VendorIntegrationIsvaConfig();
+        cfg.setDirectoryConnectionId(directoryId);
+        cfg.setVersion(4L);
+        cfg.setEnabled(true);
+        cfg.setTopologyMode(IsvaTopologyMode.INLINE);
+        when(configRepo.findById(directoryId)).thenReturn(Optional.of(cfg));
+
+        assertThat(controller.get(directoryId).getHeaders().getETag()).isEqualTo("\"4\"");
+    }
+
+    @Test
+    void upsert_staleIfMatch_throwsPreconditionFailed() {
+        VendorIntegrationIsvaConfig existing = new VendorIntegrationIsvaConfig();
+        existing.setDirectoryConnectionId(directoryId);
+        existing.setVersion(5L);
+        existing.setTopologyMode(IsvaTopologyMode.INLINE);
+        when(configRepo.findById(directoryId)).thenReturn(Optional.of(existing));
+
+        UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
+                true, IsvaTopologyMode.INLINE, "Default",
+                100, IsvaDeletePolicy.DISABLE, true,
+                null, null, null, null);
+
+        // If-Match "1" parses to expectedVersion 1, but the row is at 5.
+        assertThatThrownBy(() -> controller.upsert(directoryId, "\"1\"", principal, req))
+                .isInstanceOf(com.ldapportal.exception.PreconditionFailedException.class);
+        verify(configRepo, org.mockito.Mockito.never())
+                .saveAndFlush(any(VendorIntegrationIsvaConfig.class));
+    }
+
+    /** Mock-side mimic of a JPA flush: assigns version 0 to a freshly persisted row. */
+    private static VendorIntegrationIsvaConfig saveAnswer(org.mockito.invocation.InvocationOnMock inv) {
+        VendorIntegrationIsvaConfig e = inv.getArgument(0);
+        if (e.getVersion() == null) {
+            e.setVersion(0L);
+        }
+        return e;
     }
 }

@@ -13,6 +13,7 @@ import java.util.UUID;
  */
 public record ApiTokenResponse(
         UUID    id,
+        Long    version,
         String  name,
         String  description,
         String  tokenPrefix,
@@ -27,6 +28,7 @@ public record ApiTokenResponse(
     public static ApiTokenResponse from(ApiToken t) {
         return new ApiTokenResponse(
                 t.getId(),
+                t.getVersion(),
                 t.getName(),
                 t.getDescription(),
                 t.getTokenPrefix(),

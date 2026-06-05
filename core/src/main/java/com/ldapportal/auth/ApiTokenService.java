@@ -127,6 +127,22 @@ public class ApiTokenService {
                                      Instant expiresAt,
                                      Account creator,
                                      AuthPrincipal actor) {
+        return upsertByName(name, description, expiresAt, creator, actor, null);
+    }
+
+    /**
+     * By-name upsert with an optional {@code If-Match} precondition (§4.4).
+     * {@code expectedVersion}, when non-null, must equal the existing token's
+     * current version or the update is rejected with a 412. The check applies
+     * only on the update path — a freshly minted token has no prior version.
+     */
+    @Transactional
+    public UpsertResult upsertByName(String name,
+                                     String description,
+                                     Instant expiresAt,
+                                     Account creator,
+                                     AuthPrincipal actor,
+                                     Long expectedVersion) {
         java.util.Objects.requireNonNull(creator, "creator");
         String trimmed = name == null ? "" : name.trim();
         if (trimmed.isEmpty()) {
@@ -144,16 +160,21 @@ public class ApiTokenService {
             return new UpsertResult(created.token(), created.plaintext(), true);
         }
 
-        validateExpiry(expiresAt);
         ApiToken token = active.get(0);
+        com.ldapportal.web.ETagSupport.requireMatch(expectedVersion, token.getVersion());
+        validateExpiry(expiresAt);
         token.setDescription(description);
         token.setExpiresAt(expiresAt);
+        // saveAndFlush so the @Version increment lands before the response (and
+        // its ETag) is built — otherwise the returned ETag would be stale and
+        // the caller's next If-Match would 412.
+        ApiToken saved = repository.saveAndFlush(token);
         auditService.recordSystemEvent(
                 actor,
                 AuditAction.API_TOKEN_UPDATED,
-                Map.of("tokenId", token.getId().toString(),
-                       "tokenName", token.getName()));
-        return new UpsertResult(token, null, false);
+                Map.of("tokenId", saved.getId().toString(),
+                       "tokenName", saved.getName()));
+        return new UpsertResult(saved, null, false);
     }
 
     // ── internal helpers ──────────────────────────────────────────────────────
