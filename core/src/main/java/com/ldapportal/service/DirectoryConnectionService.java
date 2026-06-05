@@ -84,9 +84,21 @@ public class DirectoryConnectionService {
      */
     @Transactional
     public UpsertOutcome upsertBySlug(String slug, DirectoryConnectionRequest req) {
+        return upsertBySlug(slug, req, null);
+    }
+
+    /**
+     * Slug upsert with an optional {@code If-Match} precondition (§4.4). When a
+     * matching directory exists the {@code expectedVersion}, if non-null, must
+     * equal its current version or the update is rejected with a 412. The check
+     * applies only on the update path — a create has no prior version to match.
+     */
+    @Transactional
+    public UpsertOutcome upsertBySlug(String slug, DirectoryConnectionRequest req, Long expectedVersion) {
         String normalized = normalizeSlug(slug);
         return dirRepo.findBySlug(normalized)
-                .map(existing -> new UpsertOutcome(updateDirectory(existing.getId(), req), false))
+                .map(existing -> new UpsertOutcome(
+                        updateDirectory(existing.getId(), req, expectedVersion), false))
                 .orElseGet(() -> new UpsertOutcome(doCreateDirectory(normalized, req), true));
     }
 
@@ -152,7 +164,14 @@ public class DirectoryConnectionService {
 
     @Transactional
     public DirectoryConnectionResponse updateDirectory(UUID id, DirectoryConnectionRequest req) {
+        return updateDirectory(id, req, null);
+    }
+
+    @Transactional
+    public DirectoryConnectionResponse updateDirectory(UUID id, DirectoryConnectionRequest req,
+                                                       Long expectedVersion) {
         DirectoryConnection dc = require(id);
+        com.ldapportal.web.ETagSupport.requireMatch(expectedVersion, dc.getVersion());
         applyRequest(dc, req);
 
         if (req.bindPassword() != null && !req.bindPassword().isBlank()) {

@@ -52,7 +52,7 @@ class AdminManagementControllerTest extends BaseControllerTest {
 
     AdminAccountResponse sampleResponse() {
         return new AdminAccountResponse(
-                ADMIN_ID, "testadmin", "Test Admin", "testadmin@example.com",
+                ADMIN_ID, 0L, "testadmin", "Test Admin", "testadmin@example.com",
                 AccountRole.ADMIN, AccountType.LOCAL, null, true,
                 null, Instant.now(), Instant.now(), true);
     }
@@ -99,7 +99,7 @@ class AdminManagementControllerTest extends BaseControllerTest {
 
     @Test
     void upsertByUsername_newAdmin_returns201() throws Exception {
-        given(service.upsertByUsername(eq("testadmin"), any(), any()))
+        given(service.upsertByUsername(eq("testadmin"), any(), any(), any()))
                 .willReturn(new AdminManagementService.AdminUpsertOutcome(sampleResponse(), true));
 
         mockMvc.perform(put(BASE_URL + "/by-username/testadmin")
@@ -113,7 +113,7 @@ class AdminManagementControllerTest extends BaseControllerTest {
 
     @Test
     void upsertByUsername_existingAdmin_returns200() throws Exception {
-        given(service.upsertByUsername(eq("testadmin"), any(), any()))
+        given(service.upsertByUsername(eq("testadmin"), any(), any(), any()))
                 .willReturn(new AdminManagementService.AdminUpsertOutcome(sampleResponse(), false));
 
         mockMvc.perform(put(BASE_URL + "/by-username/testadmin")
@@ -126,7 +126,7 @@ class AdminManagementControllerTest extends BaseControllerTest {
 
     @Test
     void upsertByUsername_pathBodyMismatch_returns400() throws Exception {
-        given(service.upsertByUsername(eq("other"), any(), any()))
+        given(service.upsertByUsername(eq("other"), any(), any(), any()))
                 .willThrow(new IllegalArgumentException(
                         "username in the path must match the account username in the body"));
 

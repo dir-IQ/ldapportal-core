@@ -212,6 +212,21 @@ public class AdminManagementService {
             String username,
             com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
             AuthPrincipal principal) {
+        return upsertByUsername(username, req, principal, null);
+    }
+
+    /**
+     * By-username upsert with an optional {@code If-Match} precondition (§4.4).
+     * {@code expectedVersion}, when non-null, must equal the existing account's
+     * current version or the update is rejected with a 412. The check applies
+     * only on the update path — a create has no prior version to match.
+     */
+    @Transactional
+    public AdminUpsertOutcome upsertByUsername(
+            String username,
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            AuthPrincipal principal,
+            Long expectedVersion) {
         if (req.account() == null || !username.equals(req.account().username())) {
             throw new IllegalArgumentException(
                     "username in the path must match the account username in the body");
@@ -230,7 +245,7 @@ public class AdminManagementService {
                     "Account [" + username + "] already exists with a non-admin role");
         }
         return new AdminUpsertOutcome(
-                updateAdminWithPermissions(account.getId(), req, principal), false);
+                updateAdminWithPermissions(account.getId(), req, principal, expectedVersion), false);
     }
 
     /** Result of an idempotent admin upsert: the saved view plus whether a row was created. */
@@ -250,7 +265,16 @@ public class AdminManagementService {
             UUID adminId,
             com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
             AuthPrincipal principal) {
-        updateAdmin(adminId, req.account(), principal);
+        return updateAdminWithPermissions(adminId, req, principal, null);
+    }
+
+    @Transactional
+    public AdminAccountResponse updateAdminWithPermissions(
+            UUID adminId,
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            AuthPrincipal principal,
+            Long expectedVersion) {
+        updateAdmin(adminId, req.account(), principal, expectedVersion);
 
         var roles = req.profileRolesOrEmpty();
         var features = req.featurePermissionsOrEmpty();
@@ -297,7 +321,14 @@ public class AdminManagementService {
     @Transactional
     public AdminAccountResponse updateAdmin(UUID adminId, AdminAccountRequest req,
                                              AuthPrincipal principal) {
+        return updateAdmin(adminId, req, principal, null);
+    }
+
+    @Transactional
+    public AdminAccountResponse updateAdmin(UUID adminId, AdminAccountRequest req,
+                                             AuthPrincipal principal, Long expectedVersion) {
         Account a = requireAccount(adminId);
+        com.ldapportal.web.ETagSupport.requireMatch(expectedVersion, a.getVersion());
 
         // Self-mutation guard. After requireAccount tightens to ADMIN-only,
         // a SUPERADMIN principal's id can't match an ADMIN row id anyway,
