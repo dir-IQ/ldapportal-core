@@ -124,16 +124,20 @@ public class BrowseController {
     public BrowseResult deleteEntry(@PathVariable UUID directoryId,
                                     @AuthenticationPrincipal AuthPrincipal principal,
                                     @RequestParam String dn,
-                                    @RequestParam(defaultValue = "false") boolean recursive) {
+                                    @RequestParam(defaultValue = "false") boolean recursive,
+                                    @RequestParam(defaultValue = "false") boolean childrenOnly) {
         DirectoryConnection dc = loadDirectory(directoryId);
-        String parentDn = extractParentDn(dn, dc.getBaseDn());
 
-        browseService.deleteEntry(dc, dn, recursive);
+        browseService.deleteEntry(dc, dn, recursive, childrenOnly);
 
         auditService.record(principal, directoryId, AuditAction.ENTRY_DELETE, dn,
-                Map.of("recursive", recursive));
+                Map.of("recursive", recursive, "childrenOnly", childrenOnly));
 
-        return browseService.browse(dc, parentDn);
+        // Children-only keeps the entry, so return its (now-empty) listing to
+        // refresh that node; a full delete removes the entry, so return the
+        // parent's listing to refresh the parent instead.
+        String refreshDn = childrenOnly ? dn : extractParentDn(dn, dc.getBaseDn());
+        return browseService.browse(dc, refreshDn);
     }
 
     @PostMapping("/move")

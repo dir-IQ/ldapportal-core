@@ -239,6 +239,37 @@ class LdapBrowseServiceTest {
                 .contains("organization");
     }
 
+    // ── delete ────────────────────────────────────────────────────────────────
+
+    @Test
+    void deleteEntry_childrenOnly_removesDescendants_keepsEntry() throws Exception {
+        String ou = "ou=team," + BASE_DN;
+        inMemoryServer.add(new Entry(ou,
+                new Attribute("objectClass", "top", "organizationalUnit"), new Attribute("ou", "team")));
+        inMemoryServer.add(new Entry("cn=Bob," + ou,
+                new Attribute("objectClass", "top", "person"),
+                new Attribute("cn", "Bob"), new Attribute("sn", "B")));
+        String sub = "ou=sub," + ou;
+        inMemoryServer.add(new Entry(sub,
+                new Attribute("objectClass", "top", "organizationalUnit"), new Attribute("ou", "sub")));
+        inMemoryServer.add(new Entry("cn=Carl," + sub,
+                new Attribute("objectClass", "top", "person"),
+                new Attribute("cn", "Carl"), new Attribute("sn", "C")));
+
+        browseService.deleteEntry(dc, ou, false, true);
+
+        assertThat(inMemoryServer.getEntry(ou)).isNotNull();            // entry kept
+        assertThat(inMemoryServer.getEntry("cn=Bob," + ou)).isNull();   // direct child gone
+        assertThat(inMemoryServer.getEntry(sub)).isNull();              // nested subtree gone
+        assertThat(inMemoryServer.getEntry("cn=Carl," + sub)).isNull();
+    }
+
+    @Test
+    void deleteEntry_default_removesTheEntryItself() throws Exception {
+        browseService.deleteEntry(dc, ALICE_DN, false, false);
+        assertThat(inMemoryServer.getEntry(ALICE_DN)).isNull();
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private DirectoryConnection buildDc() {

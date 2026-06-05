@@ -247,9 +247,24 @@ public class LdapBrowseService {
      * entries are deleted bottom-up first (OpenLDAP rejects delete on non-leaf).
      */
     public void deleteEntry(DirectoryConnection dc, String dn, boolean recursive) {
+        deleteEntry(dc, dn, recursive, false);
+    }
+
+    /**
+     * Deletes an LDAP entry, or — when {@code childrenOnly} is true — deletes
+     * every descendant of the entry while keeping the entry itself (e.g. to
+     * empty a container without removing it). In children-only mode the delete
+     * is inherently recursive over the descendants, so {@code recursive} is
+     * ignored.
+     */
+    public void deleteEntry(DirectoryConnection dc, String dn, boolean recursive, boolean childrenOnly) {
         connectionFactory.withConnection(dc, conn -> {
-            if (recursive) {
+            if (childrenOnly) {
+                int n = deleteChildren(conn, dc, dn);
+                log.info("Deleted {} child entr{} under {} (entry kept)", n, n == 1 ? "y" : "ies", dn);
+            } else if (recursive) {
                 deleteSubtree(conn, dc, dn);
+                log.info("Deleted LDAP entry {} (recursive)", dn);
             } else {
                 LDAPResult result = conn.delete(dn);
                 if (result.getResultCode() != ResultCode.SUCCESS) {
@@ -257,10 +272,23 @@ public class LdapBrowseService {
                         "deleteEntry failed for [" + dn + "]: "
                         + result.getResultCode() + " — " + result.getDiagnosticMessage());
                 }
+                log.info("Deleted LDAP entry {}", dn);
             }
-            log.info("Deleted LDAP entry {}{}", dn, recursive ? " (recursive)" : "");
             return null;
         });
+    }
+
+    /**
+     * Deletes every descendant of {@code dn} (each direct child's whole subtree,
+     * bottom-up) but not {@code dn} itself. Returns the number of direct
+     * children removed.
+     */
+    private int deleteChildren(LDAPInterface conn, DirectoryConnection dc, String dn) throws LDAPException {
+        List<ChildEntry> children = listChildren(conn, dc, dn);
+        for (ChildEntry child : children) {
+            deleteSubtree(conn, dc, child.dn());
+        }
+        return children.size();
     }
 
     private void deleteSubtree(LDAPInterface conn, DirectoryConnection dc,
