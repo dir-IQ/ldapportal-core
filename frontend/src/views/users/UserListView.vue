@@ -89,6 +89,31 @@
           {{ value !== false ? 'Active' : 'Disabled' }}
         </span>
       </template>
+      <!-- Group-membership pills. `groupsExpanded` (toggled from the
+           header control below) flips every row between collapsed
+           (first few names + a "+N" pill) and the full list. -->
+      <template #cell-__groups="{ row }">
+        <GroupChips :dns="((row as unknown as UserRow).__groupDns as string[]) ?? []" :expanded="groupsExpanded" />
+      </template>
+      <!-- Header toggle for the whole Groups column. @click.stop so it
+           doesn't trip the header's (no-op, non-sortable) click. -->
+      <template #header-__groups>
+        <button
+          type="button"
+          @click.stop="groupsExpanded = !groupsExpanded"
+          class="ml-1 align-middle text-gray-400 hover:text-gray-600"
+          :aria-pressed="groupsExpanded"
+          :title="groupsExpanded ? 'Collapse group lists' : 'Show all groups'"
+          :aria-label="groupsExpanded ? 'Collapse group lists' : 'Show all groups'"
+        >
+          <svg v-if="!groupsExpanded" class="w-3.5 h-3.5 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 8.25v-4.5h4.5M20.25 8.25v-4.5h-4.5M3.75 15.75v4.5h4.5M20.25 15.75v4.5h-4.5" />
+          </svg>
+          <svg v-else class="w-3.5 h-3.5 inline-block" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3.75v4.5h-4.5M15.75 3.75v4.5h4.5M8.25 20.25v-4.5h-4.5M15.75 20.25v-4.5h4.5" />
+          </svg>
+        </button>
+      </template>
       <template #cell-actions="{ row }">
         <!--
           When the user is mid bulk-select (≥2 rows ticked), per-row actions
@@ -366,6 +391,8 @@ import UserForm from './UserForm.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import EntryTimeline from '@/components/EntryTimeline.vue'
 import PasswordPolicyStatus from '@/components/PasswordPolicyStatus.vue'
+import GroupChips from '@/components/GroupChips.vue'
+import { rdnValue } from '@/composables/useEntryClassification'
 
 interface ProfileLite {
   id: string
@@ -458,6 +485,26 @@ function isvaOrphaned(row: unknown): boolean {
   if (Array.isArray(v)) return v.length > 0 && String(v[0]).toLowerCase() === 'true'
   return typeof v === 'string' && v.toLowerCase() === 'true'
 }
+
+/**
+ * The memberOf values for an entry, read case-insensitively (the backend
+ * lower-cases attribute keys, but be defensive). Returns the group DNs
+ * as a string array; an absent attribute yields an empty list.
+ */
+function memberOfValues(attrs: Record<string, string[] | string | null>): string[] {
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k.toLowerCase() !== 'memberof') continue
+    if (Array.isArray(v)) return v.filter((s): s is string => typeof s === 'string')
+    if (typeof v === 'string' && v) return [v]
+    return []
+  }
+  return []
+}
+
+// Column-level expand toggle for the Groups column: collapsed shows the
+// first few group names + a "+N" pill; expanded shows the full list for
+// every row. Driven from the header control on the Groups column.
+const groupsExpanded = ref(false)
 
 const dirId          = route.params.dirId as string
 const users          = ref<UserRow[]>([])
@@ -570,10 +617,17 @@ const cols = computed(() => {
   // can never populate).
   const discoveredSet = new Set(discoveredAttrs.value.map(s => s.toLowerCase()))
   const defaults = DEFAULT_USER_COLUMNS.filter(k => discoveredSet.has(k.toLowerCase()))
-  const extras = discoveredAttrs.value.filter(k => !DEFAULT_USER_COLUMNS_LC.has(k.toLowerCase()))
+  // memberOf surfaces through the dedicated, pretty 'Groups' column
+  // below, so drop the raw (joined-DN) discovered column to avoid a
+  // duplicate.
+  const extras = discoveredAttrs.value.filter(k =>
+    !DEFAULT_USER_COLUMNS_LC.has(k.toLowerCase()) && k.toLowerCase() !== 'memberof')
   return [
     { key: 'dn', label: 'DN', alwaysVisible: true },
     ...defaults.map(k => ({ key: k, label: k })),
+    // Group membership as name pills. Default-hidden (opt-in via the
+    // column picker); not sortable (a list has no natural order).
+    { key: '__groups', label: 'Groups', sortable: false, defaultHidden: true, defaultWidth: 280 },
     ...extras.map(k => ({ key: k, label: k, defaultHidden: true })),
     // The actions cell renders three elements side-by-side: the
     // primary Edit button, the variant Disable/Enable button (the
@@ -629,6 +683,12 @@ async function load() {
       filter: filterText.value || undefined,
       baseDn: profileData.value?.targetOuDn || undefined,
       limit:  limit.value,
+      // Request all user attributes ('*') plus memberOf explicitly. The
+      // group-membership ('Groups') column reads memberOf; naming it
+      // brings it back even where it's operational (OpenLDAP with the
+      // memberof overlay), not just where it's a plain attribute (AD).
+      // Directories that don't expose it yield an empty Groups cell.
+      attributes: '*,memberOf',
     }
     const { data } = await usersApi.searchUsers(dirId, params)
     const entries = Array.isArray(data) ? data : (data.entries || [])
@@ -645,6 +705,12 @@ async function load() {
         const arr = Array.isArray(vals) ? vals : (vals == null ? [] : [vals])
         row[attr] = arr.join(', ')
       }
+      // Group membership for the (default-hidden) Groups column. The raw
+      // DNs feed GroupChips; the joined names back the quick-filter and
+      // cell title so an operator can filter the table on a group name.
+      const gdns = memberOfValues(attrs)
+      row.__groupDns = gdns
+      row.__groups = gdns.map(rdnValue).join(', ')
       // Backwards-compat with the row.enabled lookup the
       // toggleEnabled action menu still reads. The backend doesn't
       // return an `enabled` attribute today; this stays undefined,

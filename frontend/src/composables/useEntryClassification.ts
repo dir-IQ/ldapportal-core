@@ -98,6 +98,31 @@ export function rdnAttribute(dn: string): string {
 }
 
 /**
+ * The value from the first RDN component of the DN.
+ * For {@code "cn=Engineering,ou=Groups,dc=…"} returns {@code "Engineering"}.
+ * Unlike {@link rdnAttribute} this preserves the original case — the
+ * value is display text (a group name), not a schema identifier.
+ * Honours backslash-escaped commas/equals in the RDN value so
+ * {@code "cn=Smith\\, John,…"} returns {@code "Smith, John"}. Falls back
+ * to the trimmed input when there is no {@code =} (defensive).
+ */
+export function rdnValue(dn: string): string {
+  if (!dn) return ''
+  // Isolate the leading RDN by splitting on the first *unescaped* comma.
+  let firstRdn = dn
+  for (let i = 0; i < dn.length; i++) {
+    if (dn[i] === ',' && dn[i - 1] !== '\\') {
+      firstRdn = dn.slice(0, i)
+      break
+    }
+  }
+  const eq = firstRdn.indexOf('=')
+  const raw = eq >= 0 ? firstRdn.slice(eq + 1) : firstRdn
+  // Unescape \, and \= back to literal characters.
+  return raw.replace(/\\([,=])/g, '$1').trim()
+}
+
+/**
  * Returns true when the cell should render as an editable input
  * in Phase 1. Conservative — defaults to {@code false} when the
  * schema is missing, so an unreachable schema fetch locks editing
