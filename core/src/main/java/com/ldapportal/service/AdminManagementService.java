@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -190,6 +191,102 @@ public class AdminManagementService {
         }
 
         return AdminAccountResponse.from(requireAccount(created.id()));
+    }
+
+    /**
+     * Idempotent create-or-update of an admin account and its full permission
+     * set, keyed by the stable {@code username} external key (§4.1). The
+     * account username is already unique, so no surrogate slug is needed.
+     * Re-applying the same declaration converges to identical state: profile
+     * roles and feature-permission overrides are <em>replaced</em> to match
+     * the request exactly (entries absent from the request are removed),
+     * giving the full-replace semantics IaC reconciliation needs (§4.2). The
+     * {@code created} flag lets the controller report 201 vs 200.
+     *
+     * <p>Scoped to {@link AccountRole#ADMIN}: a non-ADMIN role in the body is
+     * rejected, and a username already held by a non-admin (superadmin)
+     * account yields a conflict rather than silently shadowing it.</p>
+     */
+    @Transactional
+    public AdminUpsertOutcome upsertByUsername(
+            String username,
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            AuthPrincipal principal) {
+        if (req.account() == null || !username.equals(req.account().username())) {
+            throw new IllegalArgumentException(
+                    "username in the path must match the account username in the body");
+        }
+        if (req.account().role() != AccountRole.ADMIN) {
+            throw new IllegalArgumentException("by-username upsert manages ADMIN accounts only");
+        }
+
+        Optional<Account> existing = accountRepo.findByUsername(username);
+        if (existing.isEmpty()) {
+            return new AdminUpsertOutcome(createAdminWithPermissions(req, principal), true);
+        }
+        Account account = existing.get();
+        if (account.getRole() != AccountRole.ADMIN) {
+            throw new ConflictException(
+                    "Account [" + username + "] already exists with a non-admin role");
+        }
+        return new AdminUpsertOutcome(
+                updateAdminWithPermissions(account.getId(), req, principal), false);
+    }
+
+    /** Result of an idempotent admin upsert: the saved view plus whether a row was created. */
+    public record AdminUpsertOutcome(AdminAccountResponse response, boolean created) {
+    }
+
+    /**
+     * Updates an existing admin's account fields and fully replaces its
+     * profile roles and feature-permission overrides to match the request.
+     * Ordered account → profile roles → feature permissions so the
+     * per-profile override invariant (an override requires a matching profile
+     * role) holds throughout: roles are reconciled before overrides are
+     * validated and written.
+     */
+    @Transactional
+    public AdminAccountResponse updateAdminWithPermissions(
+            UUID adminId,
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            AuthPrincipal principal) {
+        updateAdmin(adminId, req.account(), principal);
+
+        var roles = req.profileRolesOrEmpty();
+        var features = req.featurePermissionsOrEmpty();
+
+        // Per-profile overrides are inert without a matching profile role.
+        // Validate up-front against the requested role set so a mismatch is a
+        // 400 rather than a half-applied reconcile.
+        java.util.Set<UUID> declaredProfileIds = roles.stream()
+                .map(ProfileRoleRequest::profileId)
+                .collect(java.util.stream.Collectors.toSet());
+        for (FeaturePermissionRequest fp : features) {
+            if (fp.profileId() != null && !declaredProfileIds.contains(fp.profileId())) {
+                throw new IllegalArgumentException(
+                        "Feature permission for profile [" + fp.profileId()
+                                + "] requires a profile role on the same profile");
+            }
+        }
+
+        // Full-replace of profile roles: drop any role not in the request,
+        // then assign/update the declared ones. removeProfileRole also clears
+        // that profile's now-inert per-profile feature overrides.
+        for (AdminProfileRole existingRole : profileRoleRepo.findAllByAdminAccountId(adminId)) {
+            UUID profileId = existingRole.getProfile().getId();
+            if (!declaredProfileIds.contains(profileId)) {
+                removeProfileRole(adminId, profileId, principal);
+            }
+        }
+        for (ProfileRoleRequest r : roles) {
+            assignProfileRole(adminId, r, principal);
+        }
+
+        // Full-replace of feature overrides (wipe-and-recreate). Called
+        // unconditionally — an empty list clears every override.
+        setFeaturePermissions(adminId, features, principal);
+
+        return AdminAccountResponse.from(requireAccount(adminId));
     }
 
     @Transactional

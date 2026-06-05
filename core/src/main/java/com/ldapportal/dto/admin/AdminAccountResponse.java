@@ -19,7 +19,12 @@ public record AdminAccountResponse(
         boolean active,
         Instant lastLoginAt,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        // ── Write-only secret presence (§4.3) ───────────────────────────────
+        // The password hash is never returned; this lets an idempotent
+        // applier tell whether a LOCAL account already has a password set
+        // (so it can omit it on update) without exposing the credential.
+        boolean passwordSet) {
 
     public static AdminAccountResponse from(Account a) {
         return new AdminAccountResponse(
@@ -33,6 +38,7 @@ public record AdminAccountResponse(
                 a.isActive(),
                 a.getLastLoginAt(),
                 a.getCreatedAt(),
-                a.getUpdatedAt());
+                a.getUpdatedAt(),
+                a.getPasswordHash() != null && !a.getPasswordHash().isBlank());
     }
 }

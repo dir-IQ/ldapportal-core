@@ -3,6 +3,7 @@ package com.ldapportal.service;
 
 import com.ldapportal.dto.admin.AdminAccountRequest;
 import com.ldapportal.dto.admin.AdminAccountResponse;
+import com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest;
 
 import com.ldapportal.dto.admin.FeaturePermissionRequest;
 import com.ldapportal.dto.admin.ProfileRoleRequest;
@@ -359,6 +360,80 @@ class AdminManagementServiceTest {
         verify(featureRepo, never()).save(any());
     }
 
+    // ── upsertByUsername (IaC idempotent upsert) ─────────────────────────────
+
+    @Test
+    void upsertByUsername_pathBodyMismatch_throws() {
+        var req = upsertReq("alice", List.of(), List.of());
+
+        assertThatThrownBy(() -> service.upsertByUsername("bob", req, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must match");
+        verifyNoInteractions(accountRepo);
+    }
+
+    @Test
+    void upsertByUsername_nonAdminRole_throws() {
+        var account = new AdminAccountRequest("root", null, null,
+                AccountRole.SUPERADMIN, AccountType.LOCAL, null, null, true);
+        var req = new CreateAdminWithPermissionsRequest(account, List.of(), List.of());
+
+        assertThatThrownBy(() -> service.upsertByUsername("root", req, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("ADMIN accounts only");
+    }
+
+    @Test
+    void upsertByUsername_newUsername_createsAdmin() {
+        when(accountRepo.findByUsername("alice")).thenReturn(Optional.empty());
+        when(accountRepo.existsByUsername("alice")).thenReturn(false);
+        Account saved = adminAccount("alice");
+        when(accountRepo.save(any())).thenReturn(saved);
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(saved));
+
+        var outcome = service.upsertByUsername("alice", upsertReq("alice", List.of(), List.of()), null);
+
+        assertThat(outcome.created()).isTrue();
+        assertThat(outcome.response().username()).isEqualTo("alice");
+    }
+
+    @Test
+    void upsertByUsername_existingAdmin_updatesAndFullReplacesRoles() {
+        Account existing = adminAccount("alice");
+        when(accountRepo.findByUsername("alice")).thenReturn(Optional.of(existing));
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(existing));
+        when(accountRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // An existing profile role the request does NOT declare → must be removed.
+        UUID staleProfileId = UUID.randomUUID();
+        AdminProfileRole stale = new AdminProfileRole();
+        ProvisioningProfile staleProfile = new ProvisioningProfile();
+        staleProfile.setId(staleProfileId);
+        stale.setProfile(staleProfile);
+        when(profileRoleRepo.findAllByAdminAccountId(adminId)).thenReturn(List.of(stale));
+
+        var outcome = service.upsertByUsername("alice", upsertReq("alice", List.of(), List.of()), null);
+
+        assertThat(outcome.created()).isFalse();
+        verify(profileRoleRepo).deleteByAdminAccountIdAndProfileId(adminId, staleProfileId);
+        // Full-replace of feature overrides wipes the existing set.
+        verify(featureRepo).deleteAllByAdminAccountId(adminId);
+    }
+
+    @Test
+    void upsertByUsername_existingNonAdmin_throwsConflict() {
+        Account superadmin = adminAccount("root");
+        superadmin.setRole(AccountRole.SUPERADMIN);
+        when(accountRepo.findByUsername("root")).thenReturn(Optional.of(superadmin));
+
+        var account = new AdminAccountRequest("root", null, null,
+                AccountRole.ADMIN, AccountType.LOCAL, null, null, true);
+        var req = new CreateAdminWithPermissionsRequest(account, List.of(), List.of());
+
+        assertThatThrownBy(() -> service.upsertByUsername("root", req, null))
+                .isInstanceOf(ConflictException.class);
+    }
+
     // ── setFeaturePermissions duplicate detection ────────────────────────────
 
     @Test
@@ -398,6 +473,14 @@ class AdminManagementServiceTest {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private CreateAdminWithPermissionsRequest upsertReq(
+            String username, List<ProfileRoleRequest> roles, List<FeaturePermissionRequest> features) {
+        return new CreateAdminWithPermissionsRequest(
+                new AdminAccountRequest(username, "Display", username + "@e.com",
+                        AccountRole.ADMIN, AccountType.LOCAL, null, null, true),
+                roles, features);
+    }
 
     private Account adminAccount(String username) {
         Account a = new Account();

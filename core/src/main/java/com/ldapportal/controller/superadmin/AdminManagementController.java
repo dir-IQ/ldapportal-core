@@ -35,6 +35,7 @@ import java.util.UUID;
  *   POST   /api/v1/superadmin/admins                                       — create
  *   GET    /api/v1/superadmin/admins/{id}                                  — get
  *   PUT    /api/v1/superadmin/admins/{id}                                  — update
+ *   PUT    /api/v1/superadmin/admins/by-username/{username}               — idempotent upsert (IaC)
  *   DELETE /api/v1/superadmin/admins/{id}                                  — delete
  *   GET    /api/v1/superadmin/admins/{id}/permissions                      — all dims
  *   PUT    /api/v1/superadmin/admins/{id}/permissions/profile-roles        — dim 1+2
@@ -92,6 +93,26 @@ public class AdminManagementController {
                                        @org.springframework.security.core.annotation.AuthenticationPrincipal
                                                com.ldapportal.auth.AuthPrincipal principal) {
         return service.updateAdmin(adminId, req, principal);
+    }
+
+    /**
+     * Idempotent create-or-update of an admin and its full permission set,
+     * keyed by the stable username. Re-applying the same declaration converges
+     * to identical state — profile roles and feature overrides are replaced to
+     * match the body. Returns 201 on the first apply (created), 200 thereafter
+     * (updated in place). Scoped to ADMIN-role accounts.
+     */
+    @PutMapping("/by-username/{username}")
+    public ResponseEntity<AdminAccountResponse> upsertByUsername(
+            @PathVariable String username,
+            @Valid @RequestBody com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+                    com.ldapportal.auth.AuthPrincipal principal) {
+        AdminManagementService.AdminUpsertOutcome outcome =
+                service.upsertByUsername(username, req, principal);
+        return ResponseEntity
+                .status(outcome.created() ? HttpStatus.CREATED : HttpStatus.OK)
+                .body(outcome.response());
     }
 
     @DeleteMapping("/{adminId}")

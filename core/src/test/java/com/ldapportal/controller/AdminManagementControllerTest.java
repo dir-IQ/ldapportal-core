@@ -6,6 +6,7 @@ import com.ldapportal.controller.superadmin.AdminManagementController;
 import com.ldapportal.dto.admin.AdminAccountRequest;
 import com.ldapportal.dto.admin.AdminAccountResponse;
 import com.ldapportal.dto.admin.AdminPermissionsResponse;
+import com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest;
 import com.ldapportal.dto.admin.ProfileRoleRequest;
 import com.ldapportal.dto.admin.ProfileRoleResponse;
 import com.ldapportal.entity.enums.AccountRole;
@@ -53,13 +54,17 @@ class AdminManagementControllerTest extends BaseControllerTest {
         return new AdminAccountResponse(
                 ADMIN_ID, "testadmin", "Test Admin", "testadmin@example.com",
                 AccountRole.ADMIN, AccountType.LOCAL, null, true,
-                null, Instant.now(), Instant.now());
+                null, Instant.now(), Instant.now(), true);
     }
 
     AdminAccountRequest sampleRequest() {
         return new AdminAccountRequest(
                 "testadmin", "Test Admin", "testadmin@example.com",
                 AccountRole.ADMIN, AccountType.LOCAL, "password123", null, true);
+    }
+
+    CreateAdminWithPermissionsRequest sampleUpsertRequest() {
+        return new CreateAdminWithPermissionsRequest(sampleRequest(), List.of(), List.of());
     }
 
     @Test
@@ -88,6 +93,57 @@ class AdminManagementControllerTest extends BaseControllerTest {
                         .content(objectMapper.writeValueAsString(sampleRequest())))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.username").value("testadmin"));
+    }
+
+    // ── PUT /by-username/{username} (idempotent upsert) ─────────────────────────
+
+    @Test
+    void upsertByUsername_newAdmin_returns201() throws Exception {
+        given(service.upsertByUsername(eq("testadmin"), any(), any()))
+                .willReturn(new AdminManagementService.AdminUpsertOutcome(sampleResponse(), true));
+
+        mockMvc.perform(put(BASE_URL + "/by-username/testadmin")
+                        .with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(sampleUpsertRequest())))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.username").value("testadmin"))
+                .andExpect(jsonPath("$.passwordSet").value(true));
+    }
+
+    @Test
+    void upsertByUsername_existingAdmin_returns200() throws Exception {
+        given(service.upsertByUsername(eq("testadmin"), any(), any()))
+                .willReturn(new AdminManagementService.AdminUpsertOutcome(sampleResponse(), false));
+
+        mockMvc.perform(put(BASE_URL + "/by-username/testadmin")
+                        .with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(sampleUpsertRequest())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.username").value("testadmin"));
+    }
+
+    @Test
+    void upsertByUsername_pathBodyMismatch_returns400() throws Exception {
+        given(service.upsertByUsername(eq("other"), any(), any()))
+                .willThrow(new IllegalArgumentException(
+                        "username in the path must match the account username in the body"));
+
+        mockMvc.perform(put(BASE_URL + "/by-username/other")
+                        .with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(sampleUpsertRequest())))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void upsertByUsername_admin_returns403() throws Exception {
+        mockMvc.perform(put(BASE_URL + "/by-username/testadmin")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(sampleUpsertRequest())))
+                .andExpect(status().isForbidden());
     }
 
     @Test
