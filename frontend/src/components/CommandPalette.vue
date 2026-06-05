@@ -43,10 +43,25 @@
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+
+interface Command {
+  label: string
+  path: string
+  section?: string
+  icon?: string
+}
+
+/** The custom route-meta flags this palette reads to hide gated routes. */
+interface RouteMetaFlags {
+  requiresSuperadmin?: boolean
+  requiresCompliance?: boolean
+  requiresAlerting?: boolean
+  requiresHr?: boolean
+}
 
 const router = useRouter()
 const route = useRoute()
@@ -55,10 +70,10 @@ const auth = useAuthStore()
 const open = ref(false)
 const query = ref('')
 const activeIndex = ref(0)
-const inputRef = ref(null)
+const inputRef = ref<HTMLInputElement | null>(null)
 
 // Label map for route path segments
-const LABEL_MAP = {
+const LABEL_MAP: Record<string, string> = {
   'dashboard': 'Dashboard',
   'admins': 'Application Accounts',
   'directories': 'Directory Connections',
@@ -83,14 +98,14 @@ const LABEL_MAP = {
   'users': 'Users',
   'groups': 'Groups',
   'audit': 'Audit Log',
-  'bulk': 'Bulk Import/Export',
+  'bulk': 'Bulk Operations',
   'approvals': 'Approvals',
   'notifications': 'Notifications',
   'cross-campaign-report': 'Cross-Campaign Report',
 }
 
 // Section map for grouping in command palette
-const SECTION_MAP = {
+const SECTION_MAP: Record<string, string> = {
   'superadmin/dashboard': 'Overview',
   'superadmin/directory-browser': 'Explore',
   'superadmin/directory-search': 'Explore',
@@ -102,10 +117,10 @@ const SECTION_MAP = {
 }
 
 // Auto-derive commands from the router
-const commands = computed(() => {
-  const dirId = route.params.dirId || ''
-  const items = []
-  const seen = new Set()
+const commands = computed<Command[]>(() => {
+  const dirId = (route.params.dirId as string) || ''
+  const items: Command[] = []
+  const seen = new Set<string>()
 
   // Walk all resolved routes in the app shell (children of '/')
   const appRoutes = router.getRoutes().filter(r => {
@@ -122,18 +137,19 @@ const commands = computed(() => {
   for (const r of appRoutes) {
     let path = r.path
 
+    const meta = r.meta as RouteMetaFlags
     // Skip superadmin routes for non-superadmins
     if (path.includes('superadmin') && !auth.isSuperadmin) continue
-    if (r.meta?.requiresSuperadmin && !auth.isSuperadmin) continue
+    if (meta.requiresSuperadmin && !auth.isSuperadmin) continue
     // Skip compliance-gated routes (access reviews, campaign templates,
     // cross-campaign reports) for deployments without the GOVERNANCE
     // entitlement — otherwise they show up in the palette only to bounce
     // back to /dashboard via the route guard, which reads as broken UX.
-    if (r.meta?.requiresCompliance && !auth.isComplianceEnabled) continue
+    if (meta.requiresCompliance && !auth.isComplianceEnabled) continue
     // Same idea for the ALERTING entitlement.
-    if (r.meta?.requiresAlerting && !auth.isAlertingEnabled) continue
+    if (meta.requiresAlerting && !auth.isAlertingEnabled) continue
     // ...and HR_SYNC.
-    if (r.meta?.requiresHr && !auth.isHrEnabled) continue
+    if (meta.requiresHr && !auth.isHrEnabled) continue
 
     // For directory-scoped routes, substitute the current dirId
     if (path.includes(':dirId')) {
@@ -197,12 +213,12 @@ function selectCurrent() {
   if (item) go(item)
 }
 
-function go(item) {
+function go(item: Command) {
   open.value = false
   router.push(item.path)
 }
 
-function handleKeydown(e) {
+function handleKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
     e.preventDefault()
     open.value = !open.value
