@@ -41,12 +41,13 @@ vi.mock('@/api/playbooks', () => ({
 }))
 
 import UserListView from './UserListView.vue'
+import * as usersApi from '@/api/users'
 
 const stubs = {
   LdapFilterBuilder: true,
   AppModal: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' },
   FormField: true, ConfirmDialog: true, UserForm: true, CopyButton: true,
-  EntryTimeline: true, PasswordPolicyStatus: true,
+  EntryTimeline: true, PasswordPolicyStatus: true, GroupChips: true,
   // Render the toolbar slot and the per-row actions slot so gating is visible.
   ResultsTable: {
     props: ['rows', 'columns', 'selectedKeys', 'rowKey', 'tableKey', 'selectable', 'emptyText'],
@@ -112,5 +113,13 @@ describe('UserListView feature gating', () => {
     const t = texts(wrapper)
     expect(t).not.toContain('+ New User')
     expect(t.join(' ')).toContain('Export CSV')
+  })
+
+  it('requests memberOf so the Groups column can populate', async () => {
+    await mountWith(ALL)
+    expect(usersApi.searchUsers).toHaveBeenCalledWith(
+      'd1',
+      expect.objectContaining({ attributes: '*,memberOf' }),
+    )
   })
 })
