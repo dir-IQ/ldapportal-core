@@ -1110,17 +1110,10 @@ watch(() => profile.value.selfRegistrationAllowed, (allowed) => {
   if (!allowed && layoutMode.value === 'registration') layoutMode.value = 'admin'
 })
 
-// Fixed modal height based on attribute count so switching tabs doesn't resize.
-// The floor is sized so the General panel — the tallest in the initial
-// 'new profile' state (name, description, directory, target OU DN, object
-// classes, flags), where attributeConfigs is still empty — fits without a
-// scrollbar. Operators can drag-resize from there. Capped at 88vh.
-const modalHeight = computed(() => {
-  const count = profile.value.attributeConfigs.length
-  if (count <= 6) return '78vh'
-  if (count <= 12) return '84vh'
-  return '90vh'
-})
+// Fixed initial modal height so switching tabs doesn't resize the dialog.
+// Sized to fit the General panel in the 'new profile' state without a
+// scrollbar; operators can drag-resize from there.
+const modalHeight = '685px'
 
 const modalTabs = [
   { id: 'general', label: 'General' },
