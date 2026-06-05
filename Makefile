@@ -13,11 +13,13 @@
 #   make package-backend     # Just refresh the JAR (host-side `mvn package`).
 #   make redeploy-fast       # Same as redeploy but with Docker layer cache.
 #   make redeploy-frontend   # Only rebuild & redeploy the frontend container.
+#   make redeploy-app        # Rebuild & redeploy just app + frontend.
+#   make redeploy-minimal    # Tear down, bring back only app/frontend/db/oud1 pair.
 #   make logs                # Tail the app container.
 #   make down                # Stop & remove containers (keeps volumes).
 #   make db-pull-from-fly    # Copy a Fly.io Postgres DB into the local stack.
 
-.PHONY: redeploy redeploy-fast redeploy-frontend package-backend logs down help db-pull-from-fly
+.PHONY: redeploy redeploy-fast redeploy-frontend redeploy-app redeploy-minimal package-backend logs down help db-pull-from-fly
 
 # Windows shell handling. GNU Make on Windows runs recipes through cmd.exe and
 # ignores the environment's SHELL — so even launched from Git Bash, recipes run
@@ -69,6 +71,36 @@ redeploy-fast: package-backend  ## Cache-friendly redeploy. Falls back to 'redep
 redeploy-frontend:  ## Rebuild + recreate just the frontend container.
 	docker compose build --no-cache frontend
 	docker compose up -d --force-recreate frontend
+
+# App + frontend redeploy. Refreshes the JAR, rebuilds both images
+# (no cache) and recreates just those two containers — leaving the
+# database and directory containers running. Use when you've changed
+# backend and/or frontend code but don't want to disturb the rest of
+# the stack.
+redeploy-app: package-backend  ## Stop, rebuild & restart just the app + frontend containers.
+	@echo "==> Stopping app + frontend..."
+	docker compose stop app frontend
+	@echo "==> Building app + frontend images (no cache)..."
+	docker compose build --no-cache app frontend
+	@echo "==> Starting app + frontend..."
+	docker compose up -d --force-recreate app frontend
+	@echo
+	@echo "==> Done. Hard-reload your browser (Cmd/Ctrl+Shift+R) to flush index.html."
+
+# Minimal stack. Tears down every running container (keeping volumes),
+# then brings back only the essentials: the app, the frontend, the
+# database and the OUD1 primary/alternate directory pair — nothing for
+# the other vendors (OUD2/3, OpenLDAP, AD). Use when you only need the
+# OUD1 topology up and want to free the resources the rest consume.
+# This does NOT rebuild images; pair with redeploy-app first if you've
+# changed code.
+redeploy-minimal:  ## Tear down all, bring back only app/frontend/db/oud1 primary+alternate.
+	@echo "==> Stopping all containers (keeping volumes)..."
+	docker compose down
+	@echo "==> Starting minimal stack (app, frontend, db, oud1-primary, oud1-alternate)..."
+	docker compose up -d app frontend db oud1-primary oud1-alternate
+	@echo
+	@echo "==> Done. Minimal OUD1 stack is up. Tail logs: make logs"
 
 # Rebuild the runnable JAR that the backend Dockerfile COPYs from.
 # Skips tests so this stays fast — run the test suite separately when
