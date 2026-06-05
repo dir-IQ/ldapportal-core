@@ -11,6 +11,7 @@ import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.addons.isva.repository.VendorIntegrationIsvaConfigRepository;
 import com.ldapportal.addons.isva.service.IsvaConfigProbeService;
+import com.ldapportal.addons.isva.service.IsvaConfigService;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.entity.DirectoryConnection;
@@ -47,13 +48,17 @@ class IsvaConfigControllerTest {
     @Mock private DirectoryConnectionRepository directoryRepo;
     @Mock private IsvaConfigProbeService probeService;
 
+    private IsvaConfigService service;
     private IsvaConfigController controller;
+    private IsvaConfigBySlugController bySlugController;
     private UUID directoryId;
     private AuthPrincipal principal;
 
     @BeforeEach
     void setUp() {
-        controller = new IsvaConfigController(configRepo, directoryRepo, probeService);
+        service = new IsvaConfigService(configRepo, directoryRepo, probeService);
+        controller = new IsvaConfigController(service);
+        bySlugController = new IsvaConfigBySlugController(service);
         directoryId = UUID.randomUUID();
         principal = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "alice");
         lenient().when(directoryRepo.existsById(directoryId)).thenReturn(true);
@@ -252,5 +257,60 @@ class IsvaConfigControllerTest {
         assertThatThrownBy(() -> controller.probe(directoryId))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("Directory not found");
+    }
+
+    // ── by-slug (IaC) ─────────────────────────────────────────────────
+
+    @Test
+    void getBySlug_resolvesSlug_andReturnsConfig() {
+        DirectoryConnection dir = new DirectoryConnection();
+        dir.setId(directoryId);
+        when(directoryRepo.findBySlug("corp-ldap")).thenReturn(Optional.of(dir));
+
+        VendorIntegrationIsvaConfig cfg = new VendorIntegrationIsvaConfig();
+        cfg.setDirectoryConnectionId(directoryId);
+        cfg.setEnabled(true);
+        cfg.setTopologyMode(IsvaTopologyMode.INLINE);
+        when(configRepo.findById(directoryId)).thenReturn(Optional.of(cfg));
+
+        IsvaConfigDto body = bySlugController.get("corp-ldap").getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.enabled()).isTrue();
+    }
+
+    @Test
+    void upsertBySlug_resolvesSlug_andUpserts() {
+        DirectoryConnection dir = new DirectoryConnection();
+        dir.setId(directoryId);
+        when(directoryRepo.findBySlug("corp-ldap")).thenReturn(Optional.of(dir));
+        when(configRepo.findById(directoryId)).thenReturn(Optional.empty());
+        when(configRepo.save(any(VendorIntegrationIsvaConfig.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
+                true, IsvaTopologyMode.INLINE, "Default",
+                100, IsvaDeletePolicy.DISABLE, true,
+                null, null, null, null);
+
+        IsvaConfigDto body = bySlugController.upsert("corp-ldap", principal, req).getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.enabled()).isTrue();
+        assertThat(body.updatedBy()).isEqualTo("alice");
+
+        ArgumentCaptor<VendorIntegrationIsvaConfig> captor =
+                ArgumentCaptor.forClass(VendorIntegrationIsvaConfig.class);
+        verify(configRepo).save(captor.capture());
+        assertThat(captor.getValue().getDirectoryConnectionId()).isEqualTo(directoryId);
+    }
+
+    @Test
+    void bySlug_unknownSlug_404() {
+        when(directoryRepo.findBySlug("nope")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> bySlugController.get("nope"))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessageContaining("slug [nope]");
     }
 }
