@@ -255,7 +255,7 @@ class LdifPreviewServiceTest {
         LdifPreviewSummary s = preview(person("zoe", "Z"), ConflictHandling.SKIP);
         UUID id = UUID.fromString(s.previewId());
 
-        LdifImportResult result = previewService.apply(id, owner, dc, false);
+        LdifImportResult result = previewService.apply(id, owner, dc, false, java.util.Set.of());
         assertThat(result.added()).isEqualTo(1);
         assertThat(server.getEntry("uid=zoe,ou=people," + BASE)).isNotNull();
 
