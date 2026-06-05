@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+# ─────────────────────────────────────────────────────────────────────────────
+# Declarative bootstrap config, reconciled at startup when
+# BOOTSTRAP_CONFIG_FILE points at this file (Phase 2 of the IaC plan).
+#
+#   BOOTSTRAP_CONFIG_FILE=/etc/ldapportal/bootstrap-config.yml
+#
+# Applied through the SAME idempotent upserts as the REST API, so it's safe to
+# ship in the image / GitOps repo and let it reconcile on every boot. It is
+# create/update only — it never deletes resources absent from the file.
+#
+# ${ENV_VAR} placeholders are resolved against the environment at load time, so
+# secrets stay out of this (Git-tracked) file. An unresolved placeholder, an
+# unreadable file, or any validation error aborts startup (fail-fast).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Directories (keyed by slug; applied first) ───────────────────────────────
+directories:
+  - slug: corp-ldap
+    displayName: "Corp OpenLDAP"
+    directoryType: GENERIC
+    host: ldap.corp.example.com
+    port: 636
+    sslMode: LDAPS
+    trustAllCerts: false
+    bindDn: "cn=svc-ldapportal,ou=Service Accounts,dc=corp,dc=example,dc=com"
+    bindPassword: "${CORP_BIND_PW}"          # supplied via env; preserved on later edits
+    baseDn: "dc=corp,dc=example,dc=com"
+    pagingSize: 500
+    poolMinSize: 2
+    poolMaxSize: 20
+    poolConnectTimeoutSeconds: 10
+    poolResponseTimeoutSeconds: 30
+    enabled: true
+    userBaseDns:
+      - { dn: "ou=People,dc=corp,dc=example,dc=com", displayOrder: 0 }
+    groupBaseDns:
+      - { dn: "ou=Groups,dc=corp,dc=example,dc=com", displayOrder: 0 }
+
+# ── Admin accounts (keyed by account.username; full-replace roles/features) ───
+admins:
+  - account:
+      username: jdoe
+      role: ADMIN
+      authType: LOCAL
+      displayName: "Jane Doe"
+      email: jane.doe@example.com
+      active: true
+    profileRoles: []          # reference provisioning profiles by UUID, e.g.:
+                              #   - { profileId: "<uuid>", baseRole: ADMIN }
+    featurePermissions:
+      - { featureKey: "user.create",         enabled: true }
+      - { featureKey: "user.reset_password", enabled: true }
+
+# ── ISVA vendor config (applied by the addon contributor; ignored on community)
+# Keyed by the directory slug above; the directory is created first.
+isva:
+  - directorySlug: corp-ldap
+    config:
+      enabled: true
+      topologyMode: INLINE
+      secAuthority: Default
+      defaultValidUntilYears: 100
+      deletePolicy: DISABLE
+      requireSecGroup: true

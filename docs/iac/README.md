@@ -254,3 +254,40 @@ Run a single resource family with `--tags directories|admins|isva|tokens`.
   200, compares the response to the request for the fields it manages. For
   exact drift detection you can GET first and diff (and pass the ETag as
   `If-Match`); §4 covers the mechanics.
+
+---
+
+## 9. Declarative bootstrap file (startup reconcile)
+
+For GitOps / air-gapped / config-baked-into-the-image installs where running
+Ansible against the API is awkward, the server can reconcile a declarative
+config file **at startup** — no external driver. It uses the same idempotent
+upserts under the hood, so it composes with (and is safe to run alongside) the
+Ansible path.
+
+Point `BOOTSTRAP_CONFIG_FILE` at a readable YAML file:
+
+```
+BOOTSTRAP_CONFIG_FILE=/etc/ldapportal/bootstrap-config.yml
+```
+
+Unset (the default) disables it entirely. When set, on every boot the server:
+
+1. reads the file and resolves `${ENV_VAR}` / `${VAR:default}` placeholders
+   against the environment (so secrets stay out of the Git-tracked file);
+2. parses and **validates the whole file up front** — a malformed config, an
+   unresolved placeholder, or an unreadable file **aborts startup** (fail-fast,
+   like a missing `ENCRYPTION_KEY`);
+3. upserts the `directories` then `admins` sections through the same idempotent
+   service paths as the REST API;
+4. hands the parsed config to each addon contributor (the ISVA addon applies the
+   `isva` section; on a community build with no addon, that section is ignored).
+
+It is **create/update only** — it never deletes resources absent from the file;
+manage deletions through the API / Ansible. Re-running converges and writes
+nothing when nothing changed. See
+[`examples/bootstrap-config.example.yml`](examples/bootstrap-config.example.yml)
+for the file shape (it mirrors the REST request bodies in §6).
+
+The file format and the Ansible vars in §7 are intentionally close, so the two
+delivery mechanisms share the same mental model.

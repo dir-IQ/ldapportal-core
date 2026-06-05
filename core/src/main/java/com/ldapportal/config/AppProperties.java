@@ -54,6 +54,14 @@ public class AppProperties {
         @Valid
         private Superadmin superadmin = new Superadmin();
 
+        /**
+         * Optional path to a declarative bootstrap config file (YAML) reconciled
+         * at startup by {@code BootstrapConfigReconciler}. Loaded from the
+         * {@code BOOTSTRAP_CONFIG_FILE} env var; unset/blank disables it (the
+         * default), so existing deployments are unaffected.
+         */
+        private String configFile;
+
         @Getter
         @Setter
         public static class Superadmin {
