@@ -13,6 +13,7 @@ import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdapUserService;
 import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.util.CsvUtils;
+import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.RDN;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
@@ -332,6 +333,66 @@ public class BulkUserService {
 
         writer.flush();
         return baos.toByteArray();
+    }
+
+    // ── Delete ──────────────────────────────────────────────────────────────────
+
+    /** One parsed delete row: the source row number and the raw value pulled
+     *  from the configured column (DN string in DN mode, key value otherwise). */
+    public record RawDeleteRow(int rowNumber, String value) {}
+
+    /**
+     * Parses the delete CSV and pulls one value per data row from
+     * {@code valueColumn} (header match, case-insensitive). When the named
+     * column isn't present but the CSV has exactly one column, that single
+     * column is used — so a bare list of DNs/uids with no recognisable header
+     * still works. Rows where no value can be located carry a {@code null}
+     * value and are classified INVALID downstream.
+     */
+    public List<RawDeleteRow> parseDeleteRows(InputStream csvInput,
+                                              String valueColumn,
+                                              boolean skipHeaderRow) throws IOException {
+        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow);
+        List<RawDeleteRow> out = new ArrayList<>();
+        int rowNum = 0;
+        for (Map<String, String> row : rows) {
+            rowNum++;
+            out.add(new RawDeleteRow(rowNum, pickColumn(row, valueColumn)));
+        }
+        return out;
+    }
+
+    private String pickColumn(Map<String, String> row, String valueColumn) {
+        for (Map.Entry<String, String> cell : row.entrySet()) {
+            if (cell.getKey() != null && cell.getKey().equalsIgnoreCase(valueColumn)) {
+                return cell.getValue();
+            }
+        }
+        // Fallback for a file with a single meaningful column (e.g. a bare list
+        // of DNs whose header doesn't match). CsvUtils appends a phantom
+        // trailing empty-named field to every row, so count only columns with a
+        // non-blank header; use the lone real one when there's exactly one.
+        List<String> realKeys = row.keySet().stream()
+                .filter(k -> k != null && !k.isBlank())
+                .toList();
+        if (realKeys.size() == 1) return row.get(realKeys.get(0));
+        return null;
+    }
+
+    /**
+     * Resolves a key-attribute value to candidate DNs via an equality search
+     * under {@code baseDn}. Capped at 2 results — the caller only needs to
+     * distinguish none / exactly-one / more-than-one. The value is wrapped in
+     * a {@link Filter} so RFC 4515 special characters can't break or inject
+     * into the filter. Requests no attributes ({@code 1.1}); only the DN matters.
+     */
+    public List<String> resolveDnsByKey(DirectoryConnection dc,
+                                        String keyAttribute,
+                                        String value,
+                                        String baseDn) {
+        String filter = Filter.createEqualityFilter(keyAttribute, value).toString();
+        return userService.searchUsers(dc, filter, baseDn, 2, "1.1")
+                .stream().map(LdapUser::getDn).toList();
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

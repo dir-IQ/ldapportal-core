@@ -39,6 +39,26 @@ export const importCsv = (dirId, file, request) => {
 export const exportCsv = (dirId, params) =>
   client.get(`/directories/${dirId}/users/export`, { params, responseType: 'blob' })
 
+// ── Bulk delete (users) ──────────────────────────────────────────────────────
+
+export const previewBulkDelete = (dirId, file, request) => {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('request', new Blob([JSON.stringify(request)], { type: 'application/json' }))
+  return client.post(`/directories/${dirId}/users/bulk-delete/preview`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
+export const bulkDelete = (dirId, file, request) => {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('request', new Blob([JSON.stringify(request)], { type: 'application/json' }))
+  return client.post(`/directories/${dirId}/users/bulk-delete`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
 // ── Group bulk import/export ─────────────────────────────────────────────────
 
 export const previewGroupCsv = (dirId, file, request, memberAttribute = 'member', objectClass = 'groupOfNames') => {

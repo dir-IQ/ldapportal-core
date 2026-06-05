@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <PageContainer>
-    <h1 class="text-2xl font-bold text-gray-900 mb-4">Bulk Import / Export</h1>
-    <p class="text-sm text-gray-500 mt-1">Import and export users and groups via CSV</p>
+    <h1 class="text-2xl font-bold text-gray-900 mb-4">Bulk Operations</h1>
+    <p class="text-sm text-gray-500 mt-1">Import, export, and delete users and groups via CSV</p>
 
     <!-- Entity type selector -->
     <div class="flex gap-2 mb-4">
@@ -29,6 +29,13 @@
         class="px-5 py-2.5 text-sm font-medium -mb-px"
         :class="activeTab === 'export' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-700'">
         Export
+      </button>
+      <!-- Delete is users-only and entitlement-gated; the destructive verb
+           reads in red so it's distinct from the Import/Export tabs. -->
+      <button v-if="entityType === 'users' && canBulkDelete" @click="activeTab = 'delete'"
+        class="px-5 py-2.5 text-sm font-medium -mb-px"
+        :class="activeTab === 'delete' ? 'border-b-2 border-red-600 text-red-600' : 'text-gray-500 hover:text-red-600'">
+        Delete
       </button>
     </div>
 
@@ -219,6 +226,12 @@
         </button>
       </div>
     </section>
+
+    <!-- Delete tab — Users -->
+    <BulkDeleteSection
+      v-if="activeTab === 'delete' && entityType === 'users' && canBulkDelete"
+      :dir-id="dirId"
+    />
 
     <!-- Import tab — Groups -->
     <section v-if="activeTab === 'import' && entityType === 'groups'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
@@ -464,8 +477,8 @@
   </PageContainer>
 </template>
 
-<script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+<script setup lang="ts">
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
@@ -484,37 +497,90 @@ import FormField from '@/components/FormField.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import AppModal from '@/components/AppModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import BulkDeleteSection from './BulkDeleteSection.vue'
+
+interface TemplateEntry {
+  csvColumn: string
+  ldapAttribute: string
+  ignored: boolean
+  _required?: boolean
+}
+interface CsvTemplate {
+  id: string
+  name: string
+  objectClass?: string
+  targetKeyAttribute: string
+  conflictHandling: string
+  skipHeaderRow?: boolean
+  entries?: TemplateEntry[]
+}
+interface ImportForm { parentDn: string }
+interface ExportForm { filter: string, baseDn: string, attributes: string }
+interface GroupImportForm { parentDn: string, objectClass: string, conflictHandling: string }
+interface GroupExportForm { filter: string, baseDn: string, attributes: string, memberAttribute: string }
+interface TemplateForm {
+  name: string
+  objectClasses: string[]
+  targetKeyAttribute: string
+  conflictHandling: string
+  skipHeaderRow: boolean
+  entries: TemplateEntry[]
+}
+interface PreviewRow {
+  rowNumber: number
+  computedDn?: string
+  attributes?: Record<string, string>
+  missingRequired?: string[]
+}
+interface PreviewResult { totalRows: number, rows: PreviewRow[] }
+interface ImportRowResult { rowNumber: number, dn?: string, status: string, message?: string }
+interface ImportResult {
+  totalRows: number
+  created: number
+  updated: number
+  skipped: number
+  errors: number
+  rows?: ImportRowResult[]
+  approvalId?: string
+}
+type ApiError = { response?: { data?: { detail?: string }, status?: number }, message?: string }
+
+/** Extracts a user-facing message from an axios-style error of unknown type. */
+function errMsg(e: unknown): string {
+  const err = e as ApiError
+  return err.response?.data?.detail || err.message || 'Request failed'
+}
 
 const route = useRoute()
 const notif = useNotificationStore()
 const confirm = useConfirm()
-const dirId = route.params.dirId
+const dirId = route.params.dirId as string
 
-const entityType   = ref('users')
-const activeTab    = ref('import')
-const importing    = ref(false)
-const previewing   = ref(false)
-const exporting    = ref(false)
-const importFile   = ref(null)
-const importResult = ref(null)
-const previewResult = ref(null)
+const entityType    = ref<'users' | 'groups'>('users')
+const activeTab     = ref<'import' | 'export' | 'delete'>('import')
+const importing     = ref(false)
+const previewing    = ref(false)
+const exporting     = ref(false)
+const importFile    = ref<File | null>(null)
+const importResult  = ref<ImportResult | null>(null)
+const previewResult = ref<PreviewResult | null>(null)
 
-const importForm = ref({ parentDn: '' })
-const exportForm = ref({ filter: '', baseDn: '', attributes: 'cn,mail,uid' })
+const importForm = ref<ImportForm>({ parentDn: '' })
+const exportForm = ref<ExportForm>({ filter: '', baseDn: '', attributes: 'cn,mail,uid' })
 
 // ── Group bulk state ─────────────────────────────────────────────────────────
 const groupImporting    = ref(false)
 const groupPreviewing   = ref(false)
 const groupExporting    = ref(false)
-const groupImportFile   = ref(null)
-const groupImportResult = ref(null)
-const groupPreviewResult = ref(null)
-const groupImportForm = ref({
+const groupImportFile   = ref<File | null>(null)
+const groupImportResult = ref<ImportResult | null>(null)
+const groupPreviewResult = ref<PreviewResult | null>(null)
+const groupImportForm = ref<GroupImportForm>({
   parentDn: '',
   objectClass: 'groupOfNames',
   conflictHandling: 'SKIP',
 })
-const groupExportForm = ref({
+const groupExportForm = ref<GroupExportForm>({
   filter: '',
   baseDn: '',
   attributes: 'cn,description,owner',
@@ -524,10 +590,10 @@ const groupExportForm = ref({
 // ── Template actions dropdown ─────────────────────────────────────────────────
 
 const showTemplateMenu = ref(false)
-const menuRef = ref(null)
+const menuRef = ref<HTMLElement | null>(null)
 
-function onClickOutside(e) {
-  if (menuRef.value && !menuRef.value.contains(e.target)) {
+function onClickOutside(e: MouseEvent) {
+  if (menuRef.value && !menuRef.value.contains(e.target as Node)) {
     showTemplateMenu.value = false
   }
 }
@@ -546,7 +612,16 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
 // Superadmin keeps the full tree (empty array → DnPicker falls back
 // to its default "browse from directory base DN" behaviour).
 const auth = useAuthStore()
-const authorizedImportRoots = ref([])
+
+// Bulk delete is users-only and gated on the bulk.delete feature. When the
+// admin switches to Groups while on the Delete tab, fall back to Import so
+// the panel never renders blank.
+const canBulkDelete = computed(() => auth.hasFeature('bulk.delete'))
+watch(entityType, v => {
+  if (v === 'groups' && activeTab.value === 'delete') activeTab.value = 'import'
+})
+
+const authorizedImportRoots = ref<string[]>([])
 onMounted(async () => {
   if (auth.isSuperadmin) return
   try {
@@ -554,8 +629,8 @@ onMounted(async () => {
     // listProfiles already filters disabled per the previous
     // admin-picker fix; we additionally dedupe targetOuDn values
     // because multiple profiles may share an OU.
-    const uniq = new Set()
-    for (const p of data) {
+    const uniq = new Set<string>()
+    for (const p of data as Array<{ targetOuDn?: string }>) {
       if (p.targetOuDn) uniq.add(p.targetOuDn)
     }
     authorizedImportRoots.value = [...uniq]
@@ -564,7 +639,7 @@ onMounted(async () => {
   }
 })
 
-function menuAction(action) {
+function menuAction(action: string) {
   showTemplateMenu.value = false
   if (action === 'add') openCreateTemplate()
   else if (action === 'edit' && selectedTemplate.value) openEditTemplate(selectedTemplate.value)
@@ -574,22 +649,22 @@ function menuAction(action) {
 // ── Templates ─────────────────────────────────────────────────────────────────
 
 const templatesLoading    = ref(false)
-const templates           = ref([])
+const templates           = ref<CsvTemplate[]>([])
 const selectedTemplateId  = ref('')
 const showTemplateModal   = ref(false)
-const editTemplate        = ref(null)
+const editTemplate        = ref<CsvTemplate | null>(null)
 const templateSaving      = ref(false)
-const deleteTemplateTarget = ref(null)
-const templateForm = ref({
+const deleteTemplateTarget = ref<CsvTemplate | null>(null)
+const templateForm = ref<TemplateForm>({
   name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
   skipHeaderRow: true, entries: []
 })
 
 // ObjectClass picker state
-const objectClasses       = ref([])
+const objectClasses       = ref<string[]>([])
 const loadingOcAttrs      = ref(false)
-const selectedOcHighlight = ref(null)
-const availableOcHighlight = ref(null)
+const selectedOcHighlight = ref<string | null>(null)
+const availableOcHighlight = ref<string | null>(null)
 
 const availableObjectClasses = computed(() =>
   objectClasses.value.filter(oc => !templateForm.value.objectClasses.includes(oc))
@@ -652,12 +727,12 @@ const canSaveTemplate = computed(() => {
   return f.entries.filter(e => e._required).every(e => e.csvColumn && e.csvColumn.trim())
 })
 
-function conflictLabel(val) {
-  const map = { SKIP: 'Skip existing', OVERWRITE: 'Overwrite existing', PROMPT: 'Prompt (treat as skip)' }
+function conflictLabel(val: string) {
+  const map: Record<string, string> = { SKIP: 'Skip existing', OVERWRITE: 'Overwrite existing', PROMPT: 'Prompt (treat as skip)' }
   return map[val] || val
 }
 
-function formatAttrs(attrs) {
+function formatAttrs(attrs?: Record<string, string>) {
   if (!attrs) return ''
   return Object.entries(attrs).map(([k, v]) => `${k}=${v}`).join(', ')
 }
@@ -674,7 +749,8 @@ async function loadTemplates() {
 async function loadObjectClasses() {
   try {
     const { data } = await listObjectClasses(dirId)
-    objectClasses.value = data.map(oc => typeof oc === 'string' ? oc : oc.name)
+    objectClasses.value = (data as Array<string | { name: string }>)
+      .map(oc => typeof oc === 'string' ? oc : oc.name)
   } catch (e) { console.warn('Failed to load objectClasses:', e) }
 }
 
@@ -699,7 +775,7 @@ function openCreateTemplate() {
   showTemplateModal.value = true
 }
 
-function openEditTemplate(t) {
+function openEditTemplate(t: CsvTemplate) {
   editTemplate.value = t
   selectedOcHighlight.value = null
   availableOcHighlight.value = null
@@ -724,11 +800,11 @@ async function onObjectClassChange() {
   try {
     const { data } = await getObjectClassesBulk(dirId, ocs)
     // Preserve existing csvColumn values where the ldapAttribute still exists
-    const existingMap = {}
+    const existingMap: Record<string, string> = {}
     for (const e of templateForm.value.entries) {
       if (e.csvColumn) existingMap[e.ldapAttribute] = e.csvColumn
     }
-    const entries = []
+    const entries: TemplateEntry[] = []
     for (const attr of (data.required || [])) {
       if (attr.toLowerCase() === 'objectclass') continue
       entries.push({ csvColumn: existingMap[attr] || '', ldapAttribute: attr, ignored: false, _required: true })
@@ -739,13 +815,13 @@ async function onObjectClassChange() {
     }
     templateForm.value.entries = entries
   } catch (e) {
-    notif.error('Failed to load objectClass attributes: ' + (e.response?.data?.detail || e.message))
+    notif.error('Failed to load objectClass attributes: ' + errMsg(e))
   } finally {
     loadingOcAttrs.value = false
   }
 }
 
-function removeTemplateEntry(i) { templateForm.value.entries.splice(i, 1) }
+function removeTemplateEntry(i: number) { templateForm.value.entries.splice(i, 1) }
 
 async function saveTemplate() {
   templateSaving.value = true
@@ -770,13 +846,13 @@ async function saveTemplate() {
     showTemplateModal.value = false
     await loadTemplates()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     templateSaving.value = false
   }
 }
 
-function confirmDeleteTemplate(t) {
+function confirmDeleteTemplate(t: CsvTemplate | null) {
   if (!t) return
   deleteTemplateTarget.value = t
 }
@@ -784,6 +860,7 @@ function confirmDeleteTemplate(t) {
 async function doDeleteTemplate() {
   const target = deleteTemplateTarget.value
   deleteTemplateTarget.value = null
+  if (!target) return
   try {
     await deleteCsvTemplate(dirId, target.id)
     notif.success('Template deleted')
@@ -792,20 +869,20 @@ async function doDeleteTemplate() {
     }
     await loadTemplates()
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   }
 }
 
 // ── Import ────────────────────────────────────────────────────────────────────
 
-function onFileChange(e) {
-  importFile.value = e.target.files[0] || null
+function onFileChange(e: Event) {
+  importFile.value = (e.target as HTMLInputElement).files?.[0] ?? null
   previewResult.value = null
   importResult.value = null
 }
 
 function buildImportRequest() {
-  const t = selectedTemplate.value
+  const t = selectedTemplate.value!
   return {
     templateId: t.id,
     parentDn: importForm.value.parentDn,
@@ -839,7 +916,7 @@ async function doPreview() {
     const { data } = await previewCsv(dirId, importFile.value, buildImportRequest())
     previewResult.value = data
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     previewing.value = false
   }
@@ -858,13 +935,13 @@ async function doPreview() {
  * NO_SUCH_OBJECT errors — i.e. the pre-feature behaviour — rather than
  * silently blocking with a user-confusing "no static resource" message.
  */
-async function ensureParentDnExists(parentDn) {
+async function ensureParentDnExists(parentDn: string) {
   let data
   try {
     const resp = await checkContainerExists(dirId, parentDn)
     data = resp.data
   } catch (e) {
-    if (e.response?.status === 404) return true
+    if ((e as ApiError).response?.status === 404) return true
     throw e
   }
   if (data.exists) return true
@@ -884,7 +961,7 @@ async function doConfirmImport() {
   try {
     if (!(await ensureParentDnExists(importForm.value.parentDn))) return
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
     return
   }
   importing.value = true
@@ -902,7 +979,7 @@ async function doConfirmImport() {
       notif.success(`Import done: ${data.created} created, ${data.errors} errors`)
     }
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     importing.value = false
   }
@@ -921,7 +998,7 @@ async function doExport() {
     const { data } = await exportCsv(dirId, params)
     downloadBlob(data, 'users.csv')
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     exporting.value = false
   }
@@ -929,7 +1006,7 @@ async function doExport() {
 
 // ── Group import / export ────────────────────────────────────────────────────
 
-const MEMBER_ATTR_MAP = {
+const MEMBER_ATTR_MAP: Record<string, string> = {
   groupOfNames: 'member',
   groupOfUniqueNames: 'uniqueMember',
   posixGroup: 'memberUid',
@@ -943,8 +1020,8 @@ const canGroupImport = computed(() =>
   groupImportFile.value && groupImportForm.value.parentDn
 )
 
-function onGroupFileChange(e) {
-  groupImportFile.value = e.target.files[0] || null
+function onGroupFileChange(e: Event) {
+  groupImportFile.value = (e.target as HTMLInputElement).files?.[0] ?? null
   groupPreviewResult.value = null
   groupImportResult.value = null
 }
@@ -969,7 +1046,7 @@ async function doGroupPreview() {
       groupMemberAttr.value, groupImportForm.value.objectClass)
     groupPreviewResult.value = data
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     groupPreviewing.value = false
   }
@@ -980,7 +1057,7 @@ async function doGroupConfirmImport() {
   try {
     if (!(await ensureParentDnExists(groupImportForm.value.parentDn))) return
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
     return
   }
   groupImporting.value = true
@@ -995,7 +1072,7 @@ async function doGroupConfirmImport() {
     groupPreviewResult.value = null
     notif.success(`Import done: ${resp.data.created} created, ${resp.data.errors} errors`)
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     groupImporting.value = false
   }
@@ -1013,7 +1090,7 @@ async function doGroupExport() {
     const { data } = await exportGroupCsv(dirId, params)
     downloadBlob(data, 'groups.csv')
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    notif.error(errMsg(e))
   } finally {
     groupExporting.value = false
   }

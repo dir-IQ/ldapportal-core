@@ -5,6 +5,9 @@ import com.ldapportal.auth.ApiRateLimiter;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.DirectoryId;
 import com.ldapportal.auth.RequiresFeature;
+import com.ldapportal.dto.csv.BulkDeletePreviewResult;
+import com.ldapportal.dto.csv.BulkDeleteRequest;
+import com.ldapportal.dto.csv.BulkDeleteResult;
 import com.ldapportal.dto.csv.BulkImportPreviewResult;
 import com.ldapportal.dto.csv.BulkImportRequest;
 import com.ldapportal.dto.csv.BulkImportResult;
@@ -105,6 +108,45 @@ public class BulkUserController {
         }
 
         BulkImportResult result = service.bulkImportUsers(
+                directoryId, principal, file.getInputStream(), request);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Dry-run preview for a bulk delete. Resolves each CSV row to a target DN
+     * and classifies what would happen on commit — no LDAP writes occur. The
+     * frontend requires a successful preview before enabling the commit.
+     */
+    @PostMapping(value = "/bulk-delete/preview", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @RequiresFeature(FeatureKey.BULK_DELETE)
+    public ResponseEntity<BulkDeletePreviewResult> previewBulkDelete(
+            @DirectoryId @PathVariable UUID directoryId,
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @RequestPart("file") MultipartFile file,
+            @RequestPart("request") @Valid BulkDeleteRequest request) throws IOException {
+
+        rateLimiter.check(principal.username(), "bulk-delete-preview");
+        BulkDeletePreviewResult result = service.previewBulkDelete(
+                directoryId, principal, file.getInputStream(), request);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Commits a bulk delete. Unlike create/import there is no approval
+     * interception — deletes are gated by the {@code bulk.delete} feature plus
+     * the preview + typed-confirmation UX (deliberate product decision, mirrors
+     * single delete). Returns per-row results; individual failures don't abort.
+     */
+    @PostMapping(value = "/bulk-delete", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @RequiresFeature(FeatureKey.BULK_DELETE)
+    public ResponseEntity<BulkDeleteResult> bulkDelete(
+            @DirectoryId @PathVariable UUID directoryId,
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @RequestPart("file") MultipartFile file,
+            @RequestPart("request") @Valid BulkDeleteRequest request) throws IOException {
+
+        rateLimiter.check(principal.username(), "bulk-delete");
+        BulkDeleteResult result = service.bulkDeleteUsers(
                 directoryId, principal, file.getInputStream(), request);
         return ResponseEntity.ok(result);
     }
