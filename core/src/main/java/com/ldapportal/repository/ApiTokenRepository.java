@@ -27,6 +27,15 @@ public interface ApiTokenRepository extends JpaRepository<ApiToken, UUID> {
     @EntityGraph(attributePaths = "createdBy")
     List<ApiToken> findAllByRevokedAtIsNullOrderByCreatedAtDesc();
 
+    /**
+     * Active (non-revoked) tokens with a given name — the resolution key for
+     * the by-name IaC upsert. Name carries no DB-level uniqueness, so this can
+     * return more than one row if duplicate-named active tokens were minted via
+     * the plain create endpoint; the upsert treats that ambiguity as a 409.
+     */
+    @EntityGraph(attributePaths = "createdBy")
+    List<ApiToken> findAllByNameAndRevokedAtIsNull(String name);
+
     /** All tokens including revoked, newest first. Used by ?includeRevoked=true. */
     @EntityGraph(attributePaths = "createdBy")
     List<ApiToken> findAllByOrderByCreatedAtDesc();

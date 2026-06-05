@@ -56,6 +56,11 @@ public class ApiTokenService {
      *  returned once and never stored or returned again. */
     public record CreateResult(ApiToken token, String plaintext) {}
 
+    /** Return type of {@link #upsertByName}. {@code plaintext} is non-null only
+     *  when a token was newly minted ({@code created == true}); a metadata-only
+     *  update mints no secret, so it carries {@code null}. */
+    public record UpsertResult(ApiToken token, String plaintext, boolean created) {}
+
     /** Return type of {@link #authenticate}. Carries everything the filter
      *  needs to populate {@link org.springframework.security.core.context.SecurityContextHolder}. */
     public record AuthenticationBundle(
@@ -91,6 +96,64 @@ public class ApiTokenService {
                        "tokenName", saved.getName()));
 
         return new CreateResult(saved, plaintext);
+    }
+
+    // ── upsert by name (IaC) ────────────────────────────────────────────────────
+
+    /**
+     * Idempotent create-or-update of an API token keyed by its stable
+     * {@code name} (§4.1). Re-applying the same declaration converges to one
+     * named token with the requested metadata:
+     *
+     * <ul>
+     *   <li>no active token with this name → mint one and return the plaintext
+     *       once ({@code created == true});</li>
+     *   <li>exactly one active token with this name → update its mutable
+     *       metadata (description, expiry) in place; the secret is left
+     *       untouched and no plaintext is returned ({@code created == false});</li>
+     *   <li>more than one active token with this name → a 409, since the key is
+     *       ambiguous (duplicate-named tokens minted via the plain create
+     *       endpoint). The operator revokes the extras before declaring it.</li>
+     * </ul>
+     *
+     * <p>The secret is deliberately <em>not</em> rotated on update — a
+     * desired-state apply must be safe to run repeatedly without silently
+     * invalidating the credential automation is already using. Rotation stays
+     * the explicit {@link #rotate} verb.</p>
+     */
+    @Transactional
+    public UpsertResult upsertByName(String name,
+                                     String description,
+                                     Instant expiresAt,
+                                     Account creator,
+                                     AuthPrincipal actor) {
+        java.util.Objects.requireNonNull(creator, "creator");
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty()) {
+            throw new IllegalArgumentException("API token name must not be blank");
+        }
+
+        java.util.List<ApiToken> active = repository.findAllByNameAndRevokedAtIsNull(trimmed);
+        if (active.size() > 1) {
+            throw new com.ldapportal.exception.ConflictException(
+                    "Multiple active API tokens are named [" + trimmed
+                            + "]; revoke the duplicates before managing it by name");
+        }
+        if (active.isEmpty()) {
+            CreateResult created = create(trimmed, description, expiresAt, creator);
+            return new UpsertResult(created.token(), created.plaintext(), true);
+        }
+
+        validateExpiry(expiresAt);
+        ApiToken token = active.get(0);
+        token.setDescription(description);
+        token.setExpiresAt(expiresAt);
+        auditService.recordSystemEvent(
+                actor,
+                AuditAction.API_TOKEN_UPDATED,
+                Map.of("tokenId", token.getId().toString(),
+                       "tokenName", token.getName()));
+        return new UpsertResult(token, null, false);
     }
 
     // ── internal helpers ──────────────────────────────────────────────────────

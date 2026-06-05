@@ -7,12 +7,14 @@ import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.dto.apitoken.ApiTokenCreateResponse;
 import com.ldapportal.dto.apitoken.ApiTokenResponse;
 import com.ldapportal.dto.apitoken.CreateApiTokenRequest;
+import com.ldapportal.dto.apitoken.UpsertApiTokenRequest;
 import com.ldapportal.entity.Account;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.AccountRepository;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -20,6 +22,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -73,6 +76,32 @@ public class ApiTokenController {
         return new ApiTokenCreateResponse(
                 ApiTokenResponse.from(result.token()),
                 result.plaintext());
+    }
+
+    /**
+     * Idempotent create-or-update of a token keyed by its stable name, for IaC
+     * automation. <strong>201</strong> with the one-time plaintext when the
+     * named token is first created; <strong>200</strong> with a {@code null}
+     * plaintext when an existing token's metadata is updated in place (the
+     * secret is never re-minted here — rotation is the explicit
+     * {@code /{id}/rotate} verb). A name shared by more than one active token
+     * is ambiguous and returns 409. Like create/rotate/revoke, an API-token
+     * caller is rejected — tokens cannot manage other tokens.
+     */
+    @PutMapping("/by-name/{name}")
+    public ResponseEntity<ApiTokenCreateResponse> upsertByName(
+            @PathVariable String name,
+            @Valid @RequestBody UpsertApiTokenRequest req,
+            @AuthenticationPrincipal AuthPrincipal principal) {
+        rejectApiTokenCaller();
+        Account creator = accountRepository.findById(principal.id())
+                .orElseThrow(() -> new ResourceNotFoundException("Account", principal.id()));
+        ApiTokenService.UpsertResult result = service.upsertByName(
+                name, req.description(), req.expiresAt(), creator, principal);
+        return ResponseEntity
+                .status(result.created() ? HttpStatus.CREATED : HttpStatus.OK)
+                .body(new ApiTokenCreateResponse(
+                        ApiTokenResponse.from(result.token()), result.plaintext()));
     }
 
     @PostMapping("/{id}/rotate")

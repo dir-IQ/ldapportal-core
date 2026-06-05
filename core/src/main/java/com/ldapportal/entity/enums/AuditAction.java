@@ -96,6 +96,7 @@ public enum AuditAction {
 
     // ── API tokens (machine auth) ─────────────────────────────────────────────
     API_TOKEN_CREATED    ("api_token.created"),
+    API_TOKEN_UPDATED    ("api_token.updated"),
     API_TOKEN_REVOKED    ("api_token.revoked"),
     API_TOKEN_ROTATED    ("api_token.rotated"),
 
