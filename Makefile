@@ -18,14 +18,18 @@
 
 .PHONY: redeploy redeploy-fast redeploy-frontend package-backend logs down help
 
-# The Maven wrapper depends on the shell make runs RECIPES in — which is NOT
-# your interactive shell. GNU Make on Windows runs recipes through cmd.exe by
-# default, and crucially it IGNORES the environment's SHELL — so even when you
-# launch make from Git Bash, recipes still run in cmd.exe, which can't execute
-# the ./mvnw shell script ("'.' is not recognized…") and needs the mvnw.cmd
-# batch wrapper. Key off the actual recipe shell ($(SHELL)): cmd.exe → mvnw.cmd;
-# any POSIX shell (Linux/macOS/WSL, or a make configured to use sh) → ./mvnw.
-ifeq ($(findstring cmd.exe,$(SHELL)),cmd.exe)
+# Windows shell handling. GNU Make on Windows runs recipes through cmd.exe and
+# ignores the environment's SHELL — so even launched from Git Bash, recipes run
+# in cmd, which can't execute the ./mvnw shell script ("'.' is not recognized
+# …"). DETECTING the recipe shell proved unreliable (choco's make reports a
+# POSIX-looking $(SHELL) but still falls back to cmd at run time), so PIN it:
+# force cmd.exe and use the batch wrapper cmd can run. OS=Windows_NT is set in
+# both cmd and Git Bash, so this fires regardless of the launching terminal.
+# (POSIX-only targets like `help`, which use grep/awk, won't run under cmd —
+# use WSL, or run `make SHELL=/usr/bin/bash <target>` from Git Bash, for those.)
+ifeq ($(OS),Windows_NT)
+  SHELL := cmd.exe
+  .SHELLFLAGS := /c
   MVNW := mvnw.cmd
 else
   MVNW := ./mvnw
