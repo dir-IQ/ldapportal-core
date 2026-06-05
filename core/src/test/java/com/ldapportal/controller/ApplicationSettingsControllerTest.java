@@ -41,6 +41,7 @@ class ApplicationSettingsControllerTest extends BaseControllerTest {
                 UUID.randomUUID(),
                 "LDAPPortal", null, null, null,
                 true,    // directorySearchInlineEditEnabled
+                true, true,    // approvalsEnabled, selfRegistrationApprovalEnabled
                 30,
                 null, null, null, null, false, false,
                 null, null, null, false, null, 24,
@@ -66,6 +67,7 @@ class ApplicationSettingsControllerTest extends BaseControllerTest {
         return new UpdateApplicationSettingsRequest(
                 "LDAPPortal", null, null, null,
                 null,    // directorySearchInlineEditEnabled (Boolean wrapper, null preserves)
+                null, null,    // approvalsEnabled, selfRegistrationApprovalEnabled
                 30,
                 null, null, null, null, null, false,
                 null, null, null, null, null, 1,
@@ -102,7 +104,7 @@ class ApplicationSettingsControllerTest extends BaseControllerTest {
         ApplicationSettingsDto withSiem = new ApplicationSettingsDto(
                 UUID.randomUUID(),
                 "LDAPPortal", null, null, null,
-                true, 30,
+                true, true, true, 30,
                 null, null, null, null, false, false,
                 null, null, null, false, null, 24,
                 null,

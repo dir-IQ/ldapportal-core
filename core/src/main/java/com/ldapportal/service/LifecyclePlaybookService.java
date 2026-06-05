@@ -141,8 +141,9 @@ public class LifecyclePlaybookService {
                                               String targetDn, AuthPrincipal principal) {
         LifecyclePlaybook pb = requirePlaybook(directoryId, playbookId);
 
-        // Enforce the requireApproval flag (C3 fix)
-        if (pb.isRequireApproval()) {
+        // Enforce the requireApproval flag (C3 fix), unless the global approvals
+        // master switch is off (the per-playbook flag is preserved, overridden).
+        if (pb.isRequireApproval() && approvalService.approvalsEnabled()) {
             UUID profileId = pb.getProfile() != null ? pb.getProfile().getId() : null;
             Map<String, Object> payload = Map.of(
                     "playbookId", playbookId.toString(),

@@ -71,6 +71,24 @@ public class ApprovalWorkflowService {
     }
 
     /**
+     * Global master switch for admin-initiated approval workflows. When false,
+     * every admin user/group operation proceeds without approval regardless of
+     * per-profile config. Exposed so the self-registration and playbook paths —
+     * which call {@link #submitForApproval} directly rather than through
+     * {@link #checkAndSubmitForApproval} — can honour the same switch.
+     */
+    @Transactional(readOnly = true)
+    public boolean approvalsEnabled() {
+        return settingsService.isApprovalsEnabled();
+    }
+
+    /** Independent global switch for self-service registration approval. */
+    @Transactional(readOnly = true)
+    public boolean selfRegistrationApprovalEnabled() {
+        return settingsService.isSelfRegistrationApprovalEnabled();
+    }
+
+    /**
      * Finds the profile that contains the given DN for a directory.
      */
     @Transactional(readOnly = true)
@@ -92,6 +110,15 @@ public class ApprovalWorkflowService {
     public Optional<PendingApproval> checkAndSubmitForApproval(
             UUID directoryId, String targetDn, AuthPrincipal requester,
             ApprovalRequestType type, Object payload) {
+
+        // Global master switch. When approvals are turned off, every
+        // admin-initiated operation proceeds immediately — the per-profile
+        // requireApproval config is left untouched and simply overridden, so it
+        // resumes if approvals are re-enabled. (Self-registration is governed by
+        // its own switch and never reaches this method.)
+        if (!approvalsEnabled()) {
+            return Optional.empty();
+        }
 
         Optional<ProvisioningProfile> profile = findProfileForDn(directoryId, targetDn);
 

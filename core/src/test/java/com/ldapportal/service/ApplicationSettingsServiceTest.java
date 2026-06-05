@@ -65,6 +65,53 @@ class ApplicationSettingsServiceTest {
         assertThat(dto.siemProtocol()).isNull();
         assertThat(dto.siemAuthTokenConfigured()).isFalse();
         assertThat(dto.webhookAuthHeaderConfigured()).isFalse();
+        // Approval master switches default ON (upgrade-safe).
+        assertThat(dto.approvalsEnabled()).isTrue();
+        assertThat(dto.selfRegistrationApprovalEnabled()).isTrue();
+    }
+
+    // ── Approval toggles ────────────────────────────────────────────────────────
+
+    @Test
+    void approvalGetters_defaultTrueWhenNoRow() {
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.empty());
+        assertThat(service.isApprovalsEnabled()).isTrue();
+        assertThat(service.isSelfRegistrationApprovalEnabled()).isTrue();
+    }
+
+    @Test
+    void approvalGetters_reflectPersistedEntity() {
+        ApplicationSettings settings = existingSettings();
+        settings.setApprovalsEnabled(false);
+        settings.setSelfRegistrationApprovalEnabled(false);
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.of(settings));
+
+        assertThat(service.isApprovalsEnabled()).isFalse();
+        assertThat(service.isSelfRegistrationApprovalEnabled()).isFalse();
+        assertThat(service.get().approvalsEnabled()).isFalse();
+        assertThat(service.get().selfRegistrationApprovalEnabled()).isFalse();
+    }
+
+    @Test
+    void upsert_persistsApprovalToggles_andNullPreservesExisting() {
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.empty());
+        when(settingsRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // Explicit false is written through.
+        service.upsert(requestBuilder().approvalsEnabled(false).selfRegistrationApprovalEnabled(false).build());
+        ArgumentCaptor<ApplicationSettings> saved = ArgumentCaptor.forClass(ApplicationSettings.class);
+        verify(settingsRepo).save(saved.capture());
+        assertThat(saved.getValue().isApprovalsEnabled()).isFalse();
+        assertThat(saved.getValue().isSelfRegistrationApprovalEnabled()).isFalse();
+
+        // null leaves the existing value (entity default true) untouched.
+        reset(settingsRepo);
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.empty());
+        when(settingsRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        service.upsert(requestBuilder().build()); // builder defaults both toggles to null
+        ArgumentCaptor<ApplicationSettings> saved2 = ArgumentCaptor.forClass(ApplicationSettings.class);
+        verify(settingsRepo).save(saved2.capture());
+        assertThat(saved2.getValue().isApprovalsEnabled()).isTrue();
     }
 
     @Test
@@ -357,7 +404,11 @@ class ApplicationSettingsServiceTest {
         String webhookUrl = null;
         String webhookAuthHeader = null;
         Boolean setupCompleted = null;
+        Boolean approvalsEnabled = null;
+        Boolean selfRegistrationApprovalEnabled = null;
 
+        RequestBuilder approvalsEnabled(Boolean v) { this.approvalsEnabled = v; return this; }
+        RequestBuilder selfRegistrationApprovalEnabled(Boolean v) { this.selfRegistrationApprovalEnabled = v; return this; }
         RequestBuilder appName(String v) { this.appName = v; return this; }
         RequestBuilder sessionTimeoutMinutes(int v) { this.sessionTimeoutMinutes = v; return this; }
         RequestBuilder smtpHost(String v) { this.smtpHost = v; return this; }
@@ -376,6 +427,7 @@ class ApplicationSettingsServiceTest {
             return new UpdateApplicationSettingsRequest(
                     appName, null, "#fff", null,
                     null,    // directorySearchInlineEditEnabled (preserve)
+                    approvalsEnabled, selfRegistrationApprovalEnabled,
                     sessionTimeoutMinutes,
                     smtpHost, smtpPort, smtpSenderAddress, smtpUsername, smtpPassword, true,
                     null, null, null, null, null, 24,
