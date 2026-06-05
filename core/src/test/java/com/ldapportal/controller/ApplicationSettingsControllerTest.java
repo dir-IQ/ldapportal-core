@@ -33,6 +33,7 @@ class ApplicationSettingsControllerTest extends BaseControllerTest {
 
     @MockitoBean ApplicationSettingsService settingsService;
     @MockitoBean SiemExportService          siemExportService;
+    @MockitoBean com.ldapportal.service.ApprovalWorkflowService approvalWorkflowService;
 
     static final String BASE_URL = "/api/v1/settings";
 

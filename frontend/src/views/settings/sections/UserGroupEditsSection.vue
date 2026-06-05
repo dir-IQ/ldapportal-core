@@ -1,7 +1,25 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<script setup>
-defineProps({
-  form: { type: Object, required: true },
+<script setup lang="ts">
+import { ref, onMounted } from 'vue'
+import { getPendingApprovalsCount } from '@/api/settings'
+
+interface EditsForm {
+  directorySearchInlineEditEnabled: boolean
+  approvalsEnabled: boolean
+  selfRegistrationApprovalEnabled: boolean
+}
+defineProps<{ form: EditsForm }>()
+
+// Live count of in-flight approval requests, so the disable warning can be
+// specific about how many would be left queued. Null = couldn't fetch.
+const pendingCount = ref<number | null>(null)
+onMounted(async () => {
+  try {
+    const { data } = await getPendingApprovalsCount()
+    pendingCount.value = data.pending ?? 0
+  } catch {
+    pendingCount.value = null
+  }
 })
 </script>
 
@@ -85,9 +103,13 @@ defineProps({
         v-if="!form.approvalsEnabled || !form.selfRegistrationApprovalEnabled"
         class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mt-4"
       >
-        Any approval requests already pending are neither approved nor rejected by
-        turning approvals off — they stay queued and remain reachable from the
-        superadmin Approvals view so they can be drained.
+        <template v-if="pendingCount && pendingCount > 0">
+          <strong>{{ pendingCount }}</strong> approval request{{ pendingCount === 1 ? ' is' : 's are' }}
+          currently pending.
+        </template>
+        Turning approvals off neither approves nor rejects pending requests — they
+        stay queued and remain reachable from the superadmin Approvals view so they
+        can be drained.
       </p>
     </div>
   </section>

@@ -88,6 +88,13 @@ public class ApprovalWorkflowService {
         return settingsService.isSelfRegistrationApprovalEnabled();
     }
 
+    /** Total PENDING approval requests across all directories. Used by the
+     *  settings UI to warn how many requests a disable would leave queued. */
+    @Transactional(readOnly = true)
+    public long countAllPending() {
+        return approvalRepo.countByStatus(ApprovalStatus.PENDING);
+    }
+
     /**
      * Finds the profile that contains the given DN for a directory.
      */
