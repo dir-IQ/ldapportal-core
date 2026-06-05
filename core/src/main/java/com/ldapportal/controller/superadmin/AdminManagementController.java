@@ -83,16 +83,21 @@ public class AdminManagementController {
     }
 
     @GetMapping("/{adminId}")
-    public AdminAccountResponse get(@PathVariable UUID adminId) {
-        return service.getAdmin(adminId);
+    public ResponseEntity<AdminAccountResponse> get(@PathVariable UUID adminId) {
+        return withETag(service.getAdmin(adminId), HttpStatus.OK);
     }
 
     @PutMapping("/{adminId}")
-    public AdminAccountResponse update(@PathVariable UUID adminId,
-                                       @Valid @RequestBody AdminAccountRequest req,
-                                       @org.springframework.security.core.annotation.AuthenticationPrincipal
-                                               com.ldapportal.auth.AuthPrincipal principal) {
-        return service.updateAdmin(adminId, req, principal);
+    public ResponseEntity<AdminAccountResponse> update(
+            @PathVariable UUID adminId,
+            @Valid @RequestBody AdminAccountRequest req,
+            @org.springframework.web.bind.annotation.RequestHeader(
+                    value = org.springframework.http.HttpHeaders.IF_MATCH, required = false) String ifMatch,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+                    com.ldapportal.auth.AuthPrincipal principal) {
+        AdminAccountResponse resp = service.updateAdmin(
+                adminId, req, principal, com.ldapportal.web.ETagSupport.parseIfMatch(ifMatch));
+        return withETag(resp, HttpStatus.OK);
     }
 
     /**
@@ -101,18 +106,30 @@ public class AdminManagementController {
      * to identical state — profile roles and feature overrides are replaced to
      * match the body. Returns 201 on the first apply (created), 200 thereafter
      * (updated in place). Scoped to ADMIN-role accounts.
+     *
+     * <p>An optional {@code If-Match} header makes the update-path apply
+     * conditional on the account still being at the version the caller last saw
+     * (412 on mismatch); it is ignored when the apply creates the account.</p>
      */
     @PutMapping("/by-username/{username}")
     public ResponseEntity<AdminAccountResponse> upsertByUsername(
             @PathVariable String username,
             @Valid @RequestBody com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            @org.springframework.web.bind.annotation.RequestHeader(
+                    value = org.springframework.http.HttpHeaders.IF_MATCH, required = false) String ifMatch,
             @org.springframework.security.core.annotation.AuthenticationPrincipal
                     com.ldapportal.auth.AuthPrincipal principal) {
-        AdminManagementService.AdminUpsertOutcome outcome =
-                service.upsertByUsername(username, req, principal);
-        return ResponseEntity
-                .status(outcome.created() ? HttpStatus.CREATED : HttpStatus.OK)
-                .body(outcome.response());
+        AdminManagementService.AdminUpsertOutcome outcome = service.upsertByUsername(
+                username, req, principal, com.ldapportal.web.ETagSupport.parseIfMatch(ifMatch));
+        return withETag(outcome.response(), outcome.created() ? HttpStatus.CREATED : HttpStatus.OK);
+    }
+
+    /** Attach the account's version as a strong ETag for optimistic concurrency. */
+    private static ResponseEntity<AdminAccountResponse> withETag(
+            AdminAccountResponse resp, HttpStatus status) {
+        return ResponseEntity.status(status)
+                .eTag(com.ldapportal.web.ETagSupport.format(resp.version()))
+                .body(resp);
     }
 
     @DeleteMapping("/{adminId}")

@@ -30,6 +30,7 @@ import java.util.UUID;
  */
 public record DirectoryConnectionResponse(
         UUID id,
+        Long version,
         String slug,
         DirectoryType directoryType,
         String displayName,
@@ -88,6 +89,7 @@ public record DirectoryConnectionResponse(
                                                    List<DirectoryGroupBaseDn> groupDns) {
         return new DirectoryConnectionResponse(
                 dc.getId(),
+                dc.getVersion(),
                 dc.getSlug(),
                 dc.getDirectoryType(),
                 dc.getDisplayName(),

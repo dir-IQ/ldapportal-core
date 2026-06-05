@@ -474,6 +474,38 @@ class AdminManagementServiceTest {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    // ── If-Match optimistic concurrency (§4.4) ───────────────────────────────
+
+    @Test
+    void updateAdmin_staleIfMatch_throwsPreconditionFailed() {
+        Account a = adminAccount("alice");
+        a.setVersion(3L);
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(a));
+
+        assertThatThrownBy(() -> service.updateAdmin(adminId,
+                new AdminAccountRequest("alice", null, null,
+                        AccountRole.ADMIN, AccountType.LOCAL, null, null, true),
+                null, 1L))
+                .isInstanceOf(com.ldapportal.exception.PreconditionFailedException.class);
+        verify(accountRepo, never()).save(any());
+    }
+
+    @Test
+    void updateAdmin_matchingIfMatch_proceeds() {
+        Account a = adminAccount("alice");
+        a.setVersion(2L);
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(a));
+        when(accountRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        AdminAccountResponse resp = service.updateAdmin(adminId,
+                new AdminAccountRequest("alice", null, null,
+                        AccountRole.ADMIN, AccountType.LOCAL, null, null, true),
+                null, 2L);
+
+        assertThat(resp.username()).isEqualTo("alice");
+        verify(accountRepo).save(any());
+    }
+
     private CreateAdminWithPermissionsRequest upsertReq(
             String username, List<ProfileRoleRequest> roles, List<FeaturePermissionRequest> features) {
         return new CreateAdminWithPermissionsRequest(

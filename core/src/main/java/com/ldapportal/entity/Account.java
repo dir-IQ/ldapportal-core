@@ -29,6 +29,16 @@ public class Account {
     @Column(nullable = false, updatable = false)
     private UUID id;
 
+    /**
+     * Optimistic-lock counter (§4.4) — surfaced as the resource ETag and
+     * checked against {@code If-Match} so a concurrent admin edit (e.g. an IaC
+     * apply racing a UI change) fails rather than silently clobbers. Distinct
+     * from {@link #credentialsVersion}, which invalidates issued JWTs.
+     */
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
     @Column(nullable = false, unique = true)
     private String username;
 

@@ -8,6 +8,7 @@ import com.ldapportal.dto.directory.DirectoryConnectionResponse;
 import com.ldapportal.dto.directory.TestConnectionRequest;
 import com.ldapportal.dto.directory.TestConnectionResult;
 import com.ldapportal.entity.enums.SslMode;
+import com.ldapportal.exception.PreconditionFailedException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.service.DirectoryConnectionService;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -52,6 +54,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
     DirectoryConnectionResponse sampleResponse() {
         return new DirectoryConnectionResponse(
                 DIR_ID,
+                0L,                                 // version
                 "corp-ldap",                        // slug
                 com.ldapportal.entity.enums.DirectoryType.GENERIC, // directoryType
                 "Corp LDAP",                        // displayName
@@ -203,11 +206,52 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 .andExpect(status().isNotFound());
     }
 
+    @Test
+    void getDirectory_carriesVersionETag() throws Exception {
+        given(directoryService.getDirectory(DIR_ID)).willReturn(sampleResponse());
+
+        mockMvc.perform(get(BASE_URL + "/" + DIR_ID).with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(header().string("ETag", "\"0\""))
+                .andExpect(jsonPath("$.version").value(0));
+    }
+
+    // ── PUT /{id} (optimistic concurrency) ────────────────────────────────────
+
+    @Test
+    void updateDirectory_staleIfMatch_returns412() throws Exception {
+        // The controller must parse If-Match "5" → 5L and hand it to the
+        // service, which rejects the stale precondition.
+        given(directoryService.updateDirectory(eq(DIR_ID), any(), eq(5L)))
+                .willThrow(new PreconditionFailedException("stale"));
+
+        mockMvc.perform(put(BASE_URL + "/" + DIR_ID)
+                        .with(authentication(superadminAuth()))
+                        .header("If-Match", "\"5\"")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validRequest())))
+                .andExpect(status().isPreconditionFailed());
+    }
+
+    @Test
+    void updateDirectory_matchingIfMatch_returns200WithETag() throws Exception {
+        given(directoryService.updateDirectory(eq(DIR_ID), any(), eq(0L)))
+                .willReturn(sampleResponse());
+
+        mockMvc.perform(put(BASE_URL + "/" + DIR_ID)
+                        .with(authentication(superadminAuth()))
+                        .header("If-Match", "\"0\"")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(validRequest())))
+                .andExpect(status().isOk())
+                .andExpect(header().string("ETag", "\"0\""));
+    }
+
     // ── PUT /{id} ─────────────────────────────────────────────────────────────
 
     @Test
     void updateDirectory_superadmin_returns200() throws Exception {
-        given(directoryService.updateDirectory(eq(DIR_ID), any()))
+        given(directoryService.updateDirectory(eq(DIR_ID), any(), any()))
                 .willReturn(sampleResponse());
 
         mockMvc.perform(put(BASE_URL + "/" + DIR_ID)
@@ -222,7 +266,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
 
     @Test
     void upsertBySlug_newDirectory_returns201() throws Exception {
-        given(directoryService.upsertBySlug(eq("corp-ldap"), any()))
+        given(directoryService.upsertBySlug(eq("corp-ldap"), any(), any()))
                 .willReturn(new DirectoryConnectionService.UpsertOutcome(sampleResponse(), true));
 
         mockMvc.perform(put(BASE_URL + "/by-slug/corp-ldap")
@@ -237,7 +281,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
 
     @Test
     void upsertBySlug_existingDirectory_returns200() throws Exception {
-        given(directoryService.upsertBySlug(eq("corp-ldap"), any()))
+        given(directoryService.upsertBySlug(eq("corp-ldap"), any(), any()))
                 .willReturn(new DirectoryConnectionService.UpsertOutcome(sampleResponse(), false));
 
         mockMvc.perform(put(BASE_URL + "/by-slug/corp-ldap")
@@ -250,7 +294,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
 
     @Test
     void upsertBySlug_invalidSlug_returns400() throws Exception {
-        given(directoryService.upsertBySlug(eq("Bad_Slug"), any()))
+        given(directoryService.upsertBySlug(eq("Bad_Slug"), any(), any()))
                 .willThrow(new IllegalArgumentException("slug must be lowercase alphanumeric segments"));
 
         mockMvc.perform(put(BASE_URL + "/by-slug/Bad_Slug")

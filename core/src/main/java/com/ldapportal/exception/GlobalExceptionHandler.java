@@ -125,6 +125,11 @@ public class GlobalExceptionHandler {
                 "The resource was modified by another request; please reload and retry");
     }
 
+    @ExceptionHandler(PreconditionFailedException.class)
+    public ProblemDetail handlePreconditionFailed(PreconditionFailedException ex) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.PRECONDITION_FAILED, ex.getMessage());
+    }
+
     @ExceptionHandler(LdapConnectionException.class)
     public ProblemDetail handleLdapConnection(LdapConnectionException ex) {
         log.warn("LDAP connection error: {}", ex.getMessage());
