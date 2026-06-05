@@ -15,11 +15,7 @@
             There are no provisioning profiles assigned to your account. Please contact your administrator to request access.
           </p>
           <div class="flex justify-end">
-            <button
-              @click="handleNoProfilesOk"
-              class="px-4 py-2 text-sm rounded-lg text-white font-medium"
-              :style="{ backgroundColor: settings.primaryColour }"
-            >OK</button>
+            <button @click="handleNoProfilesOk" class="btn-primary">OK</button>
           </div>
         </div>
       </div>
@@ -27,7 +23,7 @@
 
     <!-- Sidebar -->
     <aside :class="['text-white flex flex-col shrink-0 transition-all duration-200', collapsed ? 'w-11' : 'w-60']"
-           :style="{ backgroundColor: settings.secondaryColour }">
+           :style="{ backgroundColor: 'var(--color-primary)' }">
       <!-- Logo + collapse toggle -->
       <div :class="['py-4 border-b border-white/15 flex items-center', collapsed ? 'justify-center px-1.5' : 'justify-between px-3']">
         <span v-if="showExpandedContent" class="text-lg font-bold tracking-tight pl-2 whitespace-nowrap">{{ settings.appName }}</span>
@@ -566,6 +562,10 @@ async function handleLogout() {
 }
 .nav-item.router-link-active {
   @apply bg-white/10 text-white;
+  /* Accent left bar so the active item reads as on-brand against the chrome.
+     Inset box-shadow (not a border) keeps it from shifting layout, and the
+     parent's rounded corners clip it into a tidy rounded bar. */
+  box-shadow: inset 3px 0 0 0 var(--color-secondary, #2563eb);
 }
 .nav-icon { @apply w-5 h-5 shrink-0; }
 .nav-header { @apply text-xs text-white/70 uppercase tracking-wider mt-4 mb-1 px-3; }

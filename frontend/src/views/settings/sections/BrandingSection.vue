@@ -19,13 +19,15 @@ defineProps({
           <input type="color" aria-label="Primary colour picker" v-model="form.primaryColour" class="h-9 w-10 rounded border border-gray-300 cursor-pointer p-0.5" />
           <input type="text" aria-label="Primary colour hex value" v-model="form.primaryColour" placeholder="#1e293b" class="input flex-1" />
         </div>
+        <p class="text-xs text-gray-500 mt-1">Brand surface — the navigation sidebar, login header, and app name. Use a dark colour.</p>
       </div>
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">Secondary Colour</label>
         <div class="flex items-center gap-2">
           <input type="color" aria-label="Secondary colour picker" v-model="form.secondaryColour" class="h-9 w-10 rounded border border-gray-300 cursor-pointer p-0.5" />
-          <input type="text" aria-label="Secondary colour hex value" v-model="form.secondaryColour" placeholder="#475569" class="input flex-1" />
+          <input type="text" aria-label="Secondary colour hex value" v-model="form.secondaryColour" placeholder="#2563eb" class="input flex-1" />
         </div>
+        <p class="text-xs text-gray-500 mt-1">Accent — primary buttons, links, focus rings, and active states.</p>
       </div>
     </div>
   </section>

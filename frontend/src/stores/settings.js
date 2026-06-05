@@ -3,17 +3,37 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getBranding } from '@/api/settings'
 
-// App default brand colours. Primary is Tailwind slate-800 — cool,
-// blue-gray chrome that stays distinct from the saturated blue used on
-// primary CTAs. Secondary is two shades lighter (slate-600) so it reads
-// as a related-but-lighter accent. Exported so the settings form falls
-// back to the same values the app actually renders when no custom colour
-// is saved (otherwise the branding pickers show colours that don't match
-// the UI).
-export const DEFAULT_PRIMARY_COLOUR   = '#1e293b' // slate-800
-export const DEFAULT_SECONDARY_COLOUR = '#475569' // slate-600 (2 shades lighter)
+// App default brand colours, by role:
+//   • Primary  = "chrome" — the dominant brand surface (sidebar/nav, login
+//     header, app name). Tailwind slate-800: a dark, cool blue-gray.
+//   • Secondary = "accent" — interactive emphasis (primary CTAs, links,
+//     focus rings, active states). Tailwind blue-600: a saturated sibling of
+//     the slate chrome so the two read as one coordinated palette.
+// Exported so the settings form falls back to the same values the app
+// actually renders when no custom colour is saved (otherwise the branding
+// pickers show colours that don't match the UI).
+export const DEFAULT_PRIMARY_COLOUR   = '#1e293b' // slate-800 (chrome)
+export const DEFAULT_SECONDARY_COLOUR = '#2563eb' // blue-600 (accent)
 const DEFAULT_PRIMARY   = DEFAULT_PRIMARY_COLOUR
 const DEFAULT_SECONDARY = DEFAULT_SECONDARY_COLOUR
+
+/**
+ * Pick a readable text colour (white or near-black slate-900) for a given
+ * background, using WCAG relative luminance so branded surfaces never end up
+ * with unreadable text. Falls back to white for malformed input.
+ */
+function readableOn(hex) {
+  const c = String(hex || '').trim().replace('#', '')
+  if (c.length !== 6) return '#ffffff'
+  const channel = (i) => {
+    const v = parseInt(c.slice(i, i + 2), 16) / 255
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+  }
+  const L = 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4)
+  const contrastWhite = 1.05 / (L + 0.05)
+  const contrastBlack = (L + 0.05) / 0.05
+  return contrastWhite >= contrastBlack ? '#ffffff' : '#0f172a'
+}
 
 export const useSettingsStore = defineStore('settings', () => {
   const appName          = ref('LDAP Portal')
@@ -54,8 +74,12 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function applyColours() {
     const root = document.documentElement
+    // Chrome + accent, plus the readable text colour to use on top of each.
+    // Hover/tint shades are derived in CSS via color-mix() from these bases.
     root.style.setProperty('--color-primary', primaryColour.value)
     root.style.setProperty('--color-secondary', secondaryColour.value)
+    root.style.setProperty('--color-primary-on', readableOn(primaryColour.value))
+    root.style.setProperty('--color-secondary-on', readableOn(secondaryColour.value))
     document.title = appName.value
   }
 

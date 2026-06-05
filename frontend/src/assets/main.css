@@ -1,5 +1,22 @@
 @import "tailwindcss";
 
+/* ── Brand colour tokens ────────────────────────────────────────────────────
+   Two operator-set brand colours, by role:
+     --color-primary    "chrome"  — dominant brand surface (sidebar, login).
+     --color-secondary  "accent"  — interactive emphasis (CTAs, links, focus,
+                                     active states).
+   The *-on values are readable text colours computed in the settings store
+   (src/stores/settings.js). Defaults here mirror the store so the theme is
+   correct before the branding fetch runs and if it ever fails. Hover/tint
+   shades are derived from the bases via color-mix() at the point of use.
+   Status colours (success/danger/warning) are deliberately NOT brandable. */
+:root {
+  --color-primary: #1e293b;
+  --color-secondary: #2563eb;
+  --color-primary-on: #ffffff;
+  --color-secondary-on: #ffffff;
+}
+
 /* ── Global accessibility ──────────────────────────────────────────────────── */
 *:focus-visible {
   outline: 2px solid #334155;
@@ -105,14 +122,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
    ──────────────────────────────────────────────────────────────────────────── */
 .btn-primary {
   padding: 0.375rem 0.75rem;
-  background-color: #2563eb;
-  color: #fff;
+  background-color: var(--color-secondary, #2563eb);
+  color: var(--color-secondary-on, #fff);
   border-radius: 0.5rem;
   font-size: 0.875rem;
   font-weight: 500;
   transition: background-color 0.15s;
 }
-.btn-primary:hover { background-color: #1d4ed8; }
+.btn-primary:hover { background-color: color-mix(in srgb, var(--color-secondary, #2563eb) 85%, black); }
 .btn-primary:disabled { opacity: 0.5; cursor: default; }
 
 .btn-secondary {
@@ -149,7 +166,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   outline: none;
   transition: box-shadow 0.15s;
 }
-.input:focus { box-shadow: 0 0 0 2px #334155; }
+.input:focus { box-shadow: 0 0 0 2px var(--color-secondary, #2563eb); }
 .input:disabled { background-color: #f3f4f6; }
 .input[aria-invalid="true"] { border-color: #ef4444; }
 .input[aria-invalid="true"]:focus { box-shadow: 0 0 0 2px #ef4444; }
@@ -277,14 +294,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
   padding: 0.375rem 0.75rem;
   font-size: 0.875rem;
   border-radius: 0.5rem;
-  border: 1px solid #2563eb;
-  background-color: #eff6ff;
-  color: #1d4ed8;
+  border: 1px solid var(--color-secondary, #2563eb);
+  background-color: color-mix(in srgb, var(--color-secondary, #2563eb) 8%, white);
+  color: color-mix(in srgb, var(--color-secondary, #2563eb) 80%, black);
   font-weight: 500;
   transition: background-color 150ms, border-color 150ms;
 }
 .btn-tab-active:hover {
-  background-color: #dbeafe;
+  background-color: color-mix(in srgb, var(--color-secondary, #2563eb) 16%, white);
 }
 
 /* ── Dashboard "jump to panel" highlight ───────────────────────────────────
@@ -319,9 +336,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 }
 [data-theme="dark"] .btn-neutral:hover { background-color: #4b5563; }
 [data-theme="dark"] .btn-primary {
-  background-color: #2563eb;
+  background-color: var(--color-secondary, #2563eb);
+  color: var(--color-secondary-on, #fff);
 }
-[data-theme="dark"] .btn-primary:hover { background-color: #3b82f6; }
+[data-theme="dark"] .btn-primary:hover { background-color: color-mix(in srgb, var(--color-secondary, #2563eb) 78%, white); }
 [data-theme="dark"] .btn-sm {
   border-color: #4b5563; color: #9ca3af;
 }
