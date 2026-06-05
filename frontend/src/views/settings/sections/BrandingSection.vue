@@ -24,7 +24,7 @@ defineProps({
         <label class="block text-sm font-medium text-gray-700 mb-1">Secondary Colour</label>
         <div class="flex items-center gap-2">
           <input type="color" aria-label="Secondary colour picker" v-model="form.secondaryColour" class="h-9 w-10 rounded border border-gray-300 cursor-pointer p-0.5" />
-          <input type="text" aria-label="Secondary colour hex value" v-model="form.secondaryColour" placeholder="#1e293b" class="input flex-1" />
+          <input type="text" aria-label="Secondary colour hex value" v-model="form.secondaryColour" placeholder="#475569" class="input flex-1" />
         </div>
       </div>
     </div>
