@@ -6,7 +6,8 @@
 # Base DN : dc=oud1,dc=example,dc=com   (same suffix as the primary; the two
 #           instances are INDEPENDENT and do not replicate — divergence is
 #           simulated by loading this near-copy with deliberate differences).
-# Schema  : secUser (AUXILIARY) + secAuthorityInfo (STRUCTURAL), auto-loaded.
+# Schema  : secUser (STRUCTURAL) + secAuthorityInfo (STRUCTURAL), auto-loaded
+#           from testdata/isva-schema-opendj-linked.ldif.
 #
 # Load (from repo root):
 #   docker exec -i ldap-oud1-alternate /opt/opendj/bin/ldapmodify \
@@ -198,9 +199,7 @@ userPassword: mona.onlyalternate
 # alice.normal → HEALTHY (matches primary).
 dn: secUUID=alice-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: alice.normal
 secUUID: alice-uuid
 secDN: uid=alice.normal,ou=people,dc=oud1,dc=example,dc=com
 secLogin: alice.normal
@@ -214,9 +213,7 @@ secPwdLastChanged: 20260515000000Z
 # → the suspend was applied on one replica only; still LIVE on this side.
 dn: secUUID=carol-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: carol.suspended
 secUUID: carol-uuid
 secDN: uid=carol.suspended,ou=people,dc=oud1,dc=example,dc=com
 secLogin: carol.suspended
@@ -230,9 +227,7 @@ secPwdLastChanged: 20260510000000Z
 # primary (expired) → a renew() that reached only one replica.
 dn: secUUID=dan-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: dan.expired
 secUUID: dan-uuid
 secDN: uid=dan.expired,ou=people,dc=oud1,dc=example,dc=com
 secLogin: dan.expired
@@ -245,9 +240,7 @@ secPwdLastChanged: 20240101000000Z
 # erin.pwdinvalid → PASSWORD INVALID (matches primary).
 dn: secUUID=erin-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: erin.pwdinvalid
 secUUID: erin-uuid
 secDN: uid=erin.pwdinvalid,ou=people,dc=oud1,dc=example,dc=com
 secLogin: erin.pwdinvalid
@@ -260,9 +253,7 @@ secPwdLastChanged: 20260101000000Z
 # frank.stalepwd → STALE PASSWORD (matches primary).
 dn: secUUID=frank-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: frank.stalepwd
 secUUID: frank-uuid
 secDN: uid=frank.stalepwd,ou=people,dc=oud1,dc=example,dc=com
 secLogin: frank.stalepwd
@@ -276,9 +267,7 @@ secPwdLastChanged: 20190101000000Z
 # secAuthority / secAcctValid / secPwdValid.
 dn: secUUID=grace-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: grace.partial
 secUUID: grace-uuid
 secDN: uid=grace.partial,ou=people,dc=oud1,dc=example,dc=com
 secValidUntil: 20300101000000Z
@@ -286,9 +275,7 @@ secValidUntil: 20300101000000Z
 # henry.expiringsoon → EXPIRING SOON (matches primary).
 dn: secUUID=henry-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: henry.expiringsoon
 secUUID: henry-uuid
 secDN: uid=henry.expiringsoon,ou=people,dc=oud1,dc=example,dc=com
 secLogin: henry.expiringsoon
@@ -304,9 +291,7 @@ secPwdLastChanged: 20260520000000Z
 # conflict that minted a second secUser under a different secUUID.
 dn: secUUID=karen-1,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: karen.dupe
 secUUID: karen-1
 secDN: uid=karen.dupe,ou=people,dc=oud1,dc=example,dc=com
 secLogin: karen.dupe
@@ -318,9 +303,7 @@ secPwdLastChanged: 20260512000000Z
 
 dn: secUUID=karen-2,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: karen.dupe
 secUUID: karen-2
 secDN: uid=karen.dupe,ou=people,dc=oud1,dc=example,dc=com
 secLogin: karen.dupe
@@ -335,9 +318,7 @@ secPwdLastChanged: 20260101000000Z
 # mona.onlyalternate → HEALTHY secUser, present only on this instance (R2).
 dn: secUUID=mona-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: mona.onlyalternate
 secUUID: mona-uuid
 secDN: uid=mona.onlyalternate,ou=people,dc=oud1,dc=example,dc=com
 secLogin: mona.onlyalternate
@@ -350,9 +331,7 @@ secPwdLastChanged: 20260519000000Z
 # ghost → DANGLING / REVERSE-ORPHAN secUser (matches primary).
 dn: secUUID=ghost-uuid,secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com
 objectClass: top
-objectClass: account
 objectClass: secUser
-uid: ghost
 secUUID: ghost-uuid
 secDN: uid=ghost,ou=people,dc=oud1,dc=example,dc=com
 secLogin: ghost

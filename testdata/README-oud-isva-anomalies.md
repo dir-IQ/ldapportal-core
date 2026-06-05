@@ -33,10 +33,13 @@ All IVIA account state (`secAcctValid`, `secPwdValid`, `secValidUntil`,
 status from the matched `secUser`. So an anomaly is a property of the `secUser`
 entry, its **absence** (orphan), or its **duplication**.
 
-> `secUser` is AUXILIARY in the fixture schema (`isva-schema-opendj.ldif`);
-> IBM ships it STRUCTURAL. Each management-DIT `secUser` leaf is layered on the
-> structural `account` class so it is valid in real OpenDJ/OUD. The app keys on
-> the `secUser` objectClass **name** + `secDN`, not the structural carrier.
+> `secUser` is STRUCTURAL in the linked fixture schema
+> (`isva-schema-opendj-linked.ldif`), as IBM ships it. Each management-DIT
+> `secUser` leaf is therefore a standalone `top` + `secUser` entry — the same
+> shape the app's linked-grant writes. (The inline fixture,
+> `isva-schema-opendj-inline.ldif`, keeps `secUser` AUXILIARY for overlay onto
+> a demographic entry.) The app keys on the `secUser` objectClass **name** +
+> `secDN`, not the structural carrier.
 
 Configure the directory's ISVA integration as **LINKED**, `secAuthority=Default`,
 management DIT base `secAuthority=Default,ou=management,dc=oud1,dc=example,dc=com`,
