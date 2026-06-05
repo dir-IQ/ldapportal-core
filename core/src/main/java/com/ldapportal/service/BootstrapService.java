@@ -10,6 +10,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @Slf4j
 @RequiredArgsConstructor
+@Order(0)   // run before BootstrapConfigReconciler so the superadmin exists first
 public class BootstrapService implements ApplicationRunner {
 
     private final AccountRepository accountRepo;
