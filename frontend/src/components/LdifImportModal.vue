@@ -44,20 +44,6 @@
             Preview shows exactly what would change before anything is written.
           </p>
         </div>
-
-        <!-- Vendor account provisioning (only when the IVIA addon is enabled). -->
-        <label v-if="auth.isIsvaIntegrationEnabled"
-               class="flex items-start gap-2 text-sm text-gray-700">
-          <input type="checkbox" v-model="provisionVendorAccounts" class="rounded mt-0.5" />
-          <span>
-            Provision {{ IVIA_ABBR }} accounts (secUser) for imported users
-            <span class="block text-xs text-gray-500 mt-0.5">
-              On by default. Imported user entries get their {{ IVIA_ABBR }} overlay created per the
-              directory's configuration. Uncheck to import entries as-is — e.g. when re-importing an
-              export that already contains secUser entries.
-            </span>
-          </span>
-        </label>
       </template>
 
       <!-- ── Step 2: preview ──────────────────────────────────────────────── -->
@@ -73,6 +59,39 @@
           <span class="chip chip-amber" title="Rows with warnings">⚠ <b>{{ summary.warningCount.toLocaleString() }}</b></span>
           <span class="chip chip-red" title="Rows with errors">✕ <b>{{ summary.errorCount.toLocaleString() }}</b></span>
           <span class="ml-auto text-gray-400">{{ summary.totalRows.toLocaleString() }} records</span>
+        </div>
+
+        <!-- IVIA secUser provisioning: confirm/reject + what will happen.
+             Shown only when the directory has IVIA enabled. -->
+        <div v-if="iviaEnabled"
+             class="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+          <template v-if="summary.containsVendorOverlayEntries">
+            <div class="flex items-start gap-2">
+              <span aria-hidden="true" class="mt-0.5">ℹ</span>
+              <span>
+                This file already contains <span class="font-mono">secUser</span> entries, so it's
+                imported as-is — no {{ IVIA_ABBR }} accounts will be provisioned on top.
+              </span>
+            </div>
+          </template>
+          <template v-else>
+            <label class="flex items-start gap-2">
+              <input type="checkbox" v-model="provisionVendorAccounts" class="rounded mt-0.5" />
+              <span>
+                Provision {{ IVIA_ABBR }} accounts (<span class="font-mono">secUser</span>) for imported users
+                <span class="block text-xs mt-0.5" :class="provisionVendorAccounts ? 'text-blue-800' : 'text-gray-500'">
+                  <template v-if="provisionVendorAccounts">
+                    <b>{{ summary.userAddCount.toLocaleString() }}</b>
+                    new user {{ summary.userAddCount === 1 ? 'entry' : 'entries' }} will be provisioned with
+                    {{ IVIA_NAME }} ({{ IVIA_ABBR }}) {{ iviaTopologyLabel }}.
+                  </template>
+                  <template v-else>
+                    Imported users will be created as-is — no {{ IVIA_ABBR }} accounts.
+                  </template>
+                </span>
+              </span>
+            </label>
+          </template>
         </div>
 
         <!-- Filter + search -->
@@ -108,6 +127,11 @@
             <span v-else class="text-[13px] text-gray-500">
               {{ row.attrCount }} attr{{ row.attrCount === 1 ? '' : 's' }}
               <span v-if="row.objectClasses.length" class="text-gray-400 ml-1">· {{ row.objectClasses.join(', ') }}</span>
+            </span>
+            <span v-if="rowGetsSecUser(row)"
+                  class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[11px] font-medium align-middle"
+                  :title="`${IVIA_ABBR} secUser account will be provisioned for this user`">
+              +secUser
             </span>
           </template>
           <!-- Always render the wrapper span: an empty issues array would
@@ -210,8 +234,9 @@ import DataTable from '@/components/DataTable.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
-import { IVIA_ABBR } from '@/constants/productNames'
+import { IVIA_ABBR, IVIA_NAME } from '@/constants/productNames'
 import { previewLdif, getLdifPreviewPage, getLdifPreviewRow, applyLdifPreview } from '@/api/browse'
+import { getIsvaConfig } from '@/api/isvaConfig'
 
 interface PreviewIssue { severity: string; code: string; message: string }
 interface MemberDelta { added: number; removed: number }
@@ -224,6 +249,7 @@ interface PreviewRow {
   memberDelta?: MemberDelta | null
   memberCount?: number | null
   issues: PreviewIssue[]
+  userAdd: boolean
 }
 interface OpCounts { add: number; modify: number; delete: number; moddn: number; skip: number; error: number }
 interface PreviewPage { rows: PreviewRow[]; page: number; size: number; totalFiltered: number }
@@ -235,6 +261,8 @@ interface PreviewSummary {
   errorCount: number
   truncated: boolean
   page0: PreviewPage
+  userAddCount: number
+  containsVendorOverlayEntries: boolean
 }
 interface PreviewRowDetail {
   rowNumber: number
@@ -280,6 +308,31 @@ const detail = ref<PreviewRowDetail | null>(null)
 const loadingDetail = ref(false)
 
 const applyResult = ref<ImportResult | null>(null)
+
+// IVIA config for this directory (enabled flag + topology), fetched when the
+// modal opens if the addon is entitled. Null = not enabled / not fetched.
+const iviaConfig = ref<{ enabled: boolean; topologyMode: string } | null>(null)
+
+// IVIA secUser provisioning applies only when the addon is entitled AND enabled
+// for this specific directory.
+const iviaEnabled = computed(() =>
+  auth.isIsvaIntegrationEnabled && iviaConfig.value?.enabled === true)
+
+const iviaTopologyLabel = computed(() =>
+  iviaConfig.value?.topologyMode === 'LINKED'
+    ? 'linked secUser entries'
+    : 'secUser accounts')
+
+// Whether a given preview row will actually get a secUser on import: a user-add
+// candidate, with provisioning left on, and not suppressed by the file already
+// containing secUser entries.
+function rowGetsSecUser(row: PreviewRow): boolean {
+  return iviaEnabled.value
+    && provisionVendorAccounts.value
+    && !!summary.value
+    && !summary.value.containsVendorOverlayEntries
+    && row.userAdd
+}
 
 const filters = [
   { value: 'ALL', label: 'All' },
@@ -332,6 +385,20 @@ function reset() {
   applyResult.value = null
 }
 
+// Fetch the directory's IVIA config so the preview can tell the operator
+// whether (and how) secUser accounts will be provisioned. Best-effort: a 404
+// (no config) or any error just means "not enabled" — no provisioning copy.
+async function loadIviaConfig() {
+  iviaConfig.value = null
+  if (!auth.isIsvaIntegrationEnabled) return
+  try {
+    const { data } = await getIsvaConfig(props.directoryId)
+    iviaConfig.value = { enabled: data.enabled === true, topologyMode: data.topologyMode }
+  } catch {
+    iviaConfig.value = null
+  }
+}
+
 function setFile(f: File | null | undefined) {
   if (!f) return
   if (!f.name.toLowerCase().endsWith('.ldif')) {
@@ -368,6 +435,9 @@ async function doPreview() {
   if (!file.value) return
   error.value = ''
   busy.value = true
+  // Load the directory's IVIA config so the preview can show whether secUser
+  // accounts will be provisioned. Fire alongside the preview; not fatal.
+  loadIviaConfig()
   // Clear any view state carried over from a previous preview / Back.
   search.value = ''
   page.value = 0
