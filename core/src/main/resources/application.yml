@@ -72,6 +72,9 @@ app:
       username: ${BOOTSTRAP_SUPERADMIN_USERNAME:superadmin}
       # REQUIRED on fresh install; no default.
       password: ${BOOTSTRAP_SUPERADMIN_PASSWORD}
+    # Optional path to a declarative config file reconciled at startup
+    # (directories/admins/ISVA). Unset = disabled. See docs/iac/README.md §9.
+    config-file: ${BOOTSTRAP_CONFIG_FILE:}
 
   jwt:
     # Long random secret, base64-encoded.  REQUIRED — no default.
