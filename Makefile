@@ -15,8 +15,9 @@
 #   make redeploy-frontend   # Only rebuild & redeploy the frontend container.
 #   make logs                # Tail the app container.
 #   make down                # Stop & remove containers (keeps volumes).
+#   make db-pull-from-fly    # Copy a Fly.io Postgres DB into the local stack.
 
-.PHONY: redeploy redeploy-fast redeploy-frontend package-backend logs down help
+.PHONY: redeploy redeploy-fast redeploy-frontend package-backend logs down help db-pull-from-fly
 
 # Windows shell handling. GNU Make on Windows runs recipes through cmd.exe and
 # ignores the environment's SHELL — so even launched from Git Bash, recipes run
@@ -75,6 +76,15 @@ redeploy-frontend:  ## Rebuild + recreate just the frontend container.
 package-backend:  ## Rebuild backend JAR (skips tests).
 	@echo "==> Building backend JAR (skipping tests)..."
 	$(MVNW) -DskipTests -q package
+
+# Pull a Fly.io Postgres DB down into the local compose stack so you can
+# develop against a copy of the deployed data. Delegates to the script,
+# which tunnels via `flyctl proxy`, dumps with the local container's
+# pg_dump (version always matches), and restores with --clean.
+# Pick the edition with EDITION=c|ci|e (default ci); FORCE=1 skips the
+# confirm prompt. See scripts/db-pull-from-fly.sh for all knobs.
+db-pull-from-fly:  ## Copy a Fly Postgres DB into the local stack (EDITION=c|ci|e, default ci).
+	./scripts/db-pull-from-fly.sh
 
 logs:  ## Tail logs of the app container.
 	docker compose logs -f app
