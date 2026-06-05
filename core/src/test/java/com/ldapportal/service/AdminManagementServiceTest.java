@@ -205,7 +205,7 @@ class AdminManagementServiceTest {
                 new AdminAccountRequest("alice", null, null,
                         AccountRole.SUPERADMIN, AccountType.LOCAL, null, null, true)))
                 .isInstanceOf(ResourceNotFoundException.class);
-        verify(accountRepo, never()).save(any());
+        verify(accountRepo, never()).saveAndFlush(any());
     }
 
     @Test
@@ -230,7 +230,7 @@ class AdminManagementServiceTest {
                         AccountRole.SUPERADMIN, AccountType.LOCAL, null, null, true)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Role cannot be changed");
-        verify(accountRepo, never()).save(any());
+        verify(accountRepo, never()).saveAndFlush(any());
     }
 
     @Test
@@ -239,7 +239,7 @@ class AdminManagementServiceTest {
         inactive.setActive(false);
         when(accountRepo.findById(adminId)).thenReturn(Optional.of(inactive));
         when(accountRepo.countByRoleAndActiveTrue(AccountRole.ADMIN)).thenReturn(0L);
-        when(accountRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(accountRepo.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service.updateAdmin(adminId,
                 new AdminAccountRequest("alice", null, null,
@@ -252,7 +252,7 @@ class AdminManagementServiceTest {
     @Test
     void updateAdmin_alreadyActive_skipsLicenseCap() {
         when(accountRepo.findById(adminId)).thenReturn(Optional.of(adminAccount("alice")));
-        when(accountRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(accountRepo.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
         // A real change (displayName) so the update actually persists — active
         // stays true, so the license cap must NOT be re-checked.
@@ -277,7 +277,7 @@ class AdminManagementServiceTest {
                 principal);
 
         assertThat(resp.username()).isEqualTo("alice");
-        verify(accountRepo, never()).save(any());
+        verify(accountRepo, never()).saveAndFlush(any());
         verify(auditService, never()).recordSystemEvent(any(), any(), any());
     }
 
@@ -460,7 +460,7 @@ class AdminManagementServiceTest {
         Account existing = adminAccount("alice");
         when(accountRepo.findByUsername("alice")).thenReturn(Optional.of(existing));
         when(accountRepo.findById(adminId)).thenReturn(Optional.of(existing));
-        when(accountRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(accountRepo.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
         // An existing profile role the request does NOT declare → must be removed.
         UUID staleProfileId = UUID.randomUUID();
@@ -544,7 +544,7 @@ class AdminManagementServiceTest {
                         AccountRole.ADMIN, AccountType.LOCAL, null, null, true),
                 null, 1L))
                 .isInstanceOf(com.ldapportal.exception.PreconditionFailedException.class);
-        verify(accountRepo, never()).save(any());
+        verify(accountRepo, never()).saveAndFlush(any());
     }
 
     @Test
@@ -552,7 +552,7 @@ class AdminManagementServiceTest {
         Account a = adminAccount("alice");
         a.setVersion(2L);
         when(accountRepo.findById(adminId)).thenReturn(Optional.of(a));
-        when(accountRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(accountRepo.saveAndFlush(any())).thenAnswer(inv -> inv.getArgument(0));
 
         // A real field change so the update proceeds past the no-op fast path.
         AdminAccountResponse resp = service.updateAdmin(adminId,
@@ -561,7 +561,7 @@ class AdminManagementServiceTest {
                 null, 2L);
 
         assertThat(resp.username()).isEqualTo("alice");
-        verify(accountRepo).save(any());
+        verify(accountRepo).saveAndFlush(any());
     }
 
     private CreateAdminWithPermissionsRequest upsertReq(

@@ -420,7 +420,10 @@ public class AdminManagementService {
         if (authTypeChanged || passwordSet) {
             bumpCredentialsVersion(a);
         }
-        Account saved = accountRepo.save(a);
+        // saveAndFlush so the @Version increment lands before the response (and
+        // its ETag) is built — a plain save would return the pre-update version
+        // and the caller's next If-Match would spuriously 412.
+        Account saved = accountRepo.saveAndFlush(a);
 
         if (principal != null) {
             List<String> changed = new ArrayList<>();

@@ -201,7 +201,11 @@ public class DirectoryConnectionService {
             connectionFactory.evict(dc.getId());
         }
 
-        dc = dirRepo.save(dc);
+        // saveAndFlush (not save) so the @Version increment is applied before
+        // the response is built — otherwise the returned ETag would be the
+        // pre-update version and the caller's next If-Match would 412. A no-op
+        // (entity not dirty) flushes nothing, so the version correctly stays.
+        dc = dirRepo.saveAndFlush(dc);
         saveBaseDns(dc, req);
 
         // Re-probe out-of-band via DirectoryCapabilityRefresher (AFTER_COMMIT,

@@ -54,7 +54,8 @@ class DirectoryConnectionServiceTest {
     @BeforeEach
     void setUp() {
         when(dirRepo.findById(DIR_ID)).thenReturn(Optional.of(existing()));
-        when(dirRepo.save(any(DirectoryConnection.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(dirRepo.saveAndFlush(any(DirectoryConnection.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
         lenient().when(userBaseDnRepo.findAllByDirectoryIdOrderByDisplayOrderAsc(DIR_ID))
                 .thenReturn(List.of());
         lenient().when(groupBaseDnRepo.findAllByDirectoryIdOrderByDisplayOrderAsc(DIR_ID))
@@ -75,6 +76,8 @@ class DirectoryConnectionServiceTest {
 
         verify(connectionFactory).evict(DIR_ID);
         verify(eventPublisher).publishEvent(any(DirectoryConnectionSavedEvent.class));
+        // saveAndFlush (not save) so the response/ETag reflects the @Version bump.
+        verify(dirRepo).saveAndFlush(any(DirectoryConnection.class));
     }
 
     // ── fixtures ────────────────────────────────────────────────────────────
