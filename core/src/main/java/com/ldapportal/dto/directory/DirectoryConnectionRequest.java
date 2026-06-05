@@ -56,6 +56,11 @@ public record DirectoryConnectionRequest(
         @Min(1) @Max(65535) Integer globalCatalogPort,
         @Valid List<BaseDnRequest> userBaseDns,
         @Valid List<BaseDnRequest> groupBaseDns,
+        // ── Entry classification object classes (V20) ────────────────────────
+        // Null/empty = use the vendor default for directoryType. The service
+        // pre-populates these from the vendor default on create when omitted.
+        List<String> userObjectClasses,
+        List<String> groupObjectClasses,
         // ── Entra ID fields ─────────────────────────────────────────────────
         String tenantId,
         String entraClientId,

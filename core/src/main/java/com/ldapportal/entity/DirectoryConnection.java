@@ -119,6 +119,29 @@ public class DirectoryConnection {
     @Column(name = "disable_value")
     private String disableValue;
 
+    // ── Entry classification object classes (V20) ────────────────────────────
+
+    /**
+     * LDAP object classes that identify a <em>user</em> entry in this
+     * directory. Comma-delimited in the column; resolved through
+     * {@link DirectoryObjectClassDefaults#effectiveUserObjectClasses} so an
+     * unset value falls back to the vendor default. Drives user/group
+     * classification in search, dashboards, and LDIF import (including which
+     * imported entries are candidates for vendor overlay provisioning).
+     */
+    @Convert(converter = com.ldapportal.entity.converter.ObjectClassListConverter.class)
+    @Column(name = "user_object_classes", columnDefinition = "TEXT")
+    private java.util.List<String> userObjectClasses;
+
+    /**
+     * LDAP object classes that identify a <em>group</em> entry in this
+     * directory. See {@link #userObjectClasses}; resolved through
+     * {@link DirectoryObjectClassDefaults#effectiveGroupObjectClasses}.
+     */
+    @Convert(converter = com.ldapportal.entity.converter.ObjectClassListConverter.class)
+    @Column(name = "group_object_classes", columnDefinition = "TEXT")
+    private java.util.List<String> groupObjectClasses;
+
     // ── Self-service portal ──────────────────────────────────────────────────
 
     @Column(name = "self_service_enabled", nullable = false)

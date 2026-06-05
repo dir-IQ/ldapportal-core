@@ -246,11 +246,13 @@ public class BrowseController {
                                        @AuthenticationPrincipal AuthPrincipal principal,
                                        @RequestParam("file") MultipartFile file,
                                        @RequestParam(defaultValue = "SKIP") ConflictHandling conflictHandling,
-                                       @RequestParam(defaultValue = "false") boolean dryRun) throws IOException {
+                                       @RequestParam(defaultValue = "false") boolean dryRun,
+                                       @RequestParam(defaultValue = "false") boolean suppressVendorOverlay)
+            throws IOException {
         DirectoryConnection dc = loadDirectory(directoryId);
 
         LdifImportResult result = ldifService.importLdif(
-                dc, file.getInputStream(), conflictHandling, dryRun);
+                dc, file.getInputStream(), conflictHandling, dryRun, suppressVendorOverlay);
 
         auditService.record(principal, directoryId, AuditAction.LDIF_IMPORT, dc.getBaseDn(),
                 Map.of("added", result.added(),
@@ -300,12 +302,14 @@ public class BrowseController {
     @PostMapping("/import/ldif/preview/{previewId}/apply")
     public LdifImportResult applyPreview(@PathVariable UUID directoryId,
                                          @PathVariable UUID previewId,
-                                         @AuthenticationPrincipal AuthPrincipal principal) {
+                                         @AuthenticationPrincipal AuthPrincipal principal,
+                                         @RequestParam(defaultValue = "false") boolean suppressVendorOverlay) {
         DirectoryConnection dc = loadDirectory(directoryId);
         // Apply the records exactly as previewed, with the conflict mode the
         // preview was computed under (so the outcome matches what was shown).
         ConflictHandling conflict = ldifPreviewService.conflictOf(previewId, principal.id());
-        LdifImportResult result = ldifPreviewService.apply(previewId, principal.id(), dc);
+        LdifImportResult result = ldifPreviewService.apply(
+                previewId, principal.id(), dc, suppressVendorOverlay);
 
         auditService.record(principal, directoryId, AuditAction.LDIF_IMPORT, dc.getBaseDn(),
                 Map.of("added", result.added(),
@@ -313,6 +317,7 @@ public class BrowseController {
                        "skipped", result.skipped(),
                        "failed", result.failed(),
                        "conflictHandling", conflict.name(),
+                       "suppressVendorOverlay", suppressVendorOverlay,
                        "source", "preview"));
 
         return result;

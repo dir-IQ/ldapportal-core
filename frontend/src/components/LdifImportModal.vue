@@ -44,6 +44,20 @@
             Preview shows exactly what would change before anything is written.
           </p>
         </div>
+
+        <!-- Vendor account provisioning (only when the IVIA addon is enabled). -->
+        <label v-if="auth.isIsvaIntegrationEnabled"
+               class="flex items-start gap-2 text-sm text-gray-700">
+          <input type="checkbox" v-model="provisionVendorAccounts" class="rounded mt-0.5" />
+          <span>
+            Provision {{ IVIA_ABBR }} accounts (secUser) for imported users
+            <span class="block text-xs text-gray-500 mt-0.5">
+              On by default. Imported user entries get their {{ IVIA_ABBR }} overlay created per the
+              directory's configuration. Uncheck to import entries as-is — e.g. when re-importing an
+              export that already contains secUser entries.
+            </span>
+          </span>
+        </label>
       </template>
 
       <!-- ── Step 2: preview ──────────────────────────────────────────────── -->
@@ -194,7 +208,9 @@ import { ref, computed, watch } from 'vue'
 import AppModal from '@/components/AppModal.vue'
 import DataTable from '@/components/DataTable.vue'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
+import { IVIA_ABBR } from '@/constants/productNames'
 import { previewLdif, getLdifPreviewPage, getLdifPreviewRow, applyLdifPreview } from '@/api/browse'
 
 interface PreviewIssue { severity: string; code: string; message: string }
@@ -236,6 +252,7 @@ const emit = defineEmits<{ (e: 'imported'): void }>()
 const visible = defineModel<boolean>({ default: false })
 
 const notif = useNotificationStore()
+const auth = useAuthStore()
 const confirm = useConfirm()
 
 const PAGE_SIZE = 50
@@ -243,6 +260,8 @@ const PAGE_SIZE = 50
 const fileInput = ref<HTMLInputElement | null>(null)
 const file = ref<File | null>(null)
 const conflictHandling = ref<'SKIP' | 'OVERWRITE'>('SKIP')
+// Checked = provision IVIA secUser overlays for imported users (the default).
+const provisionVendorAccounts = ref(true)
 const dragging = ref(false)
 const error = ref('')
 const busy = ref(false)
@@ -300,6 +319,7 @@ function reset() {
   error.value = ''
   busy.value = false
   conflictHandling.value = 'SKIP'
+  provisionVendorAccounts.value = true
   summary.value = null
   previewId.value = ''
   rows.value = []
@@ -453,7 +473,8 @@ async function doApply() {
   error.value = ''
   busy.value = true
   try {
-    const { data } = await applyLdifPreview(props.directoryId, previewId.value)
+    const { data } = await applyLdifPreview(
+      props.directoryId, previewId.value, !provisionVendorAccounts.value)
     const result = data as ImportResult
     applyResult.value = result
     if (result.added + result.updated > 0) {

@@ -420,24 +420,21 @@ public class LdapOperationService {
 
     // ── Groups — read ─────────────────────────────────────────────────────────
 
-    /**
-     * LDAP filter that restricts results to well-known group objectClasses.
-     */
-    private static final String GROUP_OBJECTCLASS_FILTER =
-            "(|(objectClass=groupOfNames)(objectClass=groupOfUniqueNames)(objectClass=posixGroup)(objectClass=group)(objectClass=groupOfURLs))";
-
     public List<LdapEntryResponse> searchGroups(UUID directoryId, AuthPrincipal principal,
                                                 String filter, String baseDn,
                                                 int limit, String[] attributes) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
 
-        // Always intersect with known group objectClasses so non-group entries are excluded.
+        // Always intersect with the directory's configured (or vendor-default)
+        // group object classes so non-group entries are excluded.
+        String groupObjectClassFilter = com.ldapportal.entity.DirectoryObjectClassDefaults.orFilter(
+                com.ldapportal.entity.DirectoryObjectClassDefaults.effectiveGroupObjectClasses(dc));
         String effectiveFilter;
         if (filter == null || filter.isBlank()) {
-            effectiveFilter = GROUP_OBJECTCLASS_FILTER;
+            effectiveFilter = groupObjectClassFilter;
         } else {
-            effectiveFilter = "(&" + filter + GROUP_OBJECTCLASS_FILTER + ")";
+            effectiveFilter = "(&" + filter + groupObjectClassFilter + ")";
         }
         // Same fan-out story as searchUsers — see comment there.
         List<String> bases = permissionService.resolveSearchBaseDns(principal, directoryId, baseDn);

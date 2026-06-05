@@ -135,6 +135,26 @@ class IsvaProvisioningInterceptorTest {
     }
 
     @Test
+    void create_suppressVendorOverlay_fallsBackToBaselinePlan() {
+        // Config is present and enabled, but the operation asked to suppress
+        // the vendor overlay (e.g. LDIF import where the operator declined
+        // secUser provisioning) — so the plan must be the baseline ADD.
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(inlineConfig()));
+
+        UserCreatePlan plan = interceptor.planUserCreate(dir,
+                UserCreatePayload.of("uid=alice,dc=x", Map.of(
+                        "objectClass", List.of("inetOrgPerson"),
+                        "uid", List.of("alice"))),
+                ProvisioningContext.of(null, true));
+
+        assertThat(plan.steps()).hasSize(1);
+        AddStep step = (AddStep) plan.steps().get(0);
+        assertThat(objectClassValues(step.attributes()))
+                .containsExactly("inetOrgPerson")
+                .doesNotContain("secUser");
+    }
+
+    @Test
     void create_inline_secAuthorityOverridable() {
         VendorIntegrationIsvaConfig cfg = inlineConfig();
         cfg.setSecAuthority("EUR-Region");

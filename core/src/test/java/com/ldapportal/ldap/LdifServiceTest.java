@@ -58,7 +58,7 @@ class LdifServiceTest {
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(PASS);
         connectionFactory = new LdapConnectionFactory(encryptionService, null);
-        ldifService = new LdifService(connectionFactory);
+        ldifService = new LdifService(connectionFactory, baselineUserService(connectionFactory));
         dc = buildDc();
     }
 
@@ -168,5 +168,17 @@ class LdifServiceTest {
         d.setPoolResponseTimeoutSeconds(10);
         d.setPagingSize(100);
         return d;
+    }
+
+    /**
+     * A real {@link LdapUserService} with no interceptors / enrichers, so
+     * user adds route through the baseline single-step ADD — byte-identical
+     * to the pre-SPI behaviour these tests pin.
+     */
+    private static LdapUserService baselineUserService(LdapConnectionFactory cf) {
+        return new LdapUserService(cf,
+                new com.ldapportal.core.provisioning.ProvisioningInterceptorChain(java.util.List.of()),
+                new com.ldapportal.core.provisioning.PlanExecutor(cf),
+                new com.ldapportal.core.provisioning.UserReadEnricherChain(java.util.List.of()));
     }
 }

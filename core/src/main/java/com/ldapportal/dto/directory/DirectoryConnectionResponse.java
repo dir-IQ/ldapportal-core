@@ -55,6 +55,9 @@ public record DirectoryConnectionResponse(
         String selfServiceLoginAttribute,
         List<BaseDnItem> userBaseDns,
         List<BaseDnItem> groupBaseDns,
+        // Effective object-class sets (configured override, else vendor default).
+        List<String> userObjectClasses,
+        List<String> groupObjectClasses,
         String secondaryHost,
         Integer secondaryPort,
         Integer globalCatalogPort,
@@ -114,6 +117,8 @@ public record DirectoryConnectionResponse(
                 dc.getSelfServiceLoginAttribute(),
                 userDns.stream().map(BaseDnItem::fromUser).toList(),
                 groupDns.stream().map(BaseDnItem::fromGroup).toList(),
+                com.ldapportal.entity.DirectoryObjectClassDefaults.effectiveUserObjectClasses(dc),
+                com.ldapportal.entity.DirectoryObjectClassDefaults.effectiveGroupObjectClasses(dc),
                 dc.getSecondaryHost(),
                 dc.getSecondaryPort(),
                 dc.getGlobalCatalogPort(),

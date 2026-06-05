@@ -120,7 +120,7 @@ class BrowseControllerLdifPreviewTest extends BaseControllerTest {
         UUID previewId = UUID.randomUUID();
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dir()));
         when(ldifPreviewService.conflictOf(eq(previewId), any())).thenReturn(ConflictHandling.SKIP);
-        when(ldifPreviewService.apply(eq(previewId), any(), any()))
+        when(ldifPreviewService.apply(eq(previewId), any(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
                 .thenReturn(new LdifImportResult(3, 1, 0, 0, List.of()));
 
         mockMvc.perform(post("/api/v1/superadmin/directories/{id}/browse/import/ldif/preview/{pid}/apply",

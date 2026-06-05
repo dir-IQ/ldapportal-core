@@ -4,11 +4,14 @@ package com.ldapportal.ldap;
 import com.ldapportal.dto.ldap.LdifImportResult;
 import com.ldapportal.dto.ldap.LdifImportResult.LdifImportError;
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.DirectoryObjectClassDefaults;
 import com.ldapportal.entity.enums.ConflictHandling;
+import com.ldapportal.exception.LdapAdminException;
 import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.unboundid.asn1.ASN1OctetString;
 import com.unboundid.ldap.sdk.*;
 import com.unboundid.ldap.sdk.controls.SimplePagedResultsControl;
+import com.unboundid.ldif.LDIFAddChangeRecord;
 import com.unboundid.ldif.LDIFChangeRecord;
 import com.unboundid.ldif.LDIFException;
 import com.unboundid.ldif.LDIFReader;
@@ -25,8 +28,13 @@ import java.io.UncheckedIOException;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Exports LDAP entries in LDIF format (RFC 2849).
@@ -42,6 +50,15 @@ import java.util.List;
 public class LdifService {
 
     private final LdapConnectionFactory connectionFactory;
+
+    /**
+     * User entries in the import are routed through {@link LdapUserService}
+     * (the provisioning-plan SPI) rather than written raw, so vendor-aware
+     * interceptors — e.g. ISVA {@code secUser} provisioning — fire for them.
+     * Non-user entries and modify/delete/moddn change records stay on the
+     * raw path. See {@link #applyParsed}.
+     */
+    private final LdapUserService userService;
 
     // ── Import ────────────────────────────────────────────────────────────────
 
@@ -104,6 +121,19 @@ public class LdifService {
                                        InputStream ldifContent,
                                        ConflictHandling conflict,
                                        boolean dryRun) {
+        return importLdif(dc, ldifContent, conflict, dryRun, false);
+    }
+
+    /**
+     * Import overload carrying the vendor-overlay suppression flag (see
+     * {@link #applyParsedRecords}). Used by the direct (non-preview) import
+     * endpoint when the operator declined vendor provisioning.
+     */
+    public LdifImportResult importLdif(DirectoryConnection dc,
+                                       InputStream ldifContent,
+                                       ConflictHandling conflict,
+                                       boolean dryRun,
+                                       boolean suppressVendorOverlay) {
         List<ParsedRecord> records = parse(ldifContent);
         if (dryRun) {
             int skipped = 0, failed = 0;
@@ -119,23 +149,53 @@ public class LdifService {
             log.info("LDIF dry-run complete: parsed={}, parseErrors={}", skipped, failed);
             return new LdifImportResult(0, 0, skipped, failed, errors);
         }
-        return applyParsedRecords(dc, records, conflict);
+        return applyParsedRecords(dc, records, conflict, suppressVendorOverlay);
     }
 
     /**
      * Execute pre-parsed records against the directory. Used by the preview's
      * apply step so the operator applies the exact records they previewed
      * (no re-upload, no re-parse).
+     *
+     * @param suppressVendorOverlay when true, user adds are routed through the
+     *        provisioning SPI with the vendor overlay suppressed — the operator
+     *        declined e.g. ISVA {@code secUser} provisioning for this import.
      */
     public LdifImportResult applyParsedRecords(DirectoryConnection dc,
                                                List<ParsedRecord> records,
-                                               ConflictHandling conflict) {
-        return connectionFactory.withConnection(dc, conn -> applyParsed(records, conn, conflict));
+                                               ConflictHandling conflict,
+                                               boolean suppressVendorOverlay) {
+        return connectionFactory.withConnection(dc,
+                conn -> applyParsed(records, conn, conflict, dc, suppressVendorOverlay));
     }
+
+    /** Outcome of applying one add record, for the loop's counters. */
+    private enum AddOutcome { ADDED, UPDATED, SKIPPED }
 
     private LdifImportResult applyParsed(List<ParsedRecord> records,
                                          FullLDAPInterface conn,
-                                         ConflictHandling conflict) {
+                                         ConflictHandling conflict,
+                                         DirectoryConnection dc,
+                                         boolean suppressVendorOverlay) {
+        Set<String> userOcs = DirectoryObjectClassDefaults.effectiveUserObjectClassSet(dc);
+
+        // Safety: if the import itself already contains secUser entries it is a
+        // self-describing export (inline overlays, or paired linked-mode
+        // secUser entries). Auto-provisioning a fresh overlay on top would
+        // duplicate it — and in linked mode the secUser ADD would hit
+        // ENTRY_ALREADY_EXISTS and trigger the compensation DELETE of the
+        // just-added demographic. So fall back to raw writes for the whole
+        // file in that case, exactly as if the operator had opted out.
+        boolean fileHasSecUser = records.stream()
+                .map(LdifService::entryOf)
+                .anyMatch(e -> e != null && hasSecUserObjectClass(e));
+        boolean provisionOverlay = !suppressVendorOverlay && !fileHasSecUser;
+        if (fileHasSecUser && !suppressVendorOverlay) {
+            log.info("LDIF import on directory '{}' contains secUser entries — treating as a "
+                    + "self-describing export and writing entries as-is (no extra overlay provisioning).",
+                    dc.getDisplayName());
+        }
+
         int added = 0, updated = 0, skipped = 0, failed = 0;
         List<LdifImportError> errors = new ArrayList<>();
 
@@ -148,47 +208,30 @@ public class LdifService {
             LDIFRecord record = pr.record();
             String dn = record.getDN();
             try {
-                if (record instanceof LDIFChangeRecord changeRecord) {
+                AddOutcome outcome;
+                if (record instanceof LDIFAddChangeRecord addRec) {
+                    outcome = applyAdd(dc, conn, addRec.getEntryToAdd(), conflict, userOcs, provisionOverlay);
+                } else if (record instanceof LDIFChangeRecord changeRecord) {
+                    // modify / delete / moddn — applied raw; lumped as "updated".
                     changeRecord.processChange(conn);
-                    // Count change records as "added" for simplicity;
-                    // delete/modify are lumped into "updated"
-                    if (changeRecord instanceof com.unboundid.ldif.LDIFAddChangeRecord) {
-                        added++;
-                    } else {
-                        updated++;
-                    }
+                    outcome = AddOutcome.UPDATED;
                 } else if (record instanceof Entry entry) {
-                    try {
-                        conn.add(entry);
-                        added++;
-                    } catch (LDAPException ex) {
-                        if (ex.getResultCode() == ResultCode.ENTRY_ALREADY_EXISTS) {
-                            switch (conflict) {
-                                case OVERWRITE -> {
-                                    // Replace all attributes from the LDIF entry
-                                    List<Modification> mods = new ArrayList<>();
-                                    for (Attribute attr : entry.getAttributes()) {
-                                        if (attr.getBaseName().equalsIgnoreCase("objectClass")) continue;
-                                        mods.add(new Modification(
-                                                ModificationType.REPLACE,
-                                                attr.getBaseName(),
-                                                attr.getValues()));
-                                    }
-                                    if (!mods.isEmpty()) {
-                                        conn.modify(dn, mods);
-                                    }
-                                    updated++;
-                                }
-                                case SKIP, PROMPT -> {
-                                    skipped++;
-                                }
-                            }
-                        } else {
-                            throw ex;
-                        }
-                    }
+                    outcome = applyAdd(dc, conn, entry, conflict, userOcs, provisionOverlay);
+                } else {
+                    continue; // unknown record shape — nothing to apply
+                }
+                switch (outcome) {
+                    case ADDED -> added++;
+                    case UPDATED -> updated++;
+                    case SKIPPED -> skipped++;
                 }
             } catch (LDAPException ex) {
+                failed++;
+                errors.add(new LdifImportError(dn, ex.getMessage()));
+                log.warn("LDIF import failed for dn='{}': {}", dn, ex.getMessage());
+            } catch (LdapAdminException ex) {
+                // Surfaced by the provisioning SPI path (createUser) for a
+                // non-conflict failure — already wrapped with context.
                 failed++;
                 errors.add(new LdifImportError(dn, ex.getMessage()));
                 log.warn("LDIF import failed for dn='{}': {}", dn, ex.getMessage());
@@ -198,6 +241,127 @@ public class LdifService {
         log.info("LDIF import complete: added={}, updated={}, skipped={}, failed={}",
                 added, updated, skipped, failed);
         return new LdifImportResult(added, updated, skipped, failed, errors);
+    }
+
+    /**
+     * Apply one entry-add. User entries (per the directory's object-class
+     * configuration) are routed through {@link LdapUserService#createUser}
+     * so vendor interceptors fire; everything else is written raw. Both
+     * paths share the conflict handling.
+     */
+    private AddOutcome applyAdd(DirectoryConnection dc,
+                                FullLDAPInterface conn,
+                                Entry entry,
+                                ConflictHandling conflict,
+                                Set<String> userOcs,
+                                boolean provisionOverlay) throws LDAPException {
+        String dn = entry.getDN();
+
+        // Candidate for vendor-overlay provisioning: a user entry that does
+        // not already carry the overlay itself. Self-describing secUser
+        // entries (overlay already present) are written as-is.
+        boolean candidate = provisionOverlay
+                && isUserEntry(entry, userOcs)
+                && !hasSecUserObjectClass(entry);
+
+        if (candidate) {
+            try {
+                userService.createUser(dc, dn, toAttributeMap(entry), null, false);
+                return AddOutcome.ADDED;
+            } catch (LdapAdminException ex) {
+                if (!isAlreadyExists(ex)) {
+                    throw ex;
+                }
+                return applyConflict(conn, entry, conflict);
+            }
+        }
+
+        try {
+            conn.add(entry);
+            return AddOutcome.ADDED;
+        } catch (LDAPException ex) {
+            if (ex.getResultCode() != ResultCode.ENTRY_ALREADY_EXISTS) {
+                throw ex;
+            }
+            return applyConflict(conn, entry, conflict);
+        }
+    }
+
+    /** Conflict resolution shared by the SPI and raw add paths. */
+    private AddOutcome applyConflict(FullLDAPInterface conn, Entry entry, ConflictHandling conflict)
+            throws LDAPException {
+        if (conflict == ConflictHandling.OVERWRITE) {
+            // Replace all attributes from the LDIF entry (objectClass left
+            // intact — it's structural and a REPLACE could strip auxiliary
+            // classes the live entry needs).
+            List<Modification> mods = new ArrayList<>();
+            for (Attribute attr : entry.getAttributes()) {
+                if (attr.getBaseName().equalsIgnoreCase("objectClass")) continue;
+                mods.add(new Modification(ModificationType.REPLACE,
+                        attr.getBaseName(), attr.getValues()));
+            }
+            if (!mods.isEmpty()) {
+                conn.modify(entry.getDN(), mods);
+            }
+            return AddOutcome.UPDATED;
+        }
+        // SKIP / PROMPT — leave the existing entry untouched.
+        return AddOutcome.SKIPPED;
+    }
+
+    /** The entry carried by a content record or an add change record; null otherwise. */
+    private static Entry entryOf(ParsedRecord pr) {
+        if (pr.isError()) return null;
+        LDIFRecord record = pr.record();
+        if (record instanceof LDIFAddChangeRecord addRec) return addRec.getEntryToAdd();
+        if (record instanceof Entry entry) return entry;
+        return null;
+    }
+
+    private static boolean isUserEntry(Entry entry, Set<String> userOcs) {
+        String[] ocs = entry.getObjectClassValues();
+        if (ocs == null) return false;
+        for (String oc : ocs) {
+            if (userOcs.contains(oc.toLowerCase(Locale.ROOT))) return true;
+        }
+        return false;
+    }
+
+    private static boolean hasSecUserObjectClass(Entry entry) {
+        String[] ocs = entry.getObjectClassValues();
+        if (ocs == null) return false;
+        for (String oc : ocs) {
+            if ("secuser".equals(oc.toLowerCase(Locale.ROOT))) return true;
+        }
+        return false;
+    }
+
+    private static Map<String, List<String>> toAttributeMap(Entry entry) {
+        Map<String, List<String>> map = new LinkedHashMap<>();
+        for (Attribute attr : entry.getAttributes()) {
+            map.put(attr.getName(), Arrays.asList(attr.getValues()));
+        }
+        return map;
+    }
+
+    /**
+     * Whether a wrapped provisioning failure was an
+     * {@code ENTRY_ALREADY_EXISTS}. The SPI wraps the original
+     * {@link LDAPException} as the cause, so we walk the cause chain and
+     * test its result code — robust regardless of how the message reads.
+     * Falls back to message matching if the chain was flattened.
+     */
+    private static boolean isAlreadyExists(Throwable ex) {
+        for (Throwable t = ex; t != null; t = t.getCause()) {
+            if (t instanceof LDAPException le
+                    && le.getResultCode() == ResultCode.ENTRY_ALREADY_EXISTS) {
+                return true;
+            }
+        }
+        String msg = ex.getMessage();
+        return msg != null
+                && (msg.contains(ResultCode.ENTRY_ALREADY_EXISTS.getName())
+                    || msg.contains("(" + ResultCode.ENTRY_ALREADY_EXISTS.intValue() + ")"));
     }
 
     // ── Export ────────────────────────────────────────────────────────────────

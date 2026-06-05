@@ -122,6 +122,21 @@ public class DirectoryConnectionService {
         dc.setSlug(slug);
         applyRequest(dc, req);
 
+        // On create, pre-populate the object-class sets with the vendor
+        // default when the request omitted them, so the new directory has a
+        // concrete, editable value in the UI rather than relying on the
+        // implicit read-time fallback.
+        if (dc.getUserObjectClasses() == null || dc.getUserObjectClasses().isEmpty()) {
+            dc.setUserObjectClasses(
+                    com.ldapportal.entity.DirectoryObjectClassDefaults
+                            .userObjectClasses(dc.getDirectoryType()));
+        }
+        if (dc.getGroupObjectClasses() == null || dc.getGroupObjectClasses().isEmpty()) {
+            dc.setGroupObjectClasses(
+                    com.ldapportal.entity.DirectoryObjectClassDefaults
+                            .groupObjectClasses(dc.getDirectoryType()));
+        }
+
         if (req.directoryType() == com.ldapportal.entity.enums.DirectoryType.ENTRA_ID) {
             // Entra ID: client secret instead of bind password
             if (req.entraClientSecret() != null && !req.entraClientSecret().isBlank()) {
@@ -314,6 +329,14 @@ public class DirectoryConnectionService {
         } else {
             dc.setAuditDataSource(null);
         }
+
+        // Entry-classification object classes (V20). Stored as sent; the
+        // converter trims and collapses an empty list to null, and a null
+        // column resolves to the vendor default at read time. Create-time
+        // defaulting happens in doCreateDirectory so a brand-new directory
+        // shows an editable, vendor-appropriate value rather than a blank.
+        dc.setUserObjectClasses(req.userObjectClasses());
+        dc.setGroupObjectClasses(req.groupObjectClasses());
 
         // Entra ID fields
         dc.setTenantId(req.tenantId());
