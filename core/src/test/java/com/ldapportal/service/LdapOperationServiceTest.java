@@ -23,8 +23,10 @@ import com.ldapportal.service.AuditService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.util.List;
 import java.util.Map;
@@ -36,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -283,6 +286,150 @@ class LdapOperationServiceTest {
                 dirRepo, permissionService, browseService, userService, groupService,
                 schemaService, auditService, bulkUserService, bulkGroupService, csvTemplateService,
                 membershipGate, provider);
+    }
+
+    // ── Bulk delete ─────────────────────────────────────────────────────────────
+
+    private com.ldapportal.service.BulkUserService.RawDeleteRow rawRow(int n, String v) {
+        return new com.ldapportal.service.BulkUserService.RawDeleteRow(n, v);
+    }
+
+    private com.ldapportal.dto.csv.BulkDeleteRequest dnDeleteReq() {
+        return new com.ldapportal.dto.csv.BulkDeleteRequest(null, null, null, true);
+    }
+
+    @Test
+    void bulkDelete_dnMode_deletesResolvedRowsAndRecordsSummaryWithDeletedDns() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String dn = "uid=a,ou=people,dc=example,dc=com";
+        when(bulkUserService.parseDeleteRows(any(), eq("dn"), eq(true)))
+                .thenReturn(List.of(rawRow(1, dn)));
+        when(userService.entryExists(dc, dn)).thenReturn(true);
+
+        var result = service.bulkDeleteUsers(dirId, adminPrincipal(),
+                new java.io.ByteArrayInputStream(new byte[0]), dnDeleteReq());
+
+        assertThat(result.deleted()).isEqualTo(1);
+        assertThat(result.rows()).singleElement()
+                .satisfies(r -> assertThat(r.status())
+                        .isEqualTo(com.ldapportal.dto.csv.BulkDeleteRowResult.Status.DELETED));
+        verify(userService).deleteUser(dc, dn, null);
+
+        // One summary audit record naming the deleted DN.
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> detail = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(any(), eq(dirId),
+                eq(com.ldapportal.entity.enums.AuditAction.USER_DELETE), isNull(), detail.capture());
+        assertThat(detail.getValue()).containsEntry("operation", "bulkDelete");
+        assertThat(detail.getValue().get("deletedDns")).asInstanceOf(
+                org.assertj.core.api.InstanceOfAssertFactories.list(String.class)).containsExactly(dn);
+    }
+
+    @Test
+    void bulkDelete_dnMode_notFoundIsSkippedNotDeleted() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String dn = "uid=ghost,ou=people,dc=example,dc=com";
+        when(bulkUserService.parseDeleteRows(any(), eq("dn"), eq(true)))
+                .thenReturn(List.of(rawRow(1, dn)));
+        when(userService.entryExists(dc, dn)).thenReturn(false);
+
+        var result = service.bulkDeleteUsers(dirId, adminPrincipal(),
+                new java.io.ByteArrayInputStream(new byte[0]), dnDeleteReq());
+
+        assertThat(result.deleted()).isZero();
+        assertThat(result.skipped()).isEqualTo(1);
+        verify(userService, never()).deleteUser(any(), anyString(), any());
+    }
+
+    @Test
+    void bulkDelete_outOfScopeRow_isErrorAndNeverDeleted() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String dn = "uid=x,ou=forbidden,dc=example,dc=com";
+        when(bulkUserService.parseDeleteRows(any(), eq("dn"), eq(true)))
+                .thenReturn(List.of(rawRow(1, dn)));
+        doThrow(new AccessDeniedException("nope"))
+                .when(permissionService).requireDnWithinScope(any(), eq(dirId), eq(dn));
+
+        var result = service.bulkDeleteUsers(dirId, adminPrincipal(),
+                new java.io.ByteArrayInputStream(new byte[0]), dnDeleteReq());
+
+        assertThat(result.errors()).isEqualTo(1);
+        assertThat(result.deleted()).isZero();
+        // Out-of-scope DNs are never even probed for existence.
+        verify(userService, never()).entryExists(any(), anyString());
+        verify(userService, never()).deleteUser(any(), anyString(), any());
+    }
+
+    @Test
+    void bulkDelete_keyMode_ambiguousMatchIsErrorNotDeleted() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String base = "ou=people,dc=example,dc=com";
+        var req = new com.ldapportal.dto.csv.BulkDeleteRequest("uid", null, base, true);
+        when(bulkUserService.parseDeleteRows(any(), eq("uid"), eq(true)))
+                .thenReturn(List.of(rawRow(1, "dup")));
+        when(bulkUserService.resolveDnsByKey(dc, "uid", "dup", base))
+                .thenReturn(List.of("uid=dup,ou=a," + base, "uid=dup,ou=b," + base));
+
+        var result = service.bulkDeleteUsers(dirId, adminPrincipal(),
+                new java.io.ByteArrayInputStream(new byte[0]), req);
+
+        assertThat(result.errors()).isEqualTo(1);
+        verify(userService, never()).deleteUser(any(), anyString(), any());
+    }
+
+    @Test
+    void bulkDelete_keyMode_requiresBaseDn() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        var req = new com.ldapportal.dto.csv.BulkDeleteRequest("uid", null, null, true);
+
+        assertThatThrownBy(() -> service.bulkDeleteUsers(dirId, adminPrincipal(),
+                new java.io.ByteArrayInputStream(new byte[0]), req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("baseDn");
+    }
+
+    @Test
+    void bulkDelete_overRowCap_rejected() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        List<com.ldapportal.service.BulkUserService.RawDeleteRow> tooMany =
+                new java.util.ArrayList<>();
+        for (int i = 1; i <= LdapOperationService.MAX_BULK_DELETE_ROWS + 1; i++) {
+            tooMany.add(rawRow(i, "uid=" + i + ",ou=people,dc=example,dc=com"));
+        }
+        when(bulkUserService.parseDeleteRows(any(), eq("dn"), eq(true))).thenReturn(tooMany);
+
+        assertThatThrownBy(() -> service.bulkDeleteUsers(dirId, adminPrincipal(),
+                new java.io.ByteArrayInputStream(new byte[0]), dnDeleteReq()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("limited to");
+        verify(userService, never()).deleteUser(any(), anyString(), any());
+    }
+
+    @Test
+    void previewBulkDelete_classifiesWithoutDeleting() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String present = "uid=here,ou=people,dc=example,dc=com";
+        String absent  = "uid=gone,ou=people,dc=example,dc=com";
+        when(bulkUserService.parseDeleteRows(any(), eq("dn"), eq(true)))
+                .thenReturn(List.of(rawRow(1, present), rawRow(2, absent)));
+        when(userService.entryExists(dc, present)).thenReturn(true);
+        when(userService.entryExists(dc, absent)).thenReturn(false);
+
+        var preview = service.previewBulkDelete(dirId, adminPrincipal(),
+                new java.io.ByteArrayInputStream(new byte[0]), dnDeleteReq());
+
+        assertThat(preview.rows()).extracting(r -> r.disposition()).containsExactly(
+                com.ldapportal.dto.csv.BulkDeletePreviewRow.Disposition.WILL_DELETE,
+                com.ldapportal.dto.csv.BulkDeletePreviewRow.Disposition.NOT_FOUND);
+        verify(userService, never()).deleteUser(any(), anyString(), any());
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
     }
 
     private AuthPrincipal adminPrincipal() {

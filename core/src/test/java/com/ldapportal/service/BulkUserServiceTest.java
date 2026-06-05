@@ -391,4 +391,73 @@ class BulkUserServiceTest {
 
         assertThat(result.rows().get(0).missingRequired()).containsExactly("uid", "sn");
     }
+
+    // ── Bulk delete — CSV parsing + key resolution ──────────────────────────────
+
+    @Test
+    void parseDeleteRows_readsNamedColumn() throws IOException {
+        // DNs contain commas, so a real exported CSV quotes them — CsvUtils
+        // (and the export writer) round-trip quoted fields correctly.
+        String csvContent = "dn,cn\n"
+                + "\"uid=a,ou=people,dc=example,dc=com\",Alice\n"
+                + "\"uid=b,ou=people,dc=example,dc=com\",Bob\n";
+
+        var rows = service.parseDeleteRows(csv(csvContent), "dn", true);
+
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0).rowNumber()).isEqualTo(1);
+        assertThat(rows.get(0).value()).isEqualTo("uid=a,ou=people,dc=example,dc=com");
+        assertThat(rows.get(1).value()).isEqualTo("uid=b,ou=people,dc=example,dc=com");
+    }
+
+    @Test
+    void parseDeleteRows_namedColumnIsCaseInsensitive() throws IOException {
+        String csvContent = "UID\njsmith\n";
+        var rows = service.parseDeleteRows(csv(csvContent), "uid", true);
+        assertThat(rows.get(0).value()).isEqualTo("jsmith");
+    }
+
+    @Test
+    void parseDeleteRows_fallsBackToSingleColumnWhenHeaderUnknown() throws IOException {
+        // A bare list of values whose header doesn't match the configured
+        // column still works because there's only one column.
+        String csvContent = "whatever\njsmith\njdoe\n";
+        var rows = service.parseDeleteRows(csv(csvContent), "dn", true);
+
+        assertThat(rows).hasSize(2);
+        assertThat(rows.get(0).value()).isEqualTo("jsmith");
+        assertThat(rows.get(1).value()).isEqualTo("jdoe");
+    }
+
+    @Test
+    void parseDeleteRows_missingColumnInMultiColumnFileYieldsNull() throws IOException {
+        String csvContent = "cn,mail\nAlice,a@example.com\n";
+        var rows = service.parseDeleteRows(csv(csvContent), "dn", true);
+        assertThat(rows.get(0).value()).isNull();
+    }
+
+    @Test
+    void resolveDnsByKey_buildsEscapedEqualityFilterAndReturnsDns() {
+        String base = "ou=people,dc=example,dc=com";
+        when(userService.searchUsers(eq(dc), eq("(uid=jsmith)"), eq(base), eq(2), eq("1.1")))
+                .thenReturn(List.of(ldapUser("uid=jsmith," + base, Map.of())));
+
+        var dns = service.resolveDnsByKey(dc, "uid", "jsmith", base);
+
+        assertThat(dns).containsExactly("uid=jsmith," + base);
+    }
+
+    @Test
+    void resolveDnsByKey_capsAtTwoSoAmbiguityIsDetectable() {
+        String base = "ou=people,dc=example,dc=com";
+        when(userService.searchUsers(eq(dc), anyString(), eq(base), eq(2), eq("1.1")))
+                .thenReturn(List.of(
+                        ldapUser("uid=dup,ou=a," + base, Map.of()),
+                        ldapUser("uid=dup,ou=b," + base, Map.of())));
+
+        var dns = service.resolveDnsByKey(dc, "uid", "dup", base);
+
+        // The service requests at most 2 — enough for the caller to flag AMBIGUOUS.
+        assertThat(dns).hasSize(2);
+    }
 }

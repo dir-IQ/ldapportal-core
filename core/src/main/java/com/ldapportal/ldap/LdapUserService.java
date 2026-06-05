@@ -223,6 +223,17 @@ public class LdapUserService {
         return readEnrichers.enrich(dc, raw);
     }
 
+    /**
+     * Lightweight existence check by DN. Requests no attributes ({@code 1.1})
+     * so it's a single cheap round-trip — used by the bulk-delete dry-run
+     * preview to classify each row before any write. Returns {@code false}
+     * when no entry exists at {@code dn} (UnboundID's {@code getEntry} returns
+     * {@code null} for NO_SUCH_OBJECT).
+     */
+    public boolean entryExists(DirectoryConnection dc, String dn) {
+        return connectionFactory.withConnection(dc, conn -> conn.getEntry(dn, "1.1") != null);
+    }
+
     // ── Create ────────────────────────────────────────────────────────────────
 
     /**

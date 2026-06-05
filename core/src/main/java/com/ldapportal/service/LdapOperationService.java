@@ -5,6 +5,11 @@ import com.ldapportal.core.governance.MembershipGate;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.ldap.validation.DnValidator;
 import com.ldapportal.auth.PermissionService;
+import com.ldapportal.dto.csv.BulkDeletePreviewResult;
+import com.ldapportal.dto.csv.BulkDeletePreviewRow;
+import com.ldapportal.dto.csv.BulkDeleteRequest;
+import com.ldapportal.dto.csv.BulkDeleteResult;
+import com.ldapportal.dto.csv.BulkDeleteRowResult;
 import com.ldapportal.dto.csv.BulkImportPreviewResult;
 import com.ldapportal.dto.csv.BulkImportRequest;
 import com.ldapportal.dto.csv.BulkImportResult;
@@ -21,6 +26,7 @@ import com.ldapportal.entity.CsvMappingTemplateEntry;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ConflictHandling;
+import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapBrowseService;
 import com.ldapportal.ldap.LdapBrowseService.BrowseResult;
@@ -35,6 +41,7 @@ import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -329,12 +336,26 @@ public class LdapOperationService {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
 
-        // Resolve the matching profile BEFORE the delete so we can
-        // clean up profile-assigned group memberships afterwards.
-        // The interceptor chain may turn a delete into a soft-disable
-        // (ISVA's default policy), and either way the user's profile
-        // group memberships should be removed so reports based on
-        // group membership don't see ghost members.
+        UUID profileId = deleteResolvedUser(dc, directoryId, principal, dn);
+
+        Map<String, Object> detail = new java.util.LinkedHashMap<>();
+        if (profileId != null) detail.put("profileId", profileId.toString());
+        auditService.record(principal, directoryId, AuditAction.USER_DELETE, dn,
+                detail.isEmpty() ? null : detail);
+    }
+
+    /**
+     * Deletes one already-scope-checked user and returns the resolved profile
+     * id (or null). Resolves the matching profile BEFORE the delete so we can
+     * clean up profile-assigned group memberships afterwards — the interceptor
+     * chain may turn a delete into a soft-disable (ISVA's default policy), and
+     * either way the user's profile group memberships should be removed so
+     * reports based on group membership don't see ghost members. Records no
+     * audit itself: the single-delete path emits one record per user, while
+     * the bulk path emits a single summary record for the whole batch.
+     */
+    private UUID deleteResolvedUser(DirectoryConnection dc, UUID directoryId,
+                                    AuthPrincipal principal, String dn) {
         ProvisioningProfileService ps = profileServiceProvider.getIfAvailable();
         UUID profileId = ps == null ? null
                 : ps.resolveProfileForDn(directoryId, dn).map(p -> p.getId()).orElse(null);
@@ -351,11 +372,7 @@ public class LdapOperationService {
                         dn, e.getMessage());
             }
         }
-
-        Map<String, Object> detail = new java.util.LinkedHashMap<>();
-        if (profileId != null) detail.put("profileId", profileId.toString());
-        auditService.record(principal, directoryId, AuditAction.USER_DELETE, dn,
-                detail.isEmpty() ? null : detail);
+        return profileId;
     }
 
     public void enableUser(UUID directoryId, AuthPrincipal principal, String dn) {
@@ -681,6 +698,225 @@ public class LdapOperationService {
         }
 
         return bulkUserService.exportCsvFromBases(dc, filter, bases, effectiveAttrs);
+    }
+
+    // ── Bulk delete ───────────────────────────────────────────────────────────
+
+    /** Per-request safety cap. A destructive op shouldn't take an unbounded
+     *  file in one shot; over-cap requests are rejected with guidance to split. */
+    static final int MAX_BULK_DELETE_ROWS = 500;
+
+    /** Internal classification of one CSV row after resolution (no writes). */
+    private record ResolvedDeleteRow(int rowNumber, String dn,
+                                     BulkDeletePreviewRow.Disposition disposition, String note) {}
+
+    /**
+     * Dry-run preview for a bulk delete: resolves every CSV row to a target DN
+     * and classifies what would happen on commit, without touching the
+     * directory. This is the safety centrepiece — the frontend forces a preview
+     * before the (typed-confirmed) commit.
+     */
+    public BulkDeletePreviewResult previewBulkDelete(UUID directoryId, AuthPrincipal principal,
+                                                     InputStream csvInput,
+                                                     BulkDeleteRequest req) throws IOException {
+        DirectoryConnection dc = loadDirectory(directoryId, principal);
+        permissionService.requireDirectoryAccess(principal, directoryId);
+        validateBulkDeleteRequest(dc, principal, directoryId, req);
+
+        List<BulkUserService.RawDeleteRow> rawRows = bulkUserService.parseDeleteRows(
+                csvInput, resolveValueColumn(req), skipHeader(req.skipHeaderRow()));
+        enforceBulkDeleteCap(rawRows.size());
+
+        List<BulkDeletePreviewRow> rows = resolveBulkDelete(dc, directoryId, principal, rawRows, req)
+                .stream()
+                .map(r -> new BulkDeletePreviewRow(r.rowNumber(), r.dn(), r.disposition(), r.note()))
+                .toList();
+        return new BulkDeletePreviewResult(rows.size(), rows);
+    }
+
+    /**
+     * Commits a bulk delete. Re-resolves the CSV (so the result reflects the
+     * directory's current state, not a stale preview) and deletes every row
+     * that resolves to a single in-scope, existing entry. Non-deletable rows
+     * become SKIPPED (not found) or ERROR (out of scope / ambiguous / invalid).
+     * One summary audit record is written for the whole batch, including the
+     * list of DNs actually deleted.
+     *
+     * <p>No approval workflow — a deliberate product decision (mirrors single
+     * delete). The destructive op is gated by the {@code bulk.delete} feature
+     * plus the mandatory preview, typed confirmation, and row cap.</p>
+     */
+    public BulkDeleteResult bulkDeleteUsers(UUID directoryId, AuthPrincipal principal,
+                                            InputStream csvInput,
+                                            BulkDeleteRequest req) throws IOException {
+        DirectoryConnection dc = loadDirectory(directoryId, principal);
+        permissionService.requireDirectoryAccess(principal, directoryId);
+        validateBulkDeleteRequest(dc, principal, directoryId, req);
+
+        List<BulkUserService.RawDeleteRow> rawRows = bulkUserService.parseDeleteRows(
+                csvInput, resolveValueColumn(req), skipHeader(req.skipHeaderRow()));
+        enforceBulkDeleteCap(rawRows.size());
+
+        List<ResolvedDeleteRow> resolved = resolveBulkDelete(dc, directoryId, principal, rawRows, req);
+
+        List<BulkDeleteRowResult> rows = new ArrayList<>();
+        List<String> deletedDns = new ArrayList<>();
+        for (ResolvedDeleteRow r : resolved) {
+            switch (r.disposition()) {
+                case WILL_DELETE -> {
+                    try {
+                        deleteResolvedUser(dc, directoryId, principal, r.dn());
+                        deletedDns.add(r.dn());
+                        rows.add(BulkDeleteRowResult.deleted(r.rowNumber(), r.dn()));
+                    } catch (ResourceNotFoundException nf) {
+                        // Vanished between preview/resolve and delete — treat as a skip.
+                        rows.add(BulkDeleteRowResult.skipped(r.rowNumber(), r.dn(), "Entry no longer exists"));
+                    } catch (Exception e) {
+                        log.warn("Bulk delete row {} failed [dn={}]: {}",
+                                r.rowNumber(), r.dn(), e.getMessage());
+                        rows.add(BulkDeleteRowResult.error(r.rowNumber(), r.dn(), e.getMessage()));
+                    }
+                }
+                case NOT_FOUND -> rows.add(BulkDeleteRowResult.skipped(r.rowNumber(), r.dn(), r.note()));
+                case OUT_OF_SCOPE, AMBIGUOUS, INVALID ->
+                        rows.add(BulkDeleteRowResult.error(r.rowNumber(), r.dn(), r.note()));
+            }
+        }
+
+        long deleted = deletedDns.size();
+        long skipped = rows.stream().filter(x -> x.status() == BulkDeleteRowResult.Status.SKIPPED).count();
+        long errors  = rows.stream().filter(x -> x.status() == BulkDeleteRowResult.Status.ERROR).count();
+
+        log.info("Bulk delete complete: {} rows — deleted={}, skipped={}, errors={}",
+                rows.size(), deleted, skipped, errors);
+
+        // Single summary record for the batch (matches bulk import / bulk
+        // attribute update). The deleted DNs are folded into the detail so the
+        // audit trail names exactly what was removed.
+        auditService.record(principal, directoryId, AuditAction.USER_DELETE, null,
+                Map.of("operation", "bulkDelete",
+                       "totalRows", rows.size(),
+                       "deleted", deleted,
+                       "skipped", skipped,
+                       "errors", errors,
+                       "deletedDns", deletedDns));
+
+        return new BulkDeleteResult(rows.size(), deleted, skipped, errors, rows);
+    }
+
+    /**
+     * Shared resolution used by both preview and commit so "what the preview
+     * shows" is exactly "what commit deletes". For each raw row: pick the
+     * target DN (DN mode = the cell; key mode = equality search), then
+     * scope-check and existence-check to assign a {@link BulkDeletePreviewRow.Disposition}.
+     * Scope is checked first (a structural DN check that performs no LDAP read)
+     * so an out-of-scope DN is never probed for existence.
+     */
+    private List<ResolvedDeleteRow> resolveBulkDelete(DirectoryConnection dc, UUID directoryId,
+                                                      AuthPrincipal principal,
+                                                      List<BulkUserService.RawDeleteRow> rawRows,
+                                                      BulkDeleteRequest req) {
+        boolean dnMode = isDnMode(req);
+        List<ResolvedDeleteRow> out = new ArrayList<>();
+        for (BulkUserService.RawDeleteRow raw : rawRows) {
+            int n = raw.rowNumber();
+            String value = raw.value() == null ? null : raw.value().trim();
+            if (value == null || value.isBlank()) {
+                out.add(new ResolvedDeleteRow(n, null,
+                        BulkDeletePreviewRow.Disposition.INVALID, "No value in the '" + resolveValueColumn(req) + "' column"));
+                continue;
+            }
+
+            if (dnMode) {
+                String dn = value;
+                if (!withinScope(principal, directoryId, dn)) {
+                    out.add(new ResolvedDeleteRow(n, dn,
+                            BulkDeletePreviewRow.Disposition.OUT_OF_SCOPE, "Outside your authorized scope"));
+                    continue;
+                }
+                boolean exists;
+                try {
+                    exists = userService.entryExists(dc, dn);
+                } catch (Exception e) {
+                    out.add(new ResolvedDeleteRow(n, dn,
+                            BulkDeletePreviewRow.Disposition.INVALID, e.getMessage()));
+                    continue;
+                }
+                out.add(exists
+                        ? new ResolvedDeleteRow(n, dn, BulkDeletePreviewRow.Disposition.WILL_DELETE, null)
+                        : new ResolvedDeleteRow(n, dn, BulkDeletePreviewRow.Disposition.NOT_FOUND, "No entry at this DN"));
+            } else {
+                List<String> dns;
+                try {
+                    dns = bulkUserService.resolveDnsByKey(dc, req.keyAttribute(), value, req.baseDn());
+                } catch (Exception e) {
+                    out.add(new ResolvedDeleteRow(n, null,
+                            BulkDeletePreviewRow.Disposition.INVALID, e.getMessage()));
+                    continue;
+                }
+                if (dns.isEmpty()) {
+                    out.add(new ResolvedDeleteRow(n, null, BulkDeletePreviewRow.Disposition.NOT_FOUND,
+                            "No entry where " + req.keyAttribute() + "=" + value));
+                } else if (dns.size() > 1) {
+                    out.add(new ResolvedDeleteRow(n, null, BulkDeletePreviewRow.Disposition.AMBIGUOUS,
+                            req.keyAttribute() + "=" + value + " matches multiple entries"));
+                } else {
+                    String dn = dns.get(0);
+                    out.add(withinScope(principal, directoryId, dn)
+                            ? new ResolvedDeleteRow(n, dn, BulkDeletePreviewRow.Disposition.WILL_DELETE, null)
+                            : new ResolvedDeleteRow(n, dn, BulkDeletePreviewRow.Disposition.OUT_OF_SCOPE, "Outside your authorized scope"));
+                }
+            }
+        }
+        return out;
+    }
+
+    private void validateBulkDeleteRequest(DirectoryConnection dc, AuthPrincipal principal,
+                                           UUID directoryId, BulkDeleteRequest req) {
+        if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
+            throw new IllegalArgumentException("Bulk delete is not supported for Entra ID directories");
+        }
+        if (!isDnMode(req)) {
+            if (req.baseDn() == null || req.baseDn().isBlank()) {
+                throw new IllegalArgumentException(
+                        "baseDn is required when deleting by a key attribute");
+            }
+            // The search base must itself be within the caller's scope, so a
+            // key-attribute lookup can't be aimed at OUs the admin doesn't own.
+            permissionService.requireDnWithinScope(principal, directoryId, req.baseDn());
+        }
+    }
+
+    private boolean isDnMode(BulkDeleteRequest req) {
+        return req.keyAttribute() == null || req.keyAttribute().isBlank()
+                || req.keyAttribute().equalsIgnoreCase("dn");
+    }
+
+    private String resolveValueColumn(BulkDeleteRequest req) {
+        if (req.valueColumn() != null && !req.valueColumn().isBlank()) return req.valueColumn().trim();
+        if (req.keyAttribute() != null && !req.keyAttribute().isBlank()) return req.keyAttribute().trim();
+        return "dn";
+    }
+
+    private boolean skipHeader(Boolean flag) {
+        return flag == null || flag; // default: first row is a header
+    }
+
+    private void enforceBulkDeleteCap(int rowCount) {
+        if (rowCount > MAX_BULK_DELETE_ROWS) {
+            throw new IllegalArgumentException(
+                    "Bulk delete is limited to " + MAX_BULK_DELETE_ROWS + " rows per file; "
+                    + "split the file and retry (" + rowCount + " rows submitted)");
+        }
+    }
+
+    private boolean withinScope(AuthPrincipal principal, UUID directoryId, String dn) {
+        try {
+            permissionService.requireDnWithinScope(principal, directoryId, dn);
+            return true;
+        } catch (AccessDeniedException e) {
+            return false;
+        }
     }
 
     // ── Bulk group import / export ───────────────────────────────────────────

@@ -22,6 +22,7 @@ public enum FeatureKey {
     BULK_IMPORT          ("bulk.import"),
     BULK_EXPORT          ("bulk.export"),
     BULK_ATTRIBUTE_UPDATE("bulk.attribute_update"),
+    BULK_DELETE          ("bulk.delete"),
     REPORTS_RUN          ("reports.run"),
     REPORTS_SCHEDULE     ("reports.schedule"),
     ACCESS_REVIEW_MANAGE ("access_review.manage"),
