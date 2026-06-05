@@ -1113,7 +1113,7 @@ watch(() => profile.value.selfRegistrationAllowed, (allowed) => {
 // Fixed initial modal height so switching tabs doesn't resize the dialog.
 // Sized to fit the General panel in the 'new profile' state without a
 // scrollbar; operators can drag-resize from there.
-const modalHeight = '685px'
+const modalHeight = '750px'
 
 const modalTabs = [
   { id: 'general', label: 'General' },
