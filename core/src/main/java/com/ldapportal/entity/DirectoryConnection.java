@@ -30,6 +30,15 @@ public class DirectoryConnection {
     private UUID id;
 
     /**
+     * Optimistic-lock counter (§4.4). Surfaced as the resource ETag and
+     * checked against {@code If-Match} so concurrent writes — e.g. an IaC
+     * apply racing a UI edit — fail rather than silently clobber.
+     */
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
+    /**
      * Stable, immutable, URL-safe external identifier for IaC tooling.
      * Unlike {@link #displayName} — which operators may rename freely — the
      * slug is the key automation upserts against across runs

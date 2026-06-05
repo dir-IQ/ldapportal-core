@@ -10,6 +10,7 @@ import java.util.UUID;
 
 public record AdminAccountResponse(
         UUID id,
+        Long version,
         String username,
         String displayName,
         String email,
@@ -29,6 +30,7 @@ public record AdminAccountResponse(
     public static AdminAccountResponse from(Account a) {
         return new AdminAccountResponse(
                 a.getId(),
+                a.getVersion(),
                 a.getUsername(),
                 a.getDisplayName(),
                 a.getEmail(),
