@@ -285,6 +285,29 @@ function clearAll(): void {
 }
 
 /**
+ * True when a rule is likely to surprise the user by escaping a typed
+ * `*` to `\2a`: an equals/not-equals match whose value contains an
+ * asterisk. Wildcarding in this builder comes from the operator
+ * (is present / contains / matches / starts with / ends with), not from
+ * typing `*` into the literal value field — so we nudge toward that.
+ * Scoped to equals/not-equals because the substring operators already
+ * imply a wildcard, so a `*` there is far less likely to be a mistake.
+ */
+function showLiteralStarHint(rule: IndexedRule): boolean {
+  return (rule.op === 'equals' || rule.op === 'not-equals') && rule.value.includes('*')
+}
+
+/**
+ * Distinguishes the two flavours of the literal-`*` confusion so the hint
+ * can point at the right operator: a bare `*` means "any value" (→ is
+ * present), while a mid-string pattern like `jo*n` means a wildcard match
+ * (→ matches (wildcard)).
+ */
+function starHintIsBare(rule: IndexedRule): boolean {
+  return rule.value.trim() === '*'
+}
+
+/**
  * Test-only helper: reset the module-scoped schema cache so component
  * tests don't have to depend on import order. Production code never
  * calls this. Exposed via defineExpose below for the spec file.
@@ -394,11 +417,8 @@ defineExpose({
         No rules yet. Click "+ Add rule" to start building a filter.
       </div>
       <div v-else class="space-y-1.5">
-        <div
-          v-for="(rule, i) in rules"
-          :key="rule.id"
-          class="flex items-center gap-2 bg-white border border-gray-200 rounded-md px-2 py-1.5"
-        >
+        <div v-for="(rule, i) in rules" :key="rule.id">
+         <div class="flex items-center gap-2 bg-white border border-gray-200 rounded-md px-2 py-1.5">
           <!-- Custom combobox: input + filtered suggestions listbox.
                Replaces the native <datalist> popup which was
                unstyleable (rendered by OS chrome, ignored page theme).
@@ -477,6 +497,26 @@ defineExpose({
             :aria-label="`Remove rule ${i + 1}`"
             title="Remove rule"
           >&times;</button>
+         </div>
+          <!-- Literal-asterisk nudge. A typed `*` is a literal value here
+               (escaped to \2a), not a wildcard — wildcards come from the
+               operator. Only shown for equals/not-equals so we don't nag
+               on the substring operators that imply a `*`. -->
+          <p
+            v-if="showLiteralStarHint(rule)"
+            data-star-hint
+            class="text-xs text-amber-600 mt-1 ml-1"
+          >
+            The <code class="font-mono">*</code> is matched literally (escaped to
+            <code class="font-mono">\2a</code>).
+            <template v-if="starHintIsBare(rule)">
+              For &ldquo;any value&rdquo;, use the <strong>is present</strong> operator.
+            </template>
+            <template v-else>
+              To use <code class="font-mono">*</code> as a wildcard, switch to the
+              <strong>matches (wildcard)</strong> operator.
+            </template>
+          </p>
         </div>
       </div>
 
