@@ -128,7 +128,11 @@
                     Import LDIF
                   </button>
                   <div class="border-t border-gray-100 my-1"></div>
-                  <button @click="showDeleteConfirm = true; deleteRecursive = false; showActionsMenu = false"
+                  <button @click="openDeleteConfirm('children'); showActionsMenu = false"
+                          class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">
+                    Delete Children Only
+                  </button>
+                  <button @click="openDeleteConfirm('entry'); showActionsMenu = false"
                           class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">
                     Delete Entry
                   </button>
@@ -166,10 +170,16 @@
         <div v-dialog-a11y role="dialog" aria-modal="true" aria-labelledby="browser-delete-title"
              @keydown.escape="showDeleteConfirm = false; deleteError = ''"
              class="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
-          <h3 id="browser-delete-title" class="text-lg font-semibold text-gray-900 mb-2">Delete Entry</h3>
-          <p class="text-sm text-gray-600 mb-3">Are you sure you want to delete this entry?</p>
+          <h3 id="browser-delete-title" class="text-lg font-semibold text-gray-900 mb-2">
+            {{ deleteMode === 'children' ? 'Delete Children' : 'Delete Entry' }}
+          </h3>
+          <p class="text-sm text-gray-600 mb-3">
+            {{ deleteMode === 'children'
+              ? 'Delete all child entries beneath this entry? The entry itself is kept. This removes every descendant and cannot be undone.'
+              : 'Are you sure you want to delete this entry?' }}
+          </p>
           <p class="text-sm font-mono text-gray-900 bg-gray-50 px-3 py-2 rounded-lg break-all mb-3">{{ selectedDn }}</p>
-          <label class="flex items-center gap-2 text-sm text-gray-700 mb-4">
+          <label v-if="deleteMode === 'entry'" class="flex items-center gap-2 text-sm text-gray-700 mb-4">
             <input type="checkbox" v-model="deleteRecursive" class="rounded border-gray-300" />
             Delete recursively (include all children)
           </label>
@@ -283,6 +293,9 @@ const showActionsMenu   = ref(false)
 const menuRef           = ref(null)
 const showDeleteConfirm = ref(false)
 const deleteRecursive   = ref(false)
+// 'entry' = delete the selected entry (optionally recursively);
+// 'children' = delete its descendants only, keeping the entry.
+const deleteMode        = ref('entry')
 const deleting          = ref(false)
 const deleteError       = ref('')
 
@@ -374,21 +387,32 @@ async function onEntryUpdated(browseResult) {
   notif.success('Entry updated successfully')
 }
 
+function openDeleteConfirm(mode) {
+  deleteMode.value = mode
+  deleteRecursive.value = false
+  deleteError.value = ''
+  showDeleteConfirm.value = true
+}
+
 async function onDeleteConfirmed() {
   deleteError.value = ''
   deleting.value = true
+  const childrenOnly = deleteMode.value === 'children'
   try {
-    const { data: parentBrowse } = await deleteEntry(selectedDirId.value, selectedDn.value, deleteRecursive.value)
+    // The endpoint returns the listing to refresh: the (now-empty) entry
+    // itself for children-only, or the parent for a full delete. Either way
+    // we refresh that node and select it.
+    const { data: browseResult } = await deleteEntry(
+      selectedDirId.value, selectedDn.value,
+      childrenOnly ? false : deleteRecursive.value, childrenOnly)
     showDeleteConfirm.value = false
-    // Compute parent DN to refresh tree
-    const parentDn = parentBrowse.dn
+    const refreshDn = browseResult.dn
     if (treeRef.value) {
-      treeRef.value.refreshNode(parentDn, parentBrowse.children)
+      treeRef.value.refreshNode(refreshDn, browseResult.children)
     }
-    // Select the parent after deletion
-    selectedDn.value = parentDn
-    entryDetail.value = { dn: parentBrowse.dn, attributes: parentBrowse.attributes }
-    notif.success('Entry deleted successfully')
+    selectedDn.value = refreshDn
+    entryDetail.value = { dn: browseResult.dn, attributes: browseResult.attributes }
+    notif.success(childrenOnly ? 'Child entries deleted successfully' : 'Entry deleted successfully')
   } catch (e) {
     deleteError.value = e.response?.data?.detail || e.response?.data?.message || e.message
   } finally {
