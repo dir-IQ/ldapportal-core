@@ -159,6 +159,60 @@ describe('LdapFilterBuilder.vue', () => {
     expect(w.text()).toContain('(no value needed)')
   })
 
+  it('labels the presence operator "is present"', async () => {
+    const w = mountBuilder()
+    await w.find('button').trigger('click')
+    await w.find('button[aria-label="Add rule"]').trigger('click')
+    expect(w.find('select').text()).toContain('is present')
+  })
+
+  it('nudges when an equals value contains a literal * (escaped to \\2a)', async () => {
+    const w = mountBuilder()
+    await w.find('button').trigger('click')
+    await w.find('button[aria-label="Add rule"]').trigger('click')
+    await w.find('input[data-rule-attr]').setValue('cn')
+
+    // No asterisk yet → no hint.
+    expect(w.find('[data-star-hint]').exists()).toBe(false)
+
+    await w.find('input[aria-label="Value"]').setValue('*')
+    const hint = w.find('[data-star-hint]')
+    expect(hint.exists()).toBe(true)
+    // Points the user at the right operator.
+    expect(hint.text()).toContain('is present')
+  })
+
+  it('also nudges for not-equals with a literal *', async () => {
+    const w = mountBuilder()
+    await w.find('button').trigger('click')
+    await w.find('button[aria-label="Add rule"]').trigger('click')
+    await w.find('input[data-rule-attr]').setValue('cn')
+    await w.find('input[aria-label="Value"]').setValue('*')
+    await w.find('select').setValue('not-equals')
+    expect(w.find('[data-star-hint]').exists()).toBe(true)
+  })
+
+  it('does not nudge for substring operators that already imply a wildcard', async () => {
+    const w = mountBuilder()
+    await w.find('button').trigger('click')
+    await w.find('button[aria-label="Add rule"]').trigger('click')
+    await w.find('input[data-rule-attr]').setValue('cn')
+    await w.find('input[aria-label="Value"]').setValue('*')
+    expect(w.find('[data-star-hint]').exists()).toBe(true)
+
+    await w.find('select').setValue('contains')
+    expect(w.find('[data-star-hint]').exists()).toBe(false)
+  })
+
+  it('does not nudge when the value has no asterisk', async () => {
+    const w = mountBuilder()
+    await w.find('button').trigger('click')
+    await w.find('button[aria-label="Add rule"]').trigger('click')
+    await w.find('input[data-rule-attr]').setValue('cn')
+    await w.find('input[aria-label="Value"]').setValue('Alice')
+    expect(w.find('[data-star-hint]').exists()).toBe(false)
+  })
+
   it('removes a rule when × is clicked', async () => {
     const w = mountBuilder()
     await w.find('button').trigger('click')

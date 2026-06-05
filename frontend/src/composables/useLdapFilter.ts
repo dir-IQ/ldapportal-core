@@ -49,7 +49,7 @@ export const OPERATORS: ReadonlyArray<OperatorMeta> = [
   { value: 'starts-with', label: 'starts with',    hasValue: true  },
   { value: 'ends-with',   label: 'ends with',      hasValue: true  },
   { value: 'contains',    label: 'contains',       hasValue: true  },
-  { value: 'present',     label: 'present',        hasValue: false },
+  { value: 'present',     label: 'is present',     hasValue: false },
   { value: 'gte',         label: 'greater than',   hasValue: true  },
   { value: 'lte',         label: 'less than',      hasValue: true  },
   { value: 'approx',      label: 'approx',         hasValue: true  },
