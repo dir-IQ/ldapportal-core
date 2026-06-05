@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <PageContainer>
-    <h1 class="text-2xl font-bold text-gray-900 mb-4">Bulk Import / Export</h1>
-    <p class="text-sm text-gray-500 mt-1">Import and export users and groups via CSV</p>
+    <h1 class="text-2xl font-bold text-gray-900 mb-4">Bulk Operations</h1>
+    <p class="text-sm text-gray-500 mt-1">Import, export, and delete users and groups via CSV</p>
 
     <!-- Entity type selector -->
     <div class="flex gap-2 mb-4">
@@ -29,6 +29,13 @@
         class="px-5 py-2.5 text-sm font-medium -mb-px"
         :class="activeTab === 'export' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-700'">
         Export
+      </button>
+      <!-- Delete is users-only and entitlement-gated; the destructive verb
+           reads in red so it's distinct from the Import/Export tabs. -->
+      <button v-if="entityType === 'users' && canBulkDelete" @click="activeTab = 'delete'"
+        class="px-5 py-2.5 text-sm font-medium -mb-px"
+        :class="activeTab === 'delete' ? 'border-b-2 border-red-600 text-red-600' : 'text-gray-500 hover:text-red-600'">
+        Delete
       </button>
     </div>
 
@@ -219,6 +226,12 @@
         </button>
       </div>
     </section>
+
+    <!-- Delete tab — Users -->
+    <BulkDeleteSection
+      v-if="activeTab === 'delete' && entityType === 'users' && canBulkDelete"
+      :dir-id="dirId"
+    />
 
     <!-- Import tab — Groups -->
     <section v-if="activeTab === 'import' && entityType === 'groups'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
@@ -465,7 +478,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
@@ -484,6 +497,7 @@ import FormField from '@/components/FormField.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import AppModal from '@/components/AppModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import BulkDeleteSection from './BulkDeleteSection.vue'
 
 interface TemplateEntry {
   csvColumn: string
@@ -543,7 +557,7 @@ const confirm = useConfirm()
 const dirId = route.params.dirId as string
 
 const entityType    = ref<'users' | 'groups'>('users')
-const activeTab     = ref<'import' | 'export'>('import')
+const activeTab     = ref<'import' | 'export' | 'delete'>('import')
 const importing     = ref(false)
 const previewing    = ref(false)
 const exporting     = ref(false)
@@ -598,6 +612,15 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
 // Superadmin keeps the full tree (empty array → DnPicker falls back
 // to its default "browse from directory base DN" behaviour).
 const auth = useAuthStore()
+
+// Bulk delete is users-only and gated on the bulk.delete feature. When the
+// admin switches to Groups while on the Delete tab, fall back to Import so
+// the panel never renders blank.
+const canBulkDelete = computed(() => auth.hasFeature('bulk.delete'))
+watch(entityType, v => {
+  if (v === 'groups' && activeTab.value === 'delete') activeTab.value = 'import'
+})
+
 const authorizedImportRoots = ref<string[]>([])
 onMounted(async () => {
   if (auth.isSuperadmin) return

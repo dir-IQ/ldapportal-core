@@ -87,7 +87,7 @@
               </RouterLink>
               <RouterLink :to="{ path: `/directories/${currentDirId}/bulk` }" class="nav-item">
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v12M10 2l4 4M10 2 6 6"/><path d="M3 13v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"/></svg>
-                <span v-if="!collapsed">Bulk Import/Export</span>
+                <span v-if="!collapsed">Bulk Operations</span>
               </RouterLink>
             </template>
             <!-- Compliance nav links (hidden when compliance module disabled) -->
