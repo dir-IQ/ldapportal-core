@@ -288,13 +288,23 @@ function clearAll(): void {
  * True when a rule is likely to surprise the user by escaping a typed
  * `*` to `\2a`: an equals/not-equals match whose value contains an
  * asterisk. Wildcarding in this builder comes from the operator
- * (is present / contains / starts with / ends with), not from typing
- * `*` into the literal value field — so we nudge toward that. Scoped to
- * equals/not-equals because the substring operators already imply a
- * wildcard, so a `*` there is far less likely to be a misunderstanding.
+ * (is present / contains / matches / starts with / ends with), not from
+ * typing `*` into the literal value field — so we nudge toward that.
+ * Scoped to equals/not-equals because the substring operators already
+ * imply a wildcard, so a `*` there is far less likely to be a mistake.
  */
 function showLiteralStarHint(rule: IndexedRule): boolean {
   return (rule.op === 'equals' || rule.op === 'not-equals') && rule.value.includes('*')
+}
+
+/**
+ * Distinguishes the two flavours of the literal-`*` confusion so the hint
+ * can point at the right operator: a bare `*` means "any value" (→ is
+ * present), while a mid-string pattern like `jo*n` means a wildcard match
+ * (→ matches (wildcard)).
+ */
+function starHintIsBare(rule: IndexedRule): boolean {
+  return rule.value.trim() === '*'
 }
 
 /**
@@ -498,8 +508,14 @@ defineExpose({
             class="text-xs text-amber-600 mt-1 ml-1"
           >
             The <code class="font-mono">*</code> is matched literally (escaped to
-            <code class="font-mono">\2a</code>). For &ldquo;any value&rdquo;, use the
-            <strong>is present</strong> operator.
+            <code class="font-mono">\2a</code>).
+            <template v-if="starHintIsBare(rule)">
+              For &ldquo;any value&rdquo;, use the <strong>is present</strong> operator.
+            </template>
+            <template v-else>
+              To use <code class="font-mono">*</code> as a wildcard, switch to the
+              <strong>matches (wildcard)</strong> operator.
+            </template>
           </p>
         </div>
       </div>

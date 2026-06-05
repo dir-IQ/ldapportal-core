@@ -178,8 +178,38 @@ describe('LdapFilterBuilder.vue', () => {
     await w.find('input[aria-label="Value"]').setValue('*')
     const hint = w.find('[data-star-hint]')
     expect(hint.exists()).toBe(true)
-    // Points the user at the right operator.
+    // Bare * → "any value" → point at the presence operator.
     expect(hint.text()).toContain('is present')
+  })
+
+  it('points a mid-string * at the matches (wildcard) operator', async () => {
+    const w = mountBuilder()
+    await w.find('button').trigger('click')
+    await w.find('button[aria-label="Add rule"]').trigger('click')
+    await w.find('input[data-rule-attr]').setValue('cn')
+    await w.find('input[aria-label="Value"]').setValue('jo*n')
+
+    const hint = w.find('[data-star-hint]')
+    expect(hint.exists()).toBe(true)
+    // Mid-string pattern → real wildcard match, not presence.
+    expect(hint.text()).toContain('matches (wildcard)')
+    expect(hint.text()).not.toContain('is present')
+  })
+
+  it('matches operator compiles a mid-string wildcard without escaping *', async () => {
+    const w = mountBuilder()
+    await w.find('button').trigger('click')
+    await w.find('button[aria-label="Add rule"]').trigger('click')
+    await w.find('input[data-rule-attr]').setValue('cn')
+    await w.find('select').setValue('matches')
+    await w.find('input[aria-label="Value"]').setValue('jo*n')
+    await flushPromises()
+
+    const lastEmit = (w.emitted('update:modelValue') ?? []).at(-1)?.[0]
+    expect(lastEmit).toBe('(cn=jo*n)')
+    // Switching to matches clears the literal-* hint (it only fires for
+    // equals/not-equals).
+    expect(w.find('[data-star-hint]').exists()).toBe(false)
   })
 
   it('also nudges for not-equals with a literal *', async () => {

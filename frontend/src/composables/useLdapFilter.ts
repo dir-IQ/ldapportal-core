@@ -19,6 +19,7 @@ export type FilterOp =
   | 'starts-with'
   | 'ends-with'
   | 'contains'
+  | 'matches'
   | 'present'
   | 'gte'
   | 'lte'
@@ -49,6 +50,7 @@ export const OPERATORS: ReadonlyArray<OperatorMeta> = [
   { value: 'starts-with', label: 'starts with',    hasValue: true  },
   { value: 'ends-with',   label: 'ends with',      hasValue: true  },
   { value: 'contains',    label: 'contains',       hasValue: true  },
+  { value: 'matches',     label: 'matches (wildcard)', hasValue: true },
   { value: 'present',     label: 'is present',     hasValue: false },
   { value: 'gte',         label: 'greater than',   hasValue: true  },
   { value: 'lte',         label: 'less than',      hasValue: true  },
@@ -57,12 +59,13 @@ export const OPERATORS: ReadonlyArray<OperatorMeta> = [
 ]
 
 /**
- * Escape a value per RFC 4515 §3. We escape the five characters that have
- * special meaning in filter strings — `*`, `(`, `)`, `\`, NUL — using
- * the `\xx` two-digit hex form. Everything else passes through unchanged
- * so a well-formed filter is human-readable.
+ * Shared escaping core. Escapes the RFC 4515 §3 filter specials using the
+ * `\xx` two-digit hex form. `*` is escaped only when `escapeWildcard` is
+ * true; the `matches` operator leaves it literal so it acts as a substring
+ * wildcard. Everything else passes through unchanged so a well-formed
+ * filter stays human-readable.
  */
-export function escapeLdapValue(s: string): string {
+function escapeFilterValue(s: string, escapeWildcard: boolean): string {
   if (s == null) return ''
   let out = ''
   for (let i = 0; i < s.length; i++) {
@@ -70,11 +73,32 @@ export function escapeLdapValue(s: string): string {
     if (c === 0)  { out += '\\00'; continue }
     if (c === 0x28) { out += '\\28'; continue } // (
     if (c === 0x29) { out += '\\29'; continue } // )
-    if (c === 0x2a) { out += '\\2a'; continue } // *
+    if (c === 0x2a && escapeWildcard) { out += '\\2a'; continue } // *
     if (c === 0x5c) { out += '\\5c'; continue } // backslash
     out += s[i]
   }
   return out
+}
+
+/**
+ * Escape a value per RFC 4515 §3. We escape the five characters that have
+ * special meaning in filter strings — `*`, `(`, `)`, `\`, NUL. This is the
+ * default for literal-match operators (equals, contains, …) where a typed
+ * `*` means a literal asterisk, not a wildcard.
+ */
+export function escapeLdapValue(s: string): string {
+  return escapeFilterValue(s, true)
+}
+
+/**
+ * Like {@link escapeLdapValue} but leaves `*` literal so it acts as an
+ * RFC 4515 substring wildcard. Backs the `matches` operator, which lets a
+ * user type mid-string patterns like `jo*n` or `a*b*c`. The other filter
+ * specials — `(`, `)`, `\`, NUL — are still escaped, so the literal
+ * segments between the wildcards remain safe.
+ */
+export function escapeLdapValueAllowingWildcards(s: string): string {
+  return escapeFilterValue(s, false)
 }
 
 /**
@@ -90,6 +114,14 @@ export function compileRule(rule: FilterRule): string {
   switch (rule.op) {
     case 'present':
       return `(${attr}=*)`
+    case 'matches': {
+      // Wildcard substring match: `*` stays literal (RFC 4515 substring
+      // delimiter), other specials escaped. Empty value → incomplete
+      // (ignored by callers); a bare `*` naturally yields `(attr=*)`.
+      const v = escapeLdapValueAllowingWildcards(rule.value)
+      if (v.length === 0) return ''
+      return `(${attr}=${v})`
+    }
     case 'is-one-of': {
       // Compile to `(|(attr=v1)(attr=v2)…)`. Empty list → empty filter.
       const values = rule.value.split(',').map(v => v.trim()).filter(v => v.length > 0)
