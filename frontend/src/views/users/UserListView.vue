@@ -487,18 +487,25 @@ function isvaOrphaned(row: unknown): boolean {
 }
 
 /**
- * The memberOf values for an entry, read case-insensitively (the backend
- * lower-cases attribute keys, but be defensive). Returns the group DNs
- * as a string array; an absent attribute yields an empty list.
+ * The reverse group-membership DNs for an entry, read case-insensitively.
+ * Different directories surface this under different attribute names:
+ * `memberOf` on AD and OpenLDAP (memberof overlay), but `isMemberOf` —
+ * an operational attribute — on OUD / OpenDJ. Collect from either, since
+ * only one is populated per directory, and de-duplicate. An absent
+ * attribute yields an empty list.
  */
 function memberOfValues(attrs: Record<string, string[] | string | null>): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
   for (const [k, v] of Object.entries(attrs)) {
-    if (k.toLowerCase() !== 'memberof') continue
-    if (Array.isArray(v)) return v.filter((s): s is string => typeof s === 'string')
-    if (typeof v === 'string' && v) return [v]
-    return []
+    const lk = k.toLowerCase()
+    if (lk !== 'memberof' && lk !== 'ismemberof') continue
+    const vals = Array.isArray(v) ? v : (typeof v === 'string' && v ? [v] : [])
+    for (const s of vals) {
+      if (typeof s === 'string' && s && !seen.has(s)) { seen.add(s); out.push(s) }
+    }
   }
-  return []
+  return out
 }
 
 // Column-level expand toggle for the Groups column: collapsed shows the
@@ -683,12 +690,13 @@ async function load() {
       filter: filterText.value || undefined,
       baseDn: profileData.value?.targetOuDn || undefined,
       limit:  limit.value,
-      // Request all user attributes ('*') plus memberOf explicitly. The
-      // group-membership ('Groups') column reads memberOf; naming it
-      // brings it back even where it's operational (OpenLDAP with the
-      // memberof overlay), not just where it's a plain attribute (AD).
-      // Directories that don't expose it yield an empty Groups cell.
-      attributes: '*,memberOf',
+      // Request all user attributes ('*') plus the reverse group-membership
+      // attributes explicitly. The 'Groups' column reads these; naming them
+      // brings them back even where they're operational — `memberOf`
+      // (OpenLDAP memberof overlay) or `isMemberOf` (OUD/OpenDJ) — not just
+      // where it's a plain attribute (AD). Directories that expose neither
+      // yield an empty Groups cell.
+      attributes: '*,memberOf,isMemberOf',
     }
     const { data } = await usersApi.searchUsers(dirId, params)
     const entries = Array.isArray(data) ? data : (data.entries || [])

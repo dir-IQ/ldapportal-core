@@ -115,11 +115,11 @@ describe('UserListView feature gating', () => {
     expect(t.join(' ')).toContain('Export CSV')
   })
 
-  it('requests memberOf so the Groups column can populate', async () => {
+  it('requests memberOf and isMemberOf so the Groups column populates across directory types', async () => {
     await mountWith(ALL)
     expect(usersApi.searchUsers).toHaveBeenCalledWith(
       'd1',
-      expect.objectContaining({ attributes: '*,memberOf' }),
+      expect.objectContaining({ attributes: '*,memberOf,isMemberOf' }),
     )
   })
 })
