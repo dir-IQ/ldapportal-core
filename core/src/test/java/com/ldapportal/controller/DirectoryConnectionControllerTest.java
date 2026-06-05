@@ -79,6 +79,8 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 null,                               // selfServiceLoginAttribute
                 List.of(),                          // userBaseDns
                 List.of(),                          // groupBaseDns
+                List.of(),                          // userObjectClasses
+                List.of(),                          // groupObjectClasses
                 null,                               // secondaryHost
                 null,                               // secondaryPort
                 null,                               // globalCatalogPort
@@ -102,6 +104,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 null, null, null, null, null, true,
                 false, null, null, null, null,
                 List.of(), List.of(),
+                null, null,                         // user/group objectClasses
                 null, null, null, null,
                 false, null);
     }
@@ -156,6 +159,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 null, null, null, null, null, true,
                 false, null, null, null, null,
                 List.of(), List.of(),
+                null, null,                         // user/group objectClasses
                 null, null, null, null,
                 false, null);
 
@@ -176,6 +180,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 null, null, null, null, null, true,
                 false, null, null, null, null,
                 List.of(), List.of(),
+                null, null,                         // user/group objectClasses
                 null, null, null, null,
                 false, null);
 

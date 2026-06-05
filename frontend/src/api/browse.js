@@ -59,8 +59,10 @@ export const getLdifPreviewPage = (dirId, previewId, params) =>
 export const getLdifPreviewRow = (dirId, previewId, rowNumber) =>
   client.get(`${base(dirId)}/import/ldif/preview/${previewId}/row/${rowNumber}`)
 
-export const applyLdifPreview = (dirId, previewId) =>
-  client.post(`${base(dirId)}/import/ldif/preview/${previewId}/apply`)
+export const applyLdifPreview = (dirId, previewId, suppressVendorOverlay = false) =>
+  client.post(`${base(dirId)}/import/ldif/preview/${previewId}/apply`, null, {
+    params: { suppressVendorOverlay },
+  })
 
 export const checkIntegrity = (dirId, baseDn, checks) =>
   client.post(`${base(dirId)}/integrity-check`, null, {

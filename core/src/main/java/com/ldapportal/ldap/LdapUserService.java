@@ -260,9 +260,23 @@ public class LdapUserService {
                            String dn,
                            Map<String, List<String>> attributes,
                            java.util.UUID profileId) {
+        createUser(dc, dn, attributes, profileId, false);
+    }
+
+    /**
+     * Full-control overload. {@code suppressVendorOverlay} asks any
+     * vendor-aware interceptor to stand down for this create and emit the
+     * baseline single-step ADD instead — used by LDIF import when the
+     * operator declined vendor (e.g. ISVA {@code secUser}) provisioning.
+     */
+    public void createUser(DirectoryConnection dc,
+                           String dn,
+                           Map<String, List<String>> attributes,
+                           java.util.UUID profileId,
+                           boolean suppressVendorOverlay) {
         UserCreatePlan plan = interceptors.planUserCreate(dc,
                 UserCreatePayload.of(dn, attributes),
-                ProvisioningContext.of(profileId));
+                ProvisioningContext.of(profileId, suppressVendorOverlay));
         planExecutor.execute(dc, plan);
         log.info("Created LDAP user {}", dn);
     }

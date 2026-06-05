@@ -89,7 +89,6 @@ public class LdifPreviewService {
 
     private static final int DEFAULT_PAGE_SIZE = 50;
     private static final Set<String> MEMBER_ATTRS = Set.of("member", "uniquemember", "memberuid");
-    private static final Set<String> GROUP_OCS = Set.of("groupofnames", "groupofuniquenames", "posixgroup");
 
     private final Map<UUID, CachedPreview> cache = new ConcurrentHashMap<>();
 
@@ -125,6 +124,11 @@ public class LdifPreviewService {
 
         boolean entra = dc.getDirectoryType() == DirectoryType.ENTRA_ID;
         String baseDnNorm = normDn(dc.getBaseDn());
+        // Group classification uses the directory's configured (or vendor-
+        // default) group object classes, so an AD `group` or IBM
+        // `groupOfURLs` is recognised here exactly as it is in search.
+        Set<String> groupOcs = com.ldapportal.entity.DirectoryObjectClassDefaults
+                .effectiveGroupObjectClassSet(dc);
 
         // Distinct target DNs of content (non-change) entries — the only records
         // whose classification depends on whether they already exist.
@@ -140,7 +144,7 @@ public class LdifPreviewService {
         List<LdifPreviewRow> rows = new ArrayList<>(records.size());
         int add = 0, modify = 0, delete = 0, moddn = 0, skip = 0, error = 0, warnings = 0, errors = 0;
         for (ParsedRecord pr : records) {
-            LdifPreviewRow row = classify(pr, conflict, existing, baseDnNorm, entra);
+            LdifPreviewRow row = classify(pr, conflict, existing, baseDnNorm, entra, groupOcs);
             rows.add(row);
             switch (row.op()) {
                 case ADD -> add++;
@@ -190,9 +194,11 @@ public class LdifPreviewService {
     }
 
     /** Apply the previewed records via the existing apply path, then evict. */
-    public LdifImportResult apply(UUID previewId, UUID ownerId, DirectoryConnection dc) {
+    public LdifImportResult apply(UUID previewId, UUID ownerId, DirectoryConnection dc,
+                                  boolean suppressVendorOverlay) {
         CachedPreview cp = require(previewId, ownerId);
-        LdifImportResult result = ldifService.applyParsedRecords(dc, cp.records(), cp.conflict());
+        LdifImportResult result = ldifService.applyParsedRecords(
+                dc, cp.records(), cp.conflict(), suppressVendorOverlay);
         cache.remove(previewId);
         return result;
     }
@@ -205,7 +211,8 @@ public class LdifPreviewService {
     // ── Classification ────────────────────────────────────────────────────────
 
     private LdifPreviewRow classify(ParsedRecord pr, ConflictHandling conflict,
-                                    Set<String> existing, String baseDnNorm, boolean entra) {
+                                    Set<String> existing, String baseDnNorm, boolean entra,
+                                    Set<String> groupOcs) {
         if (pr.isError()) {
             return new LdifPreviewRow(pr.rowNumber(), null, LdifPreviewOp.ERROR,
                     List.of(), 0, null, null, List.of(LdifPreviewIssue.parseError(pr.parseError())));
@@ -234,7 +241,7 @@ public class LdifPreviewService {
                 Entry e = addRec.getEntryToAdd();
                 objectClasses = objectClassesOf(e);
                 attrCount = e.getAttributes().size();
-                memberCount = groupMemberCount(e);
+                memberCount = groupMemberCount(e, groupOcs);
             } else if (change instanceof LDIFModifyChangeRecord modRec) {
                 op = LdifPreviewOp.MODIFY;
                 attrCount = modRec.getModifications().length;
@@ -249,7 +256,7 @@ public class LdifPreviewService {
         } else if (record instanceof Entry entry) {
             objectClasses = objectClassesOf(entry);
             attrCount = entry.getAttributes().size();
-            memberCount = groupMemberCount(entry);
+            memberCount = groupMemberCount(entry, groupOcs);
             boolean exists = validDn && existing.contains(normDn(dn));
             if (exists) {
                 issues.add(LdifPreviewIssue.conflictExists());
@@ -270,17 +277,17 @@ public class LdifPreviewService {
         return ocs == null ? List.of() : Arrays.asList(ocs);
     }
 
-    private static boolean isGroup(Entry entry) {
+    private static boolean isGroup(Entry entry, Set<String> groupOcs) {
         String[] ocs = entry.getObjectClassValues();
         if (ocs == null) return false;
         for (String oc : ocs) {
-            if (GROUP_OCS.contains(oc.toLowerCase(Locale.ROOT))) return true;
+            if (groupOcs.contains(oc.toLowerCase(Locale.ROOT))) return true;
         }
         return false;
     }
 
-    private static Integer groupMemberCount(Entry entry) {
-        if (!isGroup(entry)) return null;
+    private static Integer groupMemberCount(Entry entry, Set<String> groupOcs) {
+        if (!isGroup(entry, groupOcs)) return null;
         int count = 0;
         for (String a : MEMBER_ATTRS) {
             Attribute attr = entry.getAttribute(a);

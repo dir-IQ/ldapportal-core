@@ -135,7 +135,7 @@ describe('LdifImportModal preview flow', () => {
     await byText(wrapper, 'Import (2)')[0].trigger('click')
     await flushPromises()
 
-    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1')
+    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1', false)
     expect(wrapper.emitted('imported')).toBeTruthy()
     expect(wrapper.text()).toContain('Import Results')
   })
@@ -157,7 +157,7 @@ describe('LdifImportModal preview flow', () => {
     // Confirmed → applied.
     await byText(wrapper, 'Import (3)')[0].trigger('click')
     await flushPromises()
-    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1')
+    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1', false)
   })
 
   it('defaults to the Errors filter when the upload has parse errors', async () => {

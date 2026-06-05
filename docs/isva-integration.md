@@ -128,6 +128,37 @@ directory has ISVA enabled.
 > (deferred — tracked with the entitlement-model work). Exempting a profile
 > *before* it provisions anything has no such risk.
 
+## Bulk and LDIF import behavior
+
+Both bulk paths create users through the provisioning-plan SPI, so ISVA's
+interceptor fires and `secUser` overlays are provisioned for imported users
+exactly as they are for a single create:
+
+- **CSV bulk import** routes every row through `LdapUserService.createUser`,
+  so an ISVA-enabled directory gets `secUser` provisioning per row.
+- **LDIF import** routes **user** entries (identified by the directory's
+  configured *user object classes* — see below) through the same path.
+  Non-user entries (OUs, groups, containers), `modify`/`delete`/`modifyDN`
+  change records, and conflict overwrites are written as-is.
+
+**Operator control.** When the IVIA addon is enabled, the LDIF import dialog
+shows a *"Provision IVIA accounts (secUser) for imported users"* checkbox,
+on by default. Unchecking it suppresses the overlay for that import (the
+records are written as-is) — use this when re-importing an export that
+already contains `secUser` entries.
+
+**Safety on re-import.** If the LDIF file itself already contains any
+`secUser` entries (a prior inline or linked-mode export), import detects this
+and writes everything as-is — it does **not** layer a fresh overlay on top.
+This avoids duplicating the overlay and, in linked mode, avoids the secUser
+`ADD` colliding with the entry already in the file (which would trigger the
+compensating delete of the just-added demographic).
+
+**Which entries are users** is governed per directory by the configurable
+*user / group object classes* (directory editor → Advanced settings),
+pre-populated with vendor-appropriate defaults. The same configuration drives
+user/group classification in search and the dashboards.
+
 ## Verifying it works
 
 After saving the config:

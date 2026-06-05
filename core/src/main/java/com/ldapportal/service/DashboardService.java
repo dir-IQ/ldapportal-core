@@ -46,13 +46,6 @@ public class DashboardService {
     private final GovernanceDashboardProvider governance;
     private final com.ldapportal.core.dashboard.ReportJobHealthProvider reportJobHealthProvider;
 
-    /** User-class filter portable across OpenLDAP and AD. */
-    private static final String USER_OBJECTCLASS_FILTER =
-            "(|(objectClass=inetOrgPerson)(&(objectClass=user)(!(objectClass=computer))))";
-
-    private static final String GROUP_OBJECTCLASS_FILTER =
-            "(|(objectClass=groupOfNames)(objectClass=groupOfUniqueNames)(objectClass=posixGroup)(objectClass=group)(objectClass=groupOfURLs))";
-
     /** Maximum entries to load for counting. */
     private static final int MAX_COUNT = 100_000;
 
@@ -95,7 +88,9 @@ public class DashboardService {
 
             if (dc.isEnabled()) {
                 try {
-                    userCount = userService.searchUsers(dc, USER_OBJECTCLASS_FILTER, null, MAX_COUNT, "1.1").size();
+                    userCount = userService.searchUsers(dc,
+                            com.ldapportal.entity.DirectoryObjectClassDefaults.userSearchFilter(dc),
+                            null, MAX_COUNT, "1.1").size();
                     if (userCount >= MAX_COUNT) {
                         log.warn("User count for '{}' hit the {} limit — actual count may be higher",
                                 dc.getDisplayName(), MAX_COUNT);
@@ -105,7 +100,9 @@ public class DashboardService {
                     userCount = -1;
                 }
                 try {
-                    groupCount = groupService.searchGroups(dc, GROUP_OBJECTCLASS_FILTER, null, MAX_COUNT, "1.1").size();
+                    groupCount = groupService.searchGroups(dc,
+                            com.ldapportal.entity.DirectoryObjectClassDefaults.groupSearchFilter(dc),
+                            null, MAX_COUNT, "1.1").size();
                 } catch (Exception e) {
                     log.warn("Failed to count groups for directory {}: {}", dc.getDisplayName(), e.getMessage());
                     groupCount = -1;
@@ -210,7 +207,9 @@ public class DashboardService {
             // Get user count for this specific directory
             long dirUserCount = 0;
             try {
-                dirUserCount = userService.searchUsers(dc, USER_OBJECTCLASS_FILTER, null, MAX_COUNT, "1.1").size();
+                dirUserCount = userService.searchUsers(dc,
+                        com.ldapportal.entity.DirectoryObjectClassDefaults.userSearchFilter(dc),
+                        null, MAX_COUNT, "1.1").size();
             } catch (Exception e) {
                 continue; // skip directories we can't query
             }

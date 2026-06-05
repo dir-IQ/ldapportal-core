@@ -73,7 +73,7 @@ class LdifPreviewServiceTest {
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(PASS);
         connectionFactory = new LdapConnectionFactory(encryptionService, null);
-        ldifService = new LdifService(connectionFactory);
+        ldifService = new LdifService(connectionFactory, baselineUserService(connectionFactory));
         previewService = new LdifPreviewService(connectionFactory, ldifService);
         ReflectionTestUtils.setField(previewService, "maxRecords", 50000);
         ReflectionTestUtils.setField(previewService, "ttlMinutes", 30L);
@@ -227,7 +227,7 @@ class LdifPreviewServiceTest {
         LdifPreviewSummary s = preview(person("zoe", "Z"), ConflictHandling.SKIP);
         UUID id = UUID.fromString(s.previewId());
 
-        LdifImportResult result = previewService.apply(id, owner, dc);
+        LdifImportResult result = previewService.apply(id, owner, dc, false);
         assertThat(result.added()).isEqualTo(1);
         assertThat(server.getEntry("uid=zoe,ou=people," + BASE)).isNotNull();
 
@@ -258,5 +258,17 @@ class LdifPreviewServiceTest {
         d.setPoolResponseTimeoutSeconds(10);
         d.setPagingSize(100);
         return d;
+    }
+
+    /**
+     * A real {@link LdapUserService} with no interceptors / enrichers, so
+     * user adds route through the baseline single-step ADD — byte-identical
+     * to the pre-SPI behaviour these tests pin.
+     */
+    private static LdapUserService baselineUserService(LdapConnectionFactory cf) {
+        return new LdapUserService(cf,
+                new com.ldapportal.core.provisioning.ProvisioningInterceptorChain(java.util.List.of()),
+                new com.ldapportal.core.provisioning.PlanExecutor(cf),
+                new com.ldapportal.core.provisioning.UserReadEnricherChain(java.util.List.of()));
     }
 }

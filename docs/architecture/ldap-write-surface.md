@@ -30,7 +30,7 @@ it whenever a site is added or removed**, in the same change.
 | `LdapUserService` | `com.ldapportal.ldap` | Direct user `modify` (`updateUser`) and `modifyDN` (`moveUser`). Create/delete/password go through `PlanExecutor`. | Yes — via `withConnection`. |
 | `LdapGroupService` | `com.ldapportal.ldap` | Direct group `createGroup`/`deleteGroup`/`updateGroup` and `removeMember`. Member-add goes through `PlanExecutor`. | Yes — via `withConnection`. |
 | `LdapBrowseService` | `com.ldapportal.ldap` | Superadmin directory-browser `createEntry`/`updateEntry`/`deleteEntry`/`deleteSubtree`/`moveEntry`/`renameEntry`. | Yes — via `withConnection`. |
-| `LdifService` | `com.ldapportal.ldap` | LDIF import: applies change records and content entries (`add`/`modify`) directly. | Yes — via `withConnection`. |
+| `LdifService` | `com.ldapportal.ldap` | LDIF import. **User** entry adds are routed through `LdapUserService.createUser` (→ `PlanExecutor`) so vendor interceptors (e.g. ISVA `secUser`) fire; non-user entries, `modify`/`delete`/`modifyDN` change records, and conflict overwrites are applied directly. | Yes — via `withConnection` (and via `PlanExecutor` for the user-add path). |
 | `LdapConnectionFactory` | `com.ldapportal.ldap` | Constructs the write surface — wraps pooled connections in `ReplicatingLdapInterface` and hands out the write-capable interface. Issues **no** mutating calls itself; annotated because it holds/produces the surface. | n/a |
 
 ## How the rule works

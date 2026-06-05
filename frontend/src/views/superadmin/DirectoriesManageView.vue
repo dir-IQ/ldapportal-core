@@ -161,6 +161,19 @@
             </div>
             <FormField label="Enable Value" v-model="form.enableValue" placeholder="e.g. false" />
             <FormField label="Disable Value" v-model="form.disableValue" placeholder="e.g. true" />
+            <div class="col-span-2">
+              <FormField label="User object classes" v-model="userObjectClassesText"
+                placeholder="inetOrgPerson, organizationalPerson, person" />
+              <p class="text-xs text-gray-500 mt-1">Comma-separated. Identifies user entries for
+                search, dashboards, and LDIF import (which entries are candidates for vendor
+                account provisioning). Defaults to the selected directory type.</p>
+            </div>
+            <div class="col-span-2">
+              <FormField label="Group object classes" v-model="groupObjectClassesText"
+                placeholder="groupOfNames, groupOfUniqueNames, posixGroup" />
+              <p class="text-xs text-gray-500 mt-1">Comma-separated. Identifies group entries for
+                search and dashboards.</p>
+            </div>
           </div>
         </details>
 
@@ -197,7 +210,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 import { listDirectories, createDirectory, updateDirectory, deleteDirectory, testDirectory, evictPool, getDirectoryStatus } from '@/api/directories'
@@ -246,6 +259,34 @@ interface DirectoryForm {
   entraClientId: string
   entraClientSecret: string
   graphEndpoint: string
+  userObjectClasses: string[]
+  groupObjectClasses: string[]
+}
+
+// Vendor defaults for the user/group object-class sets. Mirrors the
+// backend's DirectoryObjectClassDefaults so a freshly-picked directory type
+// pre-populates with sensible, editable values. The server applies the same
+// defaults on create when these are omitted, so this is purely UX.
+const OBJECT_CLASS_PRESETS: Record<string, { user: string[]; group: string[] }> = {
+  ACTIVE_DIRECTORY:         { user: ['user'], group: ['group'] },
+  ENTRA_ID:                 { user: ['user'], group: ['group'] },
+  OPENLDAP:                 { user: ['inetOrgPerson', 'organizationalPerson', 'person', 'posixAccount'],
+                              group: ['groupOfNames', 'groupOfUniqueNames', 'posixGroup'] },
+  IBM_DIRECTORY_SERVER:     { user: ['inetOrgPerson', 'organizationalPerson', 'person'],
+                              group: ['groupOfNames', 'groupOfUniqueNames', 'groupOfURLs'] },
+  ORACLE_UNIFIED_DIRECTORY: { user: ['inetOrgPerson', 'organizationalPerson', 'person'],
+                              group: ['groupOfNames', 'groupOfUniqueNames', 'groupOfURLs'] },
+  GENERIC:                  { user: ['inetOrgPerson', 'organizationalPerson', 'person', 'user', 'posixAccount'],
+                              group: ['groupOfNames', 'groupOfUniqueNames', 'posixGroup', 'group', 'groupOfURLs'] },
+}
+
+function objectClassPreset(type: string): { user: string[]; group: string[] } {
+  return OBJECT_CLASS_PRESETS[type] ?? OBJECT_CLASS_PRESETS.GENERIC
+}
+
+// Parse a comma/whitespace-separated objectClass list into a clean array.
+function parseObjectClasses(text: string): string[] {
+  return text.split(/[,\s]+/).map(s => s.trim()).filter(s => s.length > 0)
 }
 
 // Root-DSE probe result the directory list renders as a vendor chip.
@@ -350,6 +391,16 @@ function probeAll() {
 
 const form = ref<DirectoryForm>(emptyForm())
 
+// Comma-separated text views over the objectClass arrays, for the inputs.
+const userObjectClassesText = computed<string>({
+  get: () => form.value.userObjectClasses.join(', '),
+  set: (v: string) => { form.value.userObjectClasses = parseObjectClasses(v) },
+})
+const groupObjectClassesText = computed<string>({
+  get: () => form.value.groupObjectClasses.join(', '),
+  set: (v: string) => { form.value.groupObjectClasses = parseObjectClasses(v) },
+})
+
 function emptyForm(): DirectoryForm {
   return {
     directoryType: 'GENERIC',
@@ -363,6 +414,8 @@ function emptyForm(): DirectoryForm {
     selfServiceEnabled: false, selfServiceLoginAttribute: 'uid',
     secondaryHost: '', secondaryPort: undefined, globalCatalogPort: undefined,
     tenantId: '', entraClientId: '', entraClientSecret: '', graphEndpoint: '',
+    userObjectClasses: objectClassPreset('GENERIC').user,
+    groupObjectClasses: objectClassPreset('GENERIC').group,
   }
 }
 
@@ -390,6 +443,12 @@ function applyPreset() {
     if (!form.value.selfServiceLoginAttribute || form.value.selfServiceLoginAttribute === 'sAMAccountName')
       form.value.selfServiceLoginAttribute = 'uid'
   }
+  // Pre-populate the entry-classification object classes for the chosen
+  // vendor. Switching type is a deliberate act, so reset to the vendor
+  // default (operators can still edit the inputs afterwards).
+  const preset = objectClassPreset(t)
+  form.value.userObjectClasses = [...preset.user]
+  form.value.groupObjectClasses = [...preset.group]
 }
 
 // Vendor / version badge formatters. The server may publish vendorName
@@ -486,6 +545,10 @@ function openEdit(d: DirectoryRow) {
     entraClientId: d.entraClientId || '',
     entraClientSecret: '',
     graphEndpoint: d.graphEndpoint || '',
+    userObjectClasses: d.userObjectClasses?.length
+      ? [...d.userObjectClasses] : objectClassPreset(d.directoryType || 'GENERIC').user,
+    groupObjectClasses: d.groupObjectClasses?.length
+      ? [...d.groupObjectClasses] : objectClassPreset(d.directoryType || 'GENERIC').group,
   }
   testResult.value = null
   showModal.value = true

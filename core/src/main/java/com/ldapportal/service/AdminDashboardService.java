@@ -47,12 +47,6 @@ public class AdminDashboardService {
     private final AdminProfileRoleRepository profileRoleRepo;
     private final GovernanceDashboardProvider governance;
 
-    private static final String USER_OBJECTCLASS_FILTER =
-            "(|(objectClass=inetOrgPerson)(&(objectClass=user)(!(objectClass=computer))))";
-
-    private static final String GROUP_OBJECTCLASS_FILTER =
-            "(|(objectClass=groupOfNames)(objectClass=groupOfUniqueNames)(objectClass=posixGroup)(objectClass=group)(objectClass=groupOfURLs))";
-
     private static final int MAX_COUNT = 100_000;
 
     @Transactional(readOnly = true)
@@ -84,13 +78,13 @@ public class AdminDashboardService {
 
             if (dc.isEnabled()) {
                 try {
-                    userCount = userService.searchUsers(dc, USER_OBJECTCLASS_FILTER, null, MAX_COUNT, "1.1").size();
+                    userCount = userService.searchUsers(dc, com.ldapportal.entity.DirectoryObjectClassDefaults.userSearchFilter(dc), null, MAX_COUNT, "1.1").size();
                 } catch (Exception e) {
                     log.warn("Failed to count users for directory {}: {}", dc.getDisplayName(), e.getMessage());
                     userCount = -1;
                 }
                 try {
-                    groupCount = groupService.searchGroups(dc, GROUP_OBJECTCLASS_FILTER, null, MAX_COUNT, "1.1").size();
+                    groupCount = groupService.searchGroups(dc, com.ldapportal.entity.DirectoryObjectClassDefaults.groupSearchFilter(dc), null, MAX_COUNT, "1.1").size();
                 } catch (Exception e) {
                     log.warn("Failed to count groups for directory {}: {}", dc.getDisplayName(), e.getMessage());
                     groupCount = -1;
@@ -246,7 +240,7 @@ public class AdminDashboardService {
             if (!dc.isEnabled()) return 0L;
             try {
                 return (long) userService.searchUsers(
-                        dc, USER_OBJECTCLASS_FILTER, baseDn, MAX_COUNT, "1.1").size();
+                        dc, com.ldapportal.entity.DirectoryObjectClassDefaults.userSearchFilter(dc), baseDn, MAX_COUNT, "1.1").size();
             } catch (Exception e) {
                 log.warn("Failed to count users for directory {} scope '{}': {}",
                         dc.getDisplayName(), baseDn, e.getMessage());
@@ -262,7 +256,7 @@ public class AdminDashboardService {
             if (!dc.isEnabled()) return 0L;
             try {
                 return (long) groupService.searchGroups(
-                        dc, GROUP_OBJECTCLASS_FILTER, baseDn, MAX_COUNT, "1.1").size();
+                        dc, com.ldapportal.entity.DirectoryObjectClassDefaults.groupSearchFilter(dc), baseDn, MAX_COUNT, "1.1").size();
             } catch (Exception e) {
                 log.warn("Failed to count groups for directory {} scope '{}': {}",
                         dc.getDisplayName(), baseDn, e.getMessage());

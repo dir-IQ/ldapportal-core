@@ -320,12 +320,23 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
     // ── helpers ──────────────────────────────────────────────────────
 
     /**
-     * Whether the resolved profile is ISVA-exempt ({@code FORCE_OFF}).
+     * Whether ISVA should stand down for this operation and let the
+     * baseline plan through. Two independent reasons:
+     * <ul>
+     *   <li>the resolved profile is ISVA-exempt ({@code FORCE_OFF}); or</li>
+     *   <li>the caller explicitly suppressed the vendor overlay for this
+     *       operation ({@link ProvisioningContext#suppressVendorOverlay()})
+     *       — e.g. an LDIF import where the operator declined secUser
+     *       provisioning.</li>
+     * </ul>
      * The per-directory kill switch is handled separately by
-     * {@link #activeConfigOrNull}; this is the per-profile narrowing
-     * half. A null context / profile id is never exempt.
+     * {@link #activeConfigOrNull}. A null context / profile id is never
+     * exempt on its own.
      */
     private boolean isExempt(ProvisioningContext ctx) {
+        if (ctx != null && ctx.suppressVendorOverlay()) {
+            return true;
+        }
         return overrideService.isExemptFromIvia(ctx == null ? null : ctx.profileId());
     }
 
