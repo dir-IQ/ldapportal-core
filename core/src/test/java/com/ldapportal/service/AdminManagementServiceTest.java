@@ -254,11 +254,69 @@ class AdminManagementServiceTest {
         when(accountRepo.findById(adminId)).thenReturn(Optional.of(adminAccount("alice")));
         when(accountRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
+        // A real change (displayName) so the update actually persists — active
+        // stays true, so the license cap must NOT be re-checked.
         service.updateAdmin(adminId,
-                new AdminAccountRequest("alice", null, null,
+                new AdminAccountRequest("alice", "Alice Renamed", null,
                         AccountRole.ADMIN, AccountType.LOCAL, null, null, true));
 
         verify(usageLimitService, never()).requireWithinLimit(any(), anyLong());
+    }
+
+    @Test
+    void updateAdmin_noFieldChange_skipsSaveAndAudit() {
+        Account existing = adminAccount("alice");
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(existing));
+        var principal = new com.ldapportal.auth.AuthPrincipal(
+                com.ldapportal.auth.PrincipalType.SUPERADMIN, UUID.randomUUID(), "root");
+
+        // Same username/displayName/email/authType/active, no password → no-op.
+        AdminAccountResponse resp = service.updateAdmin(adminId,
+                new AdminAccountRequest("alice", null, null,
+                        AccountRole.ADMIN, AccountType.LOCAL, null, null, true),
+                principal);
+
+        assertThat(resp.username()).isEqualTo("alice");
+        verify(accountRepo, never()).save(any());
+        verify(auditService, never()).recordSystemEvent(any(), any(), any());
+    }
+
+    @Test
+    void assignProfileRole_sameRole_skipsSaveAndAudit() {
+        AdminProfileRole existing = new AdminProfileRole();
+        existing.setId(UUID.randomUUID());
+        existing.setBaseRole(BaseRole.ADMIN);
+        existing.setProfile(profile());
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(adminAccount("alice")));
+        when(profileRoleRepo.findByAdminAccountIdAndProfileId(adminId, profileId))
+                .thenReturn(Optional.of(existing));
+        var principal = new com.ldapportal.auth.AuthPrincipal(
+                com.ldapportal.auth.PrincipalType.SUPERADMIN, UUID.randomUUID(), "root");
+
+        ProfileRoleResponse resp = service.assignProfileRole(adminId,
+                new ProfileRoleRequest(profileId, BaseRole.ADMIN), principal);
+
+        assertThat(resp.baseRole()).isEqualTo(BaseRole.ADMIN);
+        verify(profileRoleRepo, never()).save(any());
+        verify(auditService, never()).recordSystemEvent(any(), any(), any());
+    }
+
+    @Test
+    void setFeaturePermissions_unchangedSet_skipsWipeAndAudit() {
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(adminAccount("alice")));
+        AdminFeaturePermission existing = new AdminFeaturePermission();
+        existing.setFeatureKey(FeatureKey.USER_CREATE);
+        existing.setEnabled(true);   // admin-wide (no profile)
+        when(featureRepo.findAllByAdminAccountId(adminId)).thenReturn(List.of(existing));
+        var principal = new com.ldapportal.auth.AuthPrincipal(
+                com.ldapportal.auth.PrincipalType.SUPERADMIN, UUID.randomUUID(), "root");
+
+        service.setFeaturePermissions(adminId,
+                List.of(new FeaturePermissionRequest(FeatureKey.USER_CREATE, true)), principal);
+
+        verify(featureRepo, never()).deleteAllByAdminAccountId(any());
+        verify(featureRepo, never()).save(any());
+        verify(auditService, never()).recordSystemEvent(any(), any(), any());
     }
 
     @Test
@@ -415,9 +473,8 @@ class AdminManagementServiceTest {
         var outcome = service.upsertByUsername("alice", upsertReq("alice", List.of(), List.of()), null);
 
         assertThat(outcome.created()).isFalse();
+        // Full-replace removes the role the request didn't declare.
         verify(profileRoleRepo).deleteByAdminAccountIdAndProfileId(adminId, staleProfileId);
-        // Full-replace of feature overrides wipes the existing set.
-        verify(featureRepo).deleteAllByAdminAccountId(adminId);
     }
 
     @Test
@@ -497,8 +554,9 @@ class AdminManagementServiceTest {
         when(accountRepo.findById(adminId)).thenReturn(Optional.of(a));
         when(accountRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
+        // A real field change so the update proceeds past the no-op fast path.
         AdminAccountResponse resp = service.updateAdmin(adminId,
-                new AdminAccountRequest("alice", null, null,
+                new AdminAccountRequest("alice", "Renamed", null,
                         AccountRole.ADMIN, AccountType.LOCAL, null, null, true),
                 null, 2L);
 

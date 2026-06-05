@@ -372,6 +372,24 @@ public class AdminManagementService {
         boolean passwordSet = req.authType() == AccountType.LOCAL
                 && req.password() != null && !req.password().isBlank();
 
+        // No-op fast path: nothing the request would change differs from the
+        // stored row (and no credential is being (re)set). Returning before the
+        // save + audit keeps a re-applied IaC declaration from writing an
+        // ACCOUNT_UPDATE audit row on every reconcile. ldapDn only matters for
+        // LDAP auth; for other types it's cleared and compared as absent.
+        boolean fieldsChanged =
+                !a.getUsername().equals(req.username())
+                || !java.util.Objects.equals(a.getDisplayName(), req.displayName())
+                || !java.util.Objects.equals(a.getEmail(), req.email())
+                || authTypeChanged
+                || a.isActive() != nextActive
+                || passwordSet
+                || (req.authType() == AccountType.LDAP
+                        && !java.util.Objects.equals(a.getLdapDn(), req.ldapDn()));
+        if (!fieldsChanged) {
+            return AdminAccountResponse.from(a);
+        }
+
         a.setUsername(req.username());
         a.setDisplayName(req.displayName());
         a.setEmail(req.email());
@@ -502,16 +520,23 @@ public class AdminManagementService {
     public ProfileRoleResponse assignProfileRole(UUID adminId, ProfileRoleRequest req,
                                                   AuthPrincipal principal) {
         Account admin = requireAccount(adminId);
-        ProvisioningProfile profile = requireProfile(req.profileId());
 
-        AdminProfileRole role = profileRoleRepo
+        AdminProfileRole existing = profileRoleRepo
                 .findByAdminAccountIdAndProfileId(adminId, req.profileId())
-                .orElseGet(AdminProfileRole::new);
+                .orElse(null);
 
+        // No-op fast path: already at the requested role. Skipping the write
+        // and audit keeps a re-applied IaC declaration from churning rows and
+        // spamming the audit log every reconcile.
+        if (existing != null && existing.getBaseRole() == req.baseRole()) {
+            return ProfileRoleResponse.from(existing);
+        }
+
+        AdminProfileRole role = existing != null ? existing : new AdminProfileRole();
         boolean isNew = role.getId() == null;
         if (isNew) {
             role.setAdminAccount(admin);
-            role.setProfile(profile);
+            role.setProfile(requireProfile(req.profileId()));
         }
         role.setBaseRole(req.baseRole());
         AdminProfileRole saved = profileRoleRepo.save(role);
@@ -591,6 +616,14 @@ public class AdminManagementService {
                         "Feature override for profile [" + p.profileId()
                                 + "] requires a profile role on the same profile");
             }
+        }
+
+        // No-op fast path: the stored override set already equals the desired
+        // one. Skipping the wipe-and-recreate (and the audit row) keeps a
+        // re-applied IaC declaration from rewriting the whole permission table
+        // and spamming the audit log every reconcile.
+        if (featureOverridesMatch(featureRepo.findAllByAdminAccountId(adminId), permissions)) {
+            return;
         }
 
         // Replace every override (admin-wide and per-profile) with the list
@@ -701,5 +734,32 @@ public class AdminManagementService {
     private ProvisioningProfile requireProfile(UUID profileId) {
         return profileRepo.findById(profileId)
                 .orElseThrow(() -> new ResourceNotFoundException("ProvisioningProfile", profileId));
+    }
+
+    /**
+     * True when the stored override rows already represent exactly the
+     * requested set — same {@code (featureKey, profileId, enabled)} triples,
+     * order-independent. Lets {@link #setFeaturePermissions} no-op an
+     * unchanged re-apply instead of wiping and recreating the whole set.
+     */
+    private static boolean featureOverridesMatch(List<AdminFeaturePermission> current,
+                                                 List<FeaturePermissionRequest> desired) {
+        java.util.Set<String> currentKeys = current.stream()
+                .map(fp -> overrideKey(fp.getFeatureKey().name(),
+                        fp.getProfile() != null ? fp.getProfile().getId() : null,
+                        fp.isEnabled()))
+                .collect(java.util.stream.Collectors.toSet());
+        java.util.Set<String> desiredKeys = desired.stream()
+                .map(p -> overrideKey(p.featureKey().name(), p.profileId(), p.enabled()))
+                .collect(java.util.stream.Collectors.toSet());
+        // Size guards defend against a duplicate collapsing two rows into one
+        // key (the dedup check upstream already rejects duplicate desired rows).
+        return currentKeys.size() == current.size()
+                && desiredKeys.size() == desired.size()
+                && currentKeys.equals(desiredKeys);
+    }
+
+    private static String overrideKey(String featureKey, UUID profileId, boolean enabled) {
+        return featureKey + "@" + (profileId == null ? "global" : profileId) + "=" + enabled;
     }
 }

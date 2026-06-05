@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.service;
 
+import com.ldapportal.dto.directory.BaseDnRequest;
 import com.ldapportal.dto.directory.DirectoryConnectionRequest;
 import com.ldapportal.dto.directory.DirectoryConnectionResponse;
 import com.ldapportal.dto.directory.TestConnectionRequest;
@@ -172,34 +173,43 @@ public class DirectoryConnectionService {
                                                        Long expectedVersion) {
         DirectoryConnection dc = require(id);
         com.ldapportal.web.ETagSupport.requireMatch(expectedVersion, dc.getVersion());
+
+        String beforeSignature = connectionSignature(dc);
         applyRequest(dc, req);
 
+        boolean secretChanged = false;
         if (req.bindPassword() != null && !req.bindPassword().isBlank()) {
             dc.setBindPasswordEncrypted(encryptionService.encrypt(req.bindPassword()));
+            secretChanged = true;
         }
         if (req.entraClientSecret() != null && !req.entraClientSecret().isBlank()) {
             dc.setEntraClientSecretEncrypted(encryptionService.encrypt(req.entraClientSecret()));
+            secretChanged = true;
         }
 
-        // Clear capabilities on every update — host / port / credentials
-        // / type may have changed, and any one of those invalidates the
-        // stored vendor / OID snapshot. Clearing unconditionally (rather
-        // than guessing which subset of fields matters) keeps the invariant
-        // simple: between updateDirectory commit and the AFTER_COMMIT
-        // probe completing, the chip is hidden. A probe failure then
-        // leaves the row in a truthful "unknown" state rather than
-        // displaying stale vendor data from a previous host.
-        dc.setCapabilities(null);
+        // Only invalidate the stored capability snapshot, evict the LDAP pool
+        // and trigger a re-probe when something that actually affects the
+        // connection changed (host / port / credentials / type / pool config).
+        // On a no-op re-apply — the common IaC reconcile case — none of these
+        // fire, so an unchanged apply doesn't churn the pool or re-probe the
+        // directory every run. On a real change, clearing capabilities keeps
+        // the truthful "unknown until re-probed" invariant.
+        boolean connectionChanged = secretChanged
+                || !beforeSignature.equals(connectionSignature(dc));
+        if (connectionChanged) {
+            dc.setCapabilities(null);
+            connectionFactory.evict(dc.getId());
+        }
 
-        connectionFactory.evict(dc.getId());
         dc = dirRepo.save(dc);
         saveBaseDns(dc, req);
 
-        // Re-probe out-of-band via DirectoryCapabilityRefresher — runs
-        // AFTER_COMMIT, off the request thread, on a connectionless
-        // listener path so nothing pins a DB or LDAP resource through
-        // the probe round-trip.
-        eventPublisher.publishEvent(new DirectoryConnectionSavedEvent(dc.getId()));
+        // Re-probe out-of-band via DirectoryCapabilityRefresher (AFTER_COMMIT,
+        // off the request thread) — only when the connection actually changed,
+        // so the lone listener isn't woken on every no-op reconcile.
+        if (connectionChanged) {
+            eventPublisher.publishEvent(new DirectoryConnectionSavedEvent(dc.getId()));
+        }
 
         return toResponse(dc);
     }
@@ -308,27 +318,85 @@ public class DirectoryConnectionService {
     }
 
     private void saveBaseDns(DirectoryConnection dc, DirectoryConnectionRequest req) {
-        userBaseDnRepo.deleteAllByDirectoryId(dc.getId());
-        groupBaseDnRepo.deleteAllByDirectoryId(dc.getId());
+        // Diff-aware: only rewrite a base-DN set when it actually differs from
+        // what's stored. The original delete-all-then-recreate minted fresh row
+        // ids on every update, so a no-op IaC re-apply churned the rows and
+        // returned different base-DN ids each time. Skipping the rewrite when
+        // the set is unchanged keeps the response stable across reconciles.
+        List<String> currentUsers = userBaseDnRepo
+                .findAllByDirectoryIdOrderByDisplayOrderAsc(dc.getId())
+                .stream().map(b -> baseDnKey(b.getDn(), b.getDisplayOrder())).toList();
+        if (!baseDnsUnchanged(currentUsers, req.userBaseDns())) {
+            userBaseDnRepo.deleteAllByDirectoryId(dc.getId());
+            if (req.userBaseDns() != null) {
+                req.userBaseDns().forEach(b -> {
+                    DirectoryUserBaseDn e = new DirectoryUserBaseDn();
+                    e.setDirectory(dc);
+                    e.setDn(b.dn());
+                    e.setDisplayOrder(b.displayOrder());
+                    userBaseDnRepo.save(e);
+                });
+            }
+        }
 
-        if (req.userBaseDns() != null) {
-            req.userBaseDns().forEach(b -> {
-                DirectoryUserBaseDn e = new DirectoryUserBaseDn();
-                e.setDirectory(dc);
-                e.setDn(b.dn());
-                e.setDisplayOrder(b.displayOrder());
-                userBaseDnRepo.save(e);
-            });
+        List<String> currentGroups = groupBaseDnRepo
+                .findAllByDirectoryIdOrderByDisplayOrderAsc(dc.getId())
+                .stream().map(b -> baseDnKey(b.getDn(), b.getDisplayOrder())).toList();
+        if (!baseDnsUnchanged(currentGroups, req.groupBaseDns())) {
+            groupBaseDnRepo.deleteAllByDirectoryId(dc.getId());
+            if (req.groupBaseDns() != null) {
+                req.groupBaseDns().forEach(b -> {
+                    DirectoryGroupBaseDn e = new DirectoryGroupBaseDn();
+                    e.setDirectory(dc);
+                    e.setDn(b.dn());
+                    e.setDisplayOrder(b.displayOrder());
+                    groupBaseDnRepo.save(e);
+                });
+            }
         }
-        if (req.groupBaseDns() != null) {
-            req.groupBaseDns().forEach(b -> {
-                DirectoryGroupBaseDn e = new DirectoryGroupBaseDn();
-                e.setDirectory(dc);
-                e.setDn(b.dn());
-                e.setDisplayOrder(b.displayOrder());
-                groupBaseDnRepo.save(e);
-            });
-        }
+    }
+
+    private static String baseDnKey(String dn, int displayOrder) {
+        return dn + " " + displayOrder;
+    }
+
+    private static boolean baseDnsUnchanged(List<String> currentKeys, List<BaseDnRequest> requested) {
+        List<String> requestedKeys = requested == null ? List.of()
+                : requested.stream().map(b -> baseDnKey(b.dn(), b.displayOrder())).toList();
+        return currentKeys.size() == requestedKeys.size()
+                && new java.util.HashSet<>(currentKeys).equals(new java.util.HashSet<>(requestedKeys));
+    }
+
+    /**
+     * Signature of the fields that affect the live LDAP/Entra connection or
+     * its capability snapshot. Compared before and after applying a request so
+     * {@code updateDirectory} can skip the pool eviction + re-probe when none
+     * of them changed. Excludes purely-cosmetic / behavioural fields
+     * (displayName, self-service flags, enable/disable mapping) that don't
+     * touch connectivity. Secrets are tracked separately (they only arrive
+     * when being changed).
+     */
+    private static String connectionSignature(DirectoryConnection dc) {
+        return String.join(" ",
+                String.valueOf(dc.getDirectoryType()),
+                String.valueOf(dc.getHost()),
+                String.valueOf(dc.getPort()),
+                String.valueOf(dc.getSslMode()),
+                String.valueOf(dc.isTrustAllCerts()),
+                String.valueOf(dc.getTrustedCertificatePem()),
+                String.valueOf(dc.getBindDn()),
+                String.valueOf(dc.getBaseDn()),
+                String.valueOf(dc.getSecondaryHost()),
+                String.valueOf(dc.getSecondaryPort()),
+                String.valueOf(dc.getGlobalCatalogPort()),
+                String.valueOf(dc.getPoolMinSize()),
+                String.valueOf(dc.getPoolMaxSize()),
+                String.valueOf(dc.getPoolConnectTimeoutSeconds()),
+                String.valueOf(dc.getPoolResponseTimeoutSeconds()),
+                String.valueOf(dc.getPagingSize()),
+                String.valueOf(dc.getTenantId()),
+                String.valueOf(dc.getEntraClientId()),
+                String.valueOf(dc.getGraphEndpoint()));
     }
 
     private DirectoryConnectionResponse toResponse(DirectoryConnection dc) {
