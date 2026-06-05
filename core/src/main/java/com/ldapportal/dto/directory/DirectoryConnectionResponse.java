@@ -30,6 +30,7 @@ import java.util.UUID;
  */
 public record DirectoryConnectionResponse(
         UUID id,
+        String slug,
         DirectoryType directoryType,
         String displayName,
         String host,
@@ -64,7 +65,13 @@ public record DirectoryConnectionResponse(
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         // ── Replication (R2) ────────────────────────────────────────────────
-        boolean replicationEnabled) {
+        boolean replicationEnabled,
+        // ── Write-only secret presence (§4.3) ───────────────────────────────
+        // The secrets themselves are never returned; these booleans let an
+        // idempotent applier tell whether a credential is already stored
+        // (so it can omit it on update) without exposing the value.
+        boolean bindPasswordSet,
+        boolean entraClientSecretSet) {
 
     public record BaseDnItem(UUID id, String dn, int displayOrder) {
         public static BaseDnItem fromUser(DirectoryUserBaseDn b) {
@@ -81,6 +88,7 @@ public record DirectoryConnectionResponse(
                                                    List<DirectoryGroupBaseDn> groupDns) {
         return new DirectoryConnectionResponse(
                 dc.getId(),
+                dc.getSlug(),
                 dc.getDirectoryType(),
                 dc.getDisplayName(),
                 dc.getHost(),
@@ -113,6 +121,18 @@ public record DirectoryConnectionResponse(
                 dc.getCapabilities(),
                 dc.getCreatedAt(),
                 dc.getUpdatedAt(),
-                dc.isReplicationEnabled());
+                dc.isReplicationEnabled(),
+                isSecretSet(dc.getBindPasswordEncrypted()),
+                isSecretSet(dc.getEntraClientSecretEncrypted()));
+    }
+
+    /**
+     * A stored credential counts as "set" only when it holds a real
+     * encrypted value — not null, not blank, and not the {@code "n/a"}
+     * placeholder the service writes into the bind-password column for
+     * Entra directories (which authenticate with a client secret instead).
+     */
+    private static boolean isSecretSet(String encrypted) {
+        return encrypted != null && !encrypted.isBlank() && !"n/a".equals(encrypted);
     }
 }
