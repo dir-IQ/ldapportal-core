@@ -73,7 +73,7 @@ public class Account {
     private boolean active = true;
 
     @Column(name = "theme_preference", length = 10)
-    private String themePreference = "system";
+    private String themePreference = "light";
 
     @Column(name = "density_preference", length = 15)
     private String densityPreference = "comfortable";
