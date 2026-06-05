@@ -66,13 +66,14 @@ const props = withDefaults(
     title?: string
     size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl'
     fixedHeight?: string
-    /** Opt-in: drag the header to reposition the modal. Off by default, and
-     *  ignored on narrow viewports (phones keep modals put). */
+    /** Drag the header to reposition the modal. On by default; ignored on
+     *  narrow viewports (phones keep modals put). Pass :movable="false" to opt out. */
     movable?: boolean
-    /** Opt-in: drag the SE corner to resize. Off by default; ignored below sm. */
+    /** Drag the SE corner to resize. On by default; ignored below sm. Pass
+     *  :resizable="false" to opt out. */
     resizable?: boolean
   }>(),
-  { modelValue: false, title: '', size: 'md', fixedHeight: '', movable: false, resizable: false },
+  { modelValue: false, title: '', size: 'md', fixedHeight: '', movable: true, resizable: true },
 )
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 
