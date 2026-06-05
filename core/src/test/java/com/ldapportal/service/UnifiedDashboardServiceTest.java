@@ -212,6 +212,46 @@ class UnifiedDashboardServiceTest {
                 .doesNotContain("REPLICATION_LAG_HIGH", "RECONCILIATION_DRIFT_OPEN");
     }
 
+    @Test
+    void directorySync_awareness_kept_for_superadmin_when_enabled() {
+        stubSettings(true, true); // directory-sync defaults on
+        when(dashboardService.getDashboard()).thenReturn(sampleComplianceDto());
+        when(activityDashboardService.build(superadmin)).thenReturn(
+                new ActivityDashboardResponse(List.of(), List.of(),
+                        directorySyncAwareness(), new SummaryMetrics(0, 0, 0, 0, 0, 0)));
+
+        UnifiedDashboardDto out = service.getDashboard(superadmin);
+
+        assertThat(out.awareness()).extracting(UnifiedDashboardDto.AwarenessItem::type)
+                .contains("REPLICATION_LAG_HIGH", "RECONCILIATION_DRIFT_OPEN", "RECENT_CHANGES");
+    }
+
+    @Test
+    void directorySync_awareness_hidden_from_admin_even_when_enabled() {
+        // Directory sync is superadmin-managed and has no admin-facing view, so
+        // a non-superadmin must not see awareness whose link would only bounce
+        // off the route guard — gate it on role, not just the entitlement.
+        stubSettings(true, true);
+        when(adminDashboardService.getDashboard(admin)).thenReturn(sampleAdminDto());
+        when(activityDashboardService.build(admin)).thenReturn(
+                new ActivityDashboardResponse(List.of(), List.of(),
+                        directorySyncAwareness(), new SummaryMetrics(0, 0, 0, 0, 0, 0)));
+
+        UnifiedDashboardDto out = service.getDashboard(admin);
+
+        assertThat(out.awareness()).extracting(UnifiedDashboardDto.AwarenessItem::type)
+                .containsExactly("RECENT_CHANGES")
+                .doesNotContain("REPLICATION_LAG_HIGH", "RECONCILIATION_DRIFT_OPEN");
+    }
+
+    private List<AwarenessItem> directorySyncAwareness() {
+        return List.of(
+                new AwarenessItem("RECENT_CHANGES", "10 changes", null, "/audit"),
+                new AwarenessItem("REPLICATION_LAG_HIGH", "lag", "detail", "/superadmin/directory-sync"),
+                new AwarenessItem("RECONCILIATION_DRIFT_OPEN", "drift", "detail",
+                        "/superadmin/directory-sync?findings=open"));
+    }
+
     // ── Admin dispatch ──────────────────────────────────────────────────────
 
     @Test

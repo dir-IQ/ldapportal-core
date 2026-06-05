@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest'
 import {
   classify,
   rdnAttribute,
+  rdnValue,
   isAttributeEditable,
   type AttributeTypeInfo,
   type DirectoryEntry,
@@ -105,6 +106,32 @@ describe('rdnAttribute', () => {
 
   it('returns empty string on empty DN', () => {
     expect(rdnAttribute('')).toBe('')
+  })
+})
+
+describe('rdnValue', () => {
+  it('extracts the first RDN component value', () => {
+    expect(rdnValue('cn=Engineering,ou=Groups,dc=example,dc=com')).toBe('Engineering')
+  })
+
+  it('preserves the original case (display text, not an identifier)', () => {
+    expect(rdnValue('CN=VPN-Users,ou=Groups')).toBe('VPN-Users')
+  })
+
+  it('honours backslash-escaped commas in the value', () => {
+    expect(rdnValue('cn=Smith\\, John,ou=People,dc=example')).toBe('Smith, John')
+  })
+
+  it('handles a single-RDN DN', () => {
+    expect(rdnValue('cn=root')).toBe('root')
+  })
+
+  it('falls back to the trimmed input when there is no =', () => {
+    expect(rdnValue('justtext')).toBe('justtext')
+  })
+
+  it('returns empty string on empty DN', () => {
+    expect(rdnValue('')).toBe('')
   })
 })
 

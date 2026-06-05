@@ -311,8 +311,13 @@ function metricLabel(id) {
 // is activated — the chip's figure maps directly to that panel, so it
 // doubles as a jump link. The panel root carries id="dashboard-scope-panel".
 function scrollToScopePanel() {
-  document.getElementById('dashboard-scope-panel')
-    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const el = document.getElementById('dashboard-scope-panel')
+  if (!el) return
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // Flash a highlight so the jump is perceptible even when the panel is
+  // already on screen — otherwise the button looks like it does nothing.
+  el.classList.add('scope-panel-flash')
+  window.setTimeout(() => el.classList.remove('scope-panel-flash'), 1200)
 }
 
 // ── Data load ──────────────────────────────────────────────────────────────
@@ -474,23 +479,27 @@ async function onReset() {
       <div class="flex flex-wrap items-center gap-2 mb-6">
         <!-- Users -->
         <div class="inline-flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-1.5">
-          <svg class="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="8" r="3.25" />
-            <path d="M5.5 19a6.5 6.5 0 0 1 13 0" />
-          </svg>
+          <span class="inline-flex items-center justify-center w-6 h-6 rounded-md bg-blue-50 text-blue-500 shrink-0">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="8" r="3.25" />
+              <path d="M5.5 19a6.5 6.5 0 0 1 13 0" />
+            </svg>
+          </span>
           <span class="text-lg font-semibold text-gray-900 tabular-nums leading-none">{{ (metrics.totalUsers ?? 0).toLocaleString() }}</span>
           <span class="text-sm text-gray-500">{{ usersStatLabel }}</span>
         </div>
         <!-- Groups -->
         <div class="inline-flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-1.5">
-          <svg class="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="9" cy="9" r="3" />
-            <path d="M3.5 19.5a5.5 5.5 0 0 1 11 0" />
-            <path d="M16 4.2a3 3 0 0 1 0 5.6" />
-            <path d="M18 13.6a5.5 5.5 0 0 1 2.5 4.6" />
-          </svg>
+          <span class="inline-flex items-center justify-center w-6 h-6 rounded-md bg-violet-50 text-violet-500 shrink-0">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="9" cy="9" r="3" />
+              <path d="M3.5 19.5a5.5 5.5 0 0 1 11 0" />
+              <path d="M16 4.2a3 3 0 0 1 0 5.6" />
+              <path d="M18 13.6a5.5 5.5 0 0 1 2.5 4.6" />
+            </svg>
+          </span>
           <span class="text-lg font-semibold text-gray-900 tabular-nums leading-none">{{ (metrics.totalGroups ?? 0).toLocaleString() }}</span>
           <span class="text-sm text-gray-500">{{ groupsStatLabel }}</span>
         </div>
@@ -498,17 +507,22 @@ async function onReset() {
         <button type="button" @click="scrollToScopePanel"
                 :aria-label="`Jump to ${scopeLabel} below`"
                 class="group inline-flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-1.5 hover:border-gray-300 hover:shadow-sm transition-all">
-          <svg class="w-4 h-4 text-gray-400 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <ellipse cx="12" cy="6" rx="7" ry="3" />
-            <path d="M5 6v12c0 1.66 3.13 3 7 3s7-1.34 7-3V6" />
-            <path d="M5 12c0 1.66 3.13 3 7 3s7-1.34 7-3" />
-          </svg>
+          <span class="inline-flex items-center justify-center w-6 h-6 rounded-md bg-emerald-50 text-emerald-600 shrink-0">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <ellipse cx="12" cy="6" rx="7" ry="3" />
+              <path d="M5 6v12c0 1.66 3.13 3 7 3s7-1.34 7-3V6" />
+              <path d="M5 12c0 1.66 3.13 3 7 3s7-1.34 7-3" />
+            </svg>
+          </span>
           <span class="text-lg font-semibold text-gray-900 tabular-nums leading-none">{{ scopeCount.toLocaleString() }}</span>
           <span class="text-sm text-gray-500">{{ scopeLabel }}</span>
+          <!-- Double chevron reads as "jump to the section below", not a
+               dropdown caret (which a single chevron implied). -->
           <svg class="w-3.5 h-3.5 text-gray-400 shrink-0 transition-transform group-hover:translate-y-0.5" viewBox="0 0 24 24"
                fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M6 9l6 6 6-6" />
+            <path d="M6 5l6 6 6-6" />
+            <path d="M6 12l6 6 6-6" />
           </svg>
         </button>
       </div>

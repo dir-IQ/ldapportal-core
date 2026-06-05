@@ -19,6 +19,23 @@
 
 .PHONY: redeploy redeploy-fast redeploy-frontend package-backend logs down help db-pull-from-fly
 
+# Windows shell handling. GNU Make on Windows runs recipes through cmd.exe and
+# ignores the environment's SHELL — so even launched from Git Bash, recipes run
+# in cmd, which can't execute the ./mvnw shell script ("'.' is not recognized
+# …"). DETECTING the recipe shell proved unreliable (choco's make reports a
+# POSIX-looking $(SHELL) but still falls back to cmd at run time), so PIN it:
+# force cmd.exe and use the batch wrapper cmd can run. OS=Windows_NT is set in
+# both cmd and Git Bash, so this fires regardless of the launching terminal.
+# (POSIX-only targets like `help`, which use grep/awk, won't run under cmd —
+# use WSL, or run `make SHELL=/usr/bin/bash <target>` from Git Bash, for those.)
+ifeq ($(OS),Windows_NT)
+  SHELL := cmd.exe
+  .SHELLFLAGS := /c
+  MVNW := mvnw.cmd
+else
+  MVNW := ./mvnw
+endif
+
 # Default — print available targets.
 help:  ## Show this help.
 	@grep -hE '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | sort | awk -F'[:#][:#]?' '{printf "  \033[36m%-22s\033[0m %s\n", $$1, $$NF}'
@@ -58,7 +75,7 @@ redeploy-frontend:  ## Rebuild + recreate just the frontend container.
 # you actually want to verify behaviour.
 package-backend:  ## Rebuild backend JAR (skips tests).
 	@echo "==> Building backend JAR (skipping tests)..."
-	./mvnw -DskipTests -q package
+	$(MVNW) -DskipTests -q package
 
 # Pull a Fly.io Postgres DB down into the local compose stack so you can
 # develop against a copy of the deployed data. Delegates to the script,

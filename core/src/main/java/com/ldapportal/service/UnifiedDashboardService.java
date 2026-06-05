@@ -106,7 +106,7 @@ public class UnifiedDashboardService {
 
         List<ActionItem> actions = filterActions(activity.actions(), complianceEnabled, directorySyncEnabled);
         List<SuggestedAction> suggestions = filterSuggestions(activity.suggestions(), complianceEnabled, hrEnabled, alertingEnabled);
-        List<AwarenessItem> awareness = filterAwareness(activity.awareness(), complianceEnabled, directorySyncEnabled);
+        List<AwarenessItem> awareness = filterAwareness(activity.awareness(), complianceEnabled, directorySyncEnabled, principal.isSuperadmin());
 
         return new UnifiedDashboardDto(
                 complianceEnabled, hrEnabled, approvalsConfigured,
@@ -201,11 +201,17 @@ public class UnifiedDashboardService {
 
     private static List<AwarenessItem> filterAwareness(List<ActivityDashboardResponse.AwarenessItem> src,
                                                         boolean complianceEnabled,
-                                                        boolean directorySyncEnabled) {
+                                                        boolean directorySyncEnabled,
+                                                        boolean isSuperadmin) {
         if (src == null) return List.of();
         return src.stream()
                 .filter(a -> complianceEnabled || !COMPLIANCE_AWARENESS_TYPES.contains(a.type()))
-                .filter(a -> directorySyncEnabled || !DIRECTORY_SYNC_AWARENESS_TYPES.contains(a.type()))
+                // Directory-sync awareness (replication lag, reconciliation drift)
+                // deep-links into the superadmin-only Directory Sync surface, which
+                // has no admin-facing view. Showing it to a non-superadmin produces
+                // an item whose link the route guard bounces — so gate it on role,
+                // not just the entitlement.
+                .filter(a -> (directorySyncEnabled && isSuperadmin) || !DIRECTORY_SYNC_AWARENESS_TYPES.contains(a.type()))
                 .map(a -> new AwarenessItem(a.type(), a.title(), a.detail(), a.link()))
                 .toList();
     }

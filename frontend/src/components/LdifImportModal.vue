@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
-  <AppModal v-model="visible" title="Import LDIF" size="xl" fixed-height="min(760px, 90vh)">
+  <AppModal v-model="visible" title="Import LDIF" size="2xl" fixed-height="min(760px, 90vh)" movable resizable>
     <div class="space-y-3">
       <!-- ── Step 1: pick file + conflict mode ───────────────────────────── -->
       <template v-if="phase === 'pick'">
@@ -83,7 +83,7 @@
             <span class="badge" :class="opClass(row.op)">{{ row.op }}</span>
           </template>
           <template #cell-dn="{ row }">
-            <span class="font-mono text-[13px] text-gray-700">{{ row.dn || '—' }}</span>
+            <span class="font-mono text-[13px] text-gray-700 break-all">{{ row.dn || '—' }}</span>
           </template>
           <template #cell-detail="{ row }">
             <span v-if="row.memberDelta" class="text-[13px]">
@@ -93,11 +93,17 @@
             <span v-else-if="row.memberCount != null" class="text-[13px] text-gray-600">{{ row.memberCount }} members</span>
             <span v-else class="text-[13px] text-gray-500">
               {{ row.attrCount }} attr{{ row.attrCount === 1 ? '' : 's' }}
-              <span v-if="row.objectClasses.length" class="text-gray-400 ml-1 truncate">· {{ row.objectClasses.join(', ') }}</span>
+              <span v-if="row.objectClasses.length" class="text-gray-400 ml-1">· {{ row.objectClasses.join(', ') }}</span>
             </span>
           </template>
+          <!-- Always render the wrapper span: an empty issues array would
+               otherwise make the v-for produce zero vnodes, and DataTable's
+               <slot> falls back to interpolating row.issues — rendering a
+               literal "[]" in the cell. -->
           <template #cell-issues="{ row }">
-            <span v-for="(iss, i) in row.issues" :key="i" :title="iss.message" :aria-label="iss.code" role="img" class="mr-1">{{ issueIcon(iss) }}</span>
+            <span class="whitespace-nowrap">
+              <span v-for="(iss, i) in row.issues" :key="i" :title="iss.message" :aria-label="iss.code" role="img" class="mr-1">{{ issueIcon(iss) }}</span>
+            </span>
           </template>
         </DataTable>
 
