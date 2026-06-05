@@ -5,6 +5,7 @@ import com.ldapportal.dto.settings.ApplicationSettingsDto;
 import com.ldapportal.dto.settings.BrandingDto;
 import com.ldapportal.dto.settings.UpdateApplicationSettingsRequest;
 import com.ldapportal.service.ApplicationSettingsService;
+import com.ldapportal.service.ApprovalWorkflowService;
 import com.ldapportal.core.siem.service.SiemExportService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +37,7 @@ public class ApplicationSettingsController {
 
     private final ApplicationSettingsService service;
     private final SiemExportService          siemExportService;
+    private final ApprovalWorkflowService    approvalWorkflowService;
 
     /** Returns current settings (superadmin only). */
     @GetMapping
@@ -56,6 +58,17 @@ public class ApplicationSettingsController {
         ApplicationSettingsDto result = service.upsert(req);
         siemExportService.invalidateCache();
         return result;
+    }
+
+    /**
+     * Total pending approval requests across all directories. Backs the
+     * settings warning shown before disabling approvals (so the operator knows
+     * how many in-flight requests a disable will leave queued).
+     */
+    @GetMapping("/pending-approvals-count")
+    @PreAuthorize("hasRole('SUPERADMIN')")
+    public Map<String, Long> pendingApprovalsCount() {
+        return Map.of("pending", approvalWorkflowService.countAllPending());
     }
 
     /** Marks first-run setup as complete. Called by the setup wizard on the final step. */

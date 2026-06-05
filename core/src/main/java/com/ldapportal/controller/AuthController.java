@@ -283,10 +283,14 @@ public class AuthController {
         // to both editions. Keeping them on /auth/me so the frontend
         // doesn't need a second fetch on every page load.
         try {
-            body.put("directorySearchInlineEditEnabled",
-                    applicationSettingsService.getEntity().isDirectorySearchInlineEditEnabled());
+            var settings = applicationSettingsService.getEntity();
+            body.put("directorySearchInlineEditEnabled", settings.isDirectorySearchInlineEditEnabled());
+            body.put("approvalsEnabled", settings.isApprovalsEnabled());
+            body.put("selfRegistrationApprovalEnabled", settings.isSelfRegistrationApprovalEnabled());
         } catch (Exception ignored) {
             body.put("directorySearchInlineEditEnabled", true);
+            body.put("approvalsEnabled", true);
+            body.put("selfRegistrationApprovalEnabled", true);
         }
 
         return ResponseEntity.ok(body);

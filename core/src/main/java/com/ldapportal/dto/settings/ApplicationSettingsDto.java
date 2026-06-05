@@ -27,6 +27,10 @@ public record ApplicationSettingsDto(
         // User/Group edits
         boolean directorySearchInlineEditEnabled,
 
+        // Approval workflow — global master switches (override per-profile config)
+        boolean approvalsEnabled,
+        boolean selfRegistrationApprovalEnabled,
+
         // Session
         int sessionTimeoutMinutes,
 

@@ -59,6 +59,22 @@ public class ApplicationSettingsService {
     }
 
     /**
+     * Global master switch for admin-initiated approval workflows. Reads fresh
+     * (no caching) so a superadmin's toggle takes effect on the next operation.
+     * Defaults true when no settings row exists yet.
+     */
+    @Transactional(readOnly = true)
+    public boolean isApprovalsEnabled() {
+        return getEntity().isApprovalsEnabled();
+    }
+
+    /** Independent switch for self-service registration approval. Defaults true. */
+    @Transactional(readOnly = true)
+    public boolean isSelfRegistrationApprovalEnabled() {
+        return getEntity().isSelfRegistrationApprovalEnabled();
+    }
+
+    /**
      * Returns only the branding subset of the settings (public / unauthenticated).
      */
     @Transactional(readOnly = true)
@@ -103,6 +119,14 @@ public class ApplicationSettingsService {
         // server defaults when an older client posts without the field.
         if (req.directorySearchInlineEditEnabled() != null) {
             s.setDirectorySearchInlineEditEnabled(req.directorySearchInlineEditEnabled());
+        }
+        // Approval toggles — null means "leave existing" (preserves the column
+        // default for legacy clients that omit the fields).
+        if (req.approvalsEnabled() != null) {
+            s.setApprovalsEnabled(req.approvalsEnabled());
+        }
+        if (req.selfRegistrationApprovalEnabled() != null) {
+            s.setSelfRegistrationApprovalEnabled(req.selfRegistrationApprovalEnabled());
         }
         s.setSessionTimeoutMinutes(req.sessionTimeoutMinutes());
 
@@ -195,6 +219,8 @@ public class ApplicationSettingsService {
                 s.getPrimaryColour(),
                 s.getSecondaryColour(),
                 s.isDirectorySearchInlineEditEnabled(),
+                s.isApprovalsEnabled(),
+                s.isSelfRegistrationApprovalEnabled(),
                 s.getSessionTimeoutMinutes(),
                 s.getSmtpHost(),
                 s.getSmtpPort(),
@@ -255,6 +281,8 @@ public class ApplicationSettingsService {
                 null,
                 "LDAP Portal", null, null, null,
                 true,    // directorySearchInlineEditEnabled defaults true
+                true,    // approvalsEnabled defaults true
+                true,    // selfRegistrationApprovalEnabled defaults true
                 60,
                 null, 587, null, null, false, true,
                 null, null, null, false, null, 24,

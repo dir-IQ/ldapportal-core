@@ -31,6 +31,12 @@ public record UpdateApplicationSettingsRequest(
         // takes effect on insert).
         Boolean directorySearchInlineEditEnabled,
 
+        // Approval workflow — global master switches. Boolean wrappers: null
+        // means "leave existing" so a legacy client omitting them is harmless
+        // (the column default applies on insert).
+        Boolean approvalsEnabled,
+        Boolean selfRegistrationApprovalEnabled,
+
         // Session
         @NotNull @Min(1) Integer sessionTimeoutMinutes,
 

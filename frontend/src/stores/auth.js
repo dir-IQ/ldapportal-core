@@ -45,6 +45,20 @@ export const useAuthStore = defineStore('auth', () => {
   const isDirectorySearchInlineEditEnabled = computed(
     () => principal.value?.directorySearchInlineEditEnabled !== false,
   )
+  // Global approval master switches (ApplicationSettings, not entitlement-
+  // gated). Default true preserves prior behaviour for a client talking to a
+  // server that predates these fields.
+  const isApprovalsEnabled = computed(
+    () => principal.value?.approvalsEnabled !== false,
+  )
+  const isSelfRegistrationApprovalEnabled = computed(
+    () => principal.value?.selfRegistrationApprovalEnabled !== false,
+  )
+  // Whether ANY approval source can produce requests — drives queue/nav/
+  // dashboard visibility (self-registration approvals also land in the queue).
+  const isAnyApprovalEnabled = computed(
+    () => isApprovalsEnabled.value || isSelfRegistrationApprovalEnabled.value,
+  )
 
   /**
    * Called once per page load (from the router guard) to restore the session
@@ -69,6 +83,8 @@ export const useAuthStore = defineStore('auth', () => {
       isvaIntegrationEnabled: data.isvaIntegrationEnabled === true,
       directorySyncEnabled: data.directorySyncEnabled === true,
       directorySearchInlineEditEnabled: data.directorySearchInlineEditEnabled !== false,
+      approvalsEnabled: data.approvalsEnabled !== false,
+      selfRegistrationApprovalEnabled: data.selfRegistrationApprovalEnabled !== false,
     }
   }
 
@@ -208,6 +224,7 @@ export const useAuthStore = defineStore('auth', () => {
     principal, isLoggedIn, isSuperadmin, isSelfService, username,
     themePreference, authType, hasFeature, isHrEnabled, isComplianceEnabled,
     isAlertingEnabled, isDirectorySyncEnabled, isIsvaIntegrationEnabled, isCommunityDistribution, isDirectorySearchInlineEditEnabled,
+    isApprovalsEnabled, isSelfRegistrationApprovalEnabled, isAnyApprovalEnabled,
     setupPending, init, reinit, login, selfServiceLogin, logout,
     markSetupComplete, updatePrincipal,
   }

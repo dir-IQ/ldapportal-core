@@ -4,6 +4,7 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useSettingsStore } from '@/stores/settings'
+import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
 import { getSettings, updateSettings, testSiem } from '@/api/settings'
 import SettingsSidebar from './SettingsSidebar.vue'
@@ -16,6 +17,8 @@ interface SettingsData {
   primaryColour?: string | null
   secondaryColour?: string | null
   directorySearchInlineEditEnabled?: boolean
+  approvalsEnabled?: boolean
+  selfRegistrationApprovalEnabled?: boolean
   sessionTimeoutMinutes?: number
   smtpHost?: string | null
   smtpPort?: number | null
@@ -62,6 +65,8 @@ interface SettingsForm {
   primaryColour: string
   secondaryColour: string
   directorySearchInlineEditEnabled: boolean
+  approvalsEnabled: boolean
+  selfRegistrationApprovalEnabled: boolean
   sessionTimeoutMinutes: number
   smtpHost: string
   smtpPort: number
@@ -114,6 +119,7 @@ const route  = useRoute()
 const router = useRouter()
 const notif  = useNotificationStore()
 const brandingStore = useSettingsStore()
+const auth = useAuthStore()
 const confirm = useConfirm()
 
 const loading         = ref<boolean>(false)
@@ -163,6 +169,8 @@ function defaultForm(): SettingsForm {
     primaryColour: '#3b82f6',
     secondaryColour: '#64748b',
     directorySearchInlineEditEnabled: true,
+    approvalsEnabled: true,
+    selfRegistrationApprovalEnabled: true,
     sessionTimeoutMinutes: 60,
     smtpHost: '',
     smtpPort: 587,
@@ -219,6 +227,8 @@ async function loadSettings(): Promise<void> {
       primaryColour:          data.primaryColour ?? '#3b82f6',
       secondaryColour:        data.secondaryColour ?? '#64748b',
       directorySearchInlineEditEnabled: data.directorySearchInlineEditEnabled ?? true,
+      approvalsEnabled:               data.approvalsEnabled ?? true,
+      selfRegistrationApprovalEnabled: data.selfRegistrationApprovalEnabled ?? true,
       sessionTimeoutMinutes:  data.sessionTimeoutMinutes ?? 60,
       smtpHost:               data.smtpHost ?? '',
       smtpPort:               data.smtpPort ?? 587,
@@ -283,6 +293,8 @@ async function doSave(): Promise<void> {
       primaryColour:         form.primaryColour  || null,
       secondaryColour:       form.secondaryColour || null,
       directorySearchInlineEditEnabled: form.directorySearchInlineEditEnabled,
+      approvalsEnabled: form.approvalsEnabled,
+      selfRegistrationApprovalEnabled: form.selfRegistrationApprovalEnabled,
       sessionTimeoutMinutes: form.sessionTimeoutMinutes,
       smtpHost:              form.smtpHost       || null,
       smtpPort:              form.smtpPort       || null,
@@ -329,6 +341,9 @@ async function doSave(): Promise<void> {
     // Sync branding store so sidebar + page title update immediately.
     brandingStore.apply(form)
     await loadSettings()
+    // Refresh /auth/me so toggles surfaced there (approvals, inline-edit)
+    // take effect across nav/dashboard/profile UI without a full reload.
+    await auth.reinit()
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message || '')

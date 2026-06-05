@@ -100,6 +100,10 @@ const router = createRouter({
         {
           path: 'directories/:dirId/approvals',
           name: 'approvals',
+          // Hidden from the command palette when approvals are globally
+          // disabled. The superadmin approvals route (below) is intentionally
+          // left ungated so in-flight requests can still be drained.
+          meta: { requiresApprovals: true },
           component: () => import('@/views/approvals/PendingApprovalsView.vue'),
         },
 
