@@ -16,6 +16,11 @@ import java.util.List;
  * @param memberDelta   net member change for a group modify (null otherwise)
  * @param memberCount   member count for a group add (null otherwise)
  * @param issues        per-row findings
+ * @param userAdd       true when this row is a <em>new</em> user-entry add that
+ *                      will be routed through the provisioning SPI (so a vendor
+ *                      interceptor, e.g. ISVA, may augment it). False for
+ *                      non-user entries, updates/skips, change records, and
+ *                      entries that already carry the vendor overlay.
  */
 public record LdifPreviewRow(
         int rowNumber,
@@ -25,5 +30,6 @@ public record LdifPreviewRow(
         int attrCount,
         LdifMemberDelta memberDelta,
         Integer memberCount,
-        List<LdifPreviewIssue> issues) {
+        List<LdifPreviewIssue> issues,
+        boolean userAdd) {
 }

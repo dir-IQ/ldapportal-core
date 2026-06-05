@@ -102,6 +102,34 @@ class LdifPreviewServiceTest {
     // ── Classification ────────────────────────────────────────────────────────
 
     @Test
+    void userAdd_flaggedAndCounted_forNewUserEntriesOnly() {
+        String ou = "dn: ou=teams," + BASE + "\nobjectClass: top\n"
+                + "objectClass: organizationalUnit\nou: teams\n";
+        // bob: new person → userAdd; teams: non-user OU → not; amy: existing → not.
+        String ldif = person("bob", "B") + "\n" + ou + "\n" + person("amy", "A");
+        LdifPreviewSummary s = preview(ldif, ConflictHandling.SKIP);
+
+        assertThat(s.userAddCount()).isEqualTo(1);
+        assertThat(s.containsVendorOverlayEntries()).isFalse();
+        assertThat(rowFor(s, "uid=bob,ou=people," + BASE).userAdd()).isTrue();
+        assertThat(rowFor(s, "ou=teams," + BASE).userAdd()).isFalse();
+        assertThat(rowFor(s, "uid=amy,ou=people," + BASE).userAdd()).isFalse();
+    }
+
+    @Test
+    void fileContainingSecUserEntry_setsOverlayFlag_andEntryIsNotUserAdd() {
+        // A self-describing export entry already carrying the secUser overlay.
+        String selfDescribing = "dn: uid=ann,ou=people," + BASE + "\n"
+                + "objectClass: top\nobjectClass: person\nobjectClass: inetOrgPerson\n"
+                + "objectClass: secUser\ncn: ann\nsn: ann\n";
+        LdifPreviewSummary s = preview(selfDescribing, ConflictHandling.SKIP);
+
+        assertThat(s.containsVendorOverlayEntries()).isTrue();
+        assertThat(s.userAddCount()).isZero();
+        assertThat(rowFor(s, "uid=ann,ou=people," + BASE).userAdd()).isFalse();
+    }
+
+    @Test
     void newEntry_classifiesAsAdd_existing_dependsOnConflict() {
         String ldif = person("bob", "B") + "\n" + person("amy", "A");
 

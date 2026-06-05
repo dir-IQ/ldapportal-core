@@ -26,6 +26,16 @@ vi.mock('@/api/browse', () => ({
 
 vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => api.confirm }))
 
+// Auth store: only isIsvaIntegrationEnabled is read by the modal. Toggle it
+// per-test via the hoisted state (default off so existing tests are unaffected).
+const authState = vi.hoisted(() => ({ isvaEnabled: false }))
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ get isIsvaIntegrationEnabled() { return authState.isvaEnabled } }),
+}))
+
+const isvaApi = vi.hoisted(() => ({ getIsvaConfig: vi.fn() }))
+vi.mock('@/api/isvaConfig', () => ({ getIsvaConfig: isvaApi.getIsvaConfig }))
+
 import LdifImportModal from './LdifImportModal.vue'
 
 const stubs = {
@@ -83,6 +93,8 @@ describe('LdifImportModal preview flow', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    authState.isvaEnabled = false
+    isvaApi.getIsvaConfig.mockResolvedValue({ data: { enabled: true, topologyMode: 'INLINE' } })
     api.confirm.mockResolvedValue(true)
     api.previewLdif.mockResolvedValue({ data: summary() })
     api.getLdifPreviewPage.mockResolvedValue({ data: { rows: [], page: 0, size: 50, totalFiltered: 0 } })
@@ -158,6 +170,52 @@ describe('LdifImportModal preview flow', () => {
     await byText(wrapper, 'Import (3)')[0].trigger('click')
     await flushPromises()
     expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1', false)
+  })
+
+  it('shows the secUser provisioning indication + per-row badge when IVIA is enabled, and the toggle drives apply', async () => {
+    authState.isvaEnabled = true
+    api.previewLdif.mockResolvedValue({
+      data: summary({
+        userAddCount: 1,
+        containsVendorOverlayEntries: false,
+        page0: {
+          rows: [
+            { rowNumber: 1, dn: 'uid=bob,dc=example,dc=com', op: 'ADD', objectClasses: ['inetOrgPerson'], attrCount: 5, memberDelta: null, memberCount: null, issues: [], userAdd: true },
+            { rowNumber: 2, dn: 'cn=team,dc=example,dc=com', op: 'MODIFY', objectClasses: [], attrCount: 2, memberDelta: null, memberCount: null, issues: [], userAdd: false },
+          ],
+          page: 0, size: 50, totalFiltered: 2,
+        },
+      }),
+    })
+    const wrapper = mountModal()
+    await toPreview(wrapper)
+    await flushPromises()
+
+    // Indication mentions secUser; the user-add row carries the +secUser badge.
+    expect(wrapper.text()).toContain('secUser')
+    expect(wrapper.text()).toContain('+secUser')
+
+    // Toggle the provisioning off → apply passes suppressVendorOverlay = true.
+    await wrapper.find('input[type="checkbox"]').setValue(false)
+    expect(wrapper.text()).not.toContain('+secUser')
+    await byText(wrapper, 'Import (2)')[0].trigger('click')
+    await flushPromises()
+    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1', true)
+  })
+
+  it('suppresses provisioning when the file already contains secUser entries', async () => {
+    authState.isvaEnabled = true
+    api.previewLdif.mockResolvedValue({
+      data: summary({ userAddCount: 1, containsVendorOverlayEntries: true }),
+    })
+    const wrapper = mountModal()
+    await toPreview(wrapper)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('already contains')
+    // No toggle / badge when suppressed file-wide.
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('+secUser')
   })
 
   it('defaults to the Errors filter when the upload has parse errors', async () => {
