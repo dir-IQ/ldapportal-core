@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Stable panel identifiers. NEVER rename — stored in layout JSON.
 export const PANEL_IDS = Object.freeze({
-  APPROVAL_AGING:    'approval-aging',
+  // APPROVAL_AGING was folded into the Pending Approvals metric card (its
+  // aging breakdown now renders in the card's subtitle). Stored layouts that
+  // still reference 'approval-aging' are dropped by mergeWithDefaults.
   DIRECTORIES:       'directories',
   RECENT_ACTIVITY:   'recent-activity',
   REPORT_JOBS:       'report-jobs',
@@ -36,7 +38,6 @@ export const NON_COMPLIANCE_METRICS = new Set([])
 
 // Human labels (used for the edit-mode visibility toggle tooltip).
 export const PANEL_LABELS = Object.freeze({
-  [PANEL_IDS.APPROVAL_AGING]:    'Approval Aging',
   [PANEL_IDS.DIRECTORIES]:       'Directories',
   [PANEL_IDS.RECENT_ACTIVITY]:   'Recent Activity',
   [PANEL_IDS.REPORT_JOBS]:       'Report Jobs',
@@ -73,7 +74,7 @@ export const DEFAULT_LAYOUT = Object.freeze({
     // panel. That way col2 still has meaningful content (Directories +
     // Awareness) when compliance is disabled and Campaign Progress is
     // flag-hidden.
-    col1: Object.freeze([PANEL_IDS.APPROVAL_AGING, PANEL_IDS.RECENT_ACTIVITY, PANEL_IDS.REPORT_JOBS]),
+    col1: Object.freeze([PANEL_IDS.RECENT_ACTIVITY, PANEL_IDS.REPORT_JOBS]),
     col2: Object.freeze([PANEL_IDS.DIRECTORIES, PANEL_IDS.CAMPAIGN_PROGRESS, PANEL_IDS.AWARENESS]),
     col3: Object.freeze([PANEL_IDS.ACTION_REQUIRED, PANEL_IDS.SUGGESTED_CONFIG]),
   }),
