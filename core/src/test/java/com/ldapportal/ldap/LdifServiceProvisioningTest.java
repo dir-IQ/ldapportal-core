@@ -132,6 +132,20 @@ class LdifServiceProvisioningTest {
                 ConflictHandling.SKIP, false, suppress);
     }
 
+    @Test
+    void perRowExclusion_skipsOverlayForExcludedRowOnly() {
+        LdifService svc = ldifWithOverlay();
+        // bob = row 1, kim = row 2. Opt row 2 out of provisioning.
+        String ldif = person("bob") + "\n" + person("kim");
+        var records = svc.parse(new ByteArrayInputStream(ldif.getBytes(StandardCharsets.UTF_8)));
+        LdifImportResult r = svc.applyParsedRecords(
+                dc, records, ConflictHandling.SKIP, false, java.util.Set.of(2));
+
+        assertThat(r.added()).isEqualTo(2);
+        assertThat(marker("uid=bob," + BASE)).isEqualTo(MARKER_VALUE); // provisioned
+        assertThat(marker("uid=kim," + BASE)).isNull();                // excluded
+    }
+
     private String marker(String dn) {
         SearchResultEntry e = getEntry(dn);
         return e == null ? null : e.getAttributeValue(MARKER);

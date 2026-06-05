@@ -41,11 +41,14 @@ import LdifImportModal from './LdifImportModal.vue'
 const stubs = {
   AppModal: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /><slot name="footer" /></div>' },
   DataTable: {
-    props: ['columns', 'rows', 'rowKey', 'loading'],
+    props: ['columns', 'rows', 'rowKey', 'loading', 'expandedKey'],
     emits: ['row-click'],
-    template: `<div class="dt"><div v-for="r in rows" :key="r.rowNumber" class="dt-row" @click="$emit('row-click', r)">
-      <slot name="cell-op" :row="r" /><slot name="cell-dn" :row="r" /><slot name="cell-detail" :row="r" /><slot name="cell-issues" :row="r" />
-    </div></div>`,
+    template: `<div class="dt"><template v-for="r in rows" :key="r.rowNumber">
+      <div class="dt-row" @click="$emit('row-click', r)">
+        <slot name="cell-op" :row="r" /><slot name="cell-dn" :row="r" /><slot name="cell-detail" :row="r" /><slot name="cell-issues" :row="r" />
+      </div>
+      <div v-if="expandedKey !== undefined && r.rowNumber === expandedKey" class="dt-detail"><slot name="row-detail" :row="r" /></div>
+    </template></div>`,
   },
 }
 
@@ -147,7 +150,7 @@ describe('LdifImportModal preview flow', () => {
     await byText(wrapper, 'Import (2)')[0].trigger('click')
     await flushPromises()
 
-    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1', false)
+    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1', false, [])
     expect(wrapper.emitted('imported')).toBeTruthy()
     expect(wrapper.text()).toContain('Import Results')
   })
@@ -169,7 +172,7 @@ describe('LdifImportModal preview flow', () => {
     // Confirmed → applied.
     await byText(wrapper, 'Import (3)')[0].trigger('click')
     await flushPromises()
-    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1', false)
+    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1', false, [])
   })
 
   it('shows the secUser provisioning indication + per-row badge when IVIA is enabled, and the toggle drives apply', async () => {
@@ -200,7 +203,38 @@ describe('LdifImportModal preview flow', () => {
     expect(wrapper.text()).not.toContain('+secUser')
     await byText(wrapper, 'Import (2)')[0].trigger('click')
     await flushPromises()
-    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1', true)
+    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1', true, [])
+  })
+
+  it('per-row +secUser badge toggles that row out of provisioning on apply', async () => {
+    authState.isvaEnabled = true
+    api.previewLdif.mockResolvedValue({
+      data: summary({
+        userAddCount: 1,
+        containsVendorOverlayEntries: false,
+        countsByOp: { add: 1, modify: 0, delete: 0, moddn: 0, skip: 0, error: 0 },
+        page0: {
+          rows: [
+            { rowNumber: 1, dn: 'uid=bob,dc=example,dc=com', op: 'ADD', objectClasses: ['inetOrgPerson'], attrCount: 5, memberDelta: null, memberCount: null, issues: [], userAdd: true },
+          ],
+          page: 0, size: 50, totalFiltered: 1,
+        },
+      }),
+    })
+    const wrapper = mountModal()
+    await toPreview(wrapper)
+    await flushPromises()
+
+    // Click the +secUser badge → it flips to "secUser skipped".
+    const badge = wrapper.findAll('[role="button"]').find(el => el.text() === '+secUser')
+    expect(badge).toBeTruthy()
+    await badge!.trigger('click')
+    expect(wrapper.text()).toContain('secUser skipped')
+
+    // Apply now sends row 1 in excludeOverlayRows.
+    await byText(wrapper, 'Import (1)')[0].trigger('click')
+    await flushPromises()
+    expect(api.applyLdifPreview).toHaveBeenCalledWith('dir-1', 'prev-1', false, [1])
   })
 
   it('suppresses provisioning when the file already contains secUser entries', async () => {
