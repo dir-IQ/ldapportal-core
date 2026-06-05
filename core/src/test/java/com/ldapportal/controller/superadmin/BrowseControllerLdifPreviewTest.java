@@ -66,10 +66,10 @@ class BrowseControllerLdifPreviewTest extends BaseControllerTest {
 
     private LdifPreviewSummary sampleSummary() {
         LdifPreviewRow row = new LdifPreviewRow(1, "uid=bob,dc=example,dc=com",
-                LdifPreviewOp.ADD, List.of("inetOrgPerson"), 5, null, null, List.of());
+                LdifPreviewOp.ADD, List.of("inetOrgPerson"), 5, null, null, List.of(), true);
         return new LdifPreviewSummary("11111111-1111-1111-1111-111111111111", 1,
                 new OpCounts(1, 0, 0, 0, 0, 0), 0, 0, false,
-                new LdifPreviewPage(List.of(row), 0, 50, 1));
+                new LdifPreviewPage(List.of(row), 0, 50, 1), 1, false);
     }
 
     @Test
@@ -103,7 +103,7 @@ class BrowseControllerLdifPreviewTest extends BaseControllerTest {
         UUID previewId = UUID.randomUUID();
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dir()));
         LdifPreviewRow row = new LdifPreviewRow(2, "uid=ann,dc=example,dc=com",
-                LdifPreviewOp.ADD, List.of(), 3, null, null, List.of());
+                LdifPreviewOp.ADD, List.of(), 3, null, null, List.of(), false);
         when(ldifPreviewService.page(eq(previewId), any(), eq("ADD"), any(), eq(0), eq(50)))
                 .thenReturn(new LdifPreviewPage(List.of(row), 0, 50, 1));
 

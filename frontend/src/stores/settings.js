@@ -3,11 +3,17 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { getBranding } from '@/api/settings'
 
-// App primary brand color — Tailwind slate-800. Cool, blue-gray
-// chrome that stays distinct from the saturated blue used on
-// primary CTAs.
-const DEFAULT_PRIMARY   = '#1e293b'
-const DEFAULT_SECONDARY = '#1e293b'
+// App default brand colours. Primary is Tailwind slate-800 — cool,
+// blue-gray chrome that stays distinct from the saturated blue used on
+// primary CTAs. Secondary is two shades lighter (slate-600) so it reads
+// as a related-but-lighter accent. Exported so the settings form falls
+// back to the same values the app actually renders when no custom colour
+// is saved (otherwise the branding pickers show colours that don't match
+// the UI).
+export const DEFAULT_PRIMARY_COLOUR   = '#1e293b' // slate-800
+export const DEFAULT_SECONDARY_COLOUR = '#475569' // slate-600 (2 shades lighter)
+const DEFAULT_PRIMARY   = DEFAULT_PRIMARY_COLOUR
+const DEFAULT_SECONDARY = DEFAULT_SECONDARY_COLOUR
 
 export const useSettingsStore = defineStore('settings', () => {
   const appName          = ref('LDAP Portal')

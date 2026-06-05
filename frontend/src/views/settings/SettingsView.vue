@@ -7,6 +7,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
 import { getSettings, updateSettings, testSiem } from '@/api/settings'
+import { DEFAULT_PRIMARY_COLOUR, DEFAULT_SECONDARY_COLOUR } from '@/stores/settings'
 import SettingsSidebar from './SettingsSidebar.vue'
 import { findSection, DEFAULT_SECTION_ID } from './sectionsRegistry'
 
@@ -166,8 +167,8 @@ function defaultForm(): SettingsForm {
   return {
     appName: 'LDAP Portal',
     logoUrl: '',
-    primaryColour: '#3b82f6',
-    secondaryColour: '#64748b',
+    primaryColour: DEFAULT_PRIMARY_COLOUR,
+    secondaryColour: DEFAULT_SECONDARY_COLOUR,
     directorySearchInlineEditEnabled: true,
     approvalsEnabled: true,
     selfRegistrationApprovalEnabled: true,
@@ -224,8 +225,8 @@ async function loadSettings(): Promise<void> {
     Object.assign(form, {
       appName:                data.appName ?? 'LDAP Portal',
       logoUrl:                data.logoUrl ?? '',
-      primaryColour:          data.primaryColour ?? '#3b82f6',
-      secondaryColour:        data.secondaryColour ?? '#64748b',
+      primaryColour:          data.primaryColour ?? DEFAULT_PRIMARY_COLOUR,
+      secondaryColour:        data.secondaryColour ?? DEFAULT_SECONDARY_COLOUR,
       directorySearchInlineEditEnabled: data.directorySearchInlineEditEnabled ?? true,
       approvalsEnabled:               data.approvalsEnabled ?? true,
       selfRegistrationApprovalEnabled: data.selfRegistrationApprovalEnabled ?? true,

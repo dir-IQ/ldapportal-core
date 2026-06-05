@@ -129,6 +129,18 @@ public class LdifPreviewService {
         // `groupOfURLs` is recognised here exactly as it is in search.
         Set<String> groupOcs = com.ldapportal.entity.DirectoryObjectClassDefaults
                 .effectiveGroupObjectClassSet(dc);
+        // User classification mirrors the importer: a new user-entry add is
+        // routed through the provisioning SPI (so a vendor interceptor can
+        // augment it). Same configured user object classes the apply path uses.
+        Set<String> userOcs = com.ldapportal.entity.DirectoryObjectClassDefaults
+                .effectiveUserObjectClassSet(dc);
+        // File-level safety mirror: if the upload already contains vendor-overlay
+        // entries (secUser), the importer writes everything as-is and provisions
+        // no fresh overlay — so surface that so the UI can say provisioning is
+        // suppressed for the whole import.
+        boolean containsVendorOverlayEntries = records.stream()
+                .map(LdifPreviewService::entryOfRecord)
+                .anyMatch(e -> e != null && hasVendorOverlayObjectClass(e));
 
         // Distinct target DNs of content (non-change) entries — the only records
         // whose classification depends on whether they already exist.
@@ -143,9 +155,11 @@ public class LdifPreviewService {
 
         List<LdifPreviewRow> rows = new ArrayList<>(records.size());
         int add = 0, modify = 0, delete = 0, moddn = 0, skip = 0, error = 0, warnings = 0, errors = 0;
+        int userAddCount = 0;
         for (ParsedRecord pr : records) {
-            LdifPreviewRow row = classify(pr, conflict, existing, baseDnNorm, entra, groupOcs);
+            LdifPreviewRow row = classify(pr, conflict, existing, baseDnNorm, entra, groupOcs, userOcs);
             rows.add(row);
+            if (row.userAdd()) userAddCount++;
             switch (row.op()) {
                 case ADD -> add++;
                 case MODIFY -> modify++;
@@ -170,7 +184,7 @@ public class LdifPreviewService {
         log.info("LDIF preview {} for dir {}: {} rows (add={} modify={} delete={} moddn={} skip={} error={}, warn={})",
                 previewId, dc.getId(), rows.size(), add, modify, delete, moddn, skip, error, warnings);
         return new LdifPreviewSummary(previewId.toString(), rows.size(), counts,
-                warnings, errors, false, page0);
+                warnings, errors, false, page0, userAddCount, containsVendorOverlayEntries);
     }
 
     // ── Page / detail / apply ────────────────────────────────────────────────
@@ -212,10 +226,10 @@ public class LdifPreviewService {
 
     private LdifPreviewRow classify(ParsedRecord pr, ConflictHandling conflict,
                                     Set<String> existing, String baseDnNorm, boolean entra,
-                                    Set<String> groupOcs) {
+                                    Set<String> groupOcs, Set<String> userOcs) {
         if (pr.isError()) {
             return new LdifPreviewRow(pr.rowNumber(), null, LdifPreviewOp.ERROR,
-                    List.of(), 0, null, null, List.of(LdifPreviewIssue.parseError(pr.parseError())));
+                    List.of(), 0, null, null, List.of(LdifPreviewIssue.parseError(pr.parseError())), false);
         }
 
         LDIFRecord record = pr.record();
@@ -234,11 +248,13 @@ public class LdifPreviewService {
         int attrCount = 0;
         LdifMemberDelta memberDelta = null;
         Integer memberCount = null;
+        Entry addEntry = null; // the entry being added, for user-add detection
 
         if (record instanceof LDIFChangeRecord change) {
             if (change instanceof LDIFAddChangeRecord addRec) {
                 op = LdifPreviewOp.ADD;
                 Entry e = addRec.getEntryToAdd();
+                addEntry = e;
                 objectClasses = objectClassesOf(e);
                 attrCount = e.getAttributes().size();
                 memberCount = groupMemberCount(e, groupOcs);
@@ -254,6 +270,7 @@ public class LdifPreviewService {
                 op = LdifPreviewOp.MODIFY;
             }
         } else if (record instanceof Entry entry) {
+            addEntry = entry;
             objectClasses = objectClassesOf(entry);
             attrCount = entry.getAttributes().size();
             memberCount = groupMemberCount(entry, groupOcs);
@@ -268,8 +285,46 @@ public class LdifPreviewService {
             op = LdifPreviewOp.SKIP;
         }
 
+        // A new user-entry add routed through the provisioning SPI: only true
+        // ADDs of a user entry that doesn't already carry the vendor overlay.
+        boolean userAdd = op == LdifPreviewOp.ADD
+                && addEntry != null
+                && isUserEntry(addEntry, userOcs)
+                && !hasVendorOverlayObjectClass(addEntry);
+
         return new LdifPreviewRow(pr.rowNumber(), dn, op, objectClasses, attrCount,
-                memberDelta, memberCount, issues);
+                memberDelta, memberCount, issues, userAdd);
+    }
+
+    private static Entry entryOfRecord(ParsedRecord pr) {
+        if (pr.isError()) return null;
+        LDIFRecord record = pr.record();
+        if (record instanceof LDIFAddChangeRecord addRec) return addRec.getEntryToAdd();
+        if (record instanceof Entry entry) return entry;
+        return null;
+    }
+
+    private static boolean isUserEntry(Entry entry, Set<String> userOcs) {
+        String[] ocs = entry.getObjectClassValues();
+        if (ocs == null) return false;
+        for (String oc : ocs) {
+            if (userOcs.contains(oc.toLowerCase(Locale.ROOT))) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Whether the entry already carries the vendor overlay object class
+     * ({@code secUser}) — a self-describing export entry the importer writes
+     * as-is rather than layering a fresh overlay onto.
+     */
+    private static boolean hasVendorOverlayObjectClass(Entry entry) {
+        String[] ocs = entry.getObjectClassValues();
+        if (ocs == null) return false;
+        for (String oc : ocs) {
+            if ("secuser".equals(oc.toLowerCase(Locale.ROOT))) return true;
+        }
+        return false;
     }
 
     private static List<String> objectClassesOf(Entry entry) {
