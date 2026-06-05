@@ -7,6 +7,7 @@ import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -49,6 +50,15 @@ public class VendorIntegrationIsvaConfig {
     @Id
     @Column(name = "directory_connection_id", nullable = false, updatable = false)
     private UUID directoryConnectionId;
+
+    /**
+     * Optimistic-lock counter (§4.4) — surfaced as the resource ETag and
+     * checked against {@code If-Match} so a concurrent IaC apply racing a UI
+     * edit fails rather than silently clobbers this directory's IVIA policy.
+     */
+    @Version
+    @Column(nullable = false)
+    private Long version;
 
     @Column(nullable = false)
     private boolean enabled = false;

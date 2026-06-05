@@ -39,6 +39,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -86,6 +87,7 @@ class ApiTokenControllerTest extends BaseControllerTest {
     private ApiToken newStored() {
         ApiToken t = new ApiToken();
         t.setId(UUID.randomUUID());
+        t.setVersion(0L);
         t.setName("ci-terraform");
         t.setTokenPrefix("ldap_pat_aB3xQ9z");
         t.setCreatedBy(creator);
@@ -166,10 +168,56 @@ class ApiTokenControllerTest extends BaseControllerTest {
     // ── Upsert by name (IaC) ────────────────────────────────────────────────────
 
     @Test
+    void get_carriesVersionETag() throws Exception {
+        ApiToken stored = newStored();
+        when(apiTokenService.get(stored.getId())).thenReturn(stored);
+
+        mockMvc.perform(get("/api/v1/superadmin/api-tokens/" + stored.getId())
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(header().string("ETag", "\"0\""))
+                .andExpect(jsonPath("$.version").value(0));
+    }
+
+    @Test
+    void upsertByName_carriesVersionETag() throws Exception {
+        ApiToken stored = newStored();
+        when(apiTokenService.upsertByName(eq("ci-terraform"), any(), any(Instant.class),
+                eq(creator), any(AuthPrincipal.class), any()))
+                .thenReturn(new ApiTokenService.UpsertResult(stored, null, false));
+        UpsertApiTokenRequest req = new UpsertApiTokenRequest(
+                "d", Instant.now().plus(30, ChronoUnit.DAYS));
+
+        mockMvc.perform(put("/api/v1/superadmin/api-tokens/by-name/ci-terraform")
+                        .with(authentication(superadminAuth()))
+                        .header("If-Match", "\"0\"")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(header().string("ETag", "\"0\""));
+    }
+
+    @Test
+    void upsertByName_staleIfMatch_returns412() throws Exception {
+        when(apiTokenService.upsertByName(eq("ci-terraform"), any(), any(Instant.class),
+                eq(creator), any(AuthPrincipal.class), eq(9L)))
+                .thenThrow(new com.ldapportal.exception.PreconditionFailedException("stale"));
+        UpsertApiTokenRequest req = new UpsertApiTokenRequest(
+                "d", Instant.now().plus(30, ChronoUnit.DAYS));
+
+        mockMvc.perform(put("/api/v1/superadmin/api-tokens/by-name/ci-terraform")
+                        .with(authentication(superadminAuth()))
+                        .header("If-Match", "\"9\"")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isPreconditionFailed());
+    }
+
+    @Test
     void upsertByName_newToken_returns201WithPlaintext() throws Exception {
         ApiToken stored = newStored();
         when(apiTokenService.upsertByName(eq("ci-terraform"), any(), any(Instant.class),
-                eq(creator), any(AuthPrincipal.class)))
+                eq(creator), any(AuthPrincipal.class), any()))
                 .thenReturn(new ApiTokenService.UpsertResult(stored, "ldap_pat_newpt", true));
         UpsertApiTokenRequest req = new UpsertApiTokenRequest(
                 "CI provisioning", Instant.now().plus(30, ChronoUnit.DAYS));
@@ -187,7 +235,7 @@ class ApiTokenControllerTest extends BaseControllerTest {
     void upsertByName_existingToken_returns200WithoutPlaintext() throws Exception {
         ApiToken stored = newStored();
         when(apiTokenService.upsertByName(eq("ci-terraform"), any(), any(Instant.class),
-                eq(creator), any(AuthPrincipal.class)))
+                eq(creator), any(AuthPrincipal.class), any()))
                 .thenReturn(new ApiTokenService.UpsertResult(stored, null, false));
         UpsertApiTokenRequest req = new UpsertApiTokenRequest(
                 "updated desc", Instant.now().plus(30, ChronoUnit.DAYS));
@@ -204,7 +252,7 @@ class ApiTokenControllerTest extends BaseControllerTest {
     @Test
     void upsertByName_ambiguousName_returns409() throws Exception {
         when(apiTokenService.upsertByName(eq("dup"), any(), any(Instant.class),
-                eq(creator), any(AuthPrincipal.class)))
+                eq(creator), any(AuthPrincipal.class), any()))
                 .thenThrow(new ConflictException("Multiple active API tokens are named [dup]"));
         UpsertApiTokenRequest req = new UpsertApiTokenRequest(
                 null, Instant.now().plus(30, ChronoUnit.DAYS));

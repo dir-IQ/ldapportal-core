@@ -16,6 +16,7 @@ import java.time.OffsetDateTime;
  * via the upsert endpoint.
  */
 public record IsvaConfigDto(
+        Long version,
         boolean enabled,
         IsvaTopologyMode topologyMode,
         String secAuthority,
@@ -36,6 +37,7 @@ public record IsvaConfigDto(
 
     public static IsvaConfigDto from(VendorIntegrationIsvaConfig entity) {
         return new IsvaConfigDto(
+                entity.getVersion(),
                 entity.isEnabled(),
                 entity.getTopologyMode(),
                 entity.getSecAuthority(),

@@ -50,11 +50,28 @@ public class IsvaConfigService {
 
     @Transactional
     public IsvaConfigDto upsert(UUID directoryId, UpsertIsvaConfigRequest req, AuthPrincipal principal) {
+        return upsert(directoryId, req, principal, null);
+    }
+
+    /**
+     * ISVA config upsert with an optional {@code If-Match} precondition (§4.4).
+     * {@code expectedVersion}, when non-null, must equal the existing config's
+     * current version or the write is rejected with a 412. The check applies
+     * only when a config already exists — the first apply creates it and has no
+     * prior version to match.
+     */
+    @Transactional
+    public IsvaConfigDto upsert(UUID directoryId, UpsertIsvaConfigRequest req,
+                                AuthPrincipal principal, Long expectedVersion) {
         assertDirectoryExists(directoryId);
         validateLinkedModeFields(req);
 
-        VendorIntegrationIsvaConfig entity = configRepo.findById(directoryId)
-                .orElseGet(VendorIntegrationIsvaConfig::new);
+        VendorIntegrationIsvaConfig existing = configRepo.findById(directoryId).orElse(null);
+        if (existing != null) {
+            com.ldapportal.web.ETagSupport.requireMatch(expectedVersion, existing.getVersion());
+        }
+        VendorIntegrationIsvaConfig entity =
+                existing != null ? existing : new VendorIntegrationIsvaConfig();
         entity.setDirectoryConnectionId(directoryId);
         entity.setEnabled(req.enabled());
         entity.setTopologyMode(req.topologyMode());
@@ -82,7 +99,9 @@ public class IsvaConfigService {
         }
 
         entity.setUpdatedBy(principal != null ? principal.username() : "system");
-        return IsvaConfigDto.from(configRepo.save(entity));
+        // saveAndFlush so the @Version increment lands before the response (and
+        // its ETag) is built — a plain save would return the pre-update version.
+        return IsvaConfigDto.from(configRepo.saveAndFlush(entity));
     }
 
     @Transactional(readOnly = true)
