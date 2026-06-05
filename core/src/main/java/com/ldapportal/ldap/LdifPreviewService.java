@@ -207,12 +207,17 @@ public class LdifPreviewService {
                 attributesOf(pr), row.memberDelta(), row.issues());
     }
 
-    /** Apply the previewed records via the existing apply path, then evict. */
+    /**
+     * Apply the previewed records via the existing apply path, then evict.
+     * {@code excludeOverlayRows} carries the 1-based row numbers the operator
+     * opted out of vendor (secUser) provisioning for in the preview.
+     */
     public LdifImportResult apply(UUID previewId, UUID ownerId, DirectoryConnection dc,
-                                  boolean suppressVendorOverlay) {
+                                  boolean suppressVendorOverlay,
+                                  java.util.Set<Integer> excludeOverlayRows) {
         CachedPreview cp = require(previewId, ownerId);
         LdifImportResult result = ldifService.applyParsedRecords(
-                dc, cp.records(), cp.conflict(), suppressVendorOverlay);
+                dc, cp.records(), cp.conflict(), suppressVendorOverlay, excludeOverlayRows);
         cache.remove(previewId);
         return result;
     }

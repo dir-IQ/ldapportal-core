@@ -165,8 +165,25 @@ public class LdifService {
                                                List<ParsedRecord> records,
                                                ConflictHandling conflict,
                                                boolean suppressVendorOverlay) {
+        return applyParsedRecords(dc, records, conflict, suppressVendorOverlay, java.util.Set.of());
+    }
+
+    /**
+     * Apply overload with per-row vendor-overlay opt-outs. {@code
+     * excludeOverlayRows} holds 1-based {@link ParsedRecord#rowNumber()}s the
+     * operator excluded from provisioning in the preview; those user adds are
+     * written through the SPI with the overlay suppressed while the rest still
+     * provision. Ignored when {@code suppressVendorOverlay} is true (everything
+     * is already suppressed).
+     */
+    public LdifImportResult applyParsedRecords(DirectoryConnection dc,
+                                               List<ParsedRecord> records,
+                                               ConflictHandling conflict,
+                                               boolean suppressVendorOverlay,
+                                               java.util.Set<Integer> excludeOverlayRows) {
         return connectionFactory.withConnection(dc,
-                conn -> applyParsed(records, conn, conflict, dc, suppressVendorOverlay));
+                conn -> applyParsed(records, conn, conflict, dc, suppressVendorOverlay,
+                        excludeOverlayRows == null ? java.util.Set.of() : excludeOverlayRows));
     }
 
     /** Outcome of applying one add record, for the loop's counters. */
@@ -176,7 +193,8 @@ public class LdifService {
                                          FullLDAPInterface conn,
                                          ConflictHandling conflict,
                                          DirectoryConnection dc,
-                                         boolean suppressVendorOverlay) {
+                                         boolean suppressVendorOverlay,
+                                         java.util.Set<Integer> excludeOverlayRows) {
         Set<String> userOcs = DirectoryObjectClassDefaults.effectiveUserObjectClassSet(dc);
 
         // Safety: if the import itself already contains secUser entries it is a
@@ -207,16 +225,19 @@ public class LdifService {
             }
             LDIFRecord record = pr.record();
             String dn = record.getDN();
+            // Per-row narrowing: this row provisions only if the file-level
+            // decision allows it AND the operator didn't opt this row out.
+            boolean provisionThisRow = provisionOverlay && !excludeOverlayRows.contains(pr.rowNumber());
             try {
                 AddOutcome outcome;
                 if (record instanceof LDIFAddChangeRecord addRec) {
-                    outcome = applyAdd(dc, conn, addRec.getEntryToAdd(), conflict, userOcs, provisionOverlay);
+                    outcome = applyAdd(dc, conn, addRec.getEntryToAdd(), conflict, userOcs, provisionThisRow);
                 } else if (record instanceof LDIFChangeRecord changeRecord) {
                     // modify / delete / moddn — applied raw; lumped as "updated".
                     changeRecord.processChange(conn);
                     outcome = AddOutcome.UPDATED;
                 } else if (record instanceof Entry entry) {
-                    outcome = applyAdd(dc, conn, entry, conflict, userOcs, provisionOverlay);
+                    outcome = applyAdd(dc, conn, entry, conflict, userOcs, provisionThisRow);
                 } else {
                     continue; // unknown record shape — nothing to apply
                 }

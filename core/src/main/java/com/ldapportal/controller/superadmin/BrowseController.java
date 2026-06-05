@@ -2,6 +2,7 @@
 package com.ldapportal.controller.superadmin;
 
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.dto.ldap.ApplyLdifPreviewRequest;
 import com.ldapportal.dto.ldap.AttributeModification;
 import com.ldapportal.dto.ldap.CreateEntryRequest;
 import com.ldapportal.dto.ldap.IntegrityReport;
@@ -307,13 +308,18 @@ public class BrowseController {
     public LdifImportResult applyPreview(@PathVariable UUID directoryId,
                                          @PathVariable UUID previewId,
                                          @AuthenticationPrincipal AuthPrincipal principal,
-                                         @RequestParam(defaultValue = "false") boolean suppressVendorOverlay) {
+                                         @RequestBody(required = false) ApplyLdifPreviewRequest body) {
         DirectoryConnection dc = loadDirectory(directoryId);
+        boolean suppressVendorOverlay = body != null && body.suppressVendorOverlay();
+        java.util.Set<Integer> excludeOverlayRows =
+                (body == null || body.excludeOverlayRows() == null)
+                        ? java.util.Set.of()
+                        : java.util.Set.copyOf(body.excludeOverlayRows());
         // Apply the records exactly as previewed, with the conflict mode the
         // preview was computed under (so the outcome matches what was shown).
         ConflictHandling conflict = ldifPreviewService.conflictOf(previewId, principal.id());
         LdifImportResult result = ldifPreviewService.apply(
-                previewId, principal.id(), dc, suppressVendorOverlay);
+                previewId, principal.id(), dc, suppressVendorOverlay, excludeOverlayRows);
 
         auditService.record(principal, directoryId, AuditAction.LDIF_IMPORT, dc.getBaseDn(),
                 Map.of("added", result.added(),
@@ -322,6 +328,7 @@ public class BrowseController {
                        "failed", result.failed(),
                        "conflictHandling", conflict.name(),
                        "suppressVendorOverlay", suppressVendorOverlay,
+                       "excludedOverlayRows", excludeOverlayRows.size(),
                        "source", "preview"));
 
         return result;

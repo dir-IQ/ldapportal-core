@@ -81,9 +81,10 @@
                 Provision {{ IVIA_ABBR }} accounts (<span class="font-mono">secUser</span>) for imported users
                 <span class="block text-xs mt-0.5" :class="provisionVendorAccounts ? 'text-blue-800' : 'text-gray-500'">
                   <template v-if="provisionVendorAccounts">
-                    <b>{{ summary.userAddCount.toLocaleString() }}</b>
-                    new user {{ summary.userAddCount === 1 ? 'entry' : 'entries' }} will be provisioned with
-                    {{ IVIA_NAME }} ({{ IVIA_ABBR }}) {{ iviaTopologyLabel }}.
+                    <b>{{ effectiveProvisionCount.toLocaleString() }}</b>
+                    new user {{ effectiveProvisionCount === 1 ? 'entry' : 'entries' }} will be provisioned with
+                    {{ IVIA_NAME }} ({{ IVIA_ABBR }}) {{ iviaTopologyLabel }}<template v-if="excludedCount"> ({{ excludedCount.toLocaleString() }} excluded)</template>.
+                    <span class="block text-blue-700/80">Click a row's <b>+secUser</b> badge to skip provisioning for that user.</span>
                   </template>
                   <template v-else>
                     Imported users will be created as-is — no {{ IVIA_ABBR }} accounts.
@@ -111,6 +112,7 @@
         <!-- Rows -->
         <DataTable :columns="cols" :rows="rows" row-key="rowNumber" :loading="loadingPage"
                    :highlight-key="selectedRowNumber ?? undefined"
+                   :expanded-key="selectedRowNumber ?? undefined"
                    empty-text="No matching records" empty-icon="folder" @row-click="openRow">
           <template #cell-op="{ row }">
             <span class="badge" :class="opClass(row.op)">{{ row.op }}</span>
@@ -128,10 +130,19 @@
               {{ row.attrCount }} attr{{ row.attrCount === 1 ? '' : 's' }}
               <span v-if="row.objectClasses.length" class="text-gray-400 ml-1">· {{ row.objectClasses.join(', ') }}</span>
             </span>
-            <span v-if="rowGetsSecUser(row)"
-                  class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[11px] font-medium align-middle"
-                  :title="`${IVIA_ABBR} secUser account will be provisioned for this user`">
-              +secUser
+            <span v-if="rowOverlayEligible(row)"
+                  role="button" tabindex="0"
+                  @click.stop="toggleRowOverlay(row)"
+                  @keydown.enter.stop.prevent="toggleRowOverlay(row)"
+                  @keydown.space.stop.prevent="toggleRowOverlay(row)"
+                  class="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[11px] font-medium align-middle cursor-pointer transition-colors"
+                  :class="isExcluded(row)
+                    ? 'bg-gray-100 text-gray-400 line-through hover:bg-gray-200'
+                    : 'bg-blue-100 text-blue-700 hover:bg-blue-200'"
+                  :title="isExcluded(row)
+                    ? `Click to provision ${IVIA_ABBR} secUser for this user`
+                    : `Click to skip ${IVIA_ABBR} secUser for this user`">
+              {{ isExcluded(row) ? 'secUser skipped' : '+secUser' }}
             </span>
           </template>
           <!-- Always render the wrapper span: an empty issues array would
@@ -142,6 +153,42 @@
             <span class="whitespace-nowrap">
               <span v-for="(iss, i) in row.issues" :key="i" :title="iss.message" :aria-label="iss.code" role="img" class="mr-1">{{ issueIcon(iss) }}</span>
             </span>
+          </template>
+
+          <!-- Expanded detail, rendered inline directly beneath the clicked row. -->
+          <template #row-detail>
+            <div class="px-4 py-3 border-t border-gray-200 bg-gray-50">
+              <div class="flex items-center justify-between mb-2">
+                <div class="text-sm font-semibold text-gray-700">
+                  Row {{ selectedRowNumber }} · <span class="badge" :class="opClass(detail?.op || '')">{{ detail?.op }}</span>
+                </div>
+                <button @click.stop="selectedRowNumber = null" class="text-xs text-gray-500 hover:text-gray-700">Close</button>
+              </div>
+              <p class="font-mono text-[13px] text-gray-700 break-all mb-2">{{ detail?.dn }}</p>
+              <div v-if="loadingDetail" class="text-xs text-gray-500">Loading…</div>
+              <template v-else-if="detail">
+                <div v-if="detail.memberDelta" class="text-[13px] mb-2">
+                  member <span class="text-green-700 font-medium">+{{ detail.memberDelta.added }}</span>
+                  <span class="text-red-700 font-medium ml-1">−{{ detail.memberDelta.removed }}</span>
+                </div>
+                <ul v-if="detail.issues.length" class="mb-2 space-y-0.5">
+                  <li v-for="(iss, i) in detail.issues" :key="i" class="text-xs"
+                      :class="iss.severity === 'ERROR' ? 'text-red-700' : iss.severity === 'WARNING' ? 'text-amber-700' : 'text-gray-500'">
+                    {{ issueIcon(iss) }} {{ iss.message }}
+                  </li>
+                </ul>
+                <table v-if="Object.keys(detail.attributes).length" class="w-full text-[13px]">
+                  <tbody>
+                    <tr v-for="(vals, name) in detail.attributes" :key="name" class="align-top">
+                      <td class="py-1 pr-4 font-mono text-[13px] text-gray-600 whitespace-nowrap align-top">{{ name }}</td>
+                      <td class="py-1 font-mono text-[13px] text-gray-900">
+                        <div v-for="(v, i) in vals" :key="i" class="break-all">{{ v }}</div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </template>
+            </div>
           </template>
         </DataTable>
 
@@ -155,39 +202,6 @@
           </div>
         </div>
 
-        <!-- Row detail drawer (below the table) -->
-        <div v-if="selectedRowNumber != null" class="border border-gray-200 rounded-lg bg-gray-50 p-3">
-          <div class="flex items-center justify-between mb-2">
-            <div class="text-sm font-semibold text-gray-700">
-              Row {{ selectedRowNumber }} · <span class="badge" :class="opClass(detail?.op || '')">{{ detail?.op }}</span>
-            </div>
-            <button @click="selectedRowNumber = null" class="text-xs text-gray-500 hover:text-gray-700">Close</button>
-          </div>
-          <p class="font-mono text-[13px] text-gray-700 break-all mb-2">{{ detail?.dn }}</p>
-          <div v-if="loadingDetail" class="text-xs text-gray-500">Loading…</div>
-          <template v-else-if="detail">
-            <div v-if="detail.memberDelta" class="text-[13px] mb-2">
-              member <span class="text-green-700 font-medium">+{{ detail.memberDelta.added }}</span>
-              <span class="text-red-700 font-medium ml-1">−{{ detail.memberDelta.removed }}</span>
-            </div>
-            <ul v-if="detail.issues.length" class="mb-2 space-y-0.5">
-              <li v-for="(iss, i) in detail.issues" :key="i" class="text-xs"
-                  :class="iss.severity === 'ERROR' ? 'text-red-700' : iss.severity === 'WARNING' ? 'text-amber-700' : 'text-gray-500'">
-                {{ issueIcon(iss) }} {{ iss.message }}
-              </li>
-            </ul>
-            <table v-if="Object.keys(detail.attributes).length" class="w-full text-[13px]">
-              <tbody>
-                <tr v-for="(vals, name) in detail.attributes" :key="name" class="align-top">
-                  <td class="py-1 pr-4 font-mono text-[13px] text-gray-600 whitespace-nowrap align-top">{{ name }}</td>
-                  <td class="py-1 font-mono text-[13px] text-gray-900">
-                    <div v-for="(v, i) in vals" :key="i" class="break-all">{{ v }}</div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </template>
-        </div>
       </template>
 
       <!-- ── Step 3: applied result ───────────────────────────────────────── -->
@@ -309,6 +323,10 @@ const loadingDetail = ref(false)
 
 const applyResult = ref<ImportResult | null>(null)
 
+// 1-based preview row numbers the operator opted out of secUser provisioning
+// (via the +secUser badge). Sent to the apply call as excludeOverlayRows.
+const excludedRows = ref<Set<number>>(new Set())
+
 // IVIA config for this directory (enabled flag + topology), fetched when the
 // modal opens if the addon is entitled. Null = not enabled / not fetched.
 const iviaConfig = ref<{ enabled: boolean; topologyMode: string } | null>(null)
@@ -323,16 +341,35 @@ const iviaTopologyLabel = computed(() =>
     ? 'linked secUser entries'
     : 'secUser accounts')
 
-// Whether a given preview row will actually get a secUser on import: a user-add
-// candidate, with provisioning left on, and not suppressed by the file already
-// containing secUser entries.
-function rowGetsSecUser(row: PreviewRow): boolean {
+// A row eligible for secUser provisioning: a user-add candidate, with
+// provisioning left on globally, and not suppressed by the file already
+// containing secUser entries. (Eligible rows show the +secUser badge; whether
+// it's actually provisioned also depends on the per-row opt-out below.)
+function rowOverlayEligible(row: PreviewRow): boolean {
   return iviaEnabled.value
     && provisionVendorAccounts.value
     && !!summary.value
     && !summary.value.containsVendorOverlayEntries
     && row.userAdd
 }
+
+function isExcluded(row: PreviewRow): boolean {
+  return excludedRows.value.has(row.rowNumber)
+}
+
+function toggleRowOverlay(row: PreviewRow): void {
+  const next = new Set(excludedRows.value)
+  if (next.has(row.rowNumber)) next.delete(row.rowNumber)
+  else next.add(row.rowNumber)
+  excludedRows.value = next
+}
+
+// Whole-file provisioning count after per-row opt-outs. excludedRows only ever
+// holds user-add rows (the badge is the only way to add to it), so subtracting
+// its size from the intrinsic userAddCount is correct.
+const excludedCount = computed(() => excludedRows.value.size)
+const effectiveProvisionCount = computed(() =>
+  Math.max(0, (summary.value?.userAddCount ?? 0) - excludedCount.value))
 
 const filters = [
   { value: 'ALL', label: 'All' },
@@ -383,6 +420,7 @@ function reset() {
   selectedRowNumber.value = null
   detail.value = null
   applyResult.value = null
+  excludedRows.value = new Set()
 }
 
 // Fetch the directory's IVIA config so the preview can tell the operator
@@ -444,6 +482,7 @@ async function doPreview() {
   totalFiltered.value = 0
   selectedRowNumber.value = null
   detail.value = null
+  excludedRows.value = new Set()
   try {
     const { data } = await previewLdif(props.directoryId, file.value, conflictHandling.value)
     const s = data as PreviewSummary
@@ -510,6 +549,12 @@ function changePage(target: number) {
 
 let detailSeq = 0
 async function openRow(row: PreviewRow) {
+  // Clicking the already-open row collapses it.
+  if (selectedRowNumber.value === row.rowNumber) {
+    selectedRowNumber.value = null
+    detail.value = null
+    return
+  }
   selectedRowNumber.value = row.rowNumber
   detail.value = null
   loadingDetail.value = true
@@ -544,7 +589,8 @@ async function doApply() {
   busy.value = true
   try {
     const { data } = await applyLdifPreview(
-      props.directoryId, previewId.value, !provisionVendorAccounts.value)
+      props.directoryId, previewId.value, !provisionVendorAccounts.value,
+      Array.from(excludedRows.value))
     const result = data as ImportResult
     applyResult.value = result
     if (result.added + result.updated > 0) {
@@ -573,6 +619,7 @@ function back() {
   selectedRowNumber.value = null
   detail.value = null
   error.value = ''
+  excludedRows.value = new Set()
 }
 
 function close() {
