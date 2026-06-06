@@ -121,6 +121,19 @@ class LdapBrowseServiceTest {
     }
 
     @Test
+    void browse_entryView_returnsUserAndOperationalAttributes() {
+        // The single-entry browse view requests "*" + "+", so operational
+        // attributes (e.g. OUD/OpenDJ's isMemberOf, here entryUUID /
+        // createTimestamp from the in-memory server) show up alongside the
+        // user attributes — not just the default user set.
+        LdapBrowseService.BrowseResult result = browseService.browse(dc, ALICE_DN);
+
+        var attrs = result.attributes();
+        assertThat(attrs).containsKeys("cn", "sn", "mail", "objectClass");
+        assertThat(attrs).containsKeys("entryUUID", "createTimestamp");
+    }
+
+    @Test
     void search_nonEmptyAttrs_noOperational_returnsOnlyRequestedAttrs() {
         List<LdapBrowseService.SearchEntry> results = browseService.searchEntries(
                 dc, BASE_DN, SearchScope.SUB, "(cn=Alice)",

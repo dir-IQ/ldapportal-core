@@ -89,7 +89,12 @@ public class LdapBrowseService {
 
     private Map<String, List<String>> readEntry(LDAPInterface conn, String dn)
             throws LDAPException {
-        SearchResultEntry entry = conn.getEntry(dn);
+        // Request user attributes ("*") AND operational attributes ("+", RFC
+        // 4511). Operational attributes aren't returned by a default search, so
+        // without "+" the entry view omits server-maintained values such as
+        // OUD/OpenDJ's isMemberOf (reverse group membership), createTimestamp,
+        // modifyTimestamp, and entryUUID. The browser shows the full picture.
+        SearchResultEntry entry = conn.getEntry(dn, "*", "+");
         if (entry == null) {
             return Map.of();
         }
