@@ -186,18 +186,15 @@ async function doSavePrefs(): Promise<void> {
   saving.value = true
   saveError.value = ''
   try {
+    // Profile fields (display name / email) live on the account.
     await updatePreferences({
-      themePreference: form.value.themePreference,
-      densityPreference: form.value.densityPreference,
       displayName: form.value.displayName,
       email: form.value.email,
     })
-    // Apply theme immediately
+    // Appearance (theme / density) is a UI customization: setTheme/setDensity
+    // apply it and persist it to the user-preferences document via the
+    // preferences store, which carries the choice across browsers / devices.
     setTheme(form.value.themePreference)
-    // Density was applied via live preview during the click; this is the
-    // belt-and-braces "the server agreed, lock it in" call. The Account
-    // entity's density_preference column (V72) carries the choice across
-    // browsers / devices via /auth/me on the next session.
     setDensity(form.value.densityPreference)
     // Update auth store
     auth.updatePrincipal({

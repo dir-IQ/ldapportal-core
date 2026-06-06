@@ -1,32 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ref, computed } from 'vue'
+import { usePreferencesStore } from '@/stores/preferences'
 
 /**
  * Composable for saving and restoring filter states per page.
- * Persists to localStorage keyed by page identifier.
+ * Persists to the server-side preferences document (namespace `filters`, keyed
+ * by page identifier) via the preferences store — not localStorage — so saved
+ * views follow the user across browsers and devices.
  *
  * Usage:
  *   const { savedViews, activeView, saveView, loadView, deleteView, currentFilters }
  *     = useSavedFilters('audit-log', { action: '', from: '', to: '' })
  */
 export function useSavedFilters(pageKey, defaultFilters) {
-  const STORAGE_KEY = `saved-filters:${pageKey}`
+  const prefsStore = usePreferencesStore()
   const currentFilters = ref({ ...defaultFilters })
 
-  // Load saved views from localStorage
-  const savedViews = ref(loadFromStorage())
+  // Load saved views from the preferences document.
+  const savedViews = ref(loadFromStore())
 
-  function loadFromStorage() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      return raw ? JSON.parse(raw) : []
-    } catch { return [] }
+  function loadFromStore() {
+    const stored = prefsStore.read('filters', pageKey, [])
+    return Array.isArray(stored) ? stored : []
   }
 
   function persist() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(savedViews.value))
-    } catch { /* storage full or disabled */ }
+    prefsStore.write('filters', pageKey, savedViews.value)
   }
 
   function saveView(name) {

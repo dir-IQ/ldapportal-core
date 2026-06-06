@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import './assets/main.css'
-// Importing useDensity for its module-load side-effect: reading the
-// persisted density value from localStorage and applying the data-density
-// attribute to <html> before first paint. Without this, the page would
-// flash "comfortable" for a frame before resolving to the user's choice.
+// Importing useTheme/useDensity for their module-load side-effects: reading the
+// pre-paint "prefs-hint" cookie and applying the data-theme / data-density
+// attributes to <html>. The inline script in index.html already does this
+// before the bundle loads; these imports keep the reactive refs authoritative
+// and register the system-theme listener. The authoritative preference lives in
+// the server-side preferences document, never in localStorage.
+import './composables/useTheme'
 import './composables/useDensity'
 
 import { createApp } from 'vue'

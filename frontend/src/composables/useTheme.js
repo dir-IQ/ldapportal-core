@@ -1,9 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
+import { readPrefsHint, setPrefsHint } from '@/utils/prefsHint'
+import { usePreferencesStore } from '@/stores/preferences'
 
-const STORAGE_KEY = 'ldapportal-theme'
+/**
+ * App theme (light / dark / system). The authoritative value lives in the
+ * server-side preferences document (namespace `appearance`, key `theme`); this
+ * composable applies it to `<html>` and keeps the pre-paint FOUC hint cookie in
+ * sync. Nothing is stored in localStorage.
+ *
+ * Initial value comes from the hint cookie so the toggle reflects the right
+ * state before `/auth/me` resolves; `syncFromAccount` then reconciles with the
+ * server value on login.
+ */
+const VALID = ['light', 'dark', 'system']
 
-const theme = ref(localStorage.getItem(STORAGE_KEY) || 'system')
+function initialTheme() {
+  const hint = readPrefsHint().theme
+  return hint && VALID.includes(hint) ? hint : 'light'
+}
+
+const theme = ref(initialTheme())
 
 function applyTheme(value) {
   const root = document.documentElement
@@ -15,38 +32,37 @@ function applyTheme(value) {
   }
 }
 
-/**
- * Composable for managing the app theme (light / dark / system).
- * Persists in both localStorage (for immediate load) and the user's
- * account preferences (via the auth store / API).
- */
 export function useTheme() {
   function setTheme(value) {
+    if (!VALID.includes(value)) return
     theme.value = value
-    localStorage.setItem(STORAGE_KEY, value)
     applyTheme(value)
+    setPrefsHint({ theme: value })
+    usePreferencesStore().write('appearance', 'theme', value)
   }
 
-  /** Sync from server-side preference (called after login / init). */
+  /** Reconcile with the server-side preference (called after login / init). */
   function syncFromAccount(serverTheme) {
-    if (serverTheme && ['light', 'dark', 'system'].includes(serverTheme)) {
+    if (serverTheme && VALID.includes(serverTheme)) {
       theme.value = serverTheme
-      localStorage.setItem(STORAGE_KEY, serverTheme)
       applyTheme(serverTheme)
+      setPrefsHint({ theme: serverTheme })
     }
   }
-
-  onMounted(() => {
-    applyTheme(theme.value)
-
-    // Listen for system preference changes when in "system" mode
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-      if (theme.value === 'system') applyTheme('system')
-    })
-  })
 
   return { theme, setTheme, syncFromAccount }
 }
 
-// Apply theme immediately on module load so there's no flash
+// Apply on module load. The inline script in index.html already set the
+// attribute pre-boot from the hint cookie; this keeps the reactive ref and the
+// attribute authoritative once the app is running.
 applyTheme(theme.value)
+
+// Track system preference changes while in "system" mode (one listener for the
+// whole app, registered at module scope). Guarded for non-browser / test
+// environments that may not implement matchMedia.
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (theme.value === 'system') applyTheme('system')
+  })
+}

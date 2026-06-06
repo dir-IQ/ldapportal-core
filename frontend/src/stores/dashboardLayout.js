@@ -8,55 +8,33 @@ import {
   resetDashboardLayout,
 } from '@/api/dashboard'
 
-const STORAGE_KEY = 'dashboardLayout.v1'
-
 /**
- * Dashboard layout store (Phase B — server-persisted, localStorage cache).
+ * Dashboard layout store — server-persisted, no browser storage.
+ *
+ * The layout is one of the user's UI customizations and lives server-side (the
+ * `dashboard_layouts` table, via /dashboard/layout) so it follows the user
+ * across browsers and devices. It is structurally large and has its own
+ * endpoint, so it stays on that endpoint rather than folding into the general
+ * preferences document — but, like everything else, it is never cached in
+ * localStorage.
  *
  * Flow on mount:
- *   1. Store init reads localStorage synchronously so the dashboard can render
- *      the user's last-seen layout instantly (no default-layout flash).
- *   2. DashboardView calls load() which fetches the server copy and replaces
- *      the local one. Server wins.
- *   3. If the server returns empty AND localStorage has data, push local up
- *      to the server then clear local (one-time Phase A → B migration).
- *   4. Save/reset write through to both server and localStorage. If the
- *      server call fails, localStorage is still authoritative so the user's
- *      edits survive across page loads.
+ *   1. Store starts with the default layout.
+ *   2. DashboardView calls load() which fetches the server copy. Server wins.
+ *   3. Save/reset write straight to the server.
  */
 export const useDashboardLayoutStore = defineStore('dashboardLayout', () => {
-  const layout = ref(loadFromLocalStorage())
+  const layout = ref(cloneDefaults())
   const editing = ref(false)
   const draft = ref(null)
   const loaded = ref(false)
 
   const active = computed(() => (editing.value && draft.value ? draft.value : layout.value))
 
-  // ── Storage helpers ──────────────────────────────────────────────────────
-  function loadFromLocalStorage() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (!raw) return cloneDefaults()
-      return mergeWithDefaults(JSON.parse(raw))
-    } catch {
-      return cloneDefaults()
-    }
-  }
-  function writeLocalStorage() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(layout.value)) } catch { /* ignore */ }
-  }
-  function clearLocalStorage() {
-    try { localStorage.removeItem(STORAGE_KEY) } catch { /* ignore */ }
-  }
-  function hasLocalStorageData() {
-    try { return localStorage.getItem(STORAGE_KEY) != null } catch { return false }
-  }
-
   // ── Server sync ───────────────────────────────────────────────────────────
   /**
-   * Load from server, falling back to the already-populated localStorage copy
-   * on failure. Idempotent — safe to call repeatedly; only the first call
-   * actually hits the server.
+   * Load from server. Idempotent — safe to call repeatedly; only the first
+   * call actually hits the server. On failure the default layout stands.
    */
   async function load() {
     if (loaded.value) return
@@ -66,19 +44,9 @@ export const useDashboardLayoutStore = defineStore('dashboardLayout', () => {
       const serverHasLayout = data && typeof data === 'object' && Object.keys(data).length > 0
       if (serverHasLayout) {
         layout.value = mergeWithDefaults(data)
-        // Server wins — refresh the localStorage cache to match.
-        writeLocalStorage()
-      } else if (hasLocalStorageData()) {
-        // Phase A → B migration: push the local layout up, then clear local.
-        try {
-          await saveDashboardLayout(layout.value)
-          clearLocalStorage()
-        } catch {
-          // Upload failed; keep localStorage as the source of truth for now.
-        }
       }
     } catch {
-      // API unreachable — stick with whatever we read from localStorage.
+      // API unreachable — keep the default layout.
     }
   }
 
@@ -98,16 +66,11 @@ export const useDashboardLayoutStore = defineStore('dashboardLayout', () => {
     layout.value = draft.value
     draft.value = null
     editing.value = false
-    // Write-through: localStorage first (local cache, never fails loudly),
-    // then server. If the server call fails the user's edits still survive
-    // reloads via localStorage and will re-sync next time.
-    writeLocalStorage()
-    try { await saveDashboardLayout(layout.value) } catch { /* local is fallback */ }
+    try { await saveDashboardLayout(layout.value) } catch { /* best-effort */ }
   }
 
   async function reset() {
     layout.value = cloneDefaults()
-    clearLocalStorage()
     if (editing.value) draft.value = cloneDefaults()
     try { await resetDashboardLayout() } catch { /* best-effort */ }
   }

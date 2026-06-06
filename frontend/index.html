@@ -5,6 +5,36 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>LDAP Portal</title>
+    <!--
+      Pre-paint theme/density from the "prefs-hint" cookie so there's no flash
+      of the wrong theme. The authoritative preference lives server-side (the
+      user-preferences document); this cookie is a disposable render hint the
+      server sets at login and the app keeps in sync. Keep this in sync with
+      src/utils/prefsHint.ts.
+    -->
+    <script>
+      (function () {
+        try {
+          var hit = document.cookie.split('; ').find(function (c) {
+            return c.indexOf('prefs-hint=') === 0;
+          });
+          var theme = 'light', density = 'comfortable';
+          if (hit) {
+            var parts = decodeURIComponent(hit.slice('prefs-hint='.length)).split('.');
+            if (parts[0]) theme = parts[0];
+            if (parts[1]) density = parts[1];
+          }
+          var root = document.documentElement;
+          if (theme === 'system') {
+            var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            root.setAttribute('data-theme', dark ? 'dark' : 'light');
+          } else {
+            root.setAttribute('data-theme', theme);
+          }
+          if (density === 'compact') root.setAttribute('data-density', 'compact');
+        } catch (e) { /* fall back to default light / comfortable */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

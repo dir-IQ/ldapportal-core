@@ -72,11 +72,9 @@ public class Account {
     @Column(nullable = false)
     private boolean active = true;
 
-    @Column(name = "theme_preference", length = 10)
-    private String themePreference = "light";
-
-    @Column(name = "density_preference", length = 15)
-    private String densityPreference = "comfortable";
+    // UI customizations (theme, density, ...) moved out of the account row into
+    // the per-account user_preferences document (V22) — the single home for
+    // everything a user can customize in the UI.
 
     @Column(name = "last_login_at")
     private Instant lastLoginAt;

@@ -3,11 +3,30 @@
  * Unit tests for useTablePreferences.
  *
  * The pure helpers (sortRows, filterRows, paginate) are the meat — they're
- * what every consumer of ResultsTable.vue depends on. The persistence layer
- * is also tested but with a stubbed localStorage (happy-dom provides one).
+ * what every consumer of ResultsTable.vue depends on. The persistence layer is
+ * also tested, against an in-memory mock of the preferences store (the
+ * composable persists there now, not localStorage).
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { nextTick } from 'vue'
+
+// In-memory stand-in for the preferences store. `read`/`write` round-trip
+// through `mem`, keyed by namespace then key, with structural clones so the
+// composable can't alias the backing store.
+const { mem, prefStore } = vi.hoisted(() => {
+  const mem: Record<string, Record<string, unknown>> = {}
+  const clone = (v: unknown) => (v === undefined ? v : JSON.parse(JSON.stringify(v)))
+  const prefStore = {
+    read: (ns: string, key: string, fallback: unknown) =>
+      mem[ns] && key in mem[ns] ? clone(mem[ns][key]) : fallback,
+    write: (ns: string, key: string, value: unknown) => {
+      ;(mem[ns] ||= {})[key] = clone(value)
+    },
+  }
+  return { mem, prefStore }
+})
+vi.mock('@/stores/preferences', () => ({ usePreferencesStore: () => prefStore }))
+
 import {
   defaultPrefs,
   sortRows,
@@ -15,6 +34,15 @@ import {
   paginate,
   useTablePreferences,
 } from './useTablePreferences'
+
+/** Reset the mock store between tests (mirrors the old localStorage.clear). */
+function clearPrefs(): void {
+  for (const k of Object.keys(mem)) delete mem[k]
+}
+/** Seed a table's stored prefs directly, as a returning user would have. */
+function seedTablePrefs(tableKey: string, value: unknown): void {
+  ;(mem.tables ||= {})[tableKey] = value
+}
 
 describe('sortRows', () => {
   it('returns rows unchanged when col is empty', () => {
@@ -150,7 +178,7 @@ describe('defaultPrefs', () => {
 
 describe('useTablePreferences (persistence)', () => {
   beforeEach(() => {
-    localStorage.clear()
+    clearPrefs()
   })
 
   it('returns defaults when nothing is persisted', () => {
@@ -158,20 +186,19 @@ describe('useTablePreferences (persistence)', () => {
     expect(prefs.value).toEqual(defaultPrefs())
   })
 
-  it('persists changes to localStorage', async () => {
+  it('persists changes to the preferences store', async () => {
     const { setWidth, setPageSize, setSort } = useTablePreferences('persist-test')
     setWidth('Name', 220)
     setPageSize(100)
     setSort('Created', false)
     await nextTick()
 
-    const raw = localStorage.getItem('ldapportal.table-prefs.v1:persist-test')
-    expect(raw).toBeTruthy()
-    const parsed = JSON.parse(raw!)
-    expect(parsed.widths.Name).toBe(220)
-    expect(parsed.pageSize).toBe(100)
-    expect(parsed.sortKey).toBe('Created')
-    expect(parsed.sortAsc).toBe(false)
+    const stored = mem.tables['persist-test'] as Record<string, unknown>
+    expect(stored).toBeTruthy()
+    expect((stored.widths as Record<string, number>).Name).toBe(220)
+    expect(stored.pageSize).toBe(100)
+    expect(stored.sortKey).toBe('Created')
+    expect(stored.sortAsc).toBe(false)
   })
 
   it('reloads persisted prefs on next call with same key', async () => {
@@ -219,15 +246,15 @@ describe('useTablePreferences (persistence)', () => {
     expect(prefs.value).toEqual(defaultPrefs())
   })
 
-  it('falls back to defaults on corrupt JSON', () => {
-    localStorage.setItem('ldapportal.table-prefs.v1:corrupt', '{not-json')
+  it('falls back to defaults on a malformed stored value', () => {
+    seedTablePrefs('corrupt', 'not-an-object')
     const { prefs } = useTablePreferences('corrupt')
     expect(prefs.value).toEqual(defaultPrefs())
   })
 })
 
 describe('recordSeen — defaultHidden seeding gated on seenColumns', () => {
-  beforeEach(() => localStorage.clear())
+  beforeEach(() => clearPrefs())
 
   it('first call seeds defaultHidden columns into hidden + records all keys', () => {
     const { prefs, recordSeen } = useTablePreferences('seen-1')
@@ -270,10 +297,10 @@ describe('recordSeen — defaultHidden seeding gated on seenColumns', () => {
     // Returning user with prefs from before a column was added to
     // the schema. seenColumns persisted from previous render
     // contains the old set; the new defaultHidden col gets seeded.
-    localStorage.setItem('ldapportal.table-prefs.v1:seen-4', JSON.stringify({
+    seedTablePrefs('seen-4', {
       ...defaultPrefs(),
       seenColumns: ['cn', 'mail'],
-    }))
+    })
     const { prefs, recordSeen } = useTablePreferences('seen-4')
     expect(prefs.value.seenColumns).toEqual(['cn', 'mail'])
     recordSeen([
@@ -289,15 +316,15 @@ describe('recordSeen — defaultHidden seeding gated on seenColumns', () => {
     // The actual fix: a user who used the table before defaultHidden
     // existed has empty seenColumns. recordSeen treats every column
     // as new and applies the defaultHidden flags.
-    localStorage.setItem('ldapportal.table-prefs.v1:seen-5', JSON.stringify({
+    seedTablePrefs('seen-5', {
       widths: { cn: 200 },
       hidden: [],
       pageSize: 100,
       sortKey: 'cn',
       sortAsc: true,
       // seenColumns intentionally absent — simulates pre-feature
-      // localStorage payload. loadPrefs defaults to [].
-    }))
+      // stored payload. normalize() defaults it to [].
+    })
     const { prefs, recordSeen } = useTablePreferences('seen-5')
     expect(prefs.value.seenColumns).toEqual([])
     expect(prefs.value.widths.cn).toBe(200)  // confirm prior prefs preserved

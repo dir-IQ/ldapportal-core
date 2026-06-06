@@ -6,6 +6,7 @@ import { selfServiceLogin as apiSelfServiceLogin } from '@/api/selfservice'
 import { getSetupStatus } from '@/api/setup'
 import { useTheme } from '@/composables/useTheme'
 import { useDensity } from '@/composables/useDensity'
+import { usePreferencesStore } from '@/stores/preferences'
 
 export const useAuthStore = defineStore('auth', () => {
   const principal   = ref(null)
@@ -100,6 +101,19 @@ export const useAuthStore = defineStore('auth', () => {
     useDensity().syncFromAccount(data.densityPreference)
   }
 
+  /**
+   * Load the per-account UI preferences document (table layouts, saved filters,
+   * search history, etc.) into the preferences store, and run the one-time
+   * migration of any legacy browser-localStorage values up to the server.
+   * Skipped for self-service principals, who don't persist UI customizations
+   * (and would get a 403 from the admin-scoped endpoint anyway). Best-effort:
+   * the preferences store swallows failures so a hiccup here never blocks login.
+   */
+  async function hydratePreferences(accountType) {
+    if (accountType === 'SELF_SERVICE') return
+    await usePreferencesStore().hydrate()
+  }
+
   async function init() {
     if (initialized.value) return
     initialized.value = true
@@ -107,6 +121,7 @@ export const useAuthStore = defineStore('auth', () => {
       const { data } = await me()
       principal.value = principalFromMe(data)
       syncPreferencesFromAccount(data)
+      await hydratePreferences(data.accountType)
       await refreshSetupStatusIfSuperadmin(data.accountType)
     } catch {
       principal.value = null
@@ -178,6 +193,7 @@ export const useAuthStore = defineStore('auth', () => {
       const { data: meData } = await me()
       principal.value = principalFromMe(meData)
       syncPreferencesFromAccount(meData)
+      await hydratePreferences(meData.accountType)
     } catch { /* ok */ }
     // Refresh first-run-wizard status so the route guard knows whether
     // to redirect superadmins to /setup. Without this call, login took
@@ -207,11 +223,16 @@ export const useAuthStore = defineStore('auth', () => {
    */
   async function logout() {
     let logoutUrl = null
+    // Flush any debounced preference writes before tearing down, then clear the
+    // store so the next user on this browser doesn't inherit the document.
+    const prefs = usePreferencesStore()
+    try { await prefs.flush() } catch { /* best-effort */ }
     try {
       const { data } = await apiLogout()
       logoutUrl = data?.logoutUrl || null
     } finally {
       principal.value = null
+      prefs.clear()
     }
     return logoutUrl
   }

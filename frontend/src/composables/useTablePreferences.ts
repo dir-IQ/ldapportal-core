@@ -1,21 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * Persist per-table user preferences (column widths, hidden columns, page size,
- * sort state) to localStorage so they survive page reloads.
+ * sort state) so they survive page reloads. Storage is the server-side
+ * preferences document (namespace `tables`, keyed by `tableKey`) via the
+ * preferences store — not localStorage — so a user's table layout follows them
+ * across browsers and devices.
  *
  * Each table has a unique `tableKey` (e.g. "directory-search-results",
- * "audit-reports", "report-jobs") which forms the storage key. If the schema
- * is bumped (incompatible changes), bump SCHEMA_VERSION and old prefs are
- * silently ignored.
+ * "audit-reports", "report-jobs") which forms the document key.
  *
  * The composable is deliberately framework-agnostic — it returns a `prefs`
  * ref plus mutator helpers. ResultsTable.vue wires it to the local sort/
  * page/column state and updates on every change.
  */
 import { ref, watch, type Ref } from 'vue'
-
-const SCHEMA_VERSION = 1
-const STORAGE_PREFIX = 'ldapportal.table-prefs.v' + SCHEMA_VERSION + ':'
+import { usePreferencesStore } from '@/stores/preferences'
 
 export interface TablePrefs {
   /** Column widths in pixels, keyed by column key. */
@@ -45,40 +44,16 @@ export function defaultPrefs(): TablePrefs {
   return { widths: {}, hidden: [], pageSize: 50, sortKey: '', sortAsc: true, seenColumns: [] }
 }
 
-function storageKey(tableKey: string): string {
-  return STORAGE_PREFIX + tableKey
-}
-
-/**
- * Read prefs from localStorage. Returns {@code null} when nothing is
- * stored — the caller distinguishes "first run" (apply defaults) from
- * "stored prefs say no hidden columns" (preserve user choice).
- */
-function loadPrefs(tableKey: string): TablePrefs | null {
-  if (typeof localStorage === 'undefined') return null
-  try {
-    const raw = localStorage.getItem(storageKey(tableKey))
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<TablePrefs>
-    return {
-      widths: parsed.widths && typeof parsed.widths === 'object' ? parsed.widths : {},
-      hidden: Array.isArray(parsed.hidden) ? parsed.hidden : [],
-      pageSize: typeof parsed.pageSize === 'number' ? parsed.pageSize : 50,
-      sortKey: typeof parsed.sortKey === 'string' ? parsed.sortKey : '',
-      sortAsc: typeof parsed.sortAsc === 'boolean' ? parsed.sortAsc : true,
-      seenColumns: Array.isArray(parsed.seenColumns) ? parsed.seenColumns : [],
-    }
-  } catch {
-    return null
-  }
-}
-
-function savePrefs(tableKey: string, prefs: TablePrefs): void {
-  if (typeof localStorage === 'undefined') return
-  try {
-    localStorage.setItem(storageKey(tableKey), JSON.stringify(prefs))
-  } catch {
-    /* localStorage may be full or disabled; degrade silently */
+/** Coerce a stored (possibly partial / legacy) blob into a full TablePrefs. */
+function normalize(parsed: Partial<TablePrefs> | null | undefined): TablePrefs {
+  const p = parsed ?? {}
+  return {
+    widths: p.widths && typeof p.widths === 'object' ? p.widths : {},
+    hidden: Array.isArray(p.hidden) ? p.hidden : [],
+    pageSize: typeof p.pageSize === 'number' ? p.pageSize : 50,
+    sortKey: typeof p.sortKey === 'string' ? p.sortKey : '',
+    sortAsc: typeof p.sortAsc === 'boolean' ? p.sortAsc : true,
+    seenColumns: Array.isArray(p.seenColumns) ? p.seenColumns : [],
   }
 }
 
@@ -102,15 +77,19 @@ export interface UseTablePreferences {
 }
 
 export function useTablePreferences(tableKey: string): UseTablePreferences {
+  const prefsStore = usePreferencesStore()
+
   // First-run defaults are applied via recordSeen on the first
   // column-change tick — it gates default-hidden seeding on
   // {@code seenColumns}, which empty-defaultPrefs initialises to [].
-  const prefs = ref<TablePrefs>(loadPrefs(tableKey) ?? defaultPrefs())
+  const prefs = ref<TablePrefs>(
+    normalize(prefsStore.read<Partial<TablePrefs> | undefined>('tables', tableKey, undefined)),
+  )
 
   // Persist whenever any field changes. `deep: true` because widths is an
   // object and hidden is an array — shallow watch wouldn't catch internal
-  // mutations.
-  watch(prefs, (next) => savePrefs(tableKey, next), { deep: true })
+  // mutations. The store coalesces + debounces the write to the server.
+  watch(prefs, (next) => prefsStore.write('tables', tableKey, next), { deep: true })
 
   function setWidth(col: string, px: number): void {
     // Clone to trigger watcher; assigning to nested key on a deep ref also

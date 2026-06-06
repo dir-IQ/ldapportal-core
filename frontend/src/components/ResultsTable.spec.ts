@@ -7,9 +7,23 @@
  * component renders rows, responds to header clicks, exposes scoped slots,
  * filters via the toolbar, and emits selection updates.
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
+
+// ResultsTable persists column prefs through the preferences store; stub it so
+// these wiring tests don't need an active Pinia or a backend.
+const tablePrefs: Record<string, unknown> = {}
+vi.mock('@/stores/preferences', () => ({
+  usePreferencesStore: () => ({
+    read: (_ns: string, key: string, fallback: unknown) =>
+      key in tablePrefs ? JSON.parse(JSON.stringify(tablePrefs[key])) : fallback,
+    write: (_ns: string, key: string, value: unknown) => {
+      tablePrefs[key] = JSON.parse(JSON.stringify(value))
+    },
+  }),
+}))
+
 import ResultsTable from './ResultsTable.vue'
 import type { ColumnDef } from './ResultsTable.vue'
 
@@ -33,7 +47,7 @@ function makeWrapper(extraProps: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
-  localStorage.clear()
+  for (const k of Object.keys(tablePrefs)) delete tablePrefs[k]
 })
 
 describe('ResultsTable.vue', () => {
