@@ -138,6 +138,23 @@
             <option v-for="d in directories" :key="d.id" :value="d.id">{{ d.displayName }}</option>
           </select>
         </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Capture mode</label>
+          <select v-model="linkForm.captureMode" aria-label="Capture mode" class="input">
+            <option value="APP_INTERCEPT">App-intercept (capture portal writes)</option>
+            <option value="CHANGELOG">Changelog (poll source changelog)</option>
+          </select>
+        </div>
+        <template v-if="linkForm.captureMode === 'CHANGELOG'">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Changelog format</label>
+            <select v-model="linkForm.changelogFormat" aria-label="Changelog format" class="input">
+              <option :value="null" disabled>Select…</option>
+              <option value="DSEE_CHANGELOG">DSEE / cn=changelog</option>
+            </select>
+          </div>
+          <FormField label="Changelog base DN" v-model="changelogBaseDnModel" placeholder="cn=changelog" />
+        </template>
         <label class="flex items-center gap-2 text-sm text-gray-700">
           <input type="checkbox" v-model="linkForm.enabled" class="rounded" /> Enabled
         </label>
@@ -253,13 +270,25 @@ async function loadLinks() {
 const showLinkModal = ref(false)
 const editingLink = ref<SyncLink | null>(null)
 const linkForm = ref<SyncLinkPayload>(blankLink())
+// FormField binds a non-null string; proxy the nullable changelogBaseDn.
+const changelogBaseDnModel = computed<string>({
+  get: () => linkForm.value.changelogBaseDn ?? '',
+  set: (v: string) => { linkForm.value.changelogBaseDn = v.trim() ? v.trim() : null },
+})
 function blankLink(): SyncLinkPayload {
-  return { displayName: '', sourceDirId: '', targetDirId: '', enabled: true, captureMode: 'APP_INTERCEPT' }
+  return {
+    displayName: '', sourceDirId: '', targetDirId: '', enabled: true,
+    captureMode: 'APP_INTERCEPT', changelogFormat: null, changelogBaseDn: null,
+  }
 }
 function openLinkModal(link?: SyncLink) {
   editingLink.value = link ?? null
   linkForm.value = link
-    ? { displayName: link.displayName, sourceDirId: link.sourceDirId, targetDirId: link.targetDirId, enabled: link.enabled, captureMode: link.captureMode }
+    ? {
+        displayName: link.displayName, sourceDirId: link.sourceDirId, targetDirId: link.targetDirId,
+        enabled: link.enabled, captureMode: link.captureMode,
+        changelogFormat: link.changelogFormat, changelogBaseDn: link.changelogBaseDn,
+      }
     : blankLink()
   showLinkModal.value = true
 }

@@ -84,11 +84,20 @@ public class SyncConfigService {
     }
 
     private void applyLink(SyncLink l, SyncLinkRequest req) {
+        SyncCaptureMode mode = req.captureMode() != null ? req.captureMode() : SyncCaptureMode.APP_INTERCEPT;
         l.setDisplayName(req.displayName());
         l.setSourceDirId(req.sourceDirId());
         l.setTargetDirId(req.targetDirId());
         l.setEnabled(req.enabled());
-        l.setCaptureMode(req.captureMode() != null ? req.captureMode() : SyncCaptureMode.APP_INTERCEPT);
+        l.setCaptureMode(mode);
+        if (mode == SyncCaptureMode.CHANGELOG) {
+            l.setChangelogFormat(req.changelogFormat());
+            l.setChangelogBaseDn(req.changelogBaseDn());
+        } else {
+            // APP_INTERCEPT leaves changelog config null (DB cfg constraint).
+            l.setChangelogFormat(null);
+            l.setChangelogBaseDn(null);
+        }
     }
 
     private void validateLink(SyncLinkRequest req) {
@@ -100,6 +109,14 @@ public class SyncConfigService {
         }
         if (!directoryRepo.existsById(req.targetDirId())) {
             throw new IllegalArgumentException("Target directory not found");
+        }
+        if (req.captureMode() == SyncCaptureMode.CHANGELOG) {
+            if (req.changelogFormat() == null) {
+                throw new IllegalArgumentException("changelogFormat is required for CHANGELOG capture");
+            }
+            if (req.changelogBaseDn() == null || req.changelogBaseDn().isBlank()) {
+                throw new IllegalArgumentException("changelogBaseDn is required for CHANGELOG capture");
+            }
         }
     }
 

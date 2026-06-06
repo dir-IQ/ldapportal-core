@@ -118,10 +118,19 @@ public class RecomputeEngine {
         String identity;
         if (SyncDnUtil.isDn(key)) {
             entry = readSourceByDn(source, set, key, strategy);
-            identity = entry != null
-                    ? SyncIdentity.extract(set, strategy, entry)
-                    : membershipRepo.findFirstBySyncSetIdAndSourceDn(set.getId(), SyncDnUtil.normalize(key))
-                            .map(Membership::getIdentity).orElse(null);
+            if (entry != null) {
+                identity = SyncIdentity.extract(set, strategy, entry);
+            } else {
+                identity = membershipRepo.findFirstBySyncSetIdAndSourceDn(set.getId(), SyncDnUtil.normalize(key))
+                        .map(Membership::getIdentity).orElse(null);
+                // The DN is gone but the identity is tracked — the entry may have
+                // MOVED (a feed that reports the pre-move DN, e.g. a changelog
+                // modrdn record). Re-search by identity so a rename converges as a
+                // MODDN, not a destructive delete+recreate.
+                if (identity != null) {
+                    entry = searchSourceByIdentity(source, set, strategy, identity);
+                }
+            }
         } else {
             identity = key;
             entry = searchSourceByIdentity(source, set, strategy, key);

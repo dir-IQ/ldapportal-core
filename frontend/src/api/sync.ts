@@ -12,6 +12,9 @@ export type SyncCaptureMode = 'APP_INTERCEPT' | 'CHANGELOG'
 export type SyncScope = 'BASE' | 'ONE' | 'SUB'
 export type SyncDeletePolicy = 'DELETE' | 'REVIEW'
 export type MembershipState = 'APPLIED' | 'PENDING' | 'FAILED' | 'REVIEW'
+export type ChangelogFormat = 'DSEE_CHANGELOG' | 'OPENLDAP_ACCESSLOG' | 'AD_DIRSYNC'
+export type SyncChangelogHealth =
+  | 'HEALTHY' | 'LAGGING' | 'STALLED' | 'GAP_DETECTED' | 'CURSOR_RESET' | 'DISABLED_CONFIG_ERROR'
 
 export interface SyncLink {
   id: string
@@ -20,6 +23,13 @@ export interface SyncLink {
   targetDirId: string
   enabled: boolean
   captureMode: SyncCaptureMode
+  changelogFormat: ChangelogFormat | null
+  changelogBaseDn: string | null
+  changelogHealth: SyncChangelogHealth | null
+  changelogLastChangeNumber: number | null
+  changelogSourceLastChangeNumber: number | null
+  changelogLastPolledAt: string | null
+  changelogLastError: string | null
   createdAt: string
   updatedAt: string
   version: number
@@ -31,6 +41,8 @@ export interface SyncLinkPayload {
   targetDirId: string
   enabled: boolean
   captureMode: SyncCaptureMode
+  changelogFormat: ChangelogFormat | null
+  changelogBaseDn: string | null
 }
 
 export interface SyncTransformRule {

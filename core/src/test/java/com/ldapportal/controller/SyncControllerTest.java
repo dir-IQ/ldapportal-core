@@ -46,12 +46,13 @@ class SyncControllerTest extends BaseControllerTest {
 
     private SyncLinkRequest linkReq() {
         return new SyncLinkRequest("src->dst", UUID.randomUUID(), UUID.randomUUID(), true,
-                SyncCaptureMode.APP_INTERCEPT);
+                SyncCaptureMode.APP_INTERCEPT, null, null);
     }
 
     private SyncLinkResponse linkResp() {
         return new SyncLinkResponse(LINK, "src->dst", UUID.randomUUID(), UUID.randomUUID(), true,
-                SyncCaptureMode.APP_INTERCEPT, OffsetDateTime.now(), OffsetDateTime.now(), 0L);
+                SyncCaptureMode.APP_INTERCEPT, null, null, null, null, null, null, null,
+                OffsetDateTime.now(), OffsetDateTime.now(), 0L);
     }
 
     private SyncSetRequest setReq() {
@@ -114,7 +115,7 @@ class SyncControllerTest extends BaseControllerTest {
 
     @Test
     void createLink_blankDisplayName_returns400() throws Exception {
-        SyncLinkRequest bad = new SyncLinkRequest("", UUID.randomUUID(), UUID.randomUUID(), true, null);
+        SyncLinkRequest bad = new SyncLinkRequest("", UUID.randomUUID(), UUID.randomUUID(), true, null, null, null);
         mockMvc.perform(post(LINKS).with(authentication(superadminAuth()))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(bad)))

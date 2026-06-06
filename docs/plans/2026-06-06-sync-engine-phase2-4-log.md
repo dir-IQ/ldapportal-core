@@ -63,3 +63,49 @@ summary at the end of the effort.
 - **Perf:** brownfield anchor search adds one target read per first-encounter ADD
   when `sourceAnchor` is configured; the captor's per-write `sync_links` lookup is
   still uncached (carried from Phase 1). Severity: low.
+
+## Phase 3 — changelog adapter + changestamp reconcile
+
+### Decisions
+- **Changelog-capture adapter (`SyncChangelogPoller`):** the headline Phase 3
+  feature. Scheduled, `DIRECTORY_SYNC`-gated, HA-leased; for each CHANGELOG-mode
+  link it reads the source changelog via the existing `ChangelogStrategy` SPI and
+  emits `recompute(targetDN)` per change record — **including DELETE records**
+  (the engine re-reads the source → absent → OUT → deletes via the index). The
+  design's key simplification: the lossy `changes` blob is ignored, so there is
+  **no exactly-once dedup, no per-link FIFO, no LDIF reconstruction** —
+  convergence makes a bare "this DN changed" sufficient. Cursor advance, lag/gap/
+  cursor-reset health, and a reconcile trigger on gap are kept.
+- **V4 migration** adds the changelog columns (format, base, cursor, source-head,
+  health, poll-lease, errors) + cfg/health/format check constraints + the
+  capture index to `sync_links`; new `SyncChangelogHealth` enum.
+- **Link config API** extended with `captureMode` + `changelogFormat` /
+  `changelogBaseDn` (required + validated for CHANGELOG); response carries
+  changelog status. Frontend link form gained a capture-mode selector + changelog
+  config.
+
+### Review findings — fixed
+- **Changelog rename = MODDN, not delete+recreate (general engine fix):** a
+  changelog modrdn record reports the *pre-move* DN; a DN-keyed recompute that
+  finds the entry gone *but the identity is tracked* now re-searches by identity
+  to catch a move, so a rename converges as a MODDN instead of a destructive
+  delete+recreate (which would break the stable-identity guarantee and drop
+  references). Benefits every feed that reports a pre-move DN.
+
+### Review findings — deferred
+- **Changestamp-driven reconcile optimization** (minimal-attr enumeration of
+  DN/identity + `entryCSN`/`modifyTimestamp`/`uSNChanged`, deep-read only drifted
+  entries): the design pairs this with the changelog adapter, but the existing
+  reconcile is correct (just O(N) source reads), and the scheduled reconcile +
+  changelog adapter cover correctness. **Deferred — Severity: medium (perf/steady-
+  state read amplification, the design's Risk a).**
+- **Changelog cursor ordering assumption:** the poller advances the cursor to the
+  max `changeNumber` in the batch, assuming the strategy returns records in
+  ascending `changeNumber` order (DSEE/UnboundID do). A server returning >batch
+  records unordered could skip; the scheduled reconcile is the backstop.
+  Severity: medium (mitigated).
+- **Only `DSEE_CHANGELOG` wired for sync capture** (the OpenLDAP-accesslog / AD-
+  DirSync strategies exist for audit but aren't wired here; the format constraint
+  allows only DSEE). Phase 4 generalizes. Severity: low.
+- **Changelog health UI** is minimal (the response carries health/cursor/lag, but
+  the view shows capture mode without a dedicated health panel). Severity: low.
