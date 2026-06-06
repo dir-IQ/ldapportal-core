@@ -179,6 +179,25 @@ class SyncEngineIntegrationTest {
         assertThat(membership(identityBefore).getTargetDn()).isEqualToIgnoringCase("uid=aadams," + DST_USERS);
     }
 
+    // ── A recompute keyed on the PRE-move DN (changelog modrdn) is a MODDN ───────
+
+    @Test
+    void recomputeByOldDn_afterMove_isModdnNotDelete() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        String identityBefore = membership("alice").getIdentity();
+
+        // Entry moves; a changelog feed reports the OLD dn.
+        source.modifyDN("uid=alice," + SRC_PEOPLE, "uid=aadams", true);
+        engine.process(peopleSet.getId(), dn("alice")); // key = pre-move DN
+
+        // Re-searched by identity → MODDN, not a delete of the (still-present) entry.
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
+        assertThat(target.getEntry("uid=aadams," + DST_USERS)).isNotNull();
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).hasSize(1);
+        assertThat(membership(identityBefore).getState()).isEqualTo(MembershipState.APPLIED);
+    }
+
     // ── Convergence: a duplicate trigger is a no-op ──────────────────────────────
 
     @Test

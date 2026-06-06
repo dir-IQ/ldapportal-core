@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.entity;
 
+import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.SyncCaptureMode;
+import com.ldapportal.entity.enums.SyncChangelogHealth;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -58,6 +60,40 @@ public class SyncLink {
     @Enumerated(EnumType.STRING)
     @Column(name = "capture_mode", nullable = false)
     private SyncCaptureMode captureMode = SyncCaptureMode.APP_INTERCEPT;
+
+    // ── Changelog capture (capture_mode = CHANGELOG) ────────────────────────────
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "changelog_format")
+    private ChangelogFormat changelogFormat;
+
+    @Column(name = "changelog_base_dn")
+    private String changelogBaseDn;
+
+    /** Cursor: highest changeNumber already turned into recomputes for this link. */
+    @Column(name = "changelog_last_change_number")
+    private Long changelogLastChangeNumber;
+
+    /** Last observed source head (lastChangeNumber); lag = this − cursor. */
+    @Column(name = "changelog_source_last_change_number")
+    private Long changelogSourceLastChangeNumber;
+
+    @Column(name = "changelog_last_polled_at")
+    private OffsetDateTime changelogLastPolledAt;
+
+    @Column(name = "changelog_last_error")
+    private String changelogLastError;
+
+    @Column(name = "changelog_last_error_at")
+    private OffsetDateTime changelogLastErrorAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "changelog_health", nullable = false)
+    private SyncChangelogHealth changelogHealth = SyncChangelogHealth.HEALTHY;
+
+    /** DB-backed single-flight lease for HA poll coordination. */
+    @Column(name = "changelog_poll_claimed_at")
+    private OffsetDateTime changelogPollClaimedAt;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

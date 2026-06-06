@@ -1,11 +1,11 @@
 # Sync engine — implementation plan
 
 - **Date:** 2026-06-06
-- **Status:** In progress (Phases 0–2 shipped — clean rebaseline; the convergent
+- **Status:** In progress (Phases 0–3 shipped — clean rebaseline; the convergent
   engine core, app-intercept, reconcile, and in-stream closure; rich config +
-  identityKey override + brownfield adoption + the config/inventory API & UI;
-  Phases 3–4 not started, 2026-06-06). Implementation plan for
-  `docs/plans/2026-06-06-directory-sync-membership-engine-design.md`.
+  identityKey override + brownfield adoption + the config/inventory API & UI; the
+  changelog-capture adapter; Phase 4 not started, 2026-06-06). Implementation plan
+  for `docs/plans/2026-06-06-directory-sync-membership-engine-design.md`.
 
 Implements the membership-engine architecture (the design doc). This plan
 covers the locked decisions, the migration approach, how the legacy replication
