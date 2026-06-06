@@ -73,7 +73,7 @@ public class MembershipReconciler {
             return 0;
         }
         IdentityStrategy strategy = identityStrategies.forType(source.getDirectoryType());
-        if (strategy.identityAttribute() == null) {
+        if (SyncIdentity.attribute(set, strategy) == null) {
             log.warn("Sync set {}: source type has no LDAP identity attribute; reconcile skipped", syncSetId);
             return 0;
         }
@@ -105,6 +105,8 @@ public class MembershipReconciler {
                 engine.process(syncSetId, row.getIdentity());
             }
         }
+        set.setReconcileLastRunAt(java.time.OffsetDateTime.now());
+        syncSetRepo.save(set);
         return enumerated.size();
     }
 
@@ -119,13 +121,13 @@ public class MembershipReconciler {
                                              IdentityStrategy strategy) {
         String base = set.getObjectScopeBaseDn() != null ? set.getObjectScopeBaseDn() : source.getBaseDn();
         SearchScope scope = scopeOf(set);
-        String idAttr = strategy.identityAttribute();
+        String idAttr = SyncIdentity.attribute(set, strategy);
         return connectionFactory.withConnectionUnreplicated(source, conn -> {
             SearchRequest req = new SearchRequest(base, scope,
                     com.unboundid.ldap.sdk.Filter.createPresenceFilter("objectClass"), idAttr);
             List<Enumerated> out = new ArrayList<>();
             for (SearchResultEntry e : conn.search(req).getSearchEntries()) {
-                String identity = strategy.extract(e);
+                String identity = SyncIdentity.extract(set, strategy, e);
                 if (identity != null && !identity.isBlank()) {
                     out.add(new Enumerated(e.getDN(), identity));
                 }

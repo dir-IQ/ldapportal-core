@@ -102,6 +102,17 @@ public class SyncSet {
     private SyncDeletePolicy deletePolicy = SyncDeletePolicy.DELETE;
 
     /**
+     * How often anti-entropy reconcile runs for this set, in seconds. Null => the
+     * global default cadence. {@link #reconcileLastRunAt} stamps each run so the
+     * scheduler can compute "due".
+     */
+    @Column(name = "reconcile_cadence_seconds")
+    private Long reconcileCadenceSeconds;
+
+    @Column(name = "reconcile_last_run_at")
+    private OffsetDateTime reconcileLastRunAt;
+
+    /**
      * Optional attribute rename / value-template rules. Null/empty => identity
      * transform (copy user attributes through unchanged).
      */

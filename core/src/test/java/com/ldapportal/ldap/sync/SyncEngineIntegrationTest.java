@@ -321,7 +321,101 @@ class SyncEngineIntegrationTest {
                 .hasSize(1);
     }
 
+    // ── Brownfield adoption + quarantine (sourceAnchor) ─────────────────────────
+
+    @Test
+    void brownfield_adoptsExistingAnchoredEntry_doesNotDuplicate() throws Exception {
+        peopleSet.setSourceAnchorAttribute("description");
+        setRepo.save(peopleSet);
+        addPerson("alice", "staff", "alice@src");
+        String uuid = sourceEntryUuid("alice");
+        // A pre-existing, hand-made target entry already carries our anchor.
+        target.add(new Entry("uid=alice," + DST_USERS,
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", "alice"), new Attribute("cn", "OLD"), new Attribute("sn", "OLD"),
+                new Attribute("description", uuid)));
+
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        // Adopted (converged), not duplicated.
+        assertThat(membership("alice").getState()).isEqualTo(MembershipState.APPLIED);
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("cn")).isEqualTo("alice");
+        assertThat(target.search(DST_USERS, com.unboundid.ldap.sdk.SearchScope.SUB, "(description=" + uuid + ")")
+                .getEntryCount()).isEqualTo(1);
+    }
+
+    @Test
+    void brownfield_quarantinesUnanchoredCollisionAtPlacementDn() throws Exception {
+        peopleSet.setSourceAnchorAttribute("description");
+        setRepo.save(peopleSet);
+        addPerson("alice", "staff", "alice@src");
+        // An unanchored entry already sits at the placement DN.
+        target.add(new Entry("uid=alice," + DST_USERS,
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", "alice"), new Attribute("cn", "HANDMADE"), new Attribute("sn", "x")));
+
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        assertThat(membership("alice").getState()).isEqualTo(MembershipState.REVIEW);
+        // Target left untouched.
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("cn")).isEqualTo("HANDMADE");
+    }
+
+    @Test
+    void brownfield_quarantinesAmbiguousMultipleAnchorMatches() throws Exception {
+        peopleSet.setSourceAnchorAttribute("description");
+        setRepo.save(peopleSet);
+        addPerson("alice", "staff", "alice@src");
+        String uuid = sourceEntryUuid("alice");
+        for (String cn : List.of("dup1", "dup2")) {
+            target.add(new Entry("cn=" + cn + "," + DST_USERS,
+                    new Attribute("objectClass", "top", "person"),
+                    new Attribute("cn", cn), new Attribute("sn", "x"),
+                    new Attribute("description", uuid)));
+        }
+
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        assertThat(membership("alice").getState()).isEqualTo(MembershipState.REVIEW);
+        assertThat(membership("alice").getFailReason()).contains("ambiguous");
+    }
+
+    @Test
+    void deletePolicyReview_quarantinesScopeExit_retainsTarget() throws Exception {
+        peopleSet.setDeletePolicy(com.ldapportal.entity.enums.SyncDeletePolicy.REVIEW);
+        setRepo.save(peopleSet);
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+
+        source.delete("uid=alice," + SRC_PEOPLE);
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        // Held for review, target retained (not deleted).
+        assertThat(membership("alice").getState()).isEqualTo(MembershipState.REVIEW);
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+    }
+
+    // ── identityKey override ─────────────────────────────────────────────────────
+
+    @Test
+    void identityKey_override_keysOnConfiguredAttribute() throws Exception {
+        peopleSet.setIdentityKey("uid");
+        setRepo.save(peopleSet);
+        addPerson("alice", "staff", "alice@src");
+
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        // Identity is the uid value, not the entryUUID.
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).hasSize(1);
+        assertThat(membership("alice").getIdentity()).isEqualTo("alice");
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────────
+
+    private String sourceEntryUuid(String uid) throws Exception {
+        return source.getEntry("uid=" + uid + "," + SRC_PEOPLE, "entryUUID").getAttributeValue("entryUUID");
+    }
 
     private static InMemoryDirectoryServer startServer(String base) throws Exception {
         InMemoryDirectoryServerConfig cfg = new InMemoryDirectoryServerConfig(base);

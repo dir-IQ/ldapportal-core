@@ -10,10 +10,15 @@ package com.ldapportal.entity.enums;
  *   <li>{@code PENDING} — a transition is queued but not yet applied.</li>
  *   <li>{@code FAILED} — the last apply failed; this identity is dead-lettered
  *       and retried, without blocking any other identity.</li>
+ *   <li>{@code REVIEW} — brownfield quarantine: the target correlation is
+ *       ambiguous (multiple sourceAnchor matches, or an unanchored entry already
+ *       sits at the placement DN), so the engine holds for an operator decision
+ *       rather than risk overwriting/deleting the wrong target entry.</li>
  * </ul>
  */
 public enum MembershipState {
     APPLIED,
     PENDING,
-    FAILED
+    FAILED,
+    REVIEW
 }

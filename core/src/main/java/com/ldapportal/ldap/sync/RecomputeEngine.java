@@ -117,9 +117,9 @@ public class RecomputeEngine {
         Entry entry;
         String identity;
         if (SyncDnUtil.isDn(key)) {
-            entry = readSourceByDn(source, key, strategy);
+            entry = readSourceByDn(source, set, key, strategy);
             identity = entry != null
-                    ? strategy.extract(entry)
+                    ? SyncIdentity.extract(set, strategy, entry)
                     : membershipRepo.findFirstBySyncSetIdAndSourceDn(set.getId(), SyncDnUtil.normalize(key))
                             .map(Membership::getIdentity).orElse(null);
         } else {
@@ -155,8 +155,13 @@ public class RecomputeEngine {
                 return false; // (OUT, none) — no-op
             }
             if (set.getDeletePolicy() == SyncDeletePolicy.REVIEW) {
-                log.info("Sync set {}: identity {} left membership; deletePolicy=REVIEW, target retained",
-                        set.getId(), identity);
+                // Quarantine the pending delete so it surfaces in the inventory for
+                // an operator decision, rather than silently retaining the target.
+                if (current.getState() != MembershipState.REVIEW) {
+                    markReview(set, identity, current.getSourceDn(), current.getTargetDn(),
+                            current.getContentHash(),
+                            "scope-exit held for review (deletePolicy=REVIEW)");
+                }
                 return false;
             }
             ResultCode rc = targetDelete(target, current.getTargetDn());
@@ -172,6 +177,37 @@ public class RecomputeEngine {
         String targetDn = decision.targetDn();
         byte[] hash = decision.contentHash();
         String sourceDn = SyncDnUtil.normalize(entry.getDN());
+
+        // ── Brownfield adoption (conservative) ──
+        // On a first encounter (or while held in REVIEW) with a configured
+        // sourceAnchor, correlate by anchor before deciding ADD vs MODIFY so we
+        // adopt a pre-existing target entry rather than duplicate it. Ambiguity —
+        // multiple anchor matches, or an unanchored entry already at the
+        // placement DN — quarantines for an operator decision, never auto-
+        // overwrites.
+        String anchorAttr = set.getSourceAnchorAttribute();
+        boolean firstOrReview = current == null || current.getState() == MembershipState.REVIEW;
+        if (anchorAttr != null && !anchorAttr.isBlank() && firstOrReview) {
+            List<String> matches = searchTargetByAnchor(target, set, anchorAttr, identity);
+            if (matches.size() > 1) {
+                markReview(set, identity, sourceDn, targetDn, hash,
+                        "ambiguous: " + matches.size() + " target entries carry sourceAnchor=" + identity);
+                return false;
+            } else if (matches.size() == 1) {
+                String adoptedDn = matches.get(0);
+                if (current == null) {
+                    current = synthetic(set, identity, sourceDn, adoptedDn);
+                } else {
+                    current.setTargetDn(adoptedDn);
+                }
+            } else if (readTarget(target, targetDn) != null) {
+                // No anchor match but the placement DN is occupied by an entry
+                // that doesn't carry our anchor → don't clobber it.
+                markReview(set, identity, sourceDn, targetDn, hash,
+                        "unanchored entry already at placement DN " + targetDn);
+                return false;
+            }
+        }
 
         // Hash gate: nothing changed in the projection → no target read/write.
         if (current != null && current.getState() == MembershipState.APPLIED
@@ -238,6 +274,27 @@ public class RecomputeEngine {
         log.warn("Sync set {}: identity {} FAILED — {}", set.getId(), identity, reason);
     }
 
+    private void markReview(SyncSet set, String identity, String sourceDn, String targetDn,
+                            byte[] hash, String reason) {
+        Membership current = membershipRepo.findById(new MembershipId(set.getId(), identity)).orElse(null);
+        byte[] effectiveHash = hash != null ? hash
+                : (current != null ? current.getContentHash() : new byte[0]);
+        upsert(set, identity, sourceDn, targetDn, effectiveHash, MembershipState.REVIEW, reason, current);
+        log.info("Sync set {}: identity {} quarantined for REVIEW — {}", set.getId(), identity, reason);
+    }
+
+    /** A transient (unsaved) membership used to adopt an existing target entry. */
+    private static Membership synthetic(SyncSet set, String identity, String sourceDn, String adoptedDn) {
+        Membership m = new Membership();
+        m.setSyncSetId(set.getId());
+        m.setIdentity(identity);
+        m.setSourceDn(sourceDn);
+        m.setTargetDn(adoptedDn);
+        m.setContentHash(new byte[0]);
+        m.setState(MembershipState.PENDING);
+        return m;
+    }
+
     private ReferenceResolver resolverFor(SyncLink link) {
         List<UUID> setIds = syncSetRepo.findAllByLinkId(link.getId()).stream()
                 .map(SyncSet::getId).toList();
@@ -248,8 +305,8 @@ public class RecomputeEngine {
 
     // ── LDAP helpers (all reads/writes are uncaptured) ──────────────────────────
 
-    private Entry readSourceByDn(DirectoryConnection source, String dn, IdentityStrategy strategy) {
-        String idAttr = strategy.identityAttribute();
+    private Entry readSourceByDn(DirectoryConnection source, SyncSet set, String dn, IdentityStrategy strategy) {
+        String idAttr = SyncIdentity.attribute(set, strategy);
         String[] attrs = idAttr != null ? new String[]{"*", idAttr} : new String[]{"*"};
         return connectionFactory.withConnectionUnreplicated(source, conn -> {
             try {
@@ -265,7 +322,7 @@ public class RecomputeEngine {
 
     private Entry searchSourceByIdentity(DirectoryConnection source, SyncSet set,
                                          IdentityStrategy strategy, String identity) {
-        String idAttr = strategy.identityAttribute();
+        String idAttr = SyncIdentity.attribute(set, strategy);
         if (idAttr == null) {
             return null;
         }
@@ -310,6 +367,28 @@ public class RecomputeEngine {
                 return conn.add(new AddRequest(dn, attrs)).getResultCode();
             } catch (LDAPException e) {
                 return e.getResultCode();
+            }
+        });
+    }
+
+    /** Target DNs carrying {@code anchorAttr=identity} (brownfield correlation). */
+    private List<String> searchTargetByAnchor(DirectoryConnection target, SyncSet set,
+                                              String anchorAttr, String identity) {
+        String base = set.getTargetBaseDn() != null ? set.getTargetBaseDn() : target.getBaseDn();
+        return connectionFactory.withConnectionUnreplicated(target, conn -> {
+            try {
+                SearchRequest req = new SearchRequest(base, SearchScope.SUB,
+                        com.unboundid.ldap.sdk.Filter.createEqualityFilter(anchorAttr, identity), "1.1");
+                List<String> dns = new java.util.ArrayList<>();
+                for (SearchResultEntry e : conn.search(req).getSearchEntries()) {
+                    dns.add(e.getDN());
+                }
+                return dns;
+            } catch (LDAPException e) {
+                if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
+                    return List.of();
+                }
+                throw e;
             }
         });
     }
