@@ -1,8 +1,9 @@
 # Sync engine — implementation plan
 
 - **Date:** 2026-06-06
-- **Status:** In progress (Phase 0 shipped — clean rebaseline + sync entities;
-  Phases 1–4 not started, 2026-06-06). Implementation plan for
+- **Status:** In progress (Phases 0–1 shipped — clean rebaseline + the convergent
+  engine core, app-intercept, reconcile, and in-stream closure; Phases 2–4 not
+  started, 2026-06-06). Implementation plan for
   `docs/plans/2026-06-06-directory-sync-membership-engine-design.md`.
 
 Implements the membership-engine architecture (the design doc). This plan

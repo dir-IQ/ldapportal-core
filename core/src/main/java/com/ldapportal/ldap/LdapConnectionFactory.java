@@ -6,14 +6,17 @@ import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.exception.LdapConnectionException;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
+import com.ldapportal.ldap.sync.SyncCapturingLdapInterface;
+import com.ldapportal.ldap.sync.SyncWriteCaptor;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.sdk.*;
 import com.unboundid.ldap.sdk.extensions.StartTLSExtendedRequest;
 import com.unboundid.util.ssl.SSLUtil;
 import com.unboundid.util.ssl.TrustAllTrustManager;
 import jakarta.annotation.PreDestroy;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 import javax.net.ssl.SSLSocketFactory;
@@ -52,14 +55,36 @@ import java.util.concurrent.ConcurrentMap;
  */
 @Component
 @Slf4j
-@RequiredArgsConstructor
-@LdapWriteAuthorized("Constructs the write surface — hands out the write-capable "
-        + "LDAP interface from the pool; issues no mutating calls itself.")
+@LdapWriteAuthorized("Constructs the write surface — wraps pooled connections in "
+        + "SyncCapturingLdapInterface on the captured path and hands out the "
+        + "write-capable interface; issues no mutating calls itself.")
 public class LdapConnectionFactory {
 
     private final EncryptionService encryptionService;
 
+    /**
+     * App-intercept capture for the sync engine. Null in unit tests that
+     * construct the factory directly (and absent from edition builds without
+     * the engine). When present, {@link #withConnection} wraps borrowed
+     * connections so successful writes emit a recompute; {@link
+     * #withConnectionUnreplicated} always bypasses capture.
+     */
+    @Nullable
+    private final SyncWriteCaptor syncWriteCaptor;
+
     private final ConcurrentMap<UUID, LDAPConnectionPool> pools = new ConcurrentHashMap<>();
+
+    @Autowired
+    public LdapConnectionFactory(EncryptionService encryptionService,
+                                 @Nullable SyncWriteCaptor syncWriteCaptor) {
+        this.encryptionService = encryptionService;
+        this.syncWriteCaptor = syncWriteCaptor;
+    }
+
+    /** Convenience constructor for unit tests — no capture wrapper. */
+    public LdapConnectionFactory(EncryptionService encryptionService) {
+        this(encryptionService, null);
+    }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -101,29 +126,31 @@ public class LdapConnectionFactory {
      */
     public <T> T withConnection(DirectoryConnection dc,
                                 LdapOperation<T> operation) {
-        return doWithConnection(dc, operation);
+        return doWithConnection(dc, operation, true);
     }
 
     /**
-     * Borrows a connection from the pool without participating in any
-     * change-capture path. Retained as the wiring point for the sync
-     * engine's source reads and target writes, which must not loop back
-     * into the recompute queue once app-intercept capture is reintroduced.
-     * Currently identical to {@link #withConnection} (no capture wrapper
-     * is active).
+     * Borrows a connection from the pool without participating in the sync
+     * change-capture path. Used by the sync engine's own source reads and
+     * target writes, which must not loop back into the recompute queue, and by
+     * any caller that deliberately doesn't want app-intercept capture.
      */
     public <T> T withConnectionUnreplicated(DirectoryConnection dc,
                                              LdapOperation<T> operation) {
-        return doWithConnection(dc, operation);
+        return doWithConnection(dc, operation, false);
     }
 
     private <T> T doWithConnection(DirectoryConnection dc,
-                                    LdapOperation<T> operation) {
+                                    LdapOperation<T> operation,
+                                    boolean capture) {
         LDAPConnectionPool pool = getPool(dc);
         LDAPConnection conn = null;
         try {
             conn = pool.getConnection();
-            return operation.execute(conn);
+            FullLDAPInterface iface = (capture && syncWriteCaptor != null)
+                    ? new SyncCapturingLdapInterface(conn, syncWriteCaptor, dc.getId())
+                    : conn;
+            return operation.execute(iface);
         } catch (LDAPException e) {
             boolean connectionBroken = !e.getResultCode().isConnectionUsable();
             if (conn != null) {
