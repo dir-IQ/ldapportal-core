@@ -1,1460 +1,433 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
-  <PageContainer>
-    <div class="flex items-center justify-between mb-6">
-      <div>
-        <h1 class="text-2xl font-bold text-gray-900">Directory Sync</h1>
-        <p class="text-sm text-gray-500 mt-1">
-          Asynchronous replication of app-initiated changes between directories
-        </p>
-      </div>
-      <button @click="openCreate" class="btn-primary">+ New Replication Link</button>
-    </div>
+  <PageContainer title="Directory Sync" subtitle="Membership-driven source→target synchronization">
+    <div class="space-y-8">
+      <!-- ── Links ───────────────────────────────────────────────────────── -->
+      <section>
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-base font-semibold text-gray-900">Sync links</h2>
+          <button class="btn-primary text-sm" @click="openLinkModal()">New link</button>
+        </div>
+        <EmptyState v-if="!links.length" message="No sync links configured yet." />
+        <table v-else class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 border-b">
+              <th class="py-2">Name</th><th>Source</th><th>Target</th><th>Capture</th><th>Enabled</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="l in links" :key="l.id"
+                class="border-b hover:bg-gray-50 cursor-pointer"
+                :class="{ 'bg-blue-50': selectedLinkId === l.id }"
+                @click="selectLink(l.id)">
+              <td class="py-2 font-medium">{{ l.displayName }}</td>
+              <td>{{ dirName(l.sourceDirId) }}</td>
+              <td>{{ dirName(l.targetDirId) }}</td>
+              <td>{{ l.captureMode }}</td>
+              <td>{{ l.enabled ? 'Yes' : 'No' }}</td>
+              <td class="text-right whitespace-nowrap">
+                <button class="btn-secondary text-xs" @click.stop="openLinkModal(l)">Edit</button>
+                <button class="btn-neutral text-xs ml-1" @click.stop="removeLink(l)">Delete</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
 
-    <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
-      <div v-if="loading" class="p-8 text-center text-gray-500 text-sm">Loading…</div>
-      <EmptyState v-else-if="links.length === 0" icon="folder" title="No replication links configured." />
-      <table v-else class="w-full text-sm">
-        <thead class="bg-gray-50 border-b border-gray-100">
-          <tr>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Name</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Source → Target</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Status</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Capture</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Pending</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Failed</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Dead-lettered</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Last delivered</th>
-            <th class="px-4 py-3 text-left font-medium text-gray-500">Reconciliation</th>
-            <th class="px-4 py-3"></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-50">
-          <tr v-for="link in links" :key="link.id" class="hover:bg-gray-50">
-            <td class="px-4 py-3 font-medium text-gray-900">{{ link.displayName }}</td>
-            <td class="px-4 py-3 text-gray-600 text-xs">
-              {{ link.sourceDirectoryName }} → {{ link.targetDirectoryName }}
-            </td>
-            <td class="px-4 py-3">
-              <span :class="link.enabled ? 'text-green-600' : 'text-gray-500'" class="text-xs font-medium">
-                {{ link.enabled ? 'Enabled' : 'Disabled' }}
-              </span>
-            </td>
-            <td class="px-4 py-3 text-xs">
-              <template v-if="link.captureMode === 'CHANGELOG'">
-                <span :class="healthBadgeClass(link.changelogHealth)"
-                      :title="link.changelogLastError || 'Source changelog capture'">
-                  {{ healthLabel(link.changelogHealth) }}
-                </span>
-                <div class="text-gray-500 mt-0.5">
-                  <span v-if="link.changelogLag != null">lag {{ link.changelogLag }}</span>
-                  <span v-else class="text-gray-400">changelog</span>
-                  <template v-if="link.changelogLastPolledAt">
-                    · polled <RelativeTime :value="link.changelogLastPolledAt" />
-                  </template>
-                </div>
-              </template>
-              <span v-else class="text-gray-400">app writes</span>
-            </td>
-            <td class="px-4 py-3 text-gray-600">{{ link.pendingCount }}</td>
-            <td class="px-4 py-3"
-                :class="link.failedCount > 0 ? 'text-amber-700 font-medium' : 'text-gray-600'">
-              {{ link.failedCount }}
-            </td>
-            <td class="px-4 py-3"
-                :class="link.deadLetteredCount > 0 ? 'text-red-700 font-medium' : 'text-gray-600'">
-              {{ link.deadLetteredCount }}
-            </td>
-            <td class="px-4 py-3 text-gray-600 text-xs">
-              <RelativeTime v-if="link.lastDeliveredAt" :value="link.lastDeliveredAt" />
-              <span v-else class="text-gray-400">—</span>
-            </td>
-            <td class="px-4 py-3 text-xs">
-              <template v-if="link.reconcileEnabled">
-                <button v-if="(link.openFindingCount ?? 0) > 0"
-                        @click="openRuns(link)"
-                        class="badge badge-amber hover:opacity-80"
-                        :title="`${link.openFindingCount} finding(s) awaiting review`">
-                  {{ link.openFindingCount }} to review
-                </button>
-                <div class="text-gray-500">
-                  <template v-if="link.reconcileLastRunAt">
-                    last <RelativeTime :value="link.reconcileLastRunAt" />
-                  </template>
-                  <template v-else-if="link.reconcileNextRunAt">
-                    next <RelativeTime :value="link.reconcileNextRunAt" />
-                  </template>
-                  <span v-else class="text-gray-400">scheduled</span>
-                </div>
-              </template>
-              <span v-else class="text-gray-400">off</span>
-            </td>
-            <td class="px-4 py-3 text-right whitespace-nowrap">
-              <ActionMenu :items="rowActions(link)">
-                <template #primary>
-                  <button @click="openEdit(link)" class="btn-secondary btn-compact">Edit</button>
-                </template>
-              </ActionMenu>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+      <!-- ── Sets (for the selected link) ─────────────────────────────────── -->
+      <section v-if="selectedLinkId">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-base font-semibold text-gray-900">
+            Sync sets — {{ dirName(selectedLink?.sourceDirId) }} → {{ dirName(selectedLink?.targetDirId) }}
+          </h2>
+          <button class="btn-primary text-sm" @click="openSetModal()">New set</button>
+        </div>
+        <EmptyState v-if="!sets.length" message="No sync sets for this link yet." />
+        <table v-else class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 border-b">
+              <th class="py-2">Name</th><th>Scope</th><th>Target base</th><th>Delete policy</th><th>Enabled</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in sets" :key="s.id"
+                class="border-b hover:bg-gray-50 cursor-pointer"
+                :class="{ 'bg-blue-50': selectedSetId === s.id }"
+                @click="selectSet(s.id)">
+              <td class="py-2 font-medium">{{ s.name }}</td>
+              <td class="font-mono text-xs">{{ s.objectScopeBaseDn || '—' }}</td>
+              <td class="font-mono text-xs">{{ s.targetBaseDn || '—' }}</td>
+              <td>{{ s.deletePolicy }}</td>
+              <td>{{ s.enabled ? 'Yes' : 'No' }}</td>
+              <td class="text-right whitespace-nowrap">
+                <button class="btn-secondary text-xs" @click.stop="openSetModal(s)">Edit</button>
+                <button class="btn-neutral text-xs ml-1" @click.stop="removeSet(s)">Delete</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
 
-    <!-- Create / Edit modal ───────────────────────────────────────────── -->
-    <AppModal v-model="showForm"
-              :title="editing ? 'Edit Replication Link' : 'New Replication Link'"
-              size="lg"
-              fixed-height="min(640px, 80vh)">
-      <form @submit.prevent="save" class="space-y-3">
-        <div class="grid grid-cols-2 gap-3">
-          <FormField label="Display Name" v-model="form.displayName" required />
-          <div></div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Source Directory</label>
-            <select v-model="form.sourceDirectoryId" class="input w-full" required>
-              <option value="" disabled>Select source…</option>
-              <option v-for="d in directoryOptions" :key="d.id" :value="d.id">{{ d.displayName }}</option>
+      <!-- ── Membership inventory (for the selected set) ──────────────────── -->
+      <section v-if="selectedSetId">
+        <div class="flex items-center justify-between mb-2 gap-2 flex-wrap">
+          <h2 class="text-base font-semibold text-gray-900">Membership inventory — {{ selectedSet?.name }}</h2>
+          <div class="flex items-center gap-2">
+            <select v-model="stateFilter" aria-label="Filter by membership state" class="input text-sm w-40" @change="loadMemberships">
+              <option value="">All states</option>
+              <option value="APPLIED">Applied</option>
+              <option value="FAILED">Failed</option>
+              <option value="REVIEW">Review</option>
+              <option value="PENDING">Pending</option>
             </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Target Directory</label>
-            <select v-model="form.targetDirectoryId" class="input w-full" required>
-              <option value="" disabled>Select target…</option>
-              <option v-for="d in directoryOptions" :key="d.id" :value="d.id"
-                      :disabled="d.id === form.sourceDirectoryId">{{ d.displayName }}</option>
-            </select>
-          </div>
-          <FormField label="Source Base DN (optional)" v-model="form.sourceBaseDn"
-                     placeholder="leave blank for identity mapping" />
-          <FormField label="Target Base DN (optional)" v-model="form.targetBaseDn"
-                     placeholder="required if source is set" />
-        </div>
-
-        <div class="flex items-center gap-4">
-          <label class="flex items-center gap-2 text-sm text-gray-700">
-            <input type="checkbox" v-model="form.enabled" class="rounded" />
-            Enabled
-          </label>
-          <label class="flex items-center gap-2 text-sm text-gray-700"
-                 title="When MODIFY targets a missing entry, auto-create from source first.">
-            <input type="checkbox" v-model="form.autoCreateOnMissing" class="rounded" />
-            Auto-create on missing target
-          </label>
-        </div>
-
-        <!-- Capture mode (C4) ────────────────────────────────────────────── -->
-        <div class="border border-gray-200 rounded-lg p-3 space-y-3">
-          <span class="block text-sm font-medium text-gray-700">Capture mode</span>
-          <p class="text-xs text-gray-500">
-            How source changes are detected — exclusive per link. A link captures via the
-            portal’s own writes <em>or</em> the source’s changelog, not both.
-          </p>
-          <label class="flex items-start gap-2 text-sm text-gray-700">
-            <input type="radio" value="APP_INTERCEPT" v-model="form.captureMode" class="mt-0.5" />
-            <span>
-              <span class="font-medium">App writes</span> <span class="text-gray-400">(default)</span>
-              <span class="block text-xs text-gray-500">
-                Replicate changes the portal makes. Out-of-band writes (native consoles, scripts,
-                other tools) are caught only by reconciliation.
-              </span>
-            </span>
-          </label>
-          <label class="flex items-start gap-2 text-sm text-gray-700">
-            <input type="radio" value="CHANGELOG" v-model="form.captureMode" class="mt-0.5" />
-            <span>
-              <span class="font-medium">Source changelog</span>
-              <span class="block text-xs text-gray-500">
-                Poll the source directory’s external changelog, capturing every change regardless of
-                origin. OUD (cn=changelog) only in this version.
-              </span>
-            </span>
-          </label>
-
-          <div v-if="form.captureMode === 'CHANGELOG'" class="pl-6 space-y-3">
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Changelog format</label>
-                <select v-model="form.changelogFormat" class="input w-full">
-                  <option value="DSEE_CHANGELOG">OUD (cn=changelog)</option>
-                  <option value="OPENLDAP_ACCESSLOG" disabled>OpenLDAP accesslog (coming soon)</option>
-                  <option value="AD_DIRSYNC" disabled>Active Directory DirSync (coming soon)</option>
-                </select>
-              </div>
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Changelog base DN</label>
-                <input v-model="form.changelogBaseDn" placeholder="cn=changelog" class="input w-full" />
-              </div>
-            </div>
-            <div class="flex items-center gap-3">
-              <button type="button" @click="doTestChangelog"
-                      :disabled="changelogTesting || !form.sourceDirectoryId"
-                      class="btn-secondary text-sm">
-                {{ changelogTesting ? 'Testing…' : 'Test changelog' }}
-              </button>
-              <span v-if="!form.sourceDirectoryId" class="text-xs text-gray-400">Select a source directory first.</span>
-            </div>
-            <div v-if="changelogTest"
-                 :class="changelogTest.reachable
-                   ? 'bg-green-50 border-green-200 text-green-800'
-                   : 'bg-red-50 border-red-200 text-red-700'"
-                 class="border rounded-lg px-3 py-2 text-sm">
-              {{ changelogTest.reachable ? '✓' : '✕' }} {{ changelogTest.message }}
-              <span v-if="changelogTest.elapsedMs != null" class="text-xs opacity-70">({{ changelogTest.elapsedMs }}ms)</span>
-              <span v-if="changelogTest.currentHead != null" class="block text-xs opacity-80">
-                current head changeNumber {{ changelogTest.currentHead }}<span
-                  v-if="changelogTest.firstChangeNumber != null">, first {{ changelogTest.firstChangeNumber }}</span>
-              </span>
-            </div>
-            <p class="text-xs text-gray-500">
-              On save, capture seeds from the current changelog head — existing entries aren’t
-              replayed; reconciliation backfills them. Switching capture mode resets the cursor.
-            </p>
-          </div>
-        </div>
-
-        <!-- Exclude filter (both capture modes) ──────────────────────────── -->
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">Exclude filter (optional)</label>
-          <input v-model="form.excludeFilter" placeholder="(objectClass=computer)" class="input w-full" />
-          <p class="text-xs mt-1" :class="excludeFilterHint ? 'text-amber-600' : 'text-gray-400'">
-            {{ excludeFilterHint
-              || 'RFC 4515 filter for source entries to skip — applies to capture and reconciliation. Validated on save.' }}
-          </p>
-        </div>
-
-        <details class="border border-gray-200 rounded-lg">
-          <summary class="px-3 py-2 cursor-pointer text-sm text-gray-700 select-none">
-            Attribute mappings ({{ form.attributeMappings.length }})
-          </summary>
-          <div class="p-3 space-y-2">
-            <p class="text-xs text-gray-500">
-              Leave empty for identity mapping (same attribute names, same values).
-              <code>${value}</code> in the template substitutes the source value.
-            </p>
-            <table v-if="form.attributeMappings.length > 0" class="w-full text-xs">
-              <thead class="text-gray-500">
-                <tr>
-                  <th class="text-left pb-1">Source attr</th>
-                  <th class="text-left pb-1">Target attr</th>
-                  <th class="text-left pb-1">Value template</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="(m, i) in form.attributeMappings" :key="i">
-                  <td class="pr-2 py-1"><input v-model="m.sourceAttr" class="input w-full text-xs" /></td>
-                  <td class="pr-2 py-1"><input v-model="m.targetAttr" class="input w-full text-xs" /></td>
-                  <td class="pr-2 py-1"><input v-model="m.valueTemplate"
-                                               placeholder="${value}"
-                                               class="input w-full text-xs" /></td>
-                  <td class="py-1 text-right">
-                    <button type="button" @click="form.attributeMappings.splice(i, 1)"
-                            class="text-red-600 hover:text-red-700 text-xs px-1">×</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <button type="button" @click="addMappingRow" class="btn-secondary btn-compact text-xs">
-              + Add mapping
+            <button class="btn-secondary text-sm" @click="doReconcile" :disabled="reconciling">
+              {{ reconciling ? 'Reconciling…' : 'Reconcile now' }}
             </button>
           </div>
-        </details>
-
-        <!-- Reconciliation config (R-P0) ─────────────────────────────────── -->
-        <details class="border border-gray-200 rounded-lg">
-          <summary class="px-3 py-2 cursor-pointer text-sm text-gray-700 select-none">
-            Reconciliation
-            <span class="text-xs text-gray-400">
-              — {{ form.reconcileEnabled
-                    ? `${form.reconcileMode === 'AUTO_CORRECT' ? 'auto-correct' : 'review'}, every ${form.reconcileIntervalValue} ${form.reconcileIntervalUnit}`
-                    : 'off' }}
-            </span>
-          </summary>
-          <div class="p-3 space-y-3">
-            <p class="text-xs text-gray-500">
-              Periodically compares the target against the source and resolves drift the
-              live capture path can't see (out-of-band changes, missed writes, initial backfill).
-            </p>
-            <label class="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" v-model="form.reconcileEnabled" :disabled="!form.enabled" class="rounded" />
-              Enable periodic reconciliation
-            </label>
-            <p v-if="!form.enabled" class="text-xs text-gray-400">Enable the link first to configure reconciliation.</p>
-
-            <div v-if="form.reconcileEnabled" class="space-y-3 pl-6">
-              <!-- Mode (missing / drift) -->
-              <div>
-                <span class="block text-sm font-medium text-gray-700 mb-1">Missing entries &amp; attribute drift</span>
-                <label class="flex items-center gap-2 text-sm text-gray-700">
-                  <input type="radio" value="REVIEW" v-model="form.reconcileMode" /> Review before applying
-                </label>
-                <label class="flex items-center gap-2 text-sm text-gray-700">
-                  <input type="radio" value="AUTO_CORRECT" v-model="form.reconcileMode" /> Correct automatically
-                </label>
-              </div>
-
-              <!-- Schedule -->
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="block text-sm font-medium text-gray-700 mb-1">First run</label>
-                  <input type="datetime-local" v-model="form.reconcileFirstRunAt"
-                         class="input w-full" :required="form.reconcileEnabled" />
-                </div>
-                <div>
-                  <label class="block text-sm font-medium text-gray-700 mb-1">Repeat every</label>
-                  <div class="flex gap-2">
-                    <input type="number" min="1" v-model.number="form.reconcileIntervalValue"
-                           class="input w-24" :required="form.reconcileEnabled" />
-                    <select v-model="form.reconcileIntervalUnit" class="input">
-                      <option value="hours">hours</option>
-                      <option value="days">days</option>
-                    </select>
-                  </div>
-                  <p class="text-xs text-gray-400 mt-1">Minimum 1 hour.</p>
-                </div>
-              </div>
-
-              <!-- Extra-on-target (delete) action -->
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">
-                  Extra entries on the target (no source match)
-                </label>
-                <select v-model="form.reconcileDeleteAction" @change="onDeleteActionChange" class="input w-full">
-                  <option value="IGNORE">Leave alone</option>
-                  <option value="REVIEW">Review before deleting</option>
-                  <option value="AUTO">Delete automatically</option>
-                </select>
-                <p v-if="form.reconcileDeleteAction === 'AUTO'" class="text-xs text-red-600 mt-1">
-                  ⚠ Entries on the target with no source counterpart will be deleted automatically.
-                </p>
-              </div>
-            </div>
-          </div>
-        </details>
-      </form>
-
-      <template #footer>
-        <button @click="showForm = false" class="btn-secondary">Cancel</button>
-        <button @click="save" :disabled="saving" class="btn-primary">
-          {{ saving ? 'Saving…' : 'Save' }}
-        </button>
-      </template>
-    </AppModal>
-
-    <!-- Rewind changelog cursor modal ──────────────────────────────────── -->
-    <AppModal v-model="showRewind" title="Rewind changelog cursor" size="sm">
-      <div class="space-y-3">
-        <p class="text-sm text-gray-600">
-          Set the cursor for <span class="font-medium">{{ rewindLink?.displayName }}</span> back to a
-          changeNumber. The next poll resumes from that number + 1, re-delivering later changes.
-        </p>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">changeNumber</label>
-          <input type="number" min="0" v-model.number="rewindValue" class="input w-full" />
-          <p class="text-xs text-gray-400 mt-1">
-            Current cursor: {{ rewindLink?.changelogLastChangeNumber ?? '—' }}
-          </p>
         </div>
-      </div>
-      <template #footer>
-        <button @click="showRewind = false" class="btn-secondary">Cancel</button>
-        <button @click="doRewind" :disabled="rewindSaving || rewindValue == null || rewindValue < 0"
-                class="btn-primary">
-          {{ rewindSaving ? 'Rewinding…' : 'Rewind' }}
-        </button>
-      </template>
-    </AppModal>
 
-    <!-- Event log modal ────────────────────────────────────────────────── -->
-    <AppModal v-model="showEvents" :title="`Events — ${eventsLink?.displayName ?? ''}`"
-              size="xl" fixed-height="min(720px, 85vh)" movable resizable>
-      <div class="space-y-3">
-        <div class="flex gap-3 items-center text-sm">
-          <label class="text-gray-700">Status:</label>
-          <select v-model="eventStatusFilter" @change="loadEvents()" class="input">
-            <option value="">All</option>
-            <option value="PENDING">Pending</option>
-            <option value="IN_FLIGHT">In flight</option>
-            <option value="DELIVERED">Delivered</option>
-            <option value="FAILED">Failed</option>
-            <option value="DEAD_LETTERED">Dead-lettered</option>
-            <option value="SKIPPED">Skipped</option>
-            <option value="ACKNOWLEDGED">Acknowledged</option>
+        <div class="flex items-center gap-2 mb-3">
+          <input v-model="recomputeInput" class="input text-sm flex-1"
+                 placeholder="Recompute a source DN or identity…" />
+          <button class="btn-secondary text-sm" @click="doRecompute" :disabled="!recomputeInput.trim()">
+            Recompute
+          </button>
+        </div>
+
+        <EmptyState v-if="!memberships.length" message="No membership rows match." />
+        <table v-else class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-500 border-b">
+              <th class="py-2">Identity</th><th>State</th><th>Source DN</th><th>Target DN</th><th>Reason</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in memberships" :key="m.identity" class="border-b">
+              <td class="py-2 font-mono text-xs">{{ m.identity }}</td>
+              <td>
+                <span class="px-2 py-0.5 rounded text-xs" :class="stateClass(m.state)">{{ m.state }}</span>
+              </td>
+              <td class="font-mono text-xs">{{ m.sourceDn }}</td>
+              <td class="font-mono text-xs">{{ m.targetDn }}</td>
+              <td class="text-xs text-gray-500">{{ m.failReason || '—' }}</td>
+              <td class="text-right whitespace-nowrap">
+                <button class="btn-secondary text-xs" @click="recomputeIdentity(m)">Recompute</button>
+                <button class="btn-neutral text-xs ml-1" @click="dismiss(m)">Dismiss</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+
+    <!-- ── Link editor ─────────────────────────────────────────────────────── -->
+    <AppModal v-model="showLinkModal" :title="editingLink ? 'Edit sync link' : 'New sync link'" size="md">
+      <form class="space-y-3" @submit.prevent="saveLink">
+        <FormField label="Display name" v-model="linkForm.displayName" required />
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Source directory</label>
+          <select v-model="linkForm.sourceDirId" aria-label="Source directory" class="input" required>
+            <option value="" disabled>Select…</option>
+            <option v-for="d in directories" :key="d.id" :value="d.id">{{ d.displayName }}</option>
           </select>
-          <button @click="loadEvents()" class="btn-secondary btn-compact text-xs">Refresh</button>
         </div>
-        <div v-if="loadingEvents" class="text-center text-gray-500 py-4 text-sm">Loading…</div>
-        <div v-else-if="events.length === 0" class="text-center text-gray-500 py-4 text-sm">
-          No events match the filter.
-        </div>
-        <table v-else class="w-full text-xs">
-          <thead class="bg-gray-50 text-gray-500">
-            <tr>
-              <th class="text-left px-2 py-1">When</th>
-              <th class="text-left px-2 py-1">Op</th>
-              <th class="text-left px-2 py-1">Target DN</th>
-              <th class="text-left px-2 py-1">Status</th>
-              <th class="text-left px-2 py-1">Attempts</th>
-              <th class="text-left px-2 py-1">Last error</th>
-              <th class="px-2 py-1"></th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-50">
-            <tr v-for="e in events" :key="e.id">
-              <td class="px-2 py-1"><RelativeTime :value="e.enqueuedAt" /></td>
-              <td class="px-2 py-1 font-mono text-[13px]">{{ e.operation }}</td>
-              <td class="px-2 py-1 font-mono text-[13px] truncate max-w-xs" :title="e.targetDn">
-                {{ e.targetDn }}
-              </td>
-              <td class="px-2 py-1">
-                <span :class="statusClass(e.status)" class="px-1.5 py-0.5 rounded text-[10px] font-medium">
-                  {{ e.status }}
-                </span>
-              </td>
-              <td class="px-2 py-1">{{ e.attempts }}</td>
-              <td class="px-2 py-1 text-[10px] text-gray-600 truncate max-w-xs" :title="e.lastError">
-                {{ e.lastError || '—' }}
-              </td>
-              <td class="px-2 py-1 text-right whitespace-nowrap">
-                <button v-if="e.correlationId" @click="traceCorrelation(e)"
-                        title="Show every audit row from this event's originating operation"
-                        class="text-indigo-600 hover:text-indigo-700 text-[10px] px-1">trace</button>
-                <button v-if="canRetry(e.status)" @click="doEventAction(e, 'retry')"
-                        class="text-blue-600 hover:text-blue-700 text-[10px] px-1">retry</button>
-                <button v-if="canSkip(e.status)" @click="doEventAction(e, 'skip')"
-                        class="text-gray-600 hover:text-gray-700 text-[10px] px-1">skip</button>
-                <button v-if="e.status === 'DEAD_LETTERED'" @click="doEventAction(e, 'ack')"
-                        class="text-gray-600 hover:text-gray-700 text-[10px] px-1">ack</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <div v-if="eventsTotalPages > 1" class="flex justify-between items-center text-xs text-gray-500">
-          <button :disabled="eventsPage === 0" @click="eventsPage--; loadEvents()" class="btn-secondary btn-compact">← Prev</button>
-          <span>Page {{ eventsPage + 1 }} of {{ eventsTotalPages }}</span>
-          <button :disabled="eventsPage >= eventsTotalPages - 1" @click="eventsPage++; loadEvents()" class="btn-secondary btn-compact">Next →</button>
-        </div>
-      </div>
-    </AppModal>
-
-    <!-- Reconciliation runs modal ──────────────────────────────────────── -->
-    <AppModal v-model="showRuns" :title="`Reconciliation — ${runsLink?.displayName ?? ''}`"
-              size="xl" fixed-height="min(640px, 85vh)">
-      <div class="space-y-3">
-        <div class="flex items-center gap-3 text-sm">
-          <button v-if="runsLink" @click="reconcileNow(runsLink)" class="btn-secondary btn-compact text-xs">Reconcile now</button>
-          <button @click="loadRuns" class="btn-secondary btn-compact text-xs">Refresh</button>
-        </div>
-        <div v-if="loadingRuns" class="text-center text-gray-500 py-4 text-sm">Loading…</div>
-        <EmptyState v-else-if="runs.length === 0" icon="clipboard" title="No reconciliation runs yet." />
-        <table v-else class="w-full text-xs">
-          <thead class="bg-gray-50 text-gray-500">
-            <tr>
-              <th class="text-left px-2 py-1">Started</th>
-              <th class="text-left px-2 py-1">Trigger</th>
-              <th class="text-left px-2 py-1">Mode</th>
-              <th class="text-left px-2 py-1">Status</th>
-              <th class="text-right px-2 py-1">Missing</th>
-              <th class="text-right px-2 py-1">Drift</th>
-              <th class="text-right px-2 py-1">Extra</th>
-              <th class="text-right px-2 py-1">Suppressed</th>
-              <th class="text-right px-2 py-1">Applied</th>
-              <th class="px-2 py-1"></th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-gray-50">
-            <tr v-for="r in runs" :key="r.id" class="hover:bg-gray-50">
-              <td class="px-2 py-1"><RelativeTime :value="r.startedAt" /></td>
-              <td class="px-2 py-1">{{ r.trigger }}</td>
-              <td class="px-2 py-1">{{ r.mode }}</td>
-              <td class="px-2 py-1">
-                <span class="badge" :class="{ 'badge-green': r.status === 'COMPLETED', 'badge-blue': r.status === 'RUNNING', 'badge-red': r.status === 'FAILED', 'badge-gray': r.status === 'CANCELLED' }"
-                      :title="r.error || ''">{{ r.status }}</span>
-              </td>
-              <td class="px-2 py-1 text-right">{{ r.missingCount }}</td>
-              <td class="px-2 py-1 text-right">{{ r.driftCount }}</td>
-              <td class="px-2 py-1 text-right">{{ r.extraCount }}</td>
-              <td class="px-2 py-1 text-right text-gray-500">{{ r.suppressedCount }}</td>
-              <td class="px-2 py-1 text-right">{{ r.appliedCount }}</td>
-              <td class="px-2 py-1 text-right">
-                <button v-if="runHasFindings(r)" @click="openFindings(r)" class="text-indigo-600 hover:text-indigo-700 font-medium">Review findings</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </AppModal>
-
-    <!-- Findings review modal ──────────────────────────────────────────── -->
-    <AppModal v-model="showFindings" size="xl" fixed-height="min(720px, 88vh)">
-      <template #title>
         <div>
-          <div class="text-lg font-semibold text-gray-900">Reconciliation findings — {{ runsLink?.displayName ?? '' }}</div>
-          <div v-if="findingsRun" class="text-xs font-normal text-gray-500 mt-0.5">
-            Run #{{ findingsRun.id.slice(0, 4) }} · {{ findingsRun.trigger === 'MANUAL' ? 'Manual' : 'Scheduled' }}
-            <template v-if="findingsRun.finishedAt"> · completed <RelativeTime :value="findingsRun.finishedAt" /></template>
-            <template v-if="runsLink?.sourceBaseDn || runsLink?.targetBaseDn">
-              · source <span class="font-mono">{{ runsLink?.sourceBaseDn || '—' }}</span>
-              → <span class="font-mono">{{ runsLink?.targetBaseDn || '—' }}</span>
-            </template>
-          </div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Target directory</label>
+          <select v-model="linkForm.targetDirId" aria-label="Target directory" class="input" required>
+            <option value="" disabled>Select…</option>
+            <option v-for="d in directories" :key="d.id" :value="d.id">{{ d.displayName }}</option>
+          </select>
         </div>
-      </template>
-
-      <div class="flex flex-col h-full min-h-0">
-        <!-- Pinned header: summary chips + toolbar (stay put while the table scrolls) -->
-        <div class="shrink-0 space-y-3 pb-3 border-b border-gray-100">
-          <!-- Run summary chips -->
-          <div v-if="findingsRun" class="flex flex-wrap items-center gap-2 text-xs">
-            <span class="badge badge-gray">Source {{ findingsRun.sourceEntryCount != null ? findingsRun.sourceEntryCount.toLocaleString() : '—' }}</span>
-            <span class="badge badge-gray">Target {{ findingsRun.targetEntryCount != null ? findingsRun.targetEntryCount.toLocaleString() : '—' }}</span>
-            <span class="w-px h-4 bg-gray-200 mx-1" aria-hidden="true"></span>
-            <span class="badge badge-blue gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-blue-600"></span>Missing {{ findingsRun.missingCount }}</span>
-            <span class="badge badge-amber gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>Drift {{ findingsRun.driftCount }}</span>
-            <span class="badge badge-red gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-red-600"></span>Extra {{ findingsRun.extraCount }}</span>
-            <span class="badge badge-gray gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-gray-400"></span>Suppressed {{ findingsRun.suppressedCount }}</span>
-          </div>
-          <!-- Toolbar -->
-          <div class="flex items-center gap-2 text-sm">
-            <label class="text-gray-700">Status</label>
-            <select v-model="findingStatusFilter" @change="loadFindings" class="input-sm" aria-label="Filter by status">
-              <option value="PROPOSED">Proposed</option>
-              <option value="">All</option>
-              <option value="AUTO_APPLIED">Auto-applied</option>
-              <option value="APPLIED">Applied</option>
-              <option value="DISMISSED">Dismissed</option>
-            </select>
-            <label class="text-gray-700">Type</label>
-            <select v-model="findingTypeFilter" @change="loadFindings" class="input-sm" aria-label="Filter by type">
-              <option value="">All</option>
-              <option value="MISSING_IN_TARGET">Missing</option>
-              <option value="ATTRIBUTE_DRIFT">Drift</option>
-              <option value="EXTRA_IN_TARGET">Extra</option>
-            </select>
-            <button @click="loadFindings" class="btn-secondary btn-compact text-xs">↻ Refresh</button>
-            <div class="flex-1"></div>
-            <span class="text-xs text-gray-500">{{ selectedFindings.size }} selected</span>
-            <button @click="dismissSelectedFindings" :disabled="applyingFindings || selectedFindings.size === 0"
-                    class="btn-secondary btn-compact text-xs">Dismiss selected</button>
-            <button @click="applySelectedFindings" :disabled="applyingFindings || selectedFindings.size === 0"
-                    class="btn-primary btn-compact text-xs">Apply selected</button>
-          </div>
+        <label class="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" v-model="linkForm.enabled" class="rounded" /> Enabled
+        </label>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" class="btn-neutral" @click="showLinkModal = false">Cancel</button>
+          <button type="submit" class="btn-primary">{{ editingLink ? 'Save' : 'Create' }}</button>
         </div>
-
-        <!-- Scrollable findings table -->
-        <div class="flex-1 overflow-y-auto min-h-0 pt-3">
-          <div v-if="loadingFindings" class="text-center text-gray-500 py-4 text-sm">Loading…</div>
-          <EmptyState v-else-if="findings.length === 0" icon="shield" title="No findings for this filter." />
-          <table v-else class="w-full text-xs">
-            <thead class="bg-gray-50 text-gray-500 sticky top-0 z-10">
-              <tr>
-                <th class="px-2 py-1.5 w-8">
-                  <input type="checkbox" :checked="allProposedSelected" @change="toggleAllFindings"
-                         :disabled="proposedFindings.length === 0" aria-label="Select all proposed" />
-                </th>
-                <th class="text-left px-2 py-1.5">Type</th>
-                <th class="text-left px-2 py-1.5">Source DN</th>
-                <th class="text-left px-2 py-1.5">Target DN</th>
-                <th class="text-left px-2 py-1.5">Suggested action</th>
-                <th class="px-2 py-1.5"></th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-50">
-              <template v-for="f in findings" :key="f.id">
-                <tr class="hover:bg-gray-50" :class="{ 'bg-blue-50': selectedFindings.has(f.id) }">
-                  <td class="px-2 py-1.5 align-top">
-                    <input type="checkbox" :checked="selectedFindings.has(f.id)" @change="toggleFinding(f.id)"
-                           :disabled="f.status !== 'PROPOSED'" :aria-label="`Select ${f.targetDn}`" />
-                  </td>
-                  <td class="px-2 py-1.5 align-top">
-                    <span class="badge" :class="{ 'badge-blue': f.findingType === 'MISSING_IN_TARGET', 'badge-amber': f.findingType === 'ATTRIBUTE_DRIFT', 'badge-red': f.findingType === 'EXTRA_IN_TARGET' }">
-                      {{ f.findingType === 'MISSING_IN_TARGET' ? 'Missing' : f.findingType === 'ATTRIBUTE_DRIFT' ? 'Drift' : 'Extra' }}
-                    </span>
-                  </td>
-                  <td class="px-2 py-1.5 font-mono text-[11px] truncate max-w-xs align-top" :title="f.sourceDn || ''">{{ f.sourceDn || '—' }}</td>
-                  <td class="px-2 py-1.5 font-mono text-[11px] truncate max-w-xs align-top" :title="f.targetDn">{{ f.targetDn }}</td>
-                  <td class="px-2 py-1.5 align-top">
-                    <span class="badge" :class="opBadgeClass(f.suggestedOp)">{{ f.suggestedOp }}</span>
-                    <div v-if="opNote(f)" class="text-[10px] text-gray-400 mt-0.5">{{ opNote(f) }}</div>
-                    <div v-if="f.status !== 'PROPOSED'" class="text-[10px] text-gray-400 mt-0.5">
-                      {{ f.status }}
-                      <button v-if="f.eventId" @click="openEventLog" class="text-blue-600 hover:underline ml-0.5">event ↗</button>
-                    </div>
-                  </td>
-                  <td class="px-2 py-1.5 text-right align-top">
-                    <button @click="toggleExpand(f.id)" class="text-gray-500 hover:text-gray-700"
-                            :aria-label="expandedFindings.has(f.id) ? 'Collapse' : 'Expand'">{{ expandedFindings.has(f.id) ? '▾' : '▸' }}</button>
-                  </td>
-                </tr>
-                <tr v-if="expandedFindings.has(f.id)" :key="f.id + '-d'">
-                  <td colspan="6" class="px-2 py-3 pl-12 bg-gray-50">
-                    <!-- MISSING_IN_TARGET: attributes that would be added -->
-                    <template v-if="f.findingType === 'MISSING_IN_TARGET'">
-                      <h4 class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Attributes to add on target</h4>
-                      <div class="space-y-1">
-                        <div v-for="a in missingAttrs(f)" :key="a.k" class="text-[13px]">
-                          <span class="text-green-700 font-bold mr-1.5">+</span>
-                          <span class="font-semibold text-gray-700">{{ a.k }}:</span>
-                          <span class="font-mono text-gray-600 ml-1">{{ a.v }}</span>
-                        </div>
-                      </div>
-                    </template>
-
-                    <!-- ATTRIBUTE_DRIFT: current target vs expected source -->
-                    <template v-else-if="f.findingType === 'ATTRIBUTE_DRIFT'">
-                      <h4 class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Attribute drift — current target vs expected (source)</h4>
-                      <table class="border border-gray-200 rounded-lg overflow-hidden text-[13px]">
-                        <thead>
-                          <tr class="bg-gray-100 text-gray-600 text-left">
-                            <th class="px-3 py-1.5 font-semibold">Attribute</th>
-                            <th class="px-3 py-1.5 font-semibold">Current (target)</th>
-                            <th class="px-3 py-1.5 font-semibold">Expected (source)</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr v-for="row in driftRows(f)" :key="row.name" class="border-t border-gray-100">
-                            <td class="px-3 py-1.5 font-semibold text-gray-700">{{ row.name }}</td>
-                            <td class="px-3 py-1.5 bg-red-50">
-                              <span v-if="row.current" class="font-mono text-red-700 line-through">{{ row.current }}</span>
-                              <span v-else class="font-mono text-gray-400">— (absent)</span>
-                            </td>
-                            <td class="px-3 py-1.5 bg-green-50">
-                              <span class="font-mono text-green-700">{{ row.expected }}</span>
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </template>
-
-                    <!-- EXTRA_IN_TARGET: target entry that would be deleted -->
-                    <template v-else>
-                      <h4 class="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-2">Target entry with no source counterpart — would be deleted</h4>
-                      <div class="space-y-1">
-                        <div v-for="a in extraAttrs(f)" :key="a.k" class="text-[13px]">
-                          <span class="font-semibold text-gray-700">{{ a.k }}:</span>
-                          <span class="font-mono text-gray-600 ml-1">{{ a.v }}</span>
-                        </div>
-                      </div>
-                      <div class="flex gap-2 items-start bg-red-50 border border-red-100 rounded-lg px-3 py-2 mt-3 text-[12px] text-red-700 max-w-xl">
-                        <span aria-hidden="true">⚠</span>
-                        <span><b>Destructive.</b> This entry exists on the target but not the source. Applying will issue a
-                          <b>DELETE</b> against the target.<template v-if="runsLink?.reconcileDeleteAction === 'REVIEW'">
-                          This link's deletion policy is <b>Review before deleting</b>, so it was not applied automatically.</template></span>
-                      </div>
-                    </template>
-                  </td>
-                </tr>
-              </template>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <template #footer>
-        <div class="w-full flex items-center justify-between text-xs text-gray-500">
-          <span>{{ findingsFooter }}</span>
-          <span v-if="findingsRun">Applied findings link to their
-            <button @click="openEventLog" class="text-blue-600 hover:underline font-medium">event log</button> ↗</span>
-        </div>
-      </template>
+      </form>
     </AppModal>
 
-    <ConfirmDialog v-if="deleteTarget"
-                   v-model="confirmDeleteOpen"
-                   title="Delete replication link?"
-                   :message="`Delete '${deleteTarget.displayName}'? Pending and dead-lettered events will be removed too.`"
-                   confirm-label="Delete"
-                   danger
-                   @confirm="doDelete"
-                   @cancel="deleteTarget = null" />
+    <!-- ── Set editor ──────────────────────────────────────────────────────── -->
+    <AppModal v-model="showSetModal" :title="editingSet ? 'Edit sync set' : 'New sync set'" size="lg">
+      <form class="space-y-3" @submit.prevent="saveSet">
+        <div class="grid grid-cols-2 gap-3">
+          <FormField label="Name" v-model="setForm.name" required />
+          <FormField label="Identity key (attribute)" v-model="setForm.identityKey"
+                     placeholder="entryUUID / objectGUID (default by type)" />
+          <FormField label="Source scope base DN" v-model="setForm.objectScopeBaseDn" />
+          <FormField label="Target base DN" v-model="setForm.targetBaseDn" />
+          <FormField label="Applicability filter (RFC 4515)" v-model="setForm.applicabilityFilter"
+                     placeholder="(&(objectClass=inetOrgPerson)(employeeType=staff))" />
+          <FormField label="Reference attributes (csv)" v-model="setForm.referenceAttributes"
+                     placeholder="member,uniqueMember,manager" />
+          <FormField label="Source anchor attribute" v-model="setForm.sourceAnchorAttribute" />
+          <FormField label="Reconcile cadence (seconds)" v-model="setForm.reconcileCadenceSeconds"
+                     type="number" placeholder="default" />
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Delete policy</label>
+            <select v-model="setForm.deletePolicy" aria-label="Delete policy" class="input">
+              <option value="DELETE">Delete</option>
+              <option value="REVIEW">Review (quarantine)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Source scope</label>
+            <select v-model="setForm.objectScope" aria-label="Source scope" class="input">
+              <option :value="null">Default (subtree)</option>
+              <option value="SUB">Subtree</option>
+              <option value="ONE">One level</option>
+              <option value="BASE">Base</option>
+            </select>
+          </div>
+        </div>
+        <label class="flex items-center gap-2 text-sm text-gray-700">
+          <input type="checkbox" v-model="setForm.enabled" class="rounded" /> Enabled
+        </label>
+        <div class="flex justify-end gap-2 pt-2">
+          <button type="button" class="btn-neutral" @click="showSetModal = false">Cancel</button>
+          <button type="submit" class="btn-primary">{{ editingSet ? 'Save' : 'Create' }}</button>
+        </div>
+      </form>
+    </AppModal>
   </PageContainer>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { useNotificationStore } from '@/stores/notifications'
-import {
-  listReplicationLinks, createReplicationLink, updateReplicationLink, deleteReplicationLink,
-  listReplicationEvents, retryReplicationEvent, skipReplicationEvent, acknowledgeReplicationEvent,
-  reconcileNow as apiReconcileNow,
-  listReconciliationRuns, getReconciliationFindings,
-  applyReconciliationFindings, dismissReconciliationFindings,
-  testReplicationChangelog, testReplicationChangelogPreSave,
-  reseedChangelogCursor, rewindChangelogCursor, reEnableChangelog,
-} from '@/api/replication'
-import { listDirectories } from '@/api/directories'
+import { onMounted, ref, computed } from 'vue'
 import PageContainer from '@/components/PageContainer.vue'
 import AppModal from '@/components/AppModal.vue'
 import FormField from '@/components/FormField.vue'
-import ActionMenu from '@/components/ActionMenu.vue'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import RelativeTime from '@/components/RelativeTime.vue'
-import { useConfirm } from '@/composables/useConfirm'
-import type { components } from '@/api/openapi'
+import { useNotificationStore } from '@/stores/notifications'
+import { listDirectories } from '@/api/directories'
+import {
+  listSyncLinks, createSyncLink, updateSyncLink, deleteSyncLink,
+  listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet,
+  listMemberships, reconcileSet, recomputeKey, dismissMembership,
+  type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
+  type Membership, type MembershipState,
+} from '@/api/sync'
 
-type Directory = components['schemas']['DirectoryConnectionResponse']
-
-interface AttributeMapping {
-  sourceAttr: string
-  targetAttr: string
-  valueTemplate: string
-}
-
-type ReconcileMode = 'AUTO_CORRECT' | 'REVIEW'
-type ReconcileDeleteAction = 'IGNORE' | 'REVIEW' | 'AUTO'
-type IntervalUnit = 'hours' | 'days'
-type CaptureMode = 'APP_INTERCEPT' | 'CHANGELOG'
-// v1 accepts DSEE_CHANGELOG only; the other formats are surfaced disabled.
-type ChangelogFormat = 'DSEE_CHANGELOG' | 'OPENLDAP_ACCESSLOG' | 'AD_DIRSYNC'
-type ChangelogHealth =
-  | 'HEALTHY' | 'LAGGING' | 'STALLED'
-  | 'GAP_DETECTED' | 'CURSOR_RESET' | 'DISABLED_CONFIG_ERROR'
-
-interface ChangelogTestResult {
-  reachable: boolean
-  message: string
-  elapsedMs?: number | null
-  currentHead?: number | null
-  firstChangeNumber?: number | null
-}
-
-interface ReplicationForm {
-  displayName: string
-  sourceDirectoryId: string
-  targetDirectoryId: string
-  sourceBaseDn: string
-  targetBaseDn: string
-  enabled: boolean
-  autoCreateOnMissing: boolean
-  attributeMappings: AttributeMapping[]
-  // Reconciliation config (R-P0). interval is held as value+unit in the
-  // form and serialized to reconcileIntervalSecs on save.
-  reconcileEnabled: boolean
-  reconcileMode: ReconcileMode
-  reconcileDeleteAction: ReconcileDeleteAction
-  reconcileFirstRunAt: string          // datetime-local string ('' when unset)
-  reconcileIntervalValue: number
-  reconcileIntervalUnit: IntervalUnit
-  // Changelog capture (C4). changelogFormat/baseDn only apply when
-  // captureMode === 'CHANGELOG'; excludeFilter applies to both modes.
-  captureMode: CaptureMode
-  changelogFormat: ChangelogFormat
-  changelogBaseDn: string
-  excludeFilter: string
-}
-
-// Row shapes from the (untyped) replication API; only the fields this
-// view reads are modelled.
-interface ReplicationLink {
-  id: string
-  displayName: string
-  sourceDirectoryId: string
-  targetDirectoryId: string
-  sourceDirectoryName?: string
-  targetDirectoryName?: string
-  sourceBaseDn?: string | null
-  targetBaseDn?: string | null
-  enabled: boolean
-  autoCreateOnMissing: boolean
-  pendingCount: number
-  failedCount: number
-  deadLetteredCount: number
-  lastDeliveredAt?: string | null
-  attributeMappings?: AttributeMapping[]
-  reconcileEnabled?: boolean
-  reconcileMode?: ReconcileMode
-  reconcileDeleteAction?: ReconcileDeleteAction
-  reconcileFirstRunAt?: string | null
-  reconcileIntervalSecs?: number | null
-  reconcileNextRunAt?: string | null
-  reconcileLastRunAt?: string | null
-  openFindingCount?: number
-  // Changelog capture (read-only surfacing).
-  captureMode?: CaptureMode
-  changelogFormat?: ChangelogFormat | null
-  changelogBaseDn?: string | null
-  excludeFilter?: string | null
-  changelogLastChangeNumber?: number | null
-  changelogLag?: number | null
-  changelogHealth?: ChangelogHealth
-  changelogLastPolledAt?: string | null
-  changelogLastError?: string | null
-}
-
-interface ReplicationEvent {
-  id: string
-  enqueuedAt: string
-  operation: string
-  targetDn: string
-  status: string
-  attempts: number
-  lastError?: string
-  correlationId?: string
-}
-
-type EventAction = 'retry' | 'skip' | 'ack'
-
-// Reconciliation run + finding rows (untyped API; only read fields modelled).
-interface ReconRun {
-  id: string
-  trigger: string
-  mode: string
-  status: string
-  startedAt: string
-  finishedAt?: string | null
-  sourceEntryCount?: number | null
-  targetEntryCount?: number | null
-  missingCount: number
-  driftCount: number
-  extraCount: number
-  suppressedCount: number
-  appliedCount: number
-  error?: string | null
-}
-
-interface ReconFinding {
-  id: string
-  findingType: 'MISSING_IN_TARGET' | 'ATTRIBUTE_DRIFT' | 'EXTRA_IN_TARGET'
-  suggestedOp: string
-  sourceDn?: string | null
-  targetDn: string
-  detail: Record<string, unknown>
-  status: string
-  eventId?: string | null
-}
-
-// Repo-standard axios/native error narrowing (see docs/frontend-conventions.md).
-function errMsg(e: unknown, fallback = 'Something went wrong'): string {
-  const err = e as { response?: { data?: { detail?: string } }; message?: string }
-  return err.response?.data?.detail || err.message || fallback
-}
+interface DirOption { id: string; displayName: string }
 
 const notif = useNotificationStore()
-const router = useRouter()
-const route = useRoute()
-const confirm = useConfirm()
 
-// Choosing "Delete automatically" is destructive — make the operator
-// confirm, and revert to Review if they decline.
-async function onDeleteActionChange() {
-  if (form.value.reconcileDeleteAction !== 'AUTO') return
-  const ok = await confirm({
-    title: 'Delete extra target entries automatically?',
-    message: 'Reconciliation will permanently DELETE entries on the target that '
-      + 'have no counterpart on the source, without further review. This cannot be undone.',
-    confirmLabel: 'Yes, delete automatically',
-  })
-  if (!ok) form.value.reconcileDeleteAction = 'REVIEW'
+const directories = ref<DirOption[]>([])
+const links = ref<SyncLink[]>([])
+const sets = ref<SyncSet[]>([])
+const memberships = ref<Membership[]>([])
+
+const selectedLinkId = ref<string | null>(null)
+const selectedSetId = ref<string | null>(null)
+const stateFilter = ref<'' | MembershipState>('')
+const recomputeInput = ref('')
+const reconciling = ref(false)
+
+const selectedLink = computed(() => links.value.find((l) => l.id === selectedLinkId.value))
+const selectedSet = computed(() => sets.value.find((s) => s.id === selectedSetId.value))
+
+function dirName(id?: string | null): string {
+  return directories.value.find((d) => d.id === id)?.displayName ?? (id ? id.slice(0, 8) : '—')
 }
 
-const links     = ref<ReplicationLink[]>([])
-const directoryOptions = ref<Directory[]>([])
-const loading   = ref(false)
-
-const showForm  = ref(false)
-const editing   = ref<ReplicationLink | null>(null)
-const saving    = ref(false)
-const form      = ref<ReplicationForm>(emptyForm())
-
-const deleteTarget      = ref<ReplicationLink | null>(null)
-const confirmDeleteOpen = computed({
-  get: () => !!deleteTarget.value,
-  set: (v: boolean) => { if (!v) deleteTarget.value = null },
-})
-
-// Event log state
-const showEvents       = ref(false)
-const eventsLink       = ref<ReplicationLink | null>(null)
-const events           = ref<ReplicationEvent[]>([])
-const eventStatusFilter = ref('')
-const eventsPage       = ref(0)
-const eventsTotalPages = ref(1)
-const loadingEvents    = ref(false)
-
-function emptyForm(): ReplicationForm {
+function stateClass(state: MembershipState): string {
   return {
-    displayName: '',
-    sourceDirectoryId: '',
-    targetDirectoryId: '',
-    sourceBaseDn: '',
-    targetBaseDn: '',
-    enabled: true,
-    autoCreateOnMissing: false,
-    attributeMappings: [],
-    reconcileEnabled: false,
-    reconcileMode: 'REVIEW',
-    reconcileDeleteAction: 'REVIEW',
-    reconcileFirstRunAt: '',
-    reconcileIntervalValue: 1,
-    reconcileIntervalUnit: 'days',
-    captureMode: 'APP_INTERCEPT',
-    changelogFormat: 'DSEE_CHANGELOG',
-    changelogBaseDn: 'cn=changelog',
-    excludeFilter: '',
+    APPLIED: 'bg-green-100 text-green-800',
+    FAILED: 'bg-red-100 text-red-800',
+    REVIEW: 'bg-amber-100 text-amber-800',
+    PENDING: 'bg-gray-100 text-gray-700',
+  }[state]
+}
+
+function errMsg(e: unknown): string {
+  const err = e as { response?: { data?: { detail?: string; message?: string } } }
+  return err.response?.data?.detail || err.response?.data?.message || 'Request failed'
+}
+
+// ── Links ──
+async function loadLinks() {
+  links.value = (await listSyncLinks()).data
+}
+
+const showLinkModal = ref(false)
+const editingLink = ref<SyncLink | null>(null)
+const linkForm = ref<SyncLinkPayload>(blankLink())
+function blankLink(): SyncLinkPayload {
+  return { displayName: '', sourceDirId: '', targetDirId: '', enabled: true, captureMode: 'APP_INTERCEPT' }
+}
+function openLinkModal(link?: SyncLink) {
+  editingLink.value = link ?? null
+  linkForm.value = link
+    ? { displayName: link.displayName, sourceDirId: link.sourceDirId, targetDirId: link.targetDirId, enabled: link.enabled, captureMode: link.captureMode }
+    : blankLink()
+  showLinkModal.value = true
+}
+async function saveLink() {
+  try {
+    if (editingLink.value) await updateSyncLink(editingLink.value.id, linkForm.value)
+    else await createSyncLink(linkForm.value)
+    notif.success(editingLink.value ? 'Link updated' : 'Link created')
+    showLinkModal.value = false
+    await loadLinks()
+  } catch (e) {
+    notif.error(errMsg(e))
   }
 }
-
-function addMappingRow() {
-  form.value.attributeMappings.push({ sourceAttr: '', targetAttr: '', valueTemplate: '' })
-}
-
-// ── reconciliation interval / datetime helpers ───────────────────────────────
-// Interval is stored in seconds on the backend; the form holds value+unit.
-function intervalToSecs(value: number, unit: IntervalUnit): number | null {
-  if (!value || value < 1) return null
-  return Math.round(value) * (unit === 'days' ? 86400 : 3600)
-}
-function secsToInterval(secs: number | null | undefined): { value: number; unit: IntervalUnit } {
-  if (!secs || secs < 3600) return { value: 1, unit: 'days' }
-  // Prefer days when the cadence is a whole number of days.
-  if (secs % 86400 === 0) return { value: secs / 86400, unit: 'days' }
-  return { value: Math.round(secs / 3600), unit: 'hours' }
-}
-// ISO ⇄ <input type="datetime-local"> ('YYYY-MM-DDTHH:mm' in local time).
-function toDateTimeLocal(iso: string | null | undefined): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-function fromDateTimeLocal(s: string): string | null {
-  if (!s) return null
-  const d = new Date(s)
-  return Number.isNaN(d.getTime()) ? null : d.toISOString()
-}
-
-async function load() {
-  loading.value = true
+async function removeLink(link: SyncLink) {
   try {
-    const [linksRes, dirsRes] = await Promise.all([listReplicationLinks(), listDirectories()])
-    links.value = linksRes.data
-    directoryOptions.value = dirsRes.data
+    await deleteSyncLink(link.id)
+    notif.success('Link deleted')
+    if (selectedLinkId.value === link.id) { selectedLinkId.value = null; sets.value = [] }
+    await loadLinks()
   } catch (e) {
-    notif.error(`Failed to load: ${errMsg(e)}`)
+    notif.error(errMsg(e))
+  }
+}
+async function selectLink(id: string) {
+  selectedLinkId.value = id
+  selectedSetId.value = null
+  memberships.value = []
+  sets.value = (await listSyncSets(id)).data
+}
+
+// ── Sets ──
+// The form binds plain strings (FormField rejects null); '' maps to null on save.
+interface SetForm {
+  name: string
+  identityKey: string
+  objectScopeBaseDn: string
+  targetBaseDn: string
+  applicabilityFilter: string
+  referenceAttributes: string
+  sourceAnchorAttribute: string
+  reconcileCadenceSeconds: string
+  deletePolicy: 'DELETE' | 'REVIEW'
+  objectScope: SyncSet['objectScope']
+  enabled: boolean
+}
+const showSetModal = ref(false)
+const editingSet = ref<SyncSet | null>(null)
+const setForm = ref<SetForm>(blankSet())
+function blankSet(): SetForm {
+  return {
+    name: '', identityKey: '', objectScopeBaseDn: '', targetBaseDn: '', applicabilityFilter: '',
+    referenceAttributes: '', sourceAnchorAttribute: '', reconcileCadenceSeconds: '',
+    deletePolicy: 'DELETE', objectScope: null, enabled: true,
+  }
+}
+function openSetModal(s?: SyncSet) {
+  editingSet.value = s ?? null
+  setForm.value = s
+    ? {
+        name: s.name, identityKey: s.identityKey ?? '', objectScopeBaseDn: s.objectScopeBaseDn ?? '',
+        targetBaseDn: s.targetBaseDn ?? '', applicabilityFilter: s.applicabilityFilter ?? '',
+        referenceAttributes: s.referenceAttributes ?? '', sourceAnchorAttribute: s.sourceAnchorAttribute ?? '',
+        reconcileCadenceSeconds: s.reconcileCadenceSeconds != null ? String(s.reconcileCadenceSeconds) : '',
+        deletePolicy: s.deletePolicy, objectScope: s.objectScope, enabled: s.enabled,
+      }
+    : blankSet()
+  showSetModal.value = true
+}
+function toPayload(f: SetForm): SyncSetPayload {
+  const nn = (v: string) => (v.trim() ? v.trim() : null)
+  return {
+    linkId: selectedLinkId.value ?? '',
+    name: f.name.trim(),
+    objectScopeBaseDn: nn(f.objectScopeBaseDn),
+    objectScope: f.objectScope,
+    identityKey: nn(f.identityKey),
+    targetBaseDn: nn(f.targetBaseDn),
+    applicabilityFilter: nn(f.applicabilityFilter),
+    referenceAttributes: nn(f.referenceAttributes),
+    sourceAnchorAttribute: nn(f.sourceAnchorAttribute),
+    deletePolicy: f.deletePolicy,
+    transformRules: editingSet.value?.transformRules ?? null,
+    reconcileCadenceSeconds: f.reconcileCadenceSeconds.trim() ? Number(f.reconcileCadenceSeconds) : null,
+    enabled: f.enabled,
+  }
+}
+async function saveSet() {
+  try {
+    const payload = toPayload(setForm.value)
+    if (editingSet.value) await updateSyncSet(editingSet.value.id, payload)
+    else await createSyncSet(payload)
+    notif.success(editingSet.value ? 'Sync set updated' : 'Sync set created')
+    showSetModal.value = false
+    if (selectedLinkId.value) sets.value = (await listSyncSets(selectedLinkId.value)).data
+  } catch (e) {
+    notif.error(errMsg(e))
+  }
+}
+async function removeSet(s: SyncSet) {
+  try {
+    await deleteSyncSet(s.id)
+    notif.success('Sync set deleted')
+    if (selectedSetId.value === s.id) { selectedSetId.value = null; memberships.value = [] }
+    if (selectedLinkId.value) sets.value = (await listSyncSets(selectedLinkId.value)).data
+  } catch (e) {
+    notif.error(errMsg(e))
+  }
+}
+async function selectSet(id: string) {
+  selectedSetId.value = id
+  await loadMemberships()
+}
+
+// ── Inventory + triggers ──
+async function loadMemberships() {
+  if (!selectedSetId.value) return
+  memberships.value = (await listMemberships(selectedSetId.value, stateFilter.value || undefined)).data
+}
+async function doReconcile() {
+  if (!selectedSetId.value) return
+  reconciling.value = true
+  try {
+    const { data } = await reconcileSet(selectedSetId.value)
+    notif.success(`Reconcile enumerated ${data.enumerated} source identities`)
+    await loadMemberships()
+  } catch (e) {
+    notif.error(errMsg(e))
   } finally {
-    loading.value = false
+    reconciling.value = false
   }
 }
-
-function openCreate() {
-  editing.value = null
-  form.value = emptyForm()
-  changelogTest.value = null
-  showForm.value = true
-}
-
-function openEdit(link: ReplicationLink) {
-  editing.value = link
-  const interval = secsToInterval(link.reconcileIntervalSecs)
-  form.value = {
-    displayName: link.displayName,
-    sourceDirectoryId: link.sourceDirectoryId,
-    targetDirectoryId: link.targetDirectoryId,
-    sourceBaseDn: link.sourceBaseDn ?? '',
-    targetBaseDn: link.targetBaseDn ?? '',
-    enabled: link.enabled,
-    autoCreateOnMissing: link.autoCreateOnMissing,
-    attributeMappings: (link.attributeMappings ?? []).map(m => ({
-      sourceAttr: m.sourceAttr, targetAttr: m.targetAttr, valueTemplate: m.valueTemplate ?? '',
-    })),
-    reconcileEnabled: link.reconcileEnabled ?? false,
-    reconcileMode: link.reconcileMode ?? 'REVIEW',
-    reconcileDeleteAction: link.reconcileDeleteAction ?? 'REVIEW',
-    reconcileFirstRunAt: toDateTimeLocal(link.reconcileFirstRunAt),
-    reconcileIntervalValue: interval.value,
-    reconcileIntervalUnit: interval.unit,
-    captureMode: link.captureMode ?? 'APP_INTERCEPT',
-    changelogFormat: (link.changelogFormat as ChangelogFormat) ?? 'DSEE_CHANGELOG',
-    changelogBaseDn: link.changelogBaseDn ?? 'cn=changelog',
-    excludeFilter: link.excludeFilter ?? '',
-  }
-  changelogTest.value = null
-  showForm.value = true
-}
-
-async function save() {
-  saving.value = true
+async function doRecompute() {
+  if (!selectedSetId.value || !recomputeInput.value.trim()) return
   try {
-    const f = form.value
-    const payload = {
-      displayName: f.displayName,
-      sourceDirectoryId: f.sourceDirectoryId,
-      targetDirectoryId: f.targetDirectoryId,
-      enabled: f.enabled,
-      autoCreateOnMissing: f.autoCreateOnMissing,
-      sourceBaseDn: f.sourceBaseDn || null,
-      targetBaseDn: f.targetBaseDn || null,
-      attributeMappings: f.attributeMappings
-        .filter(m => m.sourceAttr && m.targetAttr)
-        .map(m => ({ ...m, valueTemplate: m.valueTemplate || null })),
-      // Reconciliation config. The backend ignores the schedule fields
-      // when reconcileEnabled is false, but we still round-trip them.
-      reconcileEnabled: f.reconcileEnabled,
-      reconcileMode: f.reconcileMode,
-      reconcileDeleteAction: f.reconcileDeleteAction,
-      reconcileFirstRunAt: fromDateTimeLocal(f.reconcileFirstRunAt),
-      reconcileIntervalSecs: intervalToSecs(f.reconcileIntervalValue, f.reconcileIntervalUnit),
-      // Changelog capture. The backend nulls the changelog* fields itself when
-      // captureMode is APP_INTERCEPT, but we send them explicitly for clarity.
-      captureMode: f.captureMode,
-      changelogFormat: f.captureMode === 'CHANGELOG' ? f.changelogFormat : null,
-      changelogBaseDn: f.captureMode === 'CHANGELOG' ? (f.changelogBaseDn || null) : null,
-      excludeFilter: f.excludeFilter || null,
-    }
-    if (editing.value) {
-      await updateReplicationLink(editing.value.id, payload)
-      notif.success('Replication link updated')
-    } else {
-      await createReplicationLink(payload)
-      notif.success('Replication link created')
-    }
-    showForm.value = false
-    await load()
+    await recomputeKey(selectedSetId.value, recomputeInput.value.trim())
+    notif.success('Recompute enqueued')
+    recomputeInput.value = ''
   } catch (e) {
-    notif.error(`Save failed: ${errMsg(e)}`)
-  } finally {
-    saving.value = false
+    notif.error(errMsg(e))
   }
 }
-
-// ── Changelog capture: pre-save probe + exclude-filter hint ──────────────────
-const changelogTest    = ref<ChangelogTestResult | null>(null)
-const changelogTesting = ref(false)
-
-// The probe reflects source + base DN; drop a stale result when they change.
-watch(
-  () => [form.value.sourceDirectoryId, form.value.captureMode, form.value.changelogBaseDn],
-  () => { changelogTest.value = null },
-)
-
-async function doTestChangelog() {
-  if (!form.value.sourceDirectoryId) return
-  changelogTesting.value = true
-  changelogTest.value = null
+async function recomputeIdentity(m: Membership) {
+  if (!selectedSetId.value) return
   try {
-    const { data } = await testReplicationChangelogPreSave({
-      sourceDirectoryId: form.value.sourceDirectoryId,
-      changelogBaseDn: form.value.changelogBaseDn || undefined,
-    })
-    changelogTest.value = data
+    await recomputeKey(selectedSetId.value, m.identity)
+    notif.success('Recompute enqueued')
   } catch (e) {
-    changelogTest.value = { reachable: false, message: errMsg(e) }
-  } finally {
-    changelogTesting.value = false
+    notif.error(errMsg(e))
   }
 }
-
-// Soft client-side hint only — the server validates the RFC 4515 filter
-// authoritatively on save.
-function parensBalanced(s: string): boolean {
-  let depth = 0
-  for (const ch of s) {
-    if (ch === '(') depth++
-    else if (ch === ')') { depth--; if (depth < 0) return false }
-  }
-  return depth === 0
-}
-const excludeFilterHint = computed(() => {
-  const v = form.value.excludeFilter.trim()
-  if (!v) return ''
-  if (!v.startsWith('(') || !v.endsWith(')') || !parensBalanced(v)) {
-    return "Looks off — an RFC 4515 filter is parenthesized, e.g. (objectClass=computer)."
-  }
-  return ''
-})
-
-// ── Changelog health badge (row surfacing, §7A.7) ────────────────────────────
-function healthBadgeClass(h?: ChangelogHealth): string {
-  switch (h) {
-    case 'HEALTHY':            return 'badge badge-green'
-    case 'LAGGING':
-    case 'STALLED':            return 'badge badge-amber'
-    case 'GAP_DETECTED':
-    case 'CURSOR_RESET':
-    case 'DISABLED_CONFIG_ERROR': return 'badge badge-red'
-    default:                   return 'badge badge-gray'
-  }
-}
-function healthLabel(h?: ChangelogHealth): string {
-  return (h ?? 'HEALTHY').replace(/_/g, ' ').toLowerCase()
-}
-
-// ── Operator remediation (§7A.12) ────────────────────────────────────────────
-async function testChangelogRow(link: ReplicationLink) {
+async function dismiss(m: Membership) {
+  if (!selectedSetId.value) return
   try {
-    const { data } = await testReplicationChangelog(link.id)
-    if (data.reachable) {
-      notif.success(`Changelog reachable — head ${data.currentHead ?? '?'} (${data.elapsedMs ?? '?'}ms)`)
-    } else {
-      notif.error(`Changelog unreachable: ${data.message}`)
-    }
+    await dismissMembership(selectedSetId.value, m.identity)
+    notif.success('Membership dismissed')
+    await loadMemberships()
   } catch (e) {
-    notif.error(`Test failed: ${errMsg(e)}`)
-  }
-}
-
-async function reseedCursor(link: ReplicationLink) {
-  const ok = await confirm({
-    title: 'Reseed cursor to current head?',
-    message: 'The cursor jumps to the changelog’s current head. Changes before now are '
-      + 'skipped on this path — periodic reconciliation remains the backstop that backfills them.',
-    confirmLabel: 'Reseed to now',
-  })
-  if (!ok) return
-  try {
-    await reseedChangelogCursor(link.id)
-    notif.success('Cursor reseeded to current head')
-    await load()
-  } catch (e) {
-    notif.error(`Reseed failed: ${errMsg(e)}`)
-  }
-}
-
-async function reEnableLink(link: ReplicationLink) {
-  const ok = await confirm({
-    title: 'Re-enable changelog polling?',
-    message: 'Clears the degraded health / last error and resumes polling from the current cursor.',
-    confirmLabel: 'Re-enable',
-  })
-  if (!ok) return
-  try {
-    await reEnableChangelog(link.id)
-    notif.success('Changelog polling re-enabled')
-    await load()
-  } catch (e) {
-    notif.error(`Re-enable failed: ${errMsg(e)}`)
-  }
-}
-
-// Rewind cursor modal
-const showRewind   = ref(false)
-const rewindLink   = ref<ReplicationLink | null>(null)
-const rewindValue  = ref<number | null>(null)
-const rewindSaving = ref(false)
-function openRewind(link: ReplicationLink) {
-  rewindLink.value  = link
-  rewindValue.value = link.changelogLastChangeNumber ?? 0
-  showRewind.value  = true
-}
-async function doRewind() {
-  if (!rewindLink.value || rewindValue.value == null || rewindValue.value < 0) return
-  rewindSaving.value = true
-  try {
-    await rewindChangelogCursor(rewindLink.value.id, rewindValue.value)
-    notif.success(`Cursor rewound to ${rewindValue.value}`)
-    showRewind.value = false
-    await load()
-  } catch (e) {
-    notif.error(`Rewind failed: ${errMsg(e)}`)
-  } finally {
-    rewindSaving.value = false
-  }
-}
-
-// Per-row action menu — changelog remediation surfaces only for CHANGELOG links.
-function rowActions(link: ReplicationLink): { label: string; onClick: () => void; danger?: boolean }[] {
-  const items: { label: string; onClick: () => void; danger?: boolean }[] = [
-    { label: 'View events', onClick: () => openEvents(link) },
-    { label: 'Reconcile now', onClick: () => reconcileNow(link) },
-    { label: 'Reconciliation history', onClick: () => openRuns(link) },
-  ]
-  if (link.captureMode === 'CHANGELOG') {
-    items.push(
-      { label: 'Test changelog', onClick: () => testChangelogRow(link) },
-      { label: 'Reseed to now', onClick: () => reseedCursor(link) },
-      { label: 'Rewind to…', onClick: () => openRewind(link) },
-      { label: 'Re-enable', onClick: () => reEnableLink(link) },
-    )
-  }
-  items.push({ label: 'Delete', onClick: () => confirmDelete(link), danger: true })
-  return items
-}
-
-async function reconcileNow(link: ReplicationLink) {
-  try {
-    await apiReconcileNow(link.id)
-    notif.success(`Reconciliation started for ${link.displayName}`)
-    // Refresh the runs modal if it's open for this link.
-    if (showRuns.value && runsLink.value?.id === link.id) await loadRuns()
-  } catch (e) {
-    notif.error(`Could not start reconciliation: ${errMsg(e)}`)
-  }
-}
-
-// ── Reconciliation runs modal ────────────────────────────────────────────────
-const showRuns    = ref(false)
-const runsLink    = ref<ReplicationLink | null>(null)
-const runs        = ref<ReconRun[]>([])
-const loadingRuns = ref(false)
-
-async function openRuns(link: ReplicationLink) {
-  runsLink.value = link
-  showRuns.value = true
-  await loadRuns()
-}
-
-async function loadRuns() {
-  if (!runsLink.value) return
-  loadingRuns.value = true
-  try {
-    const { data } = await listReconciliationRuns(runsLink.value.id, { page: 0, size: 20 })
-    runs.value = data.content || []
-  } catch (e) {
-    notif.error(`Failed to load runs: ${errMsg(e)}`)
-  } finally {
-    loadingRuns.value = false
-  }
-}
-
-function runHasFindings(r: ReconRun): boolean {
-  return r.missingCount + r.driftCount + r.extraCount > 0
-}
-
-// ── Findings review modal ────────────────────────────────────────────────────
-const showFindings    = ref(false)
-const findingsRun     = ref<ReconRun | null>(null)
-const findings        = ref<ReconFinding[]>([])
-const loadingFindings = ref(false)
-const findingStatusFilter = ref('PROPOSED')
-const findingTypeFilter   = ref('')
-const selectedFindings = ref<Set<string>>(new Set())
-const expandedFindings = ref<Set<string>>(new Set())
-const applyingFindings = ref(false)
-
-async function openFindings(run: ReconRun) {
-  findingsRun.value = run
-  findingStatusFilter.value = 'PROPOSED'
-  findingTypeFilter.value = ''
-  selectedFindings.value = new Set()
-  expandedFindings.value = new Set()
-  showFindings.value = true
-  await loadFindings()
-}
-
-async function loadFindings() {
-  if (!findingsRun.value) return
-  loadingFindings.value = true
-  try {
-    const params: { page: number; size: number; status?: string; type?: string } = { page: 0, size: 200 }
-    if (findingStatusFilter.value) params.status = findingStatusFilter.value
-    if (findingTypeFilter.value) params.type = findingTypeFilter.value
-    const { data } = await getReconciliationFindings(findingsRun.value.id, params)
-    findings.value = data.content || []
-    // Drop selections no longer present.
-    const present = new Set(findings.value.map(f => f.id))
-    selectedFindings.value = new Set([...selectedFindings.value].filter(id => present.has(id)))
-  } catch (e) {
-    notif.error(`Failed to load findings: ${errMsg(e)}`)
-  } finally {
-    loadingFindings.value = false
-  }
-}
-
-const proposedFindings = computed(() => findings.value.filter(f => f.status === 'PROPOSED'))
-const allProposedSelected = computed(() =>
-  proposedFindings.value.length > 0 && proposedFindings.value.every(f => selectedFindings.value.has(f.id)))
-
-function toggleFinding(id: string) {
-  const next = new Set(selectedFindings.value)
-  if (next.has(id)) next.delete(id); else next.add(id)
-  selectedFindings.value = next
-}
-function toggleAllFindings() {
-  selectedFindings.value = allProposedSelected.value
-    ? new Set()
-    : new Set(proposedFindings.value.map(f => f.id))
-}
-function toggleExpand(id: string) {
-  const next = new Set(expandedFindings.value)
-  if (next.has(id)) next.delete(id); else next.add(id)
-  expandedFindings.value = next
-}
-
-async function applySelectedFindings() {
-  if (!findingsRun.value || selectedFindings.value.size === 0) return
-  applyingFindings.value = true
-  try {
-    const { data } = await applyReconciliationFindings(findingsRun.value.id,
-      { findingIds: [...selectedFindings.value] })
-    notif.success(`Applied ${data.applied} finding(s) — corrections queued`)
-    await loadFindings()
-  } catch (e) {
-    notif.error(`Apply failed: ${errMsg(e)}`)
-  } finally {
-    applyingFindings.value = false
-  }
-}
-
-async function dismissSelectedFindings() {
-  if (!findingsRun.value || selectedFindings.value.size === 0) return
-  applyingFindings.value = true
-  try {
-    const { data } = await dismissReconciliationFindings(findingsRun.value.id,
-      { findingIds: [...selectedFindings.value] })
-    notif.success(`Dismissed ${data.dismissed} finding(s)`)
-    await loadFindings()
-  } catch (e) {
-    notif.error(`Dismiss failed: ${errMsg(e)}`)
-  } finally {
-    applyingFindings.value = false
-  }
-}
-
-/** Compact human description of a finding's diff for the expanded row. */
-// Op badge tint mirrors the operation's blast radius: ADD is additive
-// (green), MODIFY in-place (amber), DELETE destructive (red).
-function opBadgeClass(op: string): string {
-  if (op === 'ADD') return 'badge-green'
-  if (op === 'MODIFY') return 'badge-amber'
-  if (op === 'DELETE') return 'badge-red'
-  return 'badge-gray'
-}
-
-// Sub-label under the op badge: how many attrs drifted, or why a delete
-// is still sitting in the queue.
-function opNote(f: ReconFinding): string {
-  if (f.findingType === 'ATTRIBUTE_DRIFT') {
-    const n = ((f.detail.modifications ?? []) as unknown[]).length
-    return `${n} attribute${n === 1 ? '' : 's'} differ${n === 1 ? 's' : ''}`
-  }
-  if (f.findingType === 'EXTRA_IN_TARGET' && f.suggestedOp === 'DELETE'
-      && runsLink.value?.reconcileDeleteAction === 'REVIEW') {
-    return 'held for review'
-  }
-  return ''
-}
-
-// Expanded-diff data, shaped per finding type from the detail JSONB.
-function missingAttrs(f: ReconFinding): Array<{ k: string; v: string }> {
-  const attrs = (f.detail.attributes ?? {}) as Record<string, string[]>
-  return Object.keys(attrs).map(k => ({ k, v: (attrs[k] ?? []).join(', ') }))
-}
-function driftRows(f: ReconFinding): Array<{ name: string; current: string; expected: string }> {
-  const mods = (f.detail.modifications ?? []) as Array<{ name: string; values: string[] }>
-  const before = (f.detail.before ?? {}) as Record<string, string[]>
-  return mods.map(m => ({
-    name: m.name,
-    current: (before[m.name] ?? []).join(', '),
-    expected: (m.values ?? []).join(', '),
-  }))
-}
-function extraAttrs(f: ReconFinding): Array<{ k: string; v: string }> {
-  const cur = (f.detail.currentTarget ?? {}) as Record<string, string[]>
-  return Object.keys(cur).map(k => ({ k, v: (cur[k] ?? []).join(', ') }))
-}
-
-const findingsFooter = computed(() => {
-  const shown = findings.value.length
-  const status = findingStatusFilter.value
-  const label = status === 'PROPOSED' ? 'proposed ' : status ? status.toLowerCase().replace('_', '-') + ' ' : ''
-  let s = `Showing ${shown} ${label}finding${shown === 1 ? '' : 's'}`
-  const suppressed = findingsRun.value?.suppressedCount ?? 0
-  if (suppressed > 0) s += ` · ${suppressed} suppressed`
-  return s
-})
-
-// The findings list and the event log are sibling modals; jump from one
-// to the other for the same link rather than stacking dialogs.
-function openEventLog() {
-  if (!runsLink.value) return
-  showFindings.value = false
-  openEvents(runsLink.value)
-}
-
-function confirmDelete(link: ReplicationLink) { deleteTarget.value = link }
-
-async function doDelete() {
-  if (!deleteTarget.value) return
-  try {
-    await deleteReplicationLink(deleteTarget.value.id)
-    notif.success('Replication link deleted')
-    deleteTarget.value = null
-    await load()
-  } catch (e) {
-    notif.error(`Delete failed: ${errMsg(e)}`)
-  }
-}
-
-async function openEvents(link: ReplicationLink) {
-  eventsLink.value = link
-  eventStatusFilter.value = ''
-  eventsPage.value = 0
-  showEvents.value = true
-  await loadEvents()
-}
-
-async function loadEvents() {
-  if (!eventsLink.value) return
-  loadingEvents.value = true
-  try {
-    const params: { page: number; size: number; status?: string } = { page: eventsPage.value, size: 50 }
-    if (eventStatusFilter.value) params.status = eventStatusFilter.value
-    const { data } = await listReplicationEvents(eventsLink.value.id, params)
-    events.value = data.content || []
-    eventsTotalPages.value = data.totalPages || 1
-  } catch (e) {
-    notif.error(`Failed to load events: ${errMsg(e)}`)
-  } finally {
-    loadingEvents.value = false
-  }
-}
-
-async function doEventAction(event: ReplicationEvent, kind: EventAction) {
-  try {
-    if (kind === 'retry') await retryReplicationEvent(event.id)
-    else if (kind === 'skip') await skipReplicationEvent(event.id)
-    else if (kind === 'ack')  await acknowledgeReplicationEvent(event.id)
-    notif.success(`Event ${kind} succeeded`)
-    await loadEvents()
-    await load()  // refresh link health counts
-  } catch (e) {
-    notif.error(`Event ${kind} failed: ${errMsg(e)}`)
-  }
-}
-
-function traceCorrelation(e: ReplicationEvent) {
-  // Pivot to the audit log filtered by this event's source-side
-  // correlation id — every row emitted while handling the originating
-  // operation (the source write, its audit row, and any dispatch-side
-  // dead-letter row) shares this id.
-  router.push({ name: 'superadminAuditLog', query: { correlationId: e.correlationId } })
-}
-
-function canRetry(status: string) {
-  return ['FAILED', 'DEAD_LETTERED', 'SKIPPED', 'ACKNOWLEDGED'].includes(status)
-}
-function canSkip(status: string) {
-  return ['PENDING', 'FAILED', 'DEAD_LETTERED'].includes(status)
-}
-function statusClass(status: string) {
-  switch (status) {
-    case 'DELIVERED':     return 'bg-green-50 text-green-700'
-    case 'PENDING':       return 'bg-blue-50 text-blue-700'
-    case 'IN_FLIGHT':     return 'bg-blue-50 text-blue-700'
-    case 'FAILED':        return 'bg-amber-50 text-amber-700'
-    case 'DEAD_LETTERED': return 'bg-red-50 text-red-700'
-    case 'SKIPPED':       return 'bg-gray-100 text-gray-600'
-    case 'ACKNOWLEDGED':  return 'bg-gray-100 text-gray-600'
-    default:              return 'bg-gray-100 text-gray-600'
+    notif.error(errMsg(e))
   }
 }
 
 onMounted(async () => {
-  await load()
-  // Deep link from the dashboard "Reconciliation found drift" awareness item
-  // (?findings=open): open the reconciliation runs for the first link that has
-  // open findings, so the operator lands on the drift instead of a bare list.
-  if (route.query.findings === 'open') {
-    const drifted = links.value.find(l => (l.openFindingCount ?? 0) > 0)
-    if (drifted) openRuns(drifted)
+  try {
+    const [dirs] = await Promise.all([listDirectories(), loadLinks()])
+    directories.value = dirs.data.map((d) => ({ id: d.id ?? '', displayName: d.displayName ?? '' }))
+  } catch (e) {
+    notif.error(errMsg(e))
   }
 })
 </script>
-
-<style scoped>
-@reference "tailwindcss";
-</style>

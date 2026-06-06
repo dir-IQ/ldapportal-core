@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: Apache-2.0
+package com.ldapportal.controller.superadmin;
+
+import com.ldapportal.core.entitlement.Entitled;
+import com.ldapportal.core.entitlement.Entitlement;
+import com.ldapportal.dto.sync.MembershipResponse;
+import com.ldapportal.dto.sync.RecomputeKeyRequest;
+import com.ldapportal.dto.sync.SyncSetRequest;
+import com.ldapportal.dto.sync.SyncSetResponse;
+import com.ldapportal.entity.enums.MembershipState;
+import com.ldapportal.service.SyncConfigService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * CRUD for sync sets (selection + projection), the membership inventory, and
+ * operator triggers (reconcile / recompute / dismiss a quarantine). Gated on the
+ * {@code DIRECTORY_SYNC} entitlement and superadmin.
+ */
+@RestController
+@RequestMapping("/api/v1/superadmin/sync/sets")
+@Entitled(Entitlement.DIRECTORY_SYNC)
+@PreAuthorize("hasRole('SUPERADMIN')")
+@RequiredArgsConstructor
+public class SyncSetController {
+
+    private final SyncConfigService service;
+
+    @GetMapping
+    public List<SyncSetResponse> list(@RequestParam(required = false) UUID linkId) {
+        return service.listSets(linkId);
+    }
+
+    @PostMapping
+    public ResponseEntity<SyncSetResponse> create(@Valid @RequestBody SyncSetRequest req) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(service.createSet(req));
+    }
+
+    @GetMapping("/{id}")
+    public SyncSetResponse get(@PathVariable UUID id) {
+        return service.getSet(id);
+    }
+
+    @PutMapping("/{id}")
+    public SyncSetResponse update(@PathVariable UUID id, @Valid @RequestBody SyncSetRequest req) {
+        return service.updateSet(id, req);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@PathVariable UUID id) {
+        service.deleteSet(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // ── Inventory + operator triggers ──────────────────────────────────────────
+
+    @GetMapping("/{id}/memberships")
+    public List<MembershipResponse> memberships(@PathVariable UUID id,
+                                                @RequestParam(required = false) MembershipState state) {
+        return service.listMemberships(id, state);
+    }
+
+    @PostMapping("/{id}/reconcile")
+    public Map<String, Integer> reconcile(@PathVariable UUID id) {
+        return Map.of("enumerated", service.reconcileNow(id));
+    }
+
+    @PostMapping("/{id}/recompute")
+    public ResponseEntity<Void> recompute(@PathVariable UUID id, @Valid @RequestBody RecomputeKeyRequest req) {
+        service.recompute(id, req.key());
+        return ResponseEntity.accepted().build();
+    }
+
+    @DeleteMapping("/{id}/memberships/{identity}")
+    public ResponseEntity<Void> dismiss(@PathVariable UUID id, @PathVariable String identity) {
+        service.dismissMembership(id, identity);
+        return ResponseEntity.noContent().build();
+    }
+}

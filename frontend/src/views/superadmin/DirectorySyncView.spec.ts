@@ -1,287 +1,97 @@
 // SPDX-License-Identifier: Apache-2.0
-/**
- * Component test for the reconciliation findings review flow in
- * DirectorySyncView: open run history → review a run's findings → select a
- * proposed finding → apply it. The replication API, directories API,
- * notifications, confirm, and router are mocked at module level. AppModal is
- * stubbed to render its slots only when open; ActionMenu renders its items as
- * buttons so the row action is clickable.
- */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-
-const api = vi.hoisted(() => ({
-  listReplicationLinks: vi.fn(),
-  listReplicationEvents: vi.fn(),
-  reconcileNow: vi.fn(),
-  listReconciliationRuns: vi.fn(),
-  getReconciliationFindings: vi.fn(),
-  applyReconciliationFindings: vi.fn(),
-  dismissReconciliationFindings: vi.fn(),
-  testReplicationChangelog: vi.fn(),
-  testReplicationChangelogPreSave: vi.fn(),
-  reseedChangelogCursor: vi.fn(),
-  rewindChangelogCursor: vi.fn(),
-  reEnableChangelog: vi.fn(),
-  notifSuccess: vi.fn(),
-  notifError: vi.fn(),
-}))
-
-vi.mock('@/api/replication', () => ({
-  listReplicationLinks: api.listReplicationLinks,
-  createReplicationLink: vi.fn(),
-  updateReplicationLink: vi.fn(),
-  deleteReplicationLink: vi.fn(),
-  listReplicationEvents: api.listReplicationEvents,
-  retryReplicationEvent: vi.fn(),
-  skipReplicationEvent: vi.fn(),
-  acknowledgeReplicationEvent: vi.fn(),
-  reconcileNow: api.reconcileNow,
-  listReconciliationRuns: api.listReconciliationRuns,
-  getReconciliationFindings: api.getReconciliationFindings,
-  applyReconciliationFindings: api.applyReconciliationFindings,
-  dismissReconciliationFindings: api.dismissReconciliationFindings,
-  testReplicationChangelog: api.testReplicationChangelog,
-  testReplicationChangelogPreSave: api.testReplicationChangelogPreSave,
-  reseedChangelogCursor: api.reseedChangelogCursor,
-  rewindChangelogCursor: api.rewindChangelogCursor,
-  reEnableChangelog: api.reEnableChangelog,
-}))
-
-vi.mock('@/api/directories', () => ({ listDirectories: vi.fn().mockResolvedValue({ data: [] }) }))
-
-vi.mock('@/stores/notifications', () => ({
-  useNotificationStore: () => ({ success: api.notifSuccess, error: api.notifError, info: vi.fn(), warning: vi.fn() }),
-}))
-
-vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => vi.fn().mockResolvedValue(true) }))
-
-vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }), useRoute: () => ({ query: {} }) }))
-
+import { createPinia, setActivePinia } from 'pinia'
 import DirectorySyncView from './DirectorySyncView.vue'
 
-const stubs = {
-  // Render modal content only when open (mirrors v-model semantics).
-  AppModal: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /><slot name="footer" /></div>' },
-  // Render each action item as a button so row actions are clickable.
-  ActionMenu: {
-    props: ['items'],
-    template: '<div><button v-for="(it,i) in items" :key="i" class="am-item" @click="it.onClick && it.onClick()">{{ it.label }}</button><slot name="primary" /></div>',
-  },
-  RelativeTime: { template: '<span />' },
-  PageContainer: { template: '<div><slot /></div>' },
-  ConfirmDialog: { template: '<div />' },
-  FormField: { template: '<input />' },
+vi.mock('@/api/directories', () => ({
+  listDirectories: vi.fn(() =>
+    Promise.resolve({ data: [
+      { id: 'dir-src', displayName: 'Source LDAP' },
+      { id: 'dir-dst', displayName: 'Target LDAP' },
+    ] }),
+  ),
+}))
+
+const link = {
+  id: 'link-1', displayName: 'src->dst', sourceDirId: 'dir-src', targetDirId: 'dir-dst',
+  enabled: true, captureMode: 'APP_INTERCEPT', createdAt: '', updatedAt: '', version: 0,
+}
+const set = {
+  id: 'set-1', linkId: 'link-1', name: 'people', objectScopeBaseDn: 'ou=people,dc=src',
+  objectScope: 'SUB', identityKey: null, targetBaseDn: 'ou=Users,dc=dst', applicabilityFilter: null,
+  referenceAttributes: null, sourceAnchorAttribute: null, deletePolicy: 'DELETE', transformRules: null,
+  reconcileCadenceSeconds: null, reconcileLastRunAt: null, enabled: true, createdAt: '', updatedAt: '', version: 0,
+}
+const membership = {
+  syncSetId: 'set-1', identity: '1111', sourceDn: 'uid=a,ou=people,dc=src',
+  targetDn: 'uid=a,ou=Users,dc=dst', state: 'REVIEW', failReason: 'ambiguous',
+  lastSrcCursor: null, lastScanEpoch: null,
 }
 
-function link() {
-  return {
-    id: 'link-1', displayName: 'Corp → DR',
-    sourceDirectoryId: 's', targetDirectoryId: 't',
-    enabled: true, autoCreateOnMissing: false,
-    pendingCount: 0, failedCount: 0, deadLetteredCount: 0,
-    reconcileEnabled: true, reconcileMode: 'REVIEW', reconcileDeleteAction: 'REVIEW',
-  }
-}
+vi.mock('@/api/sync', () => ({
+  listSyncLinks: vi.fn(() => Promise.resolve({ data: [link] })),
+  createSyncLink: vi.fn(() => Promise.resolve({ data: link })),
+  updateSyncLink: vi.fn(() => Promise.resolve({ data: link })),
+  deleteSyncLink: vi.fn(() => Promise.resolve({ data: undefined })),
+  listSyncSets: vi.fn(() => Promise.resolve({ data: [set] })),
+  createSyncSet: vi.fn(() => Promise.resolve({ data: set })),
+  updateSyncSet: vi.fn(() => Promise.resolve({ data: set })),
+  deleteSyncSet: vi.fn(() => Promise.resolve({ data: undefined })),
+  listMemberships: vi.fn(() => Promise.resolve({ data: [membership] })),
+  reconcileSet: vi.fn(() => Promise.resolve({ data: { enumerated: 3 } })),
+  recomputeKey: vi.fn(() => Promise.resolve({ data: undefined })),
+  dismissMembership: vi.fn(() => Promise.resolve({ data: undefined })),
+}))
 
-function run() {
-  return {
-    id: 'run-1', trigger: 'MANUAL', mode: 'REVIEW', status: 'COMPLETED',
-    startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
-    sourceEntryCount: 10, targetEntryCount: 9,
-    missingCount: 1, driftCount: 0, extraCount: 0, suppressedCount: 0, appliedCount: 0,
-  }
-}
+import * as syncApi from '@/api/sync'
 
-function finding() {
-  return {
-    id: 'f-1', findingType: 'MISSING_IN_TARGET', suggestedOp: 'ADD',
-    sourceDn: 'uid=b,dc=x', targetDn: 'uid=b,dc=x',
-    detail: { attributes: { cn: ['Bob'] } }, status: 'PROPOSED', eventId: null,
-  }
-}
-
-const byText = (wrapper: ReturnType<typeof mount>, text: string) =>
-  wrapper.findAll('button').filter(b => b.text() === text)
-
-describe('DirectorySyncView reconciliation findings', () => {
+describe('DirectorySyncView', () => {
   beforeEach(() => {
+    setActivePinia(createPinia())
     vi.clearAllMocks()
-    api.listReplicationLinks.mockResolvedValue({ data: [link()] })
-    api.listReconciliationRuns.mockResolvedValue({ data: { content: [run()] } })
-    api.getReconciliationFindings.mockResolvedValue({ data: { content: [finding()] } })
-    api.applyReconciliationFindings.mockResolvedValue({ data: { applied: 1 } })
   })
 
-  it('reviews a run and applies a selected finding', async () => {
-    const wrapper = mount(DirectorySyncView, { global: { stubs } })
+  it('loads and renders sync links', async () => {
+    const wrapper = mount(DirectorySyncView)
     await flushPromises()
-
-    // Open run history from the row action.
-    byText(wrapper, 'Reconciliation history')[0].trigger('click')
-    await flushPromises()
-    expect(api.listReconciliationRuns).toHaveBeenCalledWith('link-1', expect.anything())
-
-    // Open the findings review for the run.
-    byText(wrapper, 'Review findings')[0].trigger('click')
-    await flushPromises()
-    expect(api.getReconciliationFindings).toHaveBeenCalledWith('run-1', expect.objectContaining({ status: 'PROPOSED' }))
-
-    // Select the proposed finding and apply.
-    const checkboxes = wrapper.findAll('input[type="checkbox"]')
-    // The last checkbox is the finding row (others: select-all + form toggles in closed modals are not rendered).
-    await checkboxes[checkboxes.length - 1].setValue(true)
-    await byText(wrapper, 'Apply selected')[0].trigger('click')
-    await flushPromises()
-
-    expect(api.applyReconciliationFindings).toHaveBeenCalledWith('run-1', { findingIds: ['f-1'] })
-    expect(api.notifSuccess).toHaveBeenCalled()
+    expect(syncApi.listSyncLinks).toHaveBeenCalled()
+    expect(wrapper.text()).toContain('src->dst')
+    expect(wrapper.text()).toContain('Source LDAP')
   })
 
-  // Drives history → review for a single finding of the given shape.
-  async function openFindingsWith(f: Record<string, unknown>) {
-    api.getReconciliationFindings.mockResolvedValue({ data: { content: [f] } })
-    const wrapper = mount(DirectorySyncView, { global: { stubs } })
+  it('selecting a link loads its sync sets', async () => {
+    const wrapper = mount(DirectorySyncView)
     await flushPromises()
-    byText(wrapper, 'Reconciliation history')[0].trigger('click')
+    await wrapper.find('tbody tr').trigger('click')
     await flushPromises()
-    byText(wrapper, 'Review findings')[0].trigger('click')
-    await flushPromises()
-    return wrapper
-  }
-
-  it('warns on a destructive Extra/DELETE finding and shows attribute values', async () => {
-    const wrapper = await openFindingsWith({
-      id: 'f-x', findingType: 'EXTRA_IN_TARGET', suggestedOp: 'DELETE',
-      sourceDn: null, targetDn: 'uid=tmp,dc=x',
-      detail: { currentTarget: { cn: ['Temp Account'], mail: ['tmp@x'] } },
-      status: 'PROPOSED', eventId: null,
-    })
-
-    // The link's REVIEW delete policy surfaces as a row note, no expand needed.
-    expect(wrapper.text()).toContain('held for review')
-
-    // Expand → destructive warning + the entry's actual attribute values.
-    byText(wrapper, '▸')[0].trigger('click')
-    await flushPromises()
-    expect(wrapper.text()).toContain('would be deleted')
-    expect(wrapper.text()).toContain('Destructive.')
-    expect(wrapper.text()).toContain('Temp Account')
+    expect(syncApi.listSyncSets).toHaveBeenCalledWith('link-1')
+    expect(wrapper.text()).toContain('people')
   })
 
-  it('renders a current-vs-expected table for an attribute-drift finding', async () => {
-    const wrapper = await openFindingsWith({
-      id: 'f-d', findingType: 'ATTRIBUTE_DRIFT', suggestedOp: 'MODIFY',
-      sourceDn: 'uid=a,dc=x', targetDn: 'uid=a,dc=x',
-      detail: { modifications: [{ name: 'mail', values: ['a@new'] }], before: { mail: ['a@old'] } },
-      status: 'PROPOSED', eventId: null,
-    })
-
-    expect(wrapper.text()).toContain('1 attribute differs')
-
-    byText(wrapper, '▸')[0].trigger('click')
+  it('selecting a set loads the membership inventory and surfaces REVIEW state', async () => {
+    const wrapper = mount(DirectorySyncView)
     await flushPromises()
-    expect(wrapper.text()).toContain('Current (target)')
-    expect(wrapper.text()).toContain('a@old')
-    expect(wrapper.text()).toContain('a@new')
+    await wrapper.find('tbody tr').trigger('click') // select link
+    await flushPromises()
+    const setRows = wrapper.findAll('section')[1].findAll('tbody tr')
+    await setRows[0].trigger('click') // select set
+    await flushPromises()
+    expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', undefined)
+    expect(wrapper.text()).toContain('REVIEW')
   })
 
-  it('triggers reconcile now from the row action', async () => {
-    api.reconcileNow.mockResolvedValue({ data: { runId: 'run-9' } })
-    const wrapper = mount(DirectorySyncView, { global: { stubs } })
+  it('reconcile triggers the API and reports the count', async () => {
+    const wrapper = mount(DirectorySyncView)
     await flushPromises()
-
-    byText(wrapper, 'Reconcile now')[0].trigger('click')
+    await wrapper.find('tbody tr').trigger('click')
     await flushPromises()
-
-    expect(api.reconcileNow).toHaveBeenCalledWith('link-1')
-  })
-})
-
-function changelogLink(overrides: Record<string, unknown> = {}) {
-  return {
-    ...link(),
-    id: 'link-cl', displayName: 'OUD → DR',
-    captureMode: 'CHANGELOG', changelogFormat: 'DSEE_CHANGELOG', changelogBaseDn: 'cn=changelog',
-    changelogHealth: 'LAGGING', changelogLag: 42, changelogLastChangeNumber: 100,
-    changelogLastPolledAt: new Date().toISOString(),
-    reconcileEnabled: false,
-    ...overrides,
-  }
-}
-
-describe('DirectorySyncView changelog capture (C4)', () => {
-  beforeEach(() => { vi.clearAllMocks() })
-
-  it('surfaces capture mode + health on the row', async () => {
-    api.listReplicationLinks.mockResolvedValue({ data: [changelogLink(), link()] })
-    const wrapper = mount(DirectorySyncView, { global: { stubs } })
+    const setRows = wrapper.findAll('section')[1].findAll('tbody tr')
+    await setRows[0].trigger('click')
     await flushPromises()
-
-    expect(wrapper.text()).toContain('lagging')   // changelogHealth label
-    expect(wrapper.text()).toContain('lag 42')
-    expect(wrapper.text()).toContain('app writes') // the APP_INTERCEPT link
-  })
-
-  it('shows changelog remediation actions only for changelog links', async () => {
-    api.listReplicationLinks.mockResolvedValue({ data: [changelogLink()] })
-    const wrapper = mount(DirectorySyncView, { global: { stubs } })
+    const reconcileBtn = wrapper.findAll('button').find((b) => b.text().includes('Reconcile now'))!
+    await reconcileBtn.trigger('click')
     await flushPromises()
-
-    const labels = wrapper.findAll('.am-item').map(b => b.text())
-    expect(labels).toEqual(expect.arrayContaining(['Reseed to now', 'Rewind to…', 'Re-enable', 'Test changelog']))
-  })
-
-  it('hides changelog remediation actions for app-intercept links', async () => {
-    api.listReplicationLinks.mockResolvedValue({ data: [link()] })
-    const wrapper = mount(DirectorySyncView, { global: { stubs } })
-    await flushPromises()
-
-    const labels = wrapper.findAll('.am-item').map(b => b.text())
-    expect(labels).not.toContain('Reseed to now')
-  })
-
-  it('re-enables a degraded link from the row action', async () => {
-    api.listReplicationLinks.mockResolvedValue({ data: [changelogLink({ changelogHealth: 'DISABLED_CONFIG_ERROR' })] })
-    api.reEnableChangelog.mockResolvedValue({ data: {} })
-    const wrapper = mount(DirectorySyncView, { global: { stubs } })
-    await flushPromises()
-
-    byText(wrapper, 'Re-enable')[0].trigger('click')
-    await flushPromises()
-    expect(api.reEnableChangelog).toHaveBeenCalledWith('link-cl')
-  })
-
-  it('probes the changelog from the row action and reports success', async () => {
-    api.listReplicationLinks.mockResolvedValue({ data: [changelogLink()] })
-    api.testReplicationChangelog.mockResolvedValue({ data: { reachable: true, message: 'ok', elapsedMs: 12, currentHead: 100 } })
-    const wrapper = mount(DirectorySyncView, { global: { stubs } })
-    await flushPromises()
-
-    byText(wrapper, 'Test changelog')[0].trigger('click')
-    await flushPromises()
-    expect(api.testReplicationChangelog).toHaveBeenCalledWith('link-cl')
-    expect(api.notifSuccess).toHaveBeenCalled()
-  })
-
-  it('reveals changelog config — with v1 format restriction — when Source changelog is selected', async () => {
-    api.listReplicationLinks.mockResolvedValue({ data: [] })
-    const wrapper = mount(DirectorySyncView, { global: { stubs } })
-    await flushPromises()
-
-    byText(wrapper, '+ New Replication Link')[0].trigger('click')
-    await flushPromises()
-    // Hidden under the default APP_INTERCEPT mode.
-    expect(wrapper.find('input[placeholder="cn=changelog"]').exists()).toBe(false)
-
-    const changelogRadio = wrapper.findAll('input[type="radio"]')
-      .find(r => (r.element as HTMLInputElement).value === 'CHANGELOG')!
-    await changelogRadio.setValue()
-
-    expect(wrapper.find('input[placeholder="cn=changelog"]').exists()).toBe(true)
-    // Only OUD/DSEE is selectable in v1; the other formats are disabled.
-    expect((wrapper.find('option[value="DSEE_CHANGELOG"]').element as HTMLOptionElement).disabled).toBe(false)
-    expect((wrapper.find('option[value="OPENLDAP_ACCESSLOG"]').element as HTMLOptionElement).disabled).toBe(true)
-    expect((wrapper.find('option[value="AD_DIRSYNC"]').element as HTMLOptionElement).disabled).toBe(true)
+    expect(syncApi.reconcileSet).toHaveBeenCalledWith('set-1')
   })
 })

@@ -51,10 +51,10 @@ public class MembershipFunction {
      */
     public MembershipDecision evaluate(SyncSet set, IdentityStrategy strategy,
                                        Entry entry, ReferenceResolver resolver) {
-        String identity = strategy.extract(entry);
+        String identity = SyncIdentity.extract(set, strategy, entry);
         if (identity == null || identity.isBlank()) {
             log.debug("Sync set {}: entry {} has no identity ({}); treating as OUT",
-                    set.getId(), entry.getDN(), strategy.identityAttribute());
+                    set.getId(), entry.getDN(), SyncIdentity.attribute(set, strategy));
             return MembershipDecision.out(null);
         }
 
@@ -84,7 +84,7 @@ public class MembershipFunction {
     private List<Attribute> project(SyncSet set, IdentityStrategy strategy, Entry entry,
                                     String identity, ReferenceResolver resolver) {
         List<String> refAttrs = SyncReferenceAttributes.forSet(set);
-        String idAttr = strategy.identityAttribute();
+        String idAttr = SyncIdentity.attribute(set, strategy);
         // Preserve insertion order; merge values when two source attrs collide on
         // the same target name.
         Map<String, List<String>> byTarget = new LinkedHashMap<>();
