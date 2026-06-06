@@ -2,6 +2,7 @@
 package com.ldapportal.ldap.sync.identity;
 
 import com.ldapportal.entity.enums.DirectoryType;
+import com.unboundid.ldap.sdk.Entry;
 
 /**
  * Per-{@link DirectoryType} strategy for extracting a <em>stable, server-
@@ -38,5 +39,23 @@ public interface IdentityStrategy {
      */
     default String normalize(String rawValue) {
         return rawValue == null ? null : rawValue.trim();
+    }
+
+    /**
+     * Extract and normalize the stable identity from a source entry, or
+     * {@code null} when the entry doesn't carry it. The {@link #identityAttribute()}
+     * is operational for most directories, so callers must request it explicitly
+     * in their search. Returns {@code null} for non-LDAP sources whose
+     * identity attribute is {@code null}.
+     */
+    default String extract(Entry entry) {
+        if (entry == null) {
+            return null;
+        }
+        String attr = identityAttribute();
+        if (attr == null) {
+            return null;
+        }
+        return normalize(entry.getAttributeValue(attr));
     }
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.entity;
 
+import com.ldapportal.entity.enums.SyncDeletePolicy;
 import com.ldapportal.entity.enums.SyncScope;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -15,9 +16,12 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -26,10 +30,10 @@ import java.util.UUID;
  * are placed and transformed on the target, and the identity key that
  * correlates a source entry to its {@link Membership} row.
  *
- * <p>Phase-0 mapping only: the rich applicability / placement / transform /
- * reference-attribute / delete-policy / reconcile-cadence columns are filled in
- * a later phase. This entity carries just enough to define the table contract
- * and the membership/recompute foreign-key target.
+ * <p>Phase 1 fills the projection/selection config the engine consumes
+ * (placement, applicability, transform, reference attributes, delete policy).
+ * The rich management surface (DTO/validation/controller/UI, brownfield) lands
+ * in Phase 2 on top of these columns.
  */
 @Entity
 @Table(name = "sync_set")
@@ -64,6 +68,46 @@ public class SyncSet {
      */
     @Column(name = "identity_key")
     private String identityKey;
+
+    /**
+     * Target base DN the source base ({@link #objectScopeBaseDn}) is rewritten
+     * to during placement. Null => identity placement (target DN == source DN).
+     */
+    @Column(name = "target_base_dn")
+    private String targetBaseDn;
+
+    /**
+     * Membership predicate evaluated in-engine against the read entry — an
+     * RFC 4515 filter (Phase 1). Null => every entry in scope is a member.
+     */
+    @Column(name = "applicability_filter")
+    private String applicabilityFilter;
+
+    /**
+     * Comma-separated DN-valued attributes used for reference remapping and
+     * closure. Null => the engine's built-in default set.
+     */
+    @Column(name = "reference_attributes")
+    private String referenceAttributes;
+
+    /**
+     * Attribute the normalized source identity is stamped onto every target
+     * entry as (the {@code sourceAnchor}). Null => not written.
+     */
+    @Column(name = "source_anchor_attribute")
+    private String sourceAnchorAttribute;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "delete_policy", nullable = false)
+    private SyncDeletePolicy deletePolicy = SyncDeletePolicy.DELETE;
+
+    /**
+     * Optional attribute rename / value-template rules. Null/empty => identity
+     * transform (copy user attributes through unchanged).
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "transform_rules", columnDefinition = "jsonb")
+    private List<SyncTransformRule> transformRules;
 
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;
