@@ -99,7 +99,12 @@ public class SyncChangelogPoller {
                 RootDSE root = conn.getRootDSE();
                 Long firstCn = root == null ? null : root.getAttributeValueAsLong("firstChangeNumber");
                 Long lastCn = root == null ? null : root.getAttributeValueAsLong("lastChangeNumber");
-                Long cursor = link.getChangelogLastChangeNumber();
+                // Canonical cursor is the opaque token; the DSEE family reads it as
+                // a changeNumber. Fall back to the numeric mirror for pre-V5 rows.
+                Long cursor = SyncChangelogCursor.toChangeNumber(link.getChangelogCursorToken());
+                if (cursor == null) {
+                    cursor = link.getChangelogLastChangeNumber();
+                }
 
                 boolean cursorReset = cursor != null && lastCn != null && lastCn < cursor;
                 if (cursorReset) {
@@ -141,6 +146,7 @@ public class SyncChangelogPoller {
 
     private void advance(SyncLink link, PollResult r) {
         long newCursor = r.gap() && r.sourceHead() != null ? r.sourceHead() : r.maxChangeNumber();
+        link.setChangelogCursorToken(SyncChangelogCursor.fromChangeNumber(newCursor));
         link.setChangelogLastChangeNumber(newCursor);
         link.setChangelogSourceLastChangeNumber(r.sourceHead());
         link.setChangelogLastPolledAt(OffsetDateTime.now());

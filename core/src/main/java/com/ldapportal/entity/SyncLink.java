@@ -70,7 +70,18 @@ public class SyncLink {
     @Column(name = "changelog_base_dn")
     private String changelogBaseDn;
 
-    /** Cursor: highest changeNumber already turned into recomputes for this link. */
+    /**
+     * Opaque cursor token — the canonical position in the source feed. For the
+     * DSEE numeric family it is the decimal changeNumber as text; cookie-based
+     * feeds (DirSync / syncrepl / Entra delta) persist their cookie here verbatim.
+     */
+    @Column(name = "changelog_cursor_token")
+    private String changelogCursorToken;
+
+    /**
+     * Numeric mirror of the cursor for the DSEE family (lag/gap math +
+     * observability). Null for feeds whose cursor isn't a monotonic integer.
+     */
     @Column(name = "changelog_last_change_number")
     private Long changelogLastChangeNumber;
 

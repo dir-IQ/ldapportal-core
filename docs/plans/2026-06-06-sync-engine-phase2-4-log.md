@@ -109,3 +109,52 @@ summary at the end of the effort.
   allows only DSEE). Phase 4 generalizes. Severity: low.
 - **Changelog health UI** is minimal (the response carries health/cursor/lag, but
   the view shows capture mode without a dedicated health panel). Severity: low.
+
+## Phase 4 — heterogeneous feeds (cursor generalization + seam)
+
+### Decisions / scope
+- **Delivered the design's enabling change: generalize the changelog cursor to an
+  opaque token.** V5 adds `sync_links.changelog_cursor_token TEXT` (backfilled
+  from the numeric cursor); the poller now treats the token as the canonical
+  cursor via a `SyncChangelogCursor` codec (DSEE family ↔ decimal changeNumber).
+  The numeric `changelog_last_change_number` is retained as a per-format lag/
+  observability mirror. Cookie-based feeds (DirSync / syncrepl / Entra delta)
+  persist their cookie verbatim in the same token column — the codec documents
+  the per-feed interpretation seam.
+- **Scope decision (best judgment): deferred the concrete heterogeneous feed
+  adapters** (AD DirSync, syncrepl, Entra-Graph-delta). Rationale: (1) cookie-
+  based protocol feeds need source-specific read/search paths (the DirSync
+  control, syncrepl) that the UnboundID in-memory test harness can't exercise, so
+  wiring them would be untested / low-confidence; (2) **Entra is non-LDAP** and
+  the engine's source-read path is LDAP-only (`withConnectionUnreplicated`) —
+  wiring Entra into the membership engine needs a non-LDAP source-read seam, a
+  larger architectural addition (the codebase keeps Entra in a separate Graph-
+  delta subsystem). The cursor generalization + token column + codec seam are the
+  enabling foundation these adapters build on; that foundation is delivered and
+  tested. **Severity: this is the largest deferral — the feeds themselves are not
+  implemented, only their cursor/seam.**
+
+### Review findings — fixed
+- None urgent (small, clean generalization).
+
+### Review findings — deferred
+- **AD DirSync / syncrepl / Entra-Graph-delta adapters** — not implemented (see
+  scope decision above). The opaque-token cursor + `SyncChangelogCursor` seam are
+  the plug-in point.
+- **SPI-level cursor generalization:** `ChangelogStrategy` / `ChangelogReadContext`
+  still use a `Long afterChangeNumber` (shared with the audit reader). Generalizing
+  the strategy's read context to an opaque cursor (needed for cookie feeds) is the
+  remaining step; deferred to avoid destabilizing the shared audit SPI in this
+  increment. Severity: medium (prerequisite for the cookie adapters).
+
+## Closing summary (Phases 2–4)
+
+Phases 2 and 3 are delivered effectively complete (rich config + identity +
+brownfield + UI; the changelog-capture adapter). Phase 4 delivers the cursor
+generalization + seam but **defers the concrete heterogeneous feed adapters** for
+the reasons above — that is the single largest piece of the original plan left
+unbuilt. Three review findings were fixed inline (deletePolicy=REVIEW quarantine;
+changelog-rename = MODDN; the Phase-1 hardening that preceded this batch). The
+highest-value remaining items are: the changestamp-driven reconcile (read-
+amplification, Phase 3 deferral), config-time identity present+unique validation
+(Phase 2 deferral), and the heterogeneous feed adapters (Phase 4 deferral).

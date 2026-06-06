@@ -123,6 +123,10 @@ class SyncChangelogPollerTest {
         assertThat(requestRepo.findAllBySyncSetId(peopleSet.getId())).hasSizeGreaterThanOrEqualTo(2);
         SyncLink after = linkRepo.findById(link.getId()).orElseThrow();
         assertThat(after.getChangelogLastChangeNumber()).isNotNull().isGreaterThan(0L);
+        // The canonical cursor is the opaque token (DSEE: the changeNumber as text).
+        assertThat(after.getChangelogCursorToken()).isNotBlank();
+        assertThat(SyncChangelogCursor.toChangeNumber(after.getChangelogCursorToken()))
+                .isEqualTo(after.getChangelogLastChangeNumber());
 
         // Drain → target converges.
         drain();
