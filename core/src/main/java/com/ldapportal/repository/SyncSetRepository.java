@@ -13,4 +13,6 @@ import java.util.UUID;
 public interface SyncSetRepository extends JpaRepository<SyncSet, UUID> {
 
     List<SyncSet> findAllByLinkId(UUID linkId);
+
+    List<SyncSet> findAllByEnabledTrue();
 }
