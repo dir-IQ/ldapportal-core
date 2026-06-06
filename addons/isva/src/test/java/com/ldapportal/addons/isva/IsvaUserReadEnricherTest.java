@@ -78,7 +78,7 @@ class IsvaUserReadEnricherTest {
         inMemoryServer.startListening();
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(BIND_PASS);
-        connectionFactory = new LdapConnectionFactory(encryptionService, null);
+        connectionFactory = new LdapConnectionFactory(encryptionService);
         enricher = new IsvaUserReadEnricher(configRepo, connectionFactory);
         dir = buildDc();
     }

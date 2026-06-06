@@ -5,8 +5,6 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.exception.LdapConnectionException;
 import com.ldapportal.exception.LdapOperationException;
-import com.ldapportal.ldap.replication.ReplicatingLdapInterface;
-import com.ldapportal.ldap.replication.ReplicationEnqueuer;
 import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.sdk.*;
@@ -55,21 +53,11 @@ import java.util.concurrent.ConcurrentMap;
 @Component
 @Slf4j
 @RequiredArgsConstructor
-@LdapWriteAuthorized("Constructs the write surface — wraps pooled connections in "
-        + "ReplicatingLdapInterface and hands out the write-capable interface; "
-        + "issues no mutating calls itself.")
+@LdapWriteAuthorized("Constructs the write surface — hands out the write-capable "
+        + "LDAP interface from the pool; issues no mutating calls itself.")
 public class LdapConnectionFactory {
 
     private final EncryptionService encryptionService;
-
-    /**
-     * Replication enqueuer for app-initiated writes. Wired via Spring;
-     * may be {@code null} in unit tests that construct the factory
-     * directly. When null, {@link #withConnection} passes the raw
-     * {@link LDAPConnection} through without wrapping — replication is
-     * inactive.
-     */
-    private final ReplicationEnqueuer replicationEnqueuer;
 
     private final ConcurrentMap<UUID, LDAPConnectionPool> pools = new ConcurrentHashMap<>();
 
@@ -113,49 +101,29 @@ public class LdapConnectionFactory {
      */
     public <T> T withConnection(DirectoryConnection dc,
                                 LdapOperation<T> operation) {
-        return doWithConnection(dc, operation, replicationEnqueuer != null);
+        return doWithConnection(dc, operation);
     }
 
     /**
-     * Variant of {@link #withConnection} that bypasses the replication
-     * wrapper. Use sparingly — every call site must have a deliberate
-     * reason not to participate in replication capture. Currently
-     * intended for two paths:
-     *
-     * <ol>
-     *   <li>The {@code ReplicationWorker} (P1) — target-side writes
-     *       must not loop back into the queue.</li>
-     *   <li>The {@code ChangelogReplicationEnqueuer} (future) — its
-     *       own LDAP reads on the source are uninteresting.</li>
-     * </ol>
-     *
-     * Everything else should call {@link #withConnection}.
+     * Borrows a connection from the pool without participating in any
+     * change-capture path. Retained as the wiring point for the sync
+     * engine's source reads and target writes, which must not loop back
+     * into the recompute queue once app-intercept capture is reintroduced.
+     * Currently identical to {@link #withConnection} (no capture wrapper
+     * is active).
      */
     public <T> T withConnectionUnreplicated(DirectoryConnection dc,
                                              LdapOperation<T> operation) {
-        return doWithConnection(dc, operation, false);
+        return doWithConnection(dc, operation);
     }
 
     private <T> T doWithConnection(DirectoryConnection dc,
-                                    LdapOperation<T> operation,
-                                    boolean replicate) {
+                                    LdapOperation<T> operation) {
         LDAPConnectionPool pool = getPool(dc);
         LDAPConnection conn = null;
         try {
             conn = pool.getConnection();
-            // Per-directory replication gate (R2): when the directory's
-            // master switch is off, skip the capture wrapper entirely —
-            // no events accumulate for any link sourced here. The
-            // entitlement-level degradation (community edition) is enforced
-            // downstream in ReplicationEnqueuer.
-            boolean wrap = replicate
-                    && replicationEnqueuer != null
-                    && dc.isReplicationEnabled();
-            com.unboundid.ldap.sdk.FullLDAPInterface iface =
-                    wrap
-                    ? new ReplicatingLdapInterface(conn, replicationEnqueuer, dc.getId())
-                    : conn;
-            return operation.execute(iface);
+            return operation.execute(conn);
         } catch (LDAPException e) {
             boolean connectionBroken = !e.getResultCode().isConnectionUsable();
             if (conn != null) {
@@ -333,11 +301,10 @@ public class LdapConnectionFactory {
 
     /**
      * Callback receiving a {@link com.unboundid.ldap.sdk.FullLDAPInterface}
-     * — either a raw {@link LDAPConnection} (from
-     * {@link #withConnectionUnreplicated}) or a
-     * {@code ReplicatingLdapInterface} wrapping one (from
-     * {@link #withConnection}). The wrapper intercepts successful
-     * writes to enqueue replication events; reads pass through.
+     * — currently a raw {@link LDAPConnection} borrowed from the pool. The
+     * type is kept at {@code FullLDAPInterface} (not the narrower
+     * {@link LDAPConnection}) so the seam for a change-capture wrapper can
+     * be reintroduced with the sync engine without touching call sites.
      *
      * <p>The parameter type is {@code FullLDAPInterface} rather than
      * the narrower {@code LDAPInterface} so addon callers that need

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.changelog;
 
-import com.ldapportal.entity.enums.ReplicationOperationType;
+import com.ldapportal.entity.enums.LdapChangeOp;
 
 import java.util.Map;
 
@@ -32,7 +32,7 @@ import java.util.Map;
  * @param rawPayload the pre-mapping payload in enqueuer shape (see above).
  */
 public record ChangelogChange(
-        ReplicationOperationType operation,
+        LdapChangeOp operation,
         String sourceDn,
         Map<String, Object> rawPayload) {
 }

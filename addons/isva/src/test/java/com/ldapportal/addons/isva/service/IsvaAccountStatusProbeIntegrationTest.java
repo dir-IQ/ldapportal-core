@@ -84,7 +84,7 @@ class IsvaAccountStatusProbeIntegrationTest {
         inMemoryServer.startListening();
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(BIND_PASS);
-        connectionFactory = new LdapConnectionFactory(encryptionService, null);
+        connectionFactory = new LdapConnectionFactory(encryptionService);
         IsvaLinkedUserLookup lookup = new IsvaLinkedUserLookup(connectionFactory);
         probe = new IsvaAccountStatusProbe(lookup, connectionFactory);
         dir = buildDc();

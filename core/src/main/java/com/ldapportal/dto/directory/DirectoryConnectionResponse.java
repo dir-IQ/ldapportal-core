@@ -68,8 +68,6 @@ public record DirectoryConnectionResponse(
         DirectoryCapabilities capabilities,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
-        // ── Replication (R2) ────────────────────────────────────────────────
-        boolean replicationEnabled,
         // ── Write-only secret presence (§4.3) ───────────────────────────────
         // The secrets themselves are never returned; these booleans let an
         // idempotent applier tell whether a credential is already stored
@@ -128,7 +126,6 @@ public record DirectoryConnectionResponse(
                 dc.getCapabilities(),
                 dc.getCreatedAt(),
                 dc.getUpdatedAt(),
-                dc.isReplicationEnabled(),
                 isSecretSet(dc.getBindPasswordEncrypted()),
                 isSecretSet(dc.getEntraClientSecretEncrypted()));
     }

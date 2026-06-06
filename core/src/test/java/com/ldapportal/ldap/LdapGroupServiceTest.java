@@ -66,7 +66,7 @@ class LdapGroupServiceTest {
         inMemoryServer.startListening();
 
         when(encryptionService.decrypt(anyString())).thenReturn(BIND_PASS);
-        connectionFactory = new LdapConnectionFactory(encryptionService, null);
+        connectionFactory = new LdapConnectionFactory(encryptionService);
         // Empty interceptor chain — see LdapUserServiceTest setUp.
         groupService = new LdapGroupService(
                 connectionFactory,

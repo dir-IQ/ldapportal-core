@@ -73,7 +73,7 @@ class IsvaLinkedUserLookupTest {
         inMemoryServer.startListening();
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(BIND_PASS);
-        connectionFactory = new LdapConnectionFactory(encryptionService, null);
+        connectionFactory = new LdapConnectionFactory(encryptionService);
         lookup = new IsvaLinkedUserLookup(connectionFactory);
         dir = buildDc();
     }

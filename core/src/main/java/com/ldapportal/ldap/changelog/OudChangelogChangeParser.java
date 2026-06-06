@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.changelog;
 
-import com.ldapportal.entity.enums.ReplicationOperationType;
+import com.ldapportal.entity.enums.LdapChangeOp;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.SearchResultEntry;
@@ -66,11 +66,11 @@ public final class OudChangelogChangeParser {
             return Optional.empty();
         }
 
-        ReplicationOperationType op = switch (changeType.toLowerCase(Locale.ROOT)) {
-            case "add" -> ReplicationOperationType.ADD;
-            case "modify" -> ReplicationOperationType.MODIFY;
-            case "delete" -> ReplicationOperationType.DELETE;
-            case "modrdn", "moddn" -> ReplicationOperationType.MODIFY_DN;
+        LdapChangeOp op = switch (changeType.toLowerCase(Locale.ROOT)) {
+            case "add" -> LdapChangeOp.ADD;
+            case "modify" -> LdapChangeOp.MODIFY;
+            case "delete" -> LdapChangeOp.DELETE;
+            case "modrdn", "moddn" -> LdapChangeOp.MODIFY_DN;
             default -> null;
         };
         if (op == null) {

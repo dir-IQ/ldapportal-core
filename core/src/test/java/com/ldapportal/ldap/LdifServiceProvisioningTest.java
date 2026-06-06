@@ -109,7 +109,7 @@ class LdifServiceProvisioningTest {
         server.startListening();
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(PASS);
-        connectionFactory = new LdapConnectionFactory(encryptionService, null);
+        connectionFactory = new LdapConnectionFactory(encryptionService);
         dc = buildDc();
     }
 
