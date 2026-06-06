@@ -98,34 +98,10 @@ public enum AuditAction {
     API_TOKEN_CREATED    ("api_token.created"),
     API_TOKEN_UPDATED    ("api_token.updated"),
     API_TOKEN_REVOKED    ("api_token.revoked"),
-    API_TOKEN_ROTATED    ("api_token.rotated"),
-
-    // ── Directory sync (cross-directory replication) ──────────────────────────
-    REPLICATION_LINK_CREATED               ("replication.link_created"),
-    REPLICATION_LINK_UPDATED               ("replication.link_updated"),
-    REPLICATION_LINK_DELETED               ("replication.link_deleted"),
-    REPLICATION_LINK_ENABLED               ("replication.link_enabled"),
-    REPLICATION_LINK_DISABLED              ("replication.link_disabled"),
-    REPLICATION_EVENT_DEAD_LETTERED        ("replication.event_dead_lettered"),
-    REPLICATION_EVENT_RETRIED_BY_OPERATOR  ("replication.event_retried_by_operator"),
-    REPLICATION_EVENT_SKIPPED_BY_OPERATOR  ("replication.event_skipped_by_operator"),
-    REPLICATION_EVENT_ACKNOWLEDGED         ("replication.event_acknowledged"),
-
-    // ── Changelog-driven replication capture (C3R) ─────────────────────────────
-    REPLICATION_CHANGELOG_GAP_DETECTED         ("replication.changelog_gap_detected"),
-    REPLICATION_CHANGELOG_CURSOR_RESET         ("replication.changelog_cursor_reset"),
-    REPLICATION_CHANGELOG_ENTRY_DEAD_LETTERED  ("replication.changelog_entry_dead_lettered"),
-    REPLICATION_CHANGELOG_CAPTURE_ENABLED      ("replication.changelog_capture_enabled"),
-    REPLICATION_CHANGELOG_CAPTURE_DISABLED     ("replication.changelog_capture_disabled"),
-    REPLICATION_CHANGELOG_REMEDIATED           ("replication.changelog_remediated"),
-
-    // ── Replication reconciliation ─────────────────────────────────────────────
-    RECONCILIATION_CONFIG_UPDATED          ("reconciliation.config_updated"),
-    RECONCILIATION_RUN_STARTED             ("reconciliation.run_started"),
-    RECONCILIATION_RUN_COMPLETED           ("reconciliation.run_completed"),
-    RECONCILIATION_RUN_FAILED              ("reconciliation.run_failed"),
-    RECONCILIATION_FINDING_APPLIED         ("reconciliation.finding_applied"),
-    RECONCILIATION_FINDING_DISMISSED       ("reconciliation.finding_dismissed");
+    API_TOKEN_ROTATED    ("api_token.rotated");
+    // Directory-sync audit actions are reintroduced (as sync.*) when the
+    // membership-engine lands; the legacy replication.* / reconciliation.*
+    // actions were removed with that subsystem.
 
     private final String dbValue;
 

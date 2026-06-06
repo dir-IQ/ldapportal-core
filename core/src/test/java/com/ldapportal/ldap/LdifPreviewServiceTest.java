@@ -72,7 +72,7 @@ class LdifPreviewServiceTest {
         server.startListening();
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(PASS);
-        connectionFactory = new LdapConnectionFactory(encryptionService, null);
+        connectionFactory = new LdapConnectionFactory(encryptionService);
         ldifService = new LdifService(connectionFactory, baselineUserService(connectionFactory));
         previewService = new LdifPreviewService(connectionFactory, ldifService);
         ReflectionTestUtils.setField(previewService, "maxRecords", 50000);

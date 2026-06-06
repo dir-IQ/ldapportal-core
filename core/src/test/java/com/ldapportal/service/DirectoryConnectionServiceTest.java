@@ -122,6 +122,6 @@ class DirectoryConnectionServiceTest {
                 null, null,
                 null, null,
                 null, null, null, "https://graph.microsoft.com",
-                false, null);
+                null);
     }
 }

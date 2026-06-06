@@ -114,12 +114,6 @@
             <input type="checkbox" v-model="form.enabled" class="rounded" />
             Enabled
           </label>
-          <label v-if="auth.isDirectorySyncEnabled && form.directoryType !== 'ENTRA_ID'"
-                 class="flex items-center gap-2 text-sm text-gray-700"
-                 title="Capture app-initiated writes to this directory and replicate them to its linked targets.">
-            <input type="checkbox" v-model="form.replicationEnabled" class="rounded" />
-            Replication enabled
-          </label>
         </div>
 
         <!-- Self-service settings (LDAP only) -->
@@ -249,7 +243,6 @@ interface DirectoryForm {
   enableValue: string
   disableValue: string
   enabled: boolean
-  replicationEnabled: boolean
   selfServiceEnabled: boolean
   selfServiceLoginAttribute: string
   secondaryHost: string
@@ -410,7 +403,6 @@ function emptyForm(): DirectoryForm {
     poolConnectTimeoutSeconds: 10, poolResponseTimeoutSeconds: 30,
     enableDisableAttribute: '', enableDisableValueType: 'BOOLEAN',
     enableValue: '', disableValue: '', enabled: true,
-    replicationEnabled: false,
     selfServiceEnabled: false, selfServiceLoginAttribute: 'uid',
     secondaryHost: '', secondaryPort: undefined, globalCatalogPort: undefined,
     tenantId: '', entraClientId: '', entraClientSecret: '', graphEndpoint: '',
@@ -535,7 +527,6 @@ function openEdit(d: DirectoryRow) {
     enableDisableValueType: d.enableDisableValueType || 'BOOLEAN',
     enableValue: d.enableValue || '', disableValue: d.disableValue || '',
     enabled: d.enabled,
-    replicationEnabled: d.replicationEnabled || false,
     selfServiceEnabled: d.selfServiceEnabled || false,
     selfServiceLoginAttribute: d.selfServiceLoginAttribute || 'uid',
     secondaryHost: d.secondaryHost || '',

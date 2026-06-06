@@ -39,7 +39,7 @@ class LdapCapabilityProbeServiceTest {
         inMemoryServer = new InMemoryDirectoryServer(config);
         inMemoryServer.startListening();
 
-        factory = new LdapConnectionFactory(encryptionService, null);
+        factory = new LdapConnectionFactory(encryptionService);
         probe = new LdapCapabilityProbeService(factory);
     }
 

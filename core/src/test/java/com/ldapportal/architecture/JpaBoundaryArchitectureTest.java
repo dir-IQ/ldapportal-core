@@ -9,73 +9,23 @@ import com.tngtech.archunit.lang.ArchRule;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 /**
- * Guards the snapshot/persistence boundary for the two async-dispatch
- * subsystems: their JPA entities must not be touched outside the narrow
- * set of classes that own the read/write transaction. Non-transactional
- * dispatch code consumes immutable snapshots instead, so a stray LAZY
- * association can't trip {@code LazyInitializationException} inside a
- * generic transient-failure catch and retry-loop forever.
+ * Guards the snapshot/persistence boundary for the async event-outbox
+ * subsystem: its JPA entities must not be touched outside the narrow set of
+ * classes that own the read/write transaction. Non-transactional dispatch
+ * code consumes immutable snapshots instead, so a stray LAZY association
+ * can't trip {@code LazyInitializationException} inside a generic
+ * transient-failure catch and retry-loop forever.
  *
- * <p><b>Note on rule shape (deviation from the migration plan's sketch).</b>
- * The plan assumed {@code ..ldap.replication.snapshot..} /
- * {@code ..ldap.replication.persistence..} subpackages and used a package
- * allowlist. The replication package is in fact <em>flat</em> — the
- * snapshot factories ({@code ReplicationLinkSnapshot},
- * {@code ReplicationEventSnapshot}) and the persister
- * ({@code ReplicationEventPersister}) sit alongside the dispatch classes —
- * so a package allowlist would be vacuous. The replication rule therefore
- * uses a class-name allowlist within the flat package. The events
- * subsystem, by contrast, keeps its entities in their own
- * {@code ..core.events.entity} package and they genuinely never escape the
- * module, so its rule is expressed as module containment. Both encode the
- * same R0 invariant ("snapshot pattern at the JPA boundary") and both pass
- * against the {@code feat/directory-sync} baseline.
+ * <p>The legacy replication subsystem carried an analogous rule; it was
+ * removed with that subsystem when the sync engine was rebaselined. The
+ * membership engine reintroduces its own boundary rule when it grows
+ * non-transactional dispatch.
  */
 @AnalyzeClasses(packages = "com.ldapportal", importOptions = ImportOption.DoNotIncludeTests.class)
 class JpaBoundaryArchitectureTest {
 
-    private static final String REPLICATION_LINK  = "com.ldapportal.entity.ReplicationLink";
-    private static final String REPLICATION_EVENT = "com.ldapportal.entity.ReplicationEvent";
     private static final String OUTBOX_ENTRY      = "com.ldapportal.core.events.entity.OutboxEntry";
     private static final String EVENT_SUBSCRIPTION = "com.ldapportal.core.events.entity.EventSubscription";
-
-    /**
-     * Within the async replication dispatch package, only the persistence-
-     * boundary classes may depend on the
-     * {@link com.ldapportal.entity.ReplicationLink} /
-     * {@link com.ldapportal.entity.ReplicationEvent} JPA entities:
-     * <ul>
-     *   <li>{@code *Snapshot} — read-side detached projections;</li>
-     *   <li>{@code *Persister} — the replication enqueue persister;</li>
-     *   <li>{@code *TxOps} — the reconciliation transactional helpers
-     *       ({@code ReconciliationTxOps}, {@code ReconciliationFindingTxOps}),
-     *       which mutate managed entities (run lifecycle, finding status,
-     *       corrective-event enqueue) inside a {@code @Transactional} method.
-     *       Same persistence-boundary role as {@code *Persister}, just a name
-     *       that reflects the broader transactional orchestration.</li>
-     * </ul>
-     * Every other class (worker, delivery, enqueuer, codec, mappers, the
-     * wrapper, the comparison/scheduler classes) must go through a
-     * {@code ReplicationLinkSnapshot} / {@code ReplicationEventSnapshot}
-     * obtained from {@code ReplicationReadOps} inside a {@code @Transactional}
-     * method.
-     */
-    @ArchTest
-    static final ArchRule replication_entities_stay_behind_snapshot_boundary =
-            noClasses()
-                    .that().resideInAPackage("com.ldapportal.ldap.replication..")
-                    .and().haveSimpleNameNotEndingWith("Snapshot")
-                    .and().haveSimpleNameNotEndingWith("Persister")
-                    .and().haveSimpleNameNotEndingWith("TxOps")
-                    .should().dependOnClassesThat().haveFullyQualifiedName(REPLICATION_LINK)
-                    .orShould().dependOnClassesThat().haveFullyQualifiedName(REPLICATION_EVENT)
-                    .because("JPA entities must not cross out of the snapshot/persistence "
-                           + "boundary. Use a ReplicationLinkSnapshot / ReplicationEventSnapshot "
-                           + "obtained from ReplicationReadOps inside a @Transactional method.")
-                    // Fail (not vacuously pass) if the subject set is empty —
-                    // e.g. the replication package was renamed/moved and this
-                    // rule's package matcher silently stopped matching anything.
-                    .allowEmptyShould(false);
 
     /**
      * The outbox entities ({@link com.ldapportal.core.events.entity.OutboxEntry},

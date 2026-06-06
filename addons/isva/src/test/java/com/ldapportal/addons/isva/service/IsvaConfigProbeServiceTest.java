@@ -67,7 +67,7 @@ class IsvaConfigProbeServiceTest {
         inMemoryServer.startListening();
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(BIND_PASS);
-        connectionFactory = new LdapConnectionFactory(encryptionService, null);
+        connectionFactory = new LdapConnectionFactory(encryptionService);
         probeService = new IsvaConfigProbeService(connectionFactory);
         dir = buildDc();
     }

@@ -66,8 +66,6 @@ public record DirectoryConnectionRequest(
         String entraClientId,
         String entraClientSecret,               // plaintext; null on update = keep existing
         String graphEndpoint,
-        // ── Replication (R2) ────────────────────────────────────────────────
-        boolean replicationEnabled,
         // ── IaC external key (optional; auto-derived from displayName when absent) ──
         @Size(max = 100)
         @Pattern(regexp = "^[a-z0-9]+(?:-[a-z0-9]+)*$",

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.changelog;
 
-import com.ldapportal.entity.enums.ReplicationOperationType;
+import com.ldapportal.entity.enums.LdapChangeOp;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.SearchResultEntry;
 import org.junit.jupiter.api.Test;
@@ -34,7 +34,7 @@ class OudChangelogChangeParserTest {
 
         ChangelogChange change = OudChangelogChangeParser.parse(entry).orElseThrow();
 
-        assertThat(change.operation()).isEqualTo(ReplicationOperationType.ADD);
+        assertThat(change.operation()).isEqualTo(LdapChangeOp.ADD);
         assertThat(change.sourceDn()).isEqualTo("uid=alice,ou=people,dc=test");
         Map<String, List<String>> attrs =
                 (Map<String, List<String>>) change.rawPayload().get("attributes");
@@ -146,7 +146,7 @@ class OudChangelogChangeParserTest {
                                 + "replace: mail\nmail: a@b.com\nmail: c@d.com\n-"));
 
         ChangelogChange change = OudChangelogChangeParser.parse(entry).orElseThrow();
-        assertThat(change.operation()).isEqualTo(ReplicationOperationType.MODIFY);
+        assertThat(change.operation()).isEqualTo(LdapChangeOp.MODIFY);
 
         List<Map<String, Object>> mods =
                 (List<Map<String, Object>>) change.rawPayload().get("modifications");
@@ -228,7 +228,7 @@ class OudChangelogChangeParserTest {
                 new Attribute("targetDN", "uid=gone,dc=test"));
 
         ChangelogChange change = OudChangelogChangeParser.parse(entry).orElseThrow();
-        assertThat(change.operation()).isEqualTo(ReplicationOperationType.DELETE);
+        assertThat(change.operation()).isEqualTo(LdapChangeOp.DELETE);
         assertThat(change.sourceDn()).isEqualTo("uid=gone,dc=test");
         assertThat(change.rawPayload()).isEmpty();
     }
@@ -245,7 +245,7 @@ class OudChangelogChangeParserTest {
                 new Attribute("newSuperior", "ou=new,dc=test"));
 
         ChangelogChange change = OudChangelogChangeParser.parse(entry).orElseThrow();
-        assertThat(change.operation()).isEqualTo(ReplicationOperationType.MODIFY_DN);
+        assertThat(change.operation()).isEqualTo(LdapChangeOp.MODIFY_DN);
         assertThat(change.rawPayload()).containsEntry("newRdn", "uid=jane")
                 .containsEntry("deleteOldRdn", true)
                 .containsEntry("newSuperiorDn", "ou=new,dc=test");

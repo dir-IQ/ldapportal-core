@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.changelog;
 
-import com.ldapportal.entity.enums.ReplicationOperationType;
+import com.ldapportal.entity.enums.LdapChangeOp;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResultEntry;
@@ -73,7 +73,7 @@ class DseeChangelogStrategyTest {
         Optional<ChangelogChange> change = strategy.extractChange(entry);
 
         assertThat(change).isPresent();
-        assertThat(change.get().operation()).isEqualTo(ReplicationOperationType.MODIFY);
+        assertThat(change.get().operation()).isEqualTo(LdapChangeOp.MODIFY);
         assertThat(change.get().sourceDn()).isEqualTo("uid=john,ou=users,dc=test");
     }
 
