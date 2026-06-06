@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.core.entitlement.Entitlement;
+import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.repository.SyncLinkRepository;
@@ -32,8 +34,12 @@ public class SyncWriteCaptor {
     private final SyncLinkRepository syncLinkRepo;
     private final SyncSetRepository syncSetRepo;
     private final RecomputeEnqueuer enqueuer;
+    private final EntitlementService entitlementService;
 
     public void onWrite(UUID sourceDirectoryId, String dn) {
+        if (!entitlementService.has(Entitlement.DIRECTORY_SYNC)) {
+            return; // engine inert without the entitlement
+        }
         try {
             for (SyncLink link : syncLinkRepo.findAllBySourceDirIdAndEnabledTrue(sourceDirectoryId)) {
                 for (SyncSet set : syncSetRepo.findAllByLinkId(link.getId())) {

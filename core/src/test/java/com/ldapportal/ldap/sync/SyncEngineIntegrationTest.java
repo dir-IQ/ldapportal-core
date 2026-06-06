@@ -32,6 +32,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,7 +49,9 @@ import static org.mockito.Mockito.when;
  */
 @SpringBootTest
 @ActiveProfiles("test")
-@TestPropertySource(properties = "ldapportal.sync.worker.fixed-delay-ms=3600000")
+@TestPropertySource(properties = {
+        "ldapportal.sync.worker.fixed-delay-ms=3600000",
+        "ldapportal.sync.reconcile.initial-delay-ms=3600000"})
 class SyncEngineIntegrationTest {
 
     private static final String SRC_BASE = "dc=src,dc=com";
@@ -68,6 +71,7 @@ class SyncEngineIntegrationTest {
     @Autowired private RecomputeRequestRepository requestRepo;
     @Autowired private RecomputeEngine engine;
     @Autowired private MembershipReconciler reconciler;
+    @Autowired private RecomputeEnqueuer enqueuer;
 
     private InMemoryDirectoryServer source;
     private InMemoryDirectoryServer target;
@@ -283,6 +287,38 @@ class SyncEngineIntegrationTest {
         engine.process(peopleSet.getId(), dn("carol"));
         assertThat(membership("carol").getState()).isEqualTo(MembershipState.APPLIED);
         assertThat(target.getEntry("uid=carol," + DST_USERS)).isNotNull();
+    }
+
+    // ── Queue lease: a re-trigger during processing survives the settle delete ──
+
+    @Test
+    void recomputeRequestLease_deletesOnlyWhenStillClaimed() {
+        enqueuer.enqueue(peopleSet.getId(), "k1", null);
+        assertThat(requestRepo.claim(peopleSet.getId(), "k1", OffsetDateTime.now())).isEqualTo(1);
+        assertThat(requestRepo.claim(peopleSet.getId(), "k1", OffsetDateTime.now())).isEqualTo(0);
+
+        // Re-trigger mid-processing nulls the claim, so the settle delete misses.
+        enqueuer.enqueue(peopleSet.getId(), "k1", null);
+        requestRepo.deleteIfClaimed(peopleSet.getId(), "k1");
+        assertThat(requestRepo.findAllBySyncSetId(peopleSet.getId())).hasSize(1);
+        assertThat(requestRepo.findAllBySyncSetId(peopleSet.getId()).get(0).getClaimedAt()).isNull();
+
+        // A clean claim + settle removes it.
+        requestRepo.claim(peopleSet.getId(), "k1", OffsetDateTime.now());
+        requestRepo.deleteIfClaimed(peopleSet.getId(), "k1");
+        assertThat(requestRepo.findAllBySyncSetId(peopleSet.getId())).isEmpty();
+    }
+
+    @Test
+    void recomputeRequestLease_staleClaimIsReleased() {
+        enqueuer.enqueue(peopleSet.getId(), "k2", null);
+        requestRepo.claim(peopleSet.getId(), "k2", OffsetDateTime.now().minusMinutes(30));
+        assertThat(requestRepo.findBatchUnclaimed(org.springframework.data.domain.PageRequest.of(0, 10)))
+                .isEmpty();
+
+        assertThat(requestRepo.releaseStaleClaims(OffsetDateTime.now().minusMinutes(10))).isEqualTo(1);
+        assertThat(requestRepo.findBatchUnclaimed(org.springframework.data.domain.PageRequest.of(0, 10)))
+                .hasSize(1);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────────

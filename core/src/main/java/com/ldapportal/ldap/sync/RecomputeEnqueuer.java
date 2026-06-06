@@ -36,8 +36,19 @@ public class RecomputeEnqueuer {
         var existing = repo.findById(id);
         if (existing.isPresent()) {
             RecomputeRequest r = existing.get();
+            boolean dirty = false;
             if (srcCursor != null && (r.getSrcCursor() == null || srcCursor > r.getSrcCursor())) {
                 r.setSrcCursor(srcCursor);
+                dirty = true;
+            }
+            // Re-trigger of a key that may be mid-processing: null the claim so the
+            // worker's "delete-if-still-claimed" misses and the request is
+            // reprocessed against the newer source state (no lost update).
+            if (r.getClaimedAt() != null) {
+                r.setClaimedAt(null);
+                dirty = true;
+            }
+            if (dirty) {
                 repo.save(r);
             }
             return;
