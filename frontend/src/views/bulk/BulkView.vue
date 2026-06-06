@@ -404,12 +404,12 @@
             <label class="block text-sm font-medium text-gray-700 mb-1">Object Class <span class="text-red-500">*</span></label>
             <div class="flex items-stretch gap-0">
               <!-- Selected list -->
-              <div class="flex-1">
+              <div class="flex-1 min-w-0">
                 <div class="text-xs text-gray-500 mb-1">Selected</div>
                 <div class="border border-gray-300 rounded-l-lg h-36 overflow-y-auto">
                   <div v-for="oc in templateForm.objectClasses" :key="oc"
                     @click="selectedOcHighlight = oc"
-                    class="px-2 py-1 text-sm cursor-pointer"
+                    class="px-2 py-1 text-sm cursor-pointer truncate"
                     :class="selectedOcHighlight === oc ? 'bg-blue-100 text-blue-800' : 'hover:bg-gray-50'">
                     {{ oc }}
                   </div>
@@ -424,12 +424,12 @@
                   class="w-8 h-8 flex items-center justify-center rounded border border-gray-300 text-sm hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">▶</button>
               </div>
               <!-- Available list -->
-              <div class="flex-1">
+              <div class="flex-1 min-w-0">
                 <div class="text-xs text-gray-500 mb-1">Available</div>
                 <div class="border border-gray-300 rounded-r-lg h-36 overflow-y-auto">
                   <div v-for="oc in availableObjectClasses" :key="oc"
                     @click="availableOcHighlight = oc"
-                    class="px-2 py-1 text-sm cursor-pointer"
+                    class="px-2 py-1 text-sm cursor-pointer truncate"
                     :class="availableOcHighlight === oc ? 'bg-blue-100 text-blue-800' : 'hover:bg-gray-50'">
                     {{ oc }}
                   </div>

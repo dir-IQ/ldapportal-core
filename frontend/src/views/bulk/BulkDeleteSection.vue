@@ -15,7 +15,7 @@
     </p>
 
     <div class="space-y-3">
-      <!-- Resolution controls -->
+      <!-- Resolution controls + CSV file -->
       <div class="grid grid-cols-12 gap-2 items-end">
         <div class="col-span-3">
           <label for="bd-mode" class="block text-sm font-medium text-gray-700 mb-1">Match users by</label>
@@ -32,22 +32,20 @@
           <input id="bd-keyattr" v-model="keyAttribute" class="input w-full" placeholder="uid" @input="resetResults" />
         </div>
 
-        <div v-if="mode === 'key'" class="col-span-4">
+        <div v-if="mode === 'key'" class="col-span-3">
           <label class="block text-sm font-medium text-gray-700 mb-1">
             Search base DN <span class="text-red-500">*</span>
           </label>
           <DnPicker v-model="baseDn" :directoryId="dirId" :superadmin="false" placeholder="ou=people,dc=example,dc=com" />
         </div>
 
-        <div :class="mode === 'key' ? 'col-span-3' : 'col-span-4'">
+        <div :class="mode === 'key' ? 'col-span-2' : 'col-span-4'">
           <label for="bd-valuecol" class="block text-sm font-medium text-gray-700 mb-1">CSV column</label>
           <input id="bd-valuecol" v-model="valueColumn" class="input w-full"
                  :placeholder="mode === 'key' ? (keyAttribute || 'uid') : 'dn'" @input="resetResults" />
         </div>
-      </div>
 
-      <div class="grid grid-cols-12 gap-2 items-end">
-        <div class="col-span-4">
+        <div :class="mode === 'key' ? 'col-span-2' : 'col-span-5'">
           <label class="block text-sm font-medium text-gray-700 mb-1">CSV File <span class="text-red-500">*</span></label>
           <label class="csv-file-picker input flex items-center gap-2 w-full cursor-pointer !py-0 !pr-1 hover:border-gray-400 transition-colors bg-white">
             <span class="flex-1 truncate text-sm" :class="file ? 'text-gray-900 font-medium' : 'text-gray-500'">
@@ -59,15 +57,17 @@
             <input type="file" accept=".csv,text/csv" @change="onFileChange" aria-label="CSV File" class="sr-only" />
           </label>
         </div>
-        <div class="col-span-4 flex items-center gap-2 pb-2">
+      </div>
+
+      <!-- Preview action (under Match users by) + header toggle (under CSV file) -->
+      <div class="flex items-center justify-between">
+        <button @click="doPreview" :disabled="!canPreview || previewing" class="btn-primary">
+          {{ previewing ? 'Previewing…' : 'Preview' }}
+        </button>
+        <label for="bd-skip-header" class="flex items-center gap-2 cursor-pointer">
           <input id="bd-skip-header" type="checkbox" v-model="skipHeaderRow" @change="resetResults" class="rounded border-gray-300" />
-          <label for="bd-skip-header" class="text-sm text-gray-700">First row is a header</label>
-        </div>
-        <div class="col-span-4">
-          <button @click="doPreview" :disabled="!canPreview || previewing" class="btn-primary w-full">
-            {{ previewing ? 'Previewing…' : 'Preview' }}
-          </button>
-        </div>
+          <span class="text-sm text-gray-700">First row is a header</span>
+        </label>
       </div>
 
       <!-- Preview -->
