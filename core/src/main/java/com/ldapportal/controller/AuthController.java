@@ -91,6 +91,18 @@ public class AuthController {
     private final com.ldapportal.service.ApplicationSettingsService applicationSettingsService;
     private final com.ldapportal.service.AuditService             auditService;
     private final com.ldapportal.core.entitlement.EntitlementService entitlementService;
+    private final com.ldapportal.service.UserPreferencesService   userPreferencesService;
+
+    /**
+     * Non-httpOnly hint cookie carrying just "{@code <theme>.<density>}" so an
+     * inline script in index.html can set {@code data-theme}/{@code data-density}
+     * on {@code <html>} before the SPA boots — avoiding a flash of the wrong
+     * theme now that the authoritative preference lives in the database rather
+     * than localStorage. It is a disposable render hint, never a source of
+     * truth: the server overwrites it at login and the app re-syncs from
+     * {@code /auth/me} on every load.
+     */
+    private static final String PREFS_HINT_COOKIE = "prefs-hint";
 
     /**
      * Public endpoint — returns whether the first-run setup wizard has been completed.
@@ -131,8 +143,34 @@ public class AuthController {
                 .maxAge(Duration.ofMinutes(appProperties.getJwt().getExpiryMinutes()))
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+        addPrefsHintCookie(response, resp.id());
 
         return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * Set (or refresh) the FOUC hint cookie from the account's stored
+     * appearance preference. No-op for principals without an account row
+     * (self-service), who don't persist UI preferences.
+     */
+    private void addPrefsHintCookie(HttpServletResponse response, String accountId) {
+        if (accountId == null || accountId.isBlank()) return;
+        UUID id;
+        try {
+            id = UUID.fromString(accountId);
+        } catch (IllegalArgumentException ex) {
+            return;
+        }
+        var appearance = userPreferencesService.appearance(id);
+        ResponseCookie hint = ResponseCookie.from(
+                        PREFS_HINT_COOKIE, appearance.theme() + "." + appearance.density())
+                .httpOnly(false)
+                .secure(appProperties.getCookie().isSecure())
+                .sameSite("Strict")
+                .path("/")
+                .maxAge(Duration.ofDays(365))
+                .build();
+        response.addHeader(HttpHeaders.SET_COOKIE, hint.toString());
     }
 
     @PostMapping("/logout")
@@ -176,6 +214,17 @@ public class AuthController {
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
 
+        // Clear the FOUC hint cookie too, so a logged-out browser doesn't
+        // carry the last user's theme into the login screen.
+        ResponseCookie hintCleared = ResponseCookie.from(PREFS_HINT_COOKIE, "")
+                .httpOnly(false)
+                .secure(appProperties.getCookie().isSecure())
+                .sameSite("Strict")
+                .path("/")
+                .maxAge(0)
+                .build();
+        response.addHeader(HttpHeaders.SET_COOKIE, hintCleared.toString());
+
         Map<String, String> body = new LinkedHashMap<>();
         if (logoutUrl != null) body.put("logoutUrl", logoutUrl);
         return ResponseEntity.ok(body);
@@ -199,10 +248,13 @@ public class AuthController {
         if (principal.directoryId() != null) {
             body.put("directoryId", principal.directoryId().toString());
         }
-        // Include user preferences and account info
+        // Include user preferences and account info. Appearance (theme +
+        // density) is sourced from the user-preferences document — the single
+        // home for UI customizations — not from the account row.
         accountRepo.findById(principal.id()).ifPresent(acct -> {
-            body.put("themePreference", acct.getThemePreference() != null ? acct.getThemePreference() : "system");
-            body.put("densityPreference", acct.getDensityPreference() != null ? acct.getDensityPreference() : "comfortable");
+            var appearance = userPreferencesService.appearance(principal.id());
+            body.put("themePreference", appearance.theme());
+            body.put("densityPreference", appearance.density());
             body.put("authType", acct.getAuthType().name());
             body.put("email", acct.getEmail());
             body.put("displayName", acct.getDisplayName());
@@ -298,9 +350,13 @@ public class AuthController {
 
     // ── User preferences ────────────────────────────────────────────────────
 
+    /**
+     * Account profile fields (display name / email). UI customizations like
+     * theme and density are <em>not</em> handled here — they live in the
+     * user-preferences document and are written through
+     * {@link PreferencesController} ({@code PATCH /api/v1/me/preferences}).
+     */
     public record UpdatePreferencesRequest(
-            String themePreference,
-            String densityPreference,
             String displayName,
             String email
     ) {}
@@ -315,18 +371,6 @@ public class AuthController {
         Account acct = accountRepo.findById(principal.id())
                 .orElseThrow(() -> new ResourceNotFoundException("Account", principal.id()));
 
-        if (req.themePreference() != null) {
-            if (!List.of("light", "dark", "system").contains(req.themePreference())) {
-                return ResponseEntity.badRequest().body(Map.of("error", "Invalid theme. Must be light, dark, or system."));
-            }
-            acct.setThemePreference(req.themePreference());
-        }
-        if (req.densityPreference() != null) {
-            if (!List.of("comfortable", "compact").contains(req.densityPreference())) {
-                return ResponseEntity.badRequest().body(Map.of("error", "Invalid density. Must be comfortable or compact."));
-            }
-            acct.setDensityPreference(req.densityPreference());
-        }
         if (req.displayName() != null) acct.setDisplayName(req.displayName());
         if (req.email() != null) acct.setEmail(req.email());
         accountRepo.save(acct);
@@ -534,6 +578,7 @@ public class AuthController {
                 .maxAge(Duration.ofMinutes(appProperties.getJwt().getExpiryMinutes()))
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+        addPrefsHintCookie(response, result.id());
 
         return ResponseEntity.ok(new LoginResponse(
                 result.token(), result.username(), result.accountType(), result.id()));
@@ -565,6 +610,7 @@ public class AuthController {
                 .maxAge(Duration.ofMinutes(appProperties.getJwt().getExpiryMinutes()))
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+        addPrefsHintCookie(response, result.id());
 
         LoginResponse resp = new LoginResponse(result.token(), result.username(),
                 result.accountType(), result.id());

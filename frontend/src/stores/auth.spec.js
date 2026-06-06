@@ -15,6 +15,12 @@ vi.mock('@/api/selfservice', () => ({
 vi.mock('@/api/setup', () => ({
   getSetupStatus: vi.fn(),
 }))
+// init()/login() hydrate the preferences store; mock its API so the auth-store
+// tests don't reach for a backend.
+vi.mock('@/api/preferences', () => ({
+  getPreferences: vi.fn().mockResolvedValue({ data: {} }),
+  patchPreferences: vi.fn().mockResolvedValue({ data: {} }),
+}))
 
 import { useAuthStore } from './auth'
 import { login as apiLogin, me } from '@/api/auth'

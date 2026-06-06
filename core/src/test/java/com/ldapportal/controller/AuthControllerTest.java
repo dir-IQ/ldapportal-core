@@ -60,6 +60,7 @@ class AuthControllerTest extends BaseControllerTest {
     @MockitoBean ApplicationSettingsService applicationSettingsService;
     @MockitoBean com.ldapportal.core.entitlement.EntitlementService entitlementService;
     @MockitoBean com.ldapportal.service.AuditService auditService;
+    @MockitoBean com.ldapportal.service.UserPreferencesService userPreferencesService;
 
     private static final UUID ACCOUNT_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
@@ -187,17 +188,19 @@ class AuthControllerTest extends BaseControllerTest {
                 .markSetupComplete();
     }
 
-    // ── Preferences (density) ─────────────────────────────────────────────────
+    // ── Account profile (display name / email) ────────────────────────────────
+    // UI customizations (theme, density, ...) moved to PreferencesController and
+    // are covered by its own tests — this endpoint now only touches the account
+    // profile fields.
 
     /**
-     * Helper that wires up a mocked Account for the preferences round-trip
-     * tests. The controller calls `accountRepo.save(...)`; we capture the
-     * arg via ArgumentCaptor to inspect the saved state.
+     * Helper that wires up a mocked Account for the profile round-trip tests.
+     * The controller calls `accountRepo.save(...)`; we capture the arg via
+     * ArgumentCaptor to inspect the saved state.
      */
-    private Account givenAuthenticatedAccountWithDensity(String initialDensity) {
+    private Account givenAuthenticatedAccount() {
         Account acct = new Account();
         acct.setId(ACCOUNT_ID);
-        acct.setDensityPreference(initialDensity);
         given(accountRepository.findById(ACCOUNT_ID)).willReturn(java.util.Optional.of(acct));
         given(accountRepository.save(any(Account.class)))
                 .willAnswer(inv -> inv.getArgument(0));
@@ -216,13 +219,13 @@ class AuthControllerTest extends BaseControllerTest {
     }
 
     @Test
-    void updatePreferences_validDensity_returns200AndPersists() throws Exception {
-        givenAuthenticatedAccountWithDensity("comfortable");
+    void updatePreferences_profileFields_returns200AndPersists() throws Exception {
+        givenAuthenticatedAccount();
 
         mockMvc.perform(post("/api/v1/auth/me/preferences")
                         .with(authentication(authForAccount()))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"densityPreference\":\"compact\"}"))
+                        .content("{\"displayName\":\"Alice\",\"email\":\"alice@example.com\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ok"));
 
@@ -230,31 +233,17 @@ class AuthControllerTest extends BaseControllerTest {
                 org.mockito.ArgumentCaptor.forClass(Account.class);
         org.mockito.Mockito.verify(accountRepository).save(captor.capture());
         org.junit.jupiter.api.Assertions.assertEquals(
-                "compact", captor.getValue().getDensityPreference());
+                "Alice", captor.getValue().getDisplayName());
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "alice@example.com", captor.getValue().getEmail());
     }
 
     @Test
-    void updatePreferences_invalidDensity_returns400() throws Exception {
-        givenAuthenticatedAccountWithDensity("comfortable");
-
-        mockMvc.perform(post("/api/v1/auth/me/preferences")
-                        .with(authentication(authForAccount()))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"densityPreference\":\"huge\"}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error").value(
-                        org.hamcrest.Matchers.containsString("Invalid density")));
-
-        // Save must NOT be called for a rejected request.
-        org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
-                .save(any(Account.class));
-    }
-
-    @Test
-    void updatePreferences_nullDensity_leavesAccountUnchanged() throws Exception {
-        // Partial-update contract: caller sends only displayName; density
-        // should NOT change. Mirrors how theme/email are handled today.
-        givenAuthenticatedAccountWithDensity("compact");
+    void updatePreferences_nullFields_leaveAccountUnchanged() throws Exception {
+        // Partial-update contract: caller sends only displayName; email is
+        // left untouched.
+        Account acct = givenAuthenticatedAccount();
+        acct.setEmail("original@example.com");
 
         mockMvc.perform(post("/api/v1/auth/me/preferences")
                         .with(authentication(authForAccount()))
@@ -266,8 +255,8 @@ class AuthControllerTest extends BaseControllerTest {
                 org.mockito.ArgumentCaptor.forClass(Account.class);
         org.mockito.Mockito.verify(accountRepository).save(captor.capture());
         org.junit.jupiter.api.Assertions.assertEquals(
-                "compact", captor.getValue().getDensityPreference());
-        org.junit.jupiter.api.Assertions.assertEquals(
                 "Alice", captor.getValue().getDisplayName());
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "original@example.com", captor.getValue().getEmail());
     }
 }

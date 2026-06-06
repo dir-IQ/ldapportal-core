@@ -312,6 +312,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
+import { usePreferencesStore } from '@/stores/preferences'
 import { useConfirm } from '@/composables/useConfirm'
 import { listDirectories } from '@/api/directories'
 import { searchEntries } from '@/api/browse'
@@ -361,13 +362,23 @@ interface DirectoryOption {
   directoryType?: string
 }
 
-const HISTORY_KEY = 'ldap-search-history'
-const SAVED_KEY   = 'ldap-saved-searches'
 const MAX_HISTORY = 10
 
 const notif  = useNotificationStore()
 const auth   = useAuthStore()
 const confirm = useConfirm()
+const prefsStore = usePreferencesStore()
+
+// Search history + saved searches persist in the server-side preferences
+// document (namespace `search`, key `directory`) — not localStorage — so they
+// follow the user across browsers and devices.
+interface DirectorySearchPrefs { history?: HistoryEntry[]; saved?: SavedSearch[] }
+function persistSearch(): void {
+  prefsStore.write('search', 'directory', {
+    history: history.value,
+    saved: savedSearches.value,
+  })
+}
 
 const directories = ref<DirectoryOption[]>([])
 const loadingDirs = ref(false)
@@ -714,11 +725,12 @@ function saveToHistory(f: typeof form.value): void {
       && normBool(a.includeOperational) === normBool(b.includeOperational)
   if (history.value.some(h => same(h, entry))) return
   history.value = [entry, ...history.value].slice(0, MAX_HISTORY)
-  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history.value)) } catch { /* ignore */ }
+  persistSearch()
 }
 
 function loadHistory(): HistoryEntry[] {
-  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') as HistoryEntry[] } catch { return [] }
+  const stored = prefsStore.read<DirectorySearchPrefs>('search', 'directory', {})
+  return Array.isArray(stored.history) ? stored.history : []
 }
 
 /**
@@ -745,11 +757,12 @@ function loadFromHistory(h: HistoryEntry): void {
 
 function clearHistory(): void {
   history.value = []
-  try { localStorage.removeItem(HISTORY_KEY) } catch { /* ignore */ }
+  persistSearch()
 }
 
 function loadSavedSearches(): SavedSearch[] {
-  try { return JSON.parse(localStorage.getItem(SAVED_KEY) || '[]') as SavedSearch[] } catch { return [] }
+  const stored = prefsStore.read<DirectorySearchPrefs>('search', 'directory', {})
+  return Array.isArray(stored.saved) ? stored.saved : []
 }
 
 const showSaveSearchModal = ref(false)
@@ -770,7 +783,7 @@ function doSaveSearch(): void {
     timeLimit: form.value.timeLimit, includeOperational: form.value.includeOperational,
   }
   savedSearches.value = [...savedSearches.value.filter(s => s.name !== entry.name), entry]
-  try { localStorage.setItem(SAVED_KEY, JSON.stringify(savedSearches.value)) } catch { /* ignore */ }
+  persistSearch()
 }
 
 function loadSavedSearch(event: Event): void {
@@ -787,7 +800,7 @@ function loadSavedSearch(event: Event): void {
 
 function clearSavedSearches(): void {
   savedSearches.value = []
-  try { localStorage.removeItem(SAVED_KEY) } catch { /* ignore */ }
+  persistSearch()
 }
 
 onMounted(async () => {

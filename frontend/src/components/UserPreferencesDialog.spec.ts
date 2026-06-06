@@ -33,16 +33,25 @@ vi.mock('@/api/auth', () => ({
 import { updatePreferences } from '@/api/auth'
 const mockUpdatePreferences = vi.mocked(updatePreferences)
 
-// useDensity is the real composable — we want the real localStorage
-// + data-density side-effects to be exercised, since that's the
-// surface the regression bit on.
+// Stub the preferences store so the real useDensity/useTheme composables can
+// persist appearance without a backend; we assert the visible side-effects
+// (the data-density attribute and the density ref).
+vi.mock('@/stores/preferences', () => ({
+  usePreferencesStore: () => ({
+    read: (_ns: string, _key: string, fallback: unknown) => fallback,
+    write: vi.fn(),
+  }),
+}))
+
+// useDensity is the real composable — we want the real data-density side-effect
+// exercised, since that's the surface the regression bit on.
 import { useDensity } from '@/composables/useDensity'
 
 import UserPreferencesDialog from './UserPreferencesDialog.vue'
 
 beforeEach(() => {
   setActivePinia(createPinia())
-  localStorage.clear()
+  document.cookie = 'prefs-hint=; Path=/; Max-Age=0'
   document.documentElement.removeAttribute('data-density')
   // useDensity is a module-level singleton: its `density` ref persists
   // across tests in the same file and is NOT reset by clearing
@@ -80,18 +89,19 @@ describe('UserPreferencesDialog density save behaviour', () => {
     await saveBtn.trigger('click')
     await flushPromises()
 
-    // Save call fired with the density preference in the payload — guards
-    // against silent payload-shape drift when fields are added/removed.
+    // The profile endpoint fired exactly once and now carries ONLY account
+    // profile fields — appearance moved to the preferences document, so a
+    // densityPreference here would be a regression.
     expect(mockUpdatePreferences).toHaveBeenCalledTimes(1)
     expect(mockUpdatePreferences).toHaveBeenCalledWith(
-      expect.objectContaining({ densityPreference: 'compact' }),
+      expect.not.objectContaining({ densityPreference: expect.anything() }),
     )
     // Dialog emitted close (the bug-#2 fix).
     expect(w.emitted('close')).toBeTruthy()
     expect(w.emitted('close')!.length).toBe(1)
-    // Density is still compact in localStorage and on <html>.
-    expect(localStorage.getItem('ldapportal-density')).toBe('compact')
+    // Density is still compact on <html> (persisted via the composable/store).
     expect(document.documentElement.getAttribute('data-density')).toBe('compact')
+    expect(useDensity().density.value).toBe('compact')
   })
 
   it('density survives cancelDialog called after a successful save (initialDensity bump)', async () => {
@@ -112,7 +122,7 @@ describe('UserPreferencesDialog density save behaviour', () => {
     const saveBtn = w.findAll('button').find(b => b.text() === 'Save')!
     await saveBtn.trigger('click')
     await flushPromises()
-    expect(localStorage.getItem('ldapportal-density')).toBe('compact')
+    expect(useDensity().density.value).toBe('compact')
 
     // Now invoke cancelDialog directly and assert the density stays.
     // If the initialDensity bump were removed, this call would revert
@@ -120,7 +130,6 @@ describe('UserPreferencesDialog density save behaviour', () => {
     const vm = w.vm as unknown as { cancelDialog: () => void }
     vm.cancelDialog()
 
-    expect(localStorage.getItem('ldapportal-density')).toBe('compact')
     expect(document.documentElement.getAttribute('data-density')).toBe('compact')
     const { density } = useDensity()
     expect(density.value).toBe('compact')
@@ -137,7 +146,7 @@ describe('UserPreferencesDialog density save behaviour', () => {
 
     // Cancel reverts the live preview.
     expect(document.documentElement.getAttribute('data-density')).toBe(null)
-    expect(localStorage.getItem('ldapportal-density')).toBe('comfortable')
+    expect(useDensity().density.value).toBe('comfortable')
     // And emits close.
     expect(w.emitted('close')).toBeTruthy()
   })
