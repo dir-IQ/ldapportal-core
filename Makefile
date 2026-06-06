@@ -105,9 +105,18 @@ redeploy-minimal:  ## Tear down all, bring back only app/frontend/db/oud1 primar
 # Rebuild the runnable JAR that the backend Dockerfile COPYs from.
 # Skips tests so this stays fast — run the test suite separately when
 # you actually want to verify behaviour.
+#
+# `clean` is load-bearing: an incremental `package` leaves resources that
+# a previous build copied into target/classes even after their source is
+# deleted/renamed. A migration removed or renumbered upstream (e.g. the
+# schema rebaseline that folded V2__provisioning_profile_version.sql into
+# V1__baseline) would otherwise stay in target/classes and ship in the JAR
+# next to the new V2 — Flyway then aborts boot with "more than one
+# migration with version 2". Cleaning first guarantees the JAR's migrations
+# match the source tree exactly.
 package-backend:  ## Rebuild backend JAR (skips tests).
-	@echo "==> Building backend JAR (skipping tests)..."
-	$(MVNW) -DskipTests -q package
+	@echo "==> Building backend JAR (clean, skipping tests)..."
+	$(MVNW) -DskipTests -q clean package
 
 # Pull a Fly.io Postgres DB down into the local compose stack so you can
 # develop against a copy of the deployed data. Delegates to the script,
