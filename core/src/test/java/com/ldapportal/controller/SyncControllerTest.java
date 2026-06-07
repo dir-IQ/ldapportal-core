@@ -4,16 +4,20 @@ package com.ldapportal.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ldapportal.controller.superadmin.SyncLinkController;
 import com.ldapportal.controller.superadmin.SyncSetController;
+import com.ldapportal.dto.sync.MembershipResponse;
 import com.ldapportal.dto.sync.RecomputeKeyRequest;
 import com.ldapportal.dto.sync.SyncLinkRequest;
 import com.ldapportal.dto.sync.SyncLinkResponse;
 import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncSetResponse;
+import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.service.SyncConfigService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -158,11 +162,19 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
-    void memberships_superadmin_returns200() throws Exception {
+    void memberships_superadmin_returns200_withTopLevelPageEnvelope() throws Exception {
+        MembershipResponse row = new MembershipResponse(SET, "id-1", "uid=a,dc=src", "uid=a,dc=dst",
+                MembershipState.APPLIED, null, null, null);
         given(service.listMemberships(any(), any(), any(), any()))
-                .willReturn(org.springframework.data.domain.Page.empty());
+                .willReturn(new PageImpl<>(List.of(row), PageRequest.of(0, 50), 120));
         mockMvc.perform(get(SETS + "/" + SET + "/memberships").with(authentication(superadminAuth())))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                // Stable top-level envelope (not Spring's nested page metadata).
+                .andExpect(jsonPath("$.content[0].identity").value("id-1"))
+                .andExpect(jsonPath("$.totalElements").value(120))
+                .andExpect(jsonPath("$.totalPages").value(3))
+                .andExpect(jsonPath("$.number").value(0))
+                .andExpect(jsonPath("$.size").value(50));
     }
 
     @Test
