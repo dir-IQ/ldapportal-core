@@ -176,25 +176,25 @@
                this distribution and gate it on auth.hasFeature('HYBRID')
                (the entitlement check must match the route's actual
                availability, not just superadmin role). -->
-          <RouterLink v-if="auth.isHrEnabled" to="/superadmin/hr" class="nav-item">
-            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="5" r="2.5"/><path d="M2 14c0-2.76 2.24-5 5-5s5 2.24 5 5"/><path d="M14 6h4M14 9h3M14 12h2"/></svg>
-            <span v-if="!collapsed">HR Integration</span>
-          </RouterLink>
-          <RouterLink to="/superadmin/audit-sources" class="nav-item">
-            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16z"/><path d="M10 6v4l2.5 2.5"/></svg>
-            <span v-if="!collapsed">Audit Sources</span>
-          </RouterLink>
           <RouterLink v-if="auth.isDirectorySyncEnabled" to="/superadmin/directory-sync" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10a7 7 0 0 1 12.9-3.8M17 10a7 7 0 0 1-12.9 3.8"/><path d="M16 3v4h-4M4 17v-4h4"/></svg>
             <span v-if="!collapsed">Directory Sync</span>
           </RouterLink>
-          <RouterLink v-if="auth.isComplianceEnabled" to="/superadmin/access-reviews" class="nav-item">
-            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9"/><path d="M9 11l8-8"/><path d="M14 3h3v3"/></svg>
-            <span v-if="!collapsed">Access Reviews</span>
+          <RouterLink to="/superadmin/profiles" class="nav-item">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="2" width="14" height="16" rx="2"/><path d="M7 6h6M7 10h6M7 14h3"/><path d="M14 13l1.5 1.5 3-3"/></svg>
+            <span v-if="!collapsed">Provisioning Profiles</span>
+          </RouterLink>
+          <RouterLink to="/superadmin/playbooks" class="nav-item">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12M4 8h12M4 12h8M4 16h6"/><path d="M15 12l2 2-2 2"/></svg>
+            <span v-if="!collapsed">Lifecycle Playbooks</span>
           </RouterLink>
           <RouterLink to="/superadmin/approvals" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2l7 4v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-4z"/><path d="M7 10l2 2 4-4"/></svg>
             <span v-if="!collapsed">Approvals</span>
+          </RouterLink>
+          <RouterLink v-if="auth.isComplianceEnabled" to="/superadmin/access-reviews" class="nav-item">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9"/><path d="M9 11l8-8"/><path d="M14 3h3v3"/></svg>
+            <span v-if="!collapsed">Access Reviews</span>
           </RouterLink>
           <RouterLink v-if="auth.isComplianceEnabled" to="/superadmin/sod-policies" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h5v5H4zM11 4h5v5h-5zM4 11h5v5H4z"/><path d="M11 11h5v5h-5"/><path d="M11 11l5 5M16 11l-5 5"/></svg>
@@ -204,13 +204,13 @@
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l4-8 4 4 6-10"/><path d="M14 3h4v4"/></svg>
             <span v-if="!collapsed">Access Drift Policy</span>
           </RouterLink>
-          <RouterLink to="/superadmin/profiles" class="nav-item">
-            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="2" width="14" height="16" rx="2"/><path d="M7 6h6M7 10h6M7 14h3"/><path d="M14 13l1.5 1.5 3-3"/></svg>
-            <span v-if="!collapsed">Provisioning Profiles</span>
+          <RouterLink to="/superadmin/audit-sources" class="nav-item">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16z"/><path d="M10 6v4l2.5 2.5"/></svg>
+            <span v-if="!collapsed">Audit Sources</span>
           </RouterLink>
-          <RouterLink to="/superadmin/playbooks" class="nav-item">
-            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12M4 8h12M4 12h8M4 16h6"/><path d="M15 12l2 2-2 2"/></svg>
-            <span v-if="!collapsed">Lifecycle Playbooks</span>
+          <RouterLink v-if="auth.isHrEnabled" to="/superadmin/hr" class="nav-item">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="5" r="2.5"/><path d="M2 14c0-2.76 2.24-5 5-5s5 2.24 5 5"/><path d="M14 6h4M14 9h3M14 12h2"/></svg>
+            <span v-if="!collapsed">HR Integration</span>
           </RouterLink>
           <RouterLink to="/settings" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.5"/><path d="M10 1.5v2M10 16.5v2M18.5 10h-2M3.5 10h-2M16 4l-1.4 1.4M5.4 14.6 4 16M16 16l-1.4-1.4M5.4 5.4 4 4"/></svg>
