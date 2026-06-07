@@ -8,6 +8,7 @@ import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncSetResponse;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
+import com.ldapportal.entity.SyncTransformRule;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
@@ -25,8 +26,13 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Superadmin CRUD + operations for the sync engine's configuration: links, sync
@@ -38,6 +44,9 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class SyncConfigService {
+
+    /** LDAP attribute descriptor (a leading letter, then letters/digits/hyphens). */
+    private static final Pattern ATTR_NAME = Pattern.compile("^[A-Za-z][A-Za-z0-9-]*$");
 
     private final SyncLinkRepository linkRepo;
     private final SyncSetRepository setRepo;
@@ -167,7 +176,7 @@ public class SyncConfigService {
         s.setReferenceAttributes(blankToNull(req.referenceAttributes()));
         s.setSourceAnchorAttribute(blankToNull(req.sourceAnchorAttribute()));
         s.setDeletePolicy(req.deletePolicy() != null ? req.deletePolicy() : SyncDeletePolicy.DELETE);
-        s.setTransformRules(req.transformRules());
+        s.setTransformRules(normalizeTransformRules(req.transformRules()));
         s.setReconcileCadenceSeconds(req.reconcileCadenceSeconds());
         s.setEnabled(req.enabled());
     }
@@ -185,6 +194,66 @@ public class SyncConfigService {
                 throw new IllegalArgumentException("Invalid applicabilityFilter: " + e.getMessage());
             }
         }
+        validateTransformRules(req.transformRules());
+    }
+
+    /**
+     * Validate attribute-mapping rules to the engine's actual capability: a rule
+     * keys on a non-blank {@code sourceAttr} (the engine matches first-wins on it,
+     * so a duplicate would silently shadow), attribute names look like LDAP
+     * descriptors, and {@code valueTemplate} carries no token other than the single
+     * {@code ${value}} substitution the engine understands.
+     */
+    private void validateTransformRules(List<SyncTransformRule> rules) {
+        if (rules == null) {
+            return;
+        }
+        Set<String> seen = new HashSet<>();
+        for (SyncTransformRule rule : rules) {
+            String src = rule.getSourceAttr();
+            if (src == null || src.isBlank()) {
+                throw new IllegalArgumentException("Transform rule sourceAttr is required");
+            }
+            if (!ATTR_NAME.matcher(src.trim()).matches()) {
+                throw new IllegalArgumentException("Invalid transform rule sourceAttr: " + src);
+            }
+            if (!seen.add(src.trim().toLowerCase(Locale.ROOT))) {
+                throw new IllegalArgumentException(
+                        "Duplicate transform rule for source attribute: " + src.trim());
+            }
+            String tgt = rule.getTargetAttr();
+            if (tgt != null && !tgt.isBlank() && !ATTR_NAME.matcher(tgt.trim()).matches()) {
+                throw new IllegalArgumentException("Invalid transform rule targetAttr: " + tgt);
+            }
+            String tpl = rule.getValueTemplate();
+            if (tpl != null && tpl.replace("${value}", "").contains("${")) {
+                throw new IllegalArgumentException(
+                        "Invalid transform rule valueTemplate (only ${value} is supported): " + tpl);
+            }
+        }
+    }
+
+    /**
+     * Trim and prune transform rules to a canonical form for storage: drop rows
+     * with a blank {@code sourceAttr}, collapse blank target/template to null (the
+     * engine reads null target as "same name" and null/blank template as
+     * passthrough), and an empty list to null.
+     */
+    private static List<SyncTransformRule> normalizeTransformRules(List<SyncTransformRule> rules) {
+        if (rules == null) {
+            return null;
+        }
+        List<SyncTransformRule> out = new ArrayList<>();
+        for (SyncTransformRule r : rules) {
+            if (r.getSourceAttr() == null || r.getSourceAttr().isBlank()) {
+                continue;
+            }
+            out.add(new SyncTransformRule(
+                    r.getSourceAttr().trim(),
+                    blankToNull(r.getTargetAttr()),
+                    blankToNull(r.getValueTemplate())));
+        }
+        return out.isEmpty() ? null : out;
     }
 
     // ── Membership inventory + operator triggers ────────────────────────────────

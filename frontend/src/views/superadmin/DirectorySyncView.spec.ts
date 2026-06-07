@@ -94,4 +94,43 @@ describe('DirectorySyncView', () => {
     await flushPromises()
     expect(syncApi.reconcileSet).toHaveBeenCalledWith('set-1')
   })
+
+  it('authoring a transform rule includes it in the create payload', async () => {
+    const wrapper = mount(DirectorySyncView, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.find('tbody tr').trigger('click') // select link
+    await flushPromises()
+    // The set modal teleports to <body>; drive it through document.
+    const byText = (t: string) =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.includes(t))!
+    byText('New Set').click()
+    await flushPromises()
+
+    const nameLabel = Array.from(document.querySelectorAll('label')).find((l) => l.textContent?.trim().startsWith('Name'))!
+    const nameInput = document.getElementById((nameLabel as HTMLLabelElement).htmlFor) as HTMLInputElement
+    nameInput.value = 'groups'
+    nameInput.dispatchEvent(new Event('input'))
+
+    byText('Add mapping').click()
+    await flushPromises()
+    const src = document.getElementById('tr-src-0') as HTMLInputElement
+    src.value = 'uid'
+    src.dispatchEvent(new Event('input'))
+    const tgt = document.getElementById('tr-tgt-0') as HTMLInputElement
+    tgt.value = 'sAMAccountName'
+    tgt.dispatchEvent(new Event('input'))
+    await flushPromises()
+
+    document.querySelector('form')!.dispatchEvent(new Event('submit'))
+    await flushPromises()
+
+    expect(syncApi.createSyncSet).toHaveBeenCalledTimes(1)
+    const payload = (syncApi.createSyncSet as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0] as {
+      transformRules: unknown
+    }
+    expect(payload.transformRules).toEqual([
+      { sourceAttr: 'uid', targetAttr: 'sAMAccountName', valueTemplate: null },
+    ])
+    wrapper.unmount()
+  })
 })

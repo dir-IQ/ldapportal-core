@@ -47,7 +47,8 @@ export interface SyncLinkPayload {
 
 export interface SyncTransformRule {
   sourceAttr: string
-  targetAttr: string
+  // null target ⇒ keep the source attribute name (engine semantics).
+  targetAttr: string | null
   valueTemplate: string | null
 }
 
