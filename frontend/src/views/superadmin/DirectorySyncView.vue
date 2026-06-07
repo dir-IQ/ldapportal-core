@@ -9,12 +9,20 @@
       <button @click="openLinkModal()" class="btn-primary">+ New Link</button>
     </div>
 
-    <!-- ── Links ───────────────────────────────────────────────────────── -->
+    <!-- ── Links (each expands to its nested sync sets) ─────────────────── -->
     <DataTable :columns="linkCols" :rows="links" :loading="loadingLinks" row-key="id"
-               empty-text="No sync links configured yet." :highlight-key="selectedLinkId ?? undefined"
+               empty-text="No sync links configured yet."
+               :highlight-key="selectedLinkId ?? undefined" :expanded-key="selectedLinkId ?? undefined"
                @row-click="onLinkRowClick">
       <template #cell-displayName="{ row }">
-        <span class="font-medium text-gray-900">{{ row.displayName }}</span>
+        <span class="inline-flex items-center gap-1.5 font-medium text-gray-900">
+          <svg class="w-3 h-3 text-gray-400 transition-transform"
+               :class="{ 'rotate-90': selectedLinkId === row.id }"
+               viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7 5l6 5-6 5" />
+          </svg>
+          {{ row.displayName }}
+        </span>
       </template>
       <template #cell-sourceDirId="{ row }">{{ dirName(row.sourceDirId) }}</template>
       <template #cell-targetDirId="{ row }">{{ dirName(row.targetDirId) }}</template>
@@ -30,42 +38,44 @@
           </template>
         </ActionMenu>
       </template>
-    </DataTable>
 
-    <!-- ── Sets (for the selected link) ─────────────────────────────────── -->
-    <section v-if="selectedLinkId" class="mt-8">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-lg font-semibold text-gray-900">
-          Sync sets — {{ dirName(selectedLink?.sourceDirId) }} → {{ dirName(selectedLink?.targetDirId) }}
-        </h2>
-        <button @click="openSetModal()" class="btn-primary">+ New Set</button>
-      </div>
-      <DataTable :columns="setCols" :rows="sets" :loading="loadingSets" row-key="id"
-                 empty-text="No sync sets for this link yet." :highlight-key="selectedSetId ?? undefined"
-                 @row-click="onSetRowClick">
-        <template #cell-name="{ row }">
-          <span class="font-medium text-gray-900">{{ row.name }}</span>
-        </template>
-        <template #cell-objectScopeBaseDn="{ row }">
-          <span class="font-mono text-xs">{{ row.objectScopeBaseDn || '—' }}</span>
-        </template>
-        <template #cell-targetBaseDn="{ row }">
-          <span class="font-mono text-xs">{{ row.targetBaseDn || '—' }}</span>
-        </template>
-        <template #cell-enabled="{ row }">
-          <span class="text-xs font-medium" :class="row.enabled ? 'text-green-600' : 'text-gray-500'">
-            {{ row.enabled ? 'Yes' : 'No' }}
-          </span>
-        </template>
-        <template #actions="{ row }">
-          <ActionMenu :items="[{ label: 'Delete', onClick: () => removeSet(row), danger: true }]">
-            <template #primary>
-              <button class="btn-secondary btn-compact" @click.stop="openSetModal(row)">Edit</button>
+      <!-- A link's sync sets, nested directly beneath it. -->
+      <template #row-detail="{ row }">
+        <div class="px-4 py-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-gray-700">
+              Sync sets — {{ dirName(row.sourceDirId) }} → {{ dirName(row.targetDirId) }}
+            </h3>
+            <button class="btn-secondary btn-compact" @click="openSetModal()">+ New Set</button>
+          </div>
+          <DataTable :columns="setCols" :rows="sets" :loading="loadingSets" row-key="id"
+                     empty-text="No sync sets for this link yet." :highlight-key="selectedSetId ?? undefined"
+                     @row-click="onSetRowClick">
+            <template #cell-name="{ row: s }">
+              <span class="font-medium text-gray-900">{{ s.name }}</span>
             </template>
-          </ActionMenu>
-        </template>
-      </DataTable>
-    </section>
+            <template #cell-objectScopeBaseDn="{ row: s }">
+              <span class="font-mono text-xs">{{ s.objectScopeBaseDn || '—' }}</span>
+            </template>
+            <template #cell-targetBaseDn="{ row: s }">
+              <span class="font-mono text-xs">{{ s.targetBaseDn || '—' }}</span>
+            </template>
+            <template #cell-enabled="{ row: s }">
+              <span class="text-xs font-medium" :class="s.enabled ? 'text-green-600' : 'text-gray-500'">
+                {{ s.enabled ? 'Yes' : 'No' }}
+              </span>
+            </template>
+            <template #actions="{ row: s }">
+              <ActionMenu :items="[{ label: 'Delete', onClick: () => removeSet(s), danger: true }]">
+                <template #primary>
+                  <button class="btn-secondary btn-compact" @click.stop="openSetModal(s)">Edit</button>
+                </template>
+              </ActionMenu>
+            </template>
+          </DataTable>
+        </div>
+      </template>
+    </DataTable>
 
     <!-- ── Membership inventory (for the selected set) ──────────────────── -->
     <section v-if="selectedSetId" class="mt-8">
@@ -301,10 +311,19 @@ const memberCols = [
   { key: 'failReason', label: 'Reason' },
 ]
 
-function onLinkRowClick(row: SyncLink) { selectLink(row.id) }
+function onLinkRowClick(row: SyncLink) {
+  // Toggle: clicking the expanded link collapses it (and its nested sets).
+  if (selectedLinkId.value === row.id) {
+    selectedLinkId.value = null
+    selectedSetId.value = null
+    sets.value = []
+    memberships.value = []
+  } else {
+    selectLink(row.id)
+  }
+}
 function onSetRowClick(row: SyncSet) { selectSet(row.id) }
 
-const selectedLink = computed(() => links.value.find((l) => l.id === selectedLinkId.value))
 const selectedSet = computed(() => sets.value.find((s) => s.id === selectedSetId.value))
 
 function dirName(id?: string | null): string {

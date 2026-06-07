@@ -74,7 +74,7 @@ describe('DirectorySyncView', () => {
     await flushPromises()
     await wrapper.find('tbody tr').trigger('click') // select link
     await flushPromises()
-    const setRows = wrapper.findAll('section')[0].findAll('tbody tr')
+    const setRows = wrapper.findAll('table')[1].findAll('tbody tr')
     await setRows[0].trigger('click') // select set
     await flushPromises()
     expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', undefined)
@@ -86,7 +86,7 @@ describe('DirectorySyncView', () => {
     await flushPromises()
     await wrapper.find('tbody tr').trigger('click')
     await flushPromises()
-    const setRows = wrapper.findAll('section')[0].findAll('tbody tr')
+    const setRows = wrapper.findAll('table')[1].findAll('tbody tr')
     await setRows[0].trigger('click')
     await flushPromises()
     const reconcileBtn = wrapper.findAll('button').find((b) => b.text().includes('Reconcile now'))!
