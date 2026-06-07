@@ -26,6 +26,13 @@
       </template>
       <template #cell-sourceDirId="{ row }">{{ dirName(row.sourceDirId) }}</template>
       <template #cell-targetDirId="{ row }">{{ dirName(row.targetDirId) }}</template>
+      <template #cell-health="{ row }">
+        <span class="inline-flex items-center gap-1.5 text-xs font-medium"
+              :class="healthSummary(linkCounts(row.id)).tone">
+          <span class="w-2 h-2 rounded-full shrink-0" :class="healthSummary(linkCounts(row.id)).dot" aria-hidden="true"></span>
+          {{ healthSummary(linkCounts(row.id)).label }}
+        </span>
+      </template>
       <template #cell-enabled="{ row }">
         <span class="text-xs font-medium" :class="row.enabled ? 'text-green-600' : 'text-gray-500'">
           {{ row.enabled ? 'Yes' : 'No' }}
@@ -60,6 +67,13 @@
             <template #cell-targetBaseDn="{ row: s }">
               <span class="font-mono text-xs">{{ s.targetBaseDn || '—' }}</span>
             </template>
+            <template #cell-health="{ row: s }">
+              <span class="inline-flex items-center gap-1.5 text-xs font-medium"
+                    :class="healthSummary(setCounts(s)).tone">
+                <span class="w-2 h-2 rounded-full shrink-0" :class="healthSummary(setCounts(s)).dot" aria-hidden="true"></span>
+                {{ healthSummary(setCounts(s)).label }}
+              </span>
+            </template>
             <template #cell-enabled="{ row: s }">
               <span class="text-xs font-medium" :class="s.enabled ? 'text-green-600' : 'text-gray-500'">
                 {{ s.enabled ? 'Yes' : 'No' }}
@@ -93,6 +107,17 @@
             {{ reconciling ? 'Reconciling…' : 'Reconcile now' }}
           </button>
         </div>
+      </div>
+
+      <!-- State-count summary chips (at-a-glance health for this set). -->
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <span class="text-xs text-gray-500">{{ countTotal(setCounts(selectedSet)) }} tracked</span>
+        <span v-for="c in stateChips(setCounts(selectedSet))" :key="c.key"
+              class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full"
+              :class="c.chip">
+          <span class="w-1.5 h-1.5 rounded-full" :class="c.dot" aria-hidden="true"></span>
+          {{ c.label }} <span class="tabular-nums">{{ c.n }}</span>
+        </span>
       </div>
 
       <div class="flex items-center gap-2 mb-3">
@@ -278,6 +303,9 @@ const notif = useNotificationStore()
 const directories = ref<DirOption[]>([])
 const links = ref<SyncLink[]>([])
 const sets = ref<SyncSet[]>([])
+// Every set (across all links) with its membership state counts — drives the
+// at-a-glance health rollup on the links/sets tables without drilling in.
+const allSets = ref<SyncSet[]>([])
 const memberships = ref<Membership[]>([])
 
 const selectedLinkId = ref<string | null>(null)
@@ -294,6 +322,7 @@ const linkCols = [
   { key: 'sourceDirId', label: 'Source' },
   { key: 'targetDirId', label: 'Target' },
   { key: 'captureMode', label: 'Capture' },
+  { key: 'health', label: 'Health' },
   { key: 'enabled', label: 'Enabled' },
 ]
 const setCols = [
@@ -301,8 +330,49 @@ const setCols = [
   { key: 'objectScopeBaseDn', label: 'Scope' },
   { key: 'targetBaseDn', label: 'Target base' },
   { key: 'deletePolicy', label: 'Delete policy' },
+  { key: 'health', label: 'Health' },
   { key: 'enabled', label: 'Enabled' },
 ]
+
+// ── Health rollup (membership state counts) ──
+type StateCounts = Record<string, number>
+interface StateMeta { label: string; chip: string; dot: string }
+const STATE_META: Record<string, StateMeta> = {
+  FAILED: { label: 'Failed', chip: 'bg-red-50 text-red-700 border border-red-100', dot: 'bg-red-600' },
+  REVIEW: { label: 'Review', chip: 'bg-amber-50 text-amber-800 border border-amber-100', dot: 'bg-amber-500' },
+  PENDING: { label: 'Pending', chip: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' },
+  APPLIED: { label: 'Applied', chip: 'bg-green-50 text-green-700 border border-green-100', dot: 'bg-green-600' },
+}
+// Worst-first, so a single summary dot/chip reflects the most urgent state.
+const STATE_ORDER = ['FAILED', 'REVIEW', 'PENDING', 'APPLIED'] as const
+
+function countTotal(c: StateCounts | undefined): number {
+  return Object.values(c ?? {}).reduce((a, b) => a + b, 0)
+}
+function setCounts(s: SyncSet | undefined): StateCounts {
+  return s?.stateCounts ?? {}
+}
+function linkCounts(linkId: string): StateCounts {
+  const acc: StateCounts = {}
+  for (const s of allSets.value) {
+    if (s.linkId !== linkId) continue
+    for (const [k, v] of Object.entries(s.stateCounts ?? {})) acc[k] = (acc[k] ?? 0) + v
+  }
+  return acc
+}
+// A single dot + label summarizing health (worst non-zero state wins).
+function healthSummary(c: StateCounts): { dot: string; label: string; tone: string } {
+  if ((c.FAILED ?? 0) > 0) return { dot: 'bg-red-600', label: `${c.FAILED} failed`, tone: 'text-red-700' }
+  if ((c.REVIEW ?? 0) > 0) return { dot: 'bg-amber-500', label: `${c.REVIEW} review`, tone: 'text-amber-800' }
+  if (countTotal(c) > 0) return { dot: 'bg-green-600', label: 'Healthy', tone: 'text-green-700' }
+  return { dot: 'bg-gray-300', label: 'No data', tone: 'text-gray-400' }
+}
+// Non-zero state chips in worst-first order (for the inventory summary).
+function stateChips(c: StateCounts): { key: string; label: string; chip: string; dot: string; n: number }[] {
+  return STATE_ORDER.filter((k) => (c[k] ?? 0) > 0).map((k) => ({
+    key: k, label: STATE_META[k].label, chip: STATE_META[k].chip, dot: STATE_META[k].dot, n: c[k],
+  }))
+}
 const memberCols = [
   { key: 'identity', label: 'Identity' },
   { key: 'state', label: 'State' },
@@ -352,6 +422,16 @@ async function loadLinks() {
   } finally {
     loadingLinks.value = false
   }
+}
+// All sets (with state counts) for the health rollup; refreshed after anything
+// that can change membership state (reconcile, recompute, dismiss, set edits).
+async function loadSetHealth() {
+  allSets.value = (await listSyncSets()).data
+}
+// Refresh the health rollup plus the currently-expanded link's nested sets.
+async function refreshHealth() {
+  await loadSetHealth()
+  if (selectedLinkId.value) sets.value = (await listSyncSets(selectedLinkId.value)).data
 }
 
 const showLinkModal = ref(false)
@@ -491,7 +571,7 @@ async function saveSet() {
     else await createSyncSet(payload)
     notif.success(editingSet.value ? 'Sync set updated' : 'Sync set created')
     showSetModal.value = false
-    if (selectedLinkId.value) sets.value = (await listSyncSets(selectedLinkId.value)).data
+    await refreshHealth()
   } catch (e) {
     notif.error(errMsg(e))
   }
@@ -501,7 +581,7 @@ async function removeSet(s: SyncSet) {
     await deleteSyncSet(s.id)
     notif.success('Sync set deleted')
     if (selectedSetId.value === s.id) { selectedSetId.value = null; memberships.value = [] }
-    if (selectedLinkId.value) sets.value = (await listSyncSets(selectedLinkId.value)).data
+    await refreshHealth()
   } catch (e) {
     notif.error(errMsg(e))
   }
@@ -528,6 +608,7 @@ async function doReconcile() {
     const { data } = await reconcileSet(selectedSetId.value)
     notif.success(`Reconcile enumerated ${data.enumerated} source identities`)
     await loadMemberships()
+    await refreshHealth()
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
@@ -559,6 +640,7 @@ async function dismiss(m: Membership) {
     await dismissMembership(selectedSetId.value, m.identity)
     notif.success('Membership dismissed')
     await loadMemberships()
+    await refreshHealth()
   } catch (e) {
     notif.error(errMsg(e))
   }
@@ -566,7 +648,7 @@ async function dismiss(m: Membership) {
 
 onMounted(async () => {
   try {
-    const [dirs] = await Promise.all([listDirectories(), loadLinks()])
+    const [dirs] = await Promise.all([listDirectories(), loadLinks(), loadSetHealth()])
     directories.value = dirs.data.map((d) => ({ id: d.id ?? '', displayName: d.displayName ?? '' }))
   } catch (e) {
     notif.error(errMsg(e))

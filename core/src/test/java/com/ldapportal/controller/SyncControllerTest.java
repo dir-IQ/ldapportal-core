@@ -62,7 +62,8 @@ class SyncControllerTest extends BaseControllerTest {
 
     private SyncSetResponse setResp() {
         return new SyncSetResponse(SET, LINK, "people", "ou=people,dc=src", null, null, "ou=Users,dc=dst",
-                null, null, null, null, null, null, null, true, OffsetDateTime.now(), OffsetDateTime.now(), 0L);
+                null, null, null, null, null, null, null, true, OffsetDateTime.now(), OffsetDateTime.now(), 0L,
+                java.util.Map.of());
     }
 
     // ── authz ──────────────────────────────────────────────────────────────────

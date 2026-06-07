@@ -22,6 +22,7 @@ const set = {
   objectScope: 'SUB', identityKey: null, targetBaseDn: 'ou=Users,dc=dst', applicabilityFilter: null,
   referenceAttributes: null, sourceAnchorAttribute: null, deletePolicy: 'DELETE', transformRules: null,
   reconcileCadenceSeconds: null, reconcileLastRunAt: null, enabled: true, createdAt: '', updatedAt: '', version: 0,
+  stateCounts: { APPLIED: 5, FAILED: 2, REVIEW: 1 },
 }
 const membership = {
   syncSetId: 'set-1', identity: '1111', sourceDn: 'uid=a,ou=people,dc=src',
@@ -93,6 +94,28 @@ describe('DirectorySyncView', () => {
     await reconcileBtn.trigger('click')
     await flushPromises()
     expect(syncApi.reconcileSet).toHaveBeenCalledWith('set-1')
+  })
+
+  it('rolls up membership health onto the link row (worst state wins)', async () => {
+    const wrapper = mount(DirectorySyncView)
+    await flushPromises()
+    // FAILED outranks REVIEW/APPLIED, so the link shows the failure summary.
+    expect(wrapper.find('tbody tr').text()).toContain('2 failed')
+  })
+
+  it('shows state-count summary chips for the selected set', async () => {
+    const wrapper = mount(DirectorySyncView)
+    await flushPromises()
+    await wrapper.find('tbody tr').trigger('click') // expand link
+    await flushPromises()
+    const setRow = wrapper.findAll('table')[1].findAll('tbody tr')[0]
+    await setRow.trigger('click') // select set → inventory
+    await flushPromises()
+    const inv = wrapper.find('section') // membership inventory is the only <section>
+    expect(inv.text()).toContain('8 tracked') // 5 + 2 + 1
+    expect(inv.text()).toContain('Failed')
+    expect(inv.text()).toContain('Review')
+    expect(inv.text()).toContain('Applied')
   })
 
   it('authoring a transform rule includes it in the create payload', async () => {

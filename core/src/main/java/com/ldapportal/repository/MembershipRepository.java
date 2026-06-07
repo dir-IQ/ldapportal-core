@@ -30,4 +30,9 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
     @Query("select m from Membership m where m.syncSetId = :syncSetId "
             + "and (m.lastScanEpoch is null or m.lastScanEpoch < :epoch)")
     List<Membership> findNotSeen(@Param("syncSetId") UUID syncSetId, @Param("epoch") long epoch);
+
+    /** Membership counts grouped by set + state, for the health rollup. */
+    @Query("select m.syncSetId as syncSetId, m.state as state, count(m) as cnt "
+            + "from Membership m group by m.syncSetId, m.state")
+    List<MembershipStateCount> countGroupedByState();
 }

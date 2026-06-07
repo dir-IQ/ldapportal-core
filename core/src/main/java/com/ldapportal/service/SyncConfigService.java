@@ -17,6 +17,7 @@ import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.MembershipRepository;
+import com.ldapportal.repository.MembershipStateCount;
 import com.ldapportal.repository.SyncLinkRepository;
 import com.ldapportal.repository.SyncSetRepository;
 import com.unboundid.ldap.sdk.DN;
@@ -27,9 +28,11 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -134,7 +137,20 @@ public class SyncConfigService {
     @Transactional(readOnly = true)
     public List<SyncSetResponse> listSets(UUID linkId) {
         List<SyncSet> sets = linkId != null ? setRepo.findAllByLinkId(linkId) : setRepo.findAll();
-        return sets.stream().map(SyncSetResponse::of).toList();
+        Map<UUID, Map<String, Long>> counts = membershipStateCounts();
+        return sets.stream()
+                .map(s -> SyncSetResponse.of(s, counts.getOrDefault(s.getId(), Map.of())))
+                .toList();
+    }
+
+    /** Membership counts per set keyed by state name, for the health rollup. */
+    private Map<UUID, Map<String, Long>> membershipStateCounts() {
+        Map<UUID, Map<String, Long>> counts = new HashMap<>();
+        for (MembershipStateCount c : membershipRepo.countGroupedByState()) {
+            counts.computeIfAbsent(c.getSyncSetId(), k -> new HashMap<>())
+                    .put(c.getState().name(), c.getCnt());
+        }
+        return counts;
     }
 
     @Transactional(readOnly = true)
