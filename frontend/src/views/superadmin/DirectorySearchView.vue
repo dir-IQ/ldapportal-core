@@ -50,6 +50,18 @@
             <span class="text-gray-500 font-normal">(comma-separated, optional)</span>
           </label>
           <input id="search-attributes" v-model="form.attributes" class="input w-full" placeholder="cn,mail,uid" />
+          <!-- Display-all toggle sits directly under the Attributes field it
+               affects: with an empty Attributes box this returns every user
+               AND operational attribute; otherwise it adds operational attrs
+               to the named ones. Promoted out of "Other criteria" so it's
+               discoverable without expanding the disclosure. -->
+          <div class="flex items-center gap-2 mt-2">
+            <input id="search-include-operational" type="checkbox" v-model="form.includeOperational" class="rounded border-gray-300" />
+            <label for="search-include-operational" class="text-xs font-medium text-gray-600 cursor-pointer select-none">
+              Show all attributes
+              <span class="text-gray-500 font-normal">(incl. operational: createTimestamp, modifyTimestamp, entryUUID, …)</span>
+            </label>
+          </div>
         </div>
       </div>
 
@@ -79,10 +91,10 @@
         class="mt-2"
       />
 
-      <!-- Other criteria disclosure: scope + size limit. (Base DN and
-           Attributes were promoted to the primary 3-column row above.)
-           Default-collapsed; shows "(modified)" hint when scope or limit
-           differs from defaults so users notice hidden state.
+      <!-- Other criteria disclosure: scope, size limit, time limit. (Base DN,
+           Attributes, and the "Show all attributes" toggle were promoted to the
+           primary area above.) Default-collapsed; shows "(modified)" hint when
+           any field differs from its default so users notice hidden state.
            Field layout mirrors the primary 3-col row above: labels
            above the inputs, fields stack below, all responsive. -->
       <details class="mt-2 group">
@@ -110,13 +122,6 @@
               <span class="text-gray-500 font-normal">(seconds, 0 = none)</span>
             </label>
             <input id="search-time-limit" v-model.number="form.timeLimit" type="number" min="0" max="3600" class="input w-full" />
-          </div>
-          <div class="flex items-center gap-2 pt-4 sm:col-span-2 md:col-span-3">
-            <input id="search-include-operational" type="checkbox" v-model="form.includeOperational" class="rounded border-gray-300" />
-            <label for="search-include-operational" class="text-xs font-medium text-gray-600 cursor-pointer select-none">
-              Include operational attributes
-              <span class="text-gray-500 font-normal">(createTimestamp, modifyTimestamp, entryUUID, …)</span>
-            </label>
           </div>
         </div>
       </details>
@@ -530,15 +535,14 @@ function onRowSaved(dn: string, response: LdapEntryResponse): void {
 }
 
 // Surface a hint on the "Other criteria" disclosure when any field
-// inside it has a non-default value. Base DN and Attributes live in
-// the primary 3-column row above, so they're always visible — only
-// Scope, Size Limit, Time Limit, and Include Operational live behind
-// the disclosure and need this hint.
+// inside it has a non-default value. Base DN, Attributes, and the
+// "Show all attributes" toggle live in the always-visible primary area
+// above, so only Scope, Size Limit, and Time Limit live behind the
+// disclosure and need this hint.
 const advancedFieldsActive = computed(() =>
   form.value.scope !== 'sub'
   || form.value.limit !== 100
-  || (form.value.timeLimit ?? 0) !== 0
-  || !!form.value.includeOperational,
+  || (form.value.timeLimit ?? 0) !== 0,
 )
 
 // Discover the union of attribute names returned across all rows. We cap

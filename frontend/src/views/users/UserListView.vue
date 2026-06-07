@@ -374,7 +374,7 @@ import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 import { useApi, downloadBlob } from '@/composables/useApi'
-import { IVIA_ABBR } from '@/constants/productNames'
+import { IVIA_ABBR, isIviaAttr, iviaAttrLabel } from '@/constants/productNames'
 import * as usersApi from '@/api/users'
 import * as groupsApi from '@/api/groups'
 import { exportCsv as exportUsersCsv } from '@/api/csvTemplates'
@@ -642,7 +642,9 @@ const cols = computed(() => {
     // Group membership as name pills. Default-hidden (opt-in via the
     // column picker); not sortable (a list has no natural order).
     { key: '__groups', label: 'Groups', sortable: false, defaultHidden: true, defaultWidth: 280 },
-    ...extras.map(k => ({ key: k, label: k, defaultHidden: true })),
+    // IVIA enrichment columns (keyed `isva.*` by the backend) keep their
+    // stable internal key but display the marketing `ivia.` prefix.
+    ...extras.map(k => ({ key: k, label: iviaAttrLabel(k), defaultHidden: true })),
     // The actions cell renders three elements side-by-side: the
     // primary Edit button, the variant Disable/Enable button (the
     // first ActionMenu item), and the kebab dropdown trigger. 140px
@@ -865,6 +867,10 @@ async function save() {
     if (editingDn.value) {
       const mods = Object.entries(form.value.attributes || {})
         .filter(([attr]) => attr.toLowerCase() !== 'objectclass')
+        // IVIA (isva.*) attributes are read-only enrichment merged from the
+        // paired secUser — they aren't real attributes on the demographic
+        // entry, so never write them back. They're managed via the IVIA tab.
+        .filter(([attr]) => !isIviaAttr(attr))
         .map(([attr, val]) => ({
           operation: 'REPLACE',
           attribute: attr,

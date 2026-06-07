@@ -147,4 +147,20 @@ describe('UserListView feature gating', () => {
     expect(rows[0][given!.key]).toBe('Alice')
     expect(rows[0][display!.key]).toBe('Alice Anderson')
   })
+
+  // IVIA enrichment columns are keyed `isva.*` by the backend (stable internal
+  // id) but must display the marketing `ivia.` prefix in the table header.
+  it('labels IVIA enrichment columns with the ivia. prefix while keeping the isva. key', async () => {
+    vi.mocked(usersApi.searchUsers).mockResolvedValueOnce({ data: [{
+      dn: 'uid=jdoe,ou=people,dc=x',
+      attributes: { cn: ['Alice Anderson'], 'isva.seclogin': ['alice.anderson'] },
+    }] } as never)
+    const wrapper = await mountWith(ALL)
+    const cols = wrapper.findComponent({ name: 'ResultsTable' }).props('columns') as Array<{ key: string, label: string }>
+    const secLogin = cols.find(c => c.key === 'isva.seclogin')
+    expect(secLogin).toBeTruthy()
+    expect(secLogin!.label).toBe('ivia.seclogin')
+    // No column should expose the internal isva. prefix as its label.
+    expect(cols.some(c => c.label.startsWith('isva.'))).toBe(false)
+  })
 })
