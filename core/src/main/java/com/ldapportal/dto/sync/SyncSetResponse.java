@@ -8,6 +8,7 @@ import com.ldapportal.entity.enums.SyncScope;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /** Response view of a {@link SyncSet}. */
@@ -29,13 +30,21 @@ public record SyncSetResponse(
         boolean enabled,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
-        Long version) {
+        Long version,
+        // Membership counts keyed by state name (APPLIED/PENDING/FAILED/REVIEW);
+        // empty for single-set responses, populated by the list endpoint.
+        Map<String, Long> stateCounts) {
 
     public static SyncSetResponse of(SyncSet s) {
+        return of(s, Map.of());
+    }
+
+    public static SyncSetResponse of(SyncSet s, Map<String, Long> stateCounts) {
         return new SyncSetResponse(s.getId(), s.getLinkId(), s.getName(), s.getObjectScopeBaseDn(),
                 s.getObjectScope(), s.getIdentityKey(), s.getTargetBaseDn(), s.getApplicabilityFilter(),
                 s.getReferenceAttributes(), s.getSourceAnchorAttribute(), s.getDeletePolicy(),
                 s.getTransformRules(), s.getReconcileCadenceSeconds(), s.getReconcileLastRunAt(),
-                s.isEnabled(), s.getCreatedAt(), s.getUpdatedAt(), s.getVersion());
+                s.isEnabled(), s.getCreatedAt(), s.getUpdatedAt(), s.getVersion(),
+                stateCounts == null ? Map.of() : stateCounts);
     }
 }
