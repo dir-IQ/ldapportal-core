@@ -28,7 +28,7 @@ import java.util.UUID;
  * rows arrives in a later phase. Lose the index → reconcile rebuilds it.
  */
 @Entity
-@Table(name = "membership")
+@Table(name = "sync_membership")
 @IdClass(MembershipId.class)
 @Getter
 @Setter
