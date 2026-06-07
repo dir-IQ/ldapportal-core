@@ -4,6 +4,7 @@ package com.ldapportal.service;
 import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
+import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
@@ -17,13 +18,18 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -112,5 +118,28 @@ class SyncConfigServiceTest {
         ArgumentCaptor<SyncSet> cap = ArgumentCaptor.forClass(SyncSet.class);
         verify(setRepo).save(cap.capture());
         assertThat(cap.getValue().getTransformRules()).isNull();
+    }
+
+    @Test
+    void listMemberships_lowercasesAndWrapsSearchTerm() {
+        when(setRepo.findById(any())).thenReturn(Optional.of(new SyncSet()));
+        when(membershipRepo.search(any(), any(), any(), any())).thenReturn(Page.empty());
+
+        service.listMemberships(UUID.randomUUID(), MembershipState.FAILED, "  Alice  ",
+                PageRequest.of(0, 50));
+
+        ArgumentCaptor<String> q = ArgumentCaptor.forClass(String.class);
+        verify(membershipRepo).search(any(), eq(MembershipState.FAILED), q.capture(), any());
+        assertThat(q.getValue()).isEqualTo("%alice%");
+    }
+
+    @Test
+    void listMemberships_blankSearchTermBecomesNull() {
+        when(setRepo.findById(any())).thenReturn(Optional.of(new SyncSet()));
+        when(membershipRepo.search(any(), any(), any(), any())).thenReturn(Page.empty());
+
+        service.listMemberships(UUID.randomUUID(), null, "   ", PageRequest.of(0, 50));
+
+        verify(membershipRepo).search(any(), isNull(), isNull(), any());
     }
 }

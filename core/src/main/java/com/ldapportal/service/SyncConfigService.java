@@ -24,6 +24,8 @@ import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -275,12 +277,12 @@ public class SyncConfigService {
     // ── Membership inventory + operator triggers ────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<MembershipResponse> listMemberships(UUID syncSetId, MembershipState state) {
+    public Page<MembershipResponse> listMemberships(UUID syncSetId, MembershipState state,
+                                                    String q, Pageable pageable) {
         requireSet(syncSetId);
-        return membershipRepo.findAllBySyncSetId(syncSetId).stream()
-                .filter(m -> state == null || m.getState() == state)
-                .map(MembershipResponse::of)
-                .toList();
+        String term = (q == null || q.isBlank()) ? null
+                : "%" + q.trim().toLowerCase(Locale.ROOT) + "%";
+        return membershipRepo.search(syncSetId, state, term, pageable).map(MembershipResponse::of);
     }
 
     /** Run a synchronous reconcile of the set; returns the number of source identities enumerated. */

@@ -11,6 +11,9 @@ import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.service.SyncConfigService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -63,9 +66,14 @@ public class SyncSetController {
     // ── Inventory + operator triggers ──────────────────────────────────────────
 
     @GetMapping("/{id}/memberships")
-    public List<MembershipResponse> memberships(@PathVariable UUID id,
-                                                @RequestParam(required = false) MembershipState state) {
-        return service.listMemberships(id, state);
+    public Page<MembershipResponse> memberships(@PathVariable UUID id,
+                                                @RequestParam(required = false) MembershipState state,
+                                                @RequestParam(required = false) String q,
+                                                @RequestParam(defaultValue = "0") int page,
+                                                @RequestParam(defaultValue = "50") int size) {
+        int capped = Math.min(Math.max(size, 1), 200);
+        PageRequest pageable = PageRequest.of(Math.max(page, 0), capped, Sort.by("identity"));
+        return service.listMemberships(id, state, q, pageable);
     }
 
     @PostMapping("/{id}/reconcile")
