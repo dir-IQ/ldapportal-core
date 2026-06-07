@@ -9,15 +9,30 @@
       <button @click="openLinkModal()" class="btn-primary">+ New Link</button>
     </div>
 
-    <!-- ── Links ───────────────────────────────────────────────────────── -->
+    <!-- ── Links (each expands to its nested sync sets) ─────────────────── -->
     <DataTable :columns="linkCols" :rows="links" :loading="loadingLinks" row-key="id"
-               empty-text="No sync links configured yet." :highlight-key="selectedLinkId ?? undefined"
+               empty-text="No sync links configured yet."
+               :highlight-key="selectedLinkId ?? undefined" :expanded-key="selectedLinkId ?? undefined"
                @row-click="onLinkRowClick">
       <template #cell-displayName="{ row }">
-        <span class="font-medium text-gray-900">{{ row.displayName }}</span>
+        <span class="inline-flex items-center gap-1.5 font-medium text-gray-900">
+          <svg class="w-3 h-3 text-gray-400 transition-transform"
+               :class="{ 'rotate-90': selectedLinkId === row.id }"
+               viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7 5l6 5-6 5" />
+          </svg>
+          {{ row.displayName }}
+        </span>
       </template>
       <template #cell-sourceDirId="{ row }">{{ dirName(row.sourceDirId) }}</template>
       <template #cell-targetDirId="{ row }">{{ dirName(row.targetDirId) }}</template>
+      <template #cell-health="{ row }">
+        <span class="inline-flex items-center gap-1.5 text-xs font-medium"
+              :class="healthSummary(linkCounts(row.id)).tone">
+          <span class="w-2 h-2 rounded-full shrink-0" :class="healthSummary(linkCounts(row.id)).dot" aria-hidden="true"></span>
+          {{ healthSummary(linkCounts(row.id)).label }}
+        </span>
+      </template>
       <template #cell-enabled="{ row }">
         <span class="text-xs font-medium" :class="row.enabled ? 'text-green-600' : 'text-gray-500'">
           {{ row.enabled ? 'Yes' : 'No' }}
@@ -30,42 +45,51 @@
           </template>
         </ActionMenu>
       </template>
-    </DataTable>
 
-    <!-- ── Sets (for the selected link) ─────────────────────────────────── -->
-    <section v-if="selectedLinkId" class="mt-8">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-lg font-semibold text-gray-900">
-          Sync sets — {{ dirName(selectedLink?.sourceDirId) }} → {{ dirName(selectedLink?.targetDirId) }}
-        </h2>
-        <button @click="openSetModal()" class="btn-primary">+ New Set</button>
-      </div>
-      <DataTable :columns="setCols" :rows="sets" :loading="loadingSets" row-key="id"
-                 empty-text="No sync sets for this link yet." :highlight-key="selectedSetId ?? undefined"
-                 @row-click="onSetRowClick">
-        <template #cell-name="{ row }">
-          <span class="font-medium text-gray-900">{{ row.name }}</span>
-        </template>
-        <template #cell-objectScopeBaseDn="{ row }">
-          <span class="font-mono text-xs">{{ row.objectScopeBaseDn || '—' }}</span>
-        </template>
-        <template #cell-targetBaseDn="{ row }">
-          <span class="font-mono text-xs">{{ row.targetBaseDn || '—' }}</span>
-        </template>
-        <template #cell-enabled="{ row }">
-          <span class="text-xs font-medium" :class="row.enabled ? 'text-green-600' : 'text-gray-500'">
-            {{ row.enabled ? 'Yes' : 'No' }}
-          </span>
-        </template>
-        <template #actions="{ row }">
-          <ActionMenu :items="[{ label: 'Delete', onClick: () => removeSet(row), danger: true }]">
-            <template #primary>
-              <button class="btn-secondary btn-compact" @click.stop="openSetModal(row)">Edit</button>
+      <!-- A link's sync sets, nested directly beneath it. -->
+      <template #row-detail="{ row }">
+        <div class="px-4 py-4 space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-gray-700">
+              Sync sets — {{ dirName(row.sourceDirId) }} → {{ dirName(row.targetDirId) }}
+            </h3>
+            <button class="btn-secondary btn-compact" @click="openSetModal()">+ New Set</button>
+          </div>
+          <DataTable :columns="setCols" :rows="sets" :loading="loadingSets" row-key="id"
+                     empty-text="No sync sets for this link yet." :highlight-key="selectedSetId ?? undefined"
+                     @row-click="onSetRowClick">
+            <template #cell-name="{ row: s }">
+              <span class="font-medium text-gray-900">{{ s.name }}</span>
             </template>
-          </ActionMenu>
-        </template>
-      </DataTable>
-    </section>
+            <template #cell-objectScopeBaseDn="{ row: s }">
+              <span class="font-mono text-xs">{{ s.objectScopeBaseDn || '—' }}</span>
+            </template>
+            <template #cell-targetBaseDn="{ row: s }">
+              <span class="font-mono text-xs">{{ s.targetBaseDn || '—' }}</span>
+            </template>
+            <template #cell-health="{ row: s }">
+              <span class="inline-flex items-center gap-1.5 text-xs font-medium"
+                    :class="healthSummary(setCounts(s)).tone">
+                <span class="w-2 h-2 rounded-full shrink-0" :class="healthSummary(setCounts(s)).dot" aria-hidden="true"></span>
+                {{ healthSummary(setCounts(s)).label }}
+              </span>
+            </template>
+            <template #cell-enabled="{ row: s }">
+              <span class="text-xs font-medium" :class="s.enabled ? 'text-green-600' : 'text-gray-500'">
+                {{ s.enabled ? 'Yes' : 'No' }}
+              </span>
+            </template>
+            <template #actions="{ row: s }">
+              <ActionMenu :items="[{ label: 'Delete', onClick: () => removeSet(s), danger: true }]">
+                <template #primary>
+                  <button class="btn-secondary btn-compact" @click.stop="openSetModal(s)">Edit</button>
+                </template>
+              </ActionMenu>
+            </template>
+          </DataTable>
+        </div>
+      </template>
+    </DataTable>
 
     <!-- ── Membership inventory (for the selected set) ──────────────────── -->
     <section v-if="selectedSetId" class="mt-8">
@@ -83,6 +107,17 @@
             {{ reconciling ? 'Reconciling…' : 'Reconcile now' }}
           </button>
         </div>
+      </div>
+
+      <!-- State-count summary chips (at-a-glance health for this set). -->
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <span class="text-xs text-gray-500">{{ countTotal(setCounts(selectedSet)) }} tracked</span>
+        <span v-for="c in stateChips(setCounts(selectedSet))" :key="c.key"
+              class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full"
+              :class="c.chip">
+          <span class="w-1.5 h-1.5 rounded-full" :class="c.dot" aria-hidden="true"></span>
+          {{ c.label }} <span class="tabular-nums">{{ c.n }}</span>
+        </span>
       </div>
 
       <div class="flex items-center gap-2 mb-3">
@@ -212,6 +247,21 @@
             </select>
           </div>
         </div>
+        <details class="border border-gray-200 rounded-lg">
+          <summary class="px-4 py-2 text-sm font-medium text-gray-700 cursor-pointer">
+            Attribute mapping <span class="text-gray-400 font-normal">(optional)</span>
+          </summary>
+          <div class="px-4 pb-4 pt-2 space-y-2">
+            <p class="text-xs text-gray-500">
+              Rename attributes or template their values on the way to the target. By default every
+              source attribute is synced unchanged. Leave <span class="font-medium">Target</span> blank
+              to keep the source name; use <code class="font-mono">${value}</code> in the template to
+              insert the original value (blank = passthrough). The first rule matching a source
+              attribute wins.
+            </p>
+            <TransformRulesEditor v-model:rules="setForm.transformRules" />
+          </div>
+        </details>
         <div class="flex items-center gap-1">
           <label class="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" v-model="setForm.enabled" class="rounded" /> Enabled
@@ -235,6 +285,7 @@ import FormField from '@/components/FormField.vue'
 import HelpTip from '@/components/HelpTip.vue'
 import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
+import TransformRulesEditor from '@/components/TransformRulesEditor.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
 import {
@@ -242,7 +293,7 @@ import {
   listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet,
   listMemberships, reconcileSet, recomputeKey, dismissMembership,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
-  type Membership, type MembershipState,
+  type SyncTransformRule, type Membership, type MembershipState,
 } from '@/api/sync'
 
 interface DirOption { id: string; displayName: string }
@@ -252,6 +303,9 @@ const notif = useNotificationStore()
 const directories = ref<DirOption[]>([])
 const links = ref<SyncLink[]>([])
 const sets = ref<SyncSet[]>([])
+// Every set (across all links) with its membership state counts — drives the
+// at-a-glance health rollup on the links/sets tables without drilling in.
+const allSets = ref<SyncSet[]>([])
 const memberships = ref<Membership[]>([])
 
 const selectedLinkId = ref<string | null>(null)
@@ -268,6 +322,7 @@ const linkCols = [
   { key: 'sourceDirId', label: 'Source' },
   { key: 'targetDirId', label: 'Target' },
   { key: 'captureMode', label: 'Capture' },
+  { key: 'health', label: 'Health' },
   { key: 'enabled', label: 'Enabled' },
 ]
 const setCols = [
@@ -275,8 +330,49 @@ const setCols = [
   { key: 'objectScopeBaseDn', label: 'Scope' },
   { key: 'targetBaseDn', label: 'Target base' },
   { key: 'deletePolicy', label: 'Delete policy' },
+  { key: 'health', label: 'Health' },
   { key: 'enabled', label: 'Enabled' },
 ]
+
+// ── Health rollup (membership state counts) ──
+type StateCounts = Record<string, number>
+interface StateMeta { label: string; chip: string; dot: string }
+const STATE_META: Record<string, StateMeta> = {
+  FAILED: { label: 'Failed', chip: 'bg-red-50 text-red-700 border border-red-100', dot: 'bg-red-600' },
+  REVIEW: { label: 'Review', chip: 'bg-amber-50 text-amber-800 border border-amber-100', dot: 'bg-amber-500' },
+  PENDING: { label: 'Pending', chip: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' },
+  APPLIED: { label: 'Applied', chip: 'bg-green-50 text-green-700 border border-green-100', dot: 'bg-green-600' },
+}
+// Worst-first, so a single summary dot/chip reflects the most urgent state.
+const STATE_ORDER = ['FAILED', 'REVIEW', 'PENDING', 'APPLIED'] as const
+
+function countTotal(c: StateCounts | undefined): number {
+  return Object.values(c ?? {}).reduce((a, b) => a + b, 0)
+}
+function setCounts(s: SyncSet | undefined): StateCounts {
+  return s?.stateCounts ?? {}
+}
+function linkCounts(linkId: string): StateCounts {
+  const acc: StateCounts = {}
+  for (const s of allSets.value) {
+    if (s.linkId !== linkId) continue
+    for (const [k, v] of Object.entries(s.stateCounts ?? {})) acc[k] = (acc[k] ?? 0) + v
+  }
+  return acc
+}
+// A single dot + label summarizing health (worst non-zero state wins).
+function healthSummary(c: StateCounts): { dot: string; label: string; tone: string } {
+  if ((c.FAILED ?? 0) > 0) return { dot: 'bg-red-600', label: `${c.FAILED} failed`, tone: 'text-red-700' }
+  if ((c.REVIEW ?? 0) > 0) return { dot: 'bg-amber-500', label: `${c.REVIEW} review`, tone: 'text-amber-800' }
+  if (countTotal(c) > 0) return { dot: 'bg-green-600', label: 'Healthy', tone: 'text-green-700' }
+  return { dot: 'bg-gray-300', label: 'No data', tone: 'text-gray-400' }
+}
+// Non-zero state chips in worst-first order (for the inventory summary).
+function stateChips(c: StateCounts): { key: string; label: string; chip: string; dot: string; n: number }[] {
+  return STATE_ORDER.filter((k) => (c[k] ?? 0) > 0).map((k) => ({
+    key: k, label: STATE_META[k].label, chip: STATE_META[k].chip, dot: STATE_META[k].dot, n: c[k],
+  }))
+}
 const memberCols = [
   { key: 'identity', label: 'Identity' },
   { key: 'state', label: 'State' },
@@ -285,10 +381,19 @@ const memberCols = [
   { key: 'failReason', label: 'Reason' },
 ]
 
-function onLinkRowClick(row: SyncLink) { selectLink(row.id) }
+function onLinkRowClick(row: SyncLink) {
+  // Toggle: clicking the expanded link collapses it (and its nested sets).
+  if (selectedLinkId.value === row.id) {
+    selectedLinkId.value = null
+    selectedSetId.value = null
+    sets.value = []
+    memberships.value = []
+  } else {
+    selectLink(row.id)
+  }
+}
 function onSetRowClick(row: SyncSet) { selectSet(row.id) }
 
-const selectedLink = computed(() => links.value.find((l) => l.id === selectedLinkId.value))
 const selectedSet = computed(() => sets.value.find((s) => s.id === selectedSetId.value))
 
 function dirName(id?: string | null): string {
@@ -317,6 +422,16 @@ async function loadLinks() {
   } finally {
     loadingLinks.value = false
   }
+}
+// All sets (with state counts) for the health rollup; refreshed after anything
+// that can change membership state (reconcile, recompute, dismiss, set edits).
+async function loadSetHealth() {
+  allSets.value = (await listSyncSets()).data
+}
+// Refresh the health rollup plus the currently-expanded link's nested sets.
+async function refreshHealth() {
+  await loadSetHealth()
+  if (selectedLinkId.value) sets.value = (await listSyncSets(selectedLinkId.value)).data
 }
 
 const showLinkModal = ref(false)
@@ -390,6 +505,7 @@ interface SetForm {
   reconcileCadenceSeconds: string
   deletePolicy: 'DELETE' | 'REVIEW'
   objectScope: SyncSet['objectScope']
+  transformRules: SyncTransformRule[]
   enabled: boolean
 }
 const showSetModal = ref(false)
@@ -399,7 +515,7 @@ function blankSet(): SetForm {
   return {
     name: '', identityKey: '', objectScopeBaseDn: '', targetBaseDn: '', applicabilityFilter: '',
     referenceAttributes: '', sourceAnchorAttribute: '', reconcileCadenceSeconds: '',
-    deletePolicy: 'DELETE', objectScope: null, enabled: true,
+    deletePolicy: 'DELETE', objectScope: null, transformRules: [], enabled: true,
   }
 }
 function openSetModal(s?: SyncSet) {
@@ -410,10 +526,25 @@ function openSetModal(s?: SyncSet) {
         targetBaseDn: s.targetBaseDn ?? '', applicabilityFilter: s.applicabilityFilter ?? '',
         referenceAttributes: s.referenceAttributes ?? '', sourceAnchorAttribute: s.sourceAnchorAttribute ?? '',
         reconcileCadenceSeconds: s.reconcileCadenceSeconds != null ? String(s.reconcileCadenceSeconds) : '',
-        deletePolicy: s.deletePolicy, objectScope: s.objectScope, enabled: s.enabled,
+        deletePolicy: s.deletePolicy, objectScope: s.objectScope,
+        transformRules: (s.transformRules ?? []).map((r) => ({ ...r })),
+        enabled: s.enabled,
       }
     : blankSet()
   showSetModal.value = true
+}
+// Trim rows, drop blank-source rows, and collapse blank target/template to null
+// (the engine reads null target as "same name" and null template as passthrough).
+// An empty list serializes as null. The backend re-validates and re-normalizes.
+function cleanRules(rows: SyncTransformRule[]): SyncTransformRule[] | null {
+  const cleaned = rows
+    .map((r) => ({
+      sourceAttr: r.sourceAttr.trim(),
+      targetAttr: r.targetAttr?.trim() ? r.targetAttr.trim() : null,
+      valueTemplate: r.valueTemplate?.trim() ? r.valueTemplate.trim() : null,
+    }))
+    .filter((r) => r.sourceAttr)
+  return cleaned.length ? cleaned : null
 }
 function toPayload(f: SetForm): SyncSetPayload {
   const nn = (v: string) => (v.trim() ? v.trim() : null)
@@ -428,7 +559,7 @@ function toPayload(f: SetForm): SyncSetPayload {
     referenceAttributes: nn(f.referenceAttributes),
     sourceAnchorAttribute: nn(f.sourceAnchorAttribute),
     deletePolicy: f.deletePolicy,
-    transformRules: editingSet.value?.transformRules ?? null,
+    transformRules: cleanRules(f.transformRules),
     reconcileCadenceSeconds: f.reconcileCadenceSeconds.trim() ? Number(f.reconcileCadenceSeconds) : null,
     enabled: f.enabled,
   }
@@ -440,7 +571,7 @@ async function saveSet() {
     else await createSyncSet(payload)
     notif.success(editingSet.value ? 'Sync set updated' : 'Sync set created')
     showSetModal.value = false
-    if (selectedLinkId.value) sets.value = (await listSyncSets(selectedLinkId.value)).data
+    await refreshHealth()
   } catch (e) {
     notif.error(errMsg(e))
   }
@@ -450,7 +581,7 @@ async function removeSet(s: SyncSet) {
     await deleteSyncSet(s.id)
     notif.success('Sync set deleted')
     if (selectedSetId.value === s.id) { selectedSetId.value = null; memberships.value = [] }
-    if (selectedLinkId.value) sets.value = (await listSyncSets(selectedLinkId.value)).data
+    await refreshHealth()
   } catch (e) {
     notif.error(errMsg(e))
   }
@@ -477,6 +608,7 @@ async function doReconcile() {
     const { data } = await reconcileSet(selectedSetId.value)
     notif.success(`Reconcile enumerated ${data.enumerated} source identities`)
     await loadMemberships()
+    await refreshHealth()
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
@@ -508,6 +640,7 @@ async function dismiss(m: Membership) {
     await dismissMembership(selectedSetId.value, m.identity)
     notif.success('Membership dismissed')
     await loadMemberships()
+    await refreshHealth()
   } catch (e) {
     notif.error(errMsg(e))
   }
@@ -515,7 +648,7 @@ async function dismiss(m: Membership) {
 
 onMounted(async () => {
   try {
-    const [dirs] = await Promise.all([listDirectories(), loadLinks()])
+    const [dirs] = await Promise.all([listDirectories(), loadLinks(), loadSetHealth()])
     directories.value = dirs.data.map((d) => ({ id: d.id ?? '', displayName: d.displayName ?? '' }))
   } catch (e) {
     notif.error(errMsg(e))

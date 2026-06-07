@@ -47,7 +47,8 @@ export interface SyncLinkPayload {
 
 export interface SyncTransformRule {
   sourceAttr: string
-  targetAttr: string
+  // null target ⇒ keep the source attribute name (engine semantics).
+  targetAttr: string | null
   valueTemplate: string | null
 }
 
@@ -70,11 +71,14 @@ export interface SyncSet {
   createdAt: string
   updatedAt: string
   version: number
+  // Membership counts keyed by state name (APPLIED/PENDING/FAILED/REVIEW); the
+  // list endpoint populates this, single-set responses leave it empty.
+  stateCounts: Record<string, number>
 }
 
 export type SyncSetPayload = Omit<
   SyncSet,
-  'id' | 'reconcileLastRunAt' | 'createdAt' | 'updatedAt' | 'version'
+  'id' | 'reconcileLastRunAt' | 'createdAt' | 'updatedAt' | 'version' | 'stateCounts'
 >
 
 export interface Membership {

@@ -22,6 +22,7 @@ const set = {
   objectScope: 'SUB', identityKey: null, targetBaseDn: 'ou=Users,dc=dst', applicabilityFilter: null,
   referenceAttributes: null, sourceAnchorAttribute: null, deletePolicy: 'DELETE', transformRules: null,
   reconcileCadenceSeconds: null, reconcileLastRunAt: null, enabled: true, createdAt: '', updatedAt: '', version: 0,
+  stateCounts: { APPLIED: 5, FAILED: 2, REVIEW: 1 },
 }
 const membership = {
   syncSetId: 'set-1', identity: '1111', sourceDn: 'uid=a,ou=people,dc=src',
@@ -74,7 +75,7 @@ describe('DirectorySyncView', () => {
     await flushPromises()
     await wrapper.find('tbody tr').trigger('click') // select link
     await flushPromises()
-    const setRows = wrapper.findAll('section')[0].findAll('tbody tr')
+    const setRows = wrapper.findAll('table')[1].findAll('tbody tr')
     await setRows[0].trigger('click') // select set
     await flushPromises()
     expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', undefined)
@@ -86,12 +87,73 @@ describe('DirectorySyncView', () => {
     await flushPromises()
     await wrapper.find('tbody tr').trigger('click')
     await flushPromises()
-    const setRows = wrapper.findAll('section')[0].findAll('tbody tr')
+    const setRows = wrapper.findAll('table')[1].findAll('tbody tr')
     await setRows[0].trigger('click')
     await flushPromises()
     const reconcileBtn = wrapper.findAll('button').find((b) => b.text().includes('Reconcile now'))!
     await reconcileBtn.trigger('click')
     await flushPromises()
     expect(syncApi.reconcileSet).toHaveBeenCalledWith('set-1')
+  })
+
+  it('rolls up membership health onto the link row (worst state wins)', async () => {
+    const wrapper = mount(DirectorySyncView)
+    await flushPromises()
+    // FAILED outranks REVIEW/APPLIED, so the link shows the failure summary.
+    expect(wrapper.find('tbody tr').text()).toContain('2 failed')
+  })
+
+  it('shows state-count summary chips for the selected set', async () => {
+    const wrapper = mount(DirectorySyncView)
+    await flushPromises()
+    await wrapper.find('tbody tr').trigger('click') // expand link
+    await flushPromises()
+    const setRow = wrapper.findAll('table')[1].findAll('tbody tr')[0]
+    await setRow.trigger('click') // select set → inventory
+    await flushPromises()
+    const inv = wrapper.find('section') // membership inventory is the only <section>
+    expect(inv.text()).toContain('8 tracked') // 5 + 2 + 1
+    expect(inv.text()).toContain('Failed')
+    expect(inv.text()).toContain('Review')
+    expect(inv.text()).toContain('Applied')
+  })
+
+  it('authoring a transform rule includes it in the create payload', async () => {
+    const wrapper = mount(DirectorySyncView, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.find('tbody tr').trigger('click') // select link
+    await flushPromises()
+    // The set modal teleports to <body>; drive it through document.
+    const byText = (t: string) =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.includes(t))!
+    byText('New Set').click()
+    await flushPromises()
+
+    const nameLabel = Array.from(document.querySelectorAll('label')).find((l) => l.textContent?.trim().startsWith('Name'))!
+    const nameInput = document.getElementById((nameLabel as HTMLLabelElement).htmlFor) as HTMLInputElement
+    nameInput.value = 'groups'
+    nameInput.dispatchEvent(new Event('input'))
+
+    byText('Add mapping').click()
+    await flushPromises()
+    const src = document.getElementById('tr-src-0') as HTMLInputElement
+    src.value = 'uid'
+    src.dispatchEvent(new Event('input'))
+    const tgt = document.getElementById('tr-tgt-0') as HTMLInputElement
+    tgt.value = 'sAMAccountName'
+    tgt.dispatchEvent(new Event('input'))
+    await flushPromises()
+
+    document.querySelector('form')!.dispatchEvent(new Event('submit'))
+    await flushPromises()
+
+    expect(syncApi.createSyncSet).toHaveBeenCalledTimes(1)
+    const payload = (syncApi.createSyncSet as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][0] as {
+      transformRules: unknown
+    }
+    expect(payload.transformRules).toEqual([
+      { sourceAttr: 'uid', targetAttr: 'sAMAccountName', valueTemplate: null },
+    ])
+    wrapper.unmount()
   })
 })
