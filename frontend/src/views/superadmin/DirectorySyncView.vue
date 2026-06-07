@@ -91,69 +91,11 @@
       </template>
     </DataTable>
 
-    <!-- ── Membership inventory (for the selected set) ──────────────────── -->
-    <section v-if="selectedSetId" class="mt-8">
-      <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
-        <h2 class="text-lg font-semibold text-gray-900">Membership inventory — {{ selectedSet?.name }}</h2>
-        <div class="flex items-center gap-2">
-          <select v-model="stateFilter" aria-label="Filter by membership state" class="input text-sm w-40" @change="loadMemberships">
-            <option value="">All states</option>
-            <option value="APPLIED">Applied</option>
-            <option value="FAILED">Failed</option>
-            <option value="REVIEW">Review</option>
-            <option value="PENDING">Pending</option>
-          </select>
-          <button class="btn-secondary text-sm" @click="doReconcile" :disabled="reconciling">
-            {{ reconciling ? 'Reconciling…' : 'Reconcile now' }}
-          </button>
-        </div>
-      </div>
-
-      <!-- State-count summary chips (at-a-glance health for this set). -->
-      <div class="flex flex-wrap items-center gap-2 mb-3">
-        <span class="text-xs text-gray-500">{{ countTotal(setCounts(selectedSet)) }} tracked</span>
-        <span v-for="c in stateChips(setCounts(selectedSet))" :key="c.key"
-              class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full"
-              :class="c.chip">
-          <span class="w-1.5 h-1.5 rounded-full" :class="c.dot" aria-hidden="true"></span>
-          {{ c.label }} <span class="tabular-nums">{{ c.n }}</span>
-        </span>
-      </div>
-
-      <div class="flex items-center gap-2 mb-3">
-        <input v-model="recomputeInput" class="input text-sm flex-1"
-               placeholder="Recompute a source DN or identity…" />
-        <button class="btn-secondary text-sm" @click="doRecompute" :disabled="!recomputeInput.trim()">
-          Recompute
-        </button>
-      </div>
-
-      <DataTable :columns="memberCols" :rows="memberships" :loading="loadingMembers" row-key="identity"
-                 empty-text="No membership rows match." empty-icon="users">
-        <template #cell-identity="{ row }">
-          <span class="font-mono text-xs">{{ row.identity }}</span>
-        </template>
-        <template #cell-state="{ row }">
-          <span class="px-2 py-0.5 rounded text-xs" :class="stateClass(row.state)">{{ row.state }}</span>
-        </template>
-        <template #cell-sourceDn="{ row }">
-          <span class="font-mono text-xs">{{ row.sourceDn }}</span>
-        </template>
-        <template #cell-targetDn="{ row }">
-          <span class="font-mono text-xs">{{ row.targetDn }}</span>
-        </template>
-        <template #cell-failReason="{ row }">
-          <span class="text-xs text-gray-500">{{ row.failReason || '—' }}</span>
-        </template>
-        <template #actions="{ row }">
-          <ActionMenu :items="[{ label: 'Dismiss', onClick: () => dismiss(row) }]">
-            <template #primary>
-              <button class="btn-secondary btn-compact" @click="recomputeIdentity(row)">Recompute</button>
-            </template>
-          </ActionMenu>
-        </template>
-      </DataTable>
-    </section>
+    <!-- ── Membership inventory (modal for the selected set) ────────────── -->
+    <MembershipInventoryModal v-model:show="showMembershipModal" :set="selectedSet ?? null"
+                              :source-name="dirName(selectedLink?.sourceDirId)"
+                              :target-name="dirName(selectedLink?.targetDirId)"
+                              @changed="refreshHealth" />
 
     <!-- ── Link editor ─────────────────────────────────────────────────────── -->
     <AppModal v-model="showLinkModal" :title="editingLink ? 'Edit sync link' : 'New sync link'" size="md">
@@ -286,14 +228,14 @@ import HelpTip from '@/components/HelpTip.vue'
 import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import TransformRulesEditor from '@/components/TransformRulesEditor.vue'
+import MembershipInventoryModal from '@/components/sync/MembershipInventoryModal.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
 import {
   listSyncLinks, createSyncLink, updateSyncLink, deleteSyncLink,
   listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet,
-  listMemberships, reconcileSet, recomputeKey, dismissMembership,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
-  type SyncTransformRule, type Membership, type MembershipState,
+  type SyncTransformRule,
 } from '@/api/sync'
 
 interface DirOption { id: string; displayName: string }
@@ -306,16 +248,12 @@ const sets = ref<SyncSet[]>([])
 // Every set (across all links) with its membership state counts — drives the
 // at-a-glance health rollup on the links/sets tables without drilling in.
 const allSets = ref<SyncSet[]>([])
-const memberships = ref<Membership[]>([])
 
 const selectedLinkId = ref<string | null>(null)
 const selectedSetId = ref<string | null>(null)
-const stateFilter = ref<'' | MembershipState>('')
-const recomputeInput = ref('')
-const reconciling = ref(false)
+const showMembershipModal = ref(false)
 const loadingLinks = ref(false)
 const loadingSets = ref(false)
-const loadingMembers = ref(false)
 
 const linkCols = [
   { key: 'displayName', label: 'Name' },
@@ -336,15 +274,6 @@ const setCols = [
 
 // ── Health rollup (membership state counts) ──
 type StateCounts = Record<string, number>
-interface StateMeta { label: string; chip: string; dot: string }
-const STATE_META: Record<string, StateMeta> = {
-  FAILED: { label: 'Failed', chip: 'bg-red-50 text-red-700 border border-red-100', dot: 'bg-red-600' },
-  REVIEW: { label: 'Review', chip: 'bg-amber-50 text-amber-800 border border-amber-100', dot: 'bg-amber-500' },
-  PENDING: { label: 'Pending', chip: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' },
-  APPLIED: { label: 'Applied', chip: 'bg-green-50 text-green-700 border border-green-100', dot: 'bg-green-600' },
-}
-// Worst-first, so a single summary dot/chip reflects the most urgent state.
-const STATE_ORDER = ['FAILED', 'REVIEW', 'PENDING', 'APPLIED'] as const
 
 function countTotal(c: StateCounts | undefined): number {
   return Object.values(c ?? {}).reduce((a, b) => a + b, 0)
@@ -367,19 +296,6 @@ function healthSummary(c: StateCounts): { dot: string; label: string; tone: stri
   if (countTotal(c) > 0) return { dot: 'bg-green-600', label: 'Healthy', tone: 'text-green-700' }
   return { dot: 'bg-gray-300', label: 'No data', tone: 'text-gray-400' }
 }
-// Non-zero state chips in worst-first order (for the inventory summary).
-function stateChips(c: StateCounts): { key: string; label: string; chip: string; dot: string; n: number }[] {
-  return STATE_ORDER.filter((k) => (c[k] ?? 0) > 0).map((k) => ({
-    key: k, label: STATE_META[k].label, chip: STATE_META[k].chip, dot: STATE_META[k].dot, n: c[k],
-  }))
-}
-const memberCols = [
-  { key: 'identity', label: 'Identity' },
-  { key: 'state', label: 'State' },
-  { key: 'sourceDn', label: 'Source DN' },
-  { key: 'targetDn', label: 'Target DN' },
-  { key: 'failReason', label: 'Reason' },
-]
 
 function onLinkRowClick(row: SyncLink) {
   // Toggle: clicking the expanded link collapses it (and its nested sets).
@@ -387,26 +303,18 @@ function onLinkRowClick(row: SyncLink) {
     selectedLinkId.value = null
     selectedSetId.value = null
     sets.value = []
-    memberships.value = []
   } else {
     selectLink(row.id)
   }
 }
 function onSetRowClick(row: SyncSet) { selectSet(row.id) }
 
-const selectedSet = computed(() => sets.value.find((s) => s.id === selectedSetId.value))
+const selectedSet = computed(() => allSets.value.find((s) => s.id === selectedSetId.value)
+  ?? sets.value.find((s) => s.id === selectedSetId.value))
+const selectedLink = computed(() => links.value.find((l) => l.id === selectedLinkId.value))
 
 function dirName(id?: string | null): string {
   return directories.value.find((d) => d.id === id)?.displayName ?? (id ? id.slice(0, 8) : '—')
-}
-
-function stateClass(state: MembershipState): string {
-  return {
-    APPLIED: 'bg-green-100 text-green-800',
-    FAILED: 'bg-red-100 text-red-800',
-    REVIEW: 'bg-amber-100 text-amber-800',
-    PENDING: 'bg-gray-100 text-gray-700',
-  }[state]
 }
 
 function errMsg(e: unknown): string {
@@ -483,7 +391,6 @@ async function removeLink(link: SyncLink) {
 async function selectLink(id: string) {
   selectedLinkId.value = id
   selectedSetId.value = null
-  memberships.value = []
   loadingSets.value = true
   try {
     sets.value = (await listSyncSets(id)).data
@@ -580,70 +487,16 @@ async function removeSet(s: SyncSet) {
   try {
     await deleteSyncSet(s.id)
     notif.success('Sync set deleted')
-    if (selectedSetId.value === s.id) { selectedSetId.value = null; memberships.value = [] }
+    if (selectedSetId.value === s.id) { selectedSetId.value = null; showMembershipModal.value = false }
     await refreshHealth()
   } catch (e) {
     notif.error(errMsg(e))
   }
 }
-async function selectSet(id: string) {
+// Selecting a set opens its membership inventory modal (paged + filtered there).
+function selectSet(id: string) {
   selectedSetId.value = id
-  await loadMemberships()
-}
-
-// ── Inventory + triggers ──
-async function loadMemberships() {
-  if (!selectedSetId.value) return
-  loadingMembers.value = true
-  try {
-    memberships.value = (await listMemberships(selectedSetId.value, stateFilter.value || undefined)).data
-  } finally {
-    loadingMembers.value = false
-  }
-}
-async function doReconcile() {
-  if (!selectedSetId.value) return
-  reconciling.value = true
-  try {
-    const { data } = await reconcileSet(selectedSetId.value)
-    notif.success(`Reconcile enumerated ${data.enumerated} source identities`)
-    await loadMemberships()
-    await refreshHealth()
-  } catch (e) {
-    notif.error(errMsg(e))
-  } finally {
-    reconciling.value = false
-  }
-}
-async function doRecompute() {
-  if (!selectedSetId.value || !recomputeInput.value.trim()) return
-  try {
-    await recomputeKey(selectedSetId.value, recomputeInput.value.trim())
-    notif.success('Recompute enqueued')
-    recomputeInput.value = ''
-  } catch (e) {
-    notif.error(errMsg(e))
-  }
-}
-async function recomputeIdentity(m: Membership) {
-  if (!selectedSetId.value) return
-  try {
-    await recomputeKey(selectedSetId.value, m.identity)
-    notif.success('Recompute enqueued')
-  } catch (e) {
-    notif.error(errMsg(e))
-  }
-}
-async function dismiss(m: Membership) {
-  if (!selectedSetId.value) return
-  try {
-    await dismissMembership(selectedSetId.value, m.identity)
-    notif.success('Membership dismissed')
-    await loadMemberships()
-    await refreshHealth()
-  } catch (e) {
-    notif.error(errMsg(e))
-  }
+  showMembershipModal.value = true
 }
 
 onMounted(async () => {
