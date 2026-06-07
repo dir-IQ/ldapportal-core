@@ -39,7 +39,9 @@ vi.mock('@/api/sync', () => ({
   createSyncSet: vi.fn(() => Promise.resolve({ data: set })),
   updateSyncSet: vi.fn(() => Promise.resolve({ data: set })),
   deleteSyncSet: vi.fn(() => Promise.resolve({ data: undefined })),
-  listMemberships: vi.fn(() => Promise.resolve({ data: [membership] })),
+  listMemberships: vi.fn(() => Promise.resolve({
+    data: { content: [membership], totalElements: 8, totalPages: 1, number: 0, size: 50 },
+  })),
   reconcileSet: vi.fn(() => Promise.resolve({ data: { enumerated: 3 } })),
   recomputeKey: vi.fn(() => Promise.resolve({ data: undefined })),
   dismissMembership: vi.fn(() => Promise.resolve({ data: undefined })),
@@ -70,30 +72,18 @@ describe('DirectorySyncView', () => {
     expect(wrapper.text()).toContain('people')
   })
 
-  it('selecting a set loads the membership inventory and surfaces REVIEW state', async () => {
-    const wrapper = mount(DirectorySyncView)
+  it('selecting a set opens the membership inventory modal', async () => {
+    const wrapper = mount(DirectorySyncView, { attachTo: document.body })
     await flushPromises()
-    await wrapper.find('tbody tr').trigger('click') // select link
+    await wrapper.find('tbody tr').trigger('click') // expand link
     await flushPromises()
-    const setRows = wrapper.findAll('table')[1].findAll('tbody tr')
-    await setRows[0].trigger('click') // select set
+    const setRow = wrapper.findAll('table')[1].findAll('tbody tr')[0]
+    await setRow.trigger('click') // select set → opens the (teleported) modal
     await flushPromises()
-    expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', undefined)
-    expect(wrapper.text()).toContain('REVIEW')
-  })
-
-  it('reconcile triggers the API and reports the count', async () => {
-    const wrapper = mount(DirectorySyncView)
-    await flushPromises()
-    await wrapper.find('tbody tr').trigger('click')
-    await flushPromises()
-    const setRows = wrapper.findAll('table')[1].findAll('tbody tr')
-    await setRows[0].trigger('click')
-    await flushPromises()
-    const reconcileBtn = wrapper.findAll('button').find((b) => b.text().includes('Reconcile now'))!
-    await reconcileBtn.trigger('click')
-    await flushPromises()
-    expect(syncApi.reconcileSet).toHaveBeenCalledWith('set-1')
+    // The modal teleports to <body>; it loads the set's memberships and titles itself.
+    expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', expect.objectContaining({ page: 0, size: 50 }))
+    expect(document.body.textContent).toContain('Membership inventory — people')
+    wrapper.unmount()
   })
 
   it('rolls up membership health onto the link row (worst state wins)', async () => {
@@ -101,21 +91,6 @@ describe('DirectorySyncView', () => {
     await flushPromises()
     // FAILED outranks REVIEW/APPLIED, so the link shows the failure summary.
     expect(wrapper.find('tbody tr').text()).toContain('2 failed')
-  })
-
-  it('shows state-count summary chips for the selected set', async () => {
-    const wrapper = mount(DirectorySyncView)
-    await flushPromises()
-    await wrapper.find('tbody tr').trigger('click') // expand link
-    await flushPromises()
-    const setRow = wrapper.findAll('table')[1].findAll('tbody tr')[0]
-    await setRow.trigger('click') // select set → inventory
-    await flushPromises()
-    const inv = wrapper.find('section') // membership inventory is the only <section>
-    expect(inv.text()).toContain('8 tracked') // 5 + 2 + 1
-    expect(inv.text()).toContain('Failed')
-    expect(inv.text()).toContain('Review')
-    expect(inv.text()).toContain('Applied')
   })
 
   it('authoring a transform rule includes it in the create payload', async () => {

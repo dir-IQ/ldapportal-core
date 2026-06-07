@@ -159,7 +159,8 @@ class SyncControllerTest extends BaseControllerTest {
 
     @Test
     void memberships_superadmin_returns200() throws Exception {
-        given(service.listMemberships(any(), any())).willReturn(List.of());
+        given(service.listMemberships(any(), any(), any(), any()))
+                .willReturn(org.springframework.data.domain.Page.empty());
         mockMvc.perform(get(SETS + "/" + SET + "/memberships").with(authentication(superadminAuth())))
                 .andExpect(status().isOk());
     }

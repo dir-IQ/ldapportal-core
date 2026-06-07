@@ -3,6 +3,9 @@ package com.ldapportal.repository;
 
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.MembershipId;
+import com.ldapportal.entity.enums.MembershipState;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -35,4 +38,19 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
     @Query("select m.syncSetId as syncSetId, m.state as state, count(m) as cnt "
             + "from Membership m group by m.syncSetId, m.state")
     List<MembershipStateCount> countGroupedByState();
+
+    /**
+     * Paged inventory for one set, optionally filtered by state and by a
+     * case-insensitive substring over identity / source DN / target DN.
+     * {@code state} null = all states; {@code q} null/blank = no text filter
+     * (callers pass {@code q} already lower-cased and wrapped in {@code %…%}).
+     */
+    @Query("select m from Membership m where m.syncSetId = :syncSetId "
+            + "and (:state is null or m.state = :state) "
+            + "and (:q is null or lower(m.identity) like :q "
+            + "     or lower(m.sourceDn) like :q or lower(m.targetDn) like :q)")
+    Page<Membership> search(@Param("syncSetId") UUID syncSetId,
+                            @Param("state") MembershipState state,
+                            @Param("q") String q,
+                            Pageable pageable);
 }

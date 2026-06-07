@@ -110,10 +110,25 @@ export const updateSyncSet = (id: string, data: SyncSetPayload) =>
 export const deleteSyncSet = (id: string) => client.delete(`/superadmin/sync/sets/${id}`)
 
 // ── Inventory + operator triggers ───────────────────────────────────────────
-export const listMemberships = (setId: string, state?: MembershipState) =>
-  client.get<Membership[]>(`/superadmin/sync/sets/${setId}/memberships`, {
-    params: state ? { state } : {},
-  })
+
+/** Spring Data Page envelope (the subset the UI consumes). */
+export interface Page<T> {
+  content: T[]
+  totalElements: number
+  totalPages: number
+  number: number // current page, 0-based
+  size: number
+}
+
+export interface MembershipQuery {
+  state?: MembershipState
+  q?: string
+  page?: number
+  size?: number
+}
+
+export const listMemberships = (setId: string, query: MembershipQuery = {}) =>
+  client.get<Page<Membership>>(`/superadmin/sync/sets/${setId}/memberships`, { params: query })
 export const reconcileSet = (setId: string) =>
   client.post<{ enumerated: number }>(`/superadmin/sync/sets/${setId}/reconcile`)
 export const recomputeKey = (setId: string, key: string) =>
