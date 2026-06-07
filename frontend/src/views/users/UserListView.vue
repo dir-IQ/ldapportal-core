@@ -631,7 +631,14 @@ const cols = computed(() => {
     !DEFAULT_USER_COLUMNS_LC.has(k.toLowerCase()) && k.toLowerCase() !== 'memberof')
   return [
     { key: 'dn', label: 'DN', alwaysVisible: true },
-    ...defaults.map(k => ({ key: k, label: k })),
+    // Row cells are keyed by the backend's lower-cased attribute names
+    // (see load(): `row[attr]` where attr comes straight from the
+    // server, which lower-cases keys). DEFAULT_USER_COLUMNS keeps the
+    // pretty mixed case (givenName / displayName) for the header label,
+    // so the column key must be lower-cased to match the row data —
+    // otherwise `row['givenName']` is undefined and the cell renders
+    // blank even though the attribute is populated.
+    ...defaults.map(k => ({ key: k.toLowerCase(), label: k })),
     // Group membership as name pills. Default-hidden (opt-in via the
     // column picker); not sortable (a list has no natural order).
     { key: '__groups', label: 'Groups', sortable: false, defaultHidden: true, defaultWidth: 280 },
