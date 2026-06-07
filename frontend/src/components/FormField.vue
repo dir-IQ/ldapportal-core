@@ -1,9 +1,12 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <div class="mb-2">
-    <label v-if="label" :for="id" class="block text-sm font-medium text-gray-700 mb-1">
-      {{ label }} <span v-if="required" class="text-red-500">*</span>
-    </label>
+    <div v-if="label" class="flex items-center mb-1">
+      <label :for="id" class="block text-sm font-medium text-gray-700">
+        {{ label }} <span v-if="required" class="text-red-500">*</span>
+      </label>
+      <HelpTip v-if="help" :text="help" />
+    </div>
     <slot>
       <input
         v-if="type !== 'textarea' && type !== 'select'"
@@ -49,6 +52,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import HelpTip from '@/components/HelpTip.vue'
 
 interface SelectOption {
   value: string
@@ -64,6 +68,8 @@ const props = withDefaults(defineProps<{
   modelValue?: string | number
   placeholder?: string
   hint?: string
+  // Optional help text shown via a HelpTip info icon next to the label.
+  help?: string
   disabled?: boolean
   required?: boolean
   rows?: number
