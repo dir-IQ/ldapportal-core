@@ -169,27 +169,41 @@
     <AppModal v-model="showSetModal" :title="editingSet ? 'Edit sync set' : 'New sync set'" size="lg">
       <form class="space-y-3" @submit.prevent="saveSet">
         <div class="grid grid-cols-2 gap-3">
-          <FormField label="Name" v-model="setForm.name" required />
+          <FormField label="Name" v-model="setForm.name" required
+                     help="A label for this sync set, shown in the inventory and logs. Does not affect matching." />
           <FormField label="Identity key (attribute)" v-model="setForm.identityKey"
-                     placeholder="entryUUID / objectGUID (default by type)" />
-          <FormField label="Source scope base DN" v-model="setForm.objectScopeBaseDn" />
-          <FormField label="Target base DN" v-model="setForm.targetBaseDn" />
+                     placeholder="entryUUID / objectGUID (default by type)"
+                     help="Source attribute used as each entry's stable identity (e.g. entryUUID, objectGUID). Leave blank to use the directory type's default. Avoid mutable attributes like mail." />
+          <FormField label="Source scope base DN" v-model="setForm.objectScopeBaseDn"
+                     help="Base DN under the source directory to enumerate entries from. Combined with the source scope below." />
+          <FormField label="Target base DN" v-model="setForm.targetBaseDn"
+                     help="Base DN under the target directory where matched entries are created and placed." />
           <FormField label="Applicability filter (RFC 4515)" v-model="setForm.applicabilityFilter"
-                     placeholder="(&(objectClass=inetOrgPerson)(employeeType=staff))" />
+                     placeholder="(&(objectClass=inetOrgPerson)(employeeType=staff))"
+                     help="LDAP filter selecting which source entries belong to this set. Only matching entries are synced." />
           <FormField label="Reference attributes (csv)" v-model="setForm.referenceAttributes"
-                     placeholder="member,uniqueMember,manager" />
-          <FormField label="Source anchor attribute" v-model="setForm.sourceAnchorAttribute" />
+                     placeholder="member,uniqueMember,manager"
+                     help="Comma-separated DN-valued attributes whose references are rewritten and closed across the set (e.g. member, uniqueMember, manager)." />
+          <FormField label="Source anchor attribute" v-model="setForm.sourceAnchorAttribute"
+                     help="Target attribute holding the source identity, used to adopt pre-existing target entries (brownfield). Ambiguous matches are quarantined for review." />
           <FormField label="Reconcile cadence (seconds)" v-model="setForm.reconcileCadenceSeconds"
-                     type="number" placeholder="default" />
+                     type="number" placeholder="default"
+                     help="How often this set is fully reconciled against the source. Leave blank to use the global default." />
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Delete policy</label>
+            <div class="flex items-center mb-1">
+              <label class="block text-sm font-medium text-gray-700">Delete policy</label>
+              <HelpTip text="What happens when an entry leaves scope: Delete removes the target entry; Review quarantines it for an operator to resolve." />
+            </div>
             <select v-model="setForm.deletePolicy" aria-label="Delete policy" class="input">
               <option value="DELETE">Delete</option>
               <option value="REVIEW">Review (quarantine)</option>
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Source scope</label>
+            <div class="flex items-center mb-1">
+              <label class="block text-sm font-medium text-gray-700">Source scope</label>
+              <HelpTip text="LDAP search scope under the base DN: Subtree (all descendants), One level (immediate children), or Base (the base entry only)." />
+            </div>
             <select v-model="setForm.objectScope" aria-label="Source scope" class="input">
               <option :value="null">Default (subtree)</option>
               <option value="SUB">Subtree</option>
@@ -198,9 +212,12 @@
             </select>
           </div>
         </div>
-        <label class="flex items-center gap-2 text-sm text-gray-700">
-          <input type="checkbox" v-model="setForm.enabled" class="rounded" /> Enabled
-        </label>
+        <div class="flex items-center gap-1">
+          <label class="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" v-model="setForm.enabled" class="rounded" /> Enabled
+          </label>
+          <HelpTip text="When off, this set is not reconciled or applied, and existing target entries are left untouched." />
+        </div>
         <div class="flex justify-end gap-2 pt-2">
           <button type="button" class="btn-neutral" @click="showSetModal = false">Cancel</button>
           <button type="submit" class="btn-primary">{{ editingSet ? 'Save' : 'Create' }}</button>
@@ -215,6 +232,7 @@ import { onMounted, ref, computed } from 'vue'
 import PageContainer from '@/components/PageContainer.vue'
 import AppModal from '@/components/AppModal.vue'
 import FormField from '@/components/FormField.vue'
+import HelpTip from '@/components/HelpTip.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
