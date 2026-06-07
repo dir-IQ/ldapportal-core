@@ -152,3 +152,18 @@ fi
 # If you instead see "provider is disabled", prepend:
 #   dsconfig set-synchronization-provider-prop --provider-name 'Multimaster Synchronization' \
 #       --set enabled:true <admin args>
+
+docker compose exec oud1-alternate /opt/opendj/bin/dsconfig \
+  set-password-policy-prop --policy-name "Default Password Policy" \
+  --set allow-pre-encoded-passwords:true \
+  -h localhost -p 4444 -D "$BIND_DN" -w "$BIND_PW" -X -n
+
+docker compose exec oud1-alternate /opt/opendj/bin/dsconfig \
+  set-password-policy-prop --policy-name "Default Password Policy" \
+  --set allow-pre-encoded-passwords:true \
+  -h localhost -p 4444 -D "$BIND_DN" -w "$BIND_PW" -X -n
+
+docker compose exec oud1-alternate /opt/opendj/bin/dsconfig \
+  set-password-policy-prop --policy-name "Default Password Policy" \
+  --set allow-pre-encoded-passwords:true \
+  -h localhost -p 4444 -D "$BIND_DN" -w "$BIND_PW" -X -n
