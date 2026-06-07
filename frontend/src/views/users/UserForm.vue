@@ -288,6 +288,20 @@
             <FormField :label="key" v-model="local.attributes[key]" type="textarea" :rows="2" hint="One value per line" />
           </template>
         </template>
+
+        <!-- IVIA enrichment attributes: read-only here. They're merged from the
+             paired secUser and managed via the actions on the IVIA Account tab,
+             so they're shown disabled and never written back on save. -->
+        <div v-if="Object.keys(iviaDisplayAttributes).length" class="pt-2">
+          <p class="text-xs font-medium text-gray-500">
+            {{ IVIA_ABBR }} attributes (read-only — manage on the {{ IVIA_ABBR }} Account tab)
+          </p>
+          <div class="space-y-2 mt-3 pl-3 border-l-2 border-gray-100">
+            <template v-for="(val, key) in iviaDisplayAttributes" :key="key">
+              <FormField :label="iviaAttrLabel(key)" :model-value="val" type="textarea" :rows="2" disabled />
+            </template>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -388,7 +402,7 @@ import IsvaAccountPanel from '@/components/users/IsvaAccountPanel.vue'
 import * as groupsApi from '@/api/groups'
 import { generatePassword } from '@/api/profiles'
 import { getIsvaConfig } from '@/api/isvaConfig'
-import { IVIA_ABBR } from '@/constants/productNames'
+import { IVIA_ABBR, isIviaAttr, iviaAttrLabel } from '@/constants/productNames'
 import type { IsvaAccountStatus } from '@/api/isvaAccount'
 import { validateAttributeValue, type AttributeRules } from '@/utils/attributeValidation'
 
@@ -555,13 +569,27 @@ const showExtraAttrs = ref(false)
 
 const HIDDEN_EDIT_ATTRS = new Set(['objectclass', 'objectClass', 'userpassword', 'userPassword', 'unicodePwd', 'unicodepwd'])
 
-/** Attributes to show in edit mode (excludes objectClass). */
+/** Attributes to show in edit mode (excludes objectClass and IVIA enrichment). */
 const editableAttributes = computed<Record<string, string>>(() => {
   const result: Record<string, string> = {}
   for (const key of Object.keys(local.attributes)) {
-    if (!HIDDEN_EDIT_ATTRS.has(key)) {
+    if (!HIDDEN_EDIT_ATTRS.has(key) && !isIviaAttr(key)) {
       result[key] = local.attributes[key]
     }
+  }
+  return result
+})
+
+/**
+ * IVIA (isva.*) enrichment attributes, surfaced read-only. They're merged from
+ * the paired secUser on read and managed exclusively through the IVIA Account
+ * tab actions (grant / suspend / restore / …), never edited as LDAP attributes
+ * here — so they render disabled and are excluded from the editable buckets.
+ */
+const iviaDisplayAttributes = computed<Record<string, string>>(() => {
+  const result: Record<string, string> = {}
+  for (const key of Object.keys(local.attributes)) {
+    if (isIviaAttr(key)) result[key] = local.attributes[key]
   }
   return result
 })
@@ -583,7 +611,7 @@ const extraEditAttributes = computed<Record<string, string>>(() => {
   )
   const result: Record<string, string> = {}
   for (const key of Object.keys(local.attributes)) {
-    if (!HIDDEN_EDIT_ATTRS.has(key) && !configuredNames.has(key.toLowerCase())) {
+    if (!HIDDEN_EDIT_ATTRS.has(key) && !isIviaAttr(key) && !configuredNames.has(key.toLowerCase())) {
       result[key] = local.attributes[key]
     }
   }

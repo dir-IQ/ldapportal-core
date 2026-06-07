@@ -102,4 +102,19 @@ describe('UserForm validation', () => {
     const wrapper = mountEdit({ uid: 'jsmith', mail: 'not-an-email' })
     expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
   })
+
+  // IVIA (isva.*) enrichment attributes are merged from the paired secUser on
+  // read and managed only via the IVIA Account tab actions. In the edit modal
+  // they must render display-only (disabled) and carry the marketing `ivia.`
+  // prefix rather than the internal `isva.` key.
+  it('renders IVIA enrichment attributes read-only with the ivia. display prefix', async () => {
+    const wrapper = mountEdit({ uid: 'jsmith', mail: 'a@b.com', 'isva.seclogin': 'alice.anderson' })
+    await wrapper.vm.$nextTick()
+    // Display prefix is the marketing abbreviation, not the internal id.
+    expect(wrapper.text()).toContain('ivia.seclogin')
+    expect(wrapper.text()).not.toContain('isva.seclogin')
+    // The value renders inside a disabled control — not directly editable.
+    const disabled = wrapper.findAll('textarea').filter(t => t.attributes('disabled') !== undefined)
+    expect(disabled.some(t => (t.element as HTMLTextAreaElement).value === 'alice.anderson')).toBe(true)
+  })
 })
