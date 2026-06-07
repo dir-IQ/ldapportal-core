@@ -50,6 +50,7 @@ const stubs = {
   EntryTimeline: true, PasswordPolicyStatus: true, GroupChips: true,
   // Render the toolbar slot and the per-row actions slot so gating is visible.
   ResultsTable: {
+    name: 'ResultsTable',
     props: ['rows', 'columns', 'selectedKeys', 'rowKey', 'tableKey', 'selectable', 'emptyText'],
     template: `<div><slot name="toolbar" /><template v-for="r in rows" :key="r.dn"><slot name="cell-actions" :row="r" /></template></div>`,
   },
@@ -121,5 +122,29 @@ describe('UserListView feature gating', () => {
       'd1',
       expect.objectContaining({ attributes: '*,memberOf,isMemberOf' }),
     )
+  })
+
+  // Regression: the backend lower-cases all LDAP attribute keys, so each
+  // row is keyed `givenname` / `displayname`. The curated DEFAULT_USER_COLUMNS
+  // list carries the pretty mixed case (givenName / displayName) for the
+  // header label — but the column *key* must be lower-cased to match the row
+  // data, otherwise `row['givenName']` is undefined and the cell renders
+  // blank even though the directory populated the attribute.
+  it('keys curated camelCase columns by their lower-cased name so cells resolve', async () => {
+    vi.mocked(usersApi.searchUsers).mockResolvedValueOnce({ data: [{
+      dn: 'uid=jdoe,ou=people,dc=x',
+      attributes: { givenname: ['Alice'], displayname: ['Alice Anderson'], cn: ['Alice Anderson'] },
+    }] } as never)
+    const wrapper = await mountWith(ALL)
+    const cols = wrapper.findComponent({ name: 'ResultsTable' }).props('columns') as Array<{ key: string, label: string }>
+    const given = cols.find(c => c.label === 'givenName')
+    const display = cols.find(c => c.label === 'displayName')
+    // Header keeps the pretty label; key is lower-cased to match row data.
+    expect(given).toMatchObject({ key: 'givenname', label: 'givenName' })
+    expect(display).toMatchObject({ key: 'displayname', label: 'displayName' })
+    // And the row actually exposes a value under that key.
+    const rows = wrapper.findComponent({ name: 'ResultsTable' }).props('rows') as Array<Record<string, unknown>>
+    expect(rows[0][given!.key]).toBe('Alice')
+    expect(rows[0][display!.key]).toBe('Alice Anderson')
   })
 })
