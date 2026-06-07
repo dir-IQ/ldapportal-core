@@ -52,9 +52,13 @@ summary at the end of the effort.
 - **Quarantine resolution actions:** only recompute/dismiss provided; an explicit
   "force-adopt to DN X" (write the anchor for the operator) and "confirm delete"
   are deferred. Severity: low (recompute-after-manual-anchor works).
-- **transformRules UI editor:** transform rules are API-configurable and preserved
-  on edit, but the Phase 2 form has no attribute-mapping editor. Severity: medium
-  (UI completeness).
+- **transformRules UI editor:** **Shipped (2026-06-07).** A collapsible "Attribute
+  mapping" section in the sync set modal, backed by a reusable
+  `TransformRulesEditor` component (`v-model:rules`), lets operators author the
+  rename + `${value}` rules that were previously API-only. `SyncConfigService` now
+  validates (non-blank/unique `sourceAttr`, attribute-name syntax, `${value}`-only
+  template) and normalizes the rules. Originally deferred from Phase 2 — UI
+  completeness, medium.
 - **`@Entitled` 403 enforcement test:** the `@WebMvcTest` slice doesn't load the
   entitlement aspect, so the 403-without-DIRECTORY_SYNC path is unverified by the
   controller test (the engine-level gate is tested). Severity: low.

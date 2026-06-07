@@ -212,6 +212,21 @@
             </select>
           </div>
         </div>
+        <details class="border border-gray-200 rounded-lg">
+          <summary class="px-4 py-2 text-sm font-medium text-gray-700 cursor-pointer">
+            Attribute mapping <span class="text-gray-400 font-normal">(optional)</span>
+          </summary>
+          <div class="px-4 pb-4 pt-2 space-y-2">
+            <p class="text-xs text-gray-500">
+              Rename attributes or template their values on the way to the target. By default every
+              source attribute is synced unchanged. Leave <span class="font-medium">Target</span> blank
+              to keep the source name; use <code class="font-mono">${value}</code> in the template to
+              insert the original value (blank = passthrough). The first rule matching a source
+              attribute wins.
+            </p>
+            <TransformRulesEditor v-model:rules="setForm.transformRules" />
+          </div>
+        </details>
         <div class="flex items-center gap-1">
           <label class="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" v-model="setForm.enabled" class="rounded" /> Enabled
@@ -235,6 +250,7 @@ import FormField from '@/components/FormField.vue'
 import HelpTip from '@/components/HelpTip.vue'
 import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
+import TransformRulesEditor from '@/components/TransformRulesEditor.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
 import {
@@ -242,7 +258,7 @@ import {
   listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet,
   listMemberships, reconcileSet, recomputeKey, dismissMembership,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
-  type Membership, type MembershipState,
+  type SyncTransformRule, type Membership, type MembershipState,
 } from '@/api/sync'
 
 interface DirOption { id: string; displayName: string }
@@ -390,6 +406,7 @@ interface SetForm {
   reconcileCadenceSeconds: string
   deletePolicy: 'DELETE' | 'REVIEW'
   objectScope: SyncSet['objectScope']
+  transformRules: SyncTransformRule[]
   enabled: boolean
 }
 const showSetModal = ref(false)
@@ -399,7 +416,7 @@ function blankSet(): SetForm {
   return {
     name: '', identityKey: '', objectScopeBaseDn: '', targetBaseDn: '', applicabilityFilter: '',
     referenceAttributes: '', sourceAnchorAttribute: '', reconcileCadenceSeconds: '',
-    deletePolicy: 'DELETE', objectScope: null, enabled: true,
+    deletePolicy: 'DELETE', objectScope: null, transformRules: [], enabled: true,
   }
 }
 function openSetModal(s?: SyncSet) {
@@ -410,10 +427,25 @@ function openSetModal(s?: SyncSet) {
         targetBaseDn: s.targetBaseDn ?? '', applicabilityFilter: s.applicabilityFilter ?? '',
         referenceAttributes: s.referenceAttributes ?? '', sourceAnchorAttribute: s.sourceAnchorAttribute ?? '',
         reconcileCadenceSeconds: s.reconcileCadenceSeconds != null ? String(s.reconcileCadenceSeconds) : '',
-        deletePolicy: s.deletePolicy, objectScope: s.objectScope, enabled: s.enabled,
+        deletePolicy: s.deletePolicy, objectScope: s.objectScope,
+        transformRules: (s.transformRules ?? []).map((r) => ({ ...r })),
+        enabled: s.enabled,
       }
     : blankSet()
   showSetModal.value = true
+}
+// Trim rows, drop blank-source rows, and collapse blank target/template to null
+// (the engine reads null target as "same name" and null template as passthrough).
+// An empty list serializes as null. The backend re-validates and re-normalizes.
+function cleanRules(rows: SyncTransformRule[]): SyncTransformRule[] | null {
+  const cleaned = rows
+    .map((r) => ({
+      sourceAttr: r.sourceAttr.trim(),
+      targetAttr: r.targetAttr?.trim() ? r.targetAttr.trim() : null,
+      valueTemplate: r.valueTemplate?.trim() ? r.valueTemplate.trim() : null,
+    }))
+    .filter((r) => r.sourceAttr)
+  return cleaned.length ? cleaned : null
 }
 function toPayload(f: SetForm): SyncSetPayload {
   const nn = (v: string) => (v.trim() ? v.trim() : null)
@@ -428,7 +460,7 @@ function toPayload(f: SetForm): SyncSetPayload {
     referenceAttributes: nn(f.referenceAttributes),
     sourceAnchorAttribute: nn(f.sourceAnchorAttribute),
     deletePolicy: f.deletePolicy,
-    transformRules: editingSet.value?.transformRules ?? null,
+    transformRules: cleanRules(f.transformRules),
     reconcileCadenceSeconds: f.reconcileCadenceSeconds.trim() ? Number(f.reconcileCadenceSeconds) : null,
     enabled: f.enabled,
   }
