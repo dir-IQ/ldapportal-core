@@ -1,124 +1,124 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
-  <PageContainer title="Directory Sync" subtitle="Membership-driven source→target synchronization">
-    <div class="space-y-8">
-      <!-- ── Links ───────────────────────────────────────────────────────── -->
-      <section>
-        <div class="flex items-center justify-between mb-2">
-          <h2 class="text-base font-semibold text-gray-900">Sync links</h2>
-          <button class="btn-primary text-sm" @click="openLinkModal()">New link</button>
-        </div>
-        <EmptyState v-if="!links.length" message="No sync links configured yet." />
-        <table v-else class="w-full text-sm">
-          <thead>
-            <tr class="text-left text-gray-500 border-b">
-              <th class="py-2">Name</th><th>Source</th><th>Target</th><th>Capture</th><th>Enabled</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="l in links" :key="l.id"
-                class="border-b hover:bg-gray-50 cursor-pointer"
-                :class="{ 'bg-blue-50': selectedLinkId === l.id }"
-                @click="selectLink(l.id)">
-              <td class="py-2 font-medium">{{ l.displayName }}</td>
-              <td>{{ dirName(l.sourceDirId) }}</td>
-              <td>{{ dirName(l.targetDirId) }}</td>
-              <td>{{ l.captureMode }}</td>
-              <td>{{ l.enabled ? 'Yes' : 'No' }}</td>
-              <td class="text-right whitespace-nowrap">
-                <button class="btn-secondary text-xs" @click.stop="openLinkModal(l)">Edit</button>
-                <button class="btn-neutral text-xs ml-1" @click.stop="removeLink(l)">Delete</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
+  <PageContainer>
+    <div class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-900">Directory Sync</h1>
+        <p class="text-sm text-gray-500 mt-1">Membership-driven source → target synchronization</p>
+      </div>
+      <button @click="openLinkModal()" class="btn-primary">+ New Link</button>
+    </div>
 
-      <!-- ── Sets (for the selected link) ─────────────────────────────────── -->
-      <section v-if="selectedLinkId">
-        <div class="flex items-center justify-between mb-2">
-          <h2 class="text-base font-semibold text-gray-900">
-            Sync sets — {{ dirName(selectedLink?.sourceDirId) }} → {{ dirName(selectedLink?.targetDirId) }}
-          </h2>
-          <button class="btn-primary text-sm" @click="openSetModal()">New set</button>
-        </div>
-        <EmptyState v-if="!sets.length" message="No sync sets for this link yet." />
-        <table v-else class="w-full text-sm">
-          <thead>
-            <tr class="text-left text-gray-500 border-b">
-              <th class="py-2">Name</th><th>Scope</th><th>Target base</th><th>Delete policy</th><th>Enabled</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="s in sets" :key="s.id"
-                class="border-b hover:bg-gray-50 cursor-pointer"
-                :class="{ 'bg-blue-50': selectedSetId === s.id }"
-                @click="selectSet(s.id)">
-              <td class="py-2 font-medium">{{ s.name }}</td>
-              <td class="font-mono text-xs">{{ s.objectScopeBaseDn || '—' }}</td>
-              <td class="font-mono text-xs">{{ s.targetBaseDn || '—' }}</td>
-              <td>{{ s.deletePolicy }}</td>
-              <td>{{ s.enabled ? 'Yes' : 'No' }}</td>
-              <td class="text-right whitespace-nowrap">
-                <button class="btn-secondary text-xs" @click.stop="openSetModal(s)">Edit</button>
-                <button class="btn-neutral text-xs ml-1" @click.stop="removeSet(s)">Delete</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
+    <!-- ── Links ───────────────────────────────────────────────────────── -->
+    <DataTable :columns="linkCols" :rows="links" :loading="loadingLinks" row-key="id"
+               empty-text="No sync links configured yet." :highlight-key="selectedLinkId ?? undefined"
+               @row-click="onLinkRowClick">
+      <template #cell-displayName="{ row }">
+        <span class="font-medium text-gray-900">{{ row.displayName }}</span>
+      </template>
+      <template #cell-sourceDirId="{ row }">{{ dirName(row.sourceDirId) }}</template>
+      <template #cell-targetDirId="{ row }">{{ dirName(row.targetDirId) }}</template>
+      <template #cell-enabled="{ row }">
+        <span class="text-xs font-medium" :class="row.enabled ? 'text-green-600' : 'text-gray-500'">
+          {{ row.enabled ? 'Yes' : 'No' }}
+        </span>
+      </template>
+      <template #actions="{ row }">
+        <ActionMenu :items="[{ label: 'Delete', onClick: () => removeLink(row), danger: true }]">
+          <template #primary>
+            <button class="btn-secondary btn-compact" @click.stop="openLinkModal(row)">Edit</button>
+          </template>
+        </ActionMenu>
+      </template>
+    </DataTable>
 
-      <!-- ── Membership inventory (for the selected set) ──────────────────── -->
-      <section v-if="selectedSetId">
-        <div class="flex items-center justify-between mb-2 gap-2 flex-wrap">
-          <h2 class="text-base font-semibold text-gray-900">Membership inventory — {{ selectedSet?.name }}</h2>
-          <div class="flex items-center gap-2">
-            <select v-model="stateFilter" aria-label="Filter by membership state" class="input text-sm w-40" @change="loadMemberships">
-              <option value="">All states</option>
-              <option value="APPLIED">Applied</option>
-              <option value="FAILED">Failed</option>
-              <option value="REVIEW">Review</option>
-              <option value="PENDING">Pending</option>
-            </select>
-            <button class="btn-secondary text-sm" @click="doReconcile" :disabled="reconciling">
-              {{ reconciling ? 'Reconciling…' : 'Reconcile now' }}
-            </button>
-          </div>
-        </div>
+    <!-- ── Sets (for the selected link) ─────────────────────────────────── -->
+    <section v-if="selectedLinkId" class="mt-8">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold text-gray-900">
+          Sync sets — {{ dirName(selectedLink?.sourceDirId) }} → {{ dirName(selectedLink?.targetDirId) }}
+        </h2>
+        <button @click="openSetModal()" class="btn-primary">+ New Set</button>
+      </div>
+      <DataTable :columns="setCols" :rows="sets" :loading="loadingSets" row-key="id"
+                 empty-text="No sync sets for this link yet." :highlight-key="selectedSetId ?? undefined"
+                 @row-click="onSetRowClick">
+        <template #cell-name="{ row }">
+          <span class="font-medium text-gray-900">{{ row.name }}</span>
+        </template>
+        <template #cell-objectScopeBaseDn="{ row }">
+          <span class="font-mono text-xs">{{ row.objectScopeBaseDn || '—' }}</span>
+        </template>
+        <template #cell-targetBaseDn="{ row }">
+          <span class="font-mono text-xs">{{ row.targetBaseDn || '—' }}</span>
+        </template>
+        <template #cell-enabled="{ row }">
+          <span class="text-xs font-medium" :class="row.enabled ? 'text-green-600' : 'text-gray-500'">
+            {{ row.enabled ? 'Yes' : 'No' }}
+          </span>
+        </template>
+        <template #actions="{ row }">
+          <ActionMenu :items="[{ label: 'Delete', onClick: () => removeSet(row), danger: true }]">
+            <template #primary>
+              <button class="btn-secondary btn-compact" @click.stop="openSetModal(row)">Edit</button>
+            </template>
+          </ActionMenu>
+        </template>
+      </DataTable>
+    </section>
 
-        <div class="flex items-center gap-2 mb-3">
-          <input v-model="recomputeInput" class="input text-sm flex-1"
-                 placeholder="Recompute a source DN or identity…" />
-          <button class="btn-secondary text-sm" @click="doRecompute" :disabled="!recomputeInput.trim()">
-            Recompute
+    <!-- ── Membership inventory (for the selected set) ──────────────────── -->
+    <section v-if="selectedSetId" class="mt-8">
+      <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
+        <h2 class="text-lg font-semibold text-gray-900">Membership inventory — {{ selectedSet?.name }}</h2>
+        <div class="flex items-center gap-2">
+          <select v-model="stateFilter" aria-label="Filter by membership state" class="input text-sm w-40" @change="loadMemberships">
+            <option value="">All states</option>
+            <option value="APPLIED">Applied</option>
+            <option value="FAILED">Failed</option>
+            <option value="REVIEW">Review</option>
+            <option value="PENDING">Pending</option>
+          </select>
+          <button class="btn-secondary text-sm" @click="doReconcile" :disabled="reconciling">
+            {{ reconciling ? 'Reconciling…' : 'Reconcile now' }}
           </button>
         </div>
+      </div>
 
-        <EmptyState v-if="!memberships.length" message="No membership rows match." />
-        <table v-else class="w-full text-sm">
-          <thead>
-            <tr class="text-left text-gray-500 border-b">
-              <th class="py-2">Identity</th><th>State</th><th>Source DN</th><th>Target DN</th><th>Reason</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="m in memberships" :key="m.identity" class="border-b">
-              <td class="py-2 font-mono text-xs">{{ m.identity }}</td>
-              <td>
-                <span class="px-2 py-0.5 rounded text-xs" :class="stateClass(m.state)">{{ m.state }}</span>
-              </td>
-              <td class="font-mono text-xs">{{ m.sourceDn }}</td>
-              <td class="font-mono text-xs">{{ m.targetDn }}</td>
-              <td class="text-xs text-gray-500">{{ m.failReason || '—' }}</td>
-              <td class="text-right whitespace-nowrap">
-                <button class="btn-secondary text-xs" @click="recomputeIdentity(m)">Recompute</button>
-                <button class="btn-neutral text-xs ml-1" @click="dismiss(m)">Dismiss</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </section>
-    </div>
+      <div class="flex items-center gap-2 mb-3">
+        <input v-model="recomputeInput" class="input text-sm flex-1"
+               placeholder="Recompute a source DN or identity…" />
+        <button class="btn-secondary text-sm" @click="doRecompute" :disabled="!recomputeInput.trim()">
+          Recompute
+        </button>
+      </div>
+
+      <DataTable :columns="memberCols" :rows="memberships" :loading="loadingMembers" row-key="identity"
+                 empty-text="No membership rows match." empty-icon="users">
+        <template #cell-identity="{ row }">
+          <span class="font-mono text-xs">{{ row.identity }}</span>
+        </template>
+        <template #cell-state="{ row }">
+          <span class="px-2 py-0.5 rounded text-xs" :class="stateClass(row.state)">{{ row.state }}</span>
+        </template>
+        <template #cell-sourceDn="{ row }">
+          <span class="font-mono text-xs">{{ row.sourceDn }}</span>
+        </template>
+        <template #cell-targetDn="{ row }">
+          <span class="font-mono text-xs">{{ row.targetDn }}</span>
+        </template>
+        <template #cell-failReason="{ row }">
+          <span class="text-xs text-gray-500">{{ row.failReason || '—' }}</span>
+        </template>
+        <template #actions="{ row }">
+          <ActionMenu :items="[{ label: 'Dismiss', onClick: () => dismiss(row) }]">
+            <template #primary>
+              <button class="btn-secondary btn-compact" @click="recomputeIdentity(row)">Recompute</button>
+            </template>
+          </ActionMenu>
+        </template>
+      </DataTable>
+    </section>
 
     <!-- ── Link editor ─────────────────────────────────────────────────────── -->
     <AppModal v-model="showLinkModal" :title="editingLink ? 'Edit sync link' : 'New sync link'" size="md">
@@ -233,7 +233,8 @@ import PageContainer from '@/components/PageContainer.vue'
 import AppModal from '@/components/AppModal.vue'
 import FormField from '@/components/FormField.vue'
 import HelpTip from '@/components/HelpTip.vue'
-import EmptyState from '@/components/EmptyState.vue'
+import DataTable from '@/components/DataTable.vue'
+import ActionMenu from '@/components/ActionMenu.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
 import {
@@ -258,6 +259,34 @@ const selectedSetId = ref<string | null>(null)
 const stateFilter = ref<'' | MembershipState>('')
 const recomputeInput = ref('')
 const reconciling = ref(false)
+const loadingLinks = ref(false)
+const loadingSets = ref(false)
+const loadingMembers = ref(false)
+
+const linkCols = [
+  { key: 'displayName', label: 'Name' },
+  { key: 'sourceDirId', label: 'Source' },
+  { key: 'targetDirId', label: 'Target' },
+  { key: 'captureMode', label: 'Capture' },
+  { key: 'enabled', label: 'Enabled' },
+]
+const setCols = [
+  { key: 'name', label: 'Name' },
+  { key: 'objectScopeBaseDn', label: 'Scope' },
+  { key: 'targetBaseDn', label: 'Target base' },
+  { key: 'deletePolicy', label: 'Delete policy' },
+  { key: 'enabled', label: 'Enabled' },
+]
+const memberCols = [
+  { key: 'identity', label: 'Identity' },
+  { key: 'state', label: 'State' },
+  { key: 'sourceDn', label: 'Source DN' },
+  { key: 'targetDn', label: 'Target DN' },
+  { key: 'failReason', label: 'Reason' },
+]
+
+function onLinkRowClick(row: SyncLink) { selectLink(row.id) }
+function onSetRowClick(row: SyncSet) { selectSet(row.id) }
 
 const selectedLink = computed(() => links.value.find((l) => l.id === selectedLinkId.value))
 const selectedSet = computed(() => sets.value.find((s) => s.id === selectedSetId.value))
@@ -282,7 +311,12 @@ function errMsg(e: unknown): string {
 
 // ── Links ──
 async function loadLinks() {
-  links.value = (await listSyncLinks()).data
+  loadingLinks.value = true
+  try {
+    links.value = (await listSyncLinks()).data
+  } finally {
+    loadingLinks.value = false
+  }
 }
 
 const showLinkModal = ref(false)
@@ -335,7 +369,12 @@ async function selectLink(id: string) {
   selectedLinkId.value = id
   selectedSetId.value = null
   memberships.value = []
-  sets.value = (await listSyncSets(id)).data
+  loadingSets.value = true
+  try {
+    sets.value = (await listSyncSets(id)).data
+  } finally {
+    loadingSets.value = false
+  }
 }
 
 // ── Sets ──
@@ -424,7 +463,12 @@ async function selectSet(id: string) {
 // ── Inventory + triggers ──
 async function loadMemberships() {
   if (!selectedSetId.value) return
-  memberships.value = (await listMemberships(selectedSetId.value, stateFilter.value || undefined)).data
+  loadingMembers.value = true
+  try {
+    memberships.value = (await listMemberships(selectedSetId.value, stateFilter.value || undefined)).data
+  } finally {
+    loadingMembers.value = false
+  }
 }
 async function doReconcile() {
   if (!selectedSetId.value) return
