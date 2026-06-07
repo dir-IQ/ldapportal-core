@@ -196,7 +196,11 @@ create_entry() {
     201) echo "      + $dn"; ent_created=$((ent_created + 1)) ;;
     *)
       msg="$(jq -r '.detail // .message // .' "$resp" 2>/dev/null | head -c 200)"
-      if printf '%s' "$msg" | grep -qiE 'exist|already'; then
+      # An already-present entry comes back as ENTRY_ALREADY_EXISTS (HTTP 422,
+      # "…already exists") — treat as a skip so re-runs are idempotent. Match
+      # the "already exists" wording specifically, not a bare "exist", so a
+      # genuine NO_SUCH_OBJECT ("…does not exist") is still reported as failed.
+      if printf '%s' "$msg" | grep -qiE 'already.?exist|ENTRY_ALREADY_EXISTS|result code 68'; then
         echo "      = $dn (exists)"; ent_skipped=$((ent_skipped + 1))
       else
         echo "      ! $dn — HTTP $code: $msg"; ent_failed=$((ent_failed + 1))
