@@ -150,11 +150,21 @@
               <label for="dm-endis-type" class="block text-sm font-medium text-gray-700 mb-1">Enable/Disable Value Type</label>
               <select id="dm-endis-type" v-model="form.enableDisableValueType" class="input w-full">
                 <option value="BOOLEAN">BOOLEAN</option>
-                <option value="TIMESTAMP">TIMESTAMP</option>
+                <option value="STRING">STRING</option>
               </select>
             </div>
-            <FormField label="Enable Value" v-model="form.enableValue" placeholder="e.g. false" />
-            <FormField label="Disable Value" v-model="form.disableValue" placeholder="e.g. true" />
+            <!-- Enable/Disable values only apply to the STRING type, where they're
+                 written verbatim (e.g. AD userAccountControl 512/514, or a custom
+                 status string). BOOLEAN writes a fixed TRUE/FALSE and ignores
+                 these, so hide them then to avoid implying they're honored. -->
+            <template v-if="form.enableDisableValueType === 'STRING'">
+              <FormField label="Enable Value" v-model="form.enableValue" placeholder="e.g. 512 (AD) / FALSE (nsAccountLock)" />
+              <FormField label="Disable Value" v-model="form.disableValue" placeholder="e.g. 514 (AD) / TRUE (nsAccountLock)" />
+            </template>
+            <p v-else class="col-span-2 text-xs text-gray-500 self-center">
+              BOOLEAN writes <code class="font-mono">TRUE</code> to enable and
+              <code class="font-mono">FALSE</code> to disable automatically — no values needed.
+            </p>
             <div class="col-span-2">
               <FormField label="User object classes" v-model="userObjectClassesText"
                 placeholder="inetOrgPerson, organizationalPerson, person" />
@@ -420,7 +430,9 @@ function applyPreset() {
       form.value.selfServiceLoginAttribute = 'sAMAccountName'
     if (!form.value.enableDisableAttribute) {
       form.value.enableDisableAttribute = 'userAccountControl'
-      form.value.enableDisableValueType = 'BOOLEAN'
+      // STRING (not BOOLEAN): AD disables via userAccountControl=514 /
+      // enables via 512. BOOLEAN would write TRUE/FALSE and discard these.
+      form.value.enableDisableValueType = 'STRING'
       form.value.enableValue = '512'
       form.value.disableValue = '514'
     }
