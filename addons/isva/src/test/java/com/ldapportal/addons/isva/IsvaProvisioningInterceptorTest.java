@@ -2,6 +2,7 @@
 package com.ldapportal.addons.isva;
 
 import com.ldapportal.addons.isva.entity.IsvaDeletePolicy;
+import com.ldapportal.addons.isva.entity.IsvaDemographicDeleteMode;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.addons.isva.repository.VendorIntegrationIsvaConfigRepository;
@@ -19,6 +20,7 @@ import com.ldapportal.core.provisioning.UserCreatePayload;
 import com.ldapportal.core.provisioning.UserCreatePlan;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.DirectoryType;
+import com.ldapportal.entity.enums.EnableDisableValueType;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
@@ -430,6 +432,92 @@ class IsvaProvisioningInterceptorTest {
 
         assertThat(plan.steps()).hasSize(1);
         assertThat(plan.steps().get(0).targetDn()).isEqualTo("uid=orphan,dc=x");
+    }
+
+    @Test
+    void delete_linked_disableAndMark_marksDemographicWithConfiguredDisableValue() {
+        // DISABLE + DISABLE_AND_MARK: secUser disabled (step 0), then the
+        // demographic entry marked (step 1) using the directory's configured
+        // enable/disable attribute + disable value (STRING type).
+        VendorIntegrationIsvaConfig cfg = linkedConfig();
+        cfg.setOnDemographicDelete(IsvaDemographicDeleteMode.DISABLE_AND_MARK);
+        dir.setEnableDisableAttribute("nsAccountLock");
+        dir.setEnableDisableValueType(EnableDisableValueType.STRING);
+        dir.setDisableValue("TRUE");
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
+        when(linkedUserLookup.findSecUserDn(
+                eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=alice,dc=x")))
+                .thenReturn(Optional.of("secUUID=abc,secAuthority=Default,o=acme,c=us"));
+
+        DeletePlan plan = interceptor.planUserDelete(dir, "uid=alice,dc=x", ProvisioningContext.empty());
+
+        assertThat(plan.steps()).hasSize(2);
+        // Step 0: secUser disable (runs first for recoverability).
+        ModifyStep secStep = (ModifyStep) plan.steps().get(0);
+        assertThat(secStep.targetDn()).isEqualTo("secUUID=abc,secAuthority=Default,o=acme,c=us");
+        assertThat(modValue(secStep.mods(), "secAcctValid")).isEqualTo("FALSE");
+        // Step 1: demographic marker from the directory's disable config.
+        ModifyStep demoStep = (ModifyStep) plan.steps().get(1);
+        assertThat(demoStep.targetDn()).isEqualTo("uid=alice,dc=x");
+        assertThat(modValue(demoStep.mods(), "nsAccountLock")).isEqualTo("TRUE");
+    }
+
+    @Test
+    void delete_linked_disableAndMark_booleanWritesFalse() {
+        // BOOLEAN enable/disable type writes a fixed FALSE on disable,
+        // ignoring any configured disable value (matches LdapUserService).
+        VendorIntegrationIsvaConfig cfg = linkedConfig();
+        cfg.setOnDemographicDelete(IsvaDemographicDeleteMode.DISABLE_AND_MARK);
+        dir.setEnableDisableAttribute("accountValid");
+        dir.setEnableDisableValueType(EnableDisableValueType.BOOLEAN);
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
+        when(linkedUserLookup.findSecUserDn(
+                eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=alice,dc=x")))
+                .thenReturn(Optional.of("secUUID=abc,secAuthority=Default,o=acme,c=us"));
+
+        DeletePlan plan = interceptor.planUserDelete(dir, "uid=alice,dc=x", ProvisioningContext.empty());
+
+        ModifyStep demoStep = (ModifyStep) plan.steps().get(1);
+        assertThat(demoStep.targetDn()).isEqualTo("uid=alice,dc=x");
+        assertThat(modValue(demoStep.mods(), "accountValid")).isEqualTo("FALSE");
+    }
+
+    @Test
+    void delete_linked_disableAndMark_refusesWhenNoEnableDisableAttribute() {
+        // The operator asked to mark the demographic entry but the directory
+        // has no enable/disable attribute to write — refuse rather than
+        // silently degrade to LEAVE.
+        VendorIntegrationIsvaConfig cfg = linkedConfig();
+        cfg.setOnDemographicDelete(IsvaDemographicDeleteMode.DISABLE_AND_MARK);
+        // dir.enableDisableAttribute left unset.
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
+        when(linkedUserLookup.findSecUserDn(
+                eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=alice,dc=x")))
+                .thenReturn(Optional.of("secUUID=abc,secAuthority=Default,o=acme,c=us"));
+
+        assertThatThrownBy(() -> interceptor.planUserDelete(dir, "uid=alice,dc=x", ProvisioningContext.empty()))
+                .isInstanceOf(com.ldapportal.core.provisioning.ProvisioningRefusedException.class)
+                .hasMessageContaining("DISABLE_AND_MARK")
+                .hasMessageContaining("enable/disable attribute");
+    }
+
+    @Test
+    void delete_linked_disableAndMark_refusesWhenStringHasNoDisableValue() {
+        // STRING type but no disable value configured — nothing to write,
+        // so refuse with an actionable message.
+        VendorIntegrationIsvaConfig cfg = linkedConfig();
+        cfg.setOnDemographicDelete(IsvaDemographicDeleteMode.DISABLE_AND_MARK);
+        dir.setEnableDisableAttribute("nsAccountLock");
+        dir.setEnableDisableValueType(EnableDisableValueType.STRING);
+        // dir.disableValue left unset.
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
+        when(linkedUserLookup.findSecUserDn(
+                eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=alice,dc=x")))
+                .thenReturn(Optional.of("secUUID=abc,secAuthority=Default,o=acme,c=us"));
+
+        assertThatThrownBy(() -> interceptor.planUserDelete(dir, "uid=alice,dc=x", ProvisioningContext.empty()))
+                .isInstanceOf(com.ldapportal.core.provisioning.ProvisioningRefusedException.class)
+                .hasMessageContaining("disable value");
     }
 
     // ── LINKED-mode: password set ──────────────────────────────────

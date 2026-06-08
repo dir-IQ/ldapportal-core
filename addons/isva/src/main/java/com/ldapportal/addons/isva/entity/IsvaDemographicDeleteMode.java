@@ -11,10 +11,13 @@ package com.ldapportal.addons.isva.entity;
  *       customers with site-local conventions manage the demographic
  *       side themselves. The interceptor's path for v1.</li>
  *   <li>{@link #DISABLE_AND_MARK} — also annotate the demographic
- *       entry with a customer-specific marker. v1 logs a TODO and
- *       treats it as {@link #LEAVE} until a real customer surfaces
- *       what marker they want written. Once known, the second
- *       MODIFY lands as a Phase-1.1 follow-up.</li>
+ *       entry by writing the directory's own configured enable/disable
+ *       attribute (its disable value), e.g. AD
+ *       {@code userAccountControl=514} or {@code nsAccountLock=TRUE}.
+ *       The interceptor adds a second MODIFY (after the secUser disable)
+ *       against the demographic DN. If the directory has no enable/disable
+ *       attribute configured, the delete is refused rather than silently
+ *       treated as {@link #LEAVE}.</li>
  * </ul>
  */
 public enum IsvaDemographicDeleteMode {
