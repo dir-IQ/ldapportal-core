@@ -111,7 +111,12 @@ const complianceEnabled = computed(() =>
 // ── Derive structured sections from the unified payload ─────────────────────
 const metrics = computed(() => data.value?.metrics || null)
 const alertSummary = computed(() => data.value?.alertSummary || { openCount: 0, criticalCount: 0, highCount: 0 })
-const directories = computed(() => data.value?.directories || [])
+// Directories panel — alphabetical by name (case-insensitive), matching the
+// ordering used everywhere else directories are listed.
+const directories = computed(() =>
+  [...(data.value?.directories || [])].sort((a, b) =>
+    (a.name ?? '').localeCompare(b.name ?? '', undefined, { sensitivity: 'base' })),
+)
 /**
  * Profile rows for the admin Profiles panel. Superadmin payload returns
  * an empty list — superadmins see Directories instead. The dashboard

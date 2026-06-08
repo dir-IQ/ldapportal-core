@@ -15,7 +15,12 @@ export const getGroups         = ()           => client.get('/self-service/group
 
 // ── Public registration ───────────────────────────────────────────────────────
 export const listRegistrationDirectories = () =>
-  client.get('/self-service/register/directories')
+  client.get('/self-service/register/directories').then(res => {
+    // Show the directory picker in case-insensitive alphabetical order.
+    res.data = [...res.data].sort((a, b) =>
+      (a.displayName || '').localeCompare(b.displayName || '', undefined, { sensitivity: 'base' }))
+    return res
+  })
 
 export const listRegistrationProfiles = (directoryId) =>
   client.get(`/self-service/register/profiles/${directoryId}`)
