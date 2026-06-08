@@ -23,6 +23,7 @@ import com.ldapportal.core.provisioning.ProvisioningRefusedException;
 import com.ldapportal.core.provisioning.UserCreatePayload;
 import com.ldapportal.core.provisioning.UserCreatePlan;
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.enums.EnableDisableValueType;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
@@ -194,18 +195,54 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
         List<LdapOperationStep> steps = new ArrayList<>();
         steps.add(secUserPlans.disable(secUserDn.get()));
 
-        // DISABLE_AND_MARK is configured but v1 logs a TODO and
-        // treats it as LEAVE. Once a customer surfaces what marker
-        // they want on the demographic side, swap the no-op below
-        // for a real ModifyStep.
+        // DISABLE_AND_MARK: also annotate the demographic entry, reusing the
+        // directory's own configured enable/disable attribute as the marker
+        // (e.g. AD userAccountControl=514, nsAccountLock=TRUE). The secUser
+        // MODIFY runs first so a failure to mark the demographic leaves a
+        // recoverable state (secUser disabled, demographic re-markable on a
+        // retry). demographicDisableMark refuses up-front when there's nothing
+        // configured to write, so the operator's explicit "mark" choice can
+        // never silently degrade to a no-op.
         if (cfg.getOnDemographicDelete() == IsvaDemographicDeleteMode.DISABLE_AND_MARK) {
-            log.info("TODO (v1): on_demographic_delete=DISABLE_AND_MARK on directory {} — "
-                    + "demographic-side mark not yet implemented; treating as LEAVE. "
-                    + "Surface the convention you want written and we'll add the second "
-                    + "MODIFY in v1.1.", dir.getDisplayName());
+            steps.add(demographicDisableMark(dir, demographicDn));
         }
 
         return new DeletePlan(steps);
+    }
+
+    /**
+     * Builds the demographic-side disable marker for DISABLE_AND_MARK, reusing
+     * the directory's configured enable/disable attribute and disable value —
+     * the same mapping {@code LdapUserService.disableUser} applies (BOOLEAN
+     * writes a fixed {@code FALSE}; STRING writes the configured disable value).
+     * Refuses when nothing is configured to write, so an explicit "mark" choice
+     * can never degrade to a silent no-op.
+     */
+    private ModifyStep demographicDisableMark(DirectoryConnection dir, String demographicDn) {
+        String attr = dir.getEnableDisableAttribute();
+        if (attr == null || attr.isBlank()) {
+            throw new ProvisioningRefusedException(
+                    "on_demographic_delete=DISABLE_AND_MARK on directory "
+                            + dir.getDisplayName() + " requires an enable/disable attribute to "
+                            + "mark the demographic entry, but none is configured. Set the "
+                            + "directory's enable/disable attribute (and disable value), or "
+                            + "switch on_demographic_delete to LEAVE.");
+        }
+        String value;
+        if (dir.getEnableDisableValueType() == EnableDisableValueType.BOOLEAN) {
+            value = "FALSE";
+        } else {
+            value = dir.getDisableValue();
+            if (value == null || value.isBlank()) {
+                throw new ProvisioningRefusedException(
+                        "on_demographic_delete=DISABLE_AND_MARK on directory "
+                                + dir.getDisplayName() + " uses a STRING enable/disable attribute ("
+                                + attr + ") but no disable value is configured. Set the directory's "
+                                + "disable value, or switch on_demographic_delete to LEAVE.");
+            }
+        }
+        return ModifyStep.of(demographicDn,
+                List.of(new Modification(ModificationType.REPLACE, attr, value)));
     }
 
     // ── password set ─────────────────────────────────────────────────

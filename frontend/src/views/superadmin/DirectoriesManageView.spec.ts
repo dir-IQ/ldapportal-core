@@ -97,6 +97,29 @@ describe('DirectoriesManageView status column', () => {
     expect(wrapper.text()).toContain('Unreachable')
   })
 
+  it('offers BOOLEAN and STRING enable/disable value types (not the unsupported TIMESTAMP)', async () => {
+    const wrapper = mount(DirectoriesManageView, { global: { stubs } })
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text().includes('New Directory'))!.trigger('click')
+    await flushPromises()
+
+    const opts = wrapper.find('#dm-endis-type').findAll('option').map((o) => o.attributes('value'))
+    expect(opts).toEqual(['BOOLEAN', 'STRING'])
+    expect(opts).not.toContain('TIMESTAMP')
+  })
+
+  it('Active Directory preset uses STRING so userAccountControl 512/514 are written verbatim', async () => {
+    const wrapper = mount(DirectoriesManageView, { global: { stubs } })
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text().includes('New Directory'))!.trigger('click')
+    await flushPromises()
+
+    // Selecting the AD type fires applyPreset (@change on #dm-dir-type).
+    await wrapper.find('#dm-dir-type').setValue('ACTIVE_DIRECTORY')
+    // BOOLEAN would have the backend write TRUE/FALSE and discard 512/514.
+    expect((wrapper.find('#dm-endis-type').element as HTMLSelectElement).value).toBe('STRING')
+  })
+
   it('renders directories alphabetically by display name, regardless of API order', async () => {
     api.listDirectories.mockResolvedValue({
       data: [
