@@ -76,8 +76,11 @@ const props = withDefaults(
     /** Default the panel to fill the content area (viewport minus the nav) with
      *  margins, instead of the size-class cap. */
     fill?: boolean
-    /** Persist the drag-resized size to the user's preferences (`modals`
-     *  namespace) under this key, so it follows the user across sessions. */
+    /** Key under which the drag-resized size is persisted to the user's
+     *  preferences (`modals` namespace), so it follows them across sessions.
+     *  Defaults to a slug of the title — pass an explicit key for modals whose
+     *  title is dynamic (e.g. includes a record name) so sizes don't fragment.
+     *  (A non-resizable modal never persists anyway.) */
     storageKey?: string
   }>(),
   { modelValue: false, title: '', size: 'md', fixedHeight: '', movable: true, resizable: true,
@@ -98,6 +101,14 @@ useDialogA11y({
 const FILL_MARGIN = 24
 const MIN_W = 280
 const MIN_H = 160
+
+// Size persistence is on by default, keyed by the title (so any resizable modal
+// remembers its size) unless an explicit storageKey is given. A blank key (no
+// title and no storageKey) disables it.
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+}
+const effectiveStorageKey = computed(() => props.storageKey || slugify(props.title))
 
 // The app's main content region (right of the sidebar nav); falls back to the
 // full viewport (e.g. login, or before layout mounts).
@@ -121,18 +132,18 @@ function centeredOffset(w: number, h: number): { x: number; y: number } {
 }
 
 function readPersistedSize(): { w: number; h: number } | null {
-  if (!props.storageKey) return null
+  if (!effectiveStorageKey.value) return null
   try {
-    return usePreferencesStore().read<{ w: number; h: number } | null>('modals', props.storageKey, null)
+    return usePreferencesStore().read<{ w: number; h: number } | null>('modals', effectiveStorageKey.value, null)
   } catch {
     return null
   }
 }
 
 function persistSize(s: { w: number; h: number } | null): void {
-  if (!props.storageKey || !s) return
+  if (!effectiveStorageKey.value || !s) return
   try {
-    usePreferencesStore().write('modals', props.storageKey, { w: Math.round(s.w), h: Math.round(s.h) })
+    usePreferencesStore().write('modals', effectiveStorageKey.value, { w: Math.round(s.w), h: Math.round(s.h) })
   } catch {
     /* preferences unavailable — size just won't persist */
   }
@@ -162,10 +173,11 @@ const { offset, size, onHandlePointerDown, onResizePointerDown } = useDraggableM
   movable: () => props.movable && window.innerWidth >= 640,
   resizable: () => props.resizable && window.innerWidth >= 640,
   isOpen: () => props.modelValue,
-  // Only customize the layout when asked (fill or a storageKey); otherwise the
-  // composable keeps its centered, auto-sized default — so other modals are
-  // unaffected and don't touch the preferences store.
-  getInitialLayout: () => (props.fill || props.storageKey ? getInitialLayout() : null),
+  // Apply a custom layout when there's something to apply: a fill default, or a
+  // persisted size under the effective key. With neither, getInitialLayout
+  // returns null and the composable keeps its centered, auto-sized default — so
+  // a never-resized modal looks exactly as before.
+  getInitialLayout: () => (props.fill || effectiveStorageKey.value ? getInitialLayout() : null),
   onPersist: persistSize,
 })
 

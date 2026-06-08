@@ -93,4 +93,19 @@ describe('AppModal', () => {
     expect(panelEl().style.height).toBe('400px')
     w.unmount()
   })
+
+  it('restores by a title-derived key when no storageKey is given', async () => {
+    setActivePinia(createPinia())
+    const store = usePreferencesStore()
+    store.doc = { modals: { 'edit-sync-set': { w: 700, h: 500 } } }
+    const w = mount(AppModal, {
+      props: { modelValue: false, title: 'Edit sync set' }, // no storageKey → keyed by slug(title)
+      attachTo: document.body,
+    })
+    await w.setProps({ modelValue: true })
+    await flushPromises()
+    expect(panelEl().style.width).toBe('700px')
+    expect(panelEl().style.height).toBe('500px')
+    w.unmount()
+  })
 })
