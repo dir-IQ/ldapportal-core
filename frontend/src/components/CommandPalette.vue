@@ -1,8 +1,10 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <Teleport to="body">
-    <div v-if="open" class="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]" @click.self="open = false">
-      <div class="fixed inset-0 bg-black/40" @click="open = false" />
+    <!-- Backdrop click intentionally does NOT close the palette; use Escape
+         (the ESC hint is shown in the header) or pick a result. -->
+    <div v-if="open" class="fixed inset-0 z-50 flex items-start justify-center pt-[15vh]">
+      <div class="fixed inset-0 bg-black/40" />
       <div v-dialog-a11y role="dialog" aria-modal="true" aria-label="Command palette"
            class="relative w-full max-w-lg bg-white rounded-xl shadow-2xl border border-gray-200 overflow-hidden" @keydown.escape="open = false">
         <!-- Search input -->

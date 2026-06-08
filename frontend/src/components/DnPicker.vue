@@ -26,7 +26,10 @@
 
     <!-- Tree picker modal -->
     <Teleport to="body">
-      <div v-if="showPicker" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @mousedown.self="showPicker = false">
+      <!-- Backdrop click intentionally does NOT close the picker — a stray
+           click while browsing the tree shouldn't discard the selection;
+           use Escape or the × button. -->
+      <div v-if="showPicker" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
         <div v-dialog-a11y role="dialog" aria-modal="true" aria-labelledby="dnpicker-title"
              @keydown.escape="showPicker = false"
              class="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 flex flex-col" style="max-height: 70vh;">
