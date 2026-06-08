@@ -22,8 +22,18 @@ type DirectoryRequest = components['schemas']['DirectoryConnectionRequest'];
 type TestConnectionRequest = components['schemas']['TestConnectionRequest'];
 type TestConnectionResult = components['schemas']['TestConnectionResult'];
 
-export const listDirectories = (): Promise<AxiosResponse<Directory[]>> =>
-  apiGet('/api/v1/superadmin/directories');
+// Directory lists are shown in many pickers/panels across the app; sort here
+// — the single chokepoint every `listDirectories()` consumer (and the
+// useDirectoryPicker composable) funnels through — so they all render in
+// case-insensitive alphabetical order by display name.
+const byDisplayName = (a: Directory, b: Directory): number =>
+  (a.displayName ?? '').localeCompare(b.displayName ?? '', undefined, { sensitivity: 'base' });
+
+export const listDirectories = async (): Promise<AxiosResponse<Directory[]>> => {
+  const res = await apiGet('/api/v1/superadmin/directories');
+  res.data = [...res.data].sort(byDisplayName);
+  return res;
+};
 
 export const getDirectory = (id: string): Promise<AxiosResponse<Directory>> =>
   apiGet(`/api/v1/superadmin/directories/${id}` as '/api/v1/superadmin/directories/{id}');

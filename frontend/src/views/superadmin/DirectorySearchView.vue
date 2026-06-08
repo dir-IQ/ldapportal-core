@@ -53,35 +53,37 @@
         </div>
       </div>
 
-      <!-- "Show all attributes" toggle: full-width row beneath the criteria
-           grid. Kept out of the Attributes grid cell so it doesn't stretch
-           that column and leave an empty gap under the LDAP Filter / Base DN
-           fields. With an empty Attributes box this returns every user AND
-           operational attribute; otherwise it adds operational attrs to the
-           named ones. -->
-      <div class="mt-2 flex items-center gap-2">
-        <input id="search-include-operational" type="checkbox" v-model="form.includeOperational" class="rounded border-gray-300" />
-        <label for="search-include-operational" class="text-xs font-medium text-gray-600 cursor-pointer select-none">
-          Show all attributes
-          <span class="text-gray-500 font-normal">(incl. operational: createTimestamp, modifyTimestamp, entryUUID, …)</span>
-        </label>
-      </div>
-
-      <!-- Action row: Search button + the lower-frequency
-           Clear / Save / Saved-Searches controls promoted out of
-           Other Criteria so the primary action stays adjacent to the
-           form. -->
-      <div class="mt-3 flex items-center gap-2 flex-wrap">
-        <button @click="doSearch" :disabled="!form.directoryId || searching" class="btn-primary">
-          {{ searching ? 'Searching…' : 'Search' }}
-        </button>
-        <button @click="clearForm" class="btn-secondary">Clear</button>
-        <button @click="promptSaveSearch" class="btn-secondary">Save Search</button>
-        <select v-if="savedSearches.length" @change="loadSavedSearch($event)" aria-label="Load saved search" class="input w-48 text-xs">
-          <option value="">— Saved Searches —</option>
-          <option v-for="(s, i) in savedSearches" :key="i" :value="i">{{ s.name }}</option>
-        </select>
-        <button v-if="savedSearches.length" @click="clearSavedSearches" class="text-xs text-gray-500 hover:text-gray-600" title="Clear all saved searches">Clear saved</button>
+      <!-- Action + options row, column-aligned with the criteria grid above:
+           the button group sits under the LDAP Filter, the saved-search
+           controls under Base DN, and the "Show all attributes" toggle under
+           the Attributes field. -->
+      <div class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+        <!-- Under LDAP Filter: primary actions. -->
+        <div class="flex items-center gap-2 flex-wrap">
+          <button @click="doSearch" :disabled="!form.directoryId || searching" class="btn-primary">
+            {{ searching ? 'Searching…' : 'Search' }}
+          </button>
+          <button @click="clearForm" class="btn-secondary">Clear</button>
+          <button @click="promptSaveSearch" class="btn-secondary">Save Search</button>
+        </div>
+        <!-- Under Base DN: load / clear saved searches (only when any exist). -->
+        <div class="flex items-center gap-2 flex-wrap">
+          <select v-if="savedSearches.length" @change="loadSavedSearch($event)" aria-label="Load saved search" class="input flex-1 text-xs">
+            <option value="">— Saved Searches —</option>
+            <option v-for="(s, i) in savedSearches" :key="i" :value="i">{{ s.name }}</option>
+          </select>
+          <button v-if="savedSearches.length" @click="clearSavedSearches" class="text-xs text-gray-500 hover:text-gray-600" title="Clear all saved searches">Clear saved</button>
+        </div>
+        <!-- Under Attributes: the show-all-attributes toggle. With an empty
+             Attributes box this returns every user AND operational attribute;
+             otherwise it adds operational attrs to the named ones. -->
+        <div class="flex items-start gap-2">
+          <input id="search-include-operational" type="checkbox" v-model="form.includeOperational" class="rounded border-gray-300 mt-0.5" />
+          <label for="search-include-operational" class="text-xs font-medium text-gray-600 cursor-pointer select-none">
+            Show all attributes
+            <span class="text-gray-500 font-normal">(incl. operational: createTimestamp, modifyTimestamp, entryUUID, …)</span>
+          </label>
+        </div>
       </div>
 
       <!-- Builder disclosure: visual filter builder. The component owns
