@@ -173,13 +173,13 @@ public class RecomputeEngine {
                 }
                 return false;
             }
-            ResultCode rc = targetDelete(target, current.getTargetDn());
-            if (LdapResultInterpreter.deleteConverged(rc)) {
+            ApplyOutcome del = targetDelete(target, current.getTargetDn());
+            if (LdapResultInterpreter.deleteConverged(del.code())) {
                 membershipRepo.deleteById(new MembershipId(set.getId(), identity));
                 return true;
             }
             markFailed(set, identity, current.getSourceDn(), current.getTargetDn(),
-                    current.getContentHash(), "delete failed: " + rc);
+                    current.getContentHash(), describe("delete", del));
             return false;
         }
 
@@ -236,21 +236,20 @@ public class RecomputeEngine {
         }
 
         Entry tgt = readTarget(target, targetDn);
-        ResultCode rc;
+        ApplyOutcome res;
         if (tgt == null) {
-            rc = targetAdd(target, targetDn, decision.desiredAttrs());
-            if (LdapResultInterpreter.addNeedsModify(rc)) {
+            res = targetAdd(target, targetDn, decision.desiredAttrs());
+            if (LdapResultInterpreter.addNeedsModify(res.code())) {
                 tgt = readTarget(target, targetDn);
-                rc = (tgt == null) ? rc
+                res = (tgt == null) ? res
                         : targetModify(target, targetDn, TargetEntryDiffer.diff(tgt, decision.desiredAttrs()));
             }
         } else {
-            List<Modification> mods = TargetEntryDiffer.diff(tgt, decision.desiredAttrs());
-            rc = mods.isEmpty() ? ResultCode.SUCCESS : targetModify(target, targetDn, mods);
+            res = targetModify(target, targetDn, TargetEntryDiffer.diff(tgt, decision.desiredAttrs()));
         }
 
-        if (!LdapResultInterpreter.success(rc)) {
-            markFailed(set, identity, sourceDn, targetDn, hash, "apply failed: " + rc);
+        if (!LdapResultInterpreter.success(res.code())) {
+            markFailed(set, identity, sourceDn, targetDn, hash, describe("apply", res));
             return false;
         }
         upsert(set, identity, sourceDn, targetDn, hash, MembershipState.APPLIED, null, current);
@@ -370,12 +369,12 @@ public class RecomputeEngine {
         });
     }
 
-    private ResultCode targetAdd(DirectoryConnection target, String dn, List<Attribute> attrs) {
+    private ApplyOutcome targetAdd(DirectoryConnection target, String dn, List<Attribute> attrs) {
         return connectionFactory.withConnectionUnreplicated(target, conn -> {
             try {
-                return conn.add(new AddRequest(dn, attrs)).getResultCode();
+                return ok(conn.add(new AddRequest(dn, attrs)).getResultCode());
             } catch (LDAPException e) {
-                return e.getResultCode();
+                return failed(e);
             }
         });
     }
@@ -402,40 +401,73 @@ public class RecomputeEngine {
         });
     }
 
-    private ResultCode targetModify(DirectoryConnection target, String dn, List<Modification> mods) {
+    private ApplyOutcome targetModify(DirectoryConnection target, String dn, List<Modification> mods) {
         if (mods.isEmpty()) {
-            return ResultCode.SUCCESS;
+            return ok(ResultCode.SUCCESS);
         }
         return connectionFactory.withConnectionUnreplicated(target, conn -> {
             try {
-                return conn.modify(new ModifyRequest(dn, mods)).getResultCode();
+                return ok(conn.modify(new ModifyRequest(dn, mods)).getResultCode());
             } catch (LDAPException e) {
-                return e.getResultCode();
+                return failed(e);
             }
         });
     }
 
-    private ResultCode targetDelete(DirectoryConnection target, String dn) {
+    private ApplyOutcome targetDelete(DirectoryConnection target, String dn) {
         return connectionFactory.withConnectionUnreplicated(target, conn -> {
             try {
-                return conn.delete(new DeleteRequest(dn)).getResultCode();
+                return ok(conn.delete(new DeleteRequest(dn)).getResultCode());
             } catch (LDAPException e) {
-                return e.getResultCode();
+                return failed(e);
             }
         });
     }
 
-    private ResultCode targetModifyDn(DirectoryConnection target, String oldDn, String newDn) {
+    private ApplyOutcome targetModifyDn(DirectoryConnection target, String oldDn, String newDn) {
         return connectionFactory.withConnectionUnreplicated(target, conn -> {
             try {
                 DN newDnParsed = new DN(newDn);
                 String newRdn = newDnParsed.getRDNString();
                 DN parent = newDnParsed.getParent();
                 String newSuperior = parent == null ? null : parent.toString();
-                return conn.modifyDN(new ModifyDNRequest(oldDn, newRdn, true, newSuperior)).getResultCode();
+                return ok(conn.modifyDN(new ModifyDNRequest(oldDn, newRdn, true, newSuperior)).getResultCode());
             } catch (LDAPException e) {
-                return e.getResultCode();
+                return failed(e);
             }
         });
+    }
+
+    // ── Apply outcome: the result code plus, on failure, the server's diagnostic
+    // message, so a FAILED row's reason says *why* (e.g. "…pre-encoded passwords
+    // are not allowed…") instead of just the bare code.
+
+    private record ApplyOutcome(ResultCode code, String detail) {
+    }
+
+    private static ApplyOutcome ok(ResultCode code) {
+        return new ApplyOutcome(code, null);
+    }
+
+    private static ApplyOutcome failed(LDAPException e) {
+        return new ApplyOutcome(e.getResultCode(), diagnosticOf(e));
+    }
+
+    /** A concise, single-line diagnostic from the server (collapsed + length-capped). */
+    private static String diagnosticOf(LDAPException e) {
+        String msg = e.getDiagnosticMessage();
+        if (msg == null || msg.isBlank()) {
+            msg = e.getMessage();
+        }
+        if (msg == null || msg.isBlank()) {
+            return null;
+        }
+        msg = msg.replaceAll("\\s+", " ").trim();
+        return msg.length() > 300 ? msg.substring(0, 297) + "…" : msg;
+    }
+
+    private static String describe(String verb, ApplyOutcome o) {
+        String base = verb + " failed: " + o.code();
+        return (o.detail() == null || o.detail().isBlank()) ? base : base + " — " + o.detail();
     }
 }
