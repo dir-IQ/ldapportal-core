@@ -104,7 +104,7 @@ public class ReportController {
         ReportData data = reportService.run(dc, req.reportType(), req.reportParams(), directoryId);
         byte[] csv = CsvUtils.write(data.columns(), data.rows());
 
-        String filename = req.reportType().name().toLowerCase() + ".csv";
+        String filename = req.reportType().toLowerCase() + ".csv";
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.parseMediaType("text/csv"));
         headers.setContentDisposition(ContentDisposition.attachment().filename(filename).build());
