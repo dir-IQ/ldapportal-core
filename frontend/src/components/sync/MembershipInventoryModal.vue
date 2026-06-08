@@ -6,7 +6,8 @@
   source DN / identity (replacing the old standalone recompute field).
 -->
 <template>
-  <AppModal v-model="show" :title="`Membership inventory — ${set?.name ?? ''}`" size="xl">
+  <AppModal v-model="show" :title="`Membership inventory — ${set?.name ?? ''}`" size="xl"
+            fill storage-key="sync-membership-inventory">
     <div class="space-y-3">
       <div class="flex items-center justify-between gap-2 flex-wrap -mt-1">
         <p class="text-xs text-gray-500 font-mono">{{ sourceName }} → {{ targetName }}</p>
