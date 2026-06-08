@@ -265,6 +265,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
 import { browse, deleteEntry, moveEntry, renameEntry, exportLdif, importLdif } from '@/api/browse'
@@ -279,6 +280,7 @@ const notif = useNotificationStore()
 
 const directories   = ref([])
 const loadingDirs   = ref(false)
+const route = useRoute()
 const selectedDirId = ref('')
 
 const treeLoading   = ref(false)
@@ -549,7 +551,13 @@ onMounted(async () => {
   try {
     const { data } = await listDirectories()
     directories.value = data.filter(d => d.directoryType !== 'ENTRA_ID')
-    if (directories.value.length) selectedDirId.value = directories.value[0].id
+    // Honor a ?dir=<id> deep-link (e.g. from the dashboard Directories panel);
+    // fall back to the first directory when absent or not browsable here.
+    const requested = typeof route.query.dir === 'string' ? route.query.dir : null
+    const preselect = requested && directories.value.some(d => d.id === requested)
+      ? requested
+      : directories.value[0]?.id
+    if (preselect) selectedDirId.value = preselect
   } catch (e) {
     notif.error(e.response?.data?.detail || e.message)
   } finally {

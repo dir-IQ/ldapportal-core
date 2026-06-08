@@ -1,11 +1,23 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<script setup>
+<script setup lang="ts">
 import RelativeTime from '@/components/RelativeTime.vue'
-import { actionLabel, actionColor, shortDn } from './auditLabels'
+import { actionLabel, actionColor, affectedLabel } from './auditLabels'
 
-defineProps({
-  events: { type: Array, default: () => [] },
-  viewAllTo: { type: String, default: null },
+interface AuditEvent {
+  id: string
+  action: string
+  targetDn?: string | null
+  actorUsername?: string | null
+  occurredAt: string
+  detail?: Record<string, unknown> | null
+}
+
+withDefaults(defineProps<{
+  events?: AuditEvent[]
+  viewAllTo?: string | null
+}>(), {
+  events: () => [],
+  viewAllTo: null,
 })
 </script>
 
@@ -22,12 +34,13 @@ defineProps({
         <span class="shrink-0 text-[11px] font-medium px-1.5 py-0.5 rounded" :class="actionColor(evt.action)">
           {{ actionLabel(evt.action) }}
         </span>
-        <span v-if="evt.targetDn"
-              class="min-w-0 flex-1 truncate text-gray-700"
-              :title="evt.targetDn">
-          {{ shortDn(evt.targetDn) }}
+        <!-- Affected entity: the target DN for LDAP-entry actions, otherwise a
+             label derived from the audit detail (e.g. account username, approval
+             request type) so workflow rows aren't blank. -->
+        <span class="min-w-0 flex-1 truncate text-gray-700"
+              :title="evt.targetDn || undefined">
+          {{ affectedLabel(evt) }}
         </span>
-        <span v-else class="flex-1"></span>
         <span class="shrink-0 text-xs text-gray-500">
           {{ evt.actorUsername || 'system' }}
           <span class="mx-1">&middot;</span>
