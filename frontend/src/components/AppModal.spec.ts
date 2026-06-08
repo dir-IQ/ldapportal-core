@@ -7,8 +7,10 @@
  * jsdom), so it's covered by manual/e2e testing rather than here.
  */
 import { describe, it, expect, afterEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import AppModal from './AppModal.vue'
+import { usePreferencesStore } from '@/stores/preferences'
 
 function mountModal(props = {}, slots = {}) {
   return mount(AppModal, {
@@ -61,5 +63,34 @@ describe('AppModal', () => {
     const b = mountModal({ resizable: false })
     expect(document.body.querySelector('.cursor-nwse-resize')).toBeFalsy()
     b.unmount()
+  })
+
+  const panelEl = () => document.body.querySelector('.rounded-xl') as HTMLElement
+
+  it('fills the content area with an explicit size when `fill` is set', async () => {
+    setActivePinia(createPinia())
+    // Open false→true so the layout watcher fires (no main-content in jsdom →
+    // falls back to the viewport, default 1024×768, minus margins).
+    const w = mount(AppModal, { props: { modelValue: false, title: 'T', fill: true }, attachTo: document.body })
+    await w.setProps({ modelValue: true })
+    await flushPromises()
+    const px = parseInt(panelEl().style.width)
+    expect(px).toBeGreaterThan(400) // an explicit fill width, not the size-class cap
+    w.unmount()
+  })
+
+  it('restores a persisted size from preferences (storageKey)', async () => {
+    setActivePinia(createPinia())
+    const store = usePreferencesStore()
+    store.doc = { modals: { 'msize': { w: 600, h: 400 } } }
+    const w = mount(AppModal, {
+      props: { modelValue: false, title: 'T', storageKey: 'msize' },
+      attachTo: document.body,
+    })
+    await w.setProps({ modelValue: true })
+    await flushPromises()
+    expect(panelEl().style.width).toBe('600px')
+    expect(panelEl().style.height).toBe('400px')
+    w.unmount()
   })
 })
