@@ -50,19 +50,21 @@
             <span class="text-gray-500 font-normal">(comma-separated, optional)</span>
           </label>
           <input id="search-attributes" v-model="form.attributes" class="input w-full" placeholder="cn,mail,uid" />
-          <!-- Display-all toggle sits directly under the Attributes field it
-               affects: with an empty Attributes box this returns every user
-               AND operational attribute; otherwise it adds operational attrs
-               to the named ones. Promoted out of "Other criteria" so it's
-               discoverable without expanding the disclosure. -->
-          <div class="flex items-center gap-2 mt-2">
-            <input id="search-include-operational" type="checkbox" v-model="form.includeOperational" class="rounded border-gray-300" />
-            <label for="search-include-operational" class="text-xs font-medium text-gray-600 cursor-pointer select-none">
-              Show all attributes
-              <span class="text-gray-500 font-normal">(incl. operational: createTimestamp, modifyTimestamp, entryUUID, …)</span>
-            </label>
-          </div>
         </div>
+      </div>
+
+      <!-- "Show all attributes" toggle: full-width row beneath the criteria
+           grid. Kept out of the Attributes grid cell so it doesn't stretch
+           that column and leave an empty gap under the LDAP Filter / Base DN
+           fields. With an empty Attributes box this returns every user AND
+           operational attribute; otherwise it adds operational attrs to the
+           named ones. -->
+      <div class="mt-2 flex items-center gap-2">
+        <input id="search-include-operational" type="checkbox" v-model="form.includeOperational" class="rounded border-gray-300" />
+        <label for="search-include-operational" class="text-xs font-medium text-gray-600 cursor-pointer select-none">
+          Show all attributes
+          <span class="text-gray-500 font-normal">(incl. operational: createTimestamp, modifyTimestamp, entryUUID, …)</span>
+        </label>
       </div>
 
       <!-- Action row: Search button + the lower-frequency
@@ -239,8 +241,10 @@
       </EditableResultsTable>
     </div>
 
-    <!-- Entry detail dialog -->
-    <div v-if="selectedEntry" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="selectedEntry = null">
+    <!-- Entry detail dialog. Backdrop click intentionally does NOT close it
+         (avoids losing the open entry on a stray click); use Escape or the
+         × button. -->
+    <div v-if="selectedEntry" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div v-dialog-a11y role="dialog" aria-modal="true" aria-labelledby="dir-search-entry-title"
            @keydown.escape="selectedEntry = null"
            class="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col">
@@ -716,19 +720,17 @@ function saveToHistory(f: typeof form.value): void {
     filter: f.filter, attributes: f.attributes, limit: f.limit,
     timeLimit: f.timeLimit, includeOperational: f.includeOperational,
   }
-  // Treat missing timeLimit / includeOperational on older history
-  // entries as 0 / false so a freshly-typed search with default values
-  // still dedupes against pre-feature entries with the same core fields.
-  const norm = (v: number | undefined): number => v ?? 0
-  const normBool = (v: boolean | undefined): boolean => !!v
+  // Recent searches are keyed by the query itself — directory + base DN +
+  // scope + filter — NOT the presentation options (attributes / limits /
+  // "show all attributes"). Re-running the same query with different options
+  // (e.g. after toggling operational attributes) would otherwise add a chip
+  // that's visually identical to an existing one, since the chip only shows
+  // the filter. Drop any prior match and prepend, so the entry moves to the
+  // front carrying the latest options instead of duplicating.
   const same = (a: HistoryEntry, b: HistoryEntry): boolean =>
     a.directoryId === b.directoryId && a.baseDn === b.baseDn
       && a.scope === b.scope && a.filter === b.filter
-      && a.attributes === b.attributes && a.limit === b.limit
-      && norm(a.timeLimit) === norm(b.timeLimit)
-      && normBool(a.includeOperational) === normBool(b.includeOperational)
-  if (history.value.some(h => same(h, entry))) return
-  history.value = [entry, ...history.value].slice(0, MAX_HISTORY)
+  history.value = [entry, ...history.value.filter(h => !same(h, entry))].slice(0, MAX_HISTORY)
   persistSearch()
 }
 

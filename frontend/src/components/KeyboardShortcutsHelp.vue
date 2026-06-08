@@ -1,7 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <Teleport to="body">
-    <div v-if="modelValue" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="$emit('update:modelValue', false)">
+    <!-- Backdrop click intentionally does NOT close the dialog; use Escape or
+         the × button. -->
+    <div v-if="modelValue" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
       <div v-dialog-a11y role="dialog" aria-modal="true" aria-labelledby="kbd-shortcuts-title"
            @keydown.escape="$emit('update:modelValue', false)"
            class="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-md w-full mx-4 p-6">
