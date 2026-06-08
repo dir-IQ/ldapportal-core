@@ -46,7 +46,7 @@
           <span class="font-mono text-xs">{{ row.targetDn }}</span>
         </template>
         <template #cell-failReason="{ row }">
-          <span class="text-xs text-gray-500">{{ row.failReason || '—' }}</span>
+          <span class="text-xs text-gray-500 line-clamp-2" :title="row.failReason || undefined">{{ row.failReason || '—' }}</span>
         </template>
         <template #actions="{ row }">
           <ActionMenu :items="[{ label: 'Dismiss', onClick: () => dismiss(row.identity) }]">

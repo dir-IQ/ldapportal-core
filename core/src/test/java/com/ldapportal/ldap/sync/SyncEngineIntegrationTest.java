@@ -308,6 +308,23 @@ class SyncEngineIntegrationTest {
         assertThat(target.getEntry("uid=carol," + DST_USERS)).isNotNull();
     }
 
+    @Test
+    void failReason_carriesServerDiagnostic() throws Exception {
+        // A missing target parent OU makes the ADD fail; the row's reason should
+        // carry the server's diagnostic ("…does not exist…") beyond the bare code,
+        // so an operator knows *what* to fix before recomputing.
+        target.delete(DST_USERS);
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        Membership m = membership("alice");
+        assertThat(m.getState()).isEqualTo(MembershipState.FAILED);
+        assertThat(m.getFailReason())
+                .startsWith("apply failed:")
+                .contains("—")                  // a server diagnostic was appended
+                .containsIgnoringCase("exist");  // …the missing-parent message
+    }
+
     // ── Queue lease: a re-trigger during processing survives the settle delete ──
 
     @Test
