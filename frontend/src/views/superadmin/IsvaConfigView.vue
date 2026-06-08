@@ -476,9 +476,9 @@ function extractErrorMessage(e: unknown, fallback: string): string {
                      v-model="form.onDemographicDelete" class="mt-1" />
               <span>
                 <span class="font-medium">Disable and mark</span> — also
-                annotate the demographic entry (v1 logs a TODO; the
-                actual marker write lands in v1.1 once we know your
-                site convention).
+                annotate the demographic entry on soft-delete by writing this
+                directory's configured enable/disable attribute (its disable
+                value). Requires that attribute to be set on the directory.
               </span>
             </label>
           </div>
