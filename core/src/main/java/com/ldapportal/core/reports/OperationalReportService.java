@@ -72,13 +72,24 @@ public class OperationalReportService {
     private final AuditEventRepository           auditEventRepo;
     private final ProvisioningProfileRepository  profileRepo;
     private final ProvisioningProfileService     profileService;
+    /**
+     * Addon-contributed reports. Empty in community (no addon on the
+     * classpath); populated by e.g. the IVIA addon's orphaned-account report.
+     * Consulted only after the built-in {@link OperationalReportType} names
+     * fail to match the requested type.
+     */
+    private final List<OperationalReportProvider> reportProviders;
 
     /**
      * Runs the requested operational report and returns the structured
      * data (columns + rows) for inline display or downstream rendering.
+     *
+     * <p>{@code reportType} names either a built-in {@link OperationalReportType}
+     * or an addon-contributed {@link OperationalReportProvider#reportId()};
+     * anything matching neither is a 400 ({@link IllegalArgumentException}).</p>
      */
     public ReportData run(DirectoryConnection dc,
-                          OperationalReportType reportType,
+                          String reportType,
                           Map<String, Object> params,
                           UUID directoryId) {
         requireLdapDirectory(dc);
@@ -90,20 +101,49 @@ public class OperationalReportService {
         // directory. Report types that already require an explicit DN
         // (USERS_IN_BRANCH, USERS_IN_GROUP) ignore the override.
         String scope = scopeBaseDn(safeParams);
-        return switch (reportType) {
-            case USERS_IN_GROUP         -> runUsersInGroupReport(dc, safeParams);
-            case USERS_IN_BRANCH        -> runLdapReport(dc,
-                    "(|(objectClass=inetOrgPerson)(objectClass=person))",
-                    requireString(safeParams, "branchDn"));
-            case USERS_WITH_NO_GROUP    -> runUsersWithNoGroupReport(dc, scope);
-            case RECENTLY_ADDED         -> runLdapReport(dc,
-                    buildRecentFilter("createTimestamp", safeParams), scope);
-            case RECENTLY_MODIFIED      -> runLdapReport(dc,
-                    buildRecentFilter("modifyTimestamp", safeParams), scope);
-            case RECENTLY_DELETED       -> runDeletedReport(directoryId, safeParams);
-            case DISABLED_ACCOUNTS      -> runDisabledAccountsReport(dc, scope);
-            case MISSING_PROFILE_GROUPS -> runMissingProfileGroupsReport(dc, directoryId);
-        };
+
+        OperationalReportType builtin = builtinOrNull(reportType);
+        if (builtin != null) {
+            return switch (builtin) {
+                case USERS_IN_GROUP         -> runUsersInGroupReport(dc, safeParams);
+                case USERS_IN_BRANCH        -> runLdapReport(dc,
+                        "(|(objectClass=inetOrgPerson)(objectClass=person))",
+                        requireString(safeParams, "branchDn"));
+                case USERS_WITH_NO_GROUP    -> runUsersWithNoGroupReport(dc, scope);
+                case RECENTLY_ADDED         -> runLdapReport(dc,
+                        buildRecentFilter("createTimestamp", safeParams), scope);
+                case RECENTLY_MODIFIED      -> runLdapReport(dc,
+                        buildRecentFilter("modifyTimestamp", safeParams), scope);
+                case RECENTLY_DELETED       -> runDeletedReport(directoryId, safeParams);
+                case DISABLED_ACCOUNTS      -> runDisabledAccountsReport(dc, scope);
+                case MISSING_PROFILE_GROUPS -> runMissingProfileGroupsReport(dc, directoryId);
+            };
+        }
+
+        // Addon-contributed report (e.g. the IVIA orphaned-account scan).
+        OperationalReportProvider provider = reportProviders.stream()
+                .filter(p -> p.reportId().equals(reportType))
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Unknown report type: " + reportType));
+        if (!provider.appliesTo(dc)) {
+            throw new IllegalArgumentException(
+                    "Report '" + reportType + "' is not available for directory "
+                            + dc.getDisplayName() + ".");
+        }
+        return provider.run(dc, safeParams, scope);
+    }
+
+    /** Resolve a built-in report type by name, or null if not a built-in. */
+    private static OperationalReportType builtinOrNull(String reportType) {
+        if (reportType == null) {
+            return null;
+        }
+        try {
+            return OperationalReportType.valueOf(reportType);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
     }
 
     /** Read the optional scopeBaseDn override from report params. */

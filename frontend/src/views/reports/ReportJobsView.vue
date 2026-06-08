@@ -299,20 +299,30 @@ const selectedDir = ref('')
 
 const dirId = computed(() => routeDirId || selectedDir.value)
 
-const reportTypes: ReportTypeDef[] = [
-  { value: 'USERS_IN_GROUP',       label: 'Users in Group',         param: 'groupDn',  paramLabel: 'Group DN',  paramPlaceholder: 'cn=admins,dc=example,dc=com', lookback: false },
-  { value: 'USERS_IN_BRANCH',      label: 'Users in Branch',        param: 'branchDn', paramLabel: 'Branch DN', paramPlaceholder: 'ou=people,dc=example,dc=com', lookback: false },
-  { value: 'USERS_WITH_NO_GROUP',  label: 'Users with No Group',    param: null, lookback: false },
-  { value: 'RECENTLY_ADDED',       label: 'Recently Added',         param: null, lookback: true },
-  { value: 'RECENTLY_MODIFIED',    label: 'Recently Modified',      param: null, lookback: true },
-  { value: 'RECENTLY_DELETED',     label: 'Recently Deleted',       param: null, lookback: true },
-  { value: 'DISABLED_ACCOUNTS',    label: 'Disabled Accounts',      param: null, lookback: false },
-  { value: 'MISSING_PROFILE_GROUPS', label: 'Missing Profile Groups', param: null, lookback: false },
-  { value: 'INTEGRITY_CHECK',      label: 'Integrity Check',        param: null, lookback: false },
-]
+// Report types. INTEGRITY_CHECK is a frontend-only pseudo-type (handled via a
+// separate endpoint). ORPHANED_IVIA_ACCOUNTS is contributed by the IVIA addon
+// (an OperationalReportProvider in core) and only offered when the addon's
+// entitlement is active; the backend still validates per-directory applicability.
+const reportTypes = computed<ReportTypeDef[]>(() => {
+  const types: ReportTypeDef[] = [
+    { value: 'USERS_IN_GROUP',       label: 'Users in Group',         param: 'groupDn',  paramLabel: 'Group DN',  paramPlaceholder: 'cn=admins,dc=example,dc=com', lookback: false },
+    { value: 'USERS_IN_BRANCH',      label: 'Users in Branch',        param: 'branchDn', paramLabel: 'Branch DN', paramPlaceholder: 'ou=people,dc=example,dc=com', lookback: false },
+    { value: 'USERS_WITH_NO_GROUP',  label: 'Users with No Group',    param: null, lookback: false },
+    { value: 'RECENTLY_ADDED',       label: 'Recently Added',         param: null, lookback: true },
+    { value: 'RECENTLY_MODIFIED',    label: 'Recently Modified',      param: null, lookback: true },
+    { value: 'RECENTLY_DELETED',     label: 'Recently Deleted',       param: null, lookback: true },
+    { value: 'DISABLED_ACCOUNTS',    label: 'Disabled Accounts',      param: null, lookback: false },
+    { value: 'MISSING_PROFILE_GROUPS', label: 'Missing Profile Groups', param: null, lookback: false },
+  ]
+  if (auth.isIsvaIntegrationEnabled) {
+    types.push({ value: 'ORPHANED_IVIA_ACCOUNTS', label: 'Orphaned IVIA Accounts', param: null, lookback: false })
+  }
+  types.push({ value: 'INTEGRITY_CHECK', label: 'Integrity Check', param: null, lookback: false })
+  return types
+})
 
 // Scheduled jobs can't use INTEGRITY_CHECK (it's not a backend report type)
-const schedulableTypes = computed(() => reportTypes.filter(t => t.value !== 'INTEGRITY_CHECK'))
+const schedulableTypes = computed(() => reportTypes.value.filter(t => t.value !== 'INTEGRITY_CHECK'))
 
 const integrityChecks = [
   { value: 'BROKEN_MEMBER',  label: 'Broken Member References' },
@@ -320,7 +330,7 @@ const integrityChecks = [
   { value: 'EMPTY_GROUP',    label: 'Empty Groups' },
 ]
 
-function labelFor(type: string): string { return reportTypes.find(t => t.value === type)?.label ?? type }
+function labelFor(type: string): string { return reportTypes.value.find(t => t.value === type)?.label ?? type }
 function fmtDate(iso: string): string { return new Date(iso).toLocaleString() }
 
 // ── Report runner ─────────────────────────────────────────────────────────────
@@ -335,7 +345,7 @@ const hasResults = ref(false)
 const resultColumns = ref<string[]>([])
 const resultRows = ref<ReportRow[]>([])
 
-const currentRunType   = computed(() => reportTypes.find(t => t.value === runForm.value.reportType))
+const currentRunType   = computed(() => reportTypes.value.find(t => t.value === runForm.value.reportType))
 const needsParam       = computed(() => !!currentRunType.value?.param)
 const paramLabel       = computed(() => currentRunType.value?.paramLabel ?? '')
 const paramPlaceholder = computed(() => currentRunType.value?.paramPlaceholder ?? '')
@@ -491,7 +501,7 @@ function blankJobForm(): JobForm {
 
 const jobForm = ref<JobForm>(blankJobForm())
 
-const currentJobFormType   = computed(() => reportTypes.find(t => t.value === jobForm.value.reportType))
+const currentJobFormType   = computed(() => reportTypes.value.find(t => t.value === jobForm.value.reportType))
 const jobFormNeedsParam    = computed(() => !!currentJobFormType.value?.param)
 const jobFormParamLabel    = computed(() => currentJobFormType.value?.paramLabel ?? '')
 const jobFormNeedsLookback = computed(() => !!currentJobFormType.value?.lookback)
@@ -513,7 +523,7 @@ async function openSchedules(): Promise<void> {
 
 function openEditJob(job: Job): void {
   editJob.value = job
-  const typeInfo = reportTypes.find(t => t.value === job.reportType)
+  const typeInfo = reportTypes.value.find(t => t.value === job.reportType)
   jobForm.value = {
     name: job.name, reportType: job.reportType,
     cronExpression: job.cronExpression,
