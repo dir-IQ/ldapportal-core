@@ -59,6 +59,7 @@
 import { computed, ref, useId } from 'vue'
 import { useDialogA11y } from '@/composables/useDialogA11y'
 import { useDraggableModal } from '@/composables/useDraggableModal'
+import { usePreferencesStore } from '@/stores/preferences'
 
 const props = withDefaults(
   defineProps<{
@@ -72,8 +73,15 @@ const props = withDefaults(
     /** Drag the SE corner to resize. On by default; ignored below sm. Pass
      *  :resizable="false" to opt out. */
     resizable?: boolean
+    /** Default the panel to fill the content area (viewport minus the nav) with
+     *  margins, instead of the size-class cap. */
+    fill?: boolean
+    /** Persist the drag-resized size to the user's preferences (`modals`
+     *  namespace) under this key, so it follows the user across sessions. */
+    storageKey?: string
   }>(),
-  { modelValue: false, title: '', size: 'md', fixedHeight: '', movable: true, resizable: true },
+  { modelValue: false, title: '', size: 'md', fixedHeight: '', movable: true, resizable: true,
+    fill: false, storageKey: '' },
 )
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 
@@ -86,11 +94,79 @@ useDialogA11y({
   onClose: () => emit('update:modelValue', false),
 })
 
+// ── Fill-to-content default + size persistence ──
+const FILL_MARGIN = 24
+const MIN_W = 280
+const MIN_H = 160
+
+// The app's main content region (right of the sidebar nav); falls back to the
+// full viewport (e.g. login, or before layout mounts).
+function contentRect(): { left: number; top: number; width: number; height: number } {
+  const el = document.getElementById('main-content')
+  if (el) {
+    const r = el.getBoundingClientRect()
+    return { left: r.left, top: r.top, width: r.width, height: r.height }
+  }
+  return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
+}
+
+// Translate offset that centers a w×h panel within the content area (the panel
+// is otherwise flex-centered in the full viewport).
+function centeredOffset(w: number, h: number): { x: number; y: number } {
+  const c = contentRect()
+  return {
+    x: c.left + c.width / 2 - window.innerWidth / 2,
+    y: c.top + c.height / 2 - window.innerHeight / 2,
+  }
+}
+
+function readPersistedSize(): { w: number; h: number } | null {
+  if (!props.storageKey) return null
+  try {
+    return usePreferencesStore().read<{ w: number; h: number } | null>('modals', props.storageKey, null)
+  } catch {
+    return null
+  }
+}
+
+function persistSize(s: { w: number; h: number } | null): void {
+  if (!props.storageKey || !s) return
+  try {
+    usePreferencesStore().write('modals', props.storageKey, { w: Math.round(s.w), h: Math.round(s.h) })
+  } catch {
+    /* preferences unavailable — size just won't persist */
+  }
+}
+
+function getInitialLayout(): { size: { w: number; h: number } | null; offset: { x: number; y: number } } | null {
+  const c = contentRect()
+  const persisted = readPersistedSize()
+  let target: { w: number; h: number } | null = null
+  if (persisted && persisted.w && persisted.h) {
+    // Clamp a remembered size to the current content area.
+    target = {
+      w: Math.max(MIN_W, Math.min(persisted.w, c.width - 2 * FILL_MARGIN)),
+      h: Math.max(MIN_H, Math.min(persisted.h, c.height - 2 * FILL_MARGIN)),
+    }
+  } else if (props.fill) {
+    target = {
+      w: Math.max(MIN_W, c.width - 2 * FILL_MARGIN),
+      h: Math.max(MIN_H, c.height - 2 * FILL_MARGIN),
+    }
+  }
+  return target ? { size: target, offset: centeredOffset(target.w, target.h) } : null
+}
+
 const { offset, size, onHandlePointerDown, onResizePointerDown } = useDraggableModal({
   panelRef,
   movable: () => props.movable && window.innerWidth >= 640,
   resizable: () => props.resizable && window.innerWidth >= 640,
   isOpen: () => props.modelValue,
+  // Only customize the layout when asked (fill or a storageKey); otherwise the
+  // composable keeps its centered, auto-sized default — so other modals are
+  // unaffected and don't touch the preferences store.
+  getInitialLayout: () => (props.fill || props.storageKey ? getInitialLayout() : null),
+  onPersist: persistSize,
 })
 
 // Sizing precedence: an explicit drag-resize wins (and drops the max-w/max-h

@@ -23,6 +23,14 @@ export function useDraggableModal(opts: {
   movable: () => boolean
   resizable: () => boolean
   isOpen: () => boolean
+  /**
+   * Optional initial size + offset applied each time the modal opens (e.g. a
+   * persisted size, or a "fill the content area" default). Returning null falls
+   * back to the centered, auto-sized default.
+   */
+  getInitialLayout?: () => { size: { w: number; h: number } | null; offset: { x: number; y: number } } | null
+  /** Called with the panel size when a resize gesture ends (for persistence). */
+  onPersist?: (size: { w: number; h: number } | null) => void
 }) {
   const offset = ref({ x: 0, y: 0 })
   const size = ref<{ w: number; h: number } | null>(null)
@@ -65,10 +73,12 @@ export function useDraggableModal(opts: {
   }
 
   function endSession(): void {
+    const wasResize = mode === 'resize'
     mode = null
     document.body.style.removeProperty('user-select')
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', endSession)
+    if (wasResize) opts.onPersist?.(size.value)
   }
 
   function startSession(e: PointerEvent): void {
@@ -112,9 +122,15 @@ export function useDraggableModal(opts: {
     startSession(e)
   }
 
-  // Reset to centered + default size each time the modal opens.
+  // On open: apply a provided initial layout (persisted size / content-fill
+  // default), otherwise reset to centered + auto-sized.
   watch(opts.isOpen, (open) => {
-    if (open) {
+    if (!open) return
+    const layout = opts.getInitialLayout?.() ?? null
+    if (layout) {
+      size.value = layout.size
+      offset.value = layout.offset
+    } else {
       offset.value = { x: 0, y: 0 }
       size.value = null
     }
