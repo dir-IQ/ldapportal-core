@@ -111,6 +111,26 @@ export function shortDn(dn) {
   return first || dn
 }
 
+/**
+ * Affected-entity label for a Recent Activity row. LDAP-entry actions carry a
+ * `targetDn`; workflow / system actions (approvals, account admin, campaigns,
+ * reviews) don't — their subject lives in the audit `detail`. Surface the most
+ * entity-like detail field so every row says what it touched, falling back to
+ * '—' when nothing identifiable is present.
+ */
+export function affectedLabel(evt) {
+  if (evt?.targetDn) return shortDn(evt.targetDn)
+  const d = (evt && evt.detail) || {}
+  // Direct, human-meaningful identifiers across action families (account admin
+  // → username; governance → campaign / policy name). A concrete name wins.
+  const direct = d.username || d.campaignName || d.name || d.policyName
+  if (direct) return String(direct)
+  // Approvals record the operation as requestType (e.g. CREATE_USER); show it
+  // humanized so the row isn't blank.
+  if (d.requestType) return humanize(String(d.requestType))
+  return '—'
+}
+
 export function cardBorder(severity) {
   switch (severity) {
     case 'green': return 'border-green-200 bg-green-50/30'

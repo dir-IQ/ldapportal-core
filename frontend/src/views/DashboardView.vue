@@ -199,7 +199,10 @@ const reportJobsLink = computed<string | undefined>(() => isSuperadmin.value ? '
 function onDirectoryClick(dir?: unknown) {
   const id = (dir as { id?: string } | undefined)?.id
   if (!id) return
-  router.push(`/directories/${id}/users`)
+  // The Directories panel is superadmin-only, so drill into the Directory
+  // Browser (pre-selecting this directory via ?dir) rather than the per-
+  // directory Users page.
+  router.push({ name: 'directoryBrowser', query: { dir: id } })
 }
 /**
  * Clicking a profile row deep-links to that profile's directory Users
