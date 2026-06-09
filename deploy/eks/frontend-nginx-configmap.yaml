@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Kubernetes nginx template for the frontend, mounted over the image's
+# baked-in Fly template (/etc/nginx/templates/default.conf.template). The
+# nginx:alpine stock entrypoint runs `envsubst` over templates/*.template
+# at container start, expanding ${BACKEND_APP} (set in the Deployment env)
+# and leaving the nginx runtime vars ($host, $remote_addr, …) untouched
+# because they are not in the environment.
+#
+# Why override: the GHCR frontend image targets Fly.io — its template uses
+# `${BACKEND_APP}.flycast` and the Fly DNS resolver [fdaa::3]:53, neither of
+# which exists in EKS. Here BACKEND_APP is the backend Service name; its
+# ClusterIP is stable for the life of the Service, so nginx resolving it
+# once at startup is correct (no per-request resolver needed).
+#
+# In the default topology the ALB ingress routes /api/v1 straight to the
+# backend, so this proxy block is a fallback — it also makes a
+# single-target ingress (everything → frontend) work without changes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ldapportal-frontend-nginx
+  labels:
+    app.kubernetes.io/name: ldapportal
+    app.kubernetes.io/component: frontend
+data:
+  default.conf.template: |
+    server {
+        listen 8080;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        client_max_body_size 50m;
+
+        location /api/v1 {
+            proxy_pass http://${BACKEND_APP}:8080;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+    }

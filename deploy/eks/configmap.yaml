@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Non-secret backend configuration. Secret values (DB_PASSWORD,
+# ENCRYPTION_KEY, JWT_SECRET, BOOTSTRAP_SUPERADMIN_PASSWORD) live in the
+# `ldapportal-secrets` Secret, NOT here — see secret.example.yaml.
+#
+# EDIT BEFORE APPLYING:
+#   DB_URL              → your RDS endpoint (keep ?sslmode=require for RDS).
+#   CORS_ALLOWED_ORIGIN → the public https:// origin users hit (the
+#                         ingress hostname).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ldapportal-config
+  labels:
+    app.kubernetes.io/name: ldapportal
+    app.kubernetes.io/component: backend
+data:
+  # ── Database (managed RDS Postgres recommended) ──────────────────────────
+  # Host:port/db plus sslmode=require so a mis-routed connection can't
+  # downgrade to plaintext. Matches the terraform/aws ECS module.
+  DB_URL: "jdbc:postgresql://REPLACE_RDS_ENDPOINT:5432/ldapportal?sslmode=require"
+  DB_USERNAME: "ldapportal"
+  DB_POOL_MAX: "20"
+  DB_POOL_MIN: "2"
+
+  # ── Session cookie ───────────────────────────────────────────────────────
+  # Served over HTTPS at the ALB, so the JWT cookie carries Secure.
+  COOKIE_SECURE: "true"
+
+  # ── CORS ─────────────────────────────────────────────────────────────────
+  # Must equal the public origin the SPA is served from.
+  CORS_ALLOWED_ORIGIN: "https://ldapportal.example.com"
+
+  # ── Bootstrap superadmin (username only; password is a Secret) ───────────
+  BOOTSTRAP_SUPERADMIN_USERNAME: "superadmin"
+
+  # ── Entitlements ─────────────────────────────────────────────────────────
+  # Self-host grant of the open-source DIRECTORY_SYNC entitlement (gates
+  # directory sync). Set to "" for the pure community baseline.
+  LDAPPORTAL_ENTITLEMENTS_GRANT: "DIRECTORY_SYNC"
+
+  # ── Logging ──────────────────────────────────────────────────────────────
+  LOG_LEVEL: "INFO"
+  APP_LOG_LEVEL: "INFO"
