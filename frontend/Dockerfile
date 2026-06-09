@@ -1,7 +1,11 @@
-# DOCKER-COMPOSE ONLY. For Fly.io deployment, build frontend/Dockerfile.fly
-# (which uses an envsubst template + .flycast-aware nginx config). The
-# `proxy_pass http://app:8080;` in nginx.conf only resolves on the
-# docker-compose network where the backend service is named "app".
+# Frontend image — Vue/Vite bundle on nginx. Self-contained multi-stage
+# npm build; the runtime config is an envsubst template so ONE image runs
+# on every platform (docker-compose, Kubernetes/EKS, Fly.io). The backend
+# host the SPA proxies /api/v1 to is supplied at runtime via BACKEND_APP —
+# see nginx.conf.template for the per-platform values.
+#
+# Build context is frontend/:
+#   docker build -f frontend/Dockerfile -t ldapportal-frontend:dev frontend/
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -10,6 +14,11 @@ COPY . .
 RUN npm run build
 
 FROM nginx:alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Default BACKEND_APP suits docker-compose (the backend service is "app");
+# override it on Kubernetes/Fly. NGINX_ENVSUBST_FILTER restricts the stock
+# entrypoint's envsubst to just BACKEND_APP so nginx runtime vars survive.
+ENV BACKEND_APP=app
+ENV NGINX_ENVSUBST_FILTER=BACKEND_APP
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 8080

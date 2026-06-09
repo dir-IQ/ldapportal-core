@@ -84,11 +84,12 @@ starter keeps it simple and runs the suite on every branch/MR).
   `distribution/<edition>/target/` — they are *not* multi-stage Maven builds.
   So the pipeline must **`mvn package` first** (producing the JAR as a CI
   artifact), **then `docker build`**. The starter does this across two stages.
-- The **frontend** image *is* self-contained (node build → nginx). Two variants:
-  - `frontend/Dockerfile.fly` — the published image (envsubst nginx template,
-    resolves the backend at runtime). Use this for registry publishing.
-  - `frontend/Dockerfile` — the docker-compose variant; hardcodes
-    `proxy_pass http://app:8080;` (only resolves on the compose network).
+- The **frontend** image *is* self-contained (node build → nginx).
+  `frontend/Dockerfile` is a single portable image — an envsubst nginx
+  template whose backend host is supplied at runtime via `BACKEND_APP` (see
+  `frontend/nginx.conf.template`). The same image runs on docker-compose
+  (`BACKEND_APP=app`, the default), Kubernetes/EKS (the backend Service
+  name), and Fly (`<backend-app>.flycast`). Publish this image directly.
 - Image refs move from `ghcr.io/<owner>/ldapportal-*` →
   `$CI_REGISTRY_IMAGE/ldapportal-*`. CI auth is the predefined
   `$CI_REGISTRY_USER` / `$CI_REGISTRY_PASSWORD` (job token) — no PAT to manage.
