@@ -150,11 +150,12 @@ publish-frontend:
   extends: .docker
   needs: []
   script:
-    # Self-contained multi-stage npm build. Dockerfile.fly is the published
-    # variant (runtime backend resolution); the sibling Dockerfile is the
-    # compose-only variant with a hardcoded proxy_pass.
+    # Self-contained multi-stage npm build. frontend/Dockerfile is a portable
+    # envsubst-template image; the backend host is supplied at runtime via
+    # BACKEND_APP (see frontend/nginx.conf.template), so one image runs on
+    # compose, Kubernetes and Fly.
     - IMAGE="$CI_REGISTRY_IMAGE/ldapportal-frontend"
-    - docker build -f frontend/Dockerfile.fly -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" frontend
+    - docker build -f frontend/Dockerfile -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" frontend
     - docker push "$IMAGE:$CI_COMMIT_TAG"
     - docker push "$IMAGE:latest"
   rules:

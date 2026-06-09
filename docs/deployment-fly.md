@@ -230,6 +230,14 @@ kept warm.
 
 The frontends reach the backends at `<backend>.flycast:8080`, and the
 backends reach the LDAP test directories at `<ldap>.flycast:389`.
+
+> **Frontend `BACKEND_APP` (set in each frontend `fly.toml`).** The
+> published frontend image is platform-neutral and proxies `/api/v1` to
+> the host in `BACKEND_APP` (port 8080 fixed). On Fly, set it to the
+> backend's **flycast** host — e.g. `BACKEND_APP=ldapportal-c-app.flycast`
+> for the community frontend. (The image no longer appends `.flycast`
+> itself, so a bare app name will not resolve — include the suffix.)
+
 `.flycast` hostnames only enter Fly's internal DNS when the target
 app has a **private** IPv6 allocated — and `flyctl deploy` doesn't
 auto-allocate one (it auto-allocates a *public* IPv6 instead). Skip
