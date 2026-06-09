@@ -4060,7 +4060,8 @@ export interface components {
         UpdateProfileRequest: {
             name: string;
             description?: string;
-            targetOuDn: string;
+            targetUserDn: string;
+            targetGroupDn?: string;
             objectClassNames: string[];
             rdnAttribute: string;
             showDnField?: boolean;
@@ -4093,7 +4094,8 @@ export interface components {
             directoryName?: string;
             name?: string;
             description?: string;
-            targetOuDn?: string;
+            targetUserDn?: string;
+            targetGroupDn?: string;
             objectClassNames?: string[];
             rdnAttribute?: string;
             showDnField?: boolean;
@@ -4426,7 +4428,7 @@ export interface components {
         };
         ProposedProfile: {
             name?: string;
-            targetOuDn?: string;
+            targetUserDn?: string;
             objectClasses?: string[];
             rdnAttribute?: string;
             attributeConfigs?: components["schemas"]["InferredAttributeConfig"][];
@@ -4443,7 +4445,8 @@ export interface components {
         CreateProfileRequest: {
             name: string;
             description?: string;
-            targetOuDn: string;
+            targetUserDn: string;
+            targetGroupDn?: string;
             objectClassNames: string[];
             rdnAttribute: string;
             showDnField?: boolean;
@@ -5157,7 +5160,7 @@ export interface components {
             directoryName?: string;
             /** @enum {string} */
             baseRole?: "ADMIN" | "READ_ONLY";
-            targetOuDn?: string;
+            targetUserDn?: string;
             features?: components["schemas"]["FeatureEffective"][];
         };
         BrandingDto: {
@@ -5615,7 +5618,7 @@ export interface components {
             directoryId?: string;
             directoryName?: string;
             baseRole?: string;
-            targetOuDn?: string;
+            targetUserDn?: string;
             /** Format: int64 */
             userCount?: number;
             /** Format: int64 */

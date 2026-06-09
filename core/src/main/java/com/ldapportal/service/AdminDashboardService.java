@@ -143,9 +143,9 @@ public class AdminDashboardService {
 
         // ── Per-profile stats ────────────────────────────────────────────────
         // One row per AdminProfileRole the caller holds. User/group counts
-        // are LDAP counts scoped to the profile's targetOuDn — that's what
+        // are LDAP counts scoped to the profile's targetUserDn — that's what
         // "how many things does this profile actually let me see" means.
-        // Counts are memoised per (directoryId, targetOuDn) so profiles
+        // Counts are memoised per (directoryId, targetUserDn) so profiles
         // sharing a scope only cost one LDAP query each (users + groups).
         Map<String, Long> userScopeCache = new HashMap<>();
         Map<String, Long> groupScopeCache = new HashMap<>();
@@ -165,15 +165,15 @@ public class AdminDashboardService {
                     var p = r.getProfile();
                     var d = p.getDirectory();
                     long pending = approvalRepo.countByProfileIdAndStatus(p.getId(), ApprovalStatus.PENDING);
-                    long userCount = d != null ? countUsersInScope(d, p.getTargetOuDn(), userScopeCache) : 0L;
-                    long groupCount = d != null ? countGroupsInScope(d, p.getTargetOuDn(), groupScopeCache) : 0L;
+                    long userCount = d != null ? countUsersInScope(d, p.getTargetUserDn(), userScopeCache) : 0L;
+                    long groupCount = d != null ? countGroupsInScope(d, p.getTargetUserDn(), groupScopeCache) : 0L;
                     return new ProfileStatDto(
                             p.getId().toString(),
                             p.getName(),
                             d != null ? d.getId().toString() : null,
                             d != null ? d.getDisplayName() : null,
                             r.getBaseRole() != null ? r.getBaseRole().name() : null,
-                            p.getTargetOuDn(),
+                            p.getTargetUserDn(),
                             userCount,
                             groupCount,
                             pending);

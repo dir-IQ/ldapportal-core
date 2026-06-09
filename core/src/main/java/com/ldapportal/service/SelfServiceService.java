@@ -457,7 +457,7 @@ public class SelfServiceService {
                         "RDN attribute [" + profile.getRdnAttribute() + "] is required");
             }
             // Use UnboundID RDN to properly escape special DN characters
-            String dn = new RDN(profile.getRdnAttribute(), rdnValue) + "," + profile.getTargetOuDn();
+            String dn = new RDN(profile.getRdnAttribute(), rdnValue) + "," + profile.getTargetUserDn();
 
             // Add objectClasses
             attributes.put("objectClass", profile.getObjectClassNames());

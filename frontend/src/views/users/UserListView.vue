@@ -397,7 +397,7 @@ import { rdnValue } from '@/composables/useEntryClassification'
 interface ProfileLite {
   id: string
   name: string
-  targetOuDn?: string | null
+  targetUserDn?: string | null
   rdnAttribute?: string
   enabled?: boolean
   objectClassNames?: string[]
@@ -682,7 +682,7 @@ const emptyForm = (): UserFormState => {
     }
   }
   return {
-    parentDn: profileData.value?.targetOuDn || '',
+    parentDn: profileData.value?.targetUserDn || '',
     rdnAttribute: profileData.value?.rdnAttribute || 'uid',
     rdnValue: '',
     attributes,
@@ -697,7 +697,7 @@ async function load() {
   await call(async () => {
     const params = {
       filter: filterText.value || undefined,
-      baseDn: profileData.value?.targetOuDn || undefined,
+      baseDn: profileData.value?.targetUserDn || undefined,
       limit:  limit.value,
       // Request all user attributes ('*') plus the reverse group-membership
       // attributes explicitly. The 'Groups' column reads these; naming them
@@ -760,7 +760,7 @@ async function doExportUsers() {
   try {
     const params = {
       filter: filterText.value || undefined,
-      baseDn: profileData.value?.targetOuDn || undefined,
+      baseDn: profileData.value?.targetUserDn || undefined,
     }
     const { data } = await exportUsersCsv(dirId, params)
     downloadBlob(data, 'users.csv')

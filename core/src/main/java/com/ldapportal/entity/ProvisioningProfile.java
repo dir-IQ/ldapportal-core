@@ -49,8 +49,17 @@ public class ProvisioningProfile {
     private String description;
 
     /** LDAP DN of the OU where new users are created. */
-    @Column(name = "target_ou_dn", nullable = false, length = 500)
-    private String targetOuDn;
+    @Column(name = "target_user_dn", nullable = false, length = 500)
+    private String targetUserDn;
+
+    /**
+     * LDAP DN of the container under which this profile's groups live.
+     * Lets groups be administered from a subtree separate from users;
+     * defaults to {@link #targetUserDn} when an admin doesn't set a
+     * distinct value (and is backfilled to it for pre-existing profiles).
+     */
+    @Column(name = "target_group_dn", nullable = false, length = 500)
+    private String targetGroupDn;
 
     /** LDAP objectClasses applied to entries created with this profile. */
     @ElementCollection(fetch = FetchType.EAGER)

@@ -7,7 +7,7 @@ export interface ProfileSummary {
   name: string
   directoryId?: string
   directoryType?: string
-  targetOuDn?: string | null
+  targetUserDn?: string | null
   enabled?: boolean
 }
 

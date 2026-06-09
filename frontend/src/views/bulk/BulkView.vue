@@ -627,11 +627,11 @@ onMounted(async () => {
   try {
     const { data } = await listProfiles(dirId)
     // listProfiles already filters disabled per the previous
-    // admin-picker fix; we additionally dedupe targetOuDn values
+    // admin-picker fix; we additionally dedupe targetUserDn values
     // because multiple profiles may share an OU.
     const uniq = new Set<string>()
-    for (const p of data as Array<{ targetOuDn?: string }>) {
-      if (p.targetOuDn) uniq.add(p.targetOuDn)
+    for (const p of data as Array<{ targetUserDn?: string }>) {
+      if (p.targetUserDn) uniq.add(p.targetUserDn)
     }
     authorizedImportRoots.value = [...uniq]
   } catch (e) {

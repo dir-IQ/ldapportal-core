@@ -21,7 +21,7 @@ interface ProfileRole {
   id: string
   name: string
   directoryName?: string | null
-  targetOuDn?: string | null
+  targetUserDn?: string | null
   userCount: number
   groupCount: number
   pendingApprovals: number
@@ -76,9 +76,9 @@ function shortenOu(dn: string | null | undefined): string {
           </td>
           <td class="px-4 py-2.5 text-gray-600">
             <code class="text-[11px] bg-gray-50 border border-gray-100 rounded px-1 py-0.5"
-                  :title="p.targetOuDn || ''">{{ shortenOu(p.targetOuDn) }}</code>
+                  :title="p.targetUserDn || ''">{{ shortenOu(p.targetUserDn) }}</code>
           </td>
-          <!-- LDAP counts scoped to the profile's targetOuDn. -1 signals a
+          <!-- LDAP counts scoped to the profile's targetUserDn. -1 signals a
                directory error; render em-dash rather than a misleading zero. -->
           <td class="px-4 py-2.5 text-right text-gray-600">
             {{ p.userCount >= 0 ? p.userCount.toLocaleString() : '—' }}

@@ -140,7 +140,7 @@ public class ProvisioningProfileService {
                 profileRepo.countByDirectoryId(directoryId));
 
         if (!force) {
-            requireTargetOuExists(dir, req.targetOuDn());
+            requireTargetOuExists(dir, req.targetUserDn());
         }
 
         if (profileRepo.existsByDirectoryIdAndName(directoryId, req.name())) {
@@ -150,8 +150,8 @@ public class ProvisioningProfileService {
 
         ProvisioningProfile profile = new ProvisioningProfile();
         profile.setDirectory(dir);
-        applyCommonFields(profile, req.name(), req.description(), req.targetOuDn(),
-                req.objectClassNames(), req.rdnAttribute(), req.showDnField(),
+        applyCommonFields(profile, req.name(), req.description(), req.targetUserDn(),
+                req.targetGroupDn(), req.objectClassNames(), req.rdnAttribute(), req.showDnField(),
                 req.enabled(), req.selfRegistrationAllowed(),
                 req.passwordLength(), req.passwordUppercase(), req.passwordLowercase(),
                 req.passwordDigits(), req.passwordSpecial(), req.passwordSpecialChars(),
@@ -168,7 +168,8 @@ public class ProvisioningProfileService {
         if (principal != null) {
             auditService.record(principal, directoryId, AuditAction.PROFILE_CREATE, null,
                     Map.of("profileId", profile.getId(), "name", profile.getName(),
-                            "targetOuDn", profile.getTargetOuDn()));
+                            "targetUserDn", profile.getTargetUserDn(),
+                            "targetGroupDn", profile.getTargetGroupDn()));
         }
 
         return toResponse(profile);
@@ -214,13 +215,13 @@ public class ProvisioningProfileService {
                     "Profile [" + req.name() + "] already exists in this directory");
         }
 
-        boolean targetOuDnChanged = !profile.getTargetOuDn().equalsIgnoreCase(req.targetOuDn());
-        if (!force && targetOuDnChanged) {
-            requireTargetOuExists(profile.getDirectory(), req.targetOuDn());
+        boolean targetUserDnChanged = !profile.getTargetUserDn().equalsIgnoreCase(req.targetUserDn());
+        if (!force && targetUserDnChanged) {
+            requireTargetOuExists(profile.getDirectory(), req.targetUserDn());
         }
 
-        applyCommonFields(profile, req.name(), req.description(), req.targetOuDn(),
-                req.objectClassNames(), req.rdnAttribute(), req.showDnField(),
+        applyCommonFields(profile, req.name(), req.description(), req.targetUserDn(),
+                req.targetGroupDn(), req.objectClassNames(), req.rdnAttribute(), req.showDnField(),
                 req.enabled(), req.selfRegistrationAllowed(),
                 req.passwordLength(), req.passwordUppercase(), req.passwordLowercase(),
                 req.passwordDigits(), req.passwordSpecial(), req.passwordSpecialChars(),
@@ -286,7 +287,8 @@ public class ProvisioningProfileService {
         copy.setDirectory(source.getDirectory());
         copy.setName(newName);
         copy.setDescription(source.getDescription());
-        copy.setTargetOuDn(source.getTargetOuDn());
+        copy.setTargetUserDn(source.getTargetUserDn());
+        copy.setTargetGroupDn(source.getTargetGroupDn());
         copy.setObjectClassNames(new ArrayList<>(source.getObjectClassNames()));
         copy.setRdnAttribute(source.getRdnAttribute());
         copy.setShowDnField(source.isShowDnField());
@@ -535,8 +537,8 @@ public class ProvisioningProfileService {
 
         // Find profiles whose target OU is a suffix of the DN; most specific match wins
         return profiles.stream()
-                .filter(p -> dnLower.endsWith(p.getTargetOuDn().toLowerCase()))
-                .max(Comparator.comparingInt(p -> p.getTargetOuDn().length()));
+                .filter(p -> dnLower.endsWith(p.getTargetUserDn().toLowerCase()))
+                .max(Comparator.comparingInt(p -> p.getTargetUserDn().length()));
     }
 
     @Transactional(readOnly = true)
@@ -832,7 +834,8 @@ public class ProvisioningProfileService {
     }
 
     private void applyCommonFields(ProvisioningProfile profile, String name, String description,
-                                    String targetOuDn, List<String> objectClassNames,
+                                    String targetUserDn, String targetGroupDn,
+                                    List<String> objectClassNames,
                                     String rdnAttribute, boolean showDnField,
                                     boolean enabled, boolean selfRegistrationAllowed,
                                     Integer passwordLength, Boolean passwordUppercase,
@@ -841,7 +844,13 @@ public class ProvisioningProfileService {
                                     Boolean emailPasswordToUser) {
         profile.setName(name);
         profile.setDescription(description);
-        profile.setTargetOuDn(targetOuDn);
+        profile.setTargetUserDn(targetUserDn);
+        // Groups may live in a subtree separate from users; when an admin
+        // leaves it blank, default to the user DN so the column (NOT NULL)
+        // is always populated and behaviour matches the historical
+        // single-DN profiles (and the pre-existing-row backfill).
+        profile.setTargetGroupDn(
+                (targetGroupDn != null && !targetGroupDn.isBlank()) ? targetGroupDn : targetUserDn);
         profile.setObjectClassNames(new ArrayList<>(objectClassNames));
         profile.setRdnAttribute(rdnAttribute);
         profile.setShowDnField(showDnField);
@@ -1028,7 +1037,7 @@ public class ProvisioningProfileService {
 
         // Search LDAP for users under the profile's target OU
         List<LdapUser> users = ldapUserService.searchUsers(
-                dc, "(objectClass=*)", profile.getTargetOuDn(), "dn");
+                dc, "(objectClass=*)", profile.getTargetUserDn(), "dn");
 
         List<GroupChangePreview.UserGroupChange> changes = new ArrayList<>();
 
@@ -1168,8 +1177,8 @@ public class ProvisioningProfileService {
         // Lowercase target-OU suffixes for userDn containment checks
         List<String> targetOus = new ArrayList<>();
         for (ProvisioningProfile p : profiles) {
-            if (p.getTargetOuDn() != null && !p.getTargetOuDn().isBlank()) {
-                targetOus.add(p.getTargetOuDn().toLowerCase());
+            if (p.getTargetUserDn() != null && !p.getTargetUserDn().isBlank()) {
+                targetOus.add(p.getTargetUserDn().toLowerCase());
             }
             for (ProfileGroupAssignment g :
                     groupAssignmentRepo.findAllByProfileIdOrderByDisplayOrderAsc(p.getId())) {
@@ -1307,13 +1316,13 @@ public class ProvisioningProfileService {
      * there or the bind can't see it (same observable effect — user
      * creation will fail at the LDAP layer).
      */
-    public record TargetOuProbeResult(boolean exists, String targetOuDn) {}
+    public record TargetOuProbeResult(boolean exists, String dn) {}
 
     @Transactional(readOnly = true)
-    public TargetOuProbeResult probeTargetOu(UUID directoryId, String targetOuDn) {
+    public TargetOuProbeResult probeTargetOu(UUID directoryId, String dn) {
         DirectoryConnection dir = requireDirectory(directoryId);
-        boolean exists = ldapBrowseService.entryExists(dir, targetOuDn);
-        return new TargetOuProbeResult(exists, targetOuDn);
+        boolean exists = ldapBrowseService.entryExists(dir, dn);
+        return new TargetOuProbeResult(exists, dn);
     }
 
     /**
@@ -1323,10 +1332,10 @@ public class ProvisioningProfileService {
      * legitimate pre-stage workflow (creating a profile before the
      * OU is provisioned in LDAP).
      */
-    private void requireTargetOuExists(DirectoryConnection dir, String targetOuDn) {
-        if (!ldapBrowseService.entryExists(dir, targetOuDn)) {
+    private void requireTargetOuExists(DirectoryConnection dir, String dn) {
+        if (!ldapBrowseService.entryExists(dir, dn)) {
             throw new IllegalArgumentException(
-                    "Target OU [" + targetOuDn + "] does not exist in directory ["
+                    "Target User DN [" + dn + "] does not exist in directory ["
                             + dir.getDisplayName() + "]. Create the OU first, or "
                             + "pass force=true to save the profile anyway "
                             + "(user creation will fail until the OU exists).");

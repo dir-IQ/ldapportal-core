@@ -78,7 +78,7 @@ A provisioning profile defines how users are managed in an OU. The wizard pre-fi
 |-------|-----------------|-----------------|
 | Object Classes | `inetOrgPerson`, `organizationalPerson`, `person`, `top` | `user`, `person`, `organizationalPerson`, `top` |
 | RDN Attribute | `uid` | `cn` |
-| Target OU | Your Base DN (refine later to a specific OU) | `CN=Users,DC=corp,DC=local` |
+| Target User DN | Your Base DN (refine later to a specific OU) | `CN=Users,DC=corp,DC=local` |
 
 ### Step 4: First Access Review (Optional)
 

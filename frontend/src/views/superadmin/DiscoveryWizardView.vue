@@ -28,7 +28,7 @@ const includeGroups = ref(true)
 // Proposal data
 const proposal = ref(null)
 
-// User selections per profile (keyed by targetOuDn)
+// User selections per profile (keyed by targetUserDn)
 const profileSelections = ref({})
 
 // ── Load directory info ───────────────────────────────────────────────────
@@ -57,7 +57,7 @@ async function runDiscovery() {
     // Initialize profile selections
     const sel = {}
     for (const p of data.profiles) {
-      sel[p.targetOuDn] = {
+      sel[p.targetUserDn] = {
         included: !p.alreadyConfigured,
         name: p.name,
         objectClasses: [...p.objectClasses],
@@ -84,7 +84,7 @@ async function runDiscovery() {
 // ── Computed helpers ──────────────────────────────────────────────────────
 const includedProfiles = computed(() => {
   if (!proposal.value) return []
-  return proposal.value.profiles.filter(p => profileSelections.value[p.targetOuDn]?.included)
+  return proposal.value.profiles.filter(p => profileSelections.value[p.targetUserDn]?.included)
 })
 
 const commitSummary = computed(() => {
@@ -95,10 +95,10 @@ const commitSummary = computed(() => {
   const groupBaseDns = []
 
   for (const p of profiles) {
-    const sel = profileSelections.value[p.targetOuDn]
+    const sel = profileSelections.value[p.targetUserDn]
     totalAttrs += sel.attributes.filter(a => a.included).length
     totalGroups += sel.groupAssignments.filter(g => g.included).length
-    userBaseDns.push(p.targetOuDn)
+    userBaseDns.push(p.targetUserDn)
   }
 
   if (proposal.value?.groupOUs) {
@@ -116,10 +116,10 @@ async function doCommit() {
   error.value = null
   try {
     const profiles = includedProfiles.value.map(p => {
-      const sel = profileSelections.value[p.targetOuDn]
+      const sel = profileSelections.value[p.targetUserDn]
       return {
         name: sel.name,
-        targetOuDn: p.targetOuDn,
+        targetUserDn: p.targetUserDn,
         objectClassNames: sel.objectClasses,
         rdnAttribute: sel.rdnAttribute,
         showDnField: false,
@@ -179,7 +179,7 @@ function includePopulatedOnly(ouDn) {
   profileSelections.value[ouDn].attributes.forEach(a => a.included = !a.hidden)
 }
 function resetAttrs(ouDn) {
-  const profile = proposal.value.profiles.find(p => p.targetOuDn === ouDn)
+  const profile = proposal.value.profiles.find(p => p.targetUserDn === ouDn)
   if (!profile) return
   profileSelections.value[ouDn].attributes = profile.attributeConfigs.map(a => ({
     ...a,
@@ -316,16 +316,16 @@ const maxStep = computed(() => includeGroups.value ? 5 : 4)
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
-            <tr v-for="p in proposal.profiles" :key="p.targetOuDn" class="hover:bg-gray-50">
+            <tr v-for="p in proposal.profiles" :key="p.targetUserDn" class="hover:bg-gray-50">
               <td class="px-4 py-2.5">
                 <input type="checkbox"
-                       v-model="profileSelections[p.targetOuDn].included"
+                       v-model="profileSelections[p.targetUserDn].included"
                        :disabled="p.alreadyConfigured"
                        class="rounded" />
               </td>
               <td class="px-4 py-2.5">
                 <div class="font-medium text-gray-900">{{ p.name }}</div>
-                <div class="text-xs text-gray-500 truncate max-w-xs" :title="p.targetOuDn">{{ p.targetOuDn }}</div>
+                <div class="text-xs text-gray-500 truncate max-w-xs" :title="p.targetUserDn">{{ p.targetUserDn }}</div>
               </td>
               <td class="px-4 py-2.5 text-right">
                 <span class="font-medium">{{ p.estimatedUserCount >= 1001 ? '1000+' : p.estimatedUserCount }}</span>
@@ -382,16 +382,16 @@ const maxStep = computed(() => includeGroups.value ? 5 : 4)
     <!-- Step 3: Review Proposed Profiles -->
     <!-- ══════════════════════════════════════════════════════════════════ -->
     <div v-if="step === 3 && proposal" class="space-y-6">
-      <div v-for="p in includedProfiles" :key="p.targetOuDn"
+      <div v-for="p in includedProfiles" :key="p.targetUserDn"
            class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
         <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <div class="flex-1 mr-4">
             <label class="text-xs text-gray-500">Profile Name</label>
-            <input v-model="profileSelections[p.targetOuDn].name" aria-label="Profile name"
+            <input v-model="profileSelections[p.targetUserDn].name" aria-label="Profile name"
                    class="input w-full mt-1" />
           </div>
           <div class="text-right text-xs text-gray-500">
-            <div>{{ p.targetOuDn }}</div>
+            <div>{{ p.targetUserDn }}</div>
             <div>~{{ p.estimatedUserCount }} users</div>
           </div>
         </div>
@@ -399,23 +399,23 @@ const maxStep = computed(() => includeGroups.value ? 5 : 4)
         <div class="px-5 py-3 border-b border-gray-50 flex items-center gap-3">
           <span class="text-xs text-gray-500">Object Classes:</span>
           <div class="flex flex-wrap gap-1">
-            <span v-for="oc in profileSelections[p.targetOuDn].objectClasses" :key="oc"
+            <span v-for="oc in profileSelections[p.targetUserDn].objectClasses" :key="oc"
                   class="badge-gray text-xs">{{ oc }}</span>
           </div>
           <span class="text-xs text-gray-500 ml-4">RDN:</span>
-          <input v-model="profileSelections[p.targetOuDn].rdnAttribute" aria-label="RDN attribute"
+          <input v-model="profileSelections[p.targetUserDn].rdnAttribute" aria-label="RDN attribute"
                  class="input input-sm w-24" />
         </div>
 
         <!-- Attribute table -->
         <div class="px-5 py-3 border-b border-gray-50 flex items-center justify-between">
           <h3 class="text-sm font-medium text-gray-700">
-            Attributes ({{ profileSelections[p.targetOuDn].attributes.filter(a => a.included).length }}/{{ profileSelections[p.targetOuDn].attributes.length }})
+            Attributes ({{ profileSelections[p.targetUserDn].attributes.filter(a => a.included).length }}/{{ profileSelections[p.targetUserDn].attributes.length }})
           </h3>
           <div class="flex gap-2">
-            <button @click="includeAllAttrs(p.targetOuDn)" class="text-xs text-blue-600 hover:text-blue-800">All</button>
-            <button @click="includePopulatedOnly(p.targetOuDn)" class="text-xs text-blue-600 hover:text-blue-800">Populated only</button>
-            <button @click="resetAttrs(p.targetOuDn)" class="text-xs text-gray-500 hover:text-gray-700">Reset</button>
+            <button @click="includeAllAttrs(p.targetUserDn)" class="text-xs text-blue-600 hover:text-blue-800">All</button>
+            <button @click="includePopulatedOnly(p.targetUserDn)" class="text-xs text-blue-600 hover:text-blue-800">Populated only</button>
+            <button @click="resetAttrs(p.targetUserDn)" class="text-xs text-gray-500 hover:text-gray-700">Reset</button>
           </div>
         </div>
 
@@ -432,7 +432,7 @@ const maxStep = computed(() => includeGroups.value ? 5 : 4)
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
-              <tr v-for="attr in profileSelections[p.targetOuDn].attributes" :key="attr.attributeName"
+              <tr v-for="attr in profileSelections[p.targetUserDn].attributes" :key="attr.attributeName"
                   :class="attr.included ? '' : 'opacity-50'">
                 <td class="px-4 py-1.5">
                   <input type="checkbox" v-model="attr.included" :aria-label="`Include ${attr.attributeName}`" class="rounded" />
@@ -471,14 +471,14 @@ const maxStep = computed(() => includeGroups.value ? 5 : 4)
     <!-- Step 4: Review Group Assignments -->
     <!-- ══════════════════════════════════════════════════════════════════ -->
     <div v-if="step === 4 && proposal" class="space-y-6">
-      <div v-for="p in includedProfiles" :key="p.targetOuDn"
+      <div v-for="p in includedProfiles" :key="p.targetUserDn"
            class="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
         <div class="px-5 py-3 border-b border-gray-100">
-          <h2 class="text-sm font-semibold text-gray-700">{{ profileSelections[p.targetOuDn].name }}</h2>
-          <p class="text-xs text-gray-500">{{ p.targetOuDn }}</p>
+          <h2 class="text-sm font-semibold text-gray-700">{{ profileSelections[p.targetUserDn].name }}</h2>
+          <p class="text-xs text-gray-500">{{ p.targetUserDn }}</p>
         </div>
 
-        <div v-if="!profileSelections[p.targetOuDn].groupAssignments.length"
+        <div v-if="!profileSelections[p.targetUserDn].groupAssignments.length"
              class="px-5 py-6 text-center text-gray-500 text-sm">
           No group overlap detected for this OU.
         </div>
@@ -493,7 +493,7 @@ const maxStep = computed(() => includeGroups.value ? 5 : 4)
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
-            <tr v-for="g in profileSelections[p.targetOuDn].groupAssignments" :key="g.groupDn">
+            <tr v-for="g in profileSelections[p.targetUserDn].groupAssignments" :key="g.groupDn">
               <td class="px-4 py-2">
                 <input type="checkbox" v-model="g.included" class="rounded" />
               </td>
@@ -551,15 +551,15 @@ const maxStep = computed(() => includeGroups.value ? 5 : 4)
 
         <h3 class="text-sm font-semibold text-gray-700 mb-2">Profiles</h3>
         <ul class="space-y-2 mb-6">
-          <li v-for="p in includedProfiles" :key="p.targetOuDn"
+          <li v-for="p in includedProfiles" :key="p.targetUserDn"
               class="flex items-center justify-between text-sm bg-gray-50 rounded-lg px-4 py-2">
             <div>
-              <span class="font-medium text-gray-900">{{ profileSelections[p.targetOuDn].name }}</span>
-              <span class="text-gray-500 ml-2 text-xs">{{ p.targetOuDn }}</span>
+              <span class="font-medium text-gray-900">{{ profileSelections[p.targetUserDn].name }}</span>
+              <span class="text-gray-500 ml-2 text-xs">{{ p.targetUserDn }}</span>
             </div>
             <div class="text-xs text-gray-500">
-              {{ profileSelections[p.targetOuDn].attributes.filter(a => a.included).length }} attrs,
-              {{ profileSelections[p.targetOuDn].groupAssignments.filter(g => g.included).length }} groups
+              {{ profileSelections[p.targetUserDn].attributes.filter(a => a.included).length }} attrs,
+              {{ profileSelections[p.targetUserDn].groupAssignments.filter(g => g.included).length }} groups
             </div>
           </li>
         </ul>

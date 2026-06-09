@@ -308,12 +308,12 @@ class PermissionServiceTest {
         return r;
     }
 
-    private AdminProfileRole roleWithOuDn(BaseRole baseRole, String targetOuDn) {
+    private AdminProfileRole roleWithOuDn(BaseRole baseRole, String targetUserDn) {
         AdminProfileRole r = new AdminProfileRole();
         r.setBaseRole(baseRole);
         com.ldapportal.entity.ProvisioningProfile profile = new com.ldapportal.entity.ProvisioningProfile();
         profile.setId(UUID.randomUUID());
-        profile.setTargetOuDn(targetOuDn);
+        profile.setTargetUserDn(targetUserDn);
         r.setProfile(profile);
         return r;
     }

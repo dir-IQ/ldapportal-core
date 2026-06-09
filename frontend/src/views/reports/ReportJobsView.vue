@@ -385,8 +385,8 @@ function buildReportParams(): Record<string, unknown> {
   // whole directory by default. Report types that already take an
   // explicit DN parameter (USERS_IN_BRANCH, USERS_IN_GROUP) override
   // this in the type-specific branches above.
-  if (!auth.isSuperadmin && profilePicker.selectedProfile?.targetOuDn) {
-    params.scopeBaseDn = profilePicker.selectedProfile.targetOuDn
+  if (!auth.isSuperadmin && profilePicker.selectedProfile?.targetUserDn) {
+    params.scopeBaseDn = profilePicker.selectedProfile.targetUserDn
   }
   return params
 }

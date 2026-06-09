@@ -59,7 +59,8 @@ interface GroupAssignment {
 interface ProfileForm {
   name: string
   description: string
-  targetOuDn: string
+  targetUserDn: string
+  targetGroupDn: string
   objectClassNames: string[]
   rdnAttribute: string
   showDnField: boolean
@@ -95,7 +96,8 @@ interface ProfileRow {
   description?: string | null
   directoryId: string
   directoryName?: string
-  targetOuDn: string
+  targetUserDn: string
+  targetGroupDn?: string | null
   objectClassNames: string[]
   rdnAttribute: string
   showDnField: boolean
@@ -147,7 +149,7 @@ function errMsg(e: unknown, fallback = 'Something went wrong'): string {
 const profileCols = [
   { key: 'name', label: 'Name' },
   { key: 'directoryName', label: 'Directory' },
-  { key: 'targetOuDn', label: 'Target OU' },
+  { key: 'targetUserDn', label: 'Target User' },
   { key: 'objectClassNames', label: 'Object Classes' },
   { key: 'enabled', label: 'Status' },
 ]
@@ -189,7 +191,7 @@ const profileApprovers = ref<string[]>([])
 
 function emptyProfile(): ProfileForm {
   return {
-    name: '', description: '', targetOuDn: '',
+    name: '', description: '', targetUserDn: '', targetGroupDn: '',
     objectClassNames: [], rdnAttribute: '',
     showDnField: true, enabled: true, selfRegistrationAllowed: false,
     passwordLength: 16, passwordUppercase: true, passwordLowercase: true,
@@ -262,7 +264,8 @@ async function openEdit(p: ProfileRow) {
   editing.value = p.id
   selectedDirId.value = p.directoryId
   profile.value = {
-    name: p.name, description: p.description || '', targetOuDn: p.targetOuDn,
+    name: p.name, description: p.description || '', targetUserDn: p.targetUserDn,
+    targetGroupDn: p.targetGroupDn || '',
     objectClassNames: [...p.objectClassNames], rdnAttribute: p.rdnAttribute,
     showDnField: p.showDnField, enabled: p.enabled,
     selfRegistrationAllowed: p.selfRegistrationAllowed,
@@ -371,8 +374,8 @@ async function openEdit(p: ProfileRow) {
 }
 
 async function save() {
-  if (!profile.value.name || !profile.value.targetOuDn) {
-    notif.error('Name and Target OU DN are required')
+  if (!profile.value.name || !profile.value.targetUserDn) {
+    notif.error('Name and Target User DN are required')
     return
   }
   if (profile.value.objectClassNames.length === 0) {
@@ -557,7 +560,7 @@ let targetOuProbeToken = 0
 
 function scheduleTargetOuProbe() {
   if (targetOuProbeTimer) clearTimeout(targetOuProbeTimer)
-  const dn = profile.value.targetOuDn?.trim() ?? ''
+  const dn = profile.value.targetUserDn?.trim() ?? ''
   const dirId = selectedDirId.value
   if (!dn || !dirId) {
     targetOuProbeState.value = 'idle'
@@ -584,8 +587,41 @@ function scheduleTargetOuProbe() {
 }
 
 // Re-probe whenever the DN or directory changes.
-watch(() => [profile.value.targetOuDn, selectedDirId.value],
+watch(() => [profile.value.targetUserDn, selectedDirId.value],
   () => { scheduleTargetOuProbe() })
+
+// ── Target Group DN probe / warning banner ──────────────────────
+//
+// Same debounced existence check as the user DN, but advisory only:
+// the group container isn't validated server-side (group assignments
+// reference explicit DNs), so a 'missing' result never blocks save.
+const targetGroupProbeState = ref<TargetOuProbeState>('idle')
+let targetGroupProbeTimer: ReturnType<typeof setTimeout> | null = null
+let targetGroupProbeToken = 0
+
+function scheduleTargetGroupProbe() {
+  if (targetGroupProbeTimer) clearTimeout(targetGroupProbeTimer)
+  const dn = profile.value.targetGroupDn?.trim() ?? ''
+  const dirId = selectedDirId.value
+  if (!dn || !dirId) {
+    targetGroupProbeState.value = 'idle'
+    return
+  }
+  targetGroupProbeState.value = 'checking'
+  const myToken = ++targetGroupProbeToken
+  targetGroupProbeTimer = setTimeout(async () => {
+    try {
+      const { data } = await probeTargetOu(dirId, dn)
+      if (myToken !== targetGroupProbeToken) return
+      targetGroupProbeState.value = data?.exists ? 'exists' : 'missing'
+    } catch {
+      if (myToken === targetGroupProbeToken) targetGroupProbeState.value = 'idle'
+    }
+  }, 400)
+}
+
+watch(() => [profile.value.targetGroupDn, selectedDirId.value],
+  () => { scheduleTargetGroupProbe() })
 /**
  * Apply the inetOrgPerson seed to the in-memory profile state.
  *
@@ -1144,7 +1180,7 @@ function toggleApprover(accountId: string) {
       <template #cell-name="{ row }">
         <span class="font-medium">{{ (row as ProfileRow).name }}</span>
       </template>
-      <template #cell-targetOuDn="{ value }">
+      <template #cell-targetUserDn="{ value }">
         <span class="text-gray-600 truncate block max-w-xs" :title="value">{{ value }}</span>
       </template>
       <template #cell-objectClassNames="{ value }">
@@ -1211,10 +1247,10 @@ function toggleApprover(accountId: string) {
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Target OU DN</label>
-            <DnPicker v-model="profile.targetOuDn" :directory-id="selectedDirId ?? ''"
+            <label class="block text-sm font-medium text-gray-700 mb-1">Target User DN</label>
+            <DnPicker v-model="profile.targetUserDn" :directory-id="selectedDirId ?? ''"
               placeholder="e.g. ou=engineers,ou=people,dc=corp" />
-            <!-- Target-OU warning banner: surfaces when the probe says
+            <!-- Target-User-DN warning banner: surfaces when the probe says
                  the DN doesn't resolve in the directory. Doesn't
                  block save by itself — the operator can acknowledge
                  and continue (passes force=true on the save). -->
@@ -1235,6 +1271,33 @@ function toggleApprover(accountId: string) {
               <span aria-hidden="true">✓</span> OU resolves in the directory.
             </div>
             <div v-else-if="targetOuProbeState === 'checking'"
+                 class="mt-2 text-xs text-gray-500">Checking…</div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Target Group DN</label>
+            <DnPicker v-model="profile.targetGroupDn" :directory-id="selectedDirId ?? ''"
+              placeholder="Defaults to the Target User DN" />
+            <p class="mt-1 text-xs text-gray-500">
+              Container the profile's groups live under. Scopes the group browser below.
+              Leave blank to keep groups in the same subtree as users.
+            </p>
+            <!-- Advisory only: an absent group container doesn't block save
+                 (group assignments still reference explicit DNs). -->
+            <div v-if="targetGroupProbeState === 'missing'"
+                 class="mt-2 rounded-md border border-yellow-200 bg-yellow-50 p-3 text-sm text-yellow-900 flex items-start gap-2">
+              <span aria-hidden="true" class="mt-0.5">⚠</span>
+              <div class="flex-1">
+                <div class="font-medium">This container isn't present in the directory.</div>
+                <div class="text-xs mt-0.5">
+                  The group browser will show no entries under it until it exists.
+                </div>
+              </div>
+            </div>
+            <div v-else-if="targetGroupProbeState === 'exists'"
+                 class="mt-2 text-xs text-green-700 inline-flex items-center gap-1">
+              <span aria-hidden="true">✓</span> Container resolves in the directory.
+            </div>
+            <div v-else-if="targetGroupProbeState === 'checking'"
                  class="mt-2 text-xs text-gray-500">Checking…</div>
           </div>
           <div class="grid grid-cols-3 gap-4 items-end">
@@ -1457,7 +1520,8 @@ function toggleApprover(accountId: string) {
             <div v-for="(g, i) in profile.groupAssignments" :key="i" class="flex gap-2 items-end">
               <div class="flex-1">
                 <label class="block text-xs text-gray-500">Group DN</label>
-                <DnPicker v-model="g.groupDn" :directory-id="selectedDirId ?? ''" scope="group" />
+                <DnPicker v-model="g.groupDn" :directory-id="selectedDirId ?? ''" scope="group"
+                  :base-dn="profile.targetGroupDn || ''" />
               </div>
               <div class="w-40">
                 <label :for="`sp-group-${i}-memberAttr`" class="block text-xs text-gray-500">Member Attribute</label>
