@@ -123,7 +123,7 @@ public class EffectivePermissionsService {
         return new ProfileEffective(
                 profile.getId(), profile.getName(),
                 directoryId, directoryName,
-                baseRole, profile.getTargetOuDn(),
+                baseRole, profile.getTargetUserDn(),
                 features);
     }
 

@@ -89,7 +89,7 @@ public record AdminDashboardDto(
      * Per-profile stats row for the admin dashboard.
      *
      * <p>{@code userCount}/{@code groupCount} are LDAP counts scoped to
-     * the profile's {@code targetOuDn} — not the whole directory — so the
+     * the profile's {@code targetUserDn} — not the whole directory — so the
      * number reflects what the admin can actually see and act on under
      * this profile. Multiple profiles sharing the same (directory,
      * target OU) get the same count (the service dedupes the LDAP query).
@@ -102,7 +102,7 @@ public record AdminDashboardDto(
             String directoryId,
             String directoryName,
             String baseRole,
-            String targetOuDn,
+            String targetUserDn,
             long userCount,
             long groupCount,
             long pendingApprovals

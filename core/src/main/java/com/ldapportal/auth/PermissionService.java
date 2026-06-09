@@ -177,7 +177,7 @@ public class PermissionService {
 
     /**
      * Returns the set of OU DNs the admin is authorized to operate in for
-     * the given directory (derived from profile {@code targetOuDn} fields).
+     * the given directory (derived from profile {@code targetUserDn} fields).
      * Returns empty set for superadmins (meaning unrestricted).
      */
     public Set<String> getAuthorizedOuDns(AuthPrincipal principal, UUID directoryId) {
@@ -185,7 +185,7 @@ public class PermissionService {
         return profileRoleRepo
                 .findAllByAdminAccountIdAndProfileDirectoryIdWithProfile(principal.id(), directoryId)
                 .stream()
-                .map(r -> r.getProfile().getTargetOuDn())
+                .map(r -> r.getProfile().getTargetUserDn())
                 .collect(Collectors.toSet());
     }
 

@@ -35,7 +35,7 @@ The setup wizard runs automatically on the first superadmin login. It guides the
    - Click "Continue"
 7. **Step 4 (Create Profile):**
    - Profile name defaults to directory display name
-   - Target OU defaults to Base DN
+   - Target User DN defaults to Base DN
    - Object classes default to inetOrgPerson, organizationalPerson, person, top
    - Schema dropdown loads available object classes from the directory
    - Note the Discovery Wizard callout at the bottom

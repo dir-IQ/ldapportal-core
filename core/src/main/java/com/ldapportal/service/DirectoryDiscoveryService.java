@@ -133,7 +133,7 @@ public class DirectoryDiscoveryService {
         List<ProvisioningProfile> existingProfiles =
                 profileRepo.findAllByDirectoryIdOrderByNameAsc(directoryId);
         Set<String> existingOuDns = existingProfiles.stream()
-                .map(p -> p.getTargetOuDn().toLowerCase(Locale.ROOT))
+                .map(p -> p.getTargetUserDn().toLowerCase(Locale.ROOT))
                 .collect(Collectors.toSet());
 
         // Step 4 — Build proposed profiles with attribute configs

@@ -96,7 +96,7 @@
           class="w-full text-left px-4 py-3 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors"
         >
           <span class="font-medium text-gray-900 text-sm">{{ p.name }}</span>
-          <span v-if="p.targetOuDn" class="text-[13px] text-gray-500 ml-2 font-mono">{{ p.targetOuDn }}</span>
+          <span v-if="p.targetUserDn" class="text-[13px] text-gray-500 ml-2 font-mono">{{ p.targetUserDn }}</span>
         </button>
       </div>
       <template #footer>
@@ -198,7 +198,7 @@ import CopyButton from '@/components/CopyButton.vue'
 interface ProfileLite {
   id: string
   name: string
-  targetOuDn?: string | null
+  targetUserDn?: string | null
   enabled?: boolean
   attributeConfigs?: Array<{ attributeName: string, defaultValue?: string }>
 }
@@ -384,7 +384,7 @@ async function load() {
   await call(async () => {
     const { data } = await groupsApi.searchGroups(dirId, {
       filter: filterText.value || undefined,
-      baseDn: profileData.value?.targetOuDn || undefined,
+      baseDn: profileData.value?.targetUserDn || undefined,
       limit:  FETCH_LIMIT,
     })
     const entries = Array.isArray(data) ? data : (data?.entries || [])
@@ -424,7 +424,7 @@ async function doExportGroups() {
   try {
     const params = {
       filter: filterText.value || undefined,
-      baseDn: profileData.value?.targetOuDn || undefined,
+      baseDn: profileData.value?.targetUserDn || undefined,
     }
     const { data } = await exportGroupCsv(dirId, params)
     downloadBlob(data, 'groups.csv')
@@ -477,7 +477,7 @@ function openCreate() {
 function selectProfileAndCreate(p: ProfileLite) {
   showTemplatePicker.value = false
   createProfile.value = p
-  createForm.value = emptyCreateForm(p?.targetOuDn || '')
+  createForm.value = emptyCreateForm(p?.targetUserDn || '')
   showCreate.value = true
 }
 

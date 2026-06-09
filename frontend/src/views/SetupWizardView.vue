@@ -194,8 +194,8 @@
               <input id="setup-profile-name" v-model="profile.name" type="text" class="input w-full" />
             </div>
             <div>
-              <label class="label">Target OU *</label>
-              <DnPicker v-model="profile.targetOuDn" :directory-id="directoryId" />
+              <label class="label">Target User DN *</label>
+              <DnPicker v-model="profile.targetUserDn" :directory-id="directoryId" />
             </div>
             <div>
               <label class="label">Object Classes *</label>
@@ -277,7 +277,7 @@
             </div>
             <div class="flex items-center gap-2 text-sm">
               <span class="text-green-500 font-bold">&#10003;</span>
-              <span class="text-gray-700">Profile "<strong>{{ profile.name }}</strong>" targeting {{ profile.targetOuDn }}</span>
+              <span class="text-gray-700">Profile "<strong>{{ profile.name }}</strong>" targeting {{ profile.targetUserDn }}</span>
             </div>
             <div class="flex items-center gap-2 text-sm">
               <span v-if="campaignId" class="text-green-500 font-bold">&#10003;</span>
@@ -527,7 +527,7 @@ watch(step, async (s) => {
 // ── Step 4: Profile ────────────────────────────────────────────────────
 const profile = ref({
   name: '',
-  targetOuDn: '',
+  targetUserDn: '',
   objectClasses: ['inetOrgPerson', 'organizationalPerson', 'person', 'top'],
   rdnAttribute: 'uid',
 })
@@ -538,7 +538,7 @@ const availableObjectClasses = computed(() =>
 )
 
 const canSaveProfile = computed(() =>
-  profile.value.name && profile.value.targetOuDn && profile.value.objectClasses.length > 0 && profile.value.rdnAttribute
+  profile.value.name && profile.value.targetUserDn && profile.value.objectClasses.length > 0 && profile.value.rdnAttribute
 )
 
 function addObjectClass(event: Event) {
@@ -554,7 +554,7 @@ function addObjectClass(event: Event) {
 watch(step, async (s) => {
   if (s !== 4) return
   if (!profile.value.name) profile.value.name = dir.value.displayName
-  if (!profile.value.targetOuDn) profile.value.targetOuDn = dir.value.baseDn
+  if (!profile.value.targetUserDn) profile.value.targetUserDn = dir.value.baseDn
   if (schemaObjectClasses.value.length === 0 && directoryId.value) {
     try {
       const { data } = await listObjectClasses(directoryId.value)
@@ -576,7 +576,7 @@ async function saveProfile() {
   try {
     const { data } = await createProfile(directoryId.value, {
       name: profile.value.name,
-      targetOuDn: profile.value.targetOuDn,
+      targetUserDn: profile.value.targetUserDn,
       objectClassNames: profile.value.objectClasses,
       rdnAttribute: profile.value.rdnAttribute,
       showDnField: false,

@@ -90,7 +90,8 @@ class ProvisioningProfileCloneTest {
         source.setId(sourceId);
         source.setDirectory(directory);
         source.setName("source");
-        source.setTargetOuDn("ou=people,dc=example,dc=com");
+        source.setTargetUserDn("ou=people,dc=example,dc=com");
+        source.setTargetGroupDn("ou=groups,dc=example,dc=com");
         source.setObjectClassNames(new ArrayList<>(List.of("inetOrgPerson")));
         source.setRdnAttribute("uid");
         source.setAdditionalProfiles(new HashSet<>());
@@ -119,6 +120,22 @@ class ProvisioningProfileCloneTest {
         // Previously the clone path saved twice — once empty, once with
         // additionalProfiles attached. Verify the consolidated single save.
         verify(profileRepo, times(1)).save(any(ProvisioningProfile.class));
+    }
+
+    @Test
+    void clone_copiesBothTargetDns() {
+        given(lifecycleRepo.findByProfileId(sourceId)).willReturn(Optional.empty());
+        given(approvalConfigRepo.findByProfileId(sourceId)).willReturn(Optional.empty());
+
+        ArgumentCaptor<ProvisioningProfile> captor =
+                ArgumentCaptor.forClass(ProvisioningProfile.class);
+
+        service.clone(directoryId, sourceId, "copy");
+
+        verify(profileRepo).save(captor.capture());
+        ProvisioningProfile copy = captor.getValue();
+        assertThat(copy.getTargetUserDn()).isEqualTo("ou=people,dc=example,dc=com");
+        assertThat(copy.getTargetGroupDn()).isEqualTo("ou=groups,dc=example,dc=com");
     }
 
     @Test

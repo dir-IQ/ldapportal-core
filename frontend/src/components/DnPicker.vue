@@ -108,6 +108,13 @@ const props = defineProps({
   authorizedRoots: { type: Array, default: () => [] },
   // group-only props
   directoryType: { type: String, default: '' },
+  /**
+   * Restricts the group picker to entries under this DN. Lets a caller
+   * scope the browser to a profile's Target Group DN so the tree only
+   * surfaces groups from the relevant subtree. Empty = browse all
+   * groups (the prior behaviour). LDAP scope only; ignored for Entra.
+   */
+  baseDn: { type: String, default: '' },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -286,7 +293,13 @@ async function openGroupPicker() {
     } else {
       // LDAP: tree structure from group DNs
       const { data } = await searchGroups(props.directoryId, { limit: 1000, attributes: 'dn' })
-      const dns = data.map(e => e.dn)
+      let dns = data.map(e => e.dn)
+      // Scope to the caller's base DN (e.g. a profile's Target Group DN)
+      // when supplied, so the tree only surfaces groups from that subtree.
+      const base = props.baseDn?.trim().toLowerCase()
+      if (base) {
+        dns = dns.filter(dn => dn.toLowerCase().endsWith(base))
+      }
       treeNodes.value = buildTree(dns)
     }
   } catch (e) {

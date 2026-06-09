@@ -21,7 +21,7 @@
 ### Step 3 — One profile per user OU
 
 - Profile name = RDN value of the OU DN (e.g., `ou=Staff` → "Staff")
-- Target OU DN = the discovered OU
+- Target User DN = the discovered OU
 - Object classes, RDN attribute, and attribute configs all come from the sampling
 
 ## Group Selection Algorithm
@@ -72,6 +72,6 @@ For each proposed profile, the wizard infers attribute configurations from the L
 ## Idempotency
 
 - The discovery scan is read-only — it never writes to LDAP or the database
-- Existing profiles are detected by `targetOuDn` match and shown as "Already configured" (checkbox disabled)
+- Existing profiles are detected by `targetUserDn` match and shown as "Already configured" (checkbox disabled)
 - The commit endpoint skips profiles whose name already exists and reports warnings
 - Base DN additions skip duplicates (case-insensitive comparison)

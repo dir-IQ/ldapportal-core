@@ -141,8 +141,8 @@ const filteredFeatures = computed(() => {
               <input v-model="filter" type="search" placeholder="Filter features…"
                      class="input text-xs w-56" />
             </div>
-            <p><span class="font-semibold">Target OU:</span>
-              <code class="ml-1 text-[11px] bg-white border border-gray-200 rounded px-1 py-0.5">{{ selected.targetOuDn || '—' }}</code>
+            <p><span class="font-semibold">Target User DN:</span>
+              <code class="ml-1 text-[11px] bg-white border border-gray-200 rounded px-1 py-0.5">{{ selected.targetUserDn || '—' }}</code>
             </p>
           </div>
 

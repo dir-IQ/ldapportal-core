@@ -20,7 +20,7 @@ public record DiscoveryProposalResponse(
 
     public record ProposedProfile(
             String name,
-            String targetOuDn,
+            String targetUserDn,
             List<String> objectClasses,
             String rdnAttribute,
             List<InferredAttributeConfig> attributeConfigs,

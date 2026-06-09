@@ -96,7 +96,7 @@ public class OperationalReportService {
         Map<String, Object> safeParams = params != null ? params : Map.of();
         // Admin-view scoping: when reportParams carries scopeBaseDn
         // (set by the frontend for non-superadmin sessions from the
-        // picked profile's targetOuDn), use it as the LDAP search
+        // picked profile's targetUserDn), use it as the LDAP search
         // base for report types that would otherwise scan the whole
         // directory. Report types that already require an explicit DN
         // (USERS_IN_BRANCH, USERS_IN_GROUP) ignore the override.

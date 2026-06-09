@@ -33,7 +33,7 @@ public record EffectivePermissionsResponse(
             UUID directoryId,
             String directoryName,
             BaseRole baseRole,
-            String targetOuDn,
+            String targetUserDn,
             List<FeatureEffective> features) {}
 
     public record FeatureEffective(

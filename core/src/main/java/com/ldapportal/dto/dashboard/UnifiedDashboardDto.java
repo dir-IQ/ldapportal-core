@@ -106,10 +106,10 @@ public record UnifiedDashboardDto(
             String directoryId,
             String directoryName,
             String baseRole,
-            String targetOuDn,
-            /** LDAP user count scoped to {@code targetOuDn}. -1 = failure. */
+            String targetUserDn,
+            /** LDAP user count scoped to {@code targetUserDn}. -1 = failure. */
             long userCount,
-            /** LDAP group count scoped to {@code targetOuDn}. -1 = failure. */
+            /** LDAP group count scoped to {@code targetUserDn}. -1 = failure. */
             long groupCount,
             long pendingApprovals
     ) {}

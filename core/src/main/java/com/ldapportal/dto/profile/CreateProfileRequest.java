@@ -12,7 +12,8 @@ import java.util.UUID;
 public record CreateProfileRequest(
         @NotBlank @Size(max = 255) String name,
         @Size(max = 2000) String description,
-        @NotBlank @Size(max = 500) String targetOuDn,
+        @NotBlank @Size(max = 500) String targetUserDn,
+        @Size(max = 500) String targetGroupDn,
         @NotEmpty List<@NotBlank String> objectClassNames,
         @NotBlank @Size(max = 100) String rdnAttribute,
         boolean showDnField,

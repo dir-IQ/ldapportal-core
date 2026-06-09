@@ -27,7 +27,7 @@ test.describe('ISVA profile override control plane @smoke', () => {
       {
         data: {
           name,
-          targetOuDn: 'ou=people,dc=example,dc=com',
+          targetUserDn: 'ou=people,dc=example,dc=com',
           objectClassNames: ['inetOrgPerson'],
           rdnAttribute: 'uid',
         },
