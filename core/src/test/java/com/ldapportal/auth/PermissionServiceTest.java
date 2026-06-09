@@ -245,6 +245,29 @@ class PermissionServiceTest {
     }
 
     @Test
+    void requireDnWithinScope_dnUnderGroupContainer_succeeds() {
+        // The group container is a subtree separate from users; an admin who
+        // owns the profile manages groups there, so a DN under targetGroupDn
+        // is in scope even though it isn't under targetUserDn.
+        when(profileRoleRepo.findAllByAdminAccountIdAndProfileDirectoryIdWithProfile(adminId, dirId))
+                .thenReturn(List.of(roleWithUserAndGroupDn(BaseRole.ADMIN,
+                        "ou=people,dc=example,dc=com",
+                        "ou=groups,dc=example,dc=com")));
+
+        permissionService.requireDnWithinScope(admin(), dirId, "cn=engineers,ou=groups,dc=example,dc=com");
+    }
+
+    @Test
+    void requireBaseDnWithinScope_groupContainerBase_succeeds() {
+        when(profileRoleRepo.findAllByAdminAccountIdAndProfileDirectoryIdWithProfile(adminId, dirId))
+                .thenReturn(List.of(roleWithUserAndGroupDn(BaseRole.ADMIN,
+                        "ou=people,dc=example,dc=com",
+                        "ou=groups,dc=example,dc=com")));
+
+        permissionService.requireBaseDnWithinScope(admin(), dirId, "ou=groups,dc=example,dc=com");
+    }
+
+    @Test
     void requireDnWithinScope_dnCaseDiffersFromOu_succeeds() {
         // LDAP DNs compare case-insensitively. Profile stored "ou=Engineering";
         // request DN comes in upper-case. Must still resolve as in-scope.
@@ -315,6 +338,14 @@ class PermissionServiceTest {
         profile.setId(UUID.randomUUID());
         profile.setTargetUserDn(targetUserDn);
         r.setProfile(profile);
+        return r;
+    }
+
+    private AdminProfileRole roleWithUserAndGroupDn(BaseRole baseRole,
+                                                    String targetUserDn,
+                                                    String targetGroupDn) {
+        AdminProfileRole r = roleWithOuDn(baseRole, targetUserDn);
+        r.getProfile().setTargetGroupDn(targetGroupDn);
         return r;
     }
 

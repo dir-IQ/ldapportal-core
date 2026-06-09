@@ -19,6 +19,7 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Enforces the permission model for admins.
@@ -177,7 +178,12 @@ public class PermissionService {
 
     /**
      * Returns the set of OU DNs the admin is authorized to operate in for
-     * the given directory (derived from profile {@code targetUserDn} fields).
+     * the given directory. Each profile the admin has a role on contributes
+     * both its {@code targetUserDn} (where its users live) and its
+     * {@code targetGroupDn} (where its groups live) — these may be distinct
+     * subtrees, and the admin manages both, so group searches and group
+     * writes under the group container stay in scope. When the two are equal
+     * (the default / backfilled case) the {@link Set} dedupes them.
      * Returns empty set for superadmins (meaning unrestricted).
      */
     public Set<String> getAuthorizedOuDns(AuthPrincipal principal, UUID directoryId) {
@@ -185,7 +191,10 @@ public class PermissionService {
         return profileRoleRepo
                 .findAllByAdminAccountIdAndProfileDirectoryIdWithProfile(principal.id(), directoryId)
                 .stream()
-                .map(r -> r.getProfile().getTargetUserDn())
+                .flatMap(r -> Stream.of(
+                        r.getProfile().getTargetUserDn(),
+                        r.getProfile().getTargetGroupDn()))
+                .filter(dn -> dn != null && !dn.isBlank())
                 .collect(Collectors.toSet());
     }
 
