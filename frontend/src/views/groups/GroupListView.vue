@@ -199,6 +199,7 @@ interface ProfileLite {
   id: string
   name: string
   targetUserDn?: string | null
+  targetGroupDn?: string | null
   enabled?: boolean
   attributeConfigs?: Array<{ attributeName: string, defaultValue?: string }>
 }
@@ -384,7 +385,11 @@ async function load() {
   await call(async () => {
     const { data } = await groupsApi.searchGroups(dirId, {
       filter: filterText.value || undefined,
-      baseDn: profileData.value?.targetUserDn || undefined,
+      // Groups live under the profile's group container, which may be a
+      // subtree separate from users. Fall back to the user DN for
+      // robustness (the backend backfills targetGroupDn, so this is
+      // only a guard against an older cached profile payload).
+      baseDn: profileData.value?.targetGroupDn || profileData.value?.targetUserDn || undefined,
       limit:  FETCH_LIMIT,
     })
     const entries = Array.isArray(data) ? data : (data?.entries || [])
@@ -424,7 +429,7 @@ async function doExportGroups() {
   try {
     const params = {
       filter: filterText.value || undefined,
-      baseDn: profileData.value?.targetUserDn || undefined,
+      baseDn: profileData.value?.targetGroupDn || profileData.value?.targetUserDn || undefined,
     }
     const { data } = await exportGroupCsv(dirId, params)
     downloadBlob(data, 'groups.csv')
@@ -460,8 +465,8 @@ async function doCreate() {
 
 function openCreate() {
   // Mirror UserListView's two-step flow: when multiple enabled profiles
-  // exist, force an explicit pick so the operator sees which target
-  // OU the group will be created under. Single profile auto-picks;
+  // exist, force an explicit pick so the operator sees which group
+  // container the group will be created under. Single profile auto-picks;
   // no profile falls back to the bare form using the directory base.
   createProfile.value = null
   if (allProfiles.value.length === 1) {
@@ -477,7 +482,7 @@ function openCreate() {
 function selectProfileAndCreate(p: ProfileLite) {
   showTemplatePicker.value = false
   createProfile.value = p
-  createForm.value = emptyCreateForm(p?.targetUserDn || '')
+  createForm.value = emptyCreateForm(p?.targetGroupDn || p?.targetUserDn || '')
   showCreate.value = true
 }
 
