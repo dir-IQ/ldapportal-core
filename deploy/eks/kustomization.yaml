@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Kustomize base for deploying LDAP Portal to AWS EKS from the public
+# GHCR images. Apply with:
+#
+#   kubectl apply -k deploy/eks
+#
+# Before applying, you MUST:
+#   1. Create the namespace + the secret (see README.md "Quick start").
+#   2. Edit configmap.yaml (DB_URL host, CORS origin) and
+#      ingress.yaml (hostname + ACM certificate ARN).
+#   3. Pin the image tags below to a release (don't ship :latest to prod).
+#
+# secret.example.yaml and secretproviderclass.example.yaml are intentionally
+# NOT listed here — secrets are created out of band so they never live in
+# git. See README.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ldapportal
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
+  - frontend-nginx-configmap.yaml
+  - backend-deployment.yaml
+  - backend-service.yaml
+  - backend-hpa.yaml
+  - backend-pdb.yaml
+  - frontend-deployment.yaml
+  - frontend-service.yaml
+  - frontend-pdb.yaml
+  - ingress.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: ldapportal
+  app.kubernetes.io/managed-by: kustomize
+
+# Override the image tag in one place. Pin to a released version (or a
+# digest) in production — the GHCR publish workflow tags vX.Y.Z and X.Y.
+# Swap community-plus-isva → community for the pure Apache-2.0 backend.
+images:
+  - name: ghcr.io/dir-iq/ldapportal-community-plus-isva
+    newTag: "1.0.0"
+  - name: ghcr.io/dir-iq/ldapportal-frontend
+    newTag: "1.0.0"

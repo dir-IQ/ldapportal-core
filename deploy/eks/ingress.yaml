@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Internet-facing ALB provisioned by the AWS Load Balancer Controller
+# (install it separately — see README.md). Mirrors the terraform/aws ECS
+# ALB: HTTPS-only with an HTTP→HTTPS redirect, /api/v1* to the backend,
+# everything else to the SPA. Per-target-group health checks come from
+# the Service annotations (backend → /actuator/health, frontend → /).
+#
+# EDIT BEFORE APPLYING:
+#   - alb.ingress.kubernetes.io/certificate-arn → your ACM cert ARN.
+#   - spec.rules[].host and spec.tls[].hosts    → your public hostname.
+#   - subnets are auto-discovered from tags
+#     (kubernetes.io/role/elb=1 on public subnets). To pin them, add
+#     alb.ingress.kubernetes.io/subnets: subnet-aaa,subnet-bbb.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ldapportal
+  labels:
+    app.kubernetes.io/name: ldapportal
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/REPLACE_ME
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    # Group multiple ingresses onto one ALB if you add more later.
+    alb.ingress.kubernetes.io/group.name: ldapportal
+    # Drop idle connections a touch faster than the 60s default is fine;
+    # raise if you stream long responses.
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=60
+spec:
+  ingressClassName: alb
+  tls:
+    - hosts:
+        - ldapportal.example.com
+  rules:
+    - host: ldapportal.example.com
+      http:
+        paths:
+          # API first — most specific. The SPA never sees /api/v1.
+          - path: /api/v1
+            pathType: Prefix
+            backend:
+              service:
+                name: ldapportal-backend
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ldapportal-frontend
+                port:
+                  number: 80
