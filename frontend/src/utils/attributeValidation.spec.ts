@@ -92,7 +92,9 @@ describe('validateDn', () => {
     'cn=Engineering',                       // single-RDN DN is valid
     'cn=a+sn=b,dc=example,dc=com',          // multi-valued RDN
     'cn=Smith\\, John,ou=people,dc=example,dc=com', // escaped comma in value
-    '2.5.4.3=foo,dc=example,dc=com',        // numeric OID attribute type
+    'cn=a\\+b,dc=example,dc=com',            // escaped plus in value
+    'cn=\\,,dc=example,dc=com',              // value is a single escaped char
+    '2.5.4.3=foo,dc=example,dc=com',         // numeric OID attribute type
   ])('accepts %s', (dn) => {
     expect(validateDn(dn)).toBe(true)
   })
