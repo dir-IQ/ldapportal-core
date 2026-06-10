@@ -65,6 +65,7 @@ the current code on `main`:
 | Error mapping (A6) | `GlobalExceptionHandler` | `IllegalArgumentException` → 400; `MethodArgumentNotValidException` → field-keyed 400 `ProblemDetail`. |
 | Frontend field validation + inline errors (C1 partial, C3 for `UserForm`, C4) | `frontend/src/utils/attributeValidation.ts` `validateAttributeValue()`; `UserForm.vue` `validate()` with `FormField :error`; `UserListView.save()` gates on it | required (create-only) / min / max / regex + custom message. Edit mode skips the immutable RDN. |
 | **Server-side syntax layer (A2.2, A4)** | `core/.../ldap/validation/{AttributeSyntax,WellKnownAttributes,LdapAttributeValidator}.java`; wired in `LdapOperationService` createUser / updateUser / createGroup / updateGroup / bulkUpdateAttributes | DN-format on DN-valued attrs (`manager`/`secretary`/`owner`/`seeAlso`/`roleOccupant`/`member`/`uniqueMember`, plus any profile `DN_LOOKUP` field), email on `mail`, boolean on `BOOLEAN` fields. Directory-type aware (Entra-exempt for DN); validates only values being written, so existing data is untouched. Field-keyed 400 via `IllegalArgumentException`. |
+| **Expose rules to the admin UI (B1, B2)** | B1/B2 **already complete** — `ProvisioningProfileController` → `ProfileResponse.AttributeConfigEntry` carries `inputType` + all validation fields; `SchemaController` exposes object-class `MUST`/`MAY` + `AttributeTypeInfo.syntaxOid`. **New:** `GET /api/v1/attribute-syntax` (`AttributeSyntaxController` → `AttributeSyntaxHints`) surfaces the built-in syntax map (`wellKnownAttributes`, `inputTypeSyntax`) from the same source of truth the server validates against (`AttributeSyntax.forInputType` + `WellKnownAttributes.all()`). | So the client (workstream C) can mirror DN/email/boolean checks without hard-coding a parallel list that drifts (§6 risk). Admin-scoped via the `/api/v1/**` rule. |
 
 ### Remaining ⏳ (the gaps this plan still tracks)
 
@@ -161,6 +162,12 @@ constraints) is the highest-value remaining step.
   add a handler if missing so the UI can render per-field messages.
 
 ### B. Backend — expose rules to the admin UI
+
+> **Status: ✅ shipped (2026-06-10).** B1 and B2 were verified already-complete
+> (no missing fields). A `GET /api/v1/attribute-syntax` endpoint
+> (`AttributeSyntaxController` → `AttributeSyntaxHints`) was added so the client
+> can mirror the built-in DN/email/boolean checks from the same source of truth
+> the server validates against. See §2a Shipped.
 
 - **B1.** Confirm the admin user/group template endpoint returns the full
   attribute config (it already powers `UserForm.vue`'s

@@ -35,6 +35,16 @@ public final class WellKnownAttributes {
     }
 
     /**
+     * The full, immutable well-known attribute → syntax map (keys lower-case).
+     * Exposed so the admin UI can mirror, from a single source of truth, the
+     * exact set of bare attributes the server shape-checks — rather than the
+     * frontend hard-coding a parallel list that could drift.
+     */
+    public static Map<String, AttributeSyntax.Kind> all() {
+        return SYNTAX;
+    }
+
+    /**
      * @return the syntax kind for {@code attribute} (case-insensitive), or
      *         {@code null} if the attribute is not well-known and has no
      *         intrinsic syntax to enforce.

@@ -6,6 +6,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class WellKnownAttributesTest {
 
@@ -30,5 +31,17 @@ class WellKnownAttributesTest {
         assertThat(WellKnownAttributes.syntaxFor("cn")).isNull();
         assertThat(WellKnownAttributes.syntaxFor("description")).isNull();
         assertThat(WellKnownAttributes.syntaxFor(null)).isNull();
+    }
+
+    @Test
+    void allExposesTheImmutableMapForUiMirroring() {
+        var all = WellKnownAttributes.all();
+        assertThat(all)
+                .containsEntry("manager", AttributeSyntax.Kind.DN)
+                .containsEntry("mail", AttributeSyntax.Kind.EMAIL);
+        // Keys are lower-case and the map is the source of truth for syntaxFor().
+        assertThat(all.keySet()).allMatch(k -> k.equals(k.toLowerCase(java.util.Locale.ROOT)));
+        assertThatThrownBy(() -> all.put("foo", AttributeSyntax.Kind.DN))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 }

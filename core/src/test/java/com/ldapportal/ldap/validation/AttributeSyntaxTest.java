@@ -2,10 +2,12 @@
 package com.ldapportal.ldap.validation;
 
 import com.ldapportal.entity.enums.DirectoryType;
+import com.ldapportal.entity.enums.InputType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -86,5 +88,22 @@ class AttributeSyntaxTest {
                 AttributeSyntax.Kind.BOOLEAN, "isMemberOf", value, DirectoryType.GENERIC))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("TRUE or FALSE");
+    }
+
+    // ── forInputType (shared with the client-facing hints) ──────────────────
+
+    @Test
+    void forInputTypeMapsDnLookupAndBoolean() {
+        assertThat(AttributeSyntax.forInputType(InputType.DN_LOOKUP))
+                .isEqualTo(AttributeSyntax.Kind.DN);
+        assertThat(AttributeSyntax.forInputType(InputType.BOOLEAN))
+                .isEqualTo(AttributeSyntax.Kind.BOOLEAN);
+    }
+
+    @Test
+    void forInputTypeReturnsNullForShapelessTypes() {
+        assertThat(AttributeSyntax.forInputType(InputType.TEXT)).isNull();
+        assertThat(AttributeSyntax.forInputType(InputType.SELECT)).isNull();
+        assertThat(AttributeSyntax.forInputType(null)).isNull();
     }
 }
