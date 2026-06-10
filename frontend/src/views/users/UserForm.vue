@@ -309,6 +309,35 @@
     <div v-show="activeTab === 'groups'">
       <p v-if="!isEdit" class="text-xs text-gray-500 mb-3">Select groups for the new user. Memberships will be created after the user is saved.</p>
 
+      <!-- Copy memberships from another user (edit mode). Pre-stages the
+           source user's groups as additions; applied with the rest on Save. -->
+      <div v-if="isEdit" class="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+        <button type="button" @click="showCopyFrom = !showCopyFrom"
+                class="flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800">
+          <svg :class="['w-3.5 h-3.5 transition-transform', showCopyFrom && 'rotate-90']" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
+          </svg>
+          Copy groups from another user
+        </button>
+        <div v-if="showCopyFrom" class="mt-3 space-y-2">
+          <p class="text-xs text-gray-500">Stage this user to join every group the selected user belongs to. Groups already shared are skipped; nothing is written until you Save.</p>
+          <div class="flex gap-2">
+            <div class="flex-1 min-w-0">
+              <DnPicker
+                v-model="copySourceDn"
+                :directory-id="dirId ?? undefined"
+                :superadmin="false"
+                placeholder="Select or paste a user DN"
+                title="Select source user"
+              />
+            </div>
+            <button type="button" @click="copyFromSelectedUser"
+                    :disabled="!copySourceDn.trim()"
+                    class="btn-primary text-xs shrink-0">Copy</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Two-column layout: left = current/pending memberships,
            right = search + add. Stacks vertically on narrow screens.
            Identity DN appears in the header above the tab strip — no
@@ -609,6 +638,11 @@ const displayedMemberships = computed<MembershipRow[]>(() => {
 
 const hasPendingMembershipChanges = computed(() =>
   stagedAdditions.value.length > 0 || stagedRemovals.value.length > 0)
+
+// "Copy groups from another user" (edit mode): pick a source user and stage
+// every group they belong to that this user isn't already in.
+const showCopyFrom = ref(false)
+const copySourceDn = ref('')
 
 const showExtraAttrs = ref(false)
 
@@ -1010,6 +1044,58 @@ function onMembershipAction(row: MembershipRow) {
   else unstageAddition(row.group)
 }
 
+/** Short label for a source-user DN — the leading RDN value, e.g. "alice". */
+function sourceLabel(dn: string): string {
+  const rdn = dn.split(',')[0] || dn
+  const eq = rdn.indexOf('=')
+  return eq >= 0 ? rdn.slice(eq + 1) : rdn
+}
+
+/**
+ * Stage every group the selected source user belongs to that this user isn't
+ * already in. Source memberships are derived from the already-loaded group
+ * list (same model as the Current Groups view), so no extra fetch — and the
+ * same group-search limit applies. Groups already held or staged are skipped;
+ * a group staged for removal is un-staged so the copy wins.
+ */
+function copyFromSelectedUser() {
+  const sourceDn = copySourceDn.value.trim()
+  const notif = useNotificationStore()
+  if (!sourceDn) return
+  if (sourceDn.toLowerCase() === (local.dn || '').toLowerCase()) {
+    notif.info('Pick a different user — that is this user.')
+    return
+  }
+  const sourceLower = sourceDn.toLowerCase()
+  const sourceGroups = allGroups.value.filter(g =>
+    g.members.some(m => m.toLowerCase() === sourceLower))
+  const label = sourceLabel(sourceDn)
+  if (!sourceGroups.length) {
+    notif.info(`${label} has no groups to copy (or none are visible here).`)
+    return
+  }
+
+  let added = 0
+  let shared = 0
+  for (const g of sourceGroups) {
+    const lower = g.dn.toLowerCase()
+    if (isStagedForRemoval(g.dn)) { unstageRemoval(g); added++; continue }
+    if (memberGroups.value.some(m => m.dn.toLowerCase() === lower)) { shared++; continue }
+    if (stagedAdditions.value.some(a => a.dn.toLowerCase() === lower)) continue
+    stagedAdditions.value.push(g)
+    added++
+  }
+  filterAvailableGroups()
+
+  if (added) {
+    notif.success(`Staged ${added} group(s) from ${label}${shared ? `; ${shared} already shared` : ''}`)
+  } else {
+    notif.info(`No new groups to add from ${label}${shared ? ` — ${shared} already shared` : ''}`)
+  }
+  showCopyFrom.value = false
+  copySourceDn.value = ''
+}
+
 function removePendingGroup(group: GroupItem) {
   pendingGroups.value = pendingGroups.value.filter(g => g.dn !== group.dn)
   filterAvailableGroups()
@@ -1109,6 +1195,8 @@ watch(() => props.data?.dn, () => {
     pendingGroups.value = []
     stagedAdditions.value = []
     stagedRemovals.value = []
+    showCopyFrom.value = false
+    copySourceDn.value = ''
     loadGroups()
     iviaStatus.value = null
     checkIviaTabVisibility()
