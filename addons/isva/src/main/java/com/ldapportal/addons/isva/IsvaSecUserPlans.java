@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva;
 
+import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.core.provisioning.AddStep;
 import com.ldapportal.core.provisioning.DeleteStep;
@@ -16,6 +17,7 @@ import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -52,7 +54,7 @@ public class IsvaSecUserPlans {
     public List<Attribute> grantInline(List<Attribute> demographicAttrs,
                                        VendorIntegrationIsvaConfig cfg,
                                        UserCreatePayload payload) {
-        List<Attribute> attrs = augmentObjectClass(demographicAttrs, "secUser");
+        List<Attribute> attrs = augmentObjectClass(demographicAttrs, secUserObjectClasses(cfg));
         String uid = firstValueOrEmpty(payload.attributes().get("uid"));
         for (Map.Entry<String, String> e : secDefaults(cfg, uid).entrySet()) {
             addIfAbsent(attrs, e.getKey(), e.getValue());
@@ -71,7 +73,8 @@ public class IsvaSecUserPlans {
                                             VendorIntegrationIsvaConfig cfg,
                                             String uid) {
         List<Modification> mods = new ArrayList<>();
-        mods.add(new Modification(ModificationType.ADD, "objectClass", "secUser"));
+        mods.add(new Modification(ModificationType.ADD, "objectClass",
+                secUserObjectClasses(cfg).toArray(new String[0])));
         for (Map.Entry<String, String> e : secDefaults(cfg, uid).entrySet()) {
             mods.add(new Modification(ModificationType.ADD, e.getKey(), e.getValue()));
         }
@@ -141,10 +144,18 @@ public class IsvaSecUserPlans {
      * If a deployment has set other {@code sec*} attributes
      * out-of-band, those stay; the orphaned overlay attributes are
      * inert without the {@code secUser} objectClass.</p>
+     *
+     * <p>The configured overlay objectClasses (same set
+     * {@link #grantInlineOnExisting} added) are removed too, so the
+     * teardown mirrors the grant. If the configured class set changed
+     * between grant and revoke, the DELETE targets the current set —
+     * the same drift caveat that applies to the {@code sec*} attrs.</p>
      */
-    public ModifyStep revokeInlineOnExisting(String demographicDn) {
+    public ModifyStep revokeInlineOnExisting(String demographicDn,
+                                             VendorIntegrationIsvaConfig cfg) {
         List<Modification> mods = new ArrayList<>();
-        mods.add(new Modification(ModificationType.DELETE, "objectClass", "secUser"));
+        mods.add(new Modification(ModificationType.DELETE, "objectClass",
+                secUserObjectClasses(cfg).toArray(new String[0])));
         for (String attr : SEC_OVERLAY_ATTRS) {
             mods.add(new Modification(ModificationType.DELETE, attr));
         }
@@ -186,25 +197,57 @@ public class IsvaSecUserPlans {
     // ── helpers ──────────────────────────────────────────────────────
 
     /**
-     * Build the secUser entry's DN under the management DIT.
-     * RDN attribute is config-driven ({@code secUUID} or
-     * {@code secLogin}); the value is generated for secUUID and
-     * mirrored from {@code uid} for secLogin.
+     * Build the secUser entry's DN under the management DIT. The RDN
+     * attribute name is free-form ({@code cfg.secuserRdnAttribute},
+     * default {@code secUUID}); the RDN value is independently sourced
+     * via {@code cfg.secuserRdnValueSource} — a generated UUID, or the
+     * user's {@code uid}. Decoupling the two lets a non-stock attribute
+     * (e.g. {@code principalName}) pair with the {@code uid} value.
      */
     private String computeSecUserDn(VendorIntegrationIsvaConfig cfg, UserCreatePayload payload) {
         String rdnAttr = cfg.getSecuserRdnAttribute();
         if (rdnAttr == null || rdnAttr.isBlank()) {
             rdnAttr = "secUUID";
         }
-        String rdnValue;
-        switch (rdnAttr) {
-            case "secUUID" -> rdnValue = UUID.randomUUID().toString();
-            case "secLogin" -> rdnValue = firstValueOrEmpty(payload.attributes().get("uid"));
-            default -> throw new IllegalArgumentException(
-                    "Unsupported secuser_rdn_attribute: " + rdnAttr
-                            + " (supported: secUUID, secLogin)");
-        }
+        IsvaRdnValueSource source = cfg.getSecuserRdnValueSource() != null
+                ? cfg.getSecuserRdnValueSource()
+                : IsvaRdnValueSource.GENERATED_UUID;
+        String rdnValue = switch (source) {
+            case GENERATED_UUID -> UUID.randomUUID().toString();
+            case UID -> firstValueOrEmpty(payload.attributes().get("uid"));
+        };
         return rdnAttr + "=" + rdnValue + "," + cfg.getManagementDitBaseDn();
+    }
+
+    /**
+     * The objectClass set defining the secUser identity, from config.
+     * {@code secUser} is always present (the lookup / probe filters key
+     * on it); extras (e.g. {@code eUser}) bring in additional naming
+     * attributes. Defaults to {@code [secUser]} when unset. {@code top}
+     * is the caller's concern — added for the fresh linked ADD, omitted
+     * for the inline overlay onto an entry that already has it.
+     */
+    private static List<String> secUserObjectClasses(VendorIntegrationIsvaConfig cfg) {
+        // LinkedHashSet (case-insensitive on secUser) keeps configured
+        // order while guaranteeing secUser is present exactly once.
+        LinkedHashSet<String> classes = new LinkedHashSet<>();
+        boolean hasSecUser = false;
+        List<String> configured = cfg.getSecuserObjectClasses();
+        if (configured != null) {
+            for (String oc : configured) {
+                if (oc == null || oc.isBlank()) {
+                    continue;
+                }
+                classes.add(oc);
+                if ("secUser".equalsIgnoreCase(oc)) {
+                    hasSecUser = true;
+                }
+            }
+        }
+        if (!hasSecUser) {
+            classes.add("secUser");
+        }
+        return new ArrayList<>(classes);
     }
 
     /**
@@ -217,7 +260,13 @@ public class IsvaSecUserPlans {
                                                        UserCreatePayload payload,
                                                        String secUserDn) {
         List<Attribute> attrs = new ArrayList<>();
-        attrs.add(new Attribute("objectClass", "top", "secUser"));
+        // top (structural root for the fresh ADD) + the configured
+        // overlay classes (secUser always present, plus any extras
+        // such as eUser that define the chosen RDN attribute).
+        List<String> objectClasses = new ArrayList<>();
+        objectClasses.add("top");
+        objectClasses.addAll(secUserObjectClasses(cfg));
+        attrs.add(new Attribute("objectClass", objectClasses.toArray(new String[0])));
         // Mirror the RDN attribute as a value on the entry too —
         // LDAP requires the RDN's attribute to be present on the
         // entry.
@@ -268,38 +317,35 @@ public class IsvaSecUserPlans {
     }
 
     private static List<Attribute> augmentObjectClass(List<Attribute> attrs,
-                                                       String extraObjectClass) {
+                                                       List<String> extraObjectClasses) {
         List<Attribute> out = new ArrayList<>(attrs.size() + 1);
         boolean found = false;
         for (Attribute attr : attrs) {
             if ("objectClass".equalsIgnoreCase(attr.getName())) {
-                String[] existing = attr.getValues();
-                // Idempotent: if the extra class is already present
-                // (typical when the profile's objectClassNames already
-                // include secUser), copy the existing values through
-                // unchanged rather than duplicating.
-                boolean alreadyPresent = false;
-                for (String v : existing) {
-                    if (v.equalsIgnoreCase(extraObjectClass)) {
-                        alreadyPresent = true;
-                        break;
+                // Idempotent: append only the configured classes the
+                // entry doesn't already carry (typical when the
+                // profile's objectClassNames already include secUser),
+                // preserving existing values and order.
+                LinkedHashSet<String> merged = new LinkedHashSet<>();
+                LinkedHashSet<String> lower = new LinkedHashSet<>();
+                for (String v : attr.getValues()) {
+                    merged.add(v);
+                    lower.add(v.toLowerCase());
+                }
+                for (String extra : extraObjectClasses) {
+                    if (!lower.contains(extra.toLowerCase())) {
+                        merged.add(extra);
+                        lower.add(extra.toLowerCase());
                     }
                 }
-                if (alreadyPresent) {
-                    out.add(attr);
-                } else {
-                    String[] augmented = new String[existing.length + 1];
-                    System.arraycopy(existing, 0, augmented, 0, existing.length);
-                    augmented[existing.length] = extraObjectClass;
-                    out.add(new Attribute("objectClass", augmented));
-                }
+                out.add(new Attribute("objectClass", merged.toArray(new String[0])));
                 found = true;
             } else {
                 out.add(attr);
             }
         }
         if (!found) {
-            out.add(new Attribute("objectClass", extraObjectClass));
+            out.add(new Attribute("objectClass", extraObjectClasses.toArray(new String[0])));
         }
         return out;
     }

@@ -50,12 +50,21 @@ Before flipping the toggle, the target directory must:
    needs scope over the management DIT too. Check your bind DN's
    ACLs against `<managementDitBaseDn>` before saving the linked-
    mode config.
-3. **For linked mode only:** decide the `secUser` RDN convention
-   (`secUUID` for opaque IDs, `secLogin` mirroring `uid`) and the
-   `groupMemberTarget` (whether group `member`/`uniqueMember` values
-   should point at demographic DNs or at the paired secUser DN).
-   The choice is policy-driven; the two extremes have different ACL
-   implications. Talk to your ISVA admin first.
+3. **Decide the `secUser` object classes.** The default is just
+   `secUser`. Deployments whose registry names entries on a non-stock
+   attribute need the object class that defines it too — e.g. `eUser`,
+   which contributes `principalName`. This applies to both topologies.
+4. **For linked mode only:** decide the `secUser` RDN attribute and its
+   value source — the attribute *name* (`secUUID`, `secLogin`, or any
+   attribute your object classes permit, e.g. `principalName`) is now
+   independent of where the *value* comes from (a generated UUID, or the
+   user's `uid`). Also decide the `groupMemberTarget` (whether group
+   `member`/`uniqueMember` values should point at demographic DNs or at
+   the paired secUser DN). The choices are policy-driven and have
+   different ACL implications. Talk to your ISVA admin first, and use
+   the **Probe** button — it validates your object classes and RDN
+   attribute against the live server schema before you enable
+   provisioning.
 
 ## Config reference
 
@@ -70,8 +79,10 @@ in the directory list (`/superadmin/directories`). Field by field:
 | **Default valid-until (years)** | Provisioning sets `secValidUntil` to `now + N years` on new users. The default of 100 effectively means "never expires"; lower it to enforce a periodic re-credentialling cadence. |
 | **Delete policy** | `DISABLE` (soft) flips `secAcctValid=FALSE` + `secValidUntil=now`; `HARD_DELETE` issues a real LDAP DEL. Default is `DISABLE` — the safer choice for environments that need an audit trail for departed users. |
 | **Require secGroup** | When on, group writes are gated through the secGroup objectClass (ISVA's group representation). Off matches deployments that manage groups outside of ISVA. |
+| **secUser object classes** | The objectClass set written to the secUser identity — overlaid onto the demographic entry (inline) or stamped on the paired entry (linked). `secUser` is always present (re-added if you remove it); add others your schema needs, e.g. `eUser` to bring in `principalName`. Applies to both modes. |
 | **Management DIT base DN** *(linked only)* | The subtree under which secUser entries live (e.g. `secAuthority=Default,o=acme,c=us`). The bind DN needs write access here. Required when topology mode is LINKED — the server will reject a save without it. |
-| **secUser RDN attribute** *(linked only)* | `secUUID` (generated UUID per user) or `secLogin` (mirrors `uid`). `secUUID` is the ISVA-recommended default for new deployments; `secLogin` is for shops that have to preserve human-readable DNs in the management DIT. |
+| **secUser RDN attribute** *(linked only)* | The attribute that names secUser entries — free-form. `secUUID` (default) and `secLogin` are the stock choices; any attribute your configured object classes permit works (e.g. `principalName` from `eUser`). |
+| **RDN value source** *(linked only)* | Where the RDN value comes from, independent of the attribute name. `GENERATED_UUID` (default) mints an opaque UUID per user; `UID` mirrors the user's `uid` (a rename then forces a directory rename). `secUUID`+`GENERATED_UUID` and `secLogin`/`principalName`+`UID` are the natural pairings. |
 | **Group member target** *(linked only)* | `DEMOGRAPHIC_DN` writes the user's demographic DN into group member attributes; `SECUSER_DN` writes the paired secUser DN. The right answer depends on how your ACLs resolve group membership — ISVA's own ACLs follow `SECUSER_DN`, but if your application checks groups against demographic DNs, use that instead. |
 | **On demographic delete** *(linked only)* | What to do on the demographic side when a delete-with-DISABLE-policy fires. `LEAVE` leaves the demographic entry alone (only the secUser is disabled). `DISABLE_AND_MARK` is reserved for a future v1.1; today it logs and treats as `LEAVE`. |
 
@@ -164,10 +175,15 @@ user/group classification in search and the dashboards.
 After saving the config:
 
 1. **Probe.** Use the "Probe" button on the config panel. It connects
-   to the directory, verifies the schema is loaded, and (in linked
-   mode) checks that the management DIT is reachable + writable. A
-   green probe doesn't *guarantee* every operation will succeed, but
-   a red probe always points at one of the prereqs above.
+   to the directory and validates the configured `secUser` object
+   classes against the server schema — and, in linked mode, that the
+   configured RDN attribute is permitted by one of those classes (so a
+   `principalName` RDN without the `eUser` class is caught here, not at
+   provisioning time) and that the management DIT is reachable. A green
+   probe doesn't *guarantee* every operation will succeed, but a red
+   probe always points at one of the prereqs above. (The schema verdict
+   shows as **yes / no / unknown** — *unknown* means the server didn't
+   return its schema to the bind DN.)
 2. **Provision a test user.** Create one through LDAP Portal's normal
    user-create flow. Inspect the resulting entry in your directory
    browser — you should see the `sec*` attributes alongside the

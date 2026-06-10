@@ -17,12 +17,21 @@ import java.util.List;
  *                            found under the configured base.
  *                            False on a fresh install before any
  *                            user has been created.
+ * @param schemaValid         {@code TRUE} if every configured secUser
+ *                            objectClass exists in the server schema
+ *                            and (linked mode) the configured RDN
+ *                            attribute is permitted by one of them;
+ *                            {@code FALSE} if a check failed;
+ *                            {@code null} if the server schema couldn't
+ *                            be read to make the determination. Detail
+ *                            is in {@code warnings}.
  * @param warnings            human-readable diagnostics. Empty list
  *                            on a perfectly-healthy probe.
  */
 public record ProbeResult(
         boolean reachable,
         boolean sampleSecUserFound,
+        Boolean schemaValid,
         List<String> warnings) {
 
     public ProbeResult {

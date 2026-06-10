@@ -4,9 +4,12 @@ package com.ldapportal.addons.isva.dto;
 import com.ldapportal.addons.isva.entity.IsvaDemographicDeleteMode;
 import com.ldapportal.addons.isva.entity.IsvaDeletePolicy;
 import com.ldapportal.addons.isva.entity.IsvaGroupMemberTarget;
+import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+
+import java.util.List;
 
 /**
  * Request body for PUT /api/v1/directories/{id}/isva-config.
@@ -30,9 +33,13 @@ public record UpsertIsvaConfigRequest(
         @NotNull IsvaDeletePolicy deletePolicy,
         boolean requireSecGroup,
 
+        // Applies to both modes — secUser is normalized in if omitted
+        List<String> secuserObjectClasses,
+
         // Linked-mode-only
         String managementDitBaseDn,
         String secuserRdnAttribute,
+        IsvaRdnValueSource secuserRdnValueSource,
         IsvaGroupMemberTarget groupMemberTarget,
         IsvaDemographicDeleteMode onDemographicDelete) {
 }

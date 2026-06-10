@@ -17,6 +17,7 @@ export type IsvaTopologyMode = 'INLINE' | 'LINKED';
 export type IsvaDeletePolicy = 'DISABLE' | 'HARD_DELETE';
 export type IsvaGroupMemberTarget = 'DEMOGRAPHIC_DN' | 'SECUSER_DN';
 export type IsvaDemographicDeleteMode = 'LEAVE' | 'DISABLE_AND_MARK';
+export type IsvaRdnValueSource = 'GENERATED_UUID' | 'UID';
 
 export interface IsvaConfigDto {
   enabled: boolean;
@@ -26,9 +27,13 @@ export interface IsvaConfigDto {
   deletePolicy: IsvaDeletePolicy;
   requireSecGroup: boolean;
 
+  // Applies to both modes
+  secuserObjectClasses: string[];
+
   // Linked-mode-only — null in INLINE responses
   managementDitBaseDn: string | null;
   secuserRdnAttribute: string | null;
+  secuserRdnValueSource: IsvaRdnValueSource | null;
   groupMemberTarget: IsvaGroupMemberTarget | null;
   onDemographicDelete: IsvaDemographicDeleteMode | null;
 
@@ -45,9 +50,13 @@ export interface UpsertIsvaConfigRequest {
   deletePolicy: IsvaDeletePolicy;
   requireSecGroup: boolean;
 
+  // Applies to both modes — secUser is normalized in server-side if omitted
+  secuserObjectClasses: string[];
+
   // Required when topologyMode = LINKED
   managementDitBaseDn: string | null;
   secuserRdnAttribute: string | null;
+  secuserRdnValueSource: IsvaRdnValueSource | null;
   groupMemberTarget: IsvaGroupMemberTarget | null;
   onDemographicDelete: IsvaDemographicDeleteMode | null;
 }
@@ -55,6 +64,10 @@ export interface UpsertIsvaConfigRequest {
 export interface ProbeResult {
   reachable: boolean;
   sampleSecUserFound: boolean;
+  // true = all configured objectClasses exist and (linked) the RDN
+  // attribute is permitted by one; false = a check failed; null =
+  // server schema couldn't be read to decide.
+  schemaValid: boolean | null;
   warnings: string[];
 }
 
