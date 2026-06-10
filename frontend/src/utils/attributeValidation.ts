@@ -25,6 +25,101 @@ export interface AttributeRules {
   validationRegex?: string | null
   /** Custom message shown when the regex does not match. */
   validationMessage?: string | null
+  /**
+   * The form input type (e.g. {@code DN_LOOKUP}, {@code BOOLEAN}). When set, an
+   * intrinsic {@link SyntaxKind} is derived from it (mirroring the server's
+   * {@code AttributeSyntax.forInputType}) unless {@link syntaxKind} is given.
+   */
+  inputType?: string | null
+  /**
+   * Explicit intrinsic value shape to enforce. Overrides the {@link inputType}
+   * derivation — admin forms set this from the {@code /attribute-syntax} hints so
+   * well-known bare attributes (e.g. {@code mail}, {@code manager}) are also
+   * shape-checked.
+   */
+  syntaxKind?: SyntaxKind | null
+}
+
+/** Intrinsic value shape an attribute is expected to hold (mirrors the server). */
+export type SyntaxKind = 'DN' | 'EMAIL' | 'BOOLEAN'
+
+/**
+ * The built-in attribute-syntax hints served by {@code GET /api/v1/attribute-syntax}
+ * (workstream B). Both maps carry {@link SyntaxKind} names as values.
+ */
+export interface AttributeSyntaxHints {
+  /** lower-case attribute name → kind, for bare / unprofiled attributes. */
+  wellKnownAttributes: Record<string, string>
+  /** {@code InputType} name → kind, for profile-configured input types. */
+  inputTypeSyntax: Record<string, string>
+}
+
+/** Deliberately permissive email shape — mirrors the server's check. */
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+
+/** @returns true when {@code value} looks like a valid email address. */
+export function validateEmail(value: string): boolean {
+  return EMAIL_RE.test(value)
+}
+
+/** @returns true when {@code value} is {@code TRUE}/{@code FALSE} (case-insensitive). */
+export function validateBoolean(value: string): boolean {
+  return /^(TRUE|FALSE)$/i.test(value)
+}
+
+/**
+ * Lightweight, RFC-4514-ish DN check for instant client feedback only — the
+ * server's UnboundID parser is authoritative. Accepts one or more
+ * comma-separated RDNs (commas may be backslash-escaped inside a value), each a
+ * {@code +}-joined set of {@code attr=value} pairs where {@code attr} is a
+ * descriptor (letter-led) or a numeric OID. Kept permissive so it never blocks a
+ * value the directory would actually accept.
+ */
+export function validateDn(value: string): boolean {
+  const s = value.trim()
+  if (!s || s.startsWith(',') || s.endsWith(',')) return false
+  const attrType = '(?:[A-Za-z][\\w-]*|\\d+(?:\\.\\d+)+)'
+  const pair = new RegExp(`^\\s*${attrType}\\s*=\\s*.+$`)
+  // Split on commas / plus signs that are not backslash-escaped.
+  return s.split(/(?<!\\),/).every((rdn) =>
+    rdn.split(/(?<!\\)\+/).every((av) => pair.test(av)),
+  )
+}
+
+/**
+ * Derive the intrinsic {@link SyntaxKind} for a field, mirroring the server's
+ * {@code LdapAttributeValidator.resolveKind}: the input type is authoritative
+ * (a {@code DN_LOOKUP} field is a DN, a {@code BOOLEAN} field is a boolean),
+ * otherwise the well-known attribute map decides. {@code hints} may be omitted
+ * (e.g. self-service, which can't read the admin endpoint) — the built-in
+ * input-type fallback still covers {@code DN_LOOKUP}/{@code BOOLEAN}.
+ */
+export function resolveSyntaxKind(
+  inputType: string | null | undefined,
+  attributeName: string,
+  hints?: AttributeSyntaxHints | null,
+): SyntaxKind | null {
+  const fromInput = (inputType && hints?.inputTypeSyntax?.[inputType])
+    || kindForInputType(inputType)
+  if (fromInput) return fromInput as SyntaxKind
+  const wk = hints?.wellKnownAttributes?.[attributeName.toLowerCase()]
+  return (wk as SyntaxKind) || null
+}
+
+/** Built-in input-type → kind fallback (mirrors {@code AttributeSyntax.forInputType}). */
+function kindForInputType(inputType: string | null | undefined): SyntaxKind | null {
+  if (inputType === 'DN_LOOKUP') return 'DN'
+  if (inputType === 'BOOLEAN') return 'BOOLEAN'
+  return null
+}
+
+/** @returns an error message for a syntax violation, or null when valid. */
+function validateSyntax(kind: SyntaxKind, value: string): string | null {
+  switch (kind) {
+    case 'DN': return validateDn(value) ? null : 'Not a valid DN'
+    case 'EMAIL': return validateEmail(value) ? null : 'Not a valid email address'
+    case 'BOOLEAN': return validateBoolean(value) ? null : 'Must be TRUE or FALSE'
+  }
 }
 
 /**
@@ -71,6 +166,14 @@ export function validateAttributeValue(rules: AttributeRules, value: unknown): s
     if (re && !re.test(strVal)) {
       return rules.validationMessage || 'Invalid format'
     }
+  }
+
+  // Intrinsic syntax (DN / email / boolean), mirroring the server's syntax
+  // layer. Explicit syntaxKind wins; otherwise derive from the input type.
+  const kind = rules.syntaxKind || kindForInputType(rules.inputType)
+  if (kind) {
+    const syntaxErr = validateSyntax(kind, strVal)
+    if (syntaxErr) return syntaxErr
   }
 
   return null

@@ -23,6 +23,12 @@ vi.mock('@/api/profiles', () => ({ generatePassword: vi.fn() }))
 vi.mock('@/api/isvaConfig', () => ({
   getIsvaConfig: vi.fn().mockResolvedValue({ data: { enabled: false } }),
 }))
+// onMounted loads the attribute-syntax hints; stub so the mount stays hermetic.
+vi.mock('@/api/attributeSyntax', () => ({
+  getAttributeSyntaxHints: vi.fn().mockResolvedValue({
+    data: { wellKnownAttributes: { manager: 'DN', mail: 'EMAIL' }, inputTypeSyntax: { DN_LOOKUP: 'DN', BOOLEAN: 'BOOLEAN' } },
+  }),
+}))
 
 const templateConfig = {
   rdnAttribute: 'uid',

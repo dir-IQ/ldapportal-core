@@ -456,6 +456,7 @@ import { getIsvaConfig } from '@/api/isvaConfig'
 import { IVIA_ABBR, isIviaAttr, iviaAttrLabel } from '@/constants/productNames'
 import type { IsvaAccountStatus } from '@/api/isvaAccount'
 import { validateAttributeValue, type AttributeRules } from '@/utils/attributeValidation'
+import { useAttributeSyntaxStore } from '@/stores/attributeSyntax'
 
 /** A single profile attribute config. Only `attributeName` is guaranteed;
  *  everything else is optional so a narrower caller shape stays assignable.
@@ -574,6 +575,7 @@ const activeTab = ref<'attributes' | 'groups' | 'ivia'>('attributes')
 // the panel mounts. The panel itself also self-gates so it stays
 // usable in non-UserForm contexts.
 const auth = useAuthStore()
+const syntaxStore = useAttributeSyntaxStore()
 const iviaTabVisible = ref(false)
 const iviaStatus     = ref<IsvaAccountStatus | null>(null)
 
@@ -885,6 +887,10 @@ function rulesFor(attr: AttributeConfig, forCreate: boolean): AttributeRules {
     maxLength: attr.maxLength ?? null,
     validationRegex: attr.validationRegex ?? null,
     validationMessage: attr.validationMessage ?? null,
+    // Mirror the server's syntax layer (DN / email / boolean). Driven by the
+    // /attribute-syntax hints so well-known bare attributes (mail, manager) are
+    // checked too, not just profile DN_LOOKUP/BOOLEAN fields.
+    syntaxKind: syntaxStore.kindFor(attr.inputType, attr.attributeName),
   }
 }
 
@@ -1193,6 +1199,9 @@ function emitPendingGroups() {
 }
 
 onMounted(() => {
+  // Load the attribute-syntax hints once so DN/email/boolean checks mirror the
+  // server. Best-effort — validation degrades to input-type-only if it fails.
+  syntaxStore.ensureLoaded()
   // Initialize pending groups from profile group assignments passed via data
   if (props.data?._pendingGroups?.length) {
     pendingGroups.value = props.data._pendingGroups.map((g): GroupItem => ({
