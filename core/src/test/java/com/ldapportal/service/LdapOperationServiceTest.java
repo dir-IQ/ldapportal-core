@@ -208,6 +208,58 @@ class LdapOperationServiceTest {
     }
 
     @Test
+    void createUser_malformedDnValuedAttribute_throwsAndSkipsWrite() {
+        // The DN itself is valid; a well-known DN-valued attribute (manager)
+        // carries a malformed value, which the syntax layer must reject
+        // before the write — even with no profile in context.
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        CreateEntryRequest req = new CreateEntryRequest(
+                "uid=jsmith,ou=people,dc=example,dc=com",
+                Map.of("cn", List.of("J"), "manager", List.of("not a dn")));
+
+        assertThatThrownBy(() -> service.createUser(dirId, adminPrincipal(), req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("manager");
+
+        verify(userService, never()).createUser(any(), anyString(), any(), any());
+    }
+
+    @Test
+    void updateUser_malformedMailAttribute_throwsAndSkipsWrite() {
+        String dn = "uid=jsmith,ou=people,dc=example,dc=com";
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        UpdateEntryRequest req = new UpdateEntryRequest(List.of(
+                new AttributeModification(AttributeModification.Operation.REPLACE,
+                        "mail", List.of("not-an-email"))));
+
+        assertThatThrownBy(() -> service.updateUser(dirId, adminPrincipal(), dn, req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("mail");
+
+        verify(userService, never()).updateUser(any(), anyString(), any());
+    }
+
+    @Test
+    void createGroup_malformedMemberDn_throwsAndSkipsWrite() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        CreateEntryRequest req = new CreateEntryRequest(
+                "cn=Staff,ou=groups,dc=example,dc=com",
+                Map.of("cn", List.of("Staff"), "member", List.of("not a dn")));
+
+        assertThatThrownBy(() -> service.createGroup(dirId, adminPrincipal(), req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("member");
+
+        verify(groupService, never()).createGroup(any(), anyString(), any());
+    }
+
+    @Test
     void updateUser_nonEditableAttribute_throwsAndSkipsWrite() {
         ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
         UUID profileId = UUID.randomUUID();

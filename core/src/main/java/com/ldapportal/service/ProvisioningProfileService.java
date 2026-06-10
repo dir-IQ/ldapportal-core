@@ -625,6 +625,28 @@ public class ProvisioningProfileService {
     }
 
     /**
+     * Configured input types for a profile, keyed by <strong>lower-case</strong>
+     * attribute name. Feeds the syntax layer
+     * ({@code LdapAttributeValidator.validateSyntax}) so a {@code DN_LOOKUP} /
+     * {@code BOOLEAN} field is shape-checked authoritatively on write. Returns an
+     * empty map for a {@code null} profile (an unprofiled OU still runs
+     * well-known-attribute syntax checks).
+     */
+    @Transactional(readOnly = true)
+    public Map<String, InputType> inputTypesForProfile(UUID profileId) {
+        if (profileId == null) {
+            return Map.of();
+        }
+        Map<String, InputType> types = new HashMap<>();
+        for (ProfileAttributeConfig config : attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId)) {
+            if (config.getInputType() != null) {
+                types.put(config.getAttributeName().toLowerCase(Locale.ROOT), config.getInputType());
+            }
+        }
+        return types;
+    }
+
+    /**
      * Validates a modification (update) against the profile's configs in a
      * <strong>single</strong> config fetch: rejects edits to non-editable or
      * hidden attributes, and checks value constraints (length / regex /

@@ -3,10 +3,13 @@
 - **Date:** 2026-06-01
 - **Status:** In progress (much of workstreams A/C landed since drafting —
   `DnValidator`, profile-rule enforcement on the admin **create and update**
-  paths, `editableOnUpdate`/`hidden` server gating, and field-level error UI;
-  the **syntax layer** (DN-format on DN-valued attributes, email / numeric /
-  boolean / generalized-time), object-class `MUST` coverage, and the
-  `@Dn`/`@ValidRdn` DTO constraints remain. See §2a for the verified
+  paths, `editableOnUpdate`/`hidden` server gating, field-level error UI, and
+  now the **server-side syntax layer** (`LdapAttributeValidator`: DN-format on
+  DN-valued attributes, email, boolean) wired into the user create/update,
+  group create/update, and bulk-attribute-update paths; the remaining
+  numeric / generalized-time syntax, object-class `MUST` coverage, and the
+  client-side syntax mirror remain. The `@Dn`/`@ValidRdn` DTO constraints were
+  **intentionally not added** — see §2a. See §2a for the verified
   shipped-vs-remaining split, 2026-06-10).
 - **Scope:** Consistent, layered validation of LDAP attribute values —
   presence, length, regex, allowed-values, type/syntax (DN, email,
@@ -61,17 +64,19 @@ the current code on `main`:
 | `editableOnUpdate` / `hidden` server enforcement (A3) | `validateModification` → `assertEditable` | Rejects modifying a non-editable/hidden attribute; computed attrs exempt; **unconfigured attrs pass through**. |
 | Error mapping (A6) | `GlobalExceptionHandler` | `IllegalArgumentException` → 400; `MethodArgumentNotValidException` → field-keyed 400 `ProblemDetail`. |
 | Frontend field validation + inline errors (C1 partial, C3 for `UserForm`, C4) | `frontend/src/utils/attributeValidation.ts` `validateAttributeValue()`; `UserForm.vue` `validate()` with `FormField :error`; `UserListView.save()` gates on it | required (create-only) / min / max / regex + custom message. Edit mode skips the immutable RDN. |
+| **Server-side syntax layer (A2.2, A4)** | `core/.../ldap/validation/{AttributeSyntax,WellKnownAttributes,LdapAttributeValidator}.java`; wired in `LdapOperationService` createUser / updateUser / createGroup / updateGroup / bulkUpdateAttributes | DN-format on DN-valued attrs (`manager`/`secretary`/`owner`/`seeAlso`/`roleOccupant`/`member`/`uniqueMember`, plus any profile `DN_LOOKUP` field), email on `mail`, boolean on `BOOLEAN` fields. Directory-type aware (Entra-exempt for DN); validates only values being written, so existing data is untouched. Field-keyed 400 via `IllegalArgumentException`. |
 
 ### Remaining ⏳ (the gaps this plan still tracks)
 
 | Gap | Impact | Workstream |
 |---|---|---|
-| **DN-format validation on DN-valued attributes** (`manager`, `secretary`, `DN_LOOKUP` fields) | **Not checked anywhere** — `DnPicker` only ensures *a* value; a typed/pasted DN is validated only by the LDAP server at write (raw error, not a field message). **Highest-value gap.** | A2.2 / C2 |
-| `@Dn` / `@ValidRdn` DTO constraints | `CreateEntryRequest.dn`, `MoveUserRequest.newParentDn`, `RenameEntryRequest.newRdn` are still `@NotBlank` only — no format check at the controller boundary | A5 |
-| Email / numeric / boolean / generalized-time syntax | No type/syntax layer beside the profile-rule engine | A2.2 / C1 (type-aware) |
-| Object-class `MUST` coverage on create | Missing-required-by-schema not caught pre-write | A2.3 |
-| **Unprofiled OUs / unconfigured ("Other") attributes** | Pass through **unrestricted** on both client and server — no rules at all | A2 / A4 |
-| Wiring beyond user create/update | group / move / rename / `bulkUpdateAttributes` paths — **unverified**; assume not yet wired | A4 |
+| **DN-format on DN-valued attributes — _client mirror_** | Server side **shipped** (see §2a Shipped). The client still only ensures *a* value via `DnPicker`; a typed/pasted bad DN is caught server-side now but with no instant field feedback. | C2 |
+| `@Dn` / `@ValidRdn` DTO constraints | **Intentionally not added.** A bean-validation constraint runs at the controller boundary and cannot see the directory type, so it cannot honour the Entra-ID DN exemption (principle #5). The directory-type-aware `DnValidator` in the service layer (already wired on create/move/rename/container) is the authoritative check; the new `AttributeSyntax` extends it to DN-valued *attribute values*. | A5 (closed by redesign) |
+| Numeric / generalized-time syntax | `AttributeSyntax` covers DN / email / boolean; numeric and `DATE`/`DATETIME` generalized-time are deferred — the wire format the UI sends for date fields needs pinning down first to avoid false rejects. | A2.2 / C1 (type-aware) |
+| Object-class `MUST` coverage on create | Missing-required-by-schema not caught pre-write (the directory server still rejects it at write, just with a rawer message). Deferred — backward-compat risk; plan §6 suggests gating behind a per-profile flag. | A2.3 |
+| `editableOnCreate` server enforcement (create) | Deferred. Unlike the update path, by the time `createUser` runs the caller has already merged defaults / computed / `HIDDEN_FIXED` values into the attribute map, so server-injected and user-supplied values are indistinguishable here; correct enforcement belongs at the controller on the *raw* request. | A3 (create) |
+| **Unprofiled OUs / unconfigured ("Other") attributes** | Server now applies **well-known** syntax (DN-valued attrs, `mail`) even when unprofiled; truly free-form attributes still pass through (by design). The **client** is still unrestricted for these. | A2 / C1 |
+| Wiring beyond user create/update | group create/update + `bulkUpdateAttributes` **now wired** for syntax; move/rename carry only a DN/RDN (no attribute values) and are already `DnValidator`-checked. | A4 (done) |
 | Client `validateDn` (C2); self-service dedupe onto the shared util (C5); wiring `GroupListView` / `CreateEntryForm` / `EditEntryForm` (C3) | **Unverified**; treat as remaining | C2 / C3 / C5 |
 | `createContainer` refactor onto `DnValidator`; `editableOnCreate` server enforcement (A3, create) | **Unverified** | A1 / A3 |
 
@@ -215,14 +220,18 @@ constraints) is the highest-value remaining step.
 
 Markers reflect the 2026-06-10 status (see §2a): ✅ done · ◑ partial · ⏳ remaining.
 
-1. ◑ `DnValidator` ✅ + `@Dn`/`@ValidRdn` constraints + DTO annotations ⏳ +
-   tests; `createContainer` refactor onto it ⏳ (unverified). *(Highest value,
-   lowest blast radius — the **DN-valued-attribute + DTO** half is the top
-   remaining gap.)*
-2. ◑ Profile-rule reach into admin create/update ✅; the **syntax** layer
-   (DN-valued attrs / email / numeric / boolean / generalized-time) + schema
-   `MUST` ⏳.
-3. ◑ `editable`/`hidden` server enforcement — update ✅; create (`editableOnCreate`) ⏳.
+1. ✅ `DnValidator` + `createContainer`/`renameEntry` already on it. The
+   `@Dn`/`@ValidRdn` DTO-constraint idea is **closed by redesign**: a boundary
+   bean-constraint can't honour the Entra exemption, so the directory-type-aware
+   `DnValidator` (service layer) + the new `AttributeSyntax` (DN-valued attribute
+   values) are the authoritative DN checks.
+2. ◑ Profile-rule reach into admin create/update ✅; the **syntax** layer —
+   DN-valued attrs / email / boolean ✅ (`LdapAttributeValidator`, wired into
+   user create/update + group create/update + bulk); numeric / generalized-time
+   + schema `MUST` ⏳.
+3. ◑ `editable`/`hidden` server enforcement — update ✅; create
+   (`editableOnCreate`) ⏳ (deferred — needs controller-level raw-request gating;
+   see §2a Remaining).
 4. ◑ Frontend shared util ✅ + `FormField` error state ✅ + `UserForm` wired ✅;
    DN/type client checks + `GroupListView`/`CreateEntryForm`/`EditEntryForm` ⏳.
 5. ⏳ Dedupe self-service onto the shared util (unverified).
