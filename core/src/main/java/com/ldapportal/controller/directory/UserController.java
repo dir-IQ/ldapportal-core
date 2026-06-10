@@ -8,6 +8,8 @@ import com.ldapportal.dto.ldap.BulkAttributeUpdateRequest;
 import com.ldapportal.dto.ldap.BulkAttributeUpdateResult;
 import com.ldapportal.dto.ldap.CreateEntryRequest;
 import com.ldapportal.dto.ldap.LdapEntryResponse;
+import com.ldapportal.dto.ldap.MembershipChangeRequest;
+import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.dto.ldap.MoveUserRequest;
 import com.ldapportal.dto.ldap.ResetPasswordLdapRequest;
 import com.ldapportal.dto.ldap.UpdateEntryRequest;
@@ -232,6 +234,24 @@ public class UserController {
 
         service.moveUser(directoryId, principal, dn, req);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Applies a batch of group-membership changes for one user in a single
+     * request. The user is identified by {@code dn}; the changes (add/remove
+     * across one or more groups) come in the body. Best-effort with a
+     * per-change result summary — see {@link MembershipChangeResult}. Adds may
+     * be queued for approval; removes are applied directly. Gated by
+     * GROUP_MANAGE_MEMBERS, the same feature as the single-member endpoints.
+     */
+    @PostMapping("/memberships")
+    @RequiresFeature(FeatureKey.GROUP_MANAGE_MEMBERS)
+    public MembershipChangeResult applyMemberships(
+            @DirectoryId @PathVariable UUID directoryId,
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @RequestParam String dn,
+            @Valid @RequestBody MembershipChangeRequest req) {
+        return service.applyMembershipChanges(directoryId, principal, dn, req.changes());
     }
 
     @GetMapping("/password-status")

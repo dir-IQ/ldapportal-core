@@ -19,8 +19,13 @@ import com.ldapportal.dto.ldap.BulkAttributeUpdateRequest;
 import com.ldapportal.dto.ldap.BulkAttributeUpdateResult;
 import com.ldapportal.dto.ldap.CreateEntryRequest;
 import com.ldapportal.dto.ldap.LdapEntryResponse;
+import com.ldapportal.dto.ldap.MembershipChangeRequest;
+import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.dto.ldap.MoveUserRequest;
 import com.ldapportal.dto.ldap.UpdateEntryRequest;
+import com.ldapportal.core.provisioning.ProvisioningRefusedException;
+import com.ldapportal.entity.PendingApproval;
+import com.ldapportal.entity.enums.ApprovalRequestType;
 import com.ldapportal.entity.CsvMappingTemplate;
 import com.ldapportal.entity.CsvMappingTemplateEntry;
 import com.ldapportal.entity.DirectoryConnection;
@@ -47,10 +52,12 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -92,6 +99,10 @@ public class LdapOperationService {
     // service, and lazy resolution keeps the constructor graph
     // unchanged if the service is ever swapped for a stub in tests.
     private final org.springframework.beans.factory.ObjectProvider<ProvisioningProfileService> profileServiceProvider;
+    // Lazy: ApprovalWorkflowService constructor-injects this service, so a
+    // direct dependency would form a cycle. Only the batch membership path
+    // needs it, and it resolves through the provider on demand.
+    private final org.springframework.beans.factory.ObjectProvider<ApprovalWorkflowService> approvalServiceProvider;
 
     // ── Browse ────────────────────────────────────────────────────────────────
 
@@ -527,6 +538,92 @@ public class LdapOperationService {
         groupService.removeMember(dc, groupDn, memberAttribute, memberValue);
         auditService.record(principal, directoryId, AuditAction.GROUP_MEMBER_REMOVE, groupDn,
                 Map.of("attribute", memberAttribute, "member", memberValue));
+    }
+
+    /**
+     * Applies a batch of group-membership changes for a single member in one
+     * request. Each change is attempted independently and classified into the
+     * returned {@link MembershipChangeResult} — one failure never aborts the
+     * rest. Because every per-change audit record runs on the request thread,
+     * they share its correlation id, so the whole batch is traceable as one
+     * operation in the audit log.
+     *
+     * <p>Scope: the batch is keyed on {@code memberDn}, so the caller must own
+     * that user; per-group scope is still enforced inside the single-member
+     * add/remove paths. Authorization failures on a target group abort the
+     * whole batch (they are never softened into a per-item result).</p>
+     *
+     * <p>Ordering: removes run before adds so that clearing a soon-to-be-removed
+     * membership first lets a Separation-of-Duties BLOCK policy accept an add
+     * that would otherwise conflict with the membership being dropped.</p>
+     *
+     * <p>Approvals reuse {@link ApprovalRequestType#GROUP_MEMBER_ADD} per add,
+     * exactly like the single-member endpoint; removes are never gated,
+     * consistent with the rest of the member surface.</p>
+     */
+    public MembershipChangeResult applyMembershipChanges(
+            UUID directoryId, AuthPrincipal principal,
+            String memberDn, List<MembershipChangeRequest.Change> changes) {
+
+        loadDirectory(directoryId, principal);
+        permissionService.requireDnWithinScope(principal, directoryId, memberDn);
+
+        List<MembershipChangeRequest.Change> ordered = new ArrayList<>(changes);
+        ordered.sort(Comparator.comparingInt(
+                c -> c.op() == MembershipChangeRequest.Op.REMOVE ? 0 : 1));
+
+        ApprovalWorkflowService approvalService = approvalServiceProvider.getIfAvailable();
+        List<MembershipChangeResult.Item> items = new ArrayList<>(ordered.size());
+        for (MembershipChangeRequest.Change c : ordered) {
+            items.add(applyMembershipChange(directoryId, principal, memberDn, c, approvalService));
+        }
+        return MembershipChangeResult.of(items);
+    }
+
+    private MembershipChangeResult.Item applyMembershipChange(
+            UUID directoryId, AuthPrincipal principal, String memberDn,
+            MembershipChangeRequest.Change c, ApprovalWorkflowService approvalService) {
+        try {
+            if (c.op() == MembershipChangeRequest.Op.REMOVE) {
+                removeGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberDn);
+                return MembershipChangeResult.Item.applied(c);
+            }
+
+            // ADD — gate through the approval workflow first (reuses
+            // GROUP_MEMBER_ADD). When no approver is configured the gate
+            // returns empty and we apply immediately.
+            if (approvalService != null) {
+                Optional<PendingApproval> pending = approvalService.checkAndSubmitForApproval(
+                        directoryId, c.groupDn(), principal, ApprovalRequestType.GROUP_MEMBER_ADD,
+                        Map.of("groupDn", c.groupDn(),
+                                "memberAttribute", c.memberAttribute(),
+                                "memberValue", memberDn));
+                if (pending.isPresent()) {
+                    return MembershipChangeResult.Item.queued(c, pending.get().getId());
+                }
+            }
+
+            addGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberDn);
+            return MembershipChangeResult.Item.applied(c);
+
+        } catch (ProvisioningRefusedException e) {
+            return MembershipChangeResult.Item.refused(c, e.getMessage());
+        } catch (AccessDeniedException e) {
+            // A target group outside the admin's scope is a hard authz failure,
+            // not a soft per-item error — abort so the request 403s rather than
+            // leaking which groups the admin may touch.
+            throw e;
+        } catch (RuntimeException e) {
+            // A Separation-of-Duties BLOCK surfaces as a SodViolationException
+            // from the governance addon, which core must not import (edition
+            // boundary). Detect it by simple name so the UI gets a distinct
+            // BLOCKED status without a core→addon dependency.
+            if ("SodViolationException".equals(e.getClass().getSimpleName())) {
+                return MembershipChangeResult.Item.blocked(c, e.getMessage());
+            }
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            return MembershipChangeResult.Item.errored(c, msg);
+        }
     }
 
     // ── Bulk import / export ──────────────────────────────────────────────────
