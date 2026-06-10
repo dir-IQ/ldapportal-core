@@ -13,7 +13,7 @@ withDefaults(
     suggestions?: Suggestion[]
     maxHeight?: string
   }>(),
-  { suggestions: () => [], maxHeight: '20rem' },
+  { suggestions: () => [], maxHeight: '26rem' },
 )
 defineEmits<{ dismiss: [key: string] }>()
 
