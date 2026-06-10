@@ -58,20 +58,6 @@ const daysRemainingLabel = computed(() => {
         <p class="font-medium">{{ license.bannerMessage }}</p>
       </div>
 
-      <!-- No-license callout -->
-      <div
-        v-if="!s.signed"
-        class="rounded bg-gray-50 border border-gray-200 p-4 text-sm text-gray-700"
-      >
-        <p class="font-medium text-gray-900">No signed license file installed.</p>
-        <p class="mt-1">
-          Running with community baseline entitlements. To unlock licensed
-          features, set
-          <code class="text-xs bg-gray-100 px-1 py-0.5 rounded">ldapportal.license.path</code>
-          to the path of a signed JWT and restart.
-        </p>
-      </div>
-
       <!-- Summary -->
       <div class="bg-white border border-gray-200 rounded-xl p-6">
         <div class="flex items-start justify-between mb-5">
