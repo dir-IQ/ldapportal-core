@@ -24,6 +24,9 @@
         <button v-if="bulkSelectActive && can.bulkUpdate" @click="openBulkUpdate" class="btn-secondary">
           Bulk Update ({{ selectedDns.size }})
         </button>
+        <button v-if="bulkSelectActive && can.manageMembers" @click="openBulkMembership" class="btn-secondary">
+          Manage Groups ({{ selectedDns.size }})
+        </button>
         <button v-if="can.create" @click="openCreate" class="btn-primary">+ New User</button>
       </div>
     </div>
@@ -299,6 +302,73 @@
       </template>
     </AppModal>
 
+    <!-- Bulk Group Membership modal -->
+    <AppModal v-model="showBulkMembership" title="Manage Group Memberships" size="lg">
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600">
+          Add or remove group memberships for <strong>{{ selectedDns.size }}</strong> selected user(s).
+          Adds may require approval; removes are applied directly.
+        </p>
+
+        <!-- Add / Remove toggle -->
+        <div class="flex gap-2">
+          <button type="button" @click="bulkMembershipMode = 'ADD'"
+                  :class="bulkMembershipMode === 'ADD' ? 'btn-primary' : 'btn-neutral'" class="text-sm">Add to groups</button>
+          <button type="button" @click="bulkMembershipMode = 'REMOVE'"
+                  :class="bulkMembershipMode === 'REMOVE' ? 'btn-primary' : 'btn-neutral'" class="text-sm">Remove from groups</button>
+        </div>
+
+        <!-- Chosen groups -->
+        <div>
+          <label class="block text-xs font-medium text-gray-600 mb-1">Groups</label>
+          <div v-if="bulkChosenGroups.length" class="flex flex-wrap gap-1.5 mb-2">
+            <span v-for="g in bulkChosenGroups" :key="g.dn" class="badge-blue" :title="g.dn">
+              {{ g.cn }}
+              <button type="button" @click="removeBulkGroup(g)" aria-label="Remove group"
+                      class="ml-1 text-blue-700 hover:text-blue-900 leading-none">&times;</button>
+            </span>
+          </div>
+          <p v-else class="text-xs text-gray-500 mb-2">No groups chosen yet — search and add below.</p>
+
+          <div class="flex gap-2">
+            <input v-model="bulkGroupFilter" @keyup.enter="searchBulkGroups"
+                   placeholder="Search groups…" aria-label="Search groups" class="input flex-1" />
+            <button type="button" @click="searchBulkGroups" :disabled="bulkGroupSearching" class="btn-secondary text-sm shrink-0">Search</button>
+          </div>
+          <ul v-if="bulkGroupResults.length" class="mt-2 divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+            <li v-for="g in bulkGroupResults" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
+              <div class="min-w-0 flex-1">
+                <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
+                <code class="text-xs text-gray-500 block truncate" :title="g.dn">{{ g.dn }}</code>
+              </div>
+              <button type="button" @click="addBulkGroup(g)" class="ml-2 text-blue-600 hover:text-blue-800 text-xs font-medium">Add</button>
+            </li>
+          </ul>
+          <p v-else-if="bulkGroupSearched && !bulkGroupSearching" class="text-xs text-gray-500 mt-2 text-center">No matching groups.</p>
+        </div>
+
+        <!-- Result summary -->
+        <div v-if="bulkMembershipResult" class="p-3 rounded-lg text-sm"
+             :class="bulkMembershipResult.failed ? 'bg-amber-50 border border-amber-200' : 'bg-green-50 border border-green-200'">
+          <p>
+            <strong>{{ bulkMembershipResult.applied }}</strong> applied,
+            <strong>{{ bulkMembershipResult.queued }}</strong> pending approval,
+            <strong>{{ bulkMembershipResult.failed }}</strong> failed
+            across {{ bulkMembershipResult.users }} user(s)
+          </p>
+          <ul v-if="bulkMembershipResult.userFailures.length" class="mt-1 space-y-0.5">
+            <li v-for="f in bulkMembershipResult.userFailures" :key="f.dn" class="text-xs text-red-600">{{ f.dn }}: {{ f.message }}</li>
+          </ul>
+        </div>
+      </div>
+      <template #footer>
+        <button @click="showBulkMembership = false" class="btn-neutral">Close</button>
+        <button @click="doBulkMembership" :disabled="bulkMembershipBusy || !bulkChosenGroups.length" class="btn-primary">
+          {{ bulkMembershipBusy ? 'Applying…' : (bulkMembershipMode === 'ADD' ? 'Add to Groups' : 'Remove from Groups') }}
+        </button>
+      </template>
+    </AppModal>
+
     <!-- Activity Timeline modal -->
     <AppModal v-model="showTimeline" title="Activity History" size="lg">
       <div v-if="timelineTarget" class="mb-3">
@@ -434,6 +504,27 @@ interface BulkResult {
   failures?: Array<{ dn: string, message: string }>
 }
 
+interface BulkGroup {
+  dn: string
+  cn: string
+  memberAttr: 'member' | 'uniqueMember' | 'memberUid'
+}
+
+interface BulkMembershipResult {
+  users: number
+  applied: number
+  queued: number
+  failed: number
+  userFailures: Array<{ dn: string, message: string }>
+}
+
+// Per-user response shape from POST /users/memberships (see #165).
+interface MembershipApplyItem { status: string, message?: string }
+interface MembershipApplyResponse {
+  applied: number, queued: number, refused: number, blocked: number, errored: number,
+  items: MembershipApplyItem[]
+}
+
 interface Playbook { id: string, name: string, type: string }
 interface PlaybookStep { stepOrder: number, description?: string, reversible?: boolean, action?: string, status?: string }
 interface PlaybookPreview { steps: PlaybookStep[] }
@@ -469,6 +560,7 @@ const can = computed(() => ({
   resetPassword: hasFeature('user.reset_password'),
   enableDisable: hasFeature('user.enable_disable'),
   bulkUpdate:    hasFeature('bulk.attribute_update'),
+  manageMembers: hasFeature('group.manage_members'),
   exportCsv:     hasFeature('bulk.export'),
   runPlaybook:   hasFeature('playbook.execute'),
 }))
@@ -1041,6 +1133,124 @@ async function doBulkUpdate() {
     notif.error(err.response?.data?.detail || err.message)
   } finally {
     bulkUpdating.value = false
+  }
+}
+
+// ── Bulk Group Membership ────────────────────────────────────────────────────
+// Fan the staged batch endpoint (POST /users/memberships, #165) across the
+// selected users: each user gets one request applying the chosen groups in the
+// selected direction. Per-user outcomes are aggregated into one summary.
+
+const showBulkMembership  = ref(false)
+const bulkMembershipMode  = ref<'ADD' | 'REMOVE'>('ADD')
+const bulkGroupFilter     = ref('')
+const bulkGroupResults    = ref<BulkGroup[]>([])
+const bulkChosenGroups    = ref<BulkGroup[]>([])
+const bulkGroupSearching  = ref(false)
+const bulkGroupSearched   = ref(false)
+const bulkMembershipBusy  = ref(false)
+const bulkMembershipResult = ref<BulkMembershipResult | null>(null)
+
+function openBulkMembership() {
+  bulkMembershipMode.value = 'ADD'
+  bulkGroupFilter.value = ''
+  bulkGroupResults.value = []
+  bulkChosenGroups.value = []
+  bulkGroupSearched.value = false
+  bulkMembershipResult.value = null
+  showBulkMembership.value = true
+}
+
+/** Map a group search entry to a BulkGroup, resolving its membership attribute. */
+function toBulkGroup(e: { dn: string, attributes?: Record<string, string[] | undefined> }): BulkGroup {
+  const attrs = e.attributes || {}
+  return {
+    dn: e.dn,
+    cn: attrs.cn?.[0] || rdnValue(e.dn) || e.dn,
+    memberAttr: attrs.member ? 'member'
+      : attrs.uniqueMember ? 'uniqueMember'
+      : attrs.memberUid ? 'memberUid'
+      : 'member',
+  }
+}
+
+async function searchBulkGroups() {
+  const q = bulkGroupFilter.value.trim()
+  bulkGroupSearching.value = true
+  bulkGroupSearched.value = true
+  try {
+    const params: Record<string, string> = {}
+    if (q) params.filter = `(cn=*${q}*)`
+    const { data } = await groupsApi.searchGroups(dirId, params)
+    const entries = Array.isArray(data) ? data : (data?.entries || [])
+    const chosenDns = new Set(bulkChosenGroups.value.map(g => g.dn.toLowerCase()))
+    bulkGroupResults.value = entries
+      .map(toBulkGroup)
+      .filter((g: BulkGroup) => !chosenDns.has(g.dn.toLowerCase()))
+  } catch (e) {
+    const err = e as { response?: { data?: { detail?: string } }, message?: string }
+    notif.error(err.response?.data?.detail || err.message)
+  } finally {
+    bulkGroupSearching.value = false
+  }
+}
+
+function addBulkGroup(g: BulkGroup) {
+  if (!bulkChosenGroups.value.some(c => c.dn.toLowerCase() === g.dn.toLowerCase())) {
+    bulkChosenGroups.value.push(g)
+  }
+  bulkGroupResults.value = bulkGroupResults.value.filter(r => r.dn.toLowerCase() !== g.dn.toLowerCase())
+}
+
+function removeBulkGroup(g: BulkGroup) {
+  bulkChosenGroups.value = bulkChosenGroups.value.filter(c => c.dn.toLowerCase() !== g.dn.toLowerCase())
+}
+
+async function doBulkMembership() {
+  if (!bulkChosenGroups.value.length) return
+  bulkMembershipBusy.value = true
+  bulkMembershipResult.value = null
+  const dns = [...selectedDns.value] as string[]
+  const op = bulkMembershipMode.value
+  const changes = bulkChosenGroups.value.map(g => ({
+    groupDn: g.dn, memberAttribute: g.memberAttr, op,
+  }))
+
+  let applied = 0, queued = 0, failed = 0
+  const userFailures: Array<{ dn: string, message: string }> = []
+  try {
+    for (const dn of dns) {
+      try {
+        const { data } = await usersApi.applyMemberships(dirId, dn, { changes })
+        const r = data as MembershipApplyResponse
+        applied += r.applied
+        queued += r.queued
+        const f = r.refused + r.blocked + r.errored
+        if (f) {
+          failed += f
+          const firstFail = r.items.find(i => i.status === 'REFUSED' || i.status === 'BLOCKED' || i.status === 'ERROR')
+          userFailures.push({ dn, message: firstFail?.message || `${f} change(s) failed` })
+        }
+      } catch (e) {
+        // A whole-request failure (e.g. out-of-scope user → 403) fails every
+        // change for this user; record it and keep going for the others.
+        const err = e as { response?: { data?: { detail?: string } }, message?: string }
+        failed += changes.length
+        userFailures.push({ dn, message: err.response?.data?.detail || err.message || 'Request failed' })
+      }
+    }
+    bulkMembershipResult.value = { users: dns.length, applied, queued, failed, userFailures }
+    if (!failed) {
+      notif.success(`Memberships updated for ${dns.length} user(s) — ${applied} applied${queued ? `, ${queued} pending approval` : ''}`)
+      showBulkMembership.value = false
+      selectedDns.value = new Set()
+      await load()
+    } else {
+      notif.warning(`${applied} applied, ${queued} pending, ${failed} failed across ${dns.length} user(s)`)
+      await load()
+    }
+  } finally {
+    bulkMembershipBusy.value = false
   }
 }
 

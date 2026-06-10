@@ -30,7 +30,7 @@ vi.mock('@/api/users', () => ({
   searchUsers: vi.fn().mockResolvedValue({ data: [{ dn: 'uid=jdoe,ou=people,dc=x', enabled: true, attributes: {} }] }),
   getUser: vi.fn(), createUser: vi.fn(), updateUser: vi.fn(), deleteUser: vi.fn(),
   enableUser: vi.fn(), disableUser: vi.fn(), moveUser: vi.fn(), resetPassword: vi.fn(),
-  bulkUpdateAttributes: vi.fn(), getPasswordStatus: vi.fn(),
+  bulkUpdateAttributes: vi.fn(), getPasswordStatus: vi.fn(), applyMemberships: vi.fn(),
 }))
 vi.mock('@/api/groups', () => ({ addGroupMember: vi.fn(), removeGroupMember: vi.fn(), searchGroups: vi.fn() }))
 vi.mock('@/api/csvTemplates', () => ({ exportCsv: vi.fn() }))
@@ -162,5 +162,41 @@ describe('UserListView feature gating', () => {
     expect(secLogin!.label).toBe('ivia.seclogin')
     // No column should expose the internal isva. prefix as its label.
     expect(cols.some(c => c.label.startsWith('isva.'))).toBe(false)
+  })
+})
+
+describe('UserListView bulk group membership', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  // ResultsTable variant that selects two rows on mount, so the bulk toolbar
+  // (which only appears with ≥2 selected) is exercisable.
+  const selectingStubs = {
+    ...stubs,
+    ResultsTable: {
+      name: 'ResultsTable',
+      props: ['rows', 'columns', 'selectedKeys', 'rowKey', 'tableKey', 'selectable', 'emptyText'],
+      emits: ['update:selectedKeys'],
+      mounted(this: { $emit: (e: string, v: unknown) => void }) {
+        this.$emit('update:selectedKeys', new Set(['uid=a,dc=x', 'uid=b,dc=x']))
+      },
+      template: `<div><slot name="toolbar" /></div>`,
+    },
+  }
+
+  async function mountSelecting(features: string[]) {
+    state.features = features
+    const wrapper = mount(UserListView, { global: { stubs: selectingStubs } })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('shows Manage Groups when ≥2 users are selected and the admin can manage members', async () => {
+    const wrapper = await mountSelecting(['user.read', 'group.manage_members'])
+    expect(texts(wrapper).some(t => t.startsWith('Manage Groups'))).toBe(true)
+  })
+
+  it('hides Manage Groups without the group.manage_members feature', async () => {
+    const wrapper = await mountSelecting(['user.read'])
+    expect(texts(wrapper).some(t => t.startsWith('Manage Groups'))).toBe(false)
   })
 })
