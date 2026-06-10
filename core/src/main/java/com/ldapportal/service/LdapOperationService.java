@@ -42,8 +42,10 @@ import com.ldapportal.ldap.LdapSchemaService.ObjectClassAttributes;
 import com.ldapportal.ldap.LdapSchemaService.SchemaListItem;
 import com.ldapportal.ldap.LdapUserService;
 import com.ldapportal.repository.DirectoryConnectionRepository;
+import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
+import com.unboundid.ldap.sdk.ResultCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
@@ -568,6 +570,14 @@ public class LdapOperationService {
         loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, memberDn);
 
+        // Pre-flight authorization: every target group must be within the
+        // admin's scope before any write happens. An out-of-scope group fails
+        // the whole request up front (403) with zero partial application —
+        // rather than aborting mid-batch after earlier items already persisted.
+        for (MembershipChangeRequest.Change c : changes) {
+            permissionService.requireDnWithinScope(principal, directoryId, c.groupDn());
+        }
+
         List<MembershipChangeRequest.Change> ordered = new ArrayList<>(changes);
         ordered.sort(Comparator.comparingInt(
                 c -> c.op() == MembershipChangeRequest.Op.REMOVE ? 0 : 1));
@@ -609,11 +619,18 @@ public class LdapOperationService {
         } catch (ProvisioningRefusedException e) {
             return MembershipChangeResult.Item.refused(c, e.getMessage());
         } catch (AccessDeniedException e) {
-            // A target group outside the admin's scope is a hard authz failure,
-            // not a soft per-item error — abort so the request 403s rather than
-            // leaking which groups the admin may touch.
+            // Defense-in-depth: applyMembershipChanges pre-validates every group
+            // DN, so this is unreachable in the normal flow — but never soften an
+            // authz failure into a per-item result. Re-throw so the request 403s.
             throw e;
         } catch (RuntimeException e) {
+            // Idempotency: re-adding a member that already exists, or removing one
+            // that isn't present, is a no-op — the desired membership state
+            // already holds. Treat it as applied so a bulk op across users with
+            // mixed current membership doesn't surface spurious failures.
+            if (isIdempotentNoOp(c.op(), e)) {
+                return MembershipChangeResult.Item.applied(c);
+            }
             // A Separation-of-Duties BLOCK surfaces as a SodViolationException
             // from the governance addon, which core must not import (edition
             // boundary). Detect it by simple name so the UI gets a distinct
@@ -624,6 +641,34 @@ public class LdapOperationService {
             String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
             return MembershipChangeResult.Item.errored(c, msg);
         }
+    }
+
+    /**
+     * True when the failure is the idempotent no-op for this op: adding a member
+     * value that already exists ({@code ATTRIBUTE_OR_VALUE_EXISTS}) or removing a
+     * value that isn't present ({@code NO_SUCH_ATTRIBUTE}). The LDAP result code
+     * is read from the cause chain (the write wraps the UnboundID
+     * {@link LDAPException} inside an {@code LdapOperationException}).
+     */
+    private static boolean isIdempotentNoOp(MembershipChangeRequest.Op op, Throwable failure) {
+        ResultCode rc = ldapResultCode(failure);
+        if (rc == null) {
+            return false;
+        }
+        return switch (op) {
+            case ADD    -> rc == ResultCode.ATTRIBUTE_OR_VALUE_EXISTS;
+            case REMOVE -> rc == ResultCode.NO_SUCH_ATTRIBUTE;
+        };
+    }
+
+    /** Walks the cause chain for an UnboundID {@link LDAPException} and returns its result code, or null. */
+    private static ResultCode ldapResultCode(Throwable failure) {
+        for (Throwable t = failure; t != null; t = t.getCause()) {
+            if (t instanceof LDAPException le) {
+                return le.getResultCode();
+            }
+        }
+        return null;
     }
 
     // ── Bulk import / export ──────────────────────────────────────────────────
