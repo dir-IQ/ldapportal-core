@@ -6,12 +6,17 @@ import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PermissionService;
 import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.dto.ldap.AttributeModification;
+import com.ldapportal.core.provisioning.ProvisioningRefusedException;
 import com.ldapportal.dto.ldap.CreateEntryRequest;
 import com.ldapportal.dto.ldap.LdapEntryResponse;
+import com.ldapportal.dto.ldap.MembershipChangeRequest;
+import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.dto.ldap.MoveUserRequest;
 import com.ldapportal.dto.ldap.UpdateEntryRequest;
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.PendingApproval;
 import com.ldapportal.entity.ProvisioningProfile;
+import com.ldapportal.entity.enums.ApprovalRequestType;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapBrowseService;
 import com.ldapportal.ldap.LdapGroupService;
@@ -43,6 +48,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.lenient;
@@ -80,7 +86,7 @@ class LdapOperationServiceTest {
         service = new LdapOperationService(
                 dirRepo, permissionService, browseService, userService, groupService,
                 schemaService, auditService, bulkUserService, bulkGroupService, csvTemplateService,
-                membershipGate, nullProvider);
+                membershipGate, nullProvider, nullApprovalProvider());
     }
 
     // ── Directory loading ─────────────────────────────────────────────────────
@@ -274,7 +280,109 @@ class LdapOperationServiceTest {
         verify(userService).searchUsers(eq(dc), anyString(), any(), eq(2), any(String[].class));
     }
 
+    // ── Batch membership changes ──────────────────────────────────────────────
+
+    private static final String MEMBER_DN = "uid=alice,ou=people,dc=example,dc=com";
+    private static final String GROUP_A   = "cn=devs,ou=groups,dc=example,dc=com";
+    private static final String GROUP_B   = "cn=ops,ou=groups,dc=example,dc=com";
+
+    private MembershipChangeRequest.Change add(String groupDn) {
+        return new MembershipChangeRequest.Change(groupDn, "member", MembershipChangeRequest.Op.ADD);
+    }
+
+    private MembershipChangeRequest.Change remove(String groupDn) {
+        return new MembershipChangeRequest.Change(groupDn, "member", MembershipChangeRequest.Op.REMOVE);
+    }
+
+    @Test
+    void applyMembershipChanges_appliesRemovesBeforeAdds() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        // Request order is add-then-remove; the service must reorder so the
+        // remove runs first.
+        MembershipChangeResult result = service.applyMembershipChanges(
+                dirId, adminPrincipal(), MEMBER_DN, List.of(add(GROUP_A), remove(GROUP_B)));
+
+        assertThat(result.applied()).isEqualTo(2);
+        assertThat(result.queued()).isZero();
+
+        var ord = inOrder(groupService);
+        ord.verify(groupService).removeMember(eq(dc), eq(GROUP_B), eq("member"), eq(MEMBER_DN));
+        ord.verify(groupService).addMember(eq(dc), eq(GROUP_A), eq("member"), eq(MEMBER_DN), isNull());
+    }
+
+    @Test
+    void applyMembershipChanges_queuesAddWhenApprovalRequired() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        ApprovalWorkflowService approval = mock(ApprovalWorkflowService.class);
+        PendingApproval pa = mock(PendingApproval.class);
+        UUID approvalId = UUID.randomUUID();
+        when(pa.getId()).thenReturn(approvalId);
+        when(approval.checkAndSubmitForApproval(eq(dirId), eq(GROUP_A), any(),
+                eq(ApprovalRequestType.GROUP_MEMBER_ADD), any())).thenReturn(Optional.of(pa));
+
+        MembershipChangeResult result = serviceWithApproval(approval)
+                .applyMembershipChanges(dirId, adminPrincipal(), MEMBER_DN, List.of(add(GROUP_A)));
+
+        assertThat(result.queued()).isEqualTo(1);
+        assertThat(result.applied()).isZero();
+        assertThat(result.items().get(0).status())
+                .isEqualTo(MembershipChangeResult.Status.QUEUED_FOR_APPROVAL);
+        assertThat(result.items().get(0).approvalId()).isEqualTo(approvalId);
+        // Queued — never written to the directory.
+        verify(groupService, never()).addMember(any(), anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void applyMembershipChanges_classifiesRefusalPerItem() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        doThrow(new ProvisioningRefusedException("target lacks secGroup"))
+                .when(groupService).addMember(eq(dc), eq(GROUP_A), eq("member"), eq(MEMBER_DN), isNull());
+
+        MembershipChangeResult result = service.applyMembershipChanges(
+                dirId, adminPrincipal(), MEMBER_DN, List.of(add(GROUP_A)));
+
+        assertThat(result.refused()).isEqualTo(1);
+        assertThat(result.items().get(0).status())
+                .isEqualTo(MembershipChangeResult.Status.REFUSED);
+        assertThat(result.items().get(0).message()).contains("secGroup");
+    }
+
+    @Test
+    void applyMembershipChanges_outOfScopeMember_aborts() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        doThrow(new AccessDeniedException("nope"))
+                .when(permissionService).requireDnWithinScope(any(), eq(dirId), eq(MEMBER_DN));
+
+        assertThatThrownBy(() -> service.applyMembershipChanges(
+                dirId, adminPrincipal(), MEMBER_DN, List.of(add(GROUP_A))))
+                .isInstanceOf(AccessDeniedException.class);
+
+        verify(groupService, never()).addMember(any(), anyString(), anyString(), anyString(), any());
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Builds a service whose approval provider yields the given workflow service. */
+    private LdapOperationService serviceWithApproval(ApprovalWorkflowService approval) {
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<ProvisioningProfileService> profileProvider =
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        lenient().when(profileProvider.getIfAvailable()).thenReturn(null);
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<ApprovalWorkflowService> approvalProvider =
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        lenient().when(approvalProvider.getIfAvailable()).thenReturn(approval);
+        return new LdapOperationService(
+                dirRepo, permissionService, browseService, userService, groupService,
+                schemaService, auditService, bulkUserService, bulkGroupService, csvTemplateService,
+                membershipGate, profileProvider, approvalProvider);
+    }
 
     /** Builds a service whose ObjectProvider yields the given profile service. */
     private LdapOperationService serviceWithProfile(ProvisioningProfileService ps) {
@@ -285,7 +393,16 @@ class LdapOperationServiceTest {
         return new LdapOperationService(
                 dirRepo, permissionService, browseService, userService, groupService,
                 schemaService, auditService, bulkUserService, bulkGroupService, csvTemplateService,
-                membershipGate, provider);
+                membershipGate, provider, nullApprovalProvider());
+    }
+
+    /** An ApprovalWorkflowService provider that yields null (no approval gating). */
+    private org.springframework.beans.factory.ObjectProvider<ApprovalWorkflowService> nullApprovalProvider() {
+        @SuppressWarnings("unchecked")
+        org.springframework.beans.factory.ObjectProvider<ApprovalWorkflowService> provider =
+                mock(org.springframework.beans.factory.ObjectProvider.class);
+        lenient().when(provider.getIfAvailable()).thenReturn(null);
+        return provider;
     }
 
     // ── Bulk delete ─────────────────────────────────────────────────────────────

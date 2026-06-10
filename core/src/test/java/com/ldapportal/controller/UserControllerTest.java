@@ -6,6 +6,10 @@ import com.ldapportal.controller.directory.UserController;
 import com.ldapportal.dto.ldap.AttributeModification;
 import com.ldapportal.dto.ldap.CreateEntryRequest;
 import com.ldapportal.dto.ldap.LdapEntryResponse;
+import com.ldapportal.dto.ldap.MembershipChangeRequest;
+import com.ldapportal.dto.ldap.MembershipChangeRequest.Change;
+import com.ldapportal.dto.ldap.MembershipChangeRequest.Op;
+import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.dto.ldap.MoveUserRequest;
 import com.ldapportal.dto.ldap.UpdateEntryRequest;
 import com.ldapportal.exception.ResourceNotFoundException;
@@ -199,5 +203,58 @@ class UserControllerTest extends BaseControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isNoContent());
+    }
+
+    // ── POST /memberships ─────────────────────────────────────────────────────
+
+    static final String GROUP_A = "cn=devs,ou=groups,dc=example,dc=com";
+    static final String GROUP_B = "cn=ops,ou=groups,dc=example,dc=com";
+
+    @Test
+    void applyMemberships_admin_returns200_withSummary() throws Exception {
+        MembershipChangeRequest req = new MembershipChangeRequest(List.of(
+                new Change(GROUP_A, "member", Op.ADD),
+                new Change(GROUP_B, "member", Op.REMOVE)));
+
+        MembershipChangeResult result = MembershipChangeResult.of(List.of(
+                MembershipChangeResult.Item.applied(new Change(GROUP_B, "member", Op.REMOVE)),
+                MembershipChangeResult.Item.queued(new Change(GROUP_A, "member", Op.ADD),
+                        UUID.fromString("aaaaaaaa-0000-0000-0000-000000000001"))));
+        given(ldapService.applyMembershipChanges(eq(DIR_ID), any(), eq(ENTRY_DN), any()))
+                .willReturn(result);
+
+        mockMvc.perform(post(BASE_URL + "/memberships")
+                        .param("dn", ENTRY_DN)
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.applied").value(1))
+                .andExpect(jsonPath("$.queued").value(1))
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.items[1].status").value("QUEUED_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.items[1].approvalId")
+                        .value("aaaaaaaa-0000-0000-0000-000000000001"));
+    }
+
+    @Test
+    void applyMemberships_emptyChanges_returns400() throws Exception {
+        MembershipChangeRequest req = new MembershipChangeRequest(List.of());
+
+        mockMvc.perform(post(BASE_URL + "/memberships")
+                        .param("dn", ENTRY_DN)
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void applyMemberships_unauthenticated_returns401() throws Exception {
+        mockMvc.perform(post(BASE_URL + "/memberships")
+                        .param("dn", ENTRY_DN)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"changes\":[]}"))
+                .andExpect(status().isUnauthorized());
     }
 }
