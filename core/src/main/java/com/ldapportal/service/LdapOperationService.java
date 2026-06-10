@@ -4,6 +4,7 @@ package com.ldapportal.service;
 import com.ldapportal.core.governance.MembershipGate;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.ldap.validation.DnValidator;
+import com.ldapportal.ldap.validation.LdapAttributeValidator;
 import com.ldapportal.auth.PermissionService;
 import com.ldapportal.dto.csv.BulkDeletePreviewResult;
 import com.ldapportal.dto.csv.BulkDeletePreviewRow;
@@ -32,6 +33,7 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ConflictHandling;
 import com.ldapportal.entity.enums.DirectoryType;
+import com.ldapportal.entity.enums.InputType;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapBrowseService;
 import com.ldapportal.ldap.LdapBrowseService.BrowseResult;
@@ -257,6 +259,13 @@ public class LdapOperationService {
         if (createProfileSvc != null && profileId != null) {
             createProfileSvc.validateAttributes(profileId, req.attributes());
         }
+        // Syntax layer (DN-valued / email / boolean attributes), directory-type
+        // aware. Runs even for an unprofiled DN — well-known attributes (manager,
+        // mail, …) are still shape-checked. Profiled DN_LOOKUP/BOOLEAN fields are
+        // resolved from the matched profile's input types.
+        Map<String, InputType> inputTypes = createProfileSvc == null
+                ? Map.of() : createProfileSvc.inputTypesForProfile(profileId);
+        LdapAttributeValidator.validateSyntax(dc.getDirectoryType(), req.attributes(), inputTypes);
 
         userService.createUser(dc, req.dn(), req.attributes(), profileId);
         LdapEntryResponse result = LdapEntryResponse.from(userService.getUser(dc, req.dn()));
@@ -277,14 +286,20 @@ public class LdapOperationService {
         // NOT enforced here — an attribute absent from this update is not a
         // missing-required error.
         ProvisioningProfileService updateProfileSvc = profileServiceProvider.getIfAvailable();
+        Map<String, List<String>> modifiedValues = modifiedAttributeValues(req);
+        Map<String, InputType> inputTypes = Map.of();
         if (updateProfileSvc != null) {
             UUID profileId = updateProfileSvc.resolveProfileForDn(directoryId, dn)
                     .map(p -> p.getId()).orElse(null);
             if (profileId != null) {
                 updateProfileSvc.validateModification(
-                        profileId, modifiedAttributeNames(req), modifiedAttributeValues(req));
+                        profileId, modifiedAttributeNames(req), modifiedValues);
+                inputTypes = updateProfileSvc.inputTypesForProfile(profileId);
             }
         }
+        // Syntax layer on the modified attributes only — an attribute absent from
+        // this update is not re-checked, so existing looser data is never touched.
+        LdapAttributeValidator.validateSyntax(dc.getDirectoryType(), modifiedValues, inputTypes);
 
         List<Modification> mods = toModifications(req);
         userService.updateUser(dc, dn, mods);
@@ -299,6 +314,8 @@ public class LdapOperationService {
                                          String dn, UpdateEntryRequest req) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
+        LdapAttributeValidator.validateSyntax(
+                dc.getDirectoryType(), modifiedAttributeValues(req), Map.of());
 
         List<Modification> mods = toModifications(req);
         groupService.updateGroup(dc, dn, mods);
@@ -321,6 +338,19 @@ public class LdapOperationService {
                         m.values() == null ? new String[0]
                                 : m.values().toArray(new String[0])))
                 .toList();
+
+        // The same modifications apply to every DN, so syntax-check the written
+        // values once up front (well-known attributes only — a bulk update spans
+        // many entries with potentially different profiles). A malformed value
+        // fails the whole request before any entry is touched.
+        Map<String, List<String>> modifiedValues = new java.util.LinkedHashMap<>();
+        for (AttributeModification m : req.modifications()) {
+            if (m.operation() != AttributeModification.Operation.DELETE
+                    && m.values() != null && !m.values().isEmpty()) {
+                modifiedValues.put(m.attribute(), m.values());
+            }
+        }
+        LdapAttributeValidator.validateSyntax(dc.getDirectoryType(), modifiedValues, Map.of());
 
         int updated = 0;
         List<BulkAttributeUpdateResult.BulkUpdateError> failures = new ArrayList<>();
@@ -495,6 +525,9 @@ public class LdapOperationService {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, req.dn());
         DnValidator.requireValidDn(req.dn(), dc.getDirectoryType());
+        // Groups carry no profile; well-known attribute syntax (owner / member /
+        // uniqueMember DNs) is still enforced before the write.
+        LdapAttributeValidator.validateSyntax(dc.getDirectoryType(), req.attributes(), Map.of());
 
         groupService.createGroup(dc, req.dn(), req.attributes());
         LdapEntryResponse result = LdapEntryResponse.from(groupService.getGroup(dc, req.dn()));
