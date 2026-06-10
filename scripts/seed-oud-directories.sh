@@ -71,9 +71,9 @@ INSTANCES=(
 
 # Provisioning profiles: "directory displayName|profile name|targetOuDn"
 PROFILES=(
-  "OUD1 Primary|PROD (OUD1)|ou=People,dc=oud1,dc=example,dc=com"
-  "OUD2 Primary|QA (OUD2)|ou=People,dc=oud2,dc=example,dc=com"
-  "OUD3 Primary|INT (OUD3)|ou=People,dc=oud3,dc=example,dc=com"
+  "OUD1 Primary|PROD (OUD1)|ou=People,dc=oud1,dc=example,dc=com|ou=Groups,dc=oud1,dc=example,dc=com"
+  "OUD2 Primary|QA (OUD2)|ou=People,dc=oud2,dc=example,dc=com|ou=Groups,dc=oud2,dc=example,dc=com"
+  "OUD3 Primary|INT (OUD3)|ou=People,dc=oud3,dc=example,dc=com|ou=Groups,dc=oud3,dc=example,dc=com"
 )
 
 die() { echo "ERROR: $*" >&2; exit 1; }
@@ -273,10 +273,10 @@ read -r -d '' ATTR_CONFIGS <<'JSON' || true
 JSON
 
 profile_body() {
-  local name="$1" ou="$2"
-  jq -n --arg name "$name" --arg ou "$ou" \
+  local name="$1" userDn="$2" groupDn="$3"
+  jq -n --arg name "$name" --arg userDn "$userDn" --arg groupDn "$groupDn"\
      --arg special '!@#$%^&*' --argjson attrs "$ATTR_CONFIGS" '{
-    name: $name, description: "", targetOuDn: $ou,
+    name: $name, description: "", targetUserDn: $userDn, targetGroupDn: $groupDn,
     objectClassNames: ["inetOrgPerson"], rdnAttribute: "uid",
     showDnField: true, enabled: true, selfRegistrationAllowed: false,
     passwordLength: 16, passwordUppercase: true, passwordLowercase: true,
@@ -288,7 +288,7 @@ profile_body() {
 
 prof_created=0; prof_skipped=0; prof_failed=0
 for spec in "${PROFILES[@]}"; do
-  IFS='|' read -r dirDisplay pname targetOu <<<"$spec"
+  IFS='|' read -r dirDisplay pname targetUserDn targetGroupDn <<<"$spec"
   id="$(id_for_display "$dirDisplay")"
   if [ -z "$id" ]; then
     echo "==> profile '$pname' — directory '$dirDisplay' not found, skipping."
@@ -301,14 +301,14 @@ for spec in "${PROFILES[@]}"; do
     prof_skipped=$((prof_skipped + 1)); continue
   fi
 
-  body="$(profile_body "$pname" "$targetOu")"
+  body="$(profile_body "$pname" "$targetUserDn $targetGroupDn")"
   resp="$(mktemp)"
   code="$(curl -sS -b "$COOKIES" -o "$resp" -w '%{http_code}' \
     -X POST "$api/directories/$id/profiles" \
     -H 'Content-Type: application/json' -d "$body")"
   case "$code" in
     200|201)
-      echo "==> profile '$pname' on $dirDisplay — created (id $(jq -r '.id // "?"' "$resp"))  targetOuDn=$targetOu"
+      echo "==> profile '$pname' on $dirDisplay — created (id $(jq -r '.id // "?"' "$resp")) targetUserDn=$targetUserDn, targetGroupDn=$targetGroupDn"
       prof_created=$((prof_created + 1))
       ;;
     *)
