@@ -309,6 +309,12 @@
     <div v-show="activeTab === 'groups'">
       <p v-if="!isEdit" class="text-xs text-gray-500 mb-3">Select groups for the new user. Memberships will be created after the user is saved.</p>
 
+      <!-- Truncation notice: the directory has more groups than the load cap,
+           so the membership list and copy-from-user may be incomplete. -->
+      <div v-if="isEdit && groupsTruncated" class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        Showing the first {{ GROUP_LOAD_LIMIT.toLocaleString() }} groups — in a directory this large, the membership list and “copy from another user” may be incomplete. Use search to find specific groups.
+      </div>
+
       <!-- Copy memberships from another user (edit mode). Pre-stages the
            source user's groups as additions; applied with the rest on Save. -->
       <div v-if="isEdit" class="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
@@ -603,12 +609,20 @@ const headerEnabled = computed(() => {
   return v !== 'false'
 })
 
+// Membership detection (Current Groups) and copy-from-user both derive from
+// this loaded set, so load up to the backend's hard cap and slim the payload
+// to just the membership-relevant attributes. When the cap is hit the view may
+// be incomplete — surfaced via groupsTruncated.
+const GROUP_LOAD_LIMIT = 2000
+const GROUP_LOAD_ATTRS  = 'cn,member,uniqueMember,memberUid'
+
 const loadingGroups   = ref(false)
 const memberGroups    = ref<GroupItem[]>([])
 const availableGroups = ref<GroupItem[]>([])
 const groupFilter     = ref('')
 const allGroups       = ref<GroupItem[]>([])
 const pendingGroups   = ref<GroupItem[]>([])
+const groupsTruncated = ref(false)
 
 // Edit-mode staged membership changes — accumulated locally and flushed as a
 // single batch on Save (via applyMembershipChanges, exposed to the parent),
@@ -948,12 +962,18 @@ async function loadGroups() {
   }
   loadingGroups.value = true
   try {
-    const params: Record<string, string> = {}
+    const params: Record<string, string> = {
+      limit: String(GROUP_LOAD_LIMIT),
+      attributes: GROUP_LOAD_ATTRS,
+    }
     if (groupFilter.value.trim()) {
       params.filter = `(cn=*${groupFilter.value.trim()}*)`
     }
     const { data } = await groupsApi.searchGroups(props.dirId, params)
     const entries = Array.isArray(data) ? data : (data?.entries || [])
+    // The backend caps at GROUP_LOAD_LIMIT; hitting it means the membership
+    // view (and copy-from-user) may be missing groups beyond the cap.
+    groupsTruncated.value = entries.length >= GROUP_LOAD_LIMIT
     allGroups.value = entries.map((e: { dn: string, attributes?: Record<string, string[] | undefined> }): GroupItem => ({
       dn: e.dn,
       cn: e.attributes?.cn?.[0] || '—',

@@ -219,4 +219,22 @@ describe('UserForm staged group memberships (edit mode)', () => {
       changes: [{ groupDn: OPS, memberAttribute: 'member', op: 'ADD' }],
     })
   })
+
+  it('loads groups with the raised cap and slimmed attributes', async () => {
+    await mountEditWithGroups()
+    expect(groupsApi.searchGroups).toHaveBeenCalledWith('dir1', expect.objectContaining({
+      limit: '2000',
+      attributes: 'cn,member,uniqueMember,memberUid',
+    }))
+  })
+
+  it('warns that the membership view may be incomplete when the cap is hit', async () => {
+    vi.mocked(groupsApi.searchGroups).mockResolvedValue({
+      data: Array.from({ length: 2000 }, (_, i) => ({
+        dn: `cn=g${i},ou=groups,dc=x`, attributes: { cn: [`g${i}`] },
+      })),
+    } as never)
+    const wrapper = await mountEditWithGroups()
+    expect(wrapper.text()).toContain('may be incomplete')
+  })
 })

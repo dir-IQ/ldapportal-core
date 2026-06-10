@@ -17,7 +17,10 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.PendingApproval;
 import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.entity.enums.ApprovalRequestType;
+import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.exception.ResourceNotFoundException;
+import com.unboundid.ldap.sdk.LDAPException;
+import com.unboundid.ldap.sdk.ResultCode;
 import com.ldapportal.ldap.LdapBrowseService;
 import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.ldap.LdapSchemaService;
@@ -364,6 +367,77 @@ class LdapOperationServiceTest {
                 .isInstanceOf(AccessDeniedException.class);
 
         verify(groupService, never()).addMember(any(), anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void applyMembershipChanges_outOfScopeGroup_abortsBeforeAnyWrite() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        // The member is in scope but one target group is not: the pre-flight
+        // check must 403 before any write, never half-applying the batch.
+        // Lenient: the member + GROUP_A scope checks run first and don't match
+        // this stub, which would otherwise trip strict-stubbing.
+        org.mockito.Mockito.lenient().doThrow(new AccessDeniedException("nope"))
+                .when(permissionService).requireDnWithinScope(any(), eq(dirId), eq(GROUP_B));
+
+        assertThatThrownBy(() -> service.applyMembershipChanges(
+                dirId, adminPrincipal(), MEMBER_DN, List.of(remove(GROUP_A), add(GROUP_B))))
+                .isInstanceOf(AccessDeniedException.class);
+
+        verify(groupService, never()).addMember(any(), anyString(), anyString(), anyString(), any());
+        verify(groupService, never()).removeMember(any(), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void applyMembershipChanges_addAlreadyMember_reportedApplied() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        // groupService surfaces the LDAP "value already exists" code wrapped the
+        // same way the real write path does (LDAPException as the cause).
+        doThrow(new LdapOperationException("dup",
+                new LDAPException(ResultCode.ATTRIBUTE_OR_VALUE_EXISTS, "exists")))
+                .when(groupService).addMember(eq(dc), eq(GROUP_A), eq("member"), eq(MEMBER_DN), isNull());
+
+        MembershipChangeResult result = service.applyMembershipChanges(
+                dirId, adminPrincipal(), MEMBER_DN, List.of(add(GROUP_A)));
+
+        assertThat(result.applied()).isEqualTo(1);
+        assertThat(result.errored()).isZero();
+        assertThat(result.items().get(0).status())
+                .isEqualTo(MembershipChangeResult.Status.APPLIED);
+    }
+
+    @Test
+    void applyMembershipChanges_removeNonMember_reportedApplied() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        doThrow(new LdapOperationException("no value",
+                new LDAPException(ResultCode.NO_SUCH_ATTRIBUTE, "absent")))
+                .when(groupService).removeMember(eq(dc), eq(GROUP_A), eq("member"), eq(MEMBER_DN));
+
+        MembershipChangeResult result = service.applyMembershipChanges(
+                dirId, adminPrincipal(), MEMBER_DN, List.of(remove(GROUP_A)));
+
+        assertThat(result.applied()).isEqualTo(1);
+        assertThat(result.errored()).isZero();
+    }
+
+    @Test
+    void applyMembershipChanges_realLdapError_stillReportedAsError() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        // A genuine failure (not the idempotent no-op code) stays an error.
+        doThrow(new LdapOperationException("boom",
+                new LDAPException(ResultCode.UNWILLING_TO_PERFORM, "nope")))
+                .when(groupService).addMember(eq(dc), eq(GROUP_A), eq("member"), eq(MEMBER_DN), isNull());
+
+        MembershipChangeResult result = service.applyMembershipChanges(
+                dirId, adminPrincipal(), MEMBER_DN, List.of(add(GROUP_A)));
+
+        assertThat(result.errored()).isEqualTo(1);
+        assertThat(result.applied()).isZero();
+        assertThat(result.items().get(0).status())
+                .isEqualTo(MembershipChangeResult.Status.ERROR);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
