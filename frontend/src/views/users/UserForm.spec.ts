@@ -132,6 +132,54 @@ describe('UserForm validation', () => {
   })
 })
 
+// Mirrors the server's syntax layer (workstream A) in the create form: a
+// DN_LOOKUP field must hold a valid DN, and a well-known attribute (mail) is
+// shape-checked via the /attribute-syntax hints (workstream B).
+describe('UserForm syntax validation', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  const syntaxConfig = {
+    rdnAttribute: 'uid',
+    attributeConfigs: [
+      { attributeName: 'uid', requiredOnCreate: true, editableOnCreate: true, inputType: 'TEXT' },
+      // DN_LOOKUP → DN, derivable from the input type without the hints.
+      { attributeName: 'manager', editableOnCreate: true, inputType: 'DN_LOOKUP' },
+      // Plain text, but well-known mail → EMAIL once the hints load.
+      { attributeName: 'mail', editableOnCreate: true, inputType: 'TEXT' },
+    ],
+  }
+
+  function mountSyntax(data: Record<string, unknown>) {
+    return mount(UserForm, {
+      props: { data, isEdit: false, userTemplateConfig: syntaxConfig, dirId: null, profileId: null },
+    })
+  }
+
+  it('blocks submit and shows a DN error for a malformed DN_LOOKUP value', async () => {
+    const wrapper = mountSyntax({ rdnValue: 'jsmith', attributes: { manager: 'not a dn' } })
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('Not a valid DN')
+  })
+
+  it('mirrors the well-known email check once the syntax hints load', async () => {
+    const wrapper = mountSyntax({ rdnValue: 'jsmith', attributes: { mail: 'nope' } })
+    await flushPromises() // let the attribute-syntax hints resolve
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('Not a valid email address')
+  })
+
+  it('passes with a valid DN and email', async () => {
+    const wrapper = mountSyntax({
+      rdnValue: 'jsmith',
+      attributes: { manager: 'uid=boss,ou=people,dc=example,dc=com', mail: 'a@b.com' },
+    })
+    await flushPromises()
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(true)
+  })
+})
+
 interface ExposedStaged {
   validate: () => boolean
   applyMembershipChanges: () => Promise<unknown>

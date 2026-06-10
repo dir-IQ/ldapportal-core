@@ -90,6 +90,25 @@ class GroupControllerTest extends BaseControllerTest {
                 .andExpect(jsonPath("$.dn").value(ENTRY_DN));
     }
 
+    @Test
+    void createGroup_attributeValidationFailure_returns400WithDetail() throws Exception {
+        // The service layer rejects a malformed DN-valued attribute with
+        // IllegalArgumentException; this pins the contract the UI relies on —
+        // it surfaces as a 400 ProblemDetail carrying the field-level message,
+        // not a 500.
+        CreateEntryRequest req = new CreateEntryRequest(ENTRY_DN,
+                Map.of("cn", List.of("developers"), "owner", List.of("not a dn")));
+        given(ldapService.createGroup(eq(DIR_ID), any(), any()))
+                .willThrow(new IllegalArgumentException("Attribute [owner] is not a valid DN: not a dn"));
+
+        mockMvc.perform(post(BASE_URL)
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Attribute [owner] is not a valid DN: not a dn"));
+    }
+
     // ── GET /entry ────────────────────────────────────────────────────────────
 
     @Test

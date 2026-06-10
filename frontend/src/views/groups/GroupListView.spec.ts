@@ -31,6 +31,7 @@ vi.mock('@/api/csvTemplates', () => ({ exportGroupCsv: vi.fn() }))
 vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ data: [] }) }))
 
 import GroupListView from './GroupListView.vue'
+import { createGroup, updateGroup } from '@/api/groups'
 
 const stubs = {
   LdapFilterBuilder: true, AppModal: true, FormField: true,
@@ -79,4 +80,45 @@ describe('GroupListView feature gating', () => {
     expect(t).not.toContain('+ New Group')
     expect(t.join(' ')).toContain('Export CSV')
   })
+})
+
+// Mirrors the server's DN-syntax check on group create/update — a malformed
+// owner DN is blocked client-side before the write, with an inline message.
+describe('GroupListView owner DN validation', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  async function mountVm() {
+    state.features = ['group.read', 'group.create_delete', 'group.edit']
+    const wrapper = mount(GroupListView, { global: { stubs } })
+    await flushPromises()
+    return wrapper.vm as any
+  }
+
+  it('blocks create and sets an inline error for a malformed owner DN', async () => {
+    const vm = await mountVm()
+    vm.createForm.owner = 'not a dn'
+    await vm.doCreate()
+    expect(createGroup).not.toHaveBeenCalled()
+    expect(vm.createOwnerError).toBe('Not a valid DN')
+  })
+
+  it('allows create when the owner is a valid DN (or blank)', async () => {
+    const vm = await mountVm()
+    vm.createForm.cn = 'devs'
+    vm.createForm.owner = 'uid=boss,ou=people,dc=example,dc=com'
+    await vm.doCreate()
+    expect(createGroup).toHaveBeenCalledTimes(1)
+    expect(vm.createOwnerError).toBeNull()
+  })
+
+  it('blocks edit for a malformed owner DN', async () => {
+    const vm = await mountVm()
+    vm.editingDn = 'cn=staff,ou=groups,dc=x'
+    vm.editForm.owner = 'still not a dn'
+    await vm.doEdit()
+    expect(updateGroup).not.toHaveBeenCalled()
+    expect(vm.editOwnerError).toBe('Not a valid DN')
+  })
+  /* eslint-enable @typescript-eslint/no-explicit-any */
 })
