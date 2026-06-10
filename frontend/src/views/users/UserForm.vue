@@ -317,17 +317,32 @@
 
         <!-- LEFT: existing memberships -->
         <div>
-          <!-- Current memberships (edit mode only) -->
+          <!-- Current + staged memberships (edit mode only). Changes are
+               staged locally and applied as one batch on Save. -->
           <div v-if="isEdit">
-            <h3 class="text-sm font-semibold text-gray-800 mb-2">Current Groups</h3>
+            <div class="flex items-center justify-between mb-2 gap-2">
+              <h3 class="text-sm font-semibold text-gray-800">Groups</h3>
+              <span v-if="hasPendingMembershipChanges" class="text-xs font-medium text-amber-600 shrink-0">Unsaved — applied on Save</span>
+            </div>
             <div v-if="loadingGroups" class="text-sm text-gray-500 py-3 text-center">Loading…</div>
-            <ul v-else-if="memberGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
-              <li v-for="g in memberGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
+            <ul v-else-if="displayedMemberships.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
+              <li v-for="row in displayedMemberships" :key="row.group.dn"
+                  class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50"
+                  :class="row.state === 'removing' ? 'bg-red-50' : row.state === 'adding' ? 'bg-green-50' : ''">
                 <div class="min-w-0 flex-1">
-                  <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
-                  <code class="text-xs text-gray-500 block truncate" :title="g.dn">{{ g.dn }}</code>
+                  <div class="flex items-center gap-2">
+                    <span class="font-medium truncate"
+                          :class="row.state === 'removing' ? 'line-through text-gray-400' : 'text-gray-800'">{{ row.group.cn }}</span>
+                    <span v-if="row.state === 'adding'" class="badge-green">Adding</span>
+                    <span v-else-if="row.state === 'removing'" class="badge-red">Removing</span>
+                  </div>
+                  <code class="text-xs text-gray-500 block truncate" :title="row.group.dn">{{ row.group.dn }}</code>
                 </div>
-                <button @click="removeFromGroup(g)" class="ml-2 text-red-500 hover:text-red-700 text-xs font-medium">Remove</button>
+                <button @click="onMembershipAction(row)"
+                        class="ml-2 text-xs font-medium"
+                        :class="row.state === 'member' ? 'text-red-500 hover:text-red-700' : 'text-gray-600 hover:text-gray-800'">
+                  {{ row.state === 'member' ? 'Remove' : 'Undo' }}
+                </button>
               </li>
             </ul>
             <p v-else class="text-sm text-gray-500 py-3 text-center border border-gray-200 rounded-lg">Not a member of any groups</p>
@@ -400,6 +415,7 @@ import DnPicker from '@/components/DnPicker.vue'
 import UserIdentityHeader from '@/components/users/UserIdentityHeader.vue'
 import IsvaAccountPanel from '@/components/users/IsvaAccountPanel.vue'
 import * as groupsApi from '@/api/groups'
+import * as usersApi from '@/api/users'
 import { generatePassword } from '@/api/profiles'
 import { getIsvaConfig } from '@/api/isvaConfig'
 import { IVIA_ABBR, isIviaAttr, iviaAttrLabel } from '@/constants/productNames'
@@ -564,6 +580,35 @@ const availableGroups = ref<GroupItem[]>([])
 const groupFilter     = ref('')
 const allGroups       = ref<GroupItem[]>([])
 const pendingGroups   = ref<GroupItem[]>([])
+
+// Edit-mode staged membership changes — accumulated locally and flushed as a
+// single batch on Save (via applyMembershipChanges, exposed to the parent),
+// rather than one API call per click. stagedAdditions holds groups to join;
+// stagedRemovals holds the lowercased DNs of current memberships to drop.
+const stagedAdditions = ref<GroupItem[]>([])
+const stagedRemovals  = ref<string[]>([])
+
+/** A current membership's DN is staged for removal. */
+function isStagedForRemoval(dn: string): boolean {
+  return stagedRemovals.value.includes(dn.toLowerCase())
+}
+
+/**
+ * The membership rows to render in edit mode: existing memberships (flagged
+ * 'removing' when staged to drop) followed by staged additions ('adding').
+ */
+interface MembershipRow { group: GroupItem, state: 'member' | 'removing' | 'adding' }
+const displayedMemberships = computed<MembershipRow[]>(() => {
+  const rows: MembershipRow[] = memberGroups.value.map(g => ({
+    group: g,
+    state: isStagedForRemoval(g.dn) ? 'removing' : 'member',
+  }))
+  for (const g of stagedAdditions.value) rows.push({ group: g, state: 'adding' })
+  return rows
+})
+
+const hasPendingMembershipChanges = computed(() =>
+  stagedAdditions.value.length > 0 || stagedRemovals.value.length > 0)
 
 const showExtraAttrs = ref(false)
 
@@ -833,7 +878,7 @@ function validate(): boolean {
   return ok
 }
 
-defineExpose({ validate })
+defineExpose({ validate, applyMembershipChanges, hasPendingMembershipChanges })
 
 let syncing = false
 watch(local, v => {
@@ -903,8 +948,9 @@ function filterAvailableGroups() {
   const excludedDnSet = new Set()
   // Exclude groups user is already a member of (edit mode)
   for (const g of memberGroups.value) excludedDnSet.add(g.dn.toLowerCase())
-  // Exclude groups already pending (create mode)
+  // Exclude groups already pending (create mode) or staged to add (edit mode)
   for (const g of pendingGroups.value) excludedDnSet.add(g.dn.toLowerCase())
+  for (const g of stagedAdditions.value) excludedDnSet.add(g.dn.toLowerCase())
 
   const q = groupFilter.value.toLowerCase()
   availableGroups.value = allGroups.value.filter(g =>
@@ -917,24 +963,17 @@ function searchAvailableGroups() {
   filterAvailableGroups()
 }
 
-async function addToGroup(group: GroupItem) {
+function addToGroup(group: GroupItem) {
   if (props.isEdit) {
-    // Edit mode: immediately persist the membership via API
-    try {
-      const res = await groupsApi.addGroupMember(props.dirId, group.dn, {
-        memberAttribute: group.memberAttr,
-        memberValue: local.dn,
-      })
-      if (res.status === 202) {
-        const notif = useNotificationStore()
-        notif.success('Group member addition submitted for approval')
-      } else {
-        group.members.push(local.dn || '')
-      }
-      refreshMemberships()
-    } catch (e) {
-      // silent
+    // Edit mode: stage the change; it's flushed as one batch on Save.
+    // Re-adding a current member that's staged for removal just cancels
+    // that removal instead of creating a duplicate addition.
+    if (isStagedForRemoval(group.dn)) {
+      stagedRemovals.value = stagedRemovals.value.filter(d => d !== group.dn.toLowerCase())
+    } else if (!stagedAdditions.value.some(g => g.dn.toLowerCase() === group.dn.toLowerCase())) {
+      stagedAdditions.value.push(group)
     }
+    filterAvailableGroups()
   } else {
     // Create mode: queue for after save
     pendingGroups.value.push(group)
@@ -943,23 +982,101 @@ async function addToGroup(group: GroupItem) {
   }
 }
 
-async function removeFromGroup(group: GroupItem) {
-  try {
-    await groupsApi.removeGroupMember(props.dirId, group.dn, {
-      memberAttribute: group.memberAttr,
-      memberValue: local.dn,
-    })
-    group.members = group.members.filter(m => m.toLowerCase() !== (local.dn || '').toLowerCase())
-    refreshMemberships()
-  } catch (e) {
-    // silent
+/** Stage a current membership for removal (edit mode). */
+function stageRemoval(group: GroupItem) {
+  if (!isStagedForRemoval(group.dn)) {
+    stagedRemovals.value.push(group.dn.toLowerCase())
   }
+}
+
+/** Undo a staged removal, keeping the user a member (edit mode). */
+function unstageRemoval(group: GroupItem) {
+  stagedRemovals.value = stagedRemovals.value.filter(d => d !== group.dn.toLowerCase())
+}
+
+/** Drop a staged addition before it's applied (edit mode). */
+function unstageAddition(group: GroupItem) {
+  stagedAdditions.value = stagedAdditions.value.filter(g => g.dn.toLowerCase() !== group.dn.toLowerCase())
+  filterAvailableGroups()
+}
+
+/**
+ * Row action for the membership list — dispatches by the row's staged state:
+ * an existing member stages a removal; a staged removal/addition is undone.
+ */
+function onMembershipAction(row: MembershipRow) {
+  if (row.state === 'member') stageRemoval(row.group)
+  else if (row.state === 'removing') unstageRemoval(row.group)
+  else unstageAddition(row.group)
 }
 
 function removePendingGroup(group: GroupItem) {
   pendingGroups.value = pendingGroups.value.filter(g => g.dn !== group.dn)
   filterAvailableGroups()
   emitPendingGroups()
+}
+
+/** Best-effort display name for a group DN, for result messages. */
+function cnForDn(dn: string): string {
+  const lower = dn.toLowerCase()
+  const hit = allGroups.value.find(g => g.dn.toLowerCase() === lower)
+    || memberGroups.value.find(g => g.dn.toLowerCase() === lower)
+    || stagedAdditions.value.find(g => g.dn.toLowerCase() === lower)
+  return hit?.cn || dn.split(',')[0] || dn
+}
+
+interface MembershipResultItem { groupDn: string, status: string, message?: string }
+interface MembershipResult {
+  applied: number, queued: number, refused: number, blocked: number, errored: number,
+  items: MembershipResultItem[]
+}
+
+/** Turn the batch summary into user-facing notifications. */
+function notifyMembershipResult(summary: MembershipResult) {
+  const notif = useNotificationStore()
+  const okParts: string[] = []
+  if (summary.applied) okParts.push(`${summary.applied} applied`)
+  if (summary.queued) okParts.push(`${summary.queued} pending approval`)
+
+  const failures = summary.items.filter(
+    i => i.status === 'REFUSED' || i.status === 'BLOCKED' || i.status === 'ERROR')
+  if (failures.length) {
+    const first = failures[0]
+    const detail = first.message ? `: ${first.message}` : ''
+    notif.error(
+      `${failures.length} membership change(s) failed (${cnForDn(first.groupDn)}${
+        failures.length > 1 ? ' and others' : ''}${detail})`)
+  }
+  if (okParts.length) {
+    notif.success(`Memberships — ${okParts.join(', ')}`)
+  }
+}
+
+/**
+ * Flush staged membership changes as a single batch (edit mode). Exposed to the
+ * parent so it runs as part of Save, after the attribute update. Returns the
+ * server summary, or null when there's nothing staged. On a non-error response
+ * the staged state is cleared and memberships are reloaded to reflect server
+ * truth; a thrown request leaves the staged state intact for retry.
+ */
+async function applyMembershipChanges(): Promise<MembershipResult | null> {
+  if (!props.isEdit || !props.dirId || !local.dn) return null
+  const changes: Array<{ groupDn: string, memberAttribute: string, op: 'ADD' | 'REMOVE' }> = []
+  for (const g of stagedAdditions.value) {
+    changes.push({ groupDn: g.dn, memberAttribute: g.memberAttr, op: 'ADD' })
+  }
+  for (const dnLower of stagedRemovals.value) {
+    const g = memberGroups.value.find(m => m.dn.toLowerCase() === dnLower)
+    if (g) changes.push({ groupDn: g.dn, memberAttribute: g.memberAttr, op: 'REMOVE' })
+  }
+  if (!changes.length) return null
+
+  const { data } = await usersApi.applyMemberships(props.dirId, local.dn, { changes })
+  notifyMembershipResult(data as MembershipResult)
+  stagedAdditions.value = []
+  stagedRemovals.value  = []
+  await loadGroups()
+  return data as MembershipResult
 }
 
 function emitPendingGroups() {
@@ -990,6 +1107,8 @@ watch(() => props.data?.dn, () => {
   if (props.dirId) {
     activeTab.value = 'attributes'
     pendingGroups.value = []
+    stagedAdditions.value = []
+    stagedRemovals.value = []
     loadGroups()
     iviaStatus.value = null
     checkIviaTabVisibility()

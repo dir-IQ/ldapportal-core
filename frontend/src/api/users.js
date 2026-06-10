@@ -33,5 +33,10 @@ export const resetPassword = (dirId, dn, newPassword) =>
 export const bulkUpdateAttributes = (dirId, data) =>
   client.post(`${base(dirId)}/bulk-update`, data)
 
+// Apply a batch of group-membership changes for one user in a single request.
+// data: { changes: [{ groupDn, memberAttribute, op: 'ADD' | 'REMOVE' }] }
+export const applyMemberships = (dirId, dn, data) =>
+  client.post(`${base(dirId)}/memberships`, data, { params: { dn } })
+
 export const getPasswordStatus = (dirId, dn) =>
   client.get(`${base(dirId)}/password-status`, { params: { dn } })

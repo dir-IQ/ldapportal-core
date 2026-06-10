@@ -689,7 +689,10 @@ const emptyForm = (): UserFormState => {
   }
 }
 const form = ref<UserFormState>(emptyForm())
-const userFormRef = ref<{ validate: () => boolean } | null>(null)
+const userFormRef = ref<{
+  validate: () => boolean
+  applyMembershipChanges?: () => Promise<unknown>
+} | null>(null)
 
 function search() { limit.value = FETCH_LIMIT; load() }
 
@@ -881,6 +884,11 @@ async function save() {
         .filter(m => m.values.length > 0)
       await usersApi.updateUser(dirId, editingDn.value, { modifications: mods })
       notif.success('User updated')
+      // Flush any staged group-membership changes as a single batch. The form
+      // owns the staged state and surfaces its own per-change result toast; a
+      // thrown request propagates to the catch below, leaving the modal open
+      // and the staged changes intact for retry.
+      await userFormRef.value?.applyMembershipChanges?.()
     } else {
       const f = form.value
       const dn = `${f.rdnAttribute}=${f.rdnValue},${f.parentDn}`
