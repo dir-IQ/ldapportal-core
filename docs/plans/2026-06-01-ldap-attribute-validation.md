@@ -65,21 +65,23 @@ the current code on `main`:
 | Error mapping (A6) | `GlobalExceptionHandler` | `IllegalArgumentException` → 400; `MethodArgumentNotValidException` → field-keyed 400 `ProblemDetail`. |
 | Frontend field validation + inline errors (C1 partial, C3 for `UserForm`, C4) | `frontend/src/utils/attributeValidation.ts` `validateAttributeValue()`; `UserForm.vue` `validate()` with `FormField :error`; `UserListView.save()` gates on it | required (create-only) / min / max / regex + custom message. Edit mode skips the immutable RDN. |
 | **Server-side syntax layer (A2.2, A4)** | `core/.../ldap/validation/{AttributeSyntax,WellKnownAttributes,LdapAttributeValidator}.java`; wired in `LdapOperationService` createUser / updateUser / createGroup / updateGroup / bulkUpdateAttributes | DN-format on DN-valued attrs (`manager`/`secretary`/`owner`/`seeAlso`/`roleOccupant`/`member`/`uniqueMember`, plus any profile `DN_LOOKUP` field), email on `mail`, boolean on `BOOLEAN` fields. Directory-type aware (Entra-exempt for DN); validates only values being written, so existing data is untouched. Field-keyed 400 via `IllegalArgumentException`. |
+| **Client-side syntax mirror (C1, C2, C3, C5)** | `frontend/src/utils/attributeValidation.ts` (`validateDn`/`validateEmail`/`validateBoolean`, `resolveSyntaxKind`, `inputType`/`syntaxKind` on `AttributeRules`); `frontend/src/stores/attributeSyntax.ts` + `api/attributeSyntax.ts` (caches the B hints); wired in `UserForm.vue` (`rulesFor` sets `syntaxKind`) and `GroupListView.vue` (owner-DN inline error, shared `validateDn`). | Self-service (`RegisterView`/`SelfServiceProfileView`) already shared the util, so they pick up `DN_LOOKUP`/`BOOLEAN` checks automatically via the new `inputType` derivation (no admin endpoint needed). `FormField` already had `:error` (C4). Server stays authoritative. |
 | **Expose rules to the admin UI (B1, B2)** | B1/B2 **already complete** — `ProvisioningProfileController` → `ProfileResponse.AttributeConfigEntry` carries `inputType` + all validation fields; `SchemaController` exposes object-class `MUST`/`MAY` + `AttributeTypeInfo.syntaxOid`. **New:** `GET /api/v1/attribute-syntax` (`AttributeSyntaxController` → `AttributeSyntaxHints`) surfaces the built-in syntax map (`wellKnownAttributes`, `inputTypeSyntax`) from the same source of truth the server validates against (`AttributeSyntax.forInputType` + `WellKnownAttributes.all()`). | So the client (workstream C) can mirror DN/email/boolean checks without hard-coding a parallel list that drifts (§6 risk). Admin-scoped via the `/api/v1/**` rule. |
 
 ### Remaining ⏳ (the gaps this plan still tracks)
 
 | Gap | Impact | Workstream |
 |---|---|---|
-| **DN-format on DN-valued attributes — _client mirror_** | Server side **shipped** (see §2a Shipped). The client still only ensures *a* value via `DnPicker`; a typed/pasted bad DN is caught server-side now but with no instant field feedback. | C2 |
+| **DN-format on DN-valued attributes — _client mirror_** | **Shipped** for the profile/group forms — see §2a Shipped (client syntax mirror). Still ⏳ for the superadmin browse forms (`CreateEntryForm`/`EditEntryForm`). | C2 (done) / C3 (browse forms ⏳) |
 | `@Dn` / `@ValidRdn` DTO constraints | **Intentionally not added.** A bean-validation constraint runs at the controller boundary and cannot see the directory type, so it cannot honour the Entra-ID DN exemption (principle #5). The directory-type-aware `DnValidator` in the service layer (already wired on create/move/rename/container) is the authoritative check; the new `AttributeSyntax` extends it to DN-valued *attribute values*. | A5 (closed by redesign) |
 | Numeric / generalized-time syntax | `AttributeSyntax` covers DN / email / boolean; numeric and `DATE`/`DATETIME` generalized-time are deferred — the wire format the UI sends for date fields needs pinning down first to avoid false rejects. | A2.2 / C1 (type-aware) |
 | Object-class `MUST` coverage on create | Missing-required-by-schema not caught pre-write (the directory server still rejects it at write, just with a rawer message). Deferred — backward-compat risk; plan §6 suggests gating behind a per-profile flag. | A2.3 |
 | `editableOnCreate` server enforcement (create) | Deferred. Unlike the update path, by the time `createUser` runs the caller has already merged defaults / computed / `HIDDEN_FIXED` values into the attribute map, so server-injected and user-supplied values are indistinguishable here; correct enforcement belongs at the controller on the *raw* request. | A3 (create) |
-| **Unprofiled OUs / unconfigured ("Other") attributes** | Server now applies **well-known** syntax (DN-valued attrs, `mail`) even when unprofiled; truly free-form attributes still pass through (by design). The **client** is still unrestricted for these. | A2 / C1 |
-| Wiring beyond user create/update | group create/update + `bulkUpdateAttributes` **now wired** for syntax; move/rename carry only a DN/RDN (no attribute values) and are already `DnValidator`-checked. | A4 (done) |
-| Client `validateDn` (C2); self-service dedupe onto the shared util (C5); wiring `GroupListView` / `CreateEntryForm` / `EditEntryForm` (C3) | **Unverified**; treat as remaining | C2 / C3 / C5 |
-| `createContainer` refactor onto `DnValidator`; `editableOnCreate` server enforcement (A3, create) | **Unverified** | A1 / A3 |
+| **Unprofiled OUs / unconfigured ("Other") attributes** | Server applies **well-known** syntax (DN-valued attrs, `mail`) even when unprofiled; the client now mirrors this via the `/attribute-syntax` hints (admin forms). Truly free-form attributes still pass through (by design). | A2 / C1 (done) |
+| Wiring beyond user create/update | group create/update + `bulkUpdateAttributes` **wired** for syntax; move/rename carry only a DN/RDN (no attribute values) and are already `DnValidator`-checked. | A4 (done) |
+| `validateDn` client check (C2) + shared util type-aware (C1) + `UserForm`/`GroupListView` wiring (C3) + self-service (C5) | **Shipped** — see §2a Shipped (client syntax mirror). | C1/C2/C3/C5 (done) |
+| Superadmin browse forms `CreateEntryForm` / `EditEntryForm` (C3) | ⏳ Deferred. These are plain `<script setup>` (non-TS) and write via `LdapBrowseService` (`createEntry`/`updateEntry`), which the A syntax layer does **not** wire — so there is no server counterpart to mirror; the directory server still rejects malformed values at write. | C3 (browse forms) |
+| `createContainer` refactor onto `DnValidator` | **Done** (already on `DnValidator.parse`); `editableOnCreate` server enforcement still ⏳ (see row above). | A1 (done) / A3 |
 
 **Net for the admin user-edit form today:** a *profiled* directory gets solid
 length / regex / allowed-value / edit-gating enforcement (server-authoritative,
@@ -239,11 +241,14 @@ Markers reflect the 2026-06-10 status (see §2a): ✅ done · ◑ partial · ⏳
 3. ◑ `editable`/`hidden` server enforcement — update ✅; create
    (`editableOnCreate`) ⏳ (deferred — needs controller-level raw-request gating;
    see §2a Remaining).
-4. ◑ Frontend shared util ✅ + `FormField` error state ✅ + `UserForm` wired ✅;
-   DN/type client checks + `GroupListView`/`CreateEntryForm`/`EditEntryForm` ⏳.
-5. ⏳ Dedupe self-service onto the shared util (unverified).
-6. ⏳ Operator doc note + flip this **Status** to *Shipped* once the syntax
-   layer + `@Dn` DTO constraints land.
+4. ◑ Frontend shared util ✅ + `FormField` error state ✅ + `UserForm` wired ✅ +
+   client `validateDn`/email/boolean + `resolveSyntaxKind` ✅ + `GroupListView`
+   (owner DN) ✅; `CreateEntryForm`/`EditEntryForm` (superadmin browse) ⏳
+   (no server counterpart — see §2a Remaining).
+5. ✅ Self-service shares the util; it picks up `DN_LOOKUP`/`BOOLEAN` checks
+   automatically via the new `inputType` derivation (no admin endpoint needed).
+6. ⏳ Operator doc note + flip this **Status** to *Shipped* once the remaining
+   numeric/generalized-time syntax + `MUST` coverage + browse-form mirror land.
 
 ## 6. Risks & decisions
 

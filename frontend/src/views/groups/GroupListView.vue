@@ -119,7 +119,7 @@
         </div>
       </div>
       <FormField label="Object Class" v-model="createForm.objectClass" />
-      <FormField label="Owner" v-model="createForm.owner" placeholder="DN of the group owner" />
+      <FormField label="Owner" v-model="createForm.owner" placeholder="DN of the group owner" :error="createOwnerError" />
       <FormField label="Description" v-model="createForm.description" placeholder="Group description" />
       <template #footer>
         <button @click="showCreate = false" class="btn-neutral">Cancel</button>
@@ -129,7 +129,7 @@
 
     <!-- Edit group -->
     <AppModal v-model="showEdit" title="Edit Group" size="md">
-      <FormField label="Owner" v-model="editForm.owner" placeholder="DN of the group owner" />
+      <FormField label="Owner" v-model="editForm.owner" placeholder="DN of the group owner" :error="editOwnerError" />
       <FormField label="Description" v-model="editForm.description" placeholder="Group description" />
       <template #footer>
         <button @click="showEdit = false" class="btn-neutral">Cancel</button>
@@ -194,6 +194,7 @@ import FormField from '@/components/FormField.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import CopyButton from '@/components/CopyButton.vue'
+import { validateDn } from '@/utils/attributeValidation'
 
 interface ProfileLite {
   id: string
@@ -300,6 +301,10 @@ const bulkResult    = ref<BulkResult | null>(null)
 const createForm    = ref<CreateForm>({ parentDn: '', cn: '', objectClass: 'groupOfNames', owner: '', description: '' })
 const editForm      = ref({ owner: '', description: '' })
 const editingDn     = ref<string | null>(null)
+// Inline validation for the DN-valued owner field — mirrors the server's
+// DN-syntax check on group create/update for instant feedback.
+const createOwnerError = ref<string | null>(null)
+const editOwnerError   = ref<string | null>(null)
 
 /**
  * Escape an RDN attribute value per RFC 4514 so a group name containing
@@ -331,8 +336,10 @@ const computedGroupDn = computed(() => {
 // (e.g. a pasted bare username) are caught before the round-trip. Soft
 // warning only: the lines are still submitted, since the heuristic can't
 // be authoritative.
+// Shared lightweight DN check (server stays authoritative). Used for the
+// bulk-member warning and the owner-field inline validation below.
 function looksLikeDn(s: string): boolean {
-  return /=/.test(s) && /,/.test(s)
+  return validateDn(s)
 }
 const bulkInvalidLines = computed(() =>
   bulkMemberDns.value
@@ -442,6 +449,12 @@ async function doExportGroups() {
 }
 
 async function doCreate() {
+  createOwnerError.value = null
+  const ownerVal = createForm.value.owner?.trim()
+  if (ownerVal && !validateDn(ownerVal)) {
+    createOwnerError.value = 'Not a valid DN'
+    return
+  }
   saving.value = true
   try {
     const f = createForm.value
@@ -469,6 +482,7 @@ function openCreate() {
   // container the group will be created under. Single profile auto-picks;
   // no profile falls back to the bare form using the directory base.
   createProfile.value = null
+  createOwnerError.value = null
   if (allProfiles.value.length === 1) {
     selectProfileAndCreate(allProfiles.value[0])
   } else if (allProfiles.value.length > 1) {
@@ -482,6 +496,7 @@ function openCreate() {
 function selectProfileAndCreate(p: ProfileLite) {
   showTemplatePicker.value = false
   createProfile.value = p
+  createOwnerError.value = null
   createForm.value = emptyCreateForm(p?.targetGroupDn || p?.targetUserDn || '')
   showCreate.value = true
 }
@@ -498,6 +513,7 @@ function emptyCreateForm(parentDn: string): CreateForm {
 
 function openEdit(row: GroupRow) {
   editingDn.value = row.dn
+  editOwnerError.value = null
   editForm.value = {
     owner: row._owner,
     description: row.description === '—' ? '' : (row.description ?? ''),
@@ -507,6 +523,12 @@ function openEdit(row: GroupRow) {
 
 async function doEdit() {
   if (!editingDn.value) return
+  editOwnerError.value = null
+  const ownerVal = editForm.value.owner?.trim()
+  if (ownerVal && !validateDn(ownerVal)) {
+    editOwnerError.value = 'Not a valid DN'
+    return
+  }
   saving.value = true
   try {
     const mods = [
