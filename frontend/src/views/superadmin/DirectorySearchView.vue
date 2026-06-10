@@ -10,7 +10,7 @@
     <div class="mb-3">
       <label class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
       <select v-model="form.directoryId" class="input w-64" aria-label="Directory">
-        <option value="" disabled>{{ loadingDirs ? 'Loading…' : '— Select directory —' }}</option>
+        <option v-if="loadingDirs" value="" disabled>Loading…</option>
         <option v-for="d in directories" :key="d.id" :value="d.id">{{ d.displayName }}</option>
       </select>
     </div>
