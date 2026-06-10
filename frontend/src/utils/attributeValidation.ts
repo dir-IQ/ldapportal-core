@@ -78,11 +78,16 @@ export function validateBoolean(value: string): boolean {
 export function validateDn(value: string): boolean {
   const s = value.trim()
   if (!s || s.startsWith(',') || s.endsWith(',')) return false
+  // Neutralise escaped pairs (\X — e.g. an escaped comma or plus inside a
+  // value) before splitting, so they aren't treated as RDN/AVA separators.
+  // We avoid regex look-behind deliberately: it isn't parseable by Safari
+  // < 16.4 (within this project's Vite browser baseline), and a look-behind
+  // literal would throw a SyntaxError that breaks this whole module on load.
+  const masked = s.replace(/\\./g, '\u0000')
   const attrType = '(?:[A-Za-z][\\w-]*|\\d+(?:\\.\\d+)+)'
   const pair = new RegExp(`^\\s*${attrType}\\s*=\\s*.+$`)
-  // Split on commas / plus signs that are not backslash-escaped.
-  return s.split(/(?<!\\),/).every((rdn) =>
-    rdn.split(/(?<!\\)\+/).every((av) => pair.test(av)),
+  return masked.split(',').every((rdn) =>
+    rdn.split('+').every((av) => pair.test(av)),
   )
 }
 
