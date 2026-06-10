@@ -112,6 +112,25 @@ class UserControllerTest extends BaseControllerTest {
                 .andExpect(jsonPath("$.dn").value(ENTRY_DN));
     }
 
+    @Test
+    void createUser_attributeValidationFailure_returns400WithDetail() throws Exception {
+        // A malformed DN-valued attribute (manager) is rejected by the service
+        // with IllegalArgumentException; pin that it surfaces as a 400
+        // ProblemDetail carrying the field-level message (not a 500), which is
+        // the contract the create form keys its inline errors off.
+        CreateEntryRequest req = new CreateEntryRequest(ENTRY_DN,
+                Map.of("cn", List.of("Alice"), "manager", List.of("not a dn")));
+        given(ldapService.createUser(eq(DIR_ID), any(), any(), any()))
+                .willThrow(new IllegalArgumentException("Attribute [manager] is not a valid DN: not a dn"));
+
+        mockMvc.perform(post(BASE_URL)
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Attribute [manager] is not a valid DN: not a dn"));
+    }
+
     // ── GET /entry ────────────────────────────────────────────────────────────
 
     @Test

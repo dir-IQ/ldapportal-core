@@ -208,6 +208,18 @@ constraints) is the highest-value remaining step.
 
 ### D. Tests
 
+> **Status: ✅ shipped (2026-06-10).** Most coverage was folded into the A/B/C
+> PRs; this stream added the cross-cutting cases: MockMvc 400-`ProblemDetail`
+> contract tests on `UserController`/`GroupController` (a malformed DN-valued
+> attribute → 400 with the field message), form-level inline-error / blocked-
+> submit specs for the new syntax checks (`UserForm`, `GroupListView`), and a
+> self-service regression spec (`RegisterView`) confirming it picks up the
+> input-type syntax checks via the shared util. The sweep also caught and fixed
+> a real gap: the `UserForm` `DN_LOOKUP` (DnPicker) branch set `fieldErrors` but
+> rendered **no** inline message — an error `<p>` was added to the create and
+> edit branches. `CreateEntryForm` form-level specs are not added (those forms
+> are deferred — see §2a Remaining).
+
 - **Backend:** unit tests for `DnValidator` and `LdapAttributeValidator`
   (required, too-short/long, regex pass/fail + custom message, allowed
   values, malformed DN, bad email, missing `MUST`, non-editable/hidden on

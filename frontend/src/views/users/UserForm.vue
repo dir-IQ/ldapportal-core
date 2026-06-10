@@ -163,6 +163,7 @@
                         :placeholder="'Select a DN'"
                         :superadmin="false"
                       />
+                      <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                     </template>
                     <FormField
                       v-else
@@ -245,6 +246,7 @@
                         :superadmin="false"
                         :disabled="!attr.editableOnUpdate"
                       />
+                      <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                     </template>
                     <FormField
                       v-else
