@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<!-- Mockup: "Needs Attention" account-hygiene worklist (design exploration, not production code) -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Needs Attention — mockup</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#f9fafb; color:#111827; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  /* Component classes mirrored from the app's main.css */
+  .badge { display:inline-flex; align-items:center; gap:.25rem; padding:.125rem .5rem; border-radius:9999px; font-size:.72rem; font-weight:600; white-space:nowrap; }
+  .badge-red    { background:#fee2e2; color:#991b1b; }
+  .badge-amber  { background:#fef3c7; color:#92400e; }
+  .badge-yellow { background:#fef9c3; color:#854d0e; }
+  .badge-gray   { background:#f3f4f6; color:#374151; }
+  .badge-blue   { background:#dbeafe; color:#1e40af; }
+  .badge-green  { background:#dcfce7; color:#166534; }
+  .btn { display:inline-flex; align-items:center; gap:.35rem; font-weight:600; border-radius:.5rem; padding:.4rem .75rem; font-size:.8rem; cursor:pointer; border:1px solid transparent; transition:background .12s, color .12s; }
+  .btn-primary   { background:#2563eb; color:#fff; }
+  .btn-primary:hover { background:#1d4ed8; }
+  .btn-secondary { background:#fff; color:#374151; border-color:#d1d5db; }
+  .btn-secondary:hover { background:#f9fafb; }
+  .btn-neutral   { background:#f3f4f6; color:#374151; }
+  .btn-neutral:hover { background:#e5e7eb; }
+  .btn-xs { padding:.25rem .55rem; font-size:.72rem; }
+  .input { border:1px solid #d1d5db; border-radius:.5rem; padding:.4rem .6rem; font-size:.8rem; background:#fff; }
+  .chip { display:inline-flex; align-items:center; gap:.4rem; padding:.4rem .7rem; border-radius:9999px; font-size:.8rem; font-weight:600; border:1px solid #e5e7eb; background:#fff; color:#374151; cursor:pointer; white-space:nowrap; }
+  .chip:hover { background:#f9fafb; }
+  .chip.active { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
+  .chip .cnt { background:#f3f4f6; color:#374151; border-radius:9999px; padding:0 .45rem; font-size:.7rem; line-height:1.25rem; min-width:1.25rem; text-align:center; }
+  .chip.active .cnt { background:#dbeafe; color:#1e40af; }
+  .dot { width:.5rem; height:.5rem; border-radius:9999px; display:inline-block; }
+  .row-leave { transition:opacity .35s, transform .35s; opacity:0; transform:translateX(12px); }
+  .kebab-menu { box-shadow:0 8px 24px rgba(0,0,0,.12); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<!-- faux app chrome -->
+<header class="bg-white border-b border-gray-200">
+  <div class="max-w-6xl mx-auto px-6 h-14 flex items-center gap-3">
+    <div class="w-7 h-7 rounded-md bg-blue-600 text-white grid place-items-center font-bold text-sm">L</div>
+    <span class="font-semibold text-gray-900">LDAPPortal</span>
+    <span class="text-gray-300">/</span>
+    <span class="text-sm text-gray-600">Corp OpenLDAP</span>
+    <span class="ml-auto text-xs text-gray-400">mockup — not live data</span>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-6 py-6">
+
+  <!-- ① Dashboard glance card (entry point) -->
+  <div class="mb-6">
+    <p class="text-[11px] uppercase tracking-wide text-gray-400 font-semibold mb-1">Dashboard entry point</p>
+    <div class="bg-white rounded-xl border border-gray-200 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-800 flex items-center gap-2">
+          <svg class="w-4 h-4 text-amber-500" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+          Needs Attention
+        </h2>
+        <span class="text-xs text-gray-400">updated just now</span>
+      </div>
+      <div id="glance" class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2"></div>
+    </div>
+  </div>
+
+  <!-- ② Dedicated triage view -->
+  <p class="text-[11px] uppercase tracking-wide text-gray-400 font-semibold mb-1">Triage view</p>
+  <div class="flex items-start justify-between gap-4 mb-4">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Needs Attention</h1>
+      <p class="text-sm text-gray-500 mt-1">Accounts that need a human — review and resolve.</p>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <label class="text-xs text-gray-500 font-medium">Stale threshold</label>
+      <select id="threshold" class="input">
+        <option value="30">30 days</option>
+        <option value="60">60 days</option>
+        <option value="90" selected>90 days</option>
+        <option value="180">180 days</option>
+      </select>
+      <button class="btn btn-secondary" onclick="toast('Exported worklist to CSV')">
+        <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path stroke-linecap="round" stroke-linejoin="round" d="M10 3v9m0 0l3-3m-3 3L7 9M4 15.5h12"/></svg>
+        Export CSV
+      </button>
+    </div>
+  </div>
+
+  <!-- category chips -->
+  <div id="chips" class="flex flex-wrap gap-2 mb-3"></div>
+
+  <!-- bulk action bar -->
+  <div id="bulkbar" class="hidden items-center gap-3 mb-3 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-sm">
+    <span id="bulkcount" class="font-semibold text-blue-800"></span>
+    <span class="text-blue-300">|</span>
+    <div id="bulkactions" class="flex items-center gap-2"></div>
+    <button class="ml-auto text-xs text-blue-600 hover:text-blue-800 font-medium" onclick="clearSel()">Clear selection</button>
+  </div>
+
+  <!-- table -->
+  <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
+        <tr>
+          <th class="w-10 px-3 py-2.5 text-left"><input type="checkbox" id="selall" onclick="toggleAll(this)"></th>
+          <th class="px-3 py-2.5 text-left font-semibold">User</th>
+          <th class="px-3 py-2.5 text-left font-semibold">Reason</th>
+          <th class="px-3 py-2.5 text-left font-semibold">Detail</th>
+          <th class="px-3 py-2.5 text-left font-semibold">Last auth</th>
+          <th class="px-3 py-2.5 text-right font-semibold">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div id="allclear" class="hidden px-6 py-12 text-center">
+      <div class="w-12 h-12 mx-auto rounded-full bg-green-100 grid place-items-center mb-3">
+        <svg class="w-6 h-6 text-green-600" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.704 5.29a1 1 0 010 1.42l-7.5 7.5a1 1 0 01-1.42 0l-3.5-3.5a1 1 0 011.42-1.42l2.79 2.79 6.79-6.79a1 1 0 011.42 0z" clip-rule="evenodd"/></svg>
+      </div>
+      <p class="text-sm font-medium text-gray-700">All clear</p>
+      <p class="text-xs text-gray-500 mt-1">No accounts in this category need attention.</p>
+    </div>
+    <div class="px-3 py-2 border-t border-gray-100 text-xs text-gray-500 flex items-center justify-between">
+      <span id="rowcount"></span>
+      <span class="flex items-center gap-1 text-gray-400">
+        <button class="px-2 py-1 rounded hover:bg-gray-100">‹</button>
+        <span>Page 1 of 1</span>
+        <button class="px-2 py-1 rounded hover:bg-gray-100">›</button>
+      </span>
+    </div>
+  </div>
+
+  <p class="text-xs text-gray-400 mt-4 leading-relaxed">
+    Notes: categories driven by ppolicy attributes the backend already reads (<code>pwdAccountLockedTime</code>,
+    <code>pwdChangedTime</code>+<code>pwdMaxAge</code>, <code>pwdExpireWarning</code>, <code>pwdFailureTime</code>,
+    <code>pwdReset</code>). “Never signed in”/“Stale” need a vendor last-auth timestamp and are hidden where unavailable.
+    Row/bulk actions reuse the existing user verbs (Unlock, Reset password, Disable). Resolving here is simulated.
+  </p>
+</main>
+
+<!-- toast stack -->
+<div id="toasts" class="fixed bottom-4 right-4 flex flex-col gap-2 z-50"></div>
+
+<script>
+// ── severity / category config ────────────────────────────────────────────
+const CATS = {
+  locked:   { label:'Locked',           badge:'badge-red',    dot:'#ef4444', action:'Unlock' },
+  expired:  { label:'Password expired',  badge:'badge-red',    dot:'#ef4444', action:'Reset password' },
+  expiring: { label:'Expiring soon',     badge:'badge-amber',  dot:'#f59e0b', action:'Reset password' },
+  failures: { label:'Login failures',    badge:'badge-amber',  dot:'#f59e0b', action:'Reset password' },
+  never:    { label:'Never signed in',   badge:'badge-gray',   dot:'#9ca3af', action:'Disable' },
+  stale:    { label:'Stale',             badge:'badge-gray',   dot:'#9ca3af', action:'Disable' },
+  lifecycle:{ label:'Lifecycle',         badge:'badge-yellow', dot:'#eab308', action:'Disable' },
+};
+const ORDER = ['locked','expired','expiring','failures','never','stale','lifecycle'];
+
+// ── sample population ─────────────────────────────────────────────────────
+// lastAuth: days since last successful auth, or null = never. staleDays only
+// meaningful for the 'stale' bucket (drives the threshold control).
+let DATA = [
+  { id:1,  uid:'alice',  name:'Alice Anderson', cat:'locked',   detail:'locked 2h ago',          lastAuth:3 },
+  { id:2,  uid:'bborg',  name:'Björn Borg',     cat:'locked',   detail:'locked 25m ago',         lastAuth:8 },
+  { id:3,  uid:'cwong',  name:'Carol Wong',     cat:'locked',   detail:'lockout after 5 fails',  lastAuth:1 },
+  { id:4,  uid:'dmiller',name:'Dan Miller',     cat:'expired',  detail:'expired 5 days ago',     lastAuth:12 },
+  { id:5,  uid:'efrost', name:'Erin Frost',     cat:'expired',  detail:'expired 1 day ago',      lastAuth:2 },
+  { id:6,  uid:'gpatel', name:'Gita Patel',     cat:'expired',  detail:'expired 19 days ago',    lastAuth:30 },
+  { id:7,  uid:'hkhan',  name:'Hassan Khan',    cat:'expiring', detail:'expires in 3 days',      lastAuth:0 },
+  { id:8,  uid:'ijones', name:'Iris Jones',     cat:'expiring', detail:'expires in 6 days',      lastAuth:0 },
+  { id:9,  uid:'klee',   name:'Kevin Lee',      cat:'failures', detail:'4 failures (max 5)',     lastAuth:2 },
+  { id:10, uid:'mnsmith',name:'Mona Smith',     cat:'never',    detail:'created 40 days ago',    lastAuth:null },
+  { id:11, uid:'nray',   name:'Noah Ray',       cat:'never',    detail:'created 12 days ago',    lastAuth:null },
+  { id:12, uid:'orios',  name:'Olivia Rios',    cat:'stale',    detail:'no sign-in',             lastAuth:95 },
+  { id:13, uid:'pmehta', name:'Priya Mehta',    cat:'stale',    detail:'no sign-in',             lastAuth:140 },
+  { id:14, uid:'qbrown', name:'Quinn Brown',    cat:'stale',    detail:'no sign-in',             lastAuth:75 },
+  { id:15, uid:'svetri', name:'Sam Vetri',      cat:'lifecycle',detail:'contract ended 2026-06-01', lastAuth:20 },
+  { id:16, uid:'twhite', name:'Tara White',     cat:'lifecycle',detail:'contract ended 2026-05-15', lastAuth:60 },
+];
+const BASE = 'ou=people,dc=corp,dc=example,dc=com';
+
+let active = 'all';
+let threshold = 90;
+const sel = new Set();
+
+// A stale row only counts when its last-auth age meets the threshold.
+function visible(r){ return r.cat !== 'stale' || (r.lastAuth !== null && r.lastAuth >= threshold); }
+function pool(){ return DATA.filter(visible); }
+function inCat(r){ return active === 'all' || r.cat === active; }
+function counts(){
+  const c = { all:0 }; ORDER.forEach(k=>c[k]=0);
+  pool().forEach(r=>{ c[r.cat]++; c.all++; });
+  return c;
+}
+function lastAuthLabel(r){
+  if (r.lastAuth === null) return '<span class="text-gray-400">never</span>';
+  if (r.lastAuth === 0) return '<span class="text-gray-700">today</span>';
+  if (r.lastAuth === 1) return '1 day ago';
+  return r.lastAuth + ' days ago';
+}
+
+// ── renderers ─────────────────────────────────────────────────────────────
+function renderChips(){
+  const c = counts();
+  const el = document.getElementById('chips');
+  let html = `<button class="chip ${active==='all'?'active':''}" onclick="setCat('all')">All <span class="cnt">${c.all}</span></button>`;
+  for (const k of ORDER){
+    if (c[k] === 0 && active !== k) continue; // hide empty buckets (e.g. no last-auth source)
+    html += `<button class="chip ${active===k?'active':''}" onclick="setCat('${k}')">
+      <span class="dot" style="background:${CATS[k].dot}"></span>${CATS[k].label} <span class="cnt">${c[k]}</span></button>`;
+  }
+  el.innerHTML = html;
+}
+
+function renderGlance(){
+  const c = counts();
+  document.getElementById('glance').innerHTML = ORDER.map(k=>`
+    <button onclick="setCat('${k}');document.getElementById('chips').scrollIntoView({behavior:'smooth',block:'center'})"
+            class="text-left rounded-lg border border-gray-100 hover:border-gray-200 hover:bg-gray-50 px-3 py-2">
+      <div class="flex items-center gap-1.5 text-2xl font-bold text-gray-900">${c[k]}</div>
+      <div class="flex items-center gap-1.5 text-[11px] text-gray-500 mt-0.5">
+        <span class="dot" style="background:${CATS[k].dot}"></span>${CATS[k].label}</div>
+    </button>`).join('');
+}
+
+function renderTable(){
+  const rows = pool().filter(inCat);
+  const tb = document.getElementById('tbody');
+  const clear = document.getElementById('allclear');
+  document.getElementById('rowcount').textContent = `Showing ${rows.length} of ${pool().length} flagged account${pool().length===1?'':'s'}`;
+  if (rows.length === 0){ tb.innerHTML=''; clear.classList.remove('hidden'); return; }
+  clear.classList.add('hidden');
+  tb.innerHTML = rows.map(r=>{
+    const cat = CATS[r.cat];
+    return `<tr id="row-${r.id}" class="border-t border-gray-100 hover:bg-gray-50">
+      <td class="px-3 py-2.5"><input type="checkbox" data-id="${r.id}" ${sel.has(r.id)?'checked':''} onclick="toggleRow(${r.id},this)"></td>
+      <td class="px-3 py-2.5">
+        <div class="font-medium text-gray-800">${r.name}</div>
+        <code class="text-[11px] text-gray-400">uid=${r.uid},${BASE}</code>
+      </td>
+      <td class="px-3 py-2.5"><span class="badge ${cat.badge}"><span class="dot" style="background:${cat.dot}"></span>${cat.label}</span></td>
+      <td class="px-3 py-2.5 text-gray-600">${r.detail}</td>
+      <td class="px-3 py-2.5 text-gray-600">${lastAuthLabel(r)}</td>
+      <td class="px-3 py-2.5">
+        <div class="flex items-center justify-end gap-1.5">
+          <button class="btn btn-secondary btn-xs" onclick="resolve(${r.id},'${cat.action}')">${cat.action}</button>
+          <div class="relative">
+            <button class="btn btn-neutral btn-xs" onclick="kebab(event,${r.id})">⋯</button>
+          </div>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+  syncSelAll();
+}
+
+function render(){ renderGlance(); renderChips(); renderTable(); renderBulk(); }
+
+// ── interactions ──────────────────────────────────────────────────────────
+function setCat(k){ active=k; render(); }
+document.getElementById('threshold').addEventListener('change', e=>{
+  threshold = +e.target.value;
+  // drop now-invisible stale rows from the selection
+  [...sel].forEach(id=>{ const r=DATA.find(x=>x.id===id); if(!r||!visible(r)) sel.delete(id); });
+  render();
+});
+
+function toggleRow(id, cb){ cb.checked ? sel.add(id) : sel.delete(id); renderBulk(); syncSelAll(); }
+function toggleAll(cb){
+  const rows = pool().filter(inCat);
+  rows.forEach(r=> cb.checked ? sel.add(r.id) : sel.delete(r.id));
+  renderTable(); renderBulk();
+}
+function syncSelAll(){
+  const rows = pool().filter(inCat);
+  const all = rows.length>0 && rows.every(r=>sel.has(r.id));
+  const sa = document.getElementById('selall'); if(sa) sa.checked = all;
+}
+function clearSel(){ sel.clear(); render(); }
+
+function renderBulk(){
+  const bar = document.getElementById('bulkbar');
+  if (sel.size === 0){ bar.classList.add('hidden'); bar.classList.remove('flex'); return; }
+  bar.classList.remove('hidden'); bar.classList.add('flex');
+  document.getElementById('bulkcount').textContent = `${sel.size} selected`;
+  // contextual: if every selected row shares a reason, offer that verb; always offer the common ones
+  const rows = [...sel].map(id=>DATA.find(r=>r.id===id)).filter(Boolean);
+  const cats = new Set(rows.map(r=>r.cat));
+  const verbs = new Set();
+  if (cats.size===1) verbs.add(CATS[[...cats][0]].action);
+  ['Reset password','Disable','Unlock'].forEach(v=>verbs.add(v));
+  document.getElementById('bulkactions').innerHTML = [...verbs].map(v=>
+    `<button class="btn btn-secondary btn-xs" onclick="bulkResolve('${v}')">${v}</button>`).join('');
+}
+
+function resolve(id, verb){
+  const row = document.getElementById('row-'+id);
+  if (row){ row.classList.add('row-leave'); }
+  const r = DATA.find(x=>x.id===id);
+  setTimeout(()=>{ DATA = DATA.filter(x=>x.id!==id); sel.delete(id); render(); }, 300);
+  toast(`${verb} — ${r? r.name : 'user'}`);
+}
+function bulkResolve(verb){
+  const n = sel.size;
+  const ids = [...sel];
+  ids.forEach(id=>{ const row=document.getElementById('row-'+id); if(row) row.classList.add('row-leave'); });
+  setTimeout(()=>{ DATA = DATA.filter(x=>!sel.has(x.id)); sel.clear(); render(); }, 300);
+  toast(`${verb} — ${n} user${n===1?'':'s'}`);
+}
+
+let openMenu=null;
+function kebab(e,id){
+  e.stopPropagation();
+  if(openMenu){ openMenu.remove(); openMenu=null; }
+  const items = ['Edit','View history','Reset password','Disable','Move','Run offboard playbook'];
+  const m = document.createElement('div');
+  m.className='kebab-menu absolute right-6 bg-white border border-gray-200 rounded-lg py-1 text-sm z-40';
+  m.style.minWidth='180px';
+  m.innerHTML = items.map(i=>`<button class="block w-full text-left px-3 py-1.5 hover:bg-gray-50" onclick="this.closest('.kebab-menu').remove();toast('${i} — uid demo')">${i}</button>`).join('');
+  const rect = e.target.getBoundingClientRect();
+  m.style.top = (rect.bottom + window.scrollY + 4)+'px';
+  m.style.left = (rect.right + window.scrollX - 180)+'px';
+  m.style.position='absolute';
+  document.body.appendChild(m); openMenu=m;
+}
+document.addEventListener('click', ()=>{ if(openMenu){ openMenu.remove(); openMenu=null; } });
+
+function toast(msg){
+  const t = document.createElement('div');
+  t.className='bg-gray-900 text-white text-sm rounded-lg px-3 py-2 shadow-lg flex items-center gap-2';
+  t.innerHTML=`<svg class="w-4 h-4 text-green-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 010 1.4l-7.5 7.5a1 1 0 01-1.4 0L4.3 10.7a1 1 0 011.4-1.4l2.8 2.8 6.8-6.8a1 1 0 011.4 0z" clip-rule="evenodd"/></svg>${msg}`;
+  document.getElementById('toasts').appendChild(t);
+  setTimeout(()=>{ t.style.transition='opacity .3s'; t.style.opacity='0'; setTimeout(()=>t.remove(),300); }, 2200);
+}
+
+render();
+</script>
+</body>
+</html>
