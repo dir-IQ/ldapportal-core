@@ -178,7 +178,7 @@
                availability, not just superadmin role). -->
           <RouterLink v-if="auth.isDirectorySyncEnabled" to="/superadmin/directory-sync" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10a7 7 0 0 1 12.9-3.8M17 10a7 7 0 0 1-12.9 3.8"/><path d="M16 3v4h-4M4 17v-4h4"/></svg>
-            <span v-if="!collapsed">Directory Sync</span>
+            <span v-if="!collapsed">Directory Synchronization</span>
           </RouterLink>
           <RouterLink to="/superadmin/profiles" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="2" width="14" height="16" rx="2"/><path d="M7 6h6M7 10h6M7 14h3"/><path d="M14 13l1.5 1.5 3-3"/></svg>
