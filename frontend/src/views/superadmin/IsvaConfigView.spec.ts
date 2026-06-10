@@ -75,11 +75,26 @@ function inlineConfigDto() {
     defaultValidUntilYears: 100,
     deletePolicy: 'DISABLE',
     requireSecGroup: true,
+    secuserObjectClasses: ['secUser'],
     managementDitBaseDn: null,
     secuserRdnAttribute: null,
+    secuserRdnValueSource: null,
     groupMemberTarget: null,
     onDemographicDelete: null,
     createdAt: '', updatedAt: '', updatedBy: 'alice',
+  }
+}
+
+function linkedConfigDto() {
+  return {
+    ...inlineConfigDto(),
+    topologyMode: 'LINKED',
+    secuserObjectClasses: ['secUser', 'eUser'],
+    managementDitBaseDn: 'secAuthority=Default,o=acme,c=us',
+    secuserRdnAttribute: 'principalName',
+    secuserRdnValueSource: 'UID',
+    groupMemberTarget: 'DEMOGRAPHIC_DN',
+    onDemographicDelete: 'LEAVE',
   }
 }
 
@@ -238,6 +253,53 @@ describe('IsvaConfigView save / discard flow', () => {
   })
 })
 
+describe('IsvaConfigView secUser objectClasses + generalized RDN', () => {
+  beforeEach(() => {
+    hoisted.upsertIsvaConfig.mockReset()
+  })
+
+  it('renders configured objectClasses as chips and the free-form RDN attribute', async () => {
+    hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['LINKED'] } })
+    hoisted.getIsvaConfig.mockResolvedValue({ data: linkedConfigDto() })
+
+    const wrapper = await mountView()
+
+    // Both configured classes appear; the RDN attribute is a text input
+    // carrying the free-form value.
+    expect(wrapper.text()).toContain('secUser')
+    expect(wrapper.text()).toContain('eUser')
+    const rdnInput = wrapper.find('#secuserRdnAttribute')
+    expect((rdnInput.element as HTMLInputElement).value).toBe('principalName')
+    // UID value source is selected.
+    const uidRadio = wrapper.find('input[name="rdnsource"][value="UID"]')
+    expect((uidRadio.element as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('adds an objectClass chip and includes it in the save payload', async () => {
+    hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['LINKED'] } })
+    hoisted.getIsvaConfig.mockResolvedValue({ data: linkedConfigDto() })
+    hoisted.upsertIsvaConfig.mockImplementation((_dir, payload) =>
+      Promise.resolve({ data: { ...linkedConfigDto(), ...payload } }))
+
+    const wrapper = await mountView()
+
+    await wrapper.find('#newObjectClass').setValue('customClass')
+    await wrapper.find('#newObjectClass').trigger('keydown.enter')
+
+    const saveBtn = wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save' && b.attributes('class')?.includes('btn-primary'))
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    expect(hoisted.upsertIsvaConfig).toHaveBeenCalledWith('dir-1', expect.objectContaining({
+      secuserObjectClasses: ['secUser', 'eUser', 'customClass'],
+      secuserRdnAttribute: 'principalName',
+      secuserRdnValueSource: 'UID',
+    }))
+  })
+})
+
 describe('IsvaConfigView probe gating', () => {
   beforeEach(() => {
     hoisted.probeIsvaConfig.mockReset()
@@ -262,7 +324,7 @@ describe('IsvaConfigView probe gating', () => {
     hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['INLINE', 'LINKED'] } })
     hoisted.getIsvaConfig.mockResolvedValue({ data: inlineConfigDto() })
     hoisted.probeIsvaConfig.mockResolvedValue({
-      data: { reachable: true, sampleSecUserFound: false, warnings: [] },
+      data: { reachable: true, sampleSecUserFound: false, schemaValid: null, warnings: [] },
     })
 
     const wrapper = await mountView()

@@ -3,6 +3,7 @@ package com.ldapportal.addons.isva;
 
 import com.ldapportal.addons.isva.entity.IsvaDeletePolicy;
 import com.ldapportal.addons.isva.entity.IsvaDemographicDeleteMode;
+import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.addons.isva.repository.VendorIntegrationIsvaConfigRepository;
@@ -346,6 +347,7 @@ class IsvaProvisioningInterceptorTest {
         // generated secUUID — pin that path too.
         VendorIntegrationIsvaConfig cfg = linkedConfig();
         cfg.setSecuserRdnAttribute("secLogin");
+        cfg.setSecuserRdnValueSource(IsvaRdnValueSource.UID);
         when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
 
         UserCreatePlan plan = interceptor.planUserCreate(dir,

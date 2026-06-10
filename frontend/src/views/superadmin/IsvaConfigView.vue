@@ -15,6 +15,7 @@ import {
   type IsvaDeletePolicy,
   type IsvaGroupMemberTarget,
   type IsvaDemographicDeleteMode,
+  type IsvaRdnValueSource,
 } from '@/api/isvaConfig'
 import { getDirectory } from '@/api/directories'
 import { IVIA_NAME, IVIA_ABBR } from '@/constants/productNames'
@@ -44,8 +45,10 @@ interface Form {
   defaultValidUntilYears: number
   deletePolicy: IsvaDeletePolicy
   requireSecGroup: boolean
+  secuserObjectClasses: string[]
   managementDitBaseDn: string
-  secuserRdnAttribute: 'secUUID' | 'secLogin'
+  secuserRdnAttribute: string
+  secuserRdnValueSource: IsvaRdnValueSource
   groupMemberTarget: IsvaGroupMemberTarget
   onDemographicDelete: IsvaDemographicDeleteMode
 }
@@ -58,8 +61,10 @@ function emptyForm(): Form {
     defaultValidUntilYears: 100,
     deletePolicy: 'DISABLE',
     requireSecGroup: true,
+    secuserObjectClasses: ['secUser'],
     managementDitBaseDn: '',
     secuserRdnAttribute: 'secUUID',
+    secuserRdnValueSource: 'GENERATED_UUID',
     groupMemberTarget: 'DEMOGRAPHIC_DN',
     onDemographicDelete: 'LEAVE',
   }
@@ -161,10 +166,38 @@ function populateFromDto(dto: IsvaConfigDto) {
   form.value.defaultValidUntilYears = dto.defaultValidUntilYears
   form.value.deletePolicy = dto.deletePolicy
   form.value.requireSecGroup = dto.requireSecGroup
+  form.value.secuserObjectClasses = dto.secuserObjectClasses?.length
+    ? [...dto.secuserObjectClasses]
+    : ['secUser']
   form.value.managementDitBaseDn = dto.managementDitBaseDn ?? ''
-  form.value.secuserRdnAttribute = (dto.secuserRdnAttribute as 'secUUID' | 'secLogin') ?? 'secUUID'
+  form.value.secuserRdnAttribute = dto.secuserRdnAttribute ?? 'secUUID'
+  form.value.secuserRdnValueSource = dto.secuserRdnValueSource ?? 'GENERATED_UUID'
   form.value.groupMemberTarget = dto.groupMemberTarget ?? 'DEMOGRAPHIC_DN'
   form.value.onDemographicDelete = dto.onDemographicDelete ?? 'LEAVE'
+}
+
+// secUser object-class chip editor. secUser is load-bearing (the
+// server normalizes it back in if dropped) so it's rendered locked.
+const newObjectClass = ref('')
+
+function addObjectClass() {
+  const name = newObjectClass.value.trim()
+  newObjectClass.value = ''
+  if (!name) return
+  const exists = form.value.secuserObjectClasses
+    .some((oc) => oc.toLowerCase() === name.toLowerCase())
+  // Assign a new array rather than push-mutating: pristine holds a
+  // shallow snapshot that shares this array's reference, so an in-place
+  // mutation would change both and defeat the isDirty comparison.
+  if (!exists) {
+    form.value.secuserObjectClasses = [...form.value.secuserObjectClasses, name]
+  }
+}
+
+function removeObjectClass(name: string) {
+  if (name.toLowerCase() === 'secuser') return // can't remove the required class
+  form.value.secuserObjectClasses = form.value.secuserObjectClasses
+    .filter((oc) => oc !== name)
 }
 
 async function save() {
@@ -178,10 +211,13 @@ async function save() {
       defaultValidUntilYears: form.value.defaultValidUntilYears,
       deletePolicy: form.value.deletePolicy,
       requireSecGroup: form.value.requireSecGroup,
+      // Applies to both modes; server normalizes (ensures secUser present).
+      secuserObjectClasses: form.value.secuserObjectClasses,
       // Linked-only — server clears these when topologyMode = INLINE,
       // so it's safe to send the form values regardless.
       managementDitBaseDn: form.value.managementDitBaseDn.trim() || null,
-      secuserRdnAttribute: form.value.secuserRdnAttribute,
+      secuserRdnAttribute: form.value.secuserRdnAttribute.trim() || null,
+      secuserRdnValueSource: form.value.secuserRdnValueSource,
       groupMemberTarget: form.value.groupMemberTarget,
       onDemographicDelete: form.value.onDemographicDelete,
     }
@@ -399,6 +435,46 @@ function extractErrorMessage(e: unknown, fallback: string): string {
             </p>
           </div>
         </div>
+
+        <div>
+          <label class="label" for="newObjectClass">secUser object classes</label>
+          <p class="text-xs text-gray-500 mb-2">
+            Object classes written to the <code>secUser</code> identity. Applies to
+            both topologies — overlaid onto the demographic entry (inline) or stamped
+            on the paired <code>secUser</code> entry (linked). <code>secUser</code> is
+            required; add others your schema needs (e.g. <code>eUser</code>, which
+            defines <code>principalName</code>).
+          </p>
+          <div class="flex flex-wrap gap-2 mb-2">
+            <span
+              v-for="oc in form.secuserObjectClasses"
+              :key="oc"
+              class="inline-flex items-center gap-1 rounded-full bg-gray-100 dark:bg-gray-700
+                     px-2.5 py-1 text-xs font-medium text-gray-800 dark:text-gray-100"
+            >
+              <code>{{ oc }}</code>
+              <button
+                v-if="oc.toLowerCase() !== 'secuser'"
+                type="button"
+                class="text-gray-500 hover:text-red-600"
+                :aria-label="`Remove ${oc}`"
+                @click="removeObjectClass(oc)"
+              >&times;</button>
+              <span v-else class="text-gray-400" title="Required">&#128274;</span>
+            </span>
+          </div>
+          <div class="flex gap-2">
+            <input
+              id="newObjectClass"
+              v-model="newObjectClass"
+              type="text"
+              class="input flex-1"
+              placeholder="Add an objectClass (e.g. eUser)"
+              @keydown.enter.prevent="addObjectClass"
+            />
+            <button type="button" class="btn-secondary" @click="addObjectClass">Add</button>
+          </div>
+        </div>
       </section>
 
       <!-- Linked-mode-only block -->
@@ -413,18 +489,39 @@ function extractErrorMessage(e: unknown, fallback: string): string {
           Parent DN under which paired <code>secUser</code> entries live.
         </p>
 
+        <div>
+          <label class="label" for="secuserRdnAttribute">secUser RDN attribute</label>
+          <input id="secuserRdnAttribute" type="text"
+                 v-model="form.secuserRdnAttribute"
+                 class="input w-full" placeholder="secUUID" />
+          <p class="text-xs text-gray-500 mt-1">
+            The attribute that names <code>secUser</code> entries in the management
+            DIT. <code>secUUID</code> (default) and <code>secLogin</code> are the
+            stock choices; any attribute your configured object classes permit works
+            (e.g. <code>principalName</code> from <code>eUser</code>).
+          </p>
+        </div>
+
         <fieldset>
-          <legend class="text-sm font-medium text-gray-900 mb-2">secUser RDN attribute</legend>
+          <legend class="text-sm font-medium text-gray-900 mb-2">RDN value source</legend>
           <div class="space-y-2">
-            <label class="flex items-center gap-2 text-sm">
-              <input type="radio" name="rdn" value="secUUID"
-                     v-model="form.secuserRdnAttribute" />
-              <code>secUUID</code> (default — generated UUID per user)
+            <label class="flex items-start gap-2 text-sm">
+              <input type="radio" name="rdnsource" value="GENERATED_UUID"
+                     v-model="form.secuserRdnValueSource" class="mt-1" />
+              <span>
+                <span class="font-medium">Generated UUID</span> (default) — an opaque,
+                immutable value per user. Pairs with <code>secUUID</code>.
+              </span>
             </label>
-            <label class="flex items-center gap-2 text-sm">
-              <input type="radio" name="rdn" value="secLogin"
-                     v-model="form.secuserRdnAttribute" />
-              <code>secLogin</code> (uses the user's <code>uid</code>)
+            <label class="flex items-start gap-2 text-sm">
+              <input type="radio" name="rdnsource" value="UID"
+                     v-model="form.secuserRdnValueSource" class="mt-1" />
+              <span>
+                <span class="font-medium">User's <code>uid</code></span> — mirrors the
+                login. Pairs with <code>secLogin</code> or a custom login-named
+                attribute such as <code>principalName</code>. A <code>uid</code> rename
+                then forces a directory rename of the entry.
+              </span>
             </label>
           </div>
         </fieldset>
@@ -519,6 +616,15 @@ function extractErrorMessage(e: unknown, fallback: string): string {
             Sample <code>secUser</code> entry found:
             <span :class="probeResult.sampleSecUserFound ? 'text-green-600 font-medium' : 'text-amber-600 font-medium'">
               {{ probeResult.sampleSecUserFound ? 'yes' : 'no' }}
+            </span>
+          </p>
+          <p>
+            secUser schema valid:
+            <span :class="probeResult.schemaValid === true ? 'text-green-600 font-medium'
+                          : probeResult.schemaValid === false ? 'text-red-600 font-medium'
+                          : 'text-amber-600 font-medium'">
+              {{ probeResult.schemaValid === true ? 'yes'
+                 : probeResult.schemaValid === false ? 'no' : 'unknown' }}
             </span>
           </p>
           <ul v-if="probeResult.warnings.length" class="list-disc list-inside text-gray-600">

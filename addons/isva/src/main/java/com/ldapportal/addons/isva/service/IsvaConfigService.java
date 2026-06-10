@@ -4,6 +4,7 @@ package com.ldapportal.addons.isva.service;
 import com.ldapportal.addons.isva.dto.IsvaConfigDto;
 import com.ldapportal.addons.isva.dto.ProbeResult;
 import com.ldapportal.addons.isva.dto.UpsertIsvaConfigRequest;
+import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.addons.isva.repository.VendorIntegrationIsvaConfigRepository;
@@ -15,6 +16,10 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -79,6 +84,9 @@ public class IsvaConfigService {
         entity.setDefaultValidUntilYears(req.defaultValidUntilYears());
         entity.setDeletePolicy(req.deletePolicy());
         entity.setRequireSecGroup(req.requireSecGroup());
+        // Applies to both modes — normalize so secUser is always present
+        // and the list is trimmed / de-duplicated.
+        entity.setSecuserObjectClasses(normalizeObjectClasses(req.secuserObjectClasses()));
 
         // Linked-mode fields — set when LINKED, null when INLINE so
         // a topology-mode flip doesn't leave stale linked config
@@ -86,16 +94,20 @@ public class IsvaConfigService {
         if (req.topologyMode() == IsvaTopologyMode.LINKED) {
             entity.setManagementDitBaseDn(req.managementDitBaseDn().trim());
             entity.setSecuserRdnAttribute(blankOrDefault(req.secuserRdnAttribute(), "secUUID"));
+            entity.setSecuserRdnValueSource(req.secuserRdnValueSource() != null
+                    ? req.secuserRdnValueSource() : IsvaRdnValueSource.GENERATED_UUID);
             entity.setGroupMemberTarget(req.groupMemberTarget() != null
                     ? req.groupMemberTarget() : entity.getGroupMemberTarget());
             entity.setOnDemographicDelete(req.onDemographicDelete() != null
                     ? req.onDemographicDelete() : entity.getOnDemographicDelete());
         } else {
             entity.setManagementDitBaseDn(null);
-            // Leave secuserRdnAttribute / groupMemberTarget /
-            // onDemographicDelete at their stored defaults — they're
-            // ignored in INLINE mode anyway and clearing them would
-            // be unnecessary churn against the audit columns.
+            // Leave secuserRdnAttribute / secuserRdnValueSource /
+            // groupMemberTarget / onDemographicDelete at their stored
+            // defaults — they're ignored in INLINE mode anyway and
+            // clearing them would be unnecessary churn against the
+            // audit columns. (secuserObjectClasses is set above; it
+            // applies to inline mode too.)
         }
 
         entity.setUpdatedBy(principal != null ? principal.username() : "system");
@@ -154,6 +166,32 @@ public class IsvaConfigService {
             throw new IllegalArgumentException(
                     "managementDitBaseDn is required when topologyMode is LINKED");
         }
+    }
+
+    /**
+     * Normalize the configured secUser objectClass list: trim, drop
+     * blanks, de-duplicate case-insensitively (first spelling wins), and
+     * guarantee {@code secUser} is present — the lookup / probe filters
+     * key on {@code (objectClass=secUser)}, so it can never be dropped.
+     * A null / empty request resolves to just {@code [secUser]}.
+     */
+    private static List<String> normalizeObjectClasses(List<String> requested) {
+        // LinkedHashMap keyed on lower-case name preserves insertion order
+        // while collapsing case-variant duplicates.
+        Map<String, String> seen = new LinkedHashMap<>();
+        if (requested != null) {
+            for (String oc : requested) {
+                if (oc == null) {
+                    continue;
+                }
+                String trimmed = oc.trim();
+                if (!trimmed.isEmpty()) {
+                    seen.putIfAbsent(trimmed.toLowerCase(), trimmed);
+                }
+            }
+        }
+        seen.putIfAbsent("secuser", "secUser");
+        return new ArrayList<>(seen.values());
     }
 
     private static String blankToNull(String value) {

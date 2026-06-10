@@ -2,6 +2,7 @@
 package com.ldapportal.addons.isva.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -15,6 +16,8 @@ import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -28,8 +31,10 @@ import java.util.UUID;
  * for what each field controls.</p>
  *
  * <p>Linked-mode-only fields ({@link #managementDitBaseDn},
- * {@link #secuserRdnAttribute}, {@link #groupMemberTarget},
- * {@link #onDemographicDelete}) are nullable. The DB-level
+ * {@link #secuserRdnAttribute}, {@link #secuserRdnValueSource},
+ * {@link #groupMemberTarget}, {@link #onDemographicDelete}) are
+ * nullable. ({@link #secuserObjectClasses} applies to both modes.)
+ * The DB-level
  * {@code CHECK} constraint in the Flyway migration enforces that
  * {@code management_dit_base_dn} is non-null when
  * {@code topology_mode = LINKED}.</p>
@@ -83,6 +88,15 @@ public class VendorIntegrationIsvaConfig {
     @Column(name = "require_sec_group", nullable = false)
     private boolean requireSecGroup = true;
 
+    /** ObjectClass set defining the secUser identity. Applies to both
+     * modes — inline overlays these onto the demographic entry, linked
+     * stamps them on the standalone secUser entry. {@code secUser} is
+     * always present (normalized in on write); extras (e.g.
+     * {@code eUser}) bring in additional naming attributes. */
+    @Convert(converter = SecObjectClassListConverter.class)
+    @Column(name = "secuser_object_classes", columnDefinition = "TEXT")
+    private List<String> secuserObjectClasses = new ArrayList<>(List.of("secUser"));
+
     // ── LINKED-mode-only ─────────────────────────────────────────────
 
     /** Base DN of the ISVA management DIT (e.g.
@@ -91,10 +105,19 @@ public class VendorIntegrationIsvaConfig {
     @Column(name = "management_dit_base_dn", columnDefinition = "TEXT")
     private String managementDitBaseDn;
 
-    /** RDN attribute used for secUser entries — usually {@code secUUID},
-     * sometimes {@code secLogin} in older deployments. */
+    /** RDN attribute used for secUser entries — free-form. Stock
+     * deployments use {@code secUUID} (the default) or {@code secLogin};
+     * non-stock ones can name on any attribute their schema permits
+     * (e.g. {@code principalName} from the {@code eUser} class). The
+     * value comes from {@link #secuserRdnValueSource}. */
     @Column(name = "secuser_rdn_attribute", length = 64)
     private String secuserRdnAttribute = "secUUID";
+
+    /** Where the RDN value comes from, decoupled from the attribute
+     * name above. {@code GENERATED_UUID} (default) or {@code UID}. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "secuser_rdn_value_source", length = 16)
+    private IsvaRdnValueSource secuserRdnValueSource = IsvaRdnValueSource.GENERATED_UUID;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "group_member_target", length = 16)

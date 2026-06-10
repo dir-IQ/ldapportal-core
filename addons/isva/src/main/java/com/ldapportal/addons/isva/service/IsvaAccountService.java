@@ -192,7 +192,7 @@ public class IsvaAccountService {
             detail.put("ivia_op", "revoke_soft");
         } else {
             if (ctx.cfg().getTopologyMode() == IsvaTopologyMode.INLINE) {
-                step = secUserPlans.revokeInlineOnExisting(dn);
+                step = secUserPlans.revokeInlineOnExisting(dn, ctx.cfg());
             } else {
                 step = secUserPlans.hardDelete(status.secUserDn());
             }

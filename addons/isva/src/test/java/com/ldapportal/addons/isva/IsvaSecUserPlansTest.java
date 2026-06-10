@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva;
 
+import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.core.provisioning.AddStep;
@@ -20,7 +21,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Fragment-shape tests for {@link IsvaSecUserPlans} — the extracted,
@@ -52,6 +52,21 @@ class IsvaSecUserPlansTest {
         assertThat(attrValue(attrs, "secPwdValid")).isEqualTo("TRUE");
         assertThat(attrValue(attrs, "secValidUntil")).matches("\\d{14}Z");
         assertThat(attrValue(attrs, "secPwdLastChanged")).matches("\\d{14}Z");
+    }
+
+    @Test
+    void grantInline_addsConfiguredExtraObjectClasses() {
+        VendorIntegrationIsvaConfig cfg = inlineConfig();
+        cfg.setSecuserObjectClasses(List.of("secUser", "eUser"));
+
+        List<Attribute> attrs = plans.grantInline(
+                BaselinePlans.attributesFromMap(Map.of(
+                        "objectClass", List.of("inetOrgPerson", "person"),
+                        "uid", List.of("alice"))),
+                cfg, payload("uid=alice,dc=x", "alice"));
+
+        assertThat(objectClassValues(attrs))
+                .containsExactlyInAnyOrder("inetOrgPerson", "person", "secUser", "eUser");
     }
 
     @Test
@@ -106,6 +121,7 @@ class IsvaSecUserPlansTest {
     void grantLinked_secLoginRdn_usesUidAsRdnValue() {
         VendorIntegrationIsvaConfig cfg = linkedConfig();
         cfg.setSecuserRdnAttribute("secLogin");
+        cfg.setSecuserRdnValueSource(IsvaRdnValueSource.UID);
 
         AddStep step = plans.grantLinked(cfg, payload("uid=alice,dc=x", "alice"));
 
@@ -116,13 +132,52 @@ class IsvaSecUserPlansTest {
     }
 
     @Test
-    void grantLinked_unsupportedRdnAttribute_throws() {
+    void grantLinked_freeFormRdnAttribute_withEUserObjectClass_andUidValueSource() {
+        // The customer pattern: principalName=<uid>,<mgmt base>, where
+        // principalName is contributed by the eUser objectClass.
+        VendorIntegrationIsvaConfig cfg = linkedConfig();
+        cfg.setSecuserObjectClasses(List.of("secUser", "eUser"));
+        cfg.setSecuserRdnAttribute("principalName");
+        cfg.setSecuserRdnValueSource(IsvaRdnValueSource.UID);
+
+        AddStep step = plans.grantLinked(cfg, payload("uid=alice,ou=people,dc=x", "alice"));
+
+        assertThat(step.targetDn())
+                .startsWith("principalName=alice,")
+                .endsWith(",secAuthority=Default,o=acme,c=us");
+        assertThat(objectClassValues(step.attributes()))
+                .containsExactlyInAnyOrder("top", "secUser", "eUser");
+        // RDN attribute is mirrored as a value on the entry (LDAP requires it).
+        assertThat(attrValue(step.attributes(), "principalName")).isEqualTo("alice");
+        assertThat(attrValue(step.attributes(), "secDN")).isEqualTo("uid=alice,ou=people,dc=x");
+    }
+
+    @Test
+    void grantLinked_freeFormRdnAttribute_withGeneratedValueSource() {
+        // A non-stock RDN attribute name can still take a generated value.
         VendorIntegrationIsvaConfig cfg = linkedConfig();
         cfg.setSecuserRdnAttribute("cn");
+        cfg.setSecuserRdnValueSource(IsvaRdnValueSource.GENERATED_UUID);
 
-        assertThatThrownBy(() -> plans.grantLinked(cfg, payload("uid=alice,dc=x", "alice")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Unsupported secuser_rdn_attribute");
+        AddStep step = plans.grantLinked(cfg, payload("uid=alice,dc=x", "alice"));
+
+        // cn=<uuid>,… — a UUID value, not the uid.
+        assertThat(step.targetDn())
+                .startsWith("cn=")
+                .doesNotContain("cn=alice")
+                .endsWith(",secAuthority=Default,o=acme,c=us");
+    }
+
+    @Test
+    void grantLinked_secUserAlwaysPresent_evenWhenOmittedFromConfig() {
+        // secUser is load-bearing (lookup / probe filter on it); the
+        // plan re-adds it if the operator dropped it from the list.
+        VendorIntegrationIsvaConfig cfg = linkedConfig();
+        cfg.setSecuserObjectClasses(List.of("eUser"));
+
+        AddStep step = plans.grantLinked(cfg, payload("uid=alice,dc=x", "alice"));
+
+        assertThat(objectClassValues(step.attributes())).contains("secUser", "eUser");
     }
 
     // ── revoke ──────────────────────────────────────────────────────
@@ -179,7 +234,7 @@ class IsvaSecUserPlansTest {
 
     @Test
     void revokeInlineOnExisting_stripsEveryOverlayAttr_andSecUserObjectClass() {
-        ModifyStep step = plans.revokeInlineOnExisting("uid=alice,dc=x");
+        ModifyStep step = plans.revokeInlineOnExisting("uid=alice,dc=x", inlineConfig());
 
         assertThat(step.targetDn()).isEqualTo("uid=alice,dc=x");
         // Every modification is DELETE — we're tearing down the overlay.
@@ -200,6 +255,20 @@ class IsvaSecUserPlansTest {
         }
         assertThat(deletedAttrs)
                 .containsExactlyInAnyOrderElementsOf(IsvaSecUserPlans.SEC_OVERLAY_ATTRS);
+    }
+
+    @Test
+    void revokeInlineOnExisting_stripsConfiguredExtraObjectClasses() {
+        VendorIntegrationIsvaConfig cfg = inlineConfig();
+        cfg.setSecuserObjectClasses(List.of("secUser", "eUser"));
+
+        ModifyStep step = plans.revokeInlineOnExisting("uid=alice,dc=x", cfg);
+
+        // The objectClass DELETE removes the same set grant added.
+        assertThat(step.mods()).anySatisfy(m -> {
+            assertThat(m.getAttributeName()).isEqualToIgnoringCase("objectClass");
+            assertThat(m.getValues()).contains("secUser", "eUser");
+        });
     }
 
     // ── account verbs ───────────────────────────────────────────────

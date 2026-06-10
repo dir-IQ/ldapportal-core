@@ -204,11 +204,13 @@ feature override requires a matching `profileRole` on the same profile.
 ### ISVA config — `UpsertIsvaConfigRequest`
 `enabled`, `topologyMode` (`INLINE` | `LINKED`), `secAuthority`,
 `defaultValidUntilYears` (≥1), `deletePolicy` (`DISABLE` | `HARD_DELETE`),
-`requireSecGroup`. Linked-mode
-only: `managementDitBaseDn` (**required when `LINKED`**), `secuserRdnAttribute`,
-`groupMemberTarget`, `onDemographicDelete`. The endpoint is gated by the
-`VENDOR_INTEGRATIONS_ISVA` entitlement — a community build without the addon
-returns **402/403**.
+`requireSecGroup`, `secuserObjectClasses` (string array; applies to both modes,
+`secUser` is normalized in if omitted). Linked-mode
+only: `managementDitBaseDn` (**required when `LINKED`**), `secuserRdnAttribute`
+(free-form, default `secUUID`), `secuserRdnValueSource` (`GENERATED_UUID` |
+`UID`, default `GENERATED_UUID`), `groupMemberTarget`, `onDemographicDelete`.
+The endpoint is gated by the `VENDOR_INTEGRATIONS_ISVA` entitlement — a
+community build without the addon returns **402/403**.
 
 ### API token — `UpsertApiTokenRequest`
 `description`, `expiresAt` (ISO-8601 instant, must be in the future, ≤ 2 years).
