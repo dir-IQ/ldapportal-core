@@ -85,11 +85,15 @@ class IsvaConfigProbeServiceTest {
         ProbeResult result = probeService.probe(dir, config(IsvaTopologyMode.INLINE));
         assertThat(result.reachable()).isTrue();
         assertThat(result.sampleSecUserFound()).isTrue();
-        // This server has no schema loaded (setSchema(null)) → schema
-        // validation can't be determined, reported as unknown.
-        assertThat(result.schemaValid()).isNull();
-        assertThat(result.warnings())
-                .anySatisfy(w -> assertThat(w).contains("Could not read the server schema"));
+        // This server runs without an enforced schema (setSchema(null)),
+        // so getSchema() returns the default standard schema — which does
+        // not define secUser. Schema validation therefore reports invalid
+        // with the "objectClass not defined" warning. (The unknown/null
+        // verdict is reserved for servers that refuse to return a schema
+        // at all; an in-memory server can't simulate that.)
+        assertThat(result.schemaValid()).isFalse();
+        assertThat(result.warnings()).anySatisfy(w ->
+                assertThat(w).contains("objectClass `secUser`").contains("not defined"));
     }
 
     @Test
@@ -194,23 +198,23 @@ class IsvaConfigProbeServiceTest {
      */
     private static Schema customSchema(boolean withEUser) throws Exception {
         Entry e = Schema.getDefaultStandardSchema().getSchemaEntry().duplicate();
-        e.addAttributeValue("attributeTypes",
+        e.addAttribute("attributeTypes",
                 "( 1.3.6.1.4.1.99999.1.1.1 NAME 'secUUID' EQUALITY caseIgnoreMatch "
                         + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )");
-        e.addAttributeValue("attributeTypes",
+        e.addAttribute("attributeTypes",
                 "( 1.3.6.1.4.1.99999.1.1.2 NAME 'secLogin' EQUALITY caseIgnoreMatch "
                         + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )");
-        e.addAttributeValue("attributeTypes",
+        e.addAttribute("attributeTypes",
                 "( 1.3.6.1.4.1.99999.1.1.3 NAME 'secDN' EQUALITY distinguishedNameMatch "
                         + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.12 )");
-        e.addAttributeValue("attributeTypes",
+        e.addAttribute("attributeTypes",
                 "( 1.3.6.1.4.1.99999.1.1.4 NAME 'principalName' EQUALITY caseIgnoreMatch "
                         + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )");
-        e.addAttributeValue("objectClasses",
+        e.addAttribute("objectClasses",
                 "( 1.3.6.1.4.1.99999.1.2.1 NAME 'secUser' SUP top AUXILIARY "
                         + "MAY ( secLogin $ secDN $ secUUID ) )");
         if (withEUser) {
-            e.addAttributeValue("objectClasses",
+            e.addAttribute("objectClasses",
                     "( 1.3.6.1.4.1.99999.1.2.2 NAME 'eUser' SUP top AUXILIARY "
                             + "MAY ( principalName ) )");
         }
