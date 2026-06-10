@@ -2,7 +2,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
-import FormField from '@/components/FormField.vue'
 import {
   getIsvaConfig,
   upsertIsvaConfig,
@@ -377,13 +376,16 @@ function extractErrorMessage(e: unknown, fallback: string): string {
       <section class="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
         <h2 class="text-base font-semibold text-gray-900">Common settings</h2>
 
-        <FormField label="secAuthority" v-model="form.secAuthority"
-                   placeholder="Default" />
-        <p class="text-xs text-gray-500 -mt-3">
-          Authority name written to every user's <code>secAuthority</code>
-          attribute. Default is <code>Default</code>; only override for
-          multi-authority deployments.
-        </p>
+        <div>
+          <label class="label" for="secAuthority">secAuthority</label>
+          <input id="secAuthority" type="text" v-model="form.secAuthority"
+                 class="input w-full" placeholder="Default" />
+          <p class="text-xs text-gray-500 mt-1">
+            Authority name written to every user's <code>secAuthority</code>
+            attribute. Default is <code>Default</code>; only override for
+            multi-authority deployments.
+          </p>
+        </div>
 
         <div>
           <label class="label" for="defaultValidUntilYears">
@@ -392,11 +394,11 @@ function extractErrorMessage(e: unknown, fallback: string): string {
           <input id="defaultValidUntilYears" type="number" min="1"
                  v-model.number="form.defaultValidUntilYears"
                  class="input w-full" placeholder="100" />
+          <p class="text-xs text-gray-500 mt-1">
+            New users are created with <code>secValidUntil</code> set to
+            <em>now + N years</em>. Admins can shorten per-user later.
+          </p>
         </div>
-        <p class="text-xs text-gray-500 -mt-3">
-          New users are created with <code>secValidUntil</code> set to
-          <em>now + N years</em>. Admins can shorten per-user later.
-        </p>
 
         <fieldset>
           <legend class="text-sm font-medium text-gray-900 mb-2">Delete behaviour</legend>
@@ -482,12 +484,15 @@ function extractErrorMessage(e: unknown, fallback: string): string {
                class="bg-white border border-gray-200 rounded-xl p-6 space-y-4">
         <h2 class="text-base font-semibold text-gray-900">Paired secUser settings</h2>
 
-        <FormField label="Management DIT base DN (required)"
-                   v-model="form.managementDitBaseDn"
-                   placeholder="secAuthority=Default,o=ibm,c=us" />
-        <p class="text-xs text-gray-500 -mt-3">
-          Parent DN under which paired <code>secUser</code> entries live.
-        </p>
+        <div>
+          <label class="label" for="managementDitBaseDn">Management DIT base DN (required)</label>
+          <input id="managementDitBaseDn" type="text"
+                 v-model="form.managementDitBaseDn"
+                 class="input w-full" placeholder="secAuthority=Default,o=ibm,c=us" />
+          <p class="text-xs text-gray-500 mt-1">
+            Parent DN under which paired <code>secUser</code> entries live.
+          </p>
+        </div>
 
         <div>
           <label class="label" for="secuserRdnAttribute">secUser RDN attribute</label>
@@ -674,3 +679,11 @@ function extractErrorMessage(e: unknown, fallback: string): string {
     </Transition>
   </div>
 </template>
+
+<style scoped>
+@reference "tailwindcss";
+/* Field label, matched to the fieldset legends in this view
+   (text-sm / font-medium / gray-900) so every labelled control reads
+   the same. Without this the bare `class="label"` rendered unstyled. */
+.label { @apply block text-sm font-medium text-gray-900 mb-1; }
+</style>
