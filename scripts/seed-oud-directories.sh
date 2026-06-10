@@ -43,19 +43,35 @@
 #       fixture service names over the compose network).
 #   MODE=host — host=host.docker.internal, port=<published port>.
 #       For a portal running OUTSIDE Docker, on Docker Desktop (macOS/Win).
+#   MODE=fly — host=<FLY_LDAP_PREFIX><service><FLY_LDAP_SUFFIX>, port=1389.
+#       For a portal running on Fly.io, where the OUD fixtures are deployed
+#       as apps reachable over the private 6PN at their .flycast names, e.g.
+#       service "oud1-primary" -> "ldapportal-ldap-oud1-primary.flycast".
+#       BASE_URL must point at the edition's public frontend (it proxies
+#       /api/v1 to the private backend). sslMode stays NONE — .flycast is
+#       private + encrypted at the network layer, so OpenDJ runs plaintext
+#       on 1389 there. Override the OUD app naming with FLY_LDAP_PREFIX /
+#       FLY_LDAP_SUFFIX, and the port with INTERNAL_PORT, if your fly.toml
+#       differs (verify with: flyctl services list -a <ldap-app>).
 #
 # Requires: curl, jq.
 #
 # Usage (from repo root):
 #   SUPERADMIN_PASSWORD=... ./scripts/seed-oud-directories.sh
 #   MODE=host SUPERADMIN_PASSWORD=... ./scripts/seed-oud-directories.sh
+#   BASE_URL=https://ldapportal-ci.fly.dev MODE=fly SUPERADMIN_PASSWORD=... \
+#     ./scripts/seed-oud-directories.sh
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:9080}"     # frontend (proxies /api/v1); or :9090 for the backend
 SUPERADMIN_USER="${SUPERADMIN_USER:-superadmin}"
-MODE="${MODE:-network}"                            # network | host
+MODE="${MODE:-network}"                            # network | host | fly
 INTERNAL_PORT="${INTERNAL_PORT:-1389}"             # container LDAP port (compose: right side of "NNNN:1389")
 HOST_GATEWAY="${HOST_GATEWAY:-host.docker.internal}"
+# MODE=fly builds each directory host as <prefix><service><suffix>, mapping the
+# compose service name (oud1-primary) to its Fly app (ldapportal-ldap-oud1-primary).
+FLY_LDAP_PREFIX="${FLY_LDAP_PREFIX:-ldapportal-ldap-}"
+FLY_LDAP_SUFFIX="${FLY_LDAP_SUFFIX:-.flycast}"
 BIND_DN="${BIND_DN:-cn=Directory Manager}"
 BIND_PW="${BIND_PW:-admin}"
 
@@ -79,7 +95,7 @@ PROFILES=(
 die() { echo "ERROR: $*" >&2; exit 1; }
 command -v curl >/dev/null || die "curl not found"
 command -v jq   >/dev/null || die "jq not found (brew install jq)"
-case "$MODE" in network|host) ;; *) die "MODE must be 'network' or 'host' (got '$MODE')";; esac
+case "$MODE" in network|host|fly) ;; *) die "MODE must be 'network', 'host', or 'fly' (got '$MODE')";; esac
 
 PW="${SUPERADMIN_PASSWORD:-}"
 if [ -z "$PW" ]; then read -r -s -p "Password for $SUPERADMIN_USER: " PW; echo; fi
@@ -109,11 +125,11 @@ for spec in "${INSTANCES[@]}"; do
   IFS='|' read -r label service published baseDn <<<"$spec"
   display="$label"
 
-  if [ "$MODE" = "host" ]; then
-    host="$HOST_GATEWAY"; port="$published"
-  else
-    host="$service";      port="$INTERNAL_PORT"
-  fi
+  case "$MODE" in
+    host) host="$HOST_GATEWAY";                            port="$published" ;;
+    fly)  host="${FLY_LDAP_PREFIX}${service}${FLY_LDAP_SUFFIX}"; port="$INTERNAL_PORT" ;;
+    *)    host="$service";                                 port="$INTERNAL_PORT" ;;  # network
+  esac
 
   if has_display "$display"; then
     echo "==> $display — already exists, skipping."
