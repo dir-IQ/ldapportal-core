@@ -5,9 +5,8 @@
  *   - selector shown when both are exposed
  *   - mismatch note when a persisted config uses a now-unexposed mode
  *
- * Router + the isvaConfig API are mocked at the module level. FormField is
- * stubbed — these tests assert structure (selector / panel / note), not the
- * DIT inputs.
+ * Router + the isvaConfig API are mocked at the module level. These tests
+ * assert structure (selector / panel / note), not the DIT inputs.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -99,9 +98,7 @@ function linkedConfigDto() {
 }
 
 async function mountView() {
-  const wrapper = mount(IsvaConfigView, {
-    global: { stubs: { FormField: true } },
-  })
+  const wrapper = mount(IsvaConfigView)
   await flushPromises()
   await flushPromises()
   return wrapper
