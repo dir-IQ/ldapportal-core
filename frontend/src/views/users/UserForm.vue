@@ -298,7 +298,7 @@
           </p>
           <div class="space-y-2 mt-3 pl-3 border-l-2 border-gray-100">
             <template v-for="(val, key) in iviaDisplayAttributes" :key="key">
-              <FormField :label="iviaAttrLabel(key)" :model-value="val" type="textarea" :rows="2" disabled />
+              <FormField :label="iviaAttrLabel(key)" :model-value="val" type="textarea" :rows="1" disabled />
             </template>
           </div>
         </div>
