@@ -2,6 +2,7 @@
 package com.ldapportal.ldap.validation;
 
 import com.ldapportal.entity.enums.DirectoryType;
+import com.ldapportal.entity.enums.InputType;
 
 import java.util.regex.Pattern;
 
@@ -38,6 +39,24 @@ public final class AttributeSyntax {
     private static final Pattern EMAIL = Pattern.compile("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$");
 
     private AttributeSyntax() {
+    }
+
+    /**
+     * The syntax kind a profile {@code inputType} authoritatively implies, or
+     * {@code null} if the input type carries no intrinsic value shape. A
+     * {@code DN_LOOKUP} field holds a DN; a {@code BOOLEAN} field holds
+     * {@code TRUE}/{@code FALSE}. This is the single source of truth shared by
+     * server-side resolution ({@link LdapAttributeValidator}) and the
+     * client-facing syntax hints surfaced to the admin UI.
+     */
+    public static Kind forInputType(InputType inputType) {
+        if (inputType == InputType.DN_LOOKUP) {
+            return Kind.DN;
+        }
+        if (inputType == InputType.BOOLEAN) {
+            return Kind.BOOLEAN;
+        }
+        return null;
     }
 
     /**

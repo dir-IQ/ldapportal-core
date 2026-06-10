@@ -72,11 +72,9 @@ public final class LdapAttributeValidator {
      * {@code manager} as a DN even when carried by a plain-text or absent config).
      */
     private static AttributeSyntax.Kind resolveKind(String attribute, InputType inputType) {
-        if (inputType == InputType.DN_LOOKUP) {
-            return AttributeSyntax.Kind.DN;
-        }
-        if (inputType == InputType.BOOLEAN) {
-            return AttributeSyntax.Kind.BOOLEAN;
+        AttributeSyntax.Kind fromInputType = AttributeSyntax.forInputType(inputType);
+        if (fromInputType != null) {
+            return fromInputType;
         }
         return WellKnownAttributes.syntaxFor(attribute);
     }
