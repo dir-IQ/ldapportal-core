@@ -31,9 +31,9 @@
 #      isn't loaded on the OpenDJ fixtures the add fails; it's reported but is
 #      NOT fatal to the run.
 #   3. Provisioning profiles on the OUD{1,2,3} primaries:
-#        OUD1 Primary -> "PROD (OUD1)"  targetOuDn ou=People,dc=oud1,...
-#        OUD2 Primary -> "QA (OUD2)"    targetOuDn ou=People,dc=oud2,...
-#        OUD3 Primary -> "INT (OUD3)"   targetOuDn ou=People,dc=oud3,...
+#        OUD1 Primary -> "PROD (OUD1)"  targetUserDn ou=People,dc=oud1,...  targetGroupDn ou=Groups,dc=oud1,...
+#        OUD2 Primary -> "QA (OUD2)"    targetUserDn ou=People,dc=oud2,...  targetGroupDn ou=Groups,dc=oud2,...
+#        OUD3 Primary -> "INT (OUD3)"   targetUserDn ou=People,dc=oud3,...  targetGroupDn ou=Groups,dc=oud3,...
 #      (Users are created directly under ou=People; cn=AllEmployees is the
 #      all-employees group under ou=Groups.)
 #
@@ -69,7 +69,7 @@ INSTANCES=(
   "OUD3 Alternate|oud3-alternate|9389|dc=oud3,dc=example,dc=com"
 )
 
-# Provisioning profiles: "directory displayName|profile name|targetOuDn"
+# Provisioning profiles: "directory displayName|profile name|targetUserDn|targetGroupDn"
 PROFILES=(
   "OUD1 Primary|PROD (OUD1)|ou=People,dc=oud1,dc=example,dc=com|ou=Groups,dc=oud1,dc=example,dc=com"
   "OUD2 Primary|QA (OUD2)|ou=People,dc=oud2,dc=example,dc=com|ou=Groups,dc=oud2,dc=example,dc=com"
@@ -238,8 +238,9 @@ done
 echo
 echo "==> Phase 3: provisioning profiles"
 
-# The three profiles are identical except for name + targetOuDn, so the
-# attribute layout is defined once and parameterized per profile.
+# The three profiles are identical except for name + targetUserDn +
+# targetGroupDn, so the attribute layout is defined once and parameterized
+# per profile.
 read -r -d '' ATTR_CONFIGS <<'JSON' || true
 [
   {"attributeName":"uid","customLabel":"User ID","inputType":"TEXT","requiredOnCreate":true,"editableOnCreate":true,"editableOnUpdate":false,"selfServiceEdit":false,"selfRegistrationEdit":false,"defaultValue":"","computedExpression":"","validationRegex":"","validationMessage":"","allowedValues":"","minLength":null,"maxLength":null,"sectionName":"Identity","columnSpan":3,"hidden":false,"registrationSectionName":null,"registrationColumnSpan":null,"registrationDisplayOrder":null,"selfServiceSectionName":null,"selfServiceColumnSpan":null,"selfServiceDisplayOrder":null},
@@ -301,7 +302,7 @@ for spec in "${PROFILES[@]}"; do
     prof_skipped=$((prof_skipped + 1)); continue
   fi
 
-  body="$(profile_body "$pname" "$targetUserDn $targetGroupDn")"
+  body="$(profile_body "$pname" "$targetUserDn" "$targetGroupDn")"
   resp="$(mktemp)"
   code="$(curl -sS -b "$COOKIES" -o "$resp" -w '%{http_code}' \
     -X POST "$api/directories/$id/profiles" \
