@@ -16,6 +16,10 @@
 # listed in alphabetical order. A key absent from a given file leaves that
 # file's cell empty.
 #
+# If a row's values are not all identical across the files (including the
+# empty-string value used for a file in which the key is absent), the key
+# name in that row is prefixed with '******' to flag the discrepancy.
+#
 # Usage:
 #   scripts/kv-files-to-csv.pl file1.txt file2.txt [...]            > out.csv
 #   scripts/kv-files-to-csv.pl -o out.csv file1.txt file2.txt [...]
@@ -110,8 +114,16 @@ else {
 print {$out} csv_row('Key', @headers);
 
 for my $key (sort keys %seen_key) {
-    my @cells = map { $values{$key}[$_] } 0 .. $#inputs;
-    print {$out} csv_row($key, @cells);
+    # Normalize missing cells to '' so a key present in only some files counts
+    # as a discrepancy against the empty cells of the files that lack it.
+    my @cells = map { defined $values{$key}[$_] ? $values{$key}[$_] : '' }
+        0 .. $#inputs;
+
+    # Flag the row when its values are not all identical.
+    my $all_same = !grep { $_ ne $cells[0] } @cells;
+    my $label = $all_same ? $key : "******$key";
+
+    print {$out} csv_row($label, @cells);
 }
 
 close $out if defined $out_file;
