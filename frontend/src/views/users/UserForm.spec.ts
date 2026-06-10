@@ -200,4 +200,23 @@ describe('UserForm staged group memberships (edit mode)', () => {
     expect(result).toBeNull()
     expect(usersApi.applyMemberships).not.toHaveBeenCalled()
   })
+
+  it('copies another user’s groups into staged additions, skipping shared ones', async () => {
+    const wrapper = await mountEditWithGroups()
+    const vm = wrapper.vm as unknown as ExposedStaged
+
+    // Expand the copy panel and choose a source user who is in ops (which the
+    // target — a member of devs only — is not).
+    const toggle = wrapper.findAll('button').find(b => b.text().trim() === 'Copy groups from another user')
+    await toggle!.trigger('click')
+    await wrapper.find('input[placeholder="Select or paste a user DN"]').setValue('uid=other,ou=people,dc=x')
+    await wrapper.findAll('button').find(b => b.text().trim() === 'Copy')!.trigger('click')
+
+    expect(vm.hasPendingMembershipChanges).toBe(true)
+    await vm.applyMembershipChanges()
+    // Only ops is new; devs is the target's own membership and untouched.
+    expect(usersApi.applyMemberships).toHaveBeenCalledWith('dir1', USER_DN, {
+      changes: [{ groupDn: OPS, memberAttribute: 'member', op: 'ADD' }],
+    })
+  })
 })
