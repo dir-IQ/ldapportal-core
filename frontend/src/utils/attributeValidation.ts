@@ -113,7 +113,8 @@ export function resolveSyntaxKind(
 
 /** Built-in input-type → kind fallback (mirrors {@code AttributeSyntax.forInputType}). */
 function kindForInputType(inputType: string | null | undefined): SyntaxKind | null {
-  if (inputType === 'DN_LOOKUP') return 'DN'
+  // DN_LOOKUP (picker) and DN (typed directly) both hold a DN.
+  if (inputType === 'DN_LOOKUP' || inputType === 'DN') return 'DN'
   if (inputType === 'BOOLEAN') return 'BOOLEAN'
   return null
 }

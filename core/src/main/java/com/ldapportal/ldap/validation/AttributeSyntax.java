@@ -48,9 +48,13 @@ public final class AttributeSyntax {
      * {@code TRUE}/{@code FALSE}. This is the single source of truth shared by
      * server-side resolution ({@link LdapAttributeValidator}) and the
      * client-facing syntax hints surfaced to the admin UI.
+     *
+     * <p>{@code DN_LOOKUP} (DN picker) and {@code DN} (operator types the DN
+     * directly) differ only in their input widget — both hold a DN and share
+     * the same DN-syntax validation.</p>
      */
     public static Kind forInputType(InputType inputType) {
-        if (inputType == InputType.DN_LOOKUP) {
+        if (inputType == InputType.DN_LOOKUP || inputType == InputType.DN) {
             return Kind.DN;
         }
         if (inputType == InputType.BOOLEAN) {
