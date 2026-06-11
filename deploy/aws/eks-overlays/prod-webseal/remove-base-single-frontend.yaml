@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Removes the base's single-frontend topology so this overlay can replace it
+# with the admin + superadmin pair. Each doc deletes one base object by
+# kind+name ($patch: delete). The base ingress (ldapportal) and the base
+# frontend (deployment/service/pdb + its nginx ConfigMap) all go; the backend
+# stays.
+$patch: delete
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ldapportal-frontend
+---
+$patch: delete
+apiVersion: v1
+kind: Service
+metadata:
+  name: ldapportal-frontend
+---
+$patch: delete
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ldapportal-frontend
+---
+$patch: delete
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ldapportal-frontend-nginx
+---
+$patch: delete
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ldapportal
