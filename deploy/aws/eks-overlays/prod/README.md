@@ -7,7 +7,7 @@ Manager** (Secrets Store CSI driver), and runs the **community-plus-isva**
 backend with **Directory Sync** enabled.
 
 Keeping these edits in the overlay (not the base) means upstream merges of the
-base manifests stay clean. Full runbook: [`docs/deployment-eks.md`](../../../docs/deployment-eks.md).
+base manifests stay clean. Full runbook: [`docs/deployment-eks-gitlab-ecr.md`](../../../docs/deployment-eks-gitlab-ecr.md).
 
 ## Files
 
@@ -33,7 +33,7 @@ Replace these placeholders (search for them across the overlay):
 
 ## Prerequisites
 
-See [`docs/deployment-eks.md`](../../../docs/deployment-eks.md) §1–§4:
+See [`docs/deployment-eks-gitlab-ecr.md`](../../../docs/deployment-eks-gitlab-ecr.md) §1–§4:
 EKS + OIDC provider, AWS Load Balancer Controller, Secrets Store CSI driver +
 AWS provider (`syncSecret.enabled=true`), the four `ldapportal/*` secrets in
 Secrets Manager, the IRSA role, ECR repos, and RDS.
