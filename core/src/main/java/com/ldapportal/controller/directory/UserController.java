@@ -17,6 +17,7 @@ import com.ldapportal.entity.PendingApproval;
 import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.entity.enums.ApprovalRequestType;
 import com.ldapportal.entity.enums.FeatureKey;
+import com.ldapportal.entity.enums.PasswordDisposition;
 import com.ldapportal.service.ApprovalWorkflowService;
 import com.ldapportal.service.LdapOperationService;
 import jakarta.validation.Valid;
@@ -102,6 +103,18 @@ public class UserController {
                             "approvalId", pendingApproval.get().getId()));
         }
 
+        // Server-side password generation for GENERATED_* profiles. Done here —
+        // after the approval branch, at actual execution — so the generated
+        // secret is never persisted in a pending-approval payload. No-op for
+        // OPERATOR_ENTERED or when a password was already supplied.
+        if (profile.isPresent()) {
+            Map<String, List<String>> attrs = new LinkedHashMap<>(req.attributes());
+            String generated = profileService.applyGeneratedPassword(profile.get(), attrs);
+            if (generated != null) {
+                req = new CreateEntryRequest(req.dn(), attrs);
+            }
+        }
+
         LdapEntryResponse result = service.createUser(directoryId, principal, req,
                 profile.map(ProvisioningProfile::getId).orElse(null));
 
@@ -118,8 +131,15 @@ public class UserController {
                     directoryId, profile.get().getId(), req.dn(), principal);
         }
 
-        // Email password to user if profile is configured for it
-        if (profile.isPresent() && profile.get().isEmailPasswordToUser()) {
+        // Email the password to the user when the profile delivers by email —
+        // either the explicit emailPasswordToUser flag (operator-entered) or the
+        // GENERATED_DELIVERED disposition (the value generated just above is now
+        // in req.attributes()). GENERATED_DISCARDED deliberately delivers
+        // nowhere.
+        boolean deliversByEmail = profile.isPresent()
+                && (profile.get().isEmailPasswordToUser()
+                    || profile.get().getPasswordDisposition() == PasswordDisposition.GENERATED_DELIVERED);
+        if (deliversByEmail) {
             Map<String, List<String>> attrs = req.attributes();
             List<String> mailValues = attrs.get("mail");
             List<String> pwdValues  = attrs.get("userPassword");
