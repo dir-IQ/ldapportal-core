@@ -77,39 +77,43 @@ const daysRemainingLabel = computed(() => {
             <p class="text-lg font-semibold text-gray-900 mt-1">{{ s.edition }}</p>
           </div>
 
-          <div>
-            <p class="text-xs uppercase text-gray-500 tracking-wide">Customer ID</p>
-            <p class="text-sm font-mono text-gray-800 mt-1 break-all">
-              {{ s.customerId || '—' }}
-            </p>
-          </div>
+          <!-- Remaining fields are only meaningful for an installed (signed)
+               license key; the community baseline shows the edition alone. -->
+          <template v-if="s.signed">
+            <div>
+              <p class="text-xs uppercase text-gray-500 tracking-wide">Customer ID</p>
+              <p class="text-sm font-mono text-gray-800 mt-1 break-all">
+                {{ s.customerId || '—' }}
+              </p>
+            </div>
 
-          <div>
-            <p class="text-xs uppercase text-gray-500 tracking-wide">Source</p>
-            <p class="text-sm text-gray-800 mt-1 break-all">{{ s.source }}</p>
-          </div>
+            <div>
+              <p class="text-xs uppercase text-gray-500 tracking-wide">Source</p>
+              <p class="text-sm text-gray-800 mt-1 break-all">{{ s.source }}</p>
+            </div>
 
-          <div v-if="s.issuedAt">
-            <p class="text-xs uppercase text-gray-500 tracking-wide">Issued</p>
-            <p class="text-sm text-gray-800 mt-1">{{ formatDate(s.issuedAt) }}</p>
-          </div>
+            <div v-if="s.issuedAt">
+              <p class="text-xs uppercase text-gray-500 tracking-wide">Issued</p>
+              <p class="text-sm text-gray-800 mt-1">{{ formatDate(s.issuedAt) }}</p>
+            </div>
 
-          <div v-if="s.expiresAt">
-            <p class="text-xs uppercase text-gray-500 tracking-wide">Expires</p>
-            <p class="text-sm text-gray-800 mt-1">
-              {{ formatDate(s.expiresAt) }}
-              <span class="text-xs text-gray-500 ml-1">({{ daysRemainingLabel }})</span>
-            </p>
-          </div>
+            <div v-if="s.expiresAt">
+              <p class="text-xs uppercase text-gray-500 tracking-wide">Expires</p>
+              <p class="text-sm text-gray-800 mt-1">
+                {{ formatDate(s.expiresAt) }}
+                <span class="text-xs text-gray-500 ml-1">({{ daysRemainingLabel }})</span>
+              </p>
+            </div>
 
-          <div>
-            <p class="text-xs uppercase text-gray-500 tracking-wide">Signed</p>
-            <p class="text-sm mt-1">
-              <span :class="s.signed ? 'badge-green' : 'badge-gray'">
-                {{ s.signed ? 'Yes' : 'No (community baseline)' }}
-              </span>
-            </p>
-          </div>
+            <div>
+              <p class="text-xs uppercase text-gray-500 tracking-wide">Signed</p>
+              <p class="text-sm mt-1">
+                <span :class="s.signed ? 'badge-green' : 'badge-gray'">
+                  {{ s.signed ? 'Yes' : 'No (community baseline)' }}
+                </span>
+              </p>
+            </div>
+          </template>
         </div>
       </div>
 
