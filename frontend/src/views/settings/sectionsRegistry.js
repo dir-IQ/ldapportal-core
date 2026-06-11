@@ -7,7 +7,6 @@
 import BrandingSection         from './sections/BrandingSection.vue'
 import AuthenticationSection   from './sections/AuthenticationSection.vue'
 import UserGroupEditsSection  from './sections/UserGroupEditsSection.vue'
-import SessionSection          from './sections/SessionSection.vue'
 import SmtpSection             from './sections/SmtpSection.vue'
 import S3Section               from './sections/S3Section.vue'
 import SiemSection             from './sections/SiemSection.vue'
@@ -19,7 +18,6 @@ const ICONS = {
   palette: 'M12 2a10 10 0 1 0 0 20 2 2 0 0 0 2-2v-1a2 2 0 0 1 2-2h2a4 4 0 0 0 4-4 10 10 0 0 0-10-11zM8 14a1 1 0 1 0 0-2 1 1 0 0 0 0 2zM6 10a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm6-4a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm6 4a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
   key:     'M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4',
   check:   'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
-  clock:   'M12 8v4l2.5 2.5M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z',
   mail:    'M3 8l9 6 9-6M3 7h18a0 0 0 0 1 0 0v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z',
   cloud:   'M7 18a5 5 0 1 1 .96-9.91 6 6 0 1 1 11.42 2.4A4 4 0 0 1 18 18H7z',
   signal:  'M5 12a7 7 0 0 1 14 0M8 12a4 4 0 0 1 8 0M12 20v-8m0 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
@@ -49,6 +47,7 @@ export const SECTIONS = [
       'oidcIssuerUrl', 'oidcClientId', 'oidcClientSecret', 'oidcScopes', 'oidcUsernameClaim',
       'oidcRedirectUri',
       'websealTrustedProxies', 'websealUserHeader', 'websealGroupsHeader', 'websealLogoutUrl',
+      'sessionTimeoutMinutes',
     ],
     component: AuthenticationSection,
   },
@@ -61,13 +60,6 @@ export const SECTIONS = [
     icon: iconPath('check'),
     fields: ['directorySearchInlineEditEnabled', 'approvalsEnabled', 'selfRegistrationApprovalEnabled'],
     component: UserGroupEditsSection,
-  },
-  {
-    id: 'session',
-    label: 'Session',
-    icon: iconPath('clock'),
-    fields: ['sessionTimeoutMinutes'],
-    component: SessionSection,
   },
   {
     id: 'smtp',
