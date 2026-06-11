@@ -180,16 +180,29 @@ function populateFromDto(dto: IsvaConfigDto) {
 const newObjectClass = ref('')
 
 function addObjectClass() {
-  const name = newObjectClass.value.trim()
+  // Accept a single name or a comma/space-delimited list (paste-friendly):
+  // split on either separator, drop blanks, and add each class not already
+  // present — deduping case-insensitively against the existing chips and
+  // within the pasted list itself.
+  const names = newObjectClass.value
+    .split(/[\s,]+/)
+    .map((n) => n.trim())
+    .filter(Boolean)
   newObjectClass.value = ''
-  if (!name) return
-  const exists = form.value.secuserObjectClasses
-    .some((oc) => oc.toLowerCase() === name.toLowerCase())
+  if (names.length === 0) return
   // Assign a new array rather than push-mutating: pristine holds a
   // shallow snapshot that shares this array's reference, so an in-place
   // mutation would change both and defeat the isDirty comparison.
-  if (!exists) {
-    form.value.secuserObjectClasses = [...form.value.secuserObjectClasses, name]
+  const seen = new Set(form.value.secuserObjectClasses.map((oc) => oc.toLowerCase()))
+  const additions: string[] = []
+  for (const name of names) {
+    const key = name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    additions.push(name)
+  }
+  if (additions.length > 0) {
+    form.value.secuserObjectClasses = [...form.value.secuserObjectClasses, ...additions]
   }
 }
 
@@ -471,7 +484,7 @@ function extractErrorMessage(e: unknown, fallback: string): string {
               v-model="newObjectClass"
               type="text"
               class="input flex-1"
-              placeholder="Add an objectClass (e.g. eUser)"
+              placeholder="Add one or more objectClasses — comma or space separated (e.g. eUser, inetOrgPerson)"
               @keydown.enter.prevent="addObjectClass"
             />
             <button type="button" class="btn-secondary" @click="addObjectClass">Add</button>
