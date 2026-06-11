@@ -63,6 +63,13 @@
                     <div class="w-4 h-4 border border-gray-300 rounded bg-white"></div>
                     <span class="text-sm text-gray-500">{{ field.customLabel || field.attributeName }}</span>
                   </div>
+                  <!-- Dropdown mock so SELECT reads as a picker, not a text box -->
+                  <div v-else-if="field.inputType === 'SELECT'" class="w-full h-9 border border-gray-200 rounded-lg bg-gray-50 flex items-center justify-between px-3">
+                    <span class="text-xs text-gray-400 italic">Select…</span>
+                    <svg class="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </div>
                   <div v-else class="w-full h-9 border border-gray-200 rounded-lg bg-gray-50"></div>
                 </div>
               </template>
