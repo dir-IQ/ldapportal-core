@@ -295,6 +295,32 @@ describe('IsvaConfigView secUser objectClasses + generalized RDN', () => {
       secuserRdnValueSource: 'UID',
     }))
   })
+
+  it('parses a comma/space-delimited list into separate chips, deduping against existing and within the input', async () => {
+    hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['LINKED'] } })
+    hoisted.getIsvaConfig.mockResolvedValue({ data: linkedConfigDto() })
+    hoisted.upsertIsvaConfig.mockImplementation((_dir, payload) =>
+      Promise.resolve({ data: { ...linkedConfigDto(), ...payload } }))
+
+    const wrapper = await mountView()
+
+    // Mixed comma + space separators, a duplicate of an existing class (eUser,
+    // different case) and a within-input duplicate (top twice) — all collapsed.
+    await wrapper.find('#newObjectClass').setValue('inetOrgPerson, EUSER  top top')
+    await wrapper.find('#newObjectClass').trigger('keydown.enter')
+
+    const saveBtn = wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save' && b.attributes('class')?.includes('btn-primary'))
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    expect(hoisted.upsertIsvaConfig).toHaveBeenCalledWith('dir-1', expect.objectContaining({
+      secuserObjectClasses: ['secUser', 'eUser', 'inetOrgPerson', 'top'],
+      secuserRdnAttribute: 'principalName',
+      secuserRdnValueSource: 'UID',
+    }))
+  })
 })
 
 describe('IsvaConfigView probe gating', () => {
