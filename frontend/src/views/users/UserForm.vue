@@ -94,9 +94,11 @@
                       disabled
                     />
                   </div>
-                  <!-- Password field with generate/show/copy (create mode only) -->
+                  <!-- Password field with generate/show/copy (create mode only).
+                       Hidden entirely when the profile auto-generates it
+                       server-side — see hidePasswordField. -->
                   <div
-                    v-if="!attr.rdn && attr.inputType === 'PASSWORD'"
+                    v-if="!attr.rdn && attr.inputType === 'PASSWORD' && !hidePasswordField"
                     :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <label :for="`uf-pw-${attr.attributeName}`" class="block text-sm font-medium text-gray-700 mb-1">
@@ -148,9 +150,11 @@
                     </div>
                     <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                   </div>
-                  <!-- Regular field -->
+                  <!-- Regular field. Excludes PASSWORD so a hidden (auto-
+                       generated) password renders nothing rather than falling
+                       through to a plain text input. -->
                   <div
-                    v-else-if="!attr.rdn"
+                    v-else-if="!attr.rdn && attr.inputType !== 'PASSWORD'"
                     :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <!-- DN Lookup: use DnPicker instead of text input -->
@@ -490,6 +494,12 @@ interface UserTemplateConfig {
   showDnField?: boolean
   objectClassNames?: string[]
   attributeConfigs?: AttributeConfig[]
+  /**
+   * How the profile sources the password. The GENERATED_* dispositions have the
+   * server generate it at create time, so the password field is hidden from the
+   * operator here.
+   */
+  passwordDisposition?: string | null
 }
 
 interface UserFormData {
@@ -783,6 +793,16 @@ const computedDn = computed(() => {
 
 /** Whether to show the DN field alongside the RDN. */
 const showDnField = computed(() => props.userTemplateConfig?.showDnField !== false)
+
+/**
+ * Hide the password field when the profile auto-generates it server-side
+ * (GENERATED_DELIVERED / GENERATED_DISCARDED) — the operator never sees or
+ * enters it. OPERATOR_ENTERED (or an unset disposition) keeps the field.
+ */
+const hidePasswordField = computed(() => {
+  const d = props.userTemplateConfig?.passwordDisposition
+  return d === 'GENERATED_DELIVERED' || d === 'GENERATED_DISCARDED'
+})
 
 /** All non-hidden attributes (including RDN), preserving the order defined in the user form config. */
 const allVisibleAttributes = computed(() => {

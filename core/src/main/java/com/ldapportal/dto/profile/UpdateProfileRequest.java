@@ -28,6 +28,7 @@ public record UpdateProfileRequest(
         Boolean passwordSpecial,
         @Size(max = 50) String passwordSpecialChars,
         Boolean emailPasswordToUser,
+        @Size(max = 32) String passwordDisposition,
         boolean autoIncludeGroups,
         boolean excludeAutoIncludes,
         List<UUID> additionalProfileIds,

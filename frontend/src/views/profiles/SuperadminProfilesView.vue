@@ -73,6 +73,7 @@ interface ProfileForm {
   passwordSpecial: boolean
   passwordSpecialChars: string
   emailPasswordToUser: boolean
+  passwordDisposition: string
   autoIncludeGroups: boolean
   excludeAutoIncludes: boolean
   additionalProfileIds: string[]
@@ -110,6 +111,7 @@ interface ProfileRow {
   passwordSpecial?: boolean | null
   passwordSpecialChars?: string | null
   emailPasswordToUser?: boolean | null
+  passwordDisposition?: string | null
   autoIncludeGroups?: boolean | null
   excludeAutoIncludes?: boolean | null
   additionalProfiles?: Array<{ id: string; name?: string }>
@@ -197,6 +199,7 @@ function emptyProfile(): ProfileForm {
     passwordLength: 16, passwordUppercase: true, passwordLowercase: true,
     passwordDigits: true, passwordSpecial: true, passwordSpecialChars: '!@#$%^&*',
     emailPasswordToUser: false,
+    passwordDisposition: 'OPERATOR_ENTERED',
     autoIncludeGroups: false, excludeAutoIncludes: false,
     additionalProfileIds: [],
     attributeConfigs: [], groupAssignments: []
@@ -276,6 +279,7 @@ async function openEdit(p: ProfileRow) {
     passwordSpecial: p.passwordSpecial ?? true,
     passwordSpecialChars: p.passwordSpecialChars ?? '!@#$%^&*',
     emailPasswordToUser: p.emailPasswordToUser ?? false,
+    passwordDisposition: p.passwordDisposition ?? 'OPERATOR_ENTERED',
     autoIncludeGroups: p.autoIncludeGroups ?? false,
     excludeAutoIncludes: p.excludeAutoIncludes ?? false,
     additionalProfileIds: (p.additionalProfiles || []).map(ap => ap.id),
@@ -1013,9 +1017,8 @@ function addSelectedAttributes() {
   showAttrPicker.value = false
 }
 
-// When emailPasswordToUser is enabled, ensure 'mail' is present and required
-watch(() => profile.value.emailPasswordToUser, (enabled) => {
-  if (!enabled) return
+// Delivering the password by email needs a required 'mail' attribute to send to.
+function ensureRequiredMailAttribute() {
   const existing = profile.value.attributeConfigs.find(
     a => a.attributeName.toLowerCase() === 'mail'
   )
@@ -1035,6 +1038,15 @@ watch(() => profile.value.emailPasswordToUser, (enabled) => {
       selfServiceSectionName: null, selfServiceColumnSpan: null, selfServiceDisplayOrder: null
     })
   }
+}
+
+// Both email-delivery paths (the explicit flag, and the GENERATED_DELIVERED
+// disposition) require a 'mail' attribute — mirror the server-side guard.
+watch(() => profile.value.emailPasswordToUser, (enabled) => {
+  if (enabled) ensureRequiredMailAttribute()
+})
+watch(() => profile.value.passwordDisposition, (disposition) => {
+  if (disposition === 'GENERATED_DELIVERED') ensureRequiredMailAttribute()
 })
 
 // When requiredOnCreate is set, ensure hidden is cleared (unless attribute has a computed expression)
@@ -1638,6 +1650,28 @@ function toggleApprover(accountId: string) {
           <!-- Password Generation Settings -->
           <fieldset class="border border-gray-300 rounded-lg p-3 space-y-3">
             <legend class="text-sm font-semibold text-gray-800 px-1">Password Generation</legend>
+            <div>
+              <label for="sp-pw-disposition" class="block text-xs text-gray-500 mb-1">Password handling</label>
+              <select id="sp-pw-disposition" v-model="profile.passwordDisposition" class="input w-full text-sm">
+                <option value="OPERATOR_ENTERED">Operator enters or generates it in the form</option>
+                <option value="GENERATED_DELIVERED">Auto-generate and email it to the user</option>
+                <option value="GENERATED_DISCARDED">Auto-generate, never shown (e.g. certificate-only login)</option>
+              </select>
+              <p class="text-xs text-gray-500 mt-1">
+                <template v-if="profile.passwordDisposition === 'GENERATED_DISCARDED'">
+                  The server writes a random throwaway to satisfy a schema-required password; the
+                  password field is hidden on the create form and the value is surfaced nowhere.
+                </template>
+                <template v-else-if="profile.passwordDisposition === 'GENERATED_DELIVERED'">
+                  The server generates the password at create time and emails it to the user; the
+                  password field is hidden on the create form. Requires a required <code>mail</code> attribute.
+                </template>
+                <template v-else>
+                  The operator types or generates the password in the visible field. The settings
+                  below control the generator used by the “Generate” button.
+                </template>
+              </p>
+            </div>
             <div class="grid grid-cols-6 gap-3">
               <div class="col-span-2">
                 <label for="sp-pw-length" class="block text-xs text-gray-500 mb-1">Length</label>
@@ -1664,9 +1698,9 @@ function toggleApprover(accountId: string) {
               <input id="sp-pw-special" v-model="profile.passwordSpecialChars" class="input w-full text-sm font-mono"
                 placeholder="!@#$%^&*" />
             </div>
-            <label class="flex items-center gap-2 text-sm">
+            <label v-if="profile.passwordDisposition === 'OPERATOR_ENTERED'" class="flex items-center gap-2 text-sm">
               <input type="checkbox" v-model="profile.emailPasswordToUser" />
-              Email generated password to user on creation
+              Email the password to the user on creation
             </label>
           </fieldset>
 

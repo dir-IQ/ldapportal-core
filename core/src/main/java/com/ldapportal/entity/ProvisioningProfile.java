@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.entity;
 
+import com.ldapportal.entity.enums.PasswordDisposition;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -105,6 +106,16 @@ public class ProvisioningProfile {
 
     @Column(name = "email_password_to_user", nullable = false)
     private boolean emailPasswordToUser = false;
+
+    /**
+     * How this profile sources and handles a new user's password. Defaults to
+     * {@link PasswordDisposition#OPERATOR_ENTERED}; the {@code GENERATED_*}
+     * modes have the server generate the value at create time (see
+     * {@link PasswordDisposition}).
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "password_disposition", nullable = false, length = 32)
+    private PasswordDisposition passwordDisposition = PasswordDisposition.OPERATOR_ENTERED;
 
     /** When true, this profile's group assignments are auto-included in every other profile in the same directory. */
     @Column(name = "auto_include_groups", nullable = false)

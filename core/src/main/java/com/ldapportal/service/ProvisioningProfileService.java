@@ -10,6 +10,7 @@ import com.ldapportal.entity.enums.ApproverMode;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ExpiryAction;
 import com.ldapportal.entity.enums.InputType;
+import com.ldapportal.entity.enums.PasswordDisposition;
 import com.ldapportal.exception.ConflictException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapGroupService;
@@ -155,7 +156,7 @@ public class ProvisioningProfileService {
                 req.enabled(), req.selfRegistrationAllowed(),
                 req.passwordLength(), req.passwordUppercase(), req.passwordLowercase(),
                 req.passwordDigits(), req.passwordSpecial(), req.passwordSpecialChars(),
-                req.emailPasswordToUser());
+                req.emailPasswordToUser(), req.passwordDisposition());
         profile.setAutoIncludeGroups(req.autoIncludeGroups());
         // Auto-include profiles should not also exclude auto-includes (nonsensical)
         profile.setExcludeAutoIncludes(req.autoIncludeGroups() ? false : req.excludeAutoIncludes());
@@ -225,7 +226,7 @@ public class ProvisioningProfileService {
                 req.enabled(), req.selfRegistrationAllowed(),
                 req.passwordLength(), req.passwordUppercase(), req.passwordLowercase(),
                 req.passwordDigits(), req.passwordSpecial(), req.passwordSpecialChars(),
-                req.emailPasswordToUser());
+                req.emailPasswordToUser(), req.passwordDisposition());
         profile.setAutoIncludeGroups(req.autoIncludeGroups());
         // Auto-include profiles should not also exclude auto-includes (nonsensical)
         profile.setExcludeAutoIncludes(req.autoIncludeGroups() ? false : req.excludeAutoIncludes());
@@ -816,6 +817,38 @@ public class ProvisioningProfileService {
         return passwordGenerator.generate(profile);
     }
 
+    /** The LDAP attribute a generated password is written to. */
+    static final String PASSWORD_ATTR = "userPassword";
+
+    /**
+     * For profiles whose {@link PasswordDisposition} has the server generate the
+     * password ({@code GENERATED_*}), inject a freshly generated value into
+     * {@code attributes} under {@value #PASSWORD_ATTR} when none was supplied,
+     * and return the plaintext so the caller can deliver it
+     * ({@code GENERATED_DELIVERED}) or drop it ({@code GENERATED_DISCARDED}).
+     *
+     * <p>No-op (returns {@code null}) for {@code OPERATOR_ENTERED}, or when a
+     * non-blank password is already present (e.g. a re-submitted approval whose
+     * payload still carries one). Must be called at create <em>execution</em>
+     * time — never when queuing for approval — so the secret is not persisted in
+     * the pending-approval payload.</p>
+     */
+    public String applyGeneratedPassword(ProvisioningProfile profile,
+                                          Map<String, List<String>> attributes) {
+        if (profile == null || !profile.getPasswordDisposition().isGenerated()) {
+            return null;
+        }
+        List<String> existing = attributes.get(PASSWORD_ATTR);
+        boolean hasValue = existing != null && !existing.isEmpty()
+                && existing.get(0) != null && !existing.get(0).isBlank();
+        if (hasValue) {
+            return null;
+        }
+        String generated = passwordGenerator.generate(profile);
+        attributes.put(PASSWORD_ATTR, List.of(generated));
+        return generated;
+    }
+
     @Transactional(readOnly = true)
     public ProvisioningProfile getEntity(UUID profileId) {
         return requireProfile(profileId);
@@ -863,7 +896,7 @@ public class ProvisioningProfileService {
                                     Integer passwordLength, Boolean passwordUppercase,
                                     Boolean passwordLowercase, Boolean passwordDigits,
                                     Boolean passwordSpecial, String passwordSpecialChars,
-                                    Boolean emailPasswordToUser) {
+                                    Boolean emailPasswordToUser, String passwordDisposition) {
         profile.setName(name);
         profile.setDescription(description);
         profile.setTargetUserDn(targetUserDn);
@@ -885,6 +918,24 @@ public class ProvisioningProfileService {
         if (passwordSpecial != null)      profile.setPasswordSpecial(passwordSpecial);
         if (passwordSpecialChars != null) profile.setPasswordSpecialChars(passwordSpecialChars);
         if (emailPasswordToUser != null)  profile.setEmailPasswordToUser(emailPasswordToUser);
+        // Null/blank keeps the existing value (or the entity default
+        // OPERATOR_ENTERED on a fresh profile); an unrecognised value is a
+        // 400 rather than a silent fallback.
+        if (passwordDisposition != null && !passwordDisposition.isBlank()) {
+            try {
+                profile.setPasswordDisposition(
+                        PasswordDisposition.valueOf(passwordDisposition.trim()));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "Unknown passwordDisposition: " + passwordDisposition);
+            }
+        }
+    }
+
+    /** True for the password field — the PASSWORD widget or the userPassword attribute. */
+    private static boolean isPasswordAttribute(AttributeConfigEntry e) {
+        return InputType.PASSWORD.name().equals(e.inputType())
+                || PASSWORD_ATTR.equalsIgnoreCase(e.attributeName());
     }
 
     private void saveAttributeConfigs(ProvisioningProfile profile,
@@ -895,18 +946,29 @@ public class ProvisioningProfileService {
         // the empty-entries early return was above this block.
         List<AttributeConfigEntry> safeEntries = entries != null ? entries : List.of();
 
-        if (profile.isEmailPasswordToUser()) {
+        // Emailing the password (either the explicit flag, or the
+        // GENERATED_DELIVERED disposition which delivers by email) needs a
+        // 'mail' attribute to deliver to.
+        boolean deliversByEmail = profile.isEmailPasswordToUser()
+                || profile.getPasswordDisposition() == PasswordDisposition.GENERATED_DELIVERED;
+        if (deliversByEmail) {
             boolean hasMailRequired = safeEntries.stream().anyMatch(
                     e -> e.attributeName().equalsIgnoreCase("mail") && e.requiredOnCreate());
             if (!hasMailRequired) {
                 throw new IllegalArgumentException(
-                        "Email password to user requires a 'mail' attribute marked as required");
+                        "Emailing the password to the user requires a 'mail' attribute marked as required");
             }
         }
 
         for (AttributeConfigEntry e : safeEntries) {
+            // A required password field may be hidden when the profile
+            // auto-generates it (GENERATED_*) — the server fills it at create
+            // time, so the operator never needs to see or enter it.
+            boolean filledByGeneration = isPasswordAttribute(e)
+                    && profile.getPasswordDisposition().isGenerated();
             if (e.requiredOnCreate() && e.hidden()
-                    && (e.computedExpression() == null || e.computedExpression().isBlank())) {
+                    && (e.computedExpression() == null || e.computedExpression().isBlank())
+                    && !filledByGeneration) {
                 throw new IllegalArgumentException(
                         "Required attribute '" + e.attributeName() + "' cannot be hidden unless it has a computed expression");
             }

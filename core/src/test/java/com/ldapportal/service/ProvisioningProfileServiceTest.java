@@ -275,4 +275,46 @@ class ProvisioningProfileServiceTest {
                 profileId, List.of("displayName", "cn", "mail"), Map.of()))
                 .doesNotThrowAnyException();
     }
+
+    // ── applyGeneratedPassword (server-side password generation) ──────────────
+
+    @Test
+    void applyGeneratedPassword_generatesAndInjectsForGeneratedDisposition() {
+        profile.setPasswordDisposition(
+                com.ldapportal.entity.enums.PasswordDisposition.GENERATED_DISCARDED);
+        given(passwordGenerator.generate(profile)).willReturn("Zx9!generated");
+        Map<String, List<String>> attrs = new HashMap<>();
+        attrs.put("cn", List.of("Jane"));
+
+        String returned = service.applyGeneratedPassword(profile, attrs);
+
+        assertThat(returned).isEqualTo("Zx9!generated");
+        assertThat(attrs.get("userPassword")).containsExactly("Zx9!generated");
+    }
+
+    @Test
+    void applyGeneratedPassword_noOpForOperatorEntered() {
+        // Default disposition is OPERATOR_ENTERED.
+        Map<String, List<String>> attrs = new HashMap<>();
+
+        String returned = service.applyGeneratedPassword(profile, attrs);
+
+        assertThat(returned).isNull();
+        assertThat(attrs).doesNotContainKey("userPassword");
+        org.mockito.Mockito.verifyNoInteractions(passwordGenerator);
+    }
+
+    @Test
+    void applyGeneratedPassword_doesNotOverwriteSuppliedPassword() {
+        profile.setPasswordDisposition(
+                com.ldapportal.entity.enums.PasswordDisposition.GENERATED_DELIVERED);
+        Map<String, List<String>> attrs = new HashMap<>();
+        attrs.put("userPassword", List.of("operator-typed"));
+
+        String returned = service.applyGeneratedPassword(profile, attrs);
+
+        assertThat(returned).isNull();
+        assertThat(attrs.get("userPassword")).containsExactly("operator-typed");
+        org.mockito.Mockito.verifyNoInteractions(passwordGenerator);
+    }
 }

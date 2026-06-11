@@ -292,3 +292,43 @@ describe('UserForm staged group memberships (edit mode)', () => {
     expect(wrapper.text()).toContain('may be incomplete')
   })
 })
+
+describe('UserForm password field hiding (password disposition)', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  const pwConfig = (passwordDisposition: string) => ({
+    rdnAttribute: 'uid',
+    passwordDisposition,
+    attributeConfigs: [
+      { attributeName: 'uid', requiredOnCreate: true, editableOnCreate: true, inputType: 'TEXT' },
+      { attributeName: 'userPassword', requiredOnCreate: true, editableOnCreate: true, inputType: 'PASSWORD' },
+    ],
+  })
+
+  function mountWith(passwordDisposition: string) {
+    return mount(UserForm, {
+      props: {
+        data: { attributes: {} }, isEdit: false,
+        userTemplateConfig: pwConfig(passwordDisposition), dirId: null, profileId: 'p1',
+      },
+    })
+  }
+
+  it('renders the password field for OPERATOR_ENTERED', () => {
+    const wrapper = mountWith('OPERATOR_ENTERED')
+    expect(wrapper.find('#uf-pw-userPassword').exists()).toBe(true)
+  })
+
+  it('hides the password field for GENERATED_DISCARDED (and does not fall back to a text input)', () => {
+    const wrapper = mountWith('GENERATED_DISCARDED')
+    expect(wrapper.find('#uf-pw-userPassword').exists()).toBe(false)
+    // The hidden password must not leak through as a plain field of any kind.
+    expect(wrapper.find('[id^="uf-pw-"]').exists()).toBe(false)
+    expect(wrapper.findAll('input[type="password"]').length).toBe(0)
+  })
+
+  it('hides the password field for GENERATED_DELIVERED', () => {
+    const wrapper = mountWith('GENERATED_DELIVERED')
+    expect(wrapper.find('#uf-pw-userPassword').exists()).toBe(false)
+  })
+})

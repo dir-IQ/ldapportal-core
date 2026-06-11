@@ -52,6 +52,7 @@ class ProvisioningProfileControllerTest extends BaseControllerTest {
                 List.of("inetOrgPerson"), "uid",
                 true, true, false,
                 16, true, true, true, true, "!@#$%^&*", false,
+                "OPERATOR_ENTERED",
                 false, false,
                 List.of(), List.of(), List.of(), List.of(),
                 null, null);

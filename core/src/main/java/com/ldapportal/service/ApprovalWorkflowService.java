@@ -15,6 +15,7 @@ import com.ldapportal.entity.RegistrationRequest;
 import com.ldapportal.entity.enums.ApprovalRequestType;
 import com.ldapportal.entity.enums.ApprovalStatus;
 import com.ldapportal.entity.enums.AuditAction;
+import com.ldapportal.entity.enums.PasswordDisposition;
 import com.ldapportal.entity.enums.RegistrationStatus;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.AccountRepository;
@@ -463,10 +464,15 @@ public class ApprovalWorkflowService {
             if (pa.getProfileId() != null) {
                 permissionService.requireProfileAccess(approver, pa.getProfileId());
             }
-            // Re-apply computed/default/fixed attributes in case the payload was edited
+            // Re-apply computed/default/fixed attributes in case the payload was edited,
+            // and generate the password for GENERATED_* profiles. Generating here at
+            // execution (rather than at submission) keeps the secret out of the stored
+            // pending-approval payload.
             if (pa.getProfileId() != null) {
                 Map<String, List<String>> attrs = new LinkedHashMap<>(req.attributes());
                 profileService.applyDefaults(pa.getProfileId(), attrs);
+                profileService.applyGeneratedPassword(
+                        profileService.getEntity(pa.getProfileId()), attrs);
                 req = new CreateEntryRequest(req.dn(), attrs);
             }
             ldapOperationService.createUser(pa.getDirectoryId(), approver, req, pa.getProfileId());
@@ -484,7 +490,9 @@ public class ApprovalWorkflowService {
             // a profile silently disables the welcome email.
             if (pa.getProfileId() != null) {
                 ProvisioningProfile profile = profileService.getEntity(pa.getProfileId());
-                if (profile.isEmailPasswordToUser()) {
+                boolean deliversByEmail = profile.isEmailPasswordToUser()
+                        || profile.getPasswordDisposition() == PasswordDisposition.GENERATED_DELIVERED;
+                if (deliversByEmail) {
                     Map<String, List<String>> attrs = req.attributes();
                     List<String> mailValues = attrs.get("mail");
                     List<String> pwdValues  = attrs.get("userPassword");
