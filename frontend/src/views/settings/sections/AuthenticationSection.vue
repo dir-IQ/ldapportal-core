@@ -237,6 +237,14 @@ function confirmDisableLocal() {
       </div>
     </div>
 
+    <!-- Session -->
+    <div class="border-t border-gray-100 pt-4 mt-3">
+      <h3 class="text-sm font-semibold text-gray-700 mb-3">Session</h3>
+      <div class="max-w-xs">
+        <FormField label="Session Timeout (minutes)" v-model.number="form.sessionTimeoutMinutes" type="number" required />
+      </div>
+    </div>
+
     <OidcConfigHelpDialog v-model="showOidcHelp" />
     <WebSealConfigHelpDialog v-model="showWebsealHelp" />
 
