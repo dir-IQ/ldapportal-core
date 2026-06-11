@@ -37,9 +37,11 @@
 # which already exist in OpenDJ's core schema.
 #
 # Manual fallback (if the schema wasn't auto-imported): copy this file
-# into the running container's config/schema and restart, e.g.
+# into the running instance's schema dir — which lives under the data
+# volume at /opt/opendj/data/config/schema (NOT /opt/opendj/config/schema)
+# — and restart, e.g.
 #   docker cp testdata/isva-schema-opendj-linked.ldif \
-#     ldap-oud1-primary:/opt/opendj/config/schema/99-isva.ldif
+#     ldap-oud1-primary:/opt/opendj/data/config/schema/99-isva.ldif
 #   docker restart ldap-oud1-primary
 # (OpenDJ reads every config/schema/*.ldif at boot.) Or apply live with
 # ldapmodify against cn=schema using the changetype:modify variant.
