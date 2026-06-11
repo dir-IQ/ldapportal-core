@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
-  <div class="space-y-2">
+  <div class="space-y-2" ref="rootEl">
     <!-- Toolbar -->
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-2">
@@ -261,6 +261,12 @@
 
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
+import { useDragAutoScroll } from '@/composables/useDragAutoScroll'
+
+// Root element + smooth edge auto-scroll for native drag (the browser's own
+// autoscroll inside the scrollable modal body is jerky/absent).
+const rootEl = ref(null)
+const { start: startAutoScroll, stop: stopAutoScroll } = useDragAutoScroll()
 
 const props = defineProps({
   attributeConfigs: { type: Array, required: true },
@@ -556,6 +562,7 @@ function onFieldDragStart(e, sIdx, fIdx, field) {
   fieldDrag.sourceFIdx = fIdx
   e.dataTransfer.effectAllowed = 'move'
   e.dataTransfer.setData('text/plain', 'field')
+  startAutoScroll(rootEl.value)
 }
 
 function onFieldDragEnd() {
@@ -564,6 +571,7 @@ function onFieldDragEnd() {
   fieldDrag.sourceFIdx = null
   fieldDrag.overSection = null
   fieldDrag.overIdx = null
+  stopAutoScroll()
 }
 
 function onFieldDragOver(e, sIdx, fIdx) {
@@ -673,11 +681,13 @@ function onSectionDragStart(e, sIdx) {
   sectionDrag.source = sIdx
   e.dataTransfer.effectAllowed = 'move'
   e.dataTransfer.setData('text/plain', 'section')
+  startAutoScroll(rootEl.value)
 }
 
 function onSectionDragEnd() {
   sectionDrag.source = null
   sectionDrag.overIdx = null
+  stopAutoScroll()
 }
 
 function onSectionHeaderDragOver(e, sIdx) {
