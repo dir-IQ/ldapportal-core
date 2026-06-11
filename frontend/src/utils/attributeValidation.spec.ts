@@ -132,6 +132,7 @@ describe('resolveSyntaxKind', () => {
 
   it('derives DN/boolean from the input type (works without hints)', () => {
     expect(resolveSyntaxKind('DN_LOOKUP', 'whatever')).toBe('DN')
+    expect(resolveSyntaxKind('DN', 'whatever')).toBe('DN')
     expect(resolveSyntaxKind('BOOLEAN', 'whatever')).toBe('BOOLEAN')
     expect(resolveSyntaxKind('TEXT', 'whatever')).toBeNull()
   })
@@ -150,6 +151,12 @@ describe('resolveSyntaxKind', () => {
 describe('validateAttributeValue — syntax', () => {
   it('derives a DN check from the DN_LOOKUP input type', () => {
     const rules: AttributeRules = { attributeName: 'manager', inputType: 'DN_LOOKUP' }
+    expect(validateAttributeValue(rules, 'not a dn')).toBe('Not a valid DN')
+    expect(validateAttributeValue(rules, 'uid=boss,dc=example,dc=com')).toBeNull()
+  })
+
+  it('derives the same DN check from the typed DN input type', () => {
+    const rules: AttributeRules = { attributeName: 'manager', inputType: 'DN' }
     expect(validateAttributeValue(rules, 'not a dn')).toBe('Not a valid DN')
     expect(validateAttributeValue(rules, 'uid=boss,dc=example,dc=com')).toBeNull()
   })
