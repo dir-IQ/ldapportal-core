@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ClusterIP for the admin SPA. Health-check annotations describe the admin ALB
+# target group (the SPA root returns 200).
+apiVersion: v1
+kind: Service
+metadata:
+  name: ldapportal-frontend-admin
+  labels:
+    app.kubernetes.io/name: ldapportal
+    app.kubernetes.io/component: frontend-admin
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/healthcheck-port: traffic-port
+    alb.ingress.kubernetes.io/success-codes: "200"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ldapportal
+    app.kubernetes.io/component: frontend-admin
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

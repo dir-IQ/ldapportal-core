@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Internet-facing ALB for the ADMIN hostname. The external WebSEAL junction
+# sits in front of this (it terminates IdP auth and injects iv-user), then
+# forwards to this ALB. ALL paths route to the admin frontend, which serves the
+# SPA and proxies /api/v1 to the backend — so the backend's peer IP is the
+# admin frontend pod, not the ALB. (No direct /api/v1 → backend rule: that
+# would collapse the per-population peer IP.)
+#
+# EDIT: certificate-arn and the hostname (×2). Its own group.name gives this
+# ingress a dedicated ALB, separate from the internal superadmin one.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ldapportal-admin
+  labels:
+    app.kubernetes.io/name: ldapportal
+    app.kubernetes.io/component: frontend-admin
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/REPLACE_ME
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/group.name: ldapportal-admin
+spec:
+  ingressClassName: alb
+  tls:
+    - hosts:
+        - admin.example.com
+  rules:
+    - host: admin.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ldapportal-frontend-admin
+                port:
+                  number: 80

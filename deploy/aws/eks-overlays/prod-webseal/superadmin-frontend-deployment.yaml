@@ -1,0 +1,75 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Superadmin SPA (NOT behind WebSEAL — break-glass LOCAL auth). Same image as
+# the base frontend; mounts the superadmin nginx template (strips iv-*) and
+# proxies /api/v1 to the shared backend. Distinct component label so its
+# Service/PDB select it alone.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ldapportal-frontend-superadmin
+  labels:
+    app.kubernetes.io/name: ldapportal
+    app.kubernetes.io/component: frontend-superadmin
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ldapportal
+      app.kubernetes.io/component: frontend-superadmin
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ldapportal
+        app.kubernetes.io/component: frontend-superadmin
+    spec:
+      serviceAccountName: ldapportal
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: web
+          image: ghcr.io/dir-iq/ldapportal-frontend
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: BACKEND_APP
+              value: ldapportal-backend
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: nginx-template
+              mountPath: /etc/nginx/templates/default.conf.template
+              subPath: default.conf.template
+      volumes:
+        - name: nginx-template
+          configMap:
+            name: ldapportal-frontend-superadmin-nginx

@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# INTERNAL ALB for the SUPERADMIN hostname — the break-glass LOCAL-auth path.
+# scheme: internal means it is reachable only from within the VPC (VPN/bastion),
+# matching the restricted-network guidance for the privileged entry point. ALL
+# paths route to the superadmin frontend, which STRIPS iv-* and proxies /api/v1
+# to the backend.
+#
+# Internal-scheme ALBs are placed in subnets tagged kubernetes.io/role/internal-elb=1.
+#
+# EDIT: certificate-arn and the hostname (×2). Its own group.name keeps this on
+# a separate ALB from the admin one.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ldapportal-superadmin
+  labels:
+    app.kubernetes.io/name: ldapportal
+    app.kubernetes.io/component: frontend-superadmin
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/REPLACE_ME
+    alb.ingress.kubernetes.io/healthcheck-protocol: HTTP
+    alb.ingress.kubernetes.io/group.name: ldapportal-superadmin
+spec:
+  ingressClassName: alb
+  tls:
+    - hosts:
+        - sa.example.com
+  rules:
+    - host: sa.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ldapportal-frontend-superadmin
+                port:
+                  number: 80
