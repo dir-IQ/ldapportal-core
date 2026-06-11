@@ -101,6 +101,13 @@ class AttributeSyntaxTest {
     }
 
     @Test
+    void forInputTypeMapsTypedDnLikeDnLookup() {
+        // DN (typed directly) shares DN_LOOKUP's DN-syntax validation.
+        assertThat(AttributeSyntax.forInputType(InputType.DN))
+                .isEqualTo(AttributeSyntax.Kind.DN);
+    }
+
+    @Test
     void forInputTypeReturnsNullForShapelessTypes() {
         assertThat(AttributeSyntax.forInputType(InputType.TEXT)).isNull();
         assertThat(AttributeSyntax.forInputType(InputType.SELECT)).isNull();

@@ -33,6 +33,7 @@ class AttributeSyntaxControllerTest extends BaseControllerTest {
                 .andExpect(jsonPath("$.wellKnownAttributes.member").value("DN"))
                 .andExpect(jsonPath("$.wellKnownAttributes.mail").value("EMAIL"))
                 .andExpect(jsonPath("$.inputTypeSyntax.DN_LOOKUP").value("DN"))
+                .andExpect(jsonPath("$.inputTypeSyntax.DN").value("DN"))
                 .andExpect(jsonPath("$.inputTypeSyntax.BOOLEAN").value("BOOLEAN"));
     }
 

@@ -734,6 +734,7 @@ const INPUT_TYPE_MAP: Record<string, string> = {
   DATETIME: 'datetime-local',
   MULTI_VALUE: 'textarea',
   DN_LOOKUP: 'text',
+  DN: 'text',
   SELECT: 'select',
   HIDDEN_FIXED: 'hidden',
 }

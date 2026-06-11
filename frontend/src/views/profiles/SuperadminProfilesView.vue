@@ -1061,7 +1061,7 @@ function showFieldFor(inputType: string, fieldName: string) {
   const rules: Record<string, string[]> = {
     defaultValue:       ['TEXT', 'TEXTAREA', 'PASSWORD', 'DATE', 'DATETIME', 'MULTI_VALUE', 'HIDDEN_FIXED', 'SELECT'],
     allowedValues:      ['SELECT'],
-    computedExpression: ['TEXT', 'TEXTAREA', 'PASSWORD', 'MULTI_VALUE', 'DATE', 'DATETIME', 'DN_LOOKUP'],
+    computedExpression: ['TEXT', 'TEXTAREA', 'PASSWORD', 'MULTI_VALUE', 'DATE', 'DATETIME', 'DN_LOOKUP', 'DN'],
     validationRegex:    ['TEXT', 'TEXTAREA', 'PASSWORD', 'MULTI_VALUE'],
   }
   return (rules[fieldName] || []).includes(inputType)
@@ -1416,7 +1416,7 @@ function toggleApprover(accountId: string) {
               <div>
                 <label :for="`sp-attr-${i}-inputType`" class="block text-xs text-gray-500">Input Type</label>
                 <select :id="`sp-attr-${i}-inputType`" v-model="attr.inputType" class="input w-full text-sm">
-                  <option v-for="t in ['TEXT','TEXTAREA','PASSWORD','BOOLEAN','DATE','DATETIME','MULTI_VALUE','DN_LOOKUP','SELECT','HIDDEN_FIXED']"
+                  <option v-for="t in ['TEXT','TEXTAREA','PASSWORD','BOOLEAN','DATE','DATETIME','MULTI_VALUE','DN_LOOKUP','DN','SELECT','HIDDEN_FIXED']"
                     :key="t" :value="t">{{ t }}</option>
                 </select>
               </div>
