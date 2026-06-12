@@ -229,7 +229,9 @@ class UserControllerTest extends BaseControllerTest {
         UpdateEntryRequest req = new UpdateEntryRequest(
                 List.of(new AttributeModification(AttributeModification.Operation.REPLACE,
                         "mail", List.of("newalice@example.com"))));
-        given(ldapService.updateUser(eq(DIR_ID), any(), eq(ENTRY_DN), any()))
+        // No If-Unmodified-Since-LDAP header → unconditional update (null
+        // precondition forwarded to the service).
+        given(ldapService.updateUser(eq(DIR_ID), any(), eq(ENTRY_DN), any(), isNull()))
                 .willReturn(sampleEntry());
 
         mockMvc.perform(put(BASE_URL + "/entry")
@@ -238,6 +240,29 @@ class UserControllerTest extends BaseControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void updateUser_stalePrecondition_returns412() throws Exception {
+        // The inline-edit table sends the modifyTimestamp it loaded; a
+        // mismatch must surface as 412 Precondition Failed so the row can
+        // offer "reload" instead of overwriting a concurrent change.
+        UpdateEntryRequest req = new UpdateEntryRequest(
+                List.of(new AttributeModification(AttributeModification.Operation.REPLACE,
+                        "mail", List.of("newalice@example.com"))));
+        given(ldapService.updateUser(eq(DIR_ID), any(), eq(ENTRY_DN), any(), eq("20260612180000Z")))
+                .willThrow(new com.ldapportal.exception.PreconditionFailedException(
+                        "Entry [" + ENTRY_DN + "] changed since it was loaded"));
+
+        mockMvc.perform(put(BASE_URL + "/entry")
+                        .param("dn", ENTRY_DN)
+                        .header("If-Unmodified-Since-LDAP", "20260612180000Z")
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isPreconditionFailed())
+                .andExpect(jsonPath("$.detail").value(
+                        org.hamcrest.Matchers.containsString("changed since it was loaded")));
     }
 
     // ── DELETE /entry ─────────────────────────────────────────────────────────

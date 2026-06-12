@@ -186,8 +186,12 @@ public class UserController {
             @DirectoryId @PathVariable UUID directoryId,
             @AuthenticationPrincipal AuthPrincipal principal,
             @RequestParam String dn,
+            // Optional optimistic-concurrency precondition: the modifyTimestamp
+            // the client loaded. Mismatch → 412; absent → unconditional update.
+            @org.springframework.web.bind.annotation.RequestHeader(
+                    value = "If-Unmodified-Since-LDAP", required = false) String ifUnmodifiedSince,
             @Valid @RequestBody UpdateEntryRequest req) {
-        return service.updateUser(directoryId, principal, dn, req);
+        return service.updateUser(directoryId, principal, dn, req, ifUnmodifiedSince);
     }
 
     // NOTE (M4): The following destructive operations (delete, enable/disable, password

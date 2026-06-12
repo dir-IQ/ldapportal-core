@@ -165,13 +165,38 @@ describe('EditableResultsTable — editable cells (Task 5)', () => {
     expect(w.find('input[data-edit-cell="givenName"]').exists()).toBe(true)
   })
 
-  it('keeps dn / objectClass / RDN cn / operational / multiple-value cells read-only', () => {
+  it('keeps dn / objectClass / RDN cn / operational cells read-only', () => {
     const w = mount(EditableResultsTable, { props: editableProps })
     expect(w.find('input[data-edit-cell="dn"]').exists()).toBe(false)
     expect(w.find('input[data-edit-cell="objectClass"]').exists()).toBe(false)
     expect(w.find('input[data-edit-cell="cn"]').exists()).toBe(false) // RDN of cn=alice,…
     expect(w.find('input[data-edit-cell="modifyTimestamp"]').exists()).toBe(false)
+  })
+
+  it('routes a schema-multi-valued attribute to the chip editor, not the plain input', () => {
+    const w = mount(EditableResultsTable, { props: editableProps })
     expect(w.find('input[data-edit-cell="description"]').exists()).toBe(false)
+    expect(w.find('[data-edit-chips="description"]').exists()).toBe(true)
+    // Both loaded values render as chips.
+    const chips = w.find('[data-edit-chips="description"]').findAll('.badge-blue')
+    expect(chips.map(c => c.text().replace('×', '').trim())).toEqual(['first', 'second'])
+  })
+
+  it('removing a chip and leaving the row saves REPLACE with the remaining values', async () => {
+    mockUpdateEntry.mockResolvedValue(
+      { data: { dn: aliceEntry.dn, attributes: {} } } as Awaited<ReturnType<typeof updateEntry>>)
+    const w = mount(EditableResultsTable, { props: editableProps })
+    const cell = w.find('[data-edit-chips="description"]')
+    await cell.findAll('button')[0].trigger('click') // remove "first"
+    await w.find('tbody tr').trigger('focusout', { relatedTarget: document.createElement('button') })
+    await flushPromises()
+
+    expect(mockUpdateEntry).toHaveBeenCalledWith(
+      'dir-123',
+      'user',
+      aliceEntry.dn,
+      [{ operation: 'REPLACE', attribute: 'description', values: ['second'] }],
+    )
   })
 
   it('locks every cell when edit=false', () => {
