@@ -325,17 +325,33 @@
               Other Attributes ({{ Object.keys(extraEditAttributes).length }})
             </button>
             <div v-if="showExtraAttrs" class="space-y-2 mt-3 pl-3 border-l-2 border-gray-100">
+              <!-- Naming attributes get the same lock as configured fields:
+                   a multi-valued-RDN entry can name on an attribute the form
+                   config never mentions (cn in o=0001+cn=Jane Rowe,…), and
+                   editing it here would be a server-side naming violation. -->
               <template v-for="(_, key) in extraEditAttributes" :key="key">
-                <FormField :label="key" v-model="local.attributes[key]" type="textarea" :rows="2" hint="One value per line" />
+                <FormField :label="isNamingAttr(key) ? `${key} (RDN)` : key"
+                           v-model="local.attributes[key]" type="textarea" :rows="2"
+                           :disabled="isNamingAttr(key)"
+                           :hint="isNamingAttr(key)
+                             ? 'Part of the entry DN — changing it requires a rename'
+                             : 'One value per line'" />
               </template>
             </div>
           </div>
         </template>
 
-        <!-- Fallback: raw attribute editing when no form config -->
+        <!-- Fallback: raw attribute editing when no form config. Naming
+             attributes (every AVA of the entry DN's leading RDN) are locked
+             here too — same rule as the configured-field path. -->
         <template v-else>
           <template v-for="(_, key) in editableAttributes" :key="key">
-            <FormField :label="key" v-model="local.attributes[key]" type="textarea" :rows="2" hint="One value per line" />
+            <FormField :label="isNamingAttr(key) ? `${key} (RDN)` : key"
+                       v-model="local.attributes[key]" type="textarea" :rows="2"
+                       :disabled="isNamingAttr(key)"
+                       :hint="isNamingAttr(key)
+                         ? 'Part of the entry DN — changing it requires a rename'
+                         : 'One value per line'" />
           </template>
         </template>
 

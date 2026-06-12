@@ -429,6 +429,38 @@ describe('UserForm DN-derived naming attributes', () => {
     expect(String(fieldByLabel(wrapper, 'mail').props('label'))).toBe('mail')
   })
 
+  it('locks a naming attribute that is not in the form config (Other Attributes overflow)', async () => {
+    // cn names the entry (multi-valued RDN) but isn't a configured field, so
+    // it renders in the collapsed Other Attributes overflow — which used to
+    // show it as a plain editable textarea while the configured o field was
+    // correctly locked. Both are DN constituents; both must be locked.
+    const wrapper = mount(UserForm, {
+      props: {
+        data: {
+          dn: 'o=0001+cn=Jane Rowe,ou=People,dc=oud1,dc=example,dc=com',
+          attributes: { o: '0001', cn: 'Jane Rowe', mail: 'jr@example.com' },
+        },
+        isEdit: true,
+        userTemplateConfig: {
+          rdnAttribute: 'o',
+          attributeConfigs: [
+            { attributeName: 'o', inputType: 'TEXT', editableOnUpdate: true },
+            { attributeName: 'mail', inputType: 'TEXT', editableOnUpdate: true },
+          ],
+        },
+        dirId: null,
+        profileId: null,
+      },
+    })
+    const toggle = wrapper.findAll('button').find(b => b.text().includes('Other Attributes'))!
+    await toggle.trigger('click')
+    const cnField = wrapper.findAllComponents({ name: 'FormField' })
+      .find(c => String(c.props('label') || '').startsWith('cn'))!
+    expect(String(cnField.props('label'))).toBe('cn (RDN)')
+    expect(cnField.find('textarea').attributes('disabled')).toBeDefined()
+    expect(String(cnField.props('hint'))).toContain('requires a rename')
+  })
+
   it('keeps the designated attribute editable when the entry DN does not use it', () => {
     // Entry created under an operator-overridden DN naming uid, not cn (the
     // designated rdnAttribute) — cn must not be wrongly locked.
