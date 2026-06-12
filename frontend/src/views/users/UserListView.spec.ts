@@ -200,3 +200,68 @@ describe('UserListView bulk group membership', () => {
     expect(texts(wrapper).some(t => t.startsWith('Manage Groups'))).toBe(false)
   })
 })
+
+// Edit-save must ship only attributes whose value actually changed. The
+// regression: every form attribute round-tripped as a REPLACE — including
+// disabled, non-editable fields (editableOnUpdate=false, e.g. uid) — and the
+// backend correctly 400s any modification targeting a locked attribute, so
+// an untouched edit failed with "Attribute [uid] is not editable on update".
+describe('UserListView edit save sends only changed attributes', () => {
+  const editStubs = {
+    ...stubs,
+    // Footer too — that's where the Save button lives.
+    AppModal: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /><slot name="footer" /></div>' },
+    UserForm: {
+      name: 'UserForm',
+      props: ['data', 'isEdit', 'userTemplateConfig', 'dirId', 'profileId'],
+      emits: ['update'],
+      template: '<div />',
+      methods: {
+        validate() { return true },
+        applyMembershipChanges() { return Promise.resolve() },
+      },
+    },
+  }
+
+  beforeEach(() => {
+    vi.mocked(usersApi.updateUser).mockClear()
+    vi.mocked(usersApi.getUser).mockResolvedValue({
+      data: { attributes: { uid: ['jdoe'], mail: ['jdoe@x.com'], employeeNumber: ['e1'] } },
+    } as Awaited<ReturnType<typeof usersApi.getUser>>)
+  })
+
+  async function openEditModal() {
+    state.features = ALL
+    const wrapper = mount(UserListView, { global: { stubs: editStubs } })
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'Edit')!.trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  it('skips the update call entirely when nothing changed', async () => {
+    const wrapper = await openEditModal()
+    await wrapper.findAll('button').find(b => b.text() === 'Save')!.trigger('click')
+    await flushPromises()
+    expect(usersApi.updateUser).not.toHaveBeenCalled()
+  })
+
+  it('sends modifications only for attributes whose value changed', async () => {
+    const wrapper = await openEditModal()
+    // The form reports an edit to mail; uid (naming + locked) and
+    // employeeNumber are untouched and must not be written back.
+    wrapper.findComponent({ name: 'UserForm' }).vm.$emit('update', {
+      dn: 'uid=jdoe,ou=people,dc=x',
+      attributes: { uid: 'jdoe', mail: 'new@x.com', employeeNumber: 'e1' },
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('button').find(b => b.text() === 'Save')!.trigger('click')
+    await flushPromises()
+    expect(usersApi.updateUser).toHaveBeenCalledTimes(1)
+    const payload = vi.mocked(usersApi.updateUser).mock.calls[0][2] as
+      { modifications: Array<{ operation: string, attribute: string, values: string[] }> }
+    expect(payload.modifications).toEqual([
+      { operation: 'REPLACE', attribute: 'mail', values: ['new@x.com'] },
+    ])
+  })
+})
