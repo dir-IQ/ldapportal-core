@@ -109,7 +109,44 @@ class UserControllerTest extends BaseControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.dn").value(ENTRY_DN));
+                .andExpect(jsonPath("$.entry.dn").value(ENTRY_DN))
+                // No profile matched → no group assignments attempted.
+                .andExpect(jsonPath("$.groupsAdded").value(0))
+                .andExpect(jsonPath("$.groupWarnings").isEmpty());
+    }
+
+    @Test
+    void createUser_profileGroupFailures_returnedAsWarnings() throws Exception {
+        // Per-group assignment failures must not fail the create (the entry
+        // exists) but must ride back on the 201 body — previously they were
+        // swallowed into a server-side log line and the UI reported full
+        // success. Pin the partial-success contract the UI keys off.
+        UUID profileId = UUID.fromString("40000000-0000-0000-0000-000000000004");
+        com.ldapportal.entity.ProvisioningProfile profile =
+                org.mockito.Mockito.mock(com.ldapportal.entity.ProvisioningProfile.class);
+        given(profile.getId()).willReturn(profileId);
+        given(approvalService.findProfileForDn(eq(DIR_ID), anyString()))
+                .willReturn(java.util.Optional.of(profile));
+        given(ldapService.createUser(eq(DIR_ID), any(), any(), any()))
+                .willReturn(sampleEntry());
+        given(provisioningProfileService.applyGroupAssignmentsToUser(
+                        eq(DIR_ID), eq(profileId), anyString(), any()))
+                .willReturn(new com.ldapportal.service.ProvisioningProfileService
+                        .GroupAssignmentResult(1, List.of(
+                                "Not added to cn=AllEmployees,ou=Groups,dc=x: schema violation")));
+
+        CreateEntryRequest req = new CreateEntryRequest(ENTRY_DN,
+                Map.of("cn", List.of("Alice"), "sn", List.of("Smith")));
+
+        mockMvc.perform(post(BASE_URL)
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.entry.dn").value(ENTRY_DN))
+                .andExpect(jsonPath("$.groupsAdded").value(1))
+                .andExpect(jsonPath("$.groupWarnings[0]").value(
+                        org.hamcrest.Matchers.containsString("cn=AllEmployees")));
     }
 
     @Test
