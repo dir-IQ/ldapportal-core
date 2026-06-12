@@ -75,13 +75,14 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useSettingsStore } from '@/stores/settings'
 import { oidcAuthorize, websealAuthorize } from '@/api/auth'
 import FormField from '@/components/FormField.vue'
+import { loginErrorMessage } from '@/utils/loginError'
 
 const router   = useRouter()
 const route    = useRoute()
@@ -118,7 +119,7 @@ async function tryWebsealPreAuth() {
   navigateAfterLogin()
 }
 
-const form        = ref({ username: '', password: '' })
+const form        = ref<{ username: string, password: string }>({ username: '', password: '' })
 const loading     = ref(false)
 const oidcLoading = ref(false)
 const errorMsg    = ref('')
@@ -137,9 +138,10 @@ async function handleLogin() {
     await auth.login(form.value.username, form.value.password)
     navigateAfterLogin()
   } catch (err) {
-    errorMsg.value = err.response?.data?.detail
-      || err.response?.data?.message
-      || 'Invalid username or password'
+    // Distinguish a system error (backend/LDAP/DB down → service unavailable)
+    // from an auth rejection (kept generic). Never echoes the backend body, so
+    // internal detail doesn't leak to the sign-in page.
+    errorMsg.value = loginErrorMessage(err)
   } finally {
     loading.value = false
   }
@@ -152,12 +154,14 @@ async function handleOidc() {
     const { data } = await oidcAuthorize()
     // Store state for callback validation
     sessionStorage.setItem('oidc_state', data.state)
-    sessionStorage.setItem('oidc_redirect', route.query.redirect || '/')
+    sessionStorage.setItem('oidc_redirect',
+      typeof route.query.redirect === 'string' ? route.query.redirect : '/')
     // Redirect to IdP
     window.location.href = data.authorizationUrl
   } catch (err) {
-    errorMsg.value = err.response?.data?.detail
-      || err.response?.data?.message
+    const e = err as { response?: { data?: { detail?: string, message?: string } } }
+    errorMsg.value = e.response?.data?.detail
+      || e.response?.data?.message
       || 'Failed to initiate SSO login'
     oidcLoading.value = false
   }
