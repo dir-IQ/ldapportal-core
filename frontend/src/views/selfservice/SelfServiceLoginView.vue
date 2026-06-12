@@ -60,11 +60,12 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { RouterLink, useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { listRegistrationDirectories } from '@/api/selfservice'
+import { loginErrorMessage } from '@/utils/loginError'
 
 const router = useRouter()
 const route = useRoute()
@@ -79,7 +80,7 @@ const form = reactive({
   password: '',
 })
 
-const directories = ref([])
+const directories = ref<Array<{ id: string, displayName: string }>>([])
 
 onMounted(async () => {
   try {
@@ -95,9 +96,12 @@ async function handleLogin() {
   loading.value = true
   try {
     await auth.selfServiceLogin(form.directoryId, form.username, form.password)
-    router.push(route.query.redirect || '/self-service/profile')
+    router.push(typeof route.query.redirect === 'string'
+      ? route.query.redirect : '/self-service/profile')
   } catch (e) {
-    errorMsg.value = e.response?.data?.detail || 'Invalid username or password'
+    // System errors (LDAP/DB unreachable, backend down) read as "service
+    // unavailable" rather than blaming the user's credentials.
+    errorMsg.value = loginErrorMessage(e)
   } finally {
     loading.value = false
   }
