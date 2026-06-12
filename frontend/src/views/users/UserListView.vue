@@ -463,7 +463,7 @@ import EntryTimeline from '@/components/EntryTimeline.vue'
 import PasswordPolicyStatus from '@/components/PasswordPolicyStatus.vue'
 import GroupChips from '@/components/GroupChips.vue'
 import { rdnValue } from '@/composables/useEntryClassification'
-import { ensureNamingValues } from '@/utils/dn'
+import { ensureNamingValues, parseLeadingRdn } from '@/utils/dn'
 
 interface ProfileLite {
   id: string
@@ -963,8 +963,16 @@ async function save() {
   saving.value = true
   try {
     if (editingDn.value) {
+      // Attributes that name the entry — every AVA of the DN's leading RDN,
+      // including each component of a multi-valued RDN (o AND cn in
+      // o=0001+cn=Jane Rowe,…) — are locked in the form and immutable via
+      // MODIFY: replacing one is a server-side naming violation. Changing a
+      // naming value is the rename flow's job, not save's.
+      const namingAttrs = new Set(
+        parseLeadingRdn(editingDn.value).map(a => a.name.toLowerCase()))
       const mods = Object.entries(form.value.attributes || {})
         .filter(([attr]) => attr.toLowerCase() !== 'objectclass')
+        .filter(([attr]) => !namingAttrs.has(attr.toLowerCase()))
         // IVIA (isva.*) attributes are read-only enrichment merged from the
         // paired secUser — they aren't real attributes on the demographic
         // entry, so never write them back. They're managed via the IVIA tab.
