@@ -88,6 +88,11 @@ public class UserController {
         // have a role in the matched profile, not just any profile in the directory.
         if (profile.isPresent()) {
             permissionService.requireProfileAccess(principal, profile.get().getId());
+            // The DN is admin-editable on the create form (it can override the
+            // profile's computed default), so re-assert here that the submitted
+            // DN still lands within the profile's target-OU subtree — before
+            // applying defaults or routing into the approval workflow.
+            profileService.requireDnWithinProfileDit(profile.get().getId(), req.dn());
             Map<String, List<String>> attrs = new LinkedHashMap<>(req.attributes());
             profileService.applyDefaults(profile.get().getId(), attrs);
             req = new CreateEntryRequest(req.dn(), attrs);

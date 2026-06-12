@@ -52,11 +52,15 @@
           <div class="col-span-4">
             <FormField
               label="DN"
-              :model-value="computedDn"
+              :model-value="local.dn"
+              @update:model-value="onDnInput"
               placeholder="uid=jsmith,ou=people,dc=example,dc=com"
               required
-              disabled
+              :error="dnError"
             />
+            <button v-if="dnEdited" type="button" class="mt-1 text-xs text-blue-600 hover:underline" @click="resetDn">
+              Reset to computed
+            </button>
           </div>
         </div>
 
@@ -84,15 +88,20 @@
                       :error="fieldErrors[attr.attributeName]"
                     />
                   </div>
-                  <!-- Computed DN (shown after RDN when enabled) -->
+                  <!-- Editable DN (seeded from the computed default / template,
+                       shown after RDN when enabled). -->
                   <div v-if="attr.rdn && showDnField" class="col-span-4">
                     <FormField
                       label="DN"
-                      :model-value="computedDn"
+                      :model-value="local.dn"
+                      @update:model-value="onDnInput"
                       placeholder="uid=jsmith,ou=people,dc=example,dc=com"
                       required
-                      disabled
+                      :error="dnError"
                     />
+                    <button v-if="dnEdited" type="button" class="mt-1 text-xs text-blue-600 hover:underline" @click="resetDn">
+                      Reset to computed
+                    </button>
                   </div>
                   <!-- Password field with generate/show/copy (create mode only).
                        Hidden entirely when the profile auto-generates it
@@ -492,6 +501,11 @@ interface UserTemplateConfig {
   name?: string | null
   rdnAttribute?: string | null
   showDnField?: boolean
+  /**
+   * Optional ${attr} expression that seeds the (editable) DN field on create.
+   * Blank falls back to "<rdnAttribute>=<rdnValue>,<parentDn>".
+   */
+  dnTemplate?: string | null
   objectClassNames?: string[]
   attributeConfigs?: AttributeConfig[]
   /**
@@ -782,13 +796,60 @@ const rdnAttr = computed<AttributeConfig | null>(() => {
   return props.userTemplateConfig.attributeConfigs.find(a => a.attributeName === rdnName) || null
 })
 
-/** Computed full DN based on RDN attribute, RDN value, and parent DN. */
-const computedDn = computed(() => {
+/**
+ * The computed default DN. When the profile defines a {@code dnTemplate} it is
+ * evaluated as a ${attr} expression; otherwise the DN is composed from the RDN
+ * attribute, RDN value, and parent DN. This seeds the editable DN field on
+ * create and is the value used until the admin overrides it.
+ */
+const defaultDn = computed(() => {
+  const tpl = props.userTemplateConfig?.dnTemplate
+  if (tpl && tpl.trim()) {
+    const dn = evaluateExpression(tpl).trim()
+    if (dn) return dn
+  }
   const attr = rdnAttr.value?.attributeName || local.rdnAttribute || ''
   const val = local.rdnValue || ''
   const base = local.parentDn || ''
   if (!attr || !val || !base) return ''
   return `${attr}=${val},${base}`
+})
+
+/**
+ * The DN field is editable on create: it seeds from {@link defaultDn} and tracks
+ * it as the admin fills in the RDN, until they type into the DN field themselves
+ * — after which {@code dnEdited} freezes their override. Edit mode never touches
+ * this (the DN is immutable there).
+ */
+const dnEdited = ref(false)
+watch(defaultDn, (dn) => {
+  if (!props.isEdit && !dnEdited.value) local.dn = dn
+}, { immediate: true })
+
+/** Admin typed into the DN field — stop tracking the computed default. */
+function onDnInput(v: string) {
+  dnEdited.value = true
+  local.dn = v
+}
+
+/** Re-sync the DN with the computed default, discarding a manual override. */
+function resetDn() {
+  dnEdited.value = false
+  local.dn = defaultDn.value
+}
+
+/**
+ * Client-side mirror of the server's profile-DIT check: an overridden DN must
+ * stay within the profile's target OU (parentDn). Purely advisory — the server
+ * (ProvisioningProfileService.requireDnWithinProfileDit) is authoritative.
+ */
+const dnError = computed(() => {
+  if (props.isEdit || !showDnField.value) return ''
+  const dn = (local.dn || '').trim()
+  const base = (local.parentDn || '').trim()
+  if (!dn) return dnEdited.value ? 'DN is required' : ''
+  if (base && !dnWithinBase(dn, base)) return `DN must be within ${base}`
+  return ''
 })
 
 /** Whether to show the DN field alongside the RDN. */
@@ -876,6 +937,19 @@ function evaluateExpression(expr: string): string {
 }
 
 /**
+ * RDN-boundary-aware "is dn within base" check for advisory client validation.
+ * Normalizes case and whitespace around RDN separators, then requires an exact
+ * match or a true descendant (",<base>" suffix) — mirroring the comma-boundary
+ * rule the backend's PermissionService uses, without a full DN parser.
+ */
+function dnWithinBase(dn: string, base: string): boolean {
+  const norm = (s: string) => s.toLowerCase().split(',').map(p => p.trim()).join(',')
+  const d = norm(dn)
+  const b = norm(base)
+  return d === b || d.endsWith(',' + b)
+}
+
+/**
  * Computed map of all attribute values derived from computed expressions.
  * Vue tracks which reactive properties are read (e.g. local.attributes.givenName),
  * so this recomputes only when a referenced source attribute changes —
@@ -925,6 +999,12 @@ function rulesFor(attr: AttributeConfig, forCreate: boolean): AttributeRules {
  */
 function validate(): boolean {
   for (const k of Object.keys(fieldErrors)) delete fieldErrors[k]
+  // The editable DN must stay within the profile's target OU on create. This
+  // gate applies even on the fallback path (no attribute template).
+  if (dnError.value) {
+    fieldErrors.dn = dnError.value
+    return false
+  }
   const configs = props.userTemplateConfig?.attributeConfigs
   if (!configs) return true
 

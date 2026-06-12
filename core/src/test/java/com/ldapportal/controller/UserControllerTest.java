@@ -131,6 +131,34 @@ class UserControllerTest extends BaseControllerTest {
                 .andExpect(jsonPath("$.detail").value("Attribute [manager] is not a valid DN: not a dn"));
     }
 
+    @Test
+    void createUser_dnOutsideProfileDit_returns400() throws Exception {
+        // The DN is admin-editable on the create form; when a profile matches the
+        // target DN, the controller re-asserts the (possibly overridden) DN stays
+        // within the profile's target OU. Pin that the service's rejection surfaces
+        // as a 400 ProblemDetail rather than a 500.
+        UUID profileId = UUID.fromString("40000000-0000-0000-0000-000000000004");
+        com.ldapportal.entity.ProvisioningProfile profile =
+                org.mockito.Mockito.mock(com.ldapportal.entity.ProvisioningProfile.class);
+        given(profile.getId()).willReturn(profileId);
+        given(approvalService.findProfileForDn(eq(DIR_ID), anyString()))
+                .willReturn(java.util.Optional.of(profile));
+        org.mockito.BDDMockito.willThrow(new IllegalArgumentException(
+                        "User DN [" + ENTRY_DN + "] is outside the profile's target OU [ou=staff,dc=example,dc=com]"))
+                .given(provisioningProfileService).requireDnWithinProfileDit(eq(profileId), anyString());
+
+        CreateEntryRequest req = new CreateEntryRequest(ENTRY_DN,
+                Map.of("cn", List.of("Alice"), "sn", List.of("Smith")));
+
+        mockMvc.perform(post(BASE_URL)
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.containsString(
+                        "outside the profile's target OU")));
+    }
+
     // ── GET /entry ────────────────────────────────────────────────────────────
 
     @Test

@@ -21,6 +21,24 @@
       </div>
     </div>
 
+    <!-- DN template: optional ${attr} expression that seeds the (editable)
+         DN field on the admin create form. Blank falls back to the default
+         "<rdn>=<value>,<targetUserDn>" composition. -->
+    <div v-if="!hideDnToggle && localShowDnField" class="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-1">
+      <label for="fld-dn-template" class="block text-xs font-medium text-gray-600">DN template (optional)</label>
+      <input
+        id="fld-dn-template"
+        v-model="localDnTemplate"
+        type="text"
+        class="input w-full font-mono text-xs"
+        placeholder="uid=${uid},ou=people,dc=example,dc=com"
+      />
+      <p class="text-[11px] text-gray-500">
+        <code>${'{'}attr{'}'}</code> tokens resolve to the new user's values. Leave blank to use
+        <code>&lt;rdn&gt;=&lt;value&gt;,&lt;target OU&gt;</code>. The DN stays editable and must remain within the profile's target OU.
+      </p>
+    </div>
+
     <!-- Live Preview -->
     <div v-if="showPreview" class="border border-blue-200 bg-blue-50/30 rounded-xl p-4">
       <h4 class="text-sm font-semibold text-blue-800 mb-3">Form Preview</h4>
@@ -43,10 +61,10 @@
                 <div v-if="field.rdn && localShowDnField" class="col-span-4">
                   <label class="block text-sm font-medium text-gray-700 mb-1">
                     DN
-                    <span class="text-xs bg-gray-100 text-gray-600 rounded px-1 ml-1">computed</span>
+                    <span class="text-xs bg-blue-100 text-blue-700 rounded px-1 ml-1">editable</span>
                   </label>
-                  <div class="w-full h-9 border border-gray-200 rounded-lg bg-gray-100 flex items-center px-3 text-xs text-gray-600 italic">
-                    {{ field.attributeName }}=…,ou=…,dc=…
+                  <div class="w-full h-9 border border-gray-200 rounded-lg bg-white flex items-center px-3 text-xs text-gray-600 italic font-mono truncate">
+                    {{ localDnTemplate || `${field.attributeName}=…,ou=…,dc=…` }}
                   </div>
                 </div>
                 <!-- Regular field -->
@@ -272,11 +290,15 @@ const props = defineProps({
   attributeConfigs: { type: Array, required: true },
   showDnField: { type: Boolean, default: true },
   hideDnToggle: { type: Boolean, default: false },
+  dnTemplate: { type: String, default: '' },
 })
-const emit = defineEmits(['update:attributeConfigs', 'update:showDnField'])
+const emit = defineEmits(['update:attributeConfigs', 'update:showDnField', 'update:dnTemplate'])
 
 const showPreview = ref(false)
 const localShowDnField = ref(props.showDnField)
+const localDnTemplate = ref(props.dnTemplate || '')
+watch(() => props.dnTemplate, (v) => { localDnTemplate.value = v || '' })
+watch(localDnTemplate, (v) => { emit('update:dnTemplate', v) })
 
 // Column span options: 6-column grid allows 1/3, 1/2, 2/3, and full widths
 const spanOptions = [
