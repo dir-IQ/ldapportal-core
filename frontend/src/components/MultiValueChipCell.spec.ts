@@ -82,3 +82,21 @@ describe('MultiValueChipCell', () => {
     expect(w.emitted('update:modelValue')).toBeUndefined()
   })
 })
+
+describe('MultiValueChipCell focus retention', () => {
+  it('moves focus to the value input after removing a chip', async () => {
+    // The clicked x leaves the DOM with focus; browsers then silently move
+    // focus to <body> without a focusout event, so the owning row's
+    // save-on-focusout would never fire. The cell must reclaim focus.
+    const w = mount(MultiValueChipCell, {
+      props: { modelValue: ['first', 'second'], inputLabel: 'description' },
+      attachTo: document.body,
+    })
+    const remove = w.find('button[aria-label="Remove first"]')
+    ;(remove.element as HTMLElement).focus()
+    await remove.trigger('click')
+    await w.vm.$nextTick()
+    expect(document.activeElement).toBe(w.find('input').element)
+    w.unmount()
+  })
+})

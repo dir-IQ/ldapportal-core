@@ -347,6 +347,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { listDirectories } from '@/api/directories'
 import { searchEntries } from '@/api/browse'
 import { listAttributeTypes } from '@/api/schema'
+import { mergeSavedEntryAttributes } from '@/utils/savedEntryMerge'
 import DnPicker from '@/components/DnPicker.vue'
 import AppModal from '@/components/AppModal.vue'
 import ResultsTable, { type ColumnDef } from '@/components/ResultsTable.vue'
@@ -547,17 +548,21 @@ watch(() => auth.isDirectorySearchInlineEditEnabled, (enabled) => {
 })
 
 function onRowSaved(dn: string, response: LdapEntryResponse): void {
-  // Merge the server response back into results so subsequent reads
-  // reflect server-side normalisation. Match by dn.
-  const updatedAttrs = (response.attributes ?? {}) as Record<string, string[]>
-  for (let i = 0; i < results.value.length; i++) {
-    if (results.value[i].dn === dn) {
-      results.value[i] = {
-        ...results.value[i],
-        attributes: { ...results.value[i].attributes, ...updatedAttrs },
-      }
-      break
-    }
+  // Merge the server read-back into results so subsequent reads reflect
+  // server-side state. mergeSavedEntryAttributes handles the key-casing
+  // mismatch between search results and the entry endpoints (which
+  // lower-case keys — a naive spread duplicated columns) and drops row
+  // attributes the server no longer returns (value deletions).
+  const idx = results.value.findIndex(e => e.dn === dn)
+  if (idx < 0) return
+  const row = results.value[idx]
+  results.value[idx] = {
+    ...row,
+    attributes: mergeSavedEntryAttributes(
+      resultAttributes.value,
+      row.attributes as Record<string, string[]>,
+      (response.attributes ?? {}) as Record<string, string[]>,
+    ),
   }
 }
 
