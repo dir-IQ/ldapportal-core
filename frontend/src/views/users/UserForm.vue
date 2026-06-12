@@ -357,12 +357,19 @@
 
         <!-- IVIA enrichment attributes: read-only here. They're merged from the
              paired secUser and managed via the actions on the IVIA Account tab,
-             so they're shown disabled and never written back on save. -->
+             so they're shown disabled and never written back on save.
+             Default-collapsed, same pattern as Other Attributes above. -->
         <div v-if="Object.keys(iviaDisplayAttributes).length" class="pt-2">
-          <p class="text-xs font-medium text-gray-500">
-            {{ IVIA_ABBR }} attributes (read-only — manage on the {{ IVIA_ABBR }} Account tab)
-          </p>
-          <div class="space-y-2 mt-3 pl-3 border-l-2 border-gray-100">
+          <button @click="showIviaAttrs = !showIviaAttrs"
+                  class="flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-700 mt-2">
+            <svg :class="['w-3 h-3 transition-transform', showIviaAttrs && 'rotate-90']"
+                 viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
+            </svg>
+            {{ IVIA_ABBR }} attributes ({{ Object.keys(iviaDisplayAttributes).length }})
+            <span class="font-normal">— read-only, manage on the {{ IVIA_ABBR }} Account tab</span>
+          </button>
+          <div v-if="showIviaAttrs" class="space-y-2 mt-3 pl-3 border-l-2 border-gray-100">
             <template v-for="(val, key) in iviaDisplayAttributes" :key="key">
               <FormField :label="iviaAttrLabel(key)" :model-value="val" type="textarea" :rows="1" disabled />
             </template>
@@ -748,6 +755,8 @@ const showCopyFrom = ref(false)
 const copySourceDn = ref('')
 
 const showExtraAttrs = ref(false)
+/** IVIA enrichment block — default-collapsed, like Other Attributes. */
+const showIviaAttrs = ref(false)
 
 const HIDDEN_EDIT_ATTRS = new Set(['objectclass', 'objectClass', 'userpassword', 'userPassword', 'unicodePwd', 'unicodepwd'])
 
