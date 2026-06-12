@@ -66,6 +66,9 @@ interface ProfileForm {
   rdnAttribute: string
   showDnField: boolean
   dnTemplate: string
+  dnColumnSpan: number | undefined
+  dnSectionName: string | undefined
+  dnDisplayOrder: number | undefined
   enabled: boolean
   selfRegistrationAllowed: boolean
   passwordLength: number
@@ -105,6 +108,9 @@ interface ProfileRow {
   rdnAttribute: string
   showDnField: boolean
   dnTemplate?: string | null
+  dnColumnSpan?: number | null
+  dnSectionName?: string | null
+  dnDisplayOrder?: number | null
   enabled: boolean
   selfRegistrationAllowed: boolean
   passwordLength?: number | null
@@ -198,7 +204,9 @@ function emptyProfile(): ProfileForm {
   return {
     name: '', description: '', targetUserDn: '', targetGroupDn: '',
     objectClassNames: [], rdnAttribute: '',
-    showDnField: true, dnTemplate: '', enabled: true, selfRegistrationAllowed: false,
+    showDnField: true, dnTemplate: '',
+    dnColumnSpan: undefined, dnSectionName: undefined, dnDisplayOrder: undefined,
+    enabled: true, selfRegistrationAllowed: false,
     passwordLength: 16, passwordUppercase: true, passwordLowercase: true,
     passwordDigits: true, passwordSpecial: true, passwordSpecialChars: '!@#$%^&*',
     emailPasswordToUser: false,
@@ -273,7 +281,9 @@ async function openEdit(p: ProfileRow) {
     name: p.name, description: p.description || '', targetUserDn: p.targetUserDn,
     targetGroupDn: p.targetGroupDn || '',
     objectClassNames: [...p.objectClassNames], rdnAttribute: p.rdnAttribute,
-    showDnField: p.showDnField, dnTemplate: p.dnTemplate || '', enabled: p.enabled,
+    showDnField: p.showDnField, dnTemplate: p.dnTemplate || '',
+    dnColumnSpan: p.dnColumnSpan ?? undefined, dnSectionName: p.dnSectionName ?? undefined, dnDisplayOrder: p.dnDisplayOrder ?? undefined,
+    enabled: p.enabled,
     selfRegistrationAllowed: p.selfRegistrationAllowed,
     passwordLength: p.passwordLength ?? 16,
     passwordUppercase: p.passwordUppercase ?? true,
@@ -1601,6 +1611,9 @@ function toggleApprover(accountId: string) {
             v-model:attributeConfigs="layoutAttributeConfigs"
             v-model:showDnField="profile.showDnField"
             v-model:dnTemplate="profile.dnTemplate"
+            v-model:dnColumnSpan="profile.dnColumnSpan"
+            v-model:dnSectionName="profile.dnSectionName"
+            v-model:dnDisplayOrder="profile.dnDisplayOrder"
           />
 
           <!-- Self-service layout -->

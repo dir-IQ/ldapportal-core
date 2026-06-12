@@ -89,6 +89,23 @@ public class ProvisioningProfile {
     @Column(name = "dn_template", length = 500)
     private String dnTemplate;
 
+    /**
+     * Layout of the read-only DN field on the create form (only when
+     * {@link #showDnField} is on). All nullable; null reproduces the historical
+     * default — the DN sits immediately after the RDN at 2/3 width.
+     * {@code dnColumnSpan} is a 1–6 grid span; {@code dnSectionName} +
+     * {@code dnDisplayOrder} position the DN among the form's fields, letting an
+     * admin move and resize it like any other field in the layout designer.
+     */
+    @Column(name = "dn_column_span")
+    private Integer dnColumnSpan;
+
+    @Column(name = "dn_section_name", length = 100)
+    private String dnSectionName;
+
+    @Column(name = "dn_display_order")
+    private Integer dnDisplayOrder;
+
     @Column(nullable = false)
     private boolean enabled = true;
 
