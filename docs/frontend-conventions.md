@@ -169,6 +169,26 @@ clip or mis-position it.
 Used by `ConfirmDialog.vue`. **Do not strip Teleport because tests are
 awkward** — adapt the tests instead.
 
+### Modal scroll regions — fill the height, don't cap it
+
+`AppModal` sizes its panel dynamically (content height, capped at the
+padded viewport, grow-only once open) and its **body is a flex column**.
+A scroll region inside a modal should therefore never carry a fixed
+`max-h-*`: it caps the list at an arbitrary height and leaves dead space
+below it in a tall modal. Instead, opt in to filling the available
+height:
+
+- the scrollable element gets `min-h-0 overflow-y-auto` (no `max-h-*`);
+- every wrapper between it and the modal body gets
+  `flex-1 min-h-0 flex flex-col` so the height constraint reaches it.
+
+Flexbox shrink does the sizing: a long list shrinks into exactly the
+space that exists and scrolls internally; a short list keeps its natural
+height (flex items never shrink below content without `min-h-0`, so
+unconverted modal content keeps the body scrollbar and is unaffected).
+Used by the user form's Groups tab, the group members drawer, the bulk
+membership modal, and the playbook result/history modals.
+
 ### Z-index stacking
 
 `ConfirmDialog.vue` uses `z-40` for the modal overlay. Use values at

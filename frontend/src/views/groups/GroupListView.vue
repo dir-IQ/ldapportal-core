@@ -164,7 +164,9 @@
           </button>
         </div>
       </div>
-      <ul class="divide-y divide-gray-100 max-h-80 overflow-y-auto">
+      <!-- Fills the modal's remaining height (scrolls only past it) instead
+           of a fixed cap — the modal body is a flex column. -->
+      <ul class="divide-y divide-gray-100 min-h-0 overflow-y-auto">
         <li v-for="dn in members" :key="dn" class="flex items-center justify-between py-2 text-sm">
           <span class="text-xs text-gray-700 truncate" :title="dn">{{ dn }}</span>
           <button @click="removeMember(dn)" class="text-red-500 hover:text-red-700 text-xs">Remove</button>
