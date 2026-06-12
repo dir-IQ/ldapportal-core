@@ -14,6 +14,7 @@ import com.unboundid.ldap.sdk.SearchResult;
 import com.unboundid.ldap.sdk.SearchScope;
 import com.unboundid.ldap.sdk.schema.AttributeTypeDefinition;
 import com.unboundid.ldap.sdk.schema.ObjectClassDefinition;
+import com.unboundid.ldap.sdk.schema.ObjectClassType;
 import com.unboundid.ldap.sdk.schema.Schema;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -44,12 +45,16 @@ import java.util.Set;
  *
  * <p>A third check — <b>schema validation</b> — runs in <em>both</em>
  * modes: every configured secUser objectClass must exist in the
- * server's published schema, and (linked mode) the configured RDN
- * attribute must be permitted by one of those classes. This catches a
- * mis-set RDN/objectClass combination (e.g. RDN {@code principalName}
- * without the {@code eUser} class that defines it) before the operator
- * enables provisioning, where it would otherwise surface as a
- * server-side ADD rejection per user.</p>
+ * server's published schema, the configured classes must contain at
+ * most one independent STRUCTURAL inheritance chain, and (linked mode)
+ * the configured RDN attribute must be permitted by one of those
+ * classes. This catches a mis-set RDN/objectClass combination (e.g.
+ * RDN {@code principalName} without the {@code eUser} class that
+ * defines it) and a structural-class conflict (e.g. {@code secUser} +
+ * {@code eUser} on a server whose {@code secUser} is not
+ * {@code SUP eUser}) before the operator enables provisioning, where
+ * either would otherwise surface as a server-side ADD rejection per
+ * user.</p>
  *
  * <p>Inline mode has no management DIT, so reachability + sample are
  * vacuously OK there — but the schema check still applies, since the
@@ -124,6 +129,11 @@ public class IsvaConfigProbeService {
      * <ul>
      *   <li>Every configured objectClass must be defined in the
      *       server schema.</li>
+     *   <li>The configured classes may contain at most one independent
+     *       STRUCTURAL inheritance chain — an LDAP entry may carry only
+     *       one structural objectClass (plus its superiors), so two
+     *       structural classes are valid only when one inherits from
+     *       the other (as IBM's real {@code secUser SUP eUser} does).</li>
      *   <li>Linked mode only: the configured RDN attribute must be a
      *       MUST or MAY of at least one configured objectClass (with
      *       superior-class resolution) — otherwise the secUser ADD
@@ -166,6 +176,7 @@ public class IsvaConfigProbeService {
                 //    Accumulate the union of permitted attributes (MUST +
                 //    MAY, superior classes resolved) for the RDN check.
                 Set<String> permittedAttrs = new LinkedHashSet<>();
+                List<ObjectClassDefinition> resolved = new ArrayList<>();
                 for (String ocName : classesToCheck) {
                     ObjectClassDefinition oc = schema.getObjectClass(ocName);
                     if (oc == null) {
@@ -174,6 +185,7 @@ public class IsvaConfigProbeService {
                         valid = false;
                         continue;
                     }
+                    resolved.add(oc);
                     for (AttributeTypeDefinition at : oc.getRequiredAttributes(schema, true)) {
                         addAttributeNames(permittedAttrs, at);
                     }
@@ -182,7 +194,18 @@ public class IsvaConfigProbeService {
                     }
                 }
 
-                // 2. Linked mode: the RDN attribute must be defined and
+                // 2. At most one independent STRUCTURAL chain. An LDAP
+                //    entry may carry only one structural objectClass plus
+                //    its superiors, so two configured structural classes
+                //    are valid only when one inherits from the other
+                //    (IBM's real secUser is SUP eUser); unrelated
+                //    structural classes mean the server rejects every
+                //    secUser write at provisioning time.
+                if (!structuralChainsCompatible(resolved, schema, warnings)) {
+                    valid = false;
+                }
+
+                // 3. Linked mode: the RDN attribute must be defined and
                 //    permitted by one of the configured classes.
                 if (cfg.getTopologyMode() == IsvaTopologyMode.LINKED) {
                     String rdnAttr = cfg.getSecuserRdnAttribute();
@@ -210,6 +233,61 @@ public class IsvaConfigProbeService {
                     dir.getDisplayName(), e.getMessage(), e);
             return null;
         }
+    }
+
+    /**
+     * Check that the STRUCTURAL classes among the configured set all sit
+     * on one inheritance chain — i.e. for every pair, one is a superior
+     * of the other. Adds a warning per offending pair.
+     *
+     * @return {@code false} when at least one pair of unrelated
+     *         structural classes was found.
+     */
+    private static boolean structuralChainsCompatible(List<ObjectClassDefinition> classes,
+                                                      Schema schema,
+                                                      List<String> warnings) {
+        List<ObjectClassDefinition> structural = classes.stream()
+                .filter(oc -> objectClassType(oc) == ObjectClassType.STRUCTURAL)
+                .toList();
+        boolean compatible = true;
+        for (int i = 0; i < structural.size(); i++) {
+            for (int j = i + 1; j < structural.size(); j++) {
+                ObjectClassDefinition a = structural.get(i);
+                ObjectClassDefinition b = structural.get(j);
+                if (!isSuperiorOf(a, b, schema) && !isSuperiorOf(b, a, schema)) {
+                    warnings.add("Configured secUser objectClasses `" + a.getNameOrOID()
+                            + "` and `" + b.getNameOrOID() + "` are both STRUCTURAL in the "
+                            + "server schema and neither inherits from the other. An entry "
+                            + "may carry only one structural objectClass chain, so the "
+                            + "server would reject every secUser write with these classes. "
+                            + "Align the server schema (IBM ships secUser as SUP eUser) or "
+                            + "remove one of the classes.");
+                    compatible = false;
+                }
+            }
+        }
+        return compatible;
+    }
+
+    /**
+     * RFC 4512 §4.1.1: an objectClass definition that omits its kind
+     * is STRUCTURAL.
+     */
+    private static ObjectClassType objectClassType(ObjectClassDefinition oc) {
+        ObjectClassType type = oc.getObjectClassType();
+        return type != null ? type : ObjectClassType.STRUCTURAL;
+    }
+
+    /** Whether {@code candidate} appears in {@code oc}'s recursive superior chain. */
+    private static boolean isSuperiorOf(ObjectClassDefinition candidate,
+                                        ObjectClassDefinition oc,
+                                        Schema schema) {
+        for (ObjectClassDefinition sup : oc.getSuperiorClasses(schema, true)) {
+            if (sup.getOID().equals(candidate.getOID())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -24,8 +24,10 @@ import com.ldapportal.repository.AdminFeaturePermissionRepository;
 import com.ldapportal.repository.AdminProfileRoleRepository;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.ProvisioningProfileRepository;
+import com.ldapportal.exception.LdapConnectionException;
 import com.unboundid.ldap.sdk.BindResult;
 import com.unboundid.ldap.sdk.LDAPConnection;
+import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.ResultCode;
 import com.unboundid.ldap.sdk.SimpleBindRequest;
 import com.ldapportal.entity.Account;
@@ -487,8 +489,21 @@ public class AuthController {
             }
         } catch (BadCredentialsException e) {
             throw e;
+        } catch (LDAPException e) {
+            // Only an actual credential rejection is the user's fault. Anything
+            // else (server down, timeout, TLS failure) is an infrastructure
+            // problem — surface it as a connection error (→ 502) rather than
+            // telling the user their password is wrong.
+            if (e.getResultCode() == ResultCode.INVALID_CREDENTIALS) {
+                throw new BadCredentialsException("Invalid username or password");
+            }
+            throw new LdapConnectionException(
+                    "Self-service bind failed on [" + dc.getDisplayName() + "]: " + e.getResultCode(), e);
         } catch (Exception e) {
-            throw new BadCredentialsException("Invalid username or password");
+            // Unexpected non-LDAP failure during the bind — also a system error,
+            // not a bad-credentials outcome.
+            throw new LdapConnectionException(
+                    "Self-service bind failed on [" + dc.getDisplayName() + "]", e);
         }
 
         // Issue self-service JWT

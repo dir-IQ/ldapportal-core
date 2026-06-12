@@ -176,8 +176,13 @@ After saving the config:
 
 1. **Probe.** Use the "Probe" button on the config panel. It connects
    to the directory and validates the configured `secUser` object
-   classes against the server schema — and, in linked mode, that the
-   configured RDN attribute is permitted by one of those classes (so a
+   classes against the server schema — that every class exists, that
+   the set contains at most one STRUCTURAL inheritance chain (two
+   unrelated structural classes — e.g. `secUser` + `eUser` on a server
+   whose `secUser` is not `SUP eUser` — would make the server reject
+   every secUser write with "multiple conflicting structural
+   objectclasses") — and, in linked mode, that the configured RDN
+   attribute is permitted by one of those classes (so a
    `principalName` RDN without the `eUser` class is caught here, not at
    provisioning time) and that the management DIT is reachable. A green
    probe doesn't *guarantee* every operation will succeed, but a red

@@ -7,7 +7,7 @@
 #           BASE_DN env var before this LDIF is imported — so this file starts
 #           at the OU layer, like oud-bootstrap.ldif; do NOT add the suffix here
 #           or the 5.x setup aborts on "Entry Already Exists (68)").
-# Schema  : secUser (STRUCTURAL) + secAuthorityInfo (STRUCTURAL) from
+# Schema  : secUser (STRUCTURAL, SUP eUser) + secAuthorityInfo (STRUCTURAL) from
 #           testdata/isva-schema-opendj-linked.ldif, auto-loaded at first boot.
 #
 # Load (from repo root):
@@ -31,13 +31,14 @@
 # matrix (R1–R7) and the anomaly catalogue are in
 # testdata/README-oud-isva-anomalies.md.
 #
-# secUser is STRUCTURAL in this fixture schema (as IBM ships it), so each
-# management-DIT secUser leaf is a standalone `objectClass: top` + `secUser`
-# entry — identical in shape to what the app's linked-grant writes. (Earlier
-# revisions used the AUXILIARY schema and layered secUser on a structural
-# `account` class; that workaround is gone now that the linked schema is
-# structural.) The app keys on the secUser objectClass NAME + the secDN
-# back-reference, not on the structural class.
+# secUser is STRUCTURAL `SUP eUser` in this fixture schema (as IBM ships it),
+# so each management-DIT secUser leaf is a standalone `objectClass: top` +
+# `secUser` entry — identical in shape to what the app's linked-grant writes —
+# and configs that also list `eUser` (e.g. for a principalName RDN) stay on
+# one structural chain. (Earlier revisions used the AUXILIARY schema and
+# layered secUser on a structural `account` class; that workaround is gone
+# now that the linked schema is structural.) The app keys on the secUser
+# objectClass NAME + the secDN back-reference, not on the structural class.
 #
 # Generalized-time values are UTC (yyyyMMddHHmmssZ). Reference "now" for this
 # dataset is 2026-06-02, so 20250101000000Z is "expired", 20300101... is

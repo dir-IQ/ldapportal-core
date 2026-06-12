@@ -6,7 +6,7 @@
 # Base DN : dc=oud1,dc=example,dc=com   (same suffix as the primary; the two
 #           instances are INDEPENDENT and do not replicate — divergence is
 #           simulated by loading this near-copy with deliberate differences).
-# Schema  : secUser (STRUCTURAL) + secAuthorityInfo (STRUCTURAL), auto-loaded
+# Schema  : secUser (STRUCTURAL, SUP eUser) + secAuthorityInfo (STRUCTURAL), auto-loaded
 #           from testdata/isva-schema-opendj-linked.ldif.
 #
 # Load (from repo root):

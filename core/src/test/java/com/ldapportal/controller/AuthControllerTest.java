@@ -12,8 +12,10 @@ import com.ldapportal.auth.dto.LoginRequest;
 import com.ldapportal.auth.dto.LoginResponse;
 import com.ldapportal.entity.Account;
 import com.ldapportal.entity.ApplicationSettings;
+import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.LdapUserService;
+import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.repository.AdminProfileRoleRepository;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.ProvisioningProfileRepository;
@@ -29,9 +31,12 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -258,5 +263,56 @@ class AuthControllerTest extends BaseControllerTest {
                 "Alice", captor.getValue().getDisplayName());
         org.junit.jupiter.api.Assertions.assertEquals(
                 "original@example.com", captor.getValue().getEmail());
+    }
+
+    // ── Self-service login: system errors must not read as bad credentials ────
+
+    private DirectoryConnection selfServiceDir(UUID dirId) {
+        DirectoryConnection dc = new DirectoryConnection();
+        dc.setId(dirId);
+        dc.setDisplayName("OUD1");
+        dc.setBaseDn("dc=example,dc=com");
+        dc.setSelfServiceEnabled(true);
+        dc.setSelfServiceLoginAttribute("uid");
+        return dc;
+    }
+
+    /** A bind/connection failure for a non-credential reason (server down,
+     *  timeout, TLS) must surface as a 5xx, not a 401 that blames the user's
+     *  password. The user was found, so we're past the credential lookup. */
+    @Test
+    void selfServiceLogin_ldapUnreachable_returns502NotBadCredentials() throws Exception {
+        UUID dirId = UUID.randomUUID();
+        given(directoryConnectionRepository.findById(dirId))
+                .willReturn(Optional.of(selfServiceDir(dirId)));
+        given(ldapUserService.searchUsers(any(), any(), any(), anyInt(), any()))
+                .willReturn(List.of(new LdapUser("uid=jane,dc=example,dc=com", Map.of())));
+        // The bind connection can't be opened (server unreachable). This is the
+        // catch that previously mapped every failure to 401 "bad credentials".
+        given(ldapConnectionFactory.openUnboundConnection(any()))
+                .willThrow(new RuntimeException("connection refused"));
+
+        var req = new AuthController.SelfServiceLoginRequest(dirId, "jane", "secret");
+        mockMvc.perform(post("/api/v1/auth/self-service/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isBadGateway());
+    }
+
+    /** A genuine authentication failure (here: no matching user) still returns
+     *  401 with the generic message. */
+    @Test
+    void selfServiceLogin_authFailure_returns401() throws Exception {
+        UUID dirId = UUID.randomUUID();
+        given(directoryConnectionRepository.findById(dirId))
+                .willReturn(Optional.of(selfServiceDir(dirId)));
+        given(ldapUserService.searchUsers(any(), any(), any(), anyInt(), any()))
+                .willReturn(List.of());
+
+        var req = new AuthController.SelfServiceLoginRequest(dirId, "ghost", "secret");
+        mockMvc.perform(post("/api/v1/auth/self-service/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isUnauthorized());
     }
 }
