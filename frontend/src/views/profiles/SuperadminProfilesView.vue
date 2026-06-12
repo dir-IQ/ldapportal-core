@@ -10,6 +10,7 @@ import {
 } from '@/api/profiles'
 import { listDirectories } from '@/api/directories'
 import { listObjectClasses, getObjectClass } from '@/api/schema'
+import { permittedAttrSet, unsupportedAttrs } from '@/utils/schemaPermitted'
 import { listAdmins } from '@/api/adminManagement'
 import type { components } from '@/api/openapi'
 import AppModal from '@/components/AppModal.vue'
@@ -392,6 +393,23 @@ async function save() {
     notif.error('RDN Attribute is required')
     return
   }
+  // Surface schema-invalid attributes before persisting: the directory will
+  // reject any entry that sets a value for them, so an admin saving such a
+  // profile should do it knowingly (custom/extended schemas may be the reason
+  // the live lookup disagrees — hence confirm, not block).
+  const unsupported = unsupportedAttrs(
+    profile.value.attributeConfigs.map(a => a.attributeName),
+    schemaPermittedAttrs.value)
+  if (unsupported.length > 0) {
+    const ok = await confirm({
+      title: 'Attributes not in the directory schema',
+      message: `${unsupported.join(', ')} ${unsupported.length === 1 ? 'is' : 'are'} not `
+        + 'permitted by the selected object classes per the directory schema. Entries '
+        + 'that set a value for them will be rejected by the directory. Save anyway?',
+      confirmLabel: 'Save anyway',
+    })
+    if (!ok) return
+  }
   saving.value = true
   // If the probe already determined the target OU is missing,
   // pass force=true so the save goes through (the operator can see
@@ -500,6 +518,12 @@ async function reload() {
 // flow (no profileId to PUT against yet). The backend endpoint
 // stays useful for API consumers and for re-seeding without the
 // editor open.
+//
+// The list is a curated SUPERSET: at seed time both sides filter it
+// against the live directory schema (union of required+optional for
+// the profile's object classes), so rows a given directory's chain
+// doesn't permit (e.g. 'c'/countryName on standard inetOrgPerson)
+// are skipped rather than producing configs the directory rejects.
 type SeedRow = {
   attributeName: string
   sectionName: string
@@ -653,7 +677,17 @@ async function doSeedDefaults() {
     })
     if (!ok) return
   }
-  profile.value.attributeConfigs = INETORGPERSON_SEED.map(row => ({
+  // Filter the static seed against the live schema: the list is a curated
+  // superset of commonly useful attributes, and a given directory's
+  // inetOrgPerson chain may not permit all of them (e.g. 'c'/countryName is
+  // not allowed by the standard chain — entries setting it get rejected at
+  // save). When schema isn't loaded, seed unfiltered as before.
+  const permitted = schemaPermittedAttrs.value
+  const skipped = unsupportedAttrs(INETORGPERSON_SEED.map(r => r.attributeName), permitted)
+  const skippedSet = new Set(skipped.map(s => s.toLowerCase()))
+  const rows = INETORGPERSON_SEED.filter(r => !skippedSet.has(r.attributeName.toLowerCase()))
+
+  profile.value.attributeConfigs = rows.map(row => ({
     attributeName:             row.attributeName,
     // Friendly label from the ATTR_LABELS map (sn → 'Last Name',
     // mail → 'Email', etc), matching addObjectClass()'s auto-pop
@@ -686,7 +720,10 @@ async function doSeedDefaults() {
     selfServiceColumnSpan:     null,
     selfServiceDisplayOrder:   null,
   }))
-  notif.success(`Seeded ${INETORGPERSON_SEED.length} attributes from inetOrgPerson defaults`)
+  notif.success(skipped.length
+    ? `Seeded ${rows.length} attributes from inetOrgPerson defaults `
+      + `(skipped ${skipped.join(', ')} — not permitted by this directory's schema)`
+    : `Seeded ${rows.length} attributes from inetOrgPerson defaults`)
 }
 
 // Group assignment management
@@ -915,6 +952,21 @@ function removeObjectClass(name: string) {
   profile.value.objectClassNames = profile.value.objectClassNames.filter(n => n !== name)
   // Rebuild schema-required set from remaining OCs
   rebuildSchemaRequired()
+}
+
+/**
+ * Attribute names the live schema permits for the currently selected object
+ * classes (union of required + optional from ocSchemaCache, lower-cased).
+ * Null when no selected class has schema loaded — validation is then skipped
+ * rather than flagging everything.
+ */
+const schemaPermittedAttrs = computed(() =>
+  permittedAttrSet(ocSchemaCache.value, profile.value.objectClassNames))
+
+/** Whether the live schema rejects this attribute for the selected classes. */
+function isSchemaUnsupported(attr: AttributeConfig): boolean {
+  const permitted = schemaPermittedAttrs.value
+  return !!permitted && !permitted.has(attr.attributeName.toLowerCase())
 }
 
 async function rebuildSchemaRequired() {
@@ -1462,6 +1514,9 @@ function toggleApprover(accountId: string) {
                   class="text-[10px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-medium">RDN</span>
                 <span v-if="isSchemaRequired(attr)"
                   class="text-[10px] bg-blue-50 text-blue-600 rounded px-1.5 py-0.5 font-medium">schema required</span>
+                <span v-if="isSchemaUnsupported(attr)"
+                  class="text-[10px] bg-red-50 text-red-600 rounded px-1.5 py-0.5 font-medium"
+                  title="The directory schema does not allow this attribute for the selected object classes — the directory will reject entries that set it.">not in schema</span>
               </div>
               <button v-if="canRemoveAttribute(attr)"
                 class="text-red-500 text-xs hover:underline"

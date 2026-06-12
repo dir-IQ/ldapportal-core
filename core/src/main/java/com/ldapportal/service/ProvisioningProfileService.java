@@ -60,6 +60,7 @@ public class ProvisioningProfileService {
     private final LdapUserService ldapUserService;
     private final LdapGroupService ldapGroupService;
     private final com.ldapportal.ldap.LdapBrowseService ldapBrowseService;
+    private final com.ldapportal.ldap.LdapSchemaService ldapSchemaService;
     private final AuditService auditService;
 
     // ── Profile CRUD ──────────────────────────────────────────────────────────
@@ -1503,6 +1504,25 @@ public class ProvisioningProfileService {
                     "Unsupported schema [" + schema + "] — supported: inetOrgPerson");
         };
 
+        // The seed list is a curated superset — filter it against the live
+        // directory schema so a row the profile's objectClass chain doesn't
+        // permit (e.g. 'c'/countryName on standard inetOrgPerson) isn't
+        // seeded only for the directory to reject every entry that sets it.
+        // Mirrors the client-side seed filter in SuperadminProfilesView.
+        List<String> skipped = new ArrayList<>();
+        Set<String> permitted = permittedSchemaAttrs(profile);
+        if (permitted != null) {
+            List<ProfileAttributeConfig> kept = new ArrayList<>();
+            for (ProfileAttributeConfig c : seeds) {
+                if (permitted.contains(c.getAttributeName().toLowerCase(Locale.ROOT))) {
+                    kept.add(c);
+                } else {
+                    skipped.add(c.getAttributeName());
+                }
+            }
+            seeds = kept;
+        }
+
         for (ProfileAttributeConfig c : seeds) {
             attrConfigRepo.save(c);
         }
@@ -1512,7 +1532,8 @@ public class ProvisioningProfileService {
                     Map.of("profileId", profileId,
                             "action", "seed_attribute_defaults",
                             "schema", schema,
-                            "count", seeds.size()));
+                            "count", seeds.size(),
+                            "skippedNotInSchema", skipped));
         }
 
         return get(directoryId, profileId);
@@ -1533,6 +1554,32 @@ public class ProvisioningProfileService {
      *       RDN; a value change is a MODRDN, not an in-place edit</li>
      * </ul>
      */
+    /**
+     * Lower-cased union of required + optional attribute names the live
+     * directory schema permits for the profile's objectClasses, or
+     * {@code null} when the schema can't be consulted (directory unreachable,
+     * Entra ID, no objectClasses configured) — callers must treat null as
+     * "skip filtering", never "nothing permitted".
+     */
+    private Set<String> permittedSchemaAttrs(ProvisioningProfile profile) {
+        if (profile.getObjectClassNames().isEmpty()
+                || profile.getDirectory().getDirectoryType() == DirectoryType.ENTRA_ID) {
+            return null;
+        }
+        try {
+            var attrs = ldapSchemaService.getAttributesForObjectClasses(
+                    profile.getDirectory(), profile.getObjectClassNames());
+            Set<String> permitted = new HashSet<>();
+            attrs.required().forEach(a -> permitted.add(a.toLowerCase(Locale.ROOT)));
+            attrs.optional().forEach(a -> permitted.add(a.toLowerCase(Locale.ROOT)));
+            return permitted.isEmpty() ? null : permitted;
+        } catch (Exception e) {
+            log.warn("Schema lookup failed for profile [{}] — seeding without schema filter: {}",
+                    profile.getId(), e.getMessage());
+            return null;
+        }
+    }
+
     private List<ProfileAttributeConfig> inetOrgPersonDefaults(ProvisioningProfile profile) {
         List<ProfileAttributeConfig> out = new ArrayList<>();
         int order = 0;
