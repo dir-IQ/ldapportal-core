@@ -627,6 +627,10 @@ const showModal      = ref(false)
 const showMove       = ref(false)
 const showDelete     = ref(false)
 const editingDn      = ref<string | null>(null)
+// Snapshot of the attribute values as loaded into the edit form, in the same
+// joined-string shape the form holds. save() diffs against it so only
+// actually-changed attributes ship as modifications.
+const editOriginalAttributes = ref<Record<string, unknown>>({})
 const deleteTarget   = ref<UserRow | null>(null)
 const moveTarget     = ref<UserRow | null>(null)
 const newParentDn    = ref('')
@@ -955,6 +959,7 @@ async function openEdit(row: UserRow) {
       Array.isArray(v) ? v.join('\n') : v,
     ])
   )}
+  editOriginalAttributes.value = { ...form.value.attributes }
   showModal.value = true
 }
 
@@ -971,6 +976,17 @@ async function save() {
       // naming value is the rename flow's job, not save's.
       const namingAttrs = new Set(
         parseLeadingRdn(editingDn.value).map(a => a.name.toLowerCase()))
+      // Canonical value list for change detection and for the wire format —
+      // the same splitting/trimming the mods mapper has always applied.
+      const toValueList = (val: unknown): string[] =>
+        typeof val === 'string'
+          ? val.split('\n').map(v => v.trim()).filter(v => v.length > 0)
+          : val == null ? [] : [String(val)]
+      const unchanged = (attr: string, val: unknown): boolean => {
+        const before = toValueList(editOriginalAttributes.value[attr])
+        const after  = toValueList(val)
+        return after.length === before.length && after.every((v, i) => v === before[i])
+      }
       const mods = Object.entries(form.value.attributes || {})
         .filter(([attr]) => attr.toLowerCase() !== 'objectclass')
         .filter(([attr]) => !namingAttrs.has(attr.toLowerCase()))
@@ -978,15 +994,24 @@ async function save() {
         // paired secUser — they aren't real attributes on the demographic
         // entry, so never write them back. They're managed via the IVIA tab.
         .filter(([attr]) => !isIviaAttr(attr))
+        // Only ship what actually changed. Disabled fields (editableOnUpdate
+        // = false, e.g. uid) round-trip their loaded value, and the backend
+        // correctly 400s ANY modification targeting them — so an untouched
+        // locked field must produce no modification at all. Also keeps a
+        // save from REPLACE-ing every attribute it never touched (audit
+        // noise, needless writes).
+        .filter(([attr, val]) => !unchanged(attr, val))
         .map(([attr, val]) => ({
           operation: 'REPLACE',
           attribute: attr,
-          values: typeof val === 'string'
-            ? val.split('\n').map(v => v.trim()).filter(v => v.length > 0)
-            : [String(val)],
+          values: toValueList(val),
         }))
         .filter(m => m.values.length > 0)
-      await usersApi.updateUser(dirId, editingDn.value, { modifications: mods })
+      // Nothing changed → no MODIFY at all: an empty modification list is
+      // an LDAP protocol error, and there's nothing worth an audit row.
+      if (mods.length) {
+        await usersApi.updateUser(dirId, editingDn.value, { modifications: mods })
+      }
       notif.success('User updated')
       // Flush any staged group-membership changes as a single batch. The form
       // owns the staged state and surfaces its own per-change result toast; a
