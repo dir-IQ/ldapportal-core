@@ -31,8 +31,14 @@
             <button @click="$emit('update:modelValue', false)" aria-label="Close"
                     class="text-gray-500 hover:text-gray-600 text-xl leading-none transition-colors">&#215;</button>
           </div>
-          <!-- Body -->
-          <div class="px-6 py-4 overflow-y-auto flex-1 min-h-0">
+          <!-- Body. A flex column so content can use the modal's full height:
+               a scroll region opts in with `min-h-0 overflow-y-auto` (plus the
+               same pair on any intermediate wrappers) and then shrinks into
+               exactly the available space instead of capping at a fixed
+               max-height with dead space below. Content that doesn't opt in
+               behaves as before — flex items never shrink below their natural
+               height without min-h-0, so the body scrollbar still takes over. -->
+          <div class="px-6 py-4 overflow-y-auto flex-1 min-h-0 flex flex-col">
             <slot />
           </div>
           <!-- Footer -->

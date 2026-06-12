@@ -304,7 +304,9 @@
 
     <!-- Bulk Group Membership modal -->
     <AppModal v-model="showBulkMembership" title="Manage Group Memberships" size="lg">
-      <div class="space-y-4">
+      <!-- flex column chain down to the search-results list so it fills the
+           modal's remaining height instead of capping at a fixed max. -->
+      <div class="space-y-4 flex-1 min-h-0 flex flex-col">
         <p class="text-sm text-gray-600">
           Add or remove group memberships for <strong>{{ selectedDns.size }}</strong> selected user(s).
           Adds may require approval; removes are applied directly.
@@ -319,7 +321,7 @@
         </div>
 
         <!-- Chosen groups -->
-        <div>
+        <div class="flex-1 min-h-0 flex flex-col">
           <label class="block text-xs font-medium text-gray-600 mb-1">Groups</label>
           <div v-if="bulkChosenGroups.length" class="flex flex-wrap gap-1.5 mb-2">
             <span v-for="g in bulkChosenGroups" :key="g.dn" class="badge-blue" :title="g.dn">
@@ -335,7 +337,7 @@
                    placeholder="Search groups…" aria-label="Search groups" class="input flex-1" />
             <button type="button" @click="searchBulkGroups" :disabled="bulkGroupSearching" class="btn-secondary text-sm shrink-0">Search</button>
           </div>
-          <ul v-if="bulkGroupResults.length" class="mt-2 divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
+          <ul v-if="bulkGroupResults.length" class="mt-2 divide-y divide-gray-100 border border-gray-200 rounded-lg min-h-0 overflow-y-auto">
             <li v-for="g in bulkGroupResults" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
               <div class="min-w-0 flex-1">
                 <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
@@ -423,7 +425,7 @@
             {{ playbookResult.status }}
           </span>
         </div>
-        <div class="border rounded-lg divide-y max-h-60 overflow-y-auto">
+        <div class="border rounded-lg divide-y min-h-0 overflow-y-auto">
           <div v-for="step in parsedPlaybookResults(playbookResult.stepResults)" :key="step.stepOrder" class="px-3 py-2 text-sm flex items-center gap-2">
             <span class="font-mono text-gray-500 w-5">{{ step.stepOrder + 1 }}.</span>
             <span class="font-medium">{{ step.action }}</span>

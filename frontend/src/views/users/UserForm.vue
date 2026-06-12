@@ -1,11 +1,11 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
-  <!-- h-full flex column: panes that want to use the modal's full height
-       (the Groups tab's lists) can flex into the body's available space
-       instead of capping at a fixed max-height and wasting the rest.
-       Panes that keep natural flow (Attributes) just overflow into the
-       modal body's scrollbar as before. -->
-  <div ref="formRootEl" class="h-full flex flex-col">
+  <!-- Fills the modal body (a flex column): panes that want the full height
+       (the Groups tab's lists) flex into the available space instead of
+       capping at a fixed max-height and wasting the rest. Panes that keep
+       natural flow (Attributes) just overflow into the modal body's
+       scrollbar as before. -->
+  <div ref="formRootEl" class="flex-1 min-h-0 flex flex-col">
     <!-- Validation summary — surfaced at the top so an error on a field that's
          scrolled out of view is never missed. -->
     <FormValidationSummary v-if="showSummary" :errors="validationErrors" />

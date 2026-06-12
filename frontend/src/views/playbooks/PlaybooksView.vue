@@ -419,7 +419,7 @@ function parsedStepResults(json) {
             {{ executionResult.status }}
           </span>
         </div>
-        <div class="border rounded-lg divide-y max-h-60 overflow-y-auto">
+        <div class="border rounded-lg divide-y min-h-0 overflow-y-auto">
           <div v-for="step in parsedStepResults(executionResult.stepResults)" :key="step.stepOrder"
             class="px-3 py-2 text-sm flex items-center gap-2">
             <span class="font-mono text-gray-500 w-5">{{ step.stepOrder + 1 }}.</span>
@@ -441,7 +441,7 @@ function parsedStepResults(json) {
     <!-- History Modal -->
     <AppModal v-model="showHistoryModal" :title="`Execution History — ${historyPlaybookName}`" size="lg">
       <div v-if="historyData.length === 0" class="text-gray-500 text-sm text-center py-8">No executions yet.</div>
-      <div v-else class="divide-y max-h-96 overflow-y-auto">
+      <div v-else class="divide-y min-h-0 overflow-y-auto">
         <div v-for="exec in historyData" :key="exec.id" class="py-3 flex items-center gap-4 text-sm">
           <span :class="{ 'badge-green': exec.status === 'SUCCESS', 'badge-red': exec.status === 'FAILED', 'badge-yellow': exec.status === 'PARTIAL', 'badge-gray': exec.status === 'ROLLED_BACK' }">
             {{ exec.status }}
