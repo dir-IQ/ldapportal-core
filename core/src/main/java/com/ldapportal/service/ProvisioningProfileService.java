@@ -156,7 +156,8 @@ public class ProvisioningProfileService {
         profile.setDirectory(dir);
         applyCommonFields(profile, req.name(), req.description(), req.targetUserDn(),
                 req.targetGroupDn(), req.objectClassNames(), req.rdnAttribute(), req.showDnField(),
-                req.dnTemplate(), req.enabled(), req.selfRegistrationAllowed(),
+                req.dnTemplate(), req.dnColumnSpan(), req.dnSectionName(), req.dnDisplayOrder(),
+                req.enabled(), req.selfRegistrationAllowed(),
                 req.passwordLength(), req.passwordUppercase(), req.passwordLowercase(),
                 req.passwordDigits(), req.passwordSpecial(), req.passwordSpecialChars(),
                 req.emailPasswordToUser(), req.passwordDisposition());
@@ -226,7 +227,8 @@ public class ProvisioningProfileService {
 
         applyCommonFields(profile, req.name(), req.description(), req.targetUserDn(),
                 req.targetGroupDn(), req.objectClassNames(), req.rdnAttribute(), req.showDnField(),
-                req.dnTemplate(), req.enabled(), req.selfRegistrationAllowed(),
+                req.dnTemplate(), req.dnColumnSpan(), req.dnSectionName(), req.dnDisplayOrder(),
+                req.enabled(), req.selfRegistrationAllowed(),
                 req.passwordLength(), req.passwordUppercase(), req.passwordLowercase(),
                 req.passwordDigits(), req.passwordSpecial(), req.passwordSpecialChars(),
                 req.emailPasswordToUser(), req.passwordDisposition());
@@ -297,6 +299,9 @@ public class ProvisioningProfileService {
         copy.setRdnAttribute(source.getRdnAttribute());
         copy.setShowDnField(source.isShowDnField());
         copy.setDnTemplate(source.getDnTemplate());
+        copy.setDnColumnSpan(source.getDnColumnSpan());
+        copy.setDnSectionName(source.getDnSectionName());
+        copy.setDnDisplayOrder(source.getDnDisplayOrder());
         copy.setEnabled(false); // clones start disabled
         copy.setSelfRegistrationAllowed(false);
         copy.setPasswordLength(source.getPasswordLength());
@@ -931,6 +936,7 @@ public class ProvisioningProfileService {
                                     String targetUserDn, String targetGroupDn,
                                     List<String> objectClassNames,
                                     String rdnAttribute, boolean showDnField, String dnTemplate,
+                                    Integer dnColumnSpan, String dnSectionName, Integer dnDisplayOrder,
                                     boolean enabled, boolean selfRegistrationAllowed,
                                     Integer passwordLength, Boolean passwordUppercase,
                                     Boolean passwordLowercase, Boolean passwordDigits,
@@ -951,6 +957,10 @@ public class ProvisioningProfileService {
         // Blank collapses to null so the create form falls back to the default
         // "<rdn>=<value>,<targetUserDn>" composition rather than an empty template.
         profile.setDnTemplate((dnTemplate != null && !dnTemplate.isBlank()) ? dnTemplate.trim() : null);
+        // DN field layout — null reproduces the default (after the RDN, 2/3 width).
+        profile.setDnColumnSpan(dnColumnSpan);
+        profile.setDnSectionName((dnSectionName != null && !dnSectionName.isBlank()) ? dnSectionName.trim() : null);
+        profile.setDnDisplayOrder(dnDisplayOrder);
         profile.setEnabled(enabled);
         profile.setSelfRegistrationAllowed(selfRegistrationAllowed);
         if (passwordLength != null)       profile.setPasswordLength(passwordLength);

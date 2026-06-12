@@ -534,3 +534,37 @@ describe('UserForm password field hiding (password disposition)', () => {
     expect(wrapper.find('#uf-pw-userPassword').exists()).toBe(false)
   })
 })
+
+describe('UserForm DN field layout', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  function mountWithDn(overrides: Record<string, unknown>) {
+    return mount(UserForm, {
+      props: {
+        data: { attributes: {} },
+        isEdit: false,
+        userTemplateConfig: {
+          rdnAttribute: 'uid',
+          showDnField: true,
+          attributeConfigs: [
+            { attributeName: 'uid', requiredOnCreate: true, editableOnCreate: true, inputType: 'TEXT' },
+          ],
+          ...overrides,
+        },
+        dirId: null,
+        profileId: null,
+      },
+    })
+  }
+
+  it('defaults the DN field to 2/3 width (span 4)', () => {
+    const wrapper = mountWithDn({})
+    expect(wrapper.text()).toContain('DN')
+    expect(wrapper.html()).toContain('grid-column: span 4')
+  })
+
+  it('honors a designer-configured DN width', () => {
+    const wrapper = mountWithDn({ dnColumnSpan: 6 })
+    expect(wrapper.html()).toContain('grid-column: span 6')
+  })
+})

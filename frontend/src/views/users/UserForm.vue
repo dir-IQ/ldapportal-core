@@ -125,9 +125,9 @@
                       :error="fieldErrors[attr.attributeName]"
                     />
                   </div>
-                  <!-- Editable DN (seeded from the computed default / template,
-                       shown after RDN when enabled). -->
-                  <div v-if="attr.rdn && showDnField" class="col-span-4">
+                  <!-- Editable DN (seeded from the computed default / template).
+                       Position + width come from the designer-configured layout. -->
+                  <div v-else-if="attr.isDn" :style="{ gridColumn: `span ${attr.columnSpan || 4}` }">
                     <FormField
                       label="DN"
                       :model-value="effectiveDn"
@@ -200,7 +200,7 @@
                        generated) password renders nothing rather than falling
                        through to a plain text input. -->
                   <div
-                    v-else-if="!attr.rdn && attr.inputType !== 'PASSWORD'"
+                    v-else-if="!attr.rdn && !attr.isDn && attr.inputType !== 'PASSWORD'"
                     :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <!-- DN Lookup: use DnPicker instead of text input -->
@@ -532,6 +532,8 @@ interface AttributeConfig {
   sectionName?: string | null
   id?: string | number | null
   rdn?: boolean
+  /** Marks the synthetic DN field injected into the create layout. */
+  isDn?: boolean
 }
 
 interface UserTemplateConfig {
@@ -543,6 +545,10 @@ interface UserTemplateConfig {
    * Blank falls back to "<rdnAttribute>=<rdnValue>,<parentDn>".
    */
   dnTemplate?: string | null
+  /** DN field layout (designer-configured); null reproduces the default (after the RDN, 2/3). */
+  dnColumnSpan?: number | null
+  dnSectionName?: string | null
+  dnDisplayOrder?: number | null
   objectClassNames?: string[]
   attributeConfigs?: AttributeConfig[]
   /**
@@ -992,10 +998,42 @@ const hidePasswordField = computed(() => {
 const allVisibleAttributes = computed(() => {
   if (!props.userTemplateConfig?.attributeConfigs) return []
   const rdnName = props.userTemplateConfig.rdnAttribute
-  return props.userTemplateConfig.attributeConfigs
+  const list: AttributeConfig[] = props.userTemplateConfig.attributeConfigs
     .filter(a => !a.hidden && a.attributeName.toLowerCase() !== 'objectclass')
     .map(a => ({ ...a, rdn: a.attributeName === rdnName }))
+  // Skip injection when the RDN is hidden — a standalone full-width DN row
+  // handles that (computed-RDN) case separately.
+  if (showDnField.value && !rdnIsHidden.value) insertDnPseudoField(list)
+  return list
 })
+
+/**
+ * Inject the synthetic, editable DN field into the create layout at its
+ * designer-configured section / position / width. Null layout values reproduce
+ * the default — immediately after the RDN at 2/3 width.
+ */
+function insertDnPseudoField(list: AttributeConfig[]): void {
+  const cfg = props.userTemplateConfig
+  const rdnIdx = list.findIndex(f => f.rdn)
+  const rdnSection = rdnIdx >= 0 ? (list[rdnIdx].sectionName || '') : ''
+  const targetSection = cfg?.dnSectionName != null ? cfg.dnSectionName : rdnSection
+  const dn: AttributeConfig = {
+    attributeName: '__dn__', isDn: true, rdn: false,
+    columnSpan: cfg?.dnColumnSpan || 4, sectionName: targetSection,
+  }
+  const sectionIdxs: number[] = []
+  list.forEach((f, i) => { if ((f.sectionName || '') === targetSection) sectionIdxs.push(i) })
+  let insertAt: number
+  if (cfg?.dnDisplayOrder != null && cfg.dnDisplayOrder >= 0) {
+    const order = Math.min(cfg.dnDisplayOrder, sectionIdxs.length)
+    insertAt = order < sectionIdxs.length
+      ? sectionIdxs[order]
+      : (sectionIdxs.length ? sectionIdxs[sectionIdxs.length - 1] + 1 : list.length)
+  } else {
+    insertAt = rdnIdx >= 0 ? rdnIdx + 1 : list.length
+  }
+  list.splice(insertAt, 0, dn)
+}
 
 /** Group all visible attributes into sections for create mode. */
 const createSections = computed(() => groupIntoSections(allVisibleAttributes.value))
