@@ -28,7 +28,7 @@
             <h2 :id="titleId" class="text-lg font-semibold text-gray-900">
               <slot name="title">{{ title }}</slot>
             </h2>
-            <button @click="$emit('update:modelValue', false)" aria-label="Close"
+            <button @click="requestClose" aria-label="Close"
                     class="text-gray-500 hover:text-gray-600 text-xl leading-none transition-colors">&#215;</button>
           </div>
           <!-- Body. A flex column so content can use the modal's full height:
@@ -41,9 +41,24 @@
           <div class="px-6 py-4 overflow-y-auto flex-1 min-h-0 flex flex-col">
             <slot />
           </div>
-          <!-- Footer -->
+          <!-- Footer. The `close` slot prop routes a Cancel/Close button
+               through the same unsaved-changes guard as the × and Escape. -->
           <div v-if="$slots.footer" class="px-6 py-4 border-t border-gray-200 flex justify-end gap-3 shrink-0">
-            <slot name="footer" />
+            <slot name="footer" :close="requestClose" />
+          </div>
+          <!-- Discard confirmation — shown instead of closing when `dirty`.
+               Lives inside the panel so the dialog focus trap covers it. -->
+          <div v-if="confirmingClose"
+               class="absolute inset-0 z-10 bg-white/80 flex items-center justify-center p-6">
+            <div role="alertdialog" aria-modal="true" :aria-describedby="confirmTextId"
+                 class="bg-white border border-gray-200 rounded-lg shadow-lg p-4 max-w-sm text-center">
+              <p :id="confirmTextId" class="text-sm font-medium text-gray-900">Discard unsaved changes?</p>
+              <p class="text-xs text-gray-500 mt-1">Edits in this dialog haven't been saved.</p>
+              <div class="flex justify-center gap-3 mt-4">
+                <button class="btn-neutral" @click="confirmingClose = false">Keep editing</button>
+                <button class="btn-danger" @click="discardAndClose">Discard</button>
+              </div>
+            </div>
           </div>
           <!-- Resize grip (SE corner). Hidden below sm so phones keep modals
                fixed-size. aria-hidden: keyboard resize is intentionally deferred
@@ -89,19 +104,50 @@ const props = withDefaults(
      *  title is dynamic (e.g. includes a record name) so sizes don't fragment.
      *  (A non-resizable modal never persists anyway.) */
     storageKey?: string
+    /** The consumer's "this dialog holds unsaved values" signal. While true,
+     *  every dismissal — the × button, Escape, and footer buttons wired to the
+     *  footer slot's `close` prop — asks for confirmation before closing.
+     *  Programmatic closes (setting the v-model directly, e.g. after a
+     *  successful save) bypass the guard. */
+    dirty?: boolean
   }>(),
   { modelValue: false, title: '', size: 'md', movable: true, resizable: true,
-    fill: false, storageKey: '' },
+    fill: false, storageKey: '', dirty: false },
 )
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 
 const titleId = useId()
+const confirmTextId = useId()
 const panelRef = ref<HTMLElement | null>(null)
+
+// ── Unsaved-changes guard ──
+// All dismissal paths funnel through requestClose; a dirty dialog shows the
+// in-panel discard confirmation instead of closing. Escape while the
+// confirmation is up keeps editing (dismisses the confirmation, not the work).
+const confirmingClose = ref(false)
+watch(() => props.modelValue, () => { confirmingClose.value = false })
+
+function requestClose(): void {
+  if (confirmingClose.value) {
+    confirmingClose.value = false
+    return
+  }
+  if (props.dirty) {
+    confirmingClose.value = true
+    return
+  }
+  emit('update:modelValue', false)
+}
+
+function discardAndClose(): void {
+  confirmingClose.value = false
+  emit('update:modelValue', false)
+}
 
 useDialogA11y({
   isOpen: () => props.modelValue,
   containerRef: panelRef,
-  onClose: () => emit('update:modelValue', false),
+  onClose: requestClose,
 })
 
 // ── Fill-to-content default + size persistence ──

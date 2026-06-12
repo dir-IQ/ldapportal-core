@@ -79,6 +79,54 @@ describe('AppModal', () => {
     w.unmount()
   })
 
+  // Teleported content isn't reachable through wrapper.find — query the
+  // document and click directly, then read emitted events off the wrapper.
+  const bodyButton = (match: string) =>
+    [...document.body.querySelectorAll('button')]
+      .find(b => (b.getAttribute('aria-label') || b.textContent || '').includes(match)) as HTMLElement
+
+  it('closes immediately from the x button when not dirty', async () => {
+    setActivePinia(createPinia())
+    const w = mountModal({}, { default: '<p>hi</p>' })
+    bodyButton('Close').click()
+    await w.vm.$nextTick()
+    expect(w.emitted('update:modelValue')?.at(-1)).toEqual([false])
+    w.unmount()
+  })
+
+  it('asks before discarding unsaved values, on every dismissal path', async () => {
+    setActivePinia(createPinia())
+    const w = mountModal({ dirty: true }, {
+      default: '<p>hi</p>',
+      // String slots receive scoped-slot props as `params` — wire Cancel the
+      // way consumers do, through the footer slot's `close` guard.
+      footer: '<button class="guarded-cancel" @click="params.close()">Cancel</button>',
+    })
+
+    // x button: confirmation appears, nothing emitted yet.
+    bodyButton('Close').click()
+    await w.vm.$nextTick()
+    expect(document.body.textContent).toContain('Discard unsaved changes?')
+    expect(w.emitted('update:modelValue')).toBeUndefined()
+
+    // Keep editing: confirmation goes away, still open.
+    bodyButton('Keep editing').click()
+    await w.vm.$nextTick()
+    expect(document.body.textContent).not.toContain('Discard unsaved changes?')
+    expect(w.emitted('update:modelValue')).toBeUndefined()
+
+    // Footer Cancel through the slot's close prop: guarded the same way.
+    ;(document.body.querySelector('.guarded-cancel') as HTMLElement).click()
+    await w.vm.$nextTick()
+    expect(document.body.textContent).toContain('Discard unsaved changes?')
+
+    // Discard: now (and only now) the close is emitted.
+    bodyButton('Discard').click()
+    await w.vm.$nextTick()
+    expect(w.emitted('update:modelValue')?.at(-1)).toEqual([false])
+    w.unmount()
+  })
+
   it('grows with content but never shrinks while open (stable across tab switches)', async () => {
     setActivePinia(createPinia())
     // jsdom has no ResizeObserver/layout; stub the observer and drive its
