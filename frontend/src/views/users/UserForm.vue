@@ -69,6 +69,24 @@
 
         <!-- Dynamic fields from user form config (all attributes in layout order) -->
         <template v-if="userTemplateConfig?.attributeConfigs?.length">
+          <!-- Standalone DN row when the RDN attribute is hidden (a computed
+               RDN, e.g. cn derived from other fields). The usual DN field
+               renders beside the RDN field, which doesn't exist here. -->
+          <div v-if="rdnIsHidden && showDnField" class="grid grid-cols-6 gap-2">
+            <div class="col-span-6">
+              <FormField
+                label="DN"
+                :model-value="effectiveDn"
+                @update:model-value="onDnInput"
+                placeholder="uid=jsmith,ou=people,dc=example,dc=com"
+                required
+                :error="dnError"
+              />
+              <button v-if="dnEdited" type="button" class="mt-1 text-xs text-blue-600 hover:underline" @click="resetDn">
+                Reset to computed
+              </button>
+            </div>
+          </div>
           <template v-for="(section, sIdx) in createSections" :key="sIdx">
             <fieldset v-if="section.fields.length" class="space-y-2">
               <legend v-if="section.name" class="text-base font-semibold text-gray-900 pb-1.5 border-b-2 border-gray-200 w-full mb-3">{{ section.name }}</legend>
@@ -826,11 +844,33 @@ function escapeRdnValue(v: string): string {
  * the fields that feed it.
  */
 function resolveDnVar(name: string): string {
-  if (name === local.rdnAttribute) return local.rdnValue || ''
   const cfg = props.userTemplateConfig?.attributeConfigs?.find(a => a.attributeName === name)
+  // A computed attribute's value lives in computedAttrValues — even when it is
+  // also the RDN (local.rdnValue stays empty for a computed RDN, since no RDN
+  // input renders).
   if (cfg?.computedExpression) return computedAttrValues.value[name] || ''
+  if (name === local.rdnAttribute) return local.rdnValue || ''
   return local.attributes[name] || ''
 }
+
+/**
+ * Whether the RDN attribute is hidden from the create form (i.e. a computed
+ * RDN). The DN field then renders standalone, and the RDN value used for DN
+ * composition comes from the computed expression rather than a typed field.
+ */
+const rdnIsHidden = computed(() => {
+  const cfg = props.userTemplateConfig?.attributeConfigs?.find(
+    a => a.attributeName === props.userTemplateConfig?.rdnAttribute)
+  return !!cfg?.hidden
+})
+
+/** The RDN value for DN composition: computed when the RDN attr is computed. */
+const rdnEffectiveValue = computed(() => {
+  const name = rdnAttr.value?.attributeName || local.rdnAttribute || ''
+  const cfg = props.userTemplateConfig?.attributeConfigs?.find(a => a.attributeName === name)
+  if (cfg?.computedExpression) return computedAttrValues.value[name] || ''
+  return local.rdnValue || ''
+})
 
 /**
  * Evaluate a DN template: literal text is treated as DN structure (kept as-is),
@@ -869,7 +909,7 @@ const defaultDn = computed(() => {
     if (dn) return dn
   }
   const attr = rdnAttr.value?.attributeName || local.rdnAttribute || ''
-  const val = local.rdnValue || ''
+  const val = rdnEffectiveValue.value
   const base = local.parentDn || ''
   if (!attr || !val || !base) return ''
   return `${attr}=${escapeRdnValue(val)},${base}`

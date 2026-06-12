@@ -297,6 +297,55 @@ describe('UserForm editable DN (create mode)', () => {
       .toBe('cn=John,ou=people,dc=example,dc=com')
   })
 
+  // A computed RDN (e.g. cn derived from o/givenName/sn) renders no RDN input,
+  // so the DN field must render standalone and pull the RDN's *computed* value.
+  const computedRdnConfig = {
+    rdnAttribute: 'cn',
+    attributeConfigs: [
+      { attributeName: 'o', editableOnCreate: true, inputType: 'TEXT' },
+      { attributeName: 'givenName', editableOnCreate: true, inputType: 'TEXT' },
+      { attributeName: 'sn', editableOnCreate: true, inputType: 'TEXT' },
+      { attributeName: 'cn', hidden: true, inputType: 'TEXT', computedExpression: '${o}+"+"+${givenName}+" "+${sn}' },
+    ],
+  }
+
+  function mountComputedRdn(cfg: object) {
+    return mount(UserForm, {
+      props: {
+        data: { rdnAttribute: 'cn', rdnValue: '', parentDn: 'ou=People,dc=oud1,dc=example,dc=com', attributes: {} },
+        isEdit: false,
+        userTemplateConfig: cfg,
+        dirId: null,
+        profileId: null,
+      },
+    })
+  }
+
+  it('composes the DN from a computed RDN via the dnTemplate', async () => {
+    const wrapper = mountComputedRdn({
+      ...computedRdnConfig,
+      dnTemplate: 'cn=${cn},ou=People,dc=oud1,dc=example,dc=com',
+    })
+    await wrapper.vm.$nextTick()
+    await setField(wrapper, 'o', '00001')
+    await setField(wrapper, 'givenName', 'Sanjay')
+    await setField(wrapper, 'sn', 'Mishra')
+    await wrapper.vm.$nextTick()
+    expect((dnInput(wrapper).element as HTMLInputElement).value)
+      .toBe('cn=00001\\+Sanjay Mishra,ou=People,dc=oud1,dc=example,dc=com')
+  })
+
+  it('composes the DN from a computed RDN without a template (default rule)', async () => {
+    const wrapper = mountComputedRdn(computedRdnConfig)
+    await wrapper.vm.$nextTick()
+    await setField(wrapper, 'o', '00001')
+    await setField(wrapper, 'givenName', 'Sanjay')
+    await setField(wrapper, 'sn', 'Mishra')
+    await wrapper.vm.$nextTick()
+    expect((dnInput(wrapper).element as HTMLInputElement).value)
+      .toBe('cn=00001\\+Sanjay Mishra,ou=People,dc=oud1,dc=example,dc=com')
+  })
+
   it('RFC 4514-escapes reserved characters in a substituted value', async () => {
     const wrapper = mountDn({
       rdnAttribute: 'uid',
