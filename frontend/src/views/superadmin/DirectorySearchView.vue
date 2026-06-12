@@ -193,11 +193,30 @@
             v-if="schemaLoading"
             class="text-xs text-gray-500"
           >loading schema…</span>
-          <button
-            v-if="results.length"
-            @click="doExportResults"
-            class="btn-secondary text-xs"
-          >Export LDIF</button>
+          <!-- Export dropdown: LDIF (full entries) or CSV (one row per
+               entry, like the bulk-operations export). Both serialize the
+               loaded results client-side. -->
+          <div v-if="results.length" class="relative">
+            <button
+              type="button"
+              @click="exportMenuOpen = !exportMenuOpen"
+              class="btn-secondary text-xs"
+              aria-haspopup="menu"
+              :aria-expanded="exportMenuOpen"
+            >Export ▾</button>
+            <div
+              v-if="exportMenuOpen"
+              role="menu"
+              class="absolute right-0 z-20 mt-1 w-28 rounded-md border border-gray-200 bg-white py-1 shadow-md"
+            >
+              <button role="menuitem" type="button"
+                      class="block w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                      @click="exportMenuOpen = false; doExportResults()">LDIF</button>
+              <button role="menuitem" type="button"
+                      class="block w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                      @click="exportMenuOpen = false; doExportCsv()">CSV</button>
+            </div>
+          </div>
         </template>
         <template #cell-dn="{ value }">
           <span class="font-mono text-[13px] text-blue-600 break-all">{{ value }}</span>
@@ -425,6 +444,8 @@ const savedSearches = ref<SavedSearch[]>(loadSavedSearches())
 // flow handle larger sets.
 const EDIT_MODE_ROW_CAP = 500
 const editMode = ref(false)
+/** Export dropdown (LDIF / CSV) open state. Closes on selection. */
+const exportMenuOpen = ref(false)
 const schemaMap = ref<Map<string, AttributeTypeInfo>>(new Map())
 const schemaLoading = ref(false)
 // Set of directoryIds whose schema we've already fetched (success or
@@ -654,11 +675,36 @@ function doExportResults(): void {
     }
     lines.push('')
   }
-  const blob = new Blob([lines.join('\n')], { type: 'application/ldif' })
+  downloadAs(new Blob([lines.join('\n')], { type: 'application/ldif' }), 'search-export.ldif')
+}
+
+/**
+ * CSV of the loaded results — same data set as the LDIF export (every
+ * attribute the search returned, not just the 8 visible columns), one
+ * row per entry, like the bulk-operations export. Multi-valued
+ * attributes join with '; '; RFC 4180 quoting throughout.
+ */
+function doExportCsv(): void {
+  const attrs = new Set<string>()
+  for (const entry of results.value) {
+    for (const key of Object.keys(entry.attributes || {})) attrs.add(key)
+  }
+  const columns = ['dn', ...[...attrs].sort()]
+  const quote = (v: string) => `"${v.replace(/"/g, '""')}"`
+  const lines = [columns.map(quote).join(',')]
+  for (const entry of results.value) {
+    lines.push(columns.map(col =>
+      quote(col === 'dn' ? entry.dn : (entry.attributes?.[col] ?? []).join('; '))
+    ).join(','))
+  }
+  downloadAs(new Blob([lines.join('\n')], { type: 'text/csv' }), 'search-export.csv')
+}
+
+function downloadAs(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'search-export.ldif'
+  a.download = filename
   a.click()
   URL.revokeObjectURL(url)
 }

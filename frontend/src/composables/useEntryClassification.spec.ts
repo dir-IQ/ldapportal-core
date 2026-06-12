@@ -176,8 +176,29 @@ describe('isAttributeEditable', () => {
     expect(isAttributeEditable(userEntry(), 'someUnknownAttr', schema)).toBe(false)
   })
 
-  it('locks multi-valued attributes (Phase 1 — chip editor lands in Phase 1.5)', () => {
-    expect(isAttributeEditable(userEntry(), 'description', schema)).toBe(false)
+  it('locks a schema-multi-valued attribute only while the entry holds 2+ values', () => {
+    // Standard LDAP schema marks nearly every person attribute (cn, sn,
+    // mail, givenName, ...) multi-valued — locking on the schema flag alone
+    // froze the whole editor. A single-input REPLACE is safe while the
+    // entry holds at most one value; 2+ stays locked (chip editor, 1.5).
+    const twoValues: DirectoryEntry = {
+      dn: 'cn=alice,ou=people,dc=example,dc=com',
+      attributes: {
+        objectClass: ['inetOrgPerson', 'top'],
+        cn: ['alice'],
+        description: ['first', 'second'],
+      },
+    }
+    expect(isAttributeEditable(twoValues, 'description', schema)).toBe(false)
+
+    const oneValue: DirectoryEntry = {
+      ...twoValues,
+      attributes: { ...twoValues.attributes, description: ['only'] },
+    }
+    expect(isAttributeEditable(oneValue, 'description', schema)).toBe(true)
+
+    // Absent entirely (count 0) → editable: typing a first value is safe.
+    expect(isAttributeEditable(userEntry(), 'description', schema)).toBe(true)
   })
 
   it('allows a non-RDN, single-valued, schema-known string attribute on a user', () => {

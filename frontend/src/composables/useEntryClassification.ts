@@ -141,8 +141,21 @@ export function isAttributeEditable(
   if (lower === rdnAttribute(entry.dn)) return false
   const schema = schemaByName.get(lower)
   if (!schema) return false
-  // Phase 1 locks multi-valued. Phase 1.5 will return true here and
-  // route through the chip editor instead.
-  if (schema.singleValued === false) return false
+  // A schema-multi-valued attribute stays editable while the entry holds
+  // at most ONE value — a single-input REPLACE can't discard sibling
+  // values that aren't there. This matters because in standard LDAP
+  // schema nearly every person attribute (cn, sn, mail, givenName, ...) is
+  // multi-valued, so locking on the schema flag alone froze the entire
+  // editor in practice. Cells actually holding 2+ values stay locked
+  // until the chip editor (Phase 1.5).
+  if (schema.singleValued === false && valueCount(entry, lower) > 1) return false
   return true
+}
+
+/** Number of values the entry currently holds for {@code lowerAttr} (case-insensitive). */
+function valueCount(entry: DirectoryEntry, lowerAttr: string): number {
+  for (const [key, values] of Object.entries(entry.attributes ?? {})) {
+    if (key.toLowerCase() === lowerAttr) return values?.length ?? 0
+  }
+  return 0
 }
