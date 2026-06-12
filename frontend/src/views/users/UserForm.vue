@@ -519,7 +519,7 @@
         :dir-id="dirId || ''"
         :dn="local.dn || ''"
         :ivia-config-enabled="iviaTabVisible"
-        @status-changed="iviaStatus = $event"
+        @status-changed="onIviaStatusChanged"
       />
     </div>
   </div>
@@ -702,6 +702,45 @@ async function checkIviaTabVisibility() {
   // a blank content area with no visible tab marked active.
   if (!iviaTabVisible.value && activeTab.value === 'ivia') {
     activeTab.value = 'attributes'
+  }
+}
+
+/**
+ * An IVIA account action (suspend, restore, grant, …) changed the secUser
+ * side of this identity: update the header badge AND re-pull the entry so
+ * the read-only ivia.* enrichment shown on the Attributes tab reflects the
+ * action (e.g. suspend flips ivia.secacctvalid to FALSE) instead of the
+ * values loaded when the modal opened.
+ */
+async function onIviaStatusChanged(status: IsvaAccountStatus): Promise<void> {
+  iviaStatus.value = status
+  await refreshIviaAttributes()
+}
+
+/**
+ * Replace the isva.* keys in the form's attribute map with the entry's
+ * current enrichment. Only isva.* keys are touched — the operator's
+ * in-progress edits to real attributes are never clobbered. (The parent's
+ * unsaved-changes guard ignores isva.* for the same reason: this refresh
+ * must not make an untouched dialog claim unsaved work.)
+ */
+async function refreshIviaAttributes(): Promise<void> {
+  if (!props.dirId || !local.dn) return
+  try {
+    const { data } = await usersApi.getUser(props.dirId, local.dn)
+    const fresh: Record<string, unknown> = data?.attributes ?? {}
+    for (const key of Object.keys(local.attributes)) {
+      if (isIviaAttr(key)) delete local.attributes[key]
+    }
+    for (const [key, values] of Object.entries(fresh)) {
+      if (!isIviaAttr(key)) continue
+      local.attributes[key] = Array.isArray(values)
+        ? values.join('\n')
+        : String(values ?? '')
+    }
+  } catch (e) {
+    const err = e as { message?: string }
+    console.warn('Failed to refresh IVIA attributes:', err.message ?? e)
   }
 }
 
