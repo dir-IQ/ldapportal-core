@@ -54,6 +54,7 @@ class IsvaProvisioningInterceptorTest {
     @Mock private VendorIntegrationIsvaConfigRepository configRepo;
     @Mock private IsvaLinkedUserLookup linkedUserLookup;
     @Mock private IsvaProfileOverrideService overrideService;
+    @Mock private IsvaGroupShapeCheck groupShapeCheck;
 
     private IsvaProvisioningInterceptor interceptor;
     private DirectoryConnection dir;
@@ -64,7 +65,8 @@ class IsvaProvisioningInterceptorTest {
         // these regression tests assert the resulting plan shapes, so the
         // genuine implementation is what we want to exercise.
         interceptor = new IsvaProvisioningInterceptor(
-                configRepo, linkedUserLookup, overrideService, new IsvaSecUserPlans());
+                configRepo, linkedUserLookup, overrideService, new IsvaSecUserPlans(),
+                groupShapeCheck);
         dir = new DirectoryConnection();
         dir.setId(UUID.randomUUID());
         dir.setDirectoryType(DirectoryType.OPENLDAP);
@@ -276,9 +278,8 @@ class IsvaProvisioningInterceptorTest {
         GroupMemberPlan plan = interceptor.planGroupMembership(dir,
                 "cn=eng,dc=x", "member", "uid=alice,dc=x", ProvisioningContext.empty());
 
-        // v1: interceptor produces the baseline proceeding plan. The
-        // secGroup validation is a future addition (see P4); test
-        // pinned to current behaviour.
+        // require_sec_group is off (the opt-in default), so the interceptor
+        // produces the baseline proceeding plan without reading the group.
         assertThat(plan.isRefused()).isFalse();
         assertThat(plan.steps()).hasSize(1);
         ModifyStep step = (ModifyStep) plan.steps().get(0);
@@ -286,6 +287,80 @@ class IsvaProvisioningInterceptorTest {
         assertThat(mod.getModificationType()).isEqualTo(ModificationType.ADD);
         assertThat(mod.getAttributeName()).isEqualTo("member");
         assertThat(mod.getValues()[0]).isEqualTo("uid=alice,dc=x");
+        org.mockito.Mockito.verifyNoInteractions(groupShapeCheck);
+    }
+
+    // ── require_sec_group gate (both topologies) ────────────────────
+
+    @Test
+    void groupMembership_requireSecGroup_groupLacksOverlay_refuses() {
+        VendorIntegrationIsvaConfig cfg = inlineConfig();
+        cfg.setRequireSecGroup(true);
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
+        when(groupShapeCheck.hasObjectClass(dir, "cn=eng,dc=x", "secGroup"))
+                .thenReturn(Optional.of(false));
+
+        GroupMemberPlan plan = interceptor.planGroupMembership(dir,
+                "cn=eng,dc=x", "member", "uid=alice,dc=x", ProvisioningContext.empty());
+
+        // The LDAP write would succeed, but ISVA ignores memberships in
+        // non-secGroup groups — the configured gate must refuse loudly.
+        assertThat(plan.isRefused()).isTrue();
+        assertThat(plan.refusalReason().orElseThrow())
+                .contains("secGroup")
+                .contains("cn=eng,dc=x");
+    }
+
+    @Test
+    void groupMembership_requireSecGroup_overlayPresent_proceeds() {
+        VendorIntegrationIsvaConfig cfg = inlineConfig();
+        cfg.setRequireSecGroup(true);
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
+        when(groupShapeCheck.hasObjectClass(dir, "cn=eng,dc=x", "secGroup"))
+                .thenReturn(Optional.of(true));
+
+        GroupMemberPlan plan = interceptor.planGroupMembership(dir,
+                "cn=eng,dc=x", "member", "uid=alice,dc=x", ProvisioningContext.empty());
+
+        assertThat(plan.isRefused()).isFalse();
+        assertThat(plan.steps()).hasSize(1);
+    }
+
+    @Test
+    void groupMembership_requireSecGroup_groupUnreadable_proceeds() {
+        // "Can't verify" must not become a hard refusal: a missing group
+        // fails the MODIFY with the server's own NO_SUCH_OBJECT, which is
+        // clearer than a refusal guessing at the cause.
+        VendorIntegrationIsvaConfig cfg = inlineConfig();
+        cfg.setRequireSecGroup(true);
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
+        when(groupShapeCheck.hasObjectClass(dir, "cn=eng,dc=x", "secGroup"))
+                .thenReturn(Optional.empty());
+
+        GroupMemberPlan plan = interceptor.planGroupMembership(dir,
+                "cn=eng,dc=x", "member", "uid=alice,dc=x", ProvisioningContext.empty());
+
+        assertThat(plan.isRefused()).isFalse();
+    }
+
+    @Test
+    void groupMembership_requireSecGroup_appliesBeforeLinkedRouting() {
+        // The gate runs ahead of the topology switch: a linked-mode
+        // SECUSER_DN membership refused on group shape never reaches the
+        // secUser lookup.
+        VendorIntegrationIsvaConfig cfg = linkedConfig();
+        cfg.setRequireSecGroup(true);
+        cfg.setGroupMemberTarget(
+                com.ldapportal.addons.isva.entity.IsvaGroupMemberTarget.SECUSER_DN);
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
+        when(groupShapeCheck.hasObjectClass(dir, "cn=eng,dc=x", "secGroup"))
+                .thenReturn(Optional.of(false));
+
+        GroupMemberPlan plan = interceptor.planGroupMembership(dir,
+                "cn=eng,dc=x", "member", "uid=alice,dc=x", ProvisioningContext.empty());
+
+        assertThat(plan.isRefused()).isTrue();
+        org.mockito.Mockito.verifyNoInteractions(linkedUserLookup);
     }
 
     // ── LINKED-mode: create ────────────────────────────────────────

@@ -59,7 +59,9 @@ function emptyForm(): Form {
     secAuthority: 'Default',
     defaultValidUntilYears: 100,
     deletePolicy: 'DISABLE',
-    requireSecGroup: true,
+    // Opt-in since enforcement shipped (V504) — defaulting the gate on
+    // would refuse memberships in plain (non-secGroup) groups.
+    requireSecGroup: false,
     secuserObjectClasses: ['secUser'],
     managementDitBaseDn: '',
     secuserRdnAttribute: 'secUUID',
