@@ -400,4 +400,97 @@ class ProvisioningProfileServiceTest {
                     .isEqualTo("jane.smith@corp.com");
         });
     }
+
+    // ── Group-assignment member-attribute validation ──────────────────────────
+
+    private static final String GROUP_DN = "cn=AllEmployees,ou=Groups,dc=example,dc=com";
+
+    /** Minimal valid create request carrying the given group assignments. */
+    private com.ldapportal.dto.profile.CreateProfileRequest createReq(
+            List<com.ldapportal.dto.profile.CreateProfileRequest.GroupAssignmentEntry> groups) {
+        return new com.ldapportal.dto.profile.CreateProfileRequest(
+                "engineers", null, "ou=People,dc=example,dc=com", null,
+                List.of("inetOrgPerson"), "uid", true,
+                null, null, null, null,
+                true, false,
+                null, null, null, null, null, null, null, null,
+                false, false, null, null, groups);
+    }
+
+    private com.ldapportal.entity.DirectoryConnection stubDirectory(UUID directoryId) {
+        com.ldapportal.entity.DirectoryConnection dir =
+                new com.ldapportal.entity.DirectoryConnection();
+        dir.setId(directoryId);
+        given(dirRepo.findById(directoryId)).willReturn(Optional.of(dir));
+        given(profileRepo.save(any())).willAnswer(inv -> inv.getArgument(0));
+        return dir;
+    }
+
+    @Test
+    void createProfile_memberAttributeNotPermittedByGroupSchema_rejectedWithSuggestion() {
+        // The regression this guards: a groupOfUniqueNames group configured
+        // with `member` saves fine, then every user create silently fails the
+        // group add with a server-side schema violation. The mismatch must be
+        // a 400 at profile save, naming the attribute the group does permit.
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        given(ldapBrowseService.entryExists(any(), any())).willReturn(true);
+        given(ldapGroupService.getGroup(any(), org.mockito.ArgumentMatchers.eq(GROUP_DN),
+                        org.mockito.ArgumentMatchers.eq("objectClass")))
+                .willReturn(new com.ldapportal.ldap.model.LdapGroup(GROUP_DN,
+                        Map.of("objectclass", List.of("top", "groupOfUniqueNames"))));
+        given(ldapSchemaService.getAttributesForObjectClasses(any(), any()))
+                .willReturn(new com.ldapportal.ldap.LdapSchemaService.ObjectClassAttributes(
+                        "top, groupOfUniqueNames", null,
+                        java.util.Set.of("cn", "uniqueMember"),
+                        java.util.Set.of("description", "owner")));
+
+        var req = createReq(List.of(
+                new com.ldapportal.dto.profile.CreateProfileRequest.GroupAssignmentEntry(
+                        GROUP_DN, "member")));
+
+        assertThatThrownBy(() -> service.create(directoryId, req, false, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not allow member attribute [member]")
+                .hasMessageContaining("uniqueMember");
+    }
+
+    @Test
+    void createProfile_groupEntryUnreadable_skipsValidationAndSaves() {
+        // Pre-staged groups (created in LDAP after the profile) and binds
+        // without read access must not block the save — the LDAP server
+        // stays authoritative at write time.
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        given(ldapBrowseService.entryExists(any(), any())).willReturn(true);
+        given(ldapGroupService.getGroup(any(), any(), any()))
+                .willThrow(new com.ldapportal.exception.ResourceNotFoundException(
+                        "LDAP group", GROUP_DN));
+
+        var req = createReq(List.of(
+                new com.ldapportal.dto.profile.CreateProfileRequest.GroupAssignmentEntry(
+                        GROUP_DN, "member")));
+
+        service.create(directoryId, req, false, null);
+
+        org.mockito.Mockito.verify(groupAssignmentRepo).save(any());
+    }
+
+    @Test
+    void createProfile_force_skipsMemberAttributeValidation() {
+        // force=true is the pre-stage escape hatch (same semantics as the
+        // target-OU check): nothing in LDAP is consulted at save time.
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+
+        var req = createReq(List.of(
+                new com.ldapportal.dto.profile.CreateProfileRequest.GroupAssignmentEntry(
+                        GROUP_DN, "member")));
+
+        service.create(directoryId, req, true, null);
+
+        org.mockito.Mockito.verify(ldapGroupService, org.mockito.Mockito.never())
+                .getGroup(any(), any(), any());
+        org.mockito.Mockito.verify(groupAssignmentRepo).save(any());
+    }
 }

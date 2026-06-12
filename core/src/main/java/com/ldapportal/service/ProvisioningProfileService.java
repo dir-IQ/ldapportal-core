@@ -17,6 +17,7 @@ import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.ldap.validation.DnValidator;
 import com.ldapportal.ldap.LdapUserService;
+import com.ldapportal.ldap.model.LdapGroup;
 import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -168,7 +169,7 @@ public class ProvisioningProfileService {
 
         saveAdditionalProfiles(profile, req.additionalProfileIds());
         saveAttributeConfigs(profile, req.attributeConfigs());
-        saveGroupAssignments(profile, req.groupAssignments());
+        saveGroupAssignments(profile, req.groupAssignments(), !force);
 
         if (principal != null) {
             auditService.record(principal, directoryId, AuditAction.PROFILE_CREATE, null,
@@ -248,7 +249,7 @@ public class ProvisioningProfileService {
         // Replace group assignments
         groupAssignmentRepo.deleteAllByProfileId(profileId);
         groupAssignmentRepo.flush();
-        saveGroupAssignments(profile, req.groupAssignments());
+        saveGroupAssignments(profile, req.groupAssignments(), !force);
 
         if (principal != null) {
             auditService.record(principal, directoryId, AuditAction.PROFILE_UPDATE, null,
@@ -1074,17 +1075,79 @@ public class ProvisioningProfileService {
 
     private void saveGroupAssignments(ProvisioningProfile profile,
                                        List<GroupAssignmentEntry> entries) {
+        saveGroupAssignments(profile, entries, false);
+    }
+
+    private void saveGroupAssignments(ProvisioningProfile profile,
+                                       List<GroupAssignmentEntry> entries,
+                                       boolean validateMemberAttributes) {
         if (entries == null || entries.isEmpty()) return;
 
+        DirectoryConnection dir = validateMemberAttributes
+                ? dirRepo.findById(profile.getDirectory().getId()).orElse(null)
+                : null;
         for (int i = 0; i < entries.size(); i++) {
             GroupAssignmentEntry e = entries.get(i);
+            String memberAttribute = e.memberAttribute() != null ? e.memberAttribute() : "member";
+            if (dir != null) {
+                requireMemberAttributePermitted(dir, e.groupDn(), memberAttribute);
+            }
             ProfileGroupAssignment g = new ProfileGroupAssignment();
             g.setProfile(profile);
             g.setGroupDn(e.groupDn());
-            g.setMemberAttribute(e.memberAttribute() != null ? e.memberAttribute() : "member");
+            g.setMemberAttribute(memberAttribute);
             g.setDisplayOrder(i);
             groupAssignmentRepo.save(g);
         }
+    }
+
+    /**
+     * Best-effort schema check for a profile group assignment: read the
+     * group entry's objectClasses and verify the configured member
+     * attribute is permitted by them — so a {@code groupOfUniqueNames}
+     * group configured with {@code member} fails at profile save with a
+     * 400 naming the right attribute, instead of silently failing every
+     * subsequent user create (the per-group add failures there are
+     * logged-and-continued by design).
+     *
+     * <p>Skips silently when the group entry or the server schema can't
+     * be read — pre-staged groups (the {@code force=true} workflow) and
+     * binds without subschema access must stay saveable; the LDAP server
+     * remains authoritative at write time.</p>
+     */
+    private void requireMemberAttributePermitted(DirectoryConnection dir,
+                                                 String groupDn,
+                                                 String memberAttribute) {
+        List<String> objectClasses;
+        Set<String> permitted = new HashSet<>();
+        try {
+            LdapGroup group = ldapGroupService.getGroup(dir, groupDn, "objectClass");
+            objectClasses = group.getValues("objectclass");
+            if (objectClasses == null || objectClasses.isEmpty()) {
+                return;
+            }
+            var schemaAttrs = ldapSchemaService.getAttributesForObjectClasses(dir, objectClasses);
+            schemaAttrs.required().forEach(a -> permitted.add(a.toLowerCase()));
+            schemaAttrs.optional().forEach(a -> permitted.add(a.toLowerCase()));
+        } catch (Exception ex) {
+            log.debug("Skipping member-attribute validation for group {}: {}",
+                    groupDn, ex.getMessage());
+            return;
+        }
+        if (permitted.isEmpty() || permitted.contains(memberAttribute.toLowerCase())) {
+            return;
+        }
+        String suggestion = java.util.stream.Stream
+                .of("member", "uniqueMember", "memberUid", "roleOccupant")
+                .filter(c -> permitted.contains(c.toLowerCase()))
+                .findFirst()
+                .orElse(null);
+        throw new IllegalArgumentException(
+                "Group [" + groupDn + "] (objectClasses " + objectClasses
+                        + ") does not allow member attribute [" + memberAttribute + "]"
+                        + (suggestion != null
+                            ? " — use [" + suggestion + "] instead."
+                            : " — pick an attribute its objectClasses permit."));
     }
 
     private void saveAdditionalProfiles(ProvisioningProfile profile, List<UUID> additionalProfileIds) {
@@ -1407,14 +1470,18 @@ public class ProvisioningProfileService {
      * the UI (and not at all by the bulk-import / approval-approved / API
      * flows).
      *
-     * <p>Failures on individual group adds are logged but do not abort the
-     * call; the user still exists and other group adds still run. Each
-     * successful add emits a {@code GROUP_MEMBER_ADD} audit row with
-     * {@code source = "profile_create"} so reports can distinguish
-     * provisioning-driven additions from operator-initiated ones.</p>
+     * <p>Failures on individual group adds do not abort the call; the user
+     * still exists and other group adds still run. Each failure is logged
+     * AND returned as a per-group warning so callers with a response
+     * channel (the create endpoint) can surface it to the operator —
+     * a silently-skipped membership looks identical to a successful one
+     * otherwise. Each successful add emits a {@code GROUP_MEMBER_ADD}
+     * audit row with {@code source = "profile_create"} so reports can
+     * distinguish provisioning-driven additions from operator-initiated
+     * ones.</p>
      */
     @Transactional
-    public int applyGroupAssignmentsToUser(UUID directoryId, UUID profileId,
+    public GroupAssignmentResult applyGroupAssignmentsToUser(UUID directoryId, UUID profileId,
                                             String userDn, AuthPrincipal principal) {
         ProvisioningProfile profile = requireProfileInDirectory(directoryId, profileId);
         DirectoryConnection dc = requireDirectory(directoryId);
@@ -1425,6 +1492,7 @@ public class ProvisioningProfileService {
                 computeEffectiveGroups(profile, ownGroups);
 
         int added = 0;
+        List<String> warnings = new ArrayList<>();
         for (ProfileResponse.GroupAssignmentEntry g : effective) {
             try {
                 ldapGroupService.addMember(dc, g.groupDn(), g.memberAttribute(), userDn);
@@ -1437,10 +1505,19 @@ public class ProvisioningProfileService {
             } catch (Exception e) {
                 log.warn("Failed to add {} to profile group {} on create: {}",
                         userDn, g.groupDn(), e.getMessage());
+                warnings.add("Not added to " + g.groupDn() + ": " + e.getMessage());
             }
         }
-        return added;
+        return new GroupAssignmentResult(added, warnings);
     }
+
+    /**
+     * Outcome of {@link #applyGroupAssignmentsToUser}: how many of the
+     * profile's effective groups the user was added to, plus one warning
+     * per group that failed (already logged; returned so the create
+     * response can carry them to the operator).
+     */
+    public record GroupAssignmentResult(int added, List<String> warnings) {}
 
     // ── Target-OU probe + validation ────────────────────────────────
 
