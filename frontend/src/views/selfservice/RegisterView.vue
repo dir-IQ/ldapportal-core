@@ -36,7 +36,9 @@
       </div>
 
       <!-- Registration form -->
-      <form v-else @submit.prevent="handleSubmit" class="space-y-4">
+      <form v-else ref="formRootEl" @submit.prevent="handleSubmit" class="space-y-4">
+        <FormValidationSummary v-if="showSummary" :errors="validationErrors" />
+
         <!-- Step 1: Directory & Profile selection -->
         <div class="space-y-3">
           <h2 class="text-sm font-semibold text-gray-700 uppercase tracking-wider">Directory</h2>
@@ -85,6 +87,7 @@
 
                 <textarea v-if="field.inputType === 'TEXTAREA'"
                   :id="`ss-register-field-${field.attributeName}`"
+                  :data-field="field.attributeName"
                   :value="String(attributeValues[field.attributeName] ?? '')"
                   @input="attributeValues[field.attributeName] = ($event.target as HTMLTextAreaElement).value"
                   rows="2"
@@ -93,6 +96,7 @@
 
                 <select v-else-if="field.inputType === 'SELECT' && field.allowedValues"
                   :id="`ss-register-field-${field.attributeName}`"
+                  :data-field="field.attributeName"
                   v-model="attributeValues[field.attributeName]"
                   :required="field.required"
                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
@@ -101,12 +105,13 @@
                 </select>
 
                 <label v-else-if="field.inputType === 'BOOLEAN'" class="flex items-center gap-2 py-1">
-                  <input type="checkbox" v-model="attributeValues[field.attributeName]" class="rounded" />
+                  <input type="checkbox" :data-field="field.attributeName" v-model="attributeValues[field.attributeName]" class="rounded" />
                   <span class="text-sm text-gray-700">{{ field.label }}</span>
                 </label>
 
                 <input v-else-if="field.inputType === 'DATE'"
                   :id="`ss-register-field-${field.attributeName}`"
+                  :data-field="field.attributeName"
                   v-model="attributeValues[field.attributeName]"
                   type="date" :required="field.required"
                   class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
@@ -114,6 +119,7 @@
                 <div v-else-if="field.inputType === 'PASSWORD'" class="relative">
                   <input
                     :id="`ss-register-field-${field.attributeName}`"
+                  :data-field="field.attributeName"
                     v-model="attributeValues[field.attributeName]"
                     :type="regPasswordVisible[field.attributeName] ? 'text' : 'password'"
                     :required="field.required"
@@ -135,6 +141,7 @@
 
                 <input v-else
                   :id="`ss-register-field-${field.attributeName}`"
+                  :data-field="field.attributeName"
                   v-model="attributeValues[field.attributeName]"
                   :type="field.inputType === 'DATETIME' ? 'datetime-local' : 'text'"
                   :required="field.required"
@@ -194,6 +201,8 @@ import {
   submitRegistration,
 } from '@/api/selfservice'
 import { validateAttributes } from '@/utils/attributeValidation'
+import FormValidationSummary from '@/components/FormValidationSummary.vue'
+import { useFormErrors } from '@/composables/useFormErrors'
 
 interface RegistrationDirectory { id: string, displayName: string }
 interface RegistrationProfile { id: string, name: string, description?: string }
@@ -230,7 +239,16 @@ const directories = ref<RegistrationDirectory[]>([])
 const profiles = ref<RegistrationProfile[]>([])
 const formFields = ref<RegistrationField[]>([])
 const attributeValues = reactive<Record<string, string | boolean>>({})
-const fieldErrors = reactive<Record<string, string>>({})
+const formRootEl = ref<HTMLElement | null>(null)
+const {
+  errors: fieldErrors,
+  summary: validationErrors,
+  showSummary,
+  setErrors,
+  report: reportErrors,
+} = useFormErrors({
+  labelFor: name => formFields.value.find(f => f.attributeName === name)?.label || name,
+})
 
 const selectedProfileDesc = computed(() => {
   const p = profiles.value.find(p => p.id === formData.profileId)
@@ -299,10 +317,10 @@ function parseAllowedValues(json: string): string[] {
 // Shared with the admin forms and SelfServiceProfileView; the server
 // (ProvisioningProfileService) re-validates authoritatively.
 function validateFields(): boolean {
-  for (const k of Object.keys(fieldErrors)) delete fieldErrors[k]
-  const errors = validateAttributes(formFields.value, name => attributeValues[name])
-  Object.assign(fieldErrors, errors)
-  return Object.keys(errors).length === 0
+  setErrors(validateAttributes(formFields.value, name => attributeValues[name]))
+  // report() shows the top-of-form banner and focuses/scrolls to the first
+  // failing field; it returns true when there are errors.
+  return !reportErrors(formRootEl.value)
 }
 
 async function handleSubmit() {

@@ -1,24 +1,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
-  <div>
+  <div ref="formRootEl">
     <!-- Validation summary — surfaced at the top so an error on a field that's
          scrolled out of view is never missed. -->
-    <div
-      v-if="validationFailed && validationErrors.length"
-      ref="validationSummaryRef"
-      role="alert"
-      aria-live="assertive"
-      class="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3"
-    >
-      <p class="text-sm font-semibold text-red-800">
-        Please fix {{ validationErrors.length }} field{{ validationErrors.length === 1 ? '' : 's' }} before saving:
-      </p>
-      <ul class="mt-1.5 list-disc pl-5 space-y-0.5">
-        <li v-for="e in validationErrors" :key="e.name" class="text-sm text-red-700">
-          <span class="font-medium">{{ e.label }}</span>: {{ e.message }}
-        </li>
-      </ul>
-    </div>
+    <FormValidationSummary v-if="showSummary" :errors="validationErrors" />
 
     <!-- Identity header — only meaningful in edit mode (create mode
          has no DN yet). Sits above the tab strip so it stays visible
@@ -122,6 +107,7 @@
                       :type="mapInputType(attr.inputType)"
                       required
                       :placeholder="attr.attributeName"
+                      :field-key="attr.attributeName"
                       :error="fieldErrors[attr.attributeName]"
                     />
                   </div>
@@ -155,6 +141,7 @@
                       <div class="relative flex-1">
                         <input
                           :id="`uf-pw-${attr.attributeName}`"
+                          :data-field="attr.attributeName"
                           :type="passwordVisible ? 'text' : 'password'"
                           :value="local.attributes[attr.attributeName]"
                           @input="local.attributes[attr.attributeName] = ($event.target as HTMLInputElement).value"
@@ -226,6 +213,7 @@
                       :disabled="!attr.editableOnCreate"
                       :rows="attr.inputType === 'TEXTAREA' || attr.inputType === 'MULTI_VALUE' ? 3 : undefined"
                       :hint="attr.inputType === 'MULTI_VALUE' ? 'One value per line' : undefined"
+                      :field-key="attr.attributeName"
                       :error="fieldErrors[attr.attributeName]"
                     />
                   </div>
@@ -308,6 +296,7 @@
                       :disabled="!attr.editableOnUpdate"
                       :rows="attr.inputType === 'TEXTAREA' || attr.inputType === 'MULTI_VALUE' ? 3 : undefined"
                       :hint="attr.inputType === 'MULTI_VALUE' ? 'One value per line' : undefined"
+                      :field-key="attr.attributeName"
                       :error="fieldErrors[attr.attributeName]"
                     />
                   </div>
@@ -498,6 +487,8 @@ import { reactive, ref, watch, nextTick, computed, onMounted } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 import FormField from '@/components/FormField.vue'
+import FormValidationSummary from '@/components/FormValidationSummary.vue'
+import { useFormErrors } from '@/composables/useFormErrors'
 import DnPicker from '@/components/DnPicker.vue'
 import UserIdentityHeader from '@/components/users/UserIdentityHeader.vue'
 import IsvaAccountPanel from '@/components/users/IsvaAccountPanel.vue'
@@ -1096,23 +1087,22 @@ const computedAttrValues = computed<Record<string, string>>(() => {
 // Mirrors ProvisioningProfileService's server-side rules (required / length /
 // regex) for instant field-level feedback. The server re-validates
 // authoritatively; this only gates the form submit and renders inline errors.
-const fieldErrors = reactive<Record<string, string>>({})
-
-// True once a save attempt has failed validation; drives the summary banner at
-// the top of the form so an error on a scrolled-out field is never missed.
-const validationFailed = ref(false)
-const validationSummaryRef = ref<HTMLElement | null>(null)
-
-/** Failing fields as { label, message }, for the top-of-form summary. */
-const validationErrors = computed(() => {
-  const configs = props.userTemplateConfig?.attributeConfigs ?? []
-  const labelFor = (name: string): string => {
+// Shared validation-error state: `fieldErrors` (key → message, rendered inline),
+// `validationErrors` (summary for the top-of-form banner), and `report()` which
+// reveals the banner and focuses/scrolls to the first failing field.
+const {
+  errors: fieldErrors,
+  summary: validationErrors,
+  showSummary,
+  report: reportErrors,
+} = useFormErrors({
+  labelFor: (name: string): string => {
     if (name === 'dn') return 'DN'
-    const c = configs.find(a => a.attributeName === name)
+    const c = props.userTemplateConfig?.attributeConfigs?.find(a => a.attributeName === name)
     return c?.customLabel || name
-  }
-  return Object.entries(fieldErrors).map(([name, message]) => ({ name, label: labelFor(name), message }))
+  },
 })
+const formRootEl = ref<HTMLElement | null>(null)
 
 function rulesFor(attr: AttributeConfig, forCreate: boolean): AttributeRules {
   return {
@@ -1138,13 +1128,10 @@ function rulesFor(attr: AttributeConfig, forCreate: boolean): AttributeRules {
  */
 function validate(): boolean {
   const ok = runValidation()
-  validationFailed.value = !ok
-  if (!ok) {
-    // Field errors all live on the Attributes tab; surface them and bring the
-    // top-of-form summary into view so an off-screen error is never missed.
-    activeTab.value = 'attributes'
-    nextTick(() => validationSummaryRef.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }))
-  }
+  // Field errors all live on the Attributes tab; surface them there, then show
+  // the banner and jump focus to the first failing field.
+  if (!ok) activeTab.value = 'attributes'
+  reportErrors(formRootEl.value)
   return ok
 }
 
