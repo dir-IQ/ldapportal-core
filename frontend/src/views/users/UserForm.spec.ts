@@ -256,6 +256,64 @@ describe('UserForm editable DN (create mode)', () => {
     await dnInput(wrapper).setValue('uid=jsmith,ou=people2,dc=example,dc=com')
     expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
   })
+
+  // Set a dynamic field by its FormField label.
+  async function setField(wrapper: ReturnType<typeof mountDn>, label: string, val: string) {
+    const ff = wrapper.findAllComponents({ name: 'FormField' })
+      .find(c => String(c.props('label') || '').startsWith(label))!
+    await ff.find('input').setValue(val)
+  }
+
+  it('re-derives the DN when a plain templated field changes', async () => {
+    const wrapper = mountDn({
+      rdnAttribute: 'uid',
+      dnTemplate: 'uid=${uid},ou=${department},dc=example,dc=com',
+      attributeConfigs: [
+        { attributeName: 'uid', requiredOnCreate: true, editableOnCreate: true, inputType: 'TEXT' },
+        { attributeName: 'department', editableOnCreate: true, inputType: 'TEXT' },
+      ],
+    })
+    await wrapper.vm.$nextTick()
+    await setField(wrapper, 'department', 'eng')
+    await wrapper.vm.$nextTick()
+    expect((dnInput(wrapper).element as HTMLInputElement).value)
+      .toBe('uid=jsmith,ou=eng,dc=example,dc=com')
+  })
+
+  it('reflects a COMPUTED attribute and reacts to its source field', async () => {
+    const wrapper = mountDn({
+      rdnAttribute: 'uid',
+      dnTemplate: 'cn=${cn},ou=people,dc=example,dc=com',
+      attributeConfigs: [
+        { attributeName: 'uid', requiredOnCreate: true, editableOnCreate: true, inputType: 'TEXT' },
+        { attributeName: 'givenName', editableOnCreate: true, inputType: 'TEXT' },
+        { attributeName: 'cn', inputType: 'TEXT', hidden: true, computedExpression: '${givenName}' },
+      ],
+    })
+    await wrapper.vm.$nextTick()
+    await setField(wrapper, 'givenName', 'John')
+    await wrapper.vm.$nextTick()
+    expect((dnInput(wrapper).element as HTMLInputElement).value)
+      .toBe('cn=John,ou=people,dc=example,dc=com')
+  })
+
+  it('RFC 4514-escapes reserved characters in a substituted value', async () => {
+    const wrapper = mountDn({
+      rdnAttribute: 'uid',
+      dnTemplate: 'cn=${cn},ou=people,dc=example,dc=com',
+      attributeConfigs: [
+        { attributeName: 'uid', requiredOnCreate: true, editableOnCreate: true, inputType: 'TEXT' },
+        { attributeName: 'cn', editableOnCreate: true, inputType: 'TEXT' },
+      ],
+    })
+    await wrapper.vm.$nextTick()
+    // A literal '+' (the multi-valued-RDN separator) in the value must be escaped
+    // so the DN stays a single valid RDN.
+    await setField(wrapper, 'cn', '00001+Sanjay Mishra')
+    await wrapper.vm.$nextTick()
+    expect((dnInput(wrapper).element as HTMLInputElement).value)
+      .toBe('cn=00001\\+Sanjay Mishra,ou=people,dc=example,dc=com')
+  })
 })
 
 interface ExposedStaged {

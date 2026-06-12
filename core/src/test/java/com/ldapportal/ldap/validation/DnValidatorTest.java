@@ -104,6 +104,25 @@ class DnValidatorTest {
     }
 
     @Test
+    void isWithinSubtreeAcceptsEscapedReservedChars() {
+        // RFC 4514: a '+' inside a value is escaped as '\+', keeping the DN a
+        // single valid RDN that still sits within the base subtree.
+        assertThat(DnValidator.isWithinSubtree(
+                "cn=00001\\+Sanjay Mishra,ou=people,dc=example,dc=com",
+                "ou=people,dc=example,dc=com")).isTrue();
+    }
+
+    @Test
+    void isValidDnDistinguishesUnescapedReservedChars() {
+        // A bare '+' is the multi-valued-RDN separator; "Sanjay Mishra" then has
+        // no attr= and the DN is invalid. The escaped form is valid.
+        assertThat(DnValidator.isValidDn(
+                "cn=00001+Sanjay Mishra,ou=people,dc=example,dc=com")).isFalse();
+        assertThat(DnValidator.isValidDn(
+                "cn=00001\\+Sanjay Mishra,ou=people,dc=example,dc=com")).isTrue();
+    }
+
+    @Test
     void isWithinSubtreeRejectsMalformedOrBlank() {
         assertThat(DnValidator.isWithinSubtree("not-a-dn", "ou=people,dc=example,dc=com")).isFalse();
         assertThat(DnValidator.isWithinSubtree("uid=x,ou=people,dc=example,dc=com", "")).isFalse();

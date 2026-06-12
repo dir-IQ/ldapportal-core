@@ -34,7 +34,8 @@
         placeholder="uid=${uid},ou=people,dc=example,dc=com"
       />
       <p class="text-[11px] text-gray-500">
-        <code>${'{'}attr{'}'}</code> tokens resolve to the new user's values. Leave blank to use
+        <code>${'{'}attr{'}'}</code> tokens resolve to the new user's values (reserved characters such as
+        <code>+</code> and <code>,</code> are escaped automatically). Leave blank to use
         <code>&lt;rdn&gt;=&lt;value&gt;,&lt;target OU&gt;</code>. The DN stays editable and must remain within the profile's target OU.
       </p>
     </div>

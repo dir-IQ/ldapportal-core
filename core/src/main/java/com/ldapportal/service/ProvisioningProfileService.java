@@ -561,6 +561,15 @@ public class ProvisioningProfileService {
         if (profile.getDirectory().getDirectoryType() == DirectoryType.ENTRA_ID) {
             return;
         }
+        // Distinguish "not a valid DN" from "valid but out of scope": an
+        // unescaped reserved char (e.g. a bare '+', the multi-valued-RDN
+        // separator) makes the DN unparseable, and a bare containment check
+        // would otherwise mis-report it as "outside the target OU".
+        if (!DnValidator.isValidDn(dn)) {
+            throw new IllegalArgumentException(
+                    "User DN [" + dn + "] is not a valid distinguished name "
+                            + "(reserved characters such as '+' or ',' in a value must be \\-escaped)");
+        }
         if (!DnValidator.isWithinSubtree(dn, profile.getTargetUserDn())) {
             throw new IllegalArgumentException(
                     "User DN [" + dn + "] is outside the profile's target OU ["

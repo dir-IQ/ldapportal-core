@@ -52,7 +52,7 @@
           <div class="col-span-4">
             <FormField
               label="DN"
-              :model-value="local.dn"
+              :model-value="effectiveDn"
               @update:model-value="onDnInput"
               placeholder="uid=jsmith,ou=people,dc=example,dc=com"
               required
@@ -93,7 +93,7 @@
                   <div v-if="attr.rdn && showDnField" class="col-span-4">
                     <FormField
                       label="DN"
-                      :model-value="local.dn"
+                      :model-value="effectiveDn"
                       @update:model-value="onDnInput"
                       placeholder="uid=jsmith,ou=people,dc=example,dc=com"
                       required
@@ -797,34 +797,98 @@ const rdnAttr = computed<AttributeConfig | null>(() => {
 })
 
 /**
+ * RFC 4514 escaping for an attribute value placed inside a DN/RDN. Reserved
+ * characters (notably '+', the multi-valued-RDN separator, and ',') in a value
+ * must be backslash-escaped or they corrupt the DN. Applied to ${attr}
+ * substitutions when composing the DN — never to the template's literal text,
+ * which is DN structure.
+ */
+function escapeRdnValue(v: string): string {
+  if (!v) return v
+  let out = ''
+  for (const ch of v) {
+    if (ch === '\\' || ch === '"' || ch === '+' || ch === ',' ||
+        ch === ';' || ch === '<' || ch === '>') {
+      out += '\\' + ch
+    } else {
+      out += ch
+    }
+  }
+  // A leading '#' or space, or a trailing space, must also be escaped.
+  return out.replace(/^([ #])/, '\\$1').replace(/ $/, '\\ ')
+}
+
+/**
+ * Resolve a {@code ${attr}} reference for DN composition. Unlike the raw
+ * attribute lookup, this also returns the values of *computed* attributes
+ * (whose values live in {@link computedAttrValues}, not local.attributes), so a
+ * DN template referencing e.g. a computed {@code cn} reflects it and reacts to
+ * the fields that feed it.
+ */
+function resolveDnVar(name: string): string {
+  if (name === local.rdnAttribute) return local.rdnValue || ''
+  const cfg = props.userTemplateConfig?.attributeConfigs?.find(a => a.attributeName === name)
+  if (cfg?.computedExpression) return computedAttrValues.value[name] || ''
+  return local.attributes[name] || ''
+}
+
+/**
+ * Evaluate a DN template: literal text is treated as DN structure (kept as-is),
+ * and each {@code ${attr}} placeholder is replaced with the attribute's value,
+ * RFC 4514-escaped. Note this is intentionally simpler than
+ * {@link evaluateExpression} — a DN template has no '+'/quote operators, since
+ * in a DN those characters are literal structure.
+ */
+function evaluateDnTemplate(tpl: string): string {
+  let out = ''
+  let i = 0
+  while (i < tpl.length) {
+    if (tpl[i] === '$' && tpl[i + 1] === '{') {
+      const end = tpl.indexOf('}', i + 2)
+      if (end === -1) { out += tpl.slice(i); break }
+      out += escapeRdnValue(resolveDnVar(tpl.substring(i + 2, end)))
+      i = end + 1
+    } else {
+      out += tpl[i]
+      i++
+    }
+  }
+  return out
+}
+
+/**
  * The computed default DN. When the profile defines a {@code dnTemplate} it is
- * evaluated as a ${attr} expression; otherwise the DN is composed from the RDN
- * attribute, RDN value, and parent DN. This seeds the editable DN field on
- * create and is the value used until the admin overrides it.
+ * evaluated via {@link evaluateDnTemplate}; otherwise the DN is composed from
+ * the RDN attribute, RDN value, and parent DN. Substituted values are
+ * RFC 4514-escaped either way.
  */
 const defaultDn = computed(() => {
   const tpl = props.userTemplateConfig?.dnTemplate
   if (tpl && tpl.trim()) {
-    const dn = evaluateExpression(tpl).trim()
+    const dn = evaluateDnTemplate(tpl).trim()
     if (dn) return dn
   }
   const attr = rdnAttr.value?.attributeName || local.rdnAttribute || ''
   const val = local.rdnValue || ''
   const base = local.parentDn || ''
   if (!attr || !val || !base) return ''
-  return `${attr}=${val},${base}`
+  return `${attr}=${escapeRdnValue(val)},${base}`
 })
 
-/**
- * The DN field is editable on create: it seeds from {@link defaultDn} and tracks
- * it as the admin fills in the RDN, until they type into the DN field themselves
- * — after which {@code dnEdited} freezes their override. Edit mode never touches
- * this (the DN is immutable there).
- */
 const dnEdited = ref(false)
-watch(defaultDn, (dn) => {
-  if (!props.isEdit && !dnEdited.value) local.dn = dn
-}, { immediate: true })
+
+/**
+ * The DN shown and submitted on create: the computed {@link defaultDn} until the
+ * admin overrides it by typing (after which their value, held in local.dn,
+ * wins). This is a *pure computed* — there is deliberately no watcher pushing
+ * defaultDn into local.dn — so the field always reflects the latest values of
+ * the fields the template references (including computed attributes), with no
+ * update race against the parent round-trip. Edit mode shows the immutable DN.
+ */
+const effectiveDn = computed(() => {
+  if (props.isEdit) return local.dn || ''
+  return dnEdited.value ? (local.dn || '') : defaultDn.value
+})
 
 /** Admin typed into the DN field — stop tracking the computed default. */
 function onDnInput(v: string) {
@@ -832,20 +896,20 @@ function onDnInput(v: string) {
   local.dn = v
 }
 
-/** Re-sync the DN with the computed default, discarding a manual override. */
+/** Discard a manual override and fall back to the computed default. */
 function resetDn() {
   dnEdited.value = false
   local.dn = defaultDn.value
 }
 
 /**
- * Client-side mirror of the server's profile-DIT check: an overridden DN must
- * stay within the profile's target OU (parentDn). Purely advisory — the server
+ * Client-side mirror of the server's profile-DIT check: the DN must stay within
+ * the profile's target OU (parentDn). Purely advisory — the server
  * (ProvisioningProfileService.requireDnWithinProfileDit) is authoritative.
  */
 const dnError = computed(() => {
   if (props.isEdit || !showDnField.value) return ''
-  const dn = (local.dn || '').trim()
+  const dn = effectiveDn.value.trim()
   const base = (local.parentDn || '').trim()
   if (!dn) return dnEdited.value ? 'DN is required' : ''
   if (base && !dnWithinBase(dn, base)) return `DN must be within ${base}`
@@ -1049,6 +1113,9 @@ watch(local, v => {
       data.rdnValue = cv[key]
     }
   }
+  // Carry the live computed-or-overridden DN (escaped) so the parent always
+  // submits the current value — local.dn alone is stale until an override.
+  if (!props.isEdit) data.dn = effectiveDn.value
   emit('update', data)
 }, { deep: true })
 watch(() => props.data, v => {
