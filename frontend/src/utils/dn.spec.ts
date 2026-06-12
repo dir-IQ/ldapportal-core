@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from 'vitest'
-import { parseLeadingRdn, ensureNamingValues } from './dn'
+import { parseLeadingRdn, ensureNamingValues, normalizeDnForCompare, dnEquals } from './dn'
 
 describe('parseLeadingRdn', () => {
   it('parses a single-valued RDN', () => {
@@ -69,5 +69,43 @@ describe('ensureNamingValues', () => {
     const attrs = { cn: ['Other'] }
     ensureNamingValues('cn=Primary,ou=people,dc=x', attrs)
     expect(attrs).toEqual({ cn: ['Other'] })
+  })
+})
+
+describe('dnEquals', () => {
+  it('treats AVA order within a multi-valued RDN as insignificant', () => {
+    // The as-written member value vs the server-normalized entry DN.
+    expect(dnEquals(
+      'o=0001+cn=Jim Moffett,ou=People,dc=oud1,dc=example,dc=com',
+      'cn=Jim Moffett+o=0001,ou=People,dc=oud1,dc=example,dc=com',
+    )).toBe(true)
+  })
+
+  it('ignores case and spacing around separators', () => {
+    expect(dnEquals(
+      'CN=Jim Moffett, OU=People, DC=x',
+      'cn=jim moffett,ou=people,dc=x',
+    )).toBe(true)
+  })
+
+  it('honours escaped commas instead of splitting on them', () => {
+    expect(dnEquals(
+      'cn=Moffett\\, Jim,ou=People,dc=x',
+      'cn=moffett\\, jim,ou=people,dc=x',
+    )).toBe(true)
+    // The escaped comma is part of the value, not an RDN boundary.
+    expect(normalizeDnForCompare('cn=Moffett\\, Jim,ou=People,dc=x').split(',').length)
+      .toBeGreaterThan(1)
+  })
+
+  it('distinguishes genuinely different DNs', () => {
+    expect(dnEquals('cn=jim,ou=people,dc=x', 'cn=jim,ou=staff,dc=x')).toBe(false)
+    expect(dnEquals('cn=jim+o=1,ou=people,dc=x', 'cn=jim+o=2,ou=people,dc=x')).toBe(false)
+    expect(dnEquals('cn=jim,ou=people,dc=x', 'cn=jim+o=1,ou=people,dc=x')).toBe(false)
+  })
+
+  it('handles empty input', () => {
+    expect(dnEquals('', '')).toBe(true)
+    expect(dnEquals('cn=jim,dc=x', '')).toBe(false)
   })
 })
