@@ -49,7 +49,8 @@
         </div>
 
         <!-- Dynamic fields grouped by section -->
-        <div class="p-6">
+        <div ref="formRootEl" class="p-6">
+          <FormValidationSummary v-if="showSummary" :errors="validationErrors" />
           <template v-for="(sectionFields, sectionName) in groupedFields" :key="sectionName">
             <h3 v-if="sectionName !== '_default'" class="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3 mt-6 first:mt-0">
               {{ sectionName }}
@@ -67,24 +68,27 @@
                   <template v-if="editing && field.editable">
                     <textarea v-if="field.inputType === 'TEXTAREA'"
                       :id="`ss-profile-field-${field.attributeName}`"
+                      :data-field="field.attributeName"
                       :value="String(editForm[field.attributeName] ?? '')"
                       @input="editForm[field.attributeName] = ($event.target as HTMLTextAreaElement).value"
                       rows="3"
                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
                     <select v-else-if="field.inputType === 'SELECT' && field.allowedValues"
                       :id="`ss-profile-field-${field.attributeName}`"
+                      :data-field="field.attributeName"
                       v-model="editForm[field.attributeName]"
                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                       <option value="">-- select --</option>
                       <option v-for="opt in parseAllowedValues(field.allowedValues)" :key="opt" :value="opt">{{ opt }}</option>
                     </select>
                     <label v-else-if="field.inputType === 'BOOLEAN'" class="flex items-center gap-2 py-2">
-                      <input type="checkbox" v-model="editForm[field.attributeName]" class="rounded" />
+                      <input type="checkbox" :data-field="field.attributeName" v-model="editForm[field.attributeName]" class="rounded" />
                       <span class="text-sm text-gray-700">{{ editForm[field.attributeName] ? 'Yes' : 'No' }}</span>
                     </label>
                     <div v-else-if="field.inputType === 'PASSWORD'" class="relative">
                       <input
                         :id="`ss-profile-field-${field.attributeName}`"
+                      :data-field="field.attributeName"
                         v-model="editForm[field.attributeName]"
                         :type="profilePwdVisible[field.attributeName] ? 'text' : 'password'"
                         class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 pr-9" />
@@ -104,6 +108,7 @@
                     </div>
                     <input v-else
                       :id="`ss-profile-field-${field.attributeName}`"
+                      :data-field="field.attributeName"
                       v-model="editForm[field.attributeName]"
                       type="text"
                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" />
@@ -130,6 +135,8 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { getTemplate, getProfile, updateProfile } from '@/api/selfservice'
 import { validateAttributes } from '@/utils/attributeValidation'
+import FormValidationSummary from '@/components/FormValidationSummary.vue'
+import { useFormErrors } from '@/composables/useFormErrors'
 
 interface ProfileField {
   attributeName: string
@@ -163,7 +170,16 @@ const saveError = ref('')
 const templateData = ref<TemplateData | null>(null)
 const profileData = ref<ProfileData | null>(null)
 const editForm = reactive<Record<string, string | boolean>>({})
-const fieldErrors = reactive<Record<string, string>>({})
+const formRootEl = ref<HTMLElement | null>(null)
+const {
+  errors: fieldErrors,
+  summary: validationErrors,
+  showSummary,
+  setErrors,
+  report: reportErrors,
+} = useFormErrors({
+  labelFor: name => (templateData.value?.fields || []).find(f => f.attributeName === name)?.label || name,
+})
 const profilePwdVisible = reactive<Record<string, boolean>>({})
 
 onMounted(async () => {
@@ -237,11 +253,11 @@ function parseAllowedValues(json: string): string[] {
 // Shared with the admin forms and RegisterView; the server
 // (ProvisioningProfileService) re-validates authoritatively.
 function validateFields(): boolean {
-  for (const k of Object.keys(fieldErrors)) delete fieldErrors[k]
   const editable = (templateData.value?.fields || []).filter(f => f.editable)
-  const errors = validateAttributes(editable, name => editForm[name])
-  Object.assign(fieldErrors, errors)
-  return Object.keys(errors).length === 0
+  setErrors(validateAttributes(editable, name => editForm[name]))
+  // report() shows the top-of-form banner and focuses/scrolls to the first
+  // failing field; it returns true when there are errors.
+  return !reportErrors(formRootEl.value)
 }
 
 async function handleSave() {

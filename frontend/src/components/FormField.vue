@@ -11,6 +11,7 @@
       <input
         v-if="type !== 'textarea' && type !== 'select'"
         :id="id"
+        :data-field="fieldKey || undefined"
         :type="type"
         :value="modelValue"
         :placeholder="placeholder"
@@ -24,6 +25,7 @@
       <textarea
         v-else-if="type === 'textarea'"
         :id="id"
+        :data-field="fieldKey || undefined"
         :value="modelValue"
         :placeholder="placeholder"
         :disabled="disabled"
@@ -35,6 +37,7 @@
       <select
         v-else
         :id="id"
+        :data-field="fieldKey || undefined"
         :value="modelValue"
         :disabled="disabled"
         :aria-invalid="error ? 'true' : undefined"
@@ -81,6 +84,9 @@ const props = withDefaults(defineProps<{
   // Pass null (default) to use the type-aware fallback below. Pass a string
   // to override — e.g. 'current-password' on a login form.
   autocomplete?: string | null
+  // Stable field key emitted as `data-field`, so useFormErrors() can focus and
+  // scroll to this control when it fails validation. Defaults to undefined.
+  fieldKey?: string | null
 }>(), {
   id: () => `field-${Math.random().toString(36).slice(2)}`,
   type: 'text',
