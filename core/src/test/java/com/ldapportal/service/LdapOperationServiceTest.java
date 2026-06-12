@@ -227,6 +227,30 @@ class LdapOperationServiceTest {
     }
 
     @Test
+    void createUser_mergesMultiValuedRdnNamingValuesIntoAttributes() {
+        // o=0001+cn=Sanjay Mishra is a multi-valued RDN: both AVAs must land
+        // in the attribute map or non-AD directories reject the add with a
+        // naming violation. The merge runs server-side so direct API and bulk
+        // callers get it too, not just the web form.
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String dn = "o=0001+cn=Sanjay Mishra,ou=People,dc=example,dc=com";
+        when(userService.getUser(dc, dn)).thenReturn(new LdapUser(dn, Map.of()));
+
+        service.createUser(dirId, adminPrincipal(),
+                new CreateEntryRequest(dn, Map.of("mail", List.of("sm@example.com"))));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> attrs =
+                ArgumentCaptor.forClass((Class<Map<String, List<String>>>) (Class<?>) Map.class);
+        verify(userService).createUser(eq(dc), eq(dn), attrs.capture(), isNull());
+        assertThat(attrs.getValue())
+                .containsEntry("o", List.of("0001"))
+                .containsEntry("cn", List.of("Sanjay Mishra"))
+                .containsEntry("mail", List.of("sm@example.com"));
+    }
+
+    @Test
     void updateUser_malformedMailAttribute_throwsAndSkipsWrite() {
         String dn = "uid=jsmith,ou=people,dc=example,dc=com";
         DirectoryConnection dc = enabledDir(true);

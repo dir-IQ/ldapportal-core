@@ -5,6 +5,7 @@ import com.ldapportal.core.governance.MembershipGate;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.ldap.validation.DnValidator;
 import com.ldapportal.ldap.validation.LdapAttributeValidator;
+import com.ldapportal.ldap.validation.NamingAttributes;
 import com.ldapportal.auth.PermissionService;
 import com.ldapportal.dto.csv.BulkDeletePreviewResult;
 import com.ldapportal.dto.csv.BulkDeletePreviewRow;
@@ -242,6 +243,15 @@ public class LdapOperationService {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, req.dn());
         DnValidator.requireValidDn(req.dn(), dc.getDirectoryType());
+
+        // Naming consistency: every AVA in the DN's leading RDN must be among
+        // the entry's attribute values or vendors other than AD reject the add
+        // with a naming violation. Merged (not rejected) so operator-overridden
+        // and multi-valued RDNs (o=0001+cn=…) land correctly for every caller,
+        // and merged *before* profile validation so the naming values are
+        // validated like any other.
+        req = new CreateEntryRequest(req.dn(),
+                NamingAttributes.mergeRdnValues(req.dn(), req.attributes(), dc.getDirectoryType()));
 
         // Enforce the matched profile's attribute rules (required/length/regex/
         // allowed-values) on the admin create path, mirroring the self-service
