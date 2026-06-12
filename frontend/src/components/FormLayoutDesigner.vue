@@ -58,19 +58,19 @@
                   </label>
                   <div class="w-full h-9 border border-gray-200 rounded-lg bg-gray-50"></div>
                 </div>
-                <!-- Computed DN (shown immediately after RDN when enabled) -->
-                <div v-if="field.rdn && localShowDnField" class="col-span-4">
+                <!-- DN field (placed/sized per its layout) -->
+                <div v-else-if="field.isDn" :style="{ gridColumn: `span ${field.columnSpan || 4}` }">
                   <label class="block text-sm font-medium text-gray-700 mb-1">
                     DN
                     <span class="text-xs bg-blue-100 text-blue-700 rounded px-1 ml-1">editable</span>
                   </label>
                   <div class="w-full h-9 border border-gray-200 rounded-lg bg-white flex items-center px-3 text-xs text-gray-600 italic font-mono truncate">
-                    {{ localDnTemplate || `${field.attributeName}=…,ou=…,dc=…` }}
+                    {{ localDnTemplate || `${rdnFieldName}=…,ou=…,dc=…` }}
                   </div>
                 </div>
                 <!-- Regular field -->
                 <div
-                  v-if="!field.rdn"
+                  v-else-if="!field.rdn"
                   :style="{ gridColumn: `span ${field.columnSpan || 6}` }"
                 >
                   <label class="block text-sm font-medium text-gray-700 mb-1">
@@ -204,23 +204,50 @@
                   >{{ opt.label }}</button>
                 </div>
               </div>
-              <!-- Computed DN card (shown after RDN when enabled) -->
+              <!-- DN field card — computed/read-only, but draggable + resizable -->
               <div
-                v-if="field.rdn && localShowDnField"
-                class="col-span-4 flex items-center gap-2 px-3 py-2 bg-gray-50 border border-dashed border-gray-300 rounded-lg"
+                v-else-if="field.isDn"
+                :style="{ gridColumn: `span ${field.columnSpan || 4}` }"
+                :class="[
+                  fieldDrag.field?.attributeName === field.attributeName ? 'opacity-30' : '',
+                ]"
+                class="group relative flex items-center gap-2 px-3 py-2 bg-gray-50 border border-dashed border-gray-300 rounded-lg hover:border-blue-300 cursor-grab transition-colors"
+                draggable="true"
+                @dragstart="onFieldDragStart($event, sIdx, fIdx, field)"
+                @dragend="onFieldDragEnd"
+                @dragover.prevent.stop="onFieldDragOver($event, sIdx, fIdx)"
+                @drop.prevent.stop="onFieldDrop($event, sIdx, fIdx)"
               >
+                <svg class="w-3.5 h-3.5 text-gray-300 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z"/>
+                </svg>
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-1.5">
                     <span class="text-sm font-medium text-gray-500">DN</span>
                     <span class="text-[10px] bg-gray-100 text-gray-600 rounded px-1 font-medium">computed</span>
                   </div>
-                  <div class="text-[10px] text-gray-500">Auto-generated from RDN · 2/3</div>
+                  <div class="text-[10px] text-gray-500">Auto-generated from RDN · {{ spanLabel(field.columnSpan || 4) }}</div>
+                </div>
+                <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    v-for="opt in spanOptions"
+                    :key="opt.span"
+                    type="button"
+                    @click="setColumnSpan(sIdx, fIdx, opt.span)"
+                    :class="[
+                      'px-1.5 h-5 rounded text-[10px] font-bold border transition-colors whitespace-nowrap',
+                      (field.columnSpan || 4) === opt.span
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-gray-500 border-gray-300 hover:border-blue-400'
+                    ]"
+                    :title="opt.label"
+                  >{{ opt.label }}</button>
                 </div>
               </div>
 
               <!-- Regular field card -->
               <div
-                v-if="!field.rdn"
+                v-else-if="!field.rdn"
                 :style="{ gridColumn: `span ${field.columnSpan || 6}` }"
                 :class="[
                   fieldDrag.field?.attributeName === field.attributeName ? 'opacity-30' : '',
@@ -292,8 +319,16 @@ const props = defineProps({
   showDnField: { type: Boolean, default: true },
   hideDnToggle: { type: Boolean, default: false },
   dnTemplate: { type: String, default: '' },
+  // DN field layout — unset (undefined) reproduces the default: after the RDN,
+  // 2/3 width.
+  dnColumnSpan: { type: Number, default: undefined },
+  dnSectionName: { type: String, default: undefined },
+  dnDisplayOrder: { type: Number, default: undefined },
 })
-const emit = defineEmits(['update:attributeConfigs', 'update:showDnField', 'update:dnTemplate'])
+const emit = defineEmits([
+  'update:attributeConfigs', 'update:showDnField', 'update:dnTemplate',
+  'update:dnColumnSpan', 'update:dnSectionName', 'update:dnDisplayOrder',
+])
 
 const showPreview = ref(false)
 const localShowDnField = ref(props.showDnField)
@@ -311,18 +346,70 @@ const spanOptions = [
 const spanLabels = Object.fromEntries(spanOptions.map(o => [o.span, o.label]))
 function spanLabel(span) { return spanLabels[span] || 'Full' }
 
+// ── DN pseudo-field ─────────────────────────────────────────────────────────
+// The read-only DN is modelled as a synthetic layout field so it can be dragged
+// and resized with the same machinery as real attributes. It is never emitted
+// as an attribute config — its layout is reported back through the dn* model
+// values (see emitDnLayout).
+const DN_KEY = '__dn__'
+const DEFAULT_DN_SPAN = 4
+
+function makeDnField() {
+  return { attributeName: DN_KEY, isDn: true, rdn: false, columnSpan: props.dnColumnSpan || DEFAULT_DN_SPAN }
+}
+
+function hasDnField(list) {
+  return list.some(s => s.fields.some(f => f.isDn))
+}
+
+function removeDnField(list) {
+  for (const s of list) s.fields = s.fields.filter(f => !f.isDn)
+}
+
+// Insert the DN pseudo-field at its configured position, defaulting to
+// immediately after the RDN in the RDN's section.
+function insertDnField(list) {
+  if (!localShowDnField.value || hasDnField(list)) return
+  let section = (props.dnSectionName != null)
+    ? list.find(s => (s.name || '') === props.dnSectionName)
+    : null
+  if (!section) section = list.find(s => s.fields.some(f => f.rdn)) || list[0]
+  if (!section) return
+  let idx
+  if (props.dnDisplayOrder != null && props.dnDisplayOrder >= 0) {
+    idx = Math.min(props.dnDisplayOrder, section.fields.length)
+  } else {
+    const rdnIdx = section.fields.findIndex(f => f.rdn)
+    idx = rdnIdx >= 0 ? rdnIdx + 1 : section.fields.length
+  }
+  section.fields.splice(idx, 0, makeDnField())
+}
+
+// The RDN attribute name, for the DN preview placeholder.
+const rdnFieldName = computed(() => {
+  for (const s of sections.value) {
+    const r = s.fields.find(f => f.rdn)
+    if (r) return r.attributeName
+  }
+  return 'uid'
+})
+
 watch(() => props.showDnField, (v) => { localShowDnField.value = v })
 watch(localShowDnField, (v) => {
   emit('update:showDnField', v)
-  // When DN display is toggled on, force RDN field to 1/3 width
   if (v) {
+    // When DN display is toggled on, force the RDN to 1/3 width and add the
+    // draggable DN field.
     for (const section of sections.value) {
       for (const field of section.fields) {
         if (field.rdn) field.columnSpan = 2
       }
     }
-    syncToParent()
+    insertDnField(sections.value)
+  } else {
+    removeDnField(sections.value)
   }
+  syncToParent()
 })
 
 let sectionIdCounter = 0
@@ -362,6 +449,8 @@ function buildSections(attrs) {
   moveRdnToFirst(result)
   // Build initial hidden position map
   recordHiddenPositions(attrs)
+  // Add the draggable/resizable DN pseudo-field at its configured position.
+  insertDnField(result)
   return result
 }
 
@@ -407,7 +496,8 @@ watch(() => props.attributeConfigs, (newConfigs) => {
   if (syncing) return
 
   const currentFields = sections.value.flatMap(s => s.fields)
-  const currentNames = new Set(currentFields.map(f => f.attributeName))
+  // Exclude the synthetic DN field from the diff against real attribute configs.
+  const currentNames = new Set(currentFields.filter(f => !f.isDn).map(f => f.attributeName))
   const visibleConfigs = newConfigs.filter(a => !a.hidden)
   const incomingNames = new Set(visibleConfigs.map(a => a.attributeName))
 
@@ -444,9 +534,10 @@ watch(() => props.attributeConfigs, (newConfigs) => {
     [...currentNames].every(n => incomingNames.has(n))
   ) return
 
-  // Remove fields that were deleted or hidden on the Attributes tab
+  // Remove fields that were deleted or hidden on the Attributes tab (keep the
+  // synthetic DN field, which isn't a real attribute).
   for (const section of sections.value) {
-    section.fields = section.fields.filter(f => incomingNames.has(f.attributeName))
+    section.fields = section.fields.filter(f => f.isDn || incomingNames.has(f.attributeName))
   }
 
   // Add newly-added visible fields
@@ -517,6 +608,7 @@ function flattenSections() {
   const result = []
   for (const section of sections.value) {
     for (const field of section.fields) {
+      if (field.isDn) continue // DN isn't an attribute — emitted via emitDnLayout
       result.push({
         ...field,
         sectionName: section.name || '',
@@ -526,9 +618,29 @@ function flattenSections() {
   return result
 }
 
+// Report the DN field's current section / position / width back to the parent.
+function emitDnLayout() {
+  let span
+  let sectionName
+  let order
+  for (const section of sections.value) {
+    const idx = section.fields.findIndex(f => f.isDn)
+    if (idx >= 0) {
+      span = section.fields[idx].columnSpan || DEFAULT_DN_SPAN
+      sectionName = section.name || ''
+      order = section.fields.slice(0, idx).filter(f => !f.isDn).length
+      break
+    }
+  }
+  emit('update:dnColumnSpan', span)
+  emit('update:dnSectionName', sectionName)
+  emit('update:dnDisplayOrder', order)
+}
+
 function syncToParent() {
   syncing = true
   emit('update:attributeConfigs', flattenSections())
+  emitDnLayout()
   // Allow the next tick to propagate before re-enabling the watch
   setTimeout(() => { syncing = false }, 0)
 }
