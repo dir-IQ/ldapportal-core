@@ -182,7 +182,7 @@
     </AppModal>
 
     <!-- Create/Edit modal (step 2 of create, or edit) -->
-    <AppModal v-model="showModal" size="xl">
+    <AppModal v-model="showModal" size="xl" :dirty="modalDirty">
       <template #title>
         <span>{{ editingDn ? 'Edit User' : 'New User' }}</span>
         <span v-if="profileConfig?.name" class="text-gray-500 font-normal"> — </span>
@@ -190,8 +190,10 @@
         <span v-if="profileConfig?.name" class="text-gray-500 font-normal"> profile</span>
       </template>
       <UserForm ref="userFormRef" :data="form" :is-edit="!!editingDn" :user-template-config="profileConfig ?? undefined" :dir-id="dirId" :profile-id="selectedProfileId" @update="(v: UserFormState) => form = v" />
-      <template #footer>
-        <button @click="showModal = false" class="btn-neutral">Cancel</button>
+      <template #footer="{ close }">
+        <!-- Cancel routes through the AppModal close guard so unsaved values
+             get the same discard confirmation as the × button and Escape. -->
+        <button @click="close()" class="btn-neutral">Cancel</button>
         <button @click="save" :disabled="saving" class="btn-primary">{{ saving ? 'Saving…' : 'Save' }}</button>
       </template>
     </AppModal>
@@ -439,7 +441,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, nextTick, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
@@ -631,6 +633,24 @@ const editingDn      = ref<string | null>(null)
 // joined-string shape the form holds. save() diffs against it so only
 // actually-changed attributes ship as modifications.
 const editOriginalAttributes = ref<Record<string, unknown>>({})
+
+// Snapshot of the whole form state once the modal (create or edit) has opened
+// and UserForm's mount-time normalization has settled. Drives the dialog's
+// unsaved-changes guard: dirty = the form differs from this snapshot, or
+// group-membership changes are staged. Empty string = not yet captured =
+// never dirty, so the guard can't misfire while the form is still seeding.
+const formSnapshot = ref('')
+watch(showModal, (open) => {
+  formSnapshot.value = ''
+  if (open) {
+    nextTick(() => { formSnapshot.value = JSON.stringify(form.value) })
+  }
+})
+const modalDirty = computed(() =>
+  showModal.value && formSnapshot.value !== '' && (
+    JSON.stringify(form.value) !== formSnapshot.value
+    || !!userFormRef.value?.hasPendingMembershipChanges
+  ))
 const deleteTarget   = ref<UserRow | null>(null)
 const moveTarget     = ref<UserRow | null>(null)
 const newParentDn    = ref('')
@@ -792,6 +812,7 @@ const form = ref<UserFormState>(emptyForm())
 const userFormRef = ref<{
   validate: () => boolean
   applyMembershipChanges?: () => Promise<unknown>
+  hasPendingMembershipChanges?: boolean
 } | null>(null)
 
 function search() { limit.value = FETCH_LIMIT; load() }
