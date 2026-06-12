@@ -623,8 +623,11 @@ public class ProvisioningProfileService {
                 result.append(expression, i + 1, end);
                 i = end + 1;
             } else {
-                // Literal text (dots, @domain, etc.)
-                int j = i;
+                // Literal text (dots, @domain, or a lone '$'/operator char that
+                // didn't start a ${...} reference). Scan from i+1 so the current
+                // char is always consumed — otherwise a '$' not followed by '{'
+                // would never advance i and the loop would spin forever.
+                int j = i + 1;
                 while (j < len) {
                     char ch = expression.charAt(j);
                     if (ch == '$' || ch == '+' || ch == '"' || ch == '\'') break;
