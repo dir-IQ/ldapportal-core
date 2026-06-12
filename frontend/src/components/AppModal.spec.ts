@@ -67,6 +67,18 @@ describe('AppModal', () => {
 
   const panelEl = () => document.body.querySelector('.rounded-xl') as HTMLElement
 
+  it('sizes dynamically by default: no fixed height, capped at the padded viewport', () => {
+    setActivePinia(createPinia())
+    // The panel must take its content's natural height (so short content
+    // shows no inner scrollbar) and cap at 100% of the p-4 wrapper — the
+    // window minus a 1rem margin all round — where the body starts
+    // scrolling instead.
+    const w = mountModal({}, { default: '<p>hi</p>' })
+    expect(panelEl().style.height).toBe('')
+    expect(panelEl().style.maxHeight).toBe('100%')
+    w.unmount()
+  })
+
   it('fills the content area with an explicit size when `fill` is set', async () => {
     setActivePinia(createPinia())
     // Open false→true so the layout watcher fires (no main-content in jsdom →

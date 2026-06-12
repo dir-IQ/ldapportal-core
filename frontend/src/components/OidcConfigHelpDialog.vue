@@ -10,7 +10,7 @@ defineEmits(['update:modelValue'])
 
 <template>
   <AppModal :model-value="modelValue" @update:model-value="$emit('update:modelValue', $event)"
-            title="OIDC Configuration Guide" size="xl" fixed-height="80vh">
+            title="OIDC Configuration Guide" size="xl">
     <div class="oidc-help space-y-6 text-sm text-gray-700 leading-relaxed">
 
       <!-- Table of contents -->

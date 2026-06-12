@@ -14,8 +14,10 @@
         -->
         <div class="fixed inset-0 bg-black/40" />
         <!-- Panel is a flex column: header/footer are fixed, the body flexes
-             and scrolls. This lets fixedHeight (and a future resize) size the
-             whole panel while the body reflows into the remaining space. -->
+             and scrolls. Height is dynamic: the panel takes its content's
+             natural height (no inner scrollbar while everything fits) capped
+             at the padded viewport, where the body starts scrolling. A
+             drag-resize sizes the whole panel instead. -->
         <div ref="panelRef"
              :class="['relative bg-white rounded-xl shadow-xl w-full flex flex-col overflow-hidden', sizeClass]"
              :style="panelStyle">
@@ -66,7 +68,6 @@ const props = withDefaults(
     modelValue?: boolean
     title?: string
     size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl'
-    fixedHeight?: string
     /** Drag the header to reposition the modal. On by default; ignored on
      *  narrow viewports (phones keep modals put). Pass :movable="false" to opt out. */
     movable?: boolean
@@ -83,7 +84,7 @@ const props = withDefaults(
      *  (A non-resizable modal never persists anyway.) */
     storageKey?: string
   }>(),
-  { modelValue: false, title: '', size: 'md', fixedHeight: '', movable: true, resizable: true,
+  { modelValue: false, title: '', size: 'md', movable: true, resizable: true,
     fill: false, storageKey: '' },
 )
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
@@ -182,9 +183,12 @@ const { offset, size, onHandlePointerDown, onResizePointerDown } = useDraggableM
 })
 
 // Sizing precedence: an explicit drag-resize wins (and drops the max-w/max-h
-// caps); otherwise fixedHeight, else a viewport cap. The drag offset is applied
-// as a transform — but only once moved/resized, so the open/close scale
-// transition (which also animates `transform`) is left alone in the common case.
+// caps). Otherwise the height is dynamic: the panel takes its content's
+// natural height — no inner scrollbar while everything fits — capped at 100%
+// of the p-4 inset wrapper, i.e. the window minus a 1rem margin all round,
+// beyond which the body scrolls. The drag offset is applied as a transform —
+// but only once moved/resized, so the open/close scale transition (which also
+// animates `transform`) is left alone in the common case.
 const panelStyle = computed(() => {
   const style: Record<string, string> = {}
   if (size.value) {
@@ -192,10 +196,8 @@ const panelStyle = computed(() => {
     style.height = `${size.value.h}px`
     style.maxWidth = 'none'
     style.maxHeight = 'none'
-  } else if (props.fixedHeight) {
-    style.height = props.fixedHeight
   } else {
-    style.maxHeight = '90vh'
+    style.maxHeight = '100%'
   }
   const { x, y } = offset.value
   if (x || y) style.transform = `translate(${x}px, ${y}px)`
