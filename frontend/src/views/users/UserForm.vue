@@ -1,6 +1,11 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
-  <div ref="formRootEl">
+  <!-- h-full flex column: panes that want to use the modal's full height
+       (the Groups tab's lists) can flex into the body's available space
+       instead of capping at a fixed max-height and wasting the rest.
+       Panes that keep natural flow (Attributes) just overflow into the
+       modal body's scrollbar as before. -->
+  <div ref="formRootEl" class="h-full flex flex-col">
     <!-- Validation summary — surfaced at the top so an error on a field that's
          scrolled out of view is never missed. -->
     <FormValidationSummary v-if="showSummary" :errors="validationErrors" />
@@ -378,8 +383,11 @@
       </div>
     </div>
 
-    <!-- ═══ Groups tab ═══ -->
-    <div v-show="activeTab === 'groups'">
+    <!-- ═══ Groups tab ═══
+         Fills the modal body's height: the two group lists flex into the
+         remaining space (scrolling internally only when they exceed it)
+         rather than cutting off at a fixed height with dead space below. -->
+    <div v-show="activeTab === 'groups'" class="flex-1 min-h-0 flex flex-col">
       <p v-if="!isEdit" class="text-xs text-gray-500 mb-3">Select groups for the new user. Memberships will be created after the user is saved.</p>
 
       <!-- Truncation notice: the directory has more groups than the load cap,
@@ -421,19 +429,19 @@
            right = search + add. Stacks vertically on narrow screens.
            Identity DN appears in the header above the tab strip — no
            need to repeat it inside the tab content. -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-4">
 
         <!-- LEFT: existing memberships -->
-        <div>
+        <div class="flex flex-col min-h-0">
           <!-- Current + staged memberships (edit mode only). Changes are
                staged locally and applied as one batch on Save. -->
-          <div v-if="isEdit">
+          <div v-if="isEdit" class="flex flex-col min-h-0">
             <div class="flex items-center justify-between mb-2 gap-2">
               <h3 class="text-sm font-semibold text-gray-800">Groups</h3>
               <span v-if="hasPendingMembershipChanges" class="text-xs font-medium text-amber-600 shrink-0">Unsaved — applied on Save</span>
             </div>
             <div v-if="loadingGroups" class="text-sm text-gray-500 py-3 text-center">Loading…</div>
-            <ul v-else-if="displayedMemberships.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
+            <ul v-else-if="displayedMemberships.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg min-h-0 overflow-y-auto">
               <li v-for="row in displayedMemberships" :key="row.group.dn"
                   class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50"
                   :class="row.state === 'removing' ? 'bg-red-50' : row.state === 'adding' ? 'bg-green-50' : ''">
@@ -457,9 +465,9 @@
           </div>
 
           <!-- Pending groups (create mode only) -->
-          <div v-if="!isEdit">
+          <div v-if="!isEdit" class="flex flex-col min-h-0">
             <h3 class="text-sm font-semibold text-gray-800 mb-2">Groups to Join</h3>
-            <ul v-if="pendingGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden">
+            <ul v-if="pendingGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg min-h-0 overflow-y-auto">
               <li v-for="g in pendingGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
                 <div class="min-w-0 flex-1">
                   <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
@@ -473,7 +481,7 @@
         </div>
 
         <!-- RIGHT: add to group -->
-        <div>
+        <div class="flex flex-col min-h-0">
           <h3 class="text-sm font-semibold text-gray-800 mb-2">Add to Group</h3>
           <div class="flex gap-2 mb-2">
             <input
@@ -487,7 +495,10 @@
           </div>
           <div v-if="loadingGroups" class="text-sm text-gray-500 py-3 text-center">Loading…</div>
           <p v-else-if="!groupFilter.trim() && availableGroups.length === 0" class="text-xs text-gray-500 py-3 text-center">Type a group name and click Search.</p>
-          <ul v-else-if="availableGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg overflow-hidden max-h-72 overflow-y-auto">
+          <!-- No fixed max-height: the list shrinks into the column's
+               available space (scrolling internally) or takes its natural
+               height when it fits — never a hard cap with dead space below. -->
+          <ul v-else-if="availableGroups.length" class="divide-y divide-gray-100 border border-gray-200 rounded-lg min-h-0 overflow-y-auto">
             <li v-for="g in availableGroups" :key="g.dn" class="flex items-center justify-between px-3 py-2 text-sm hover:bg-gray-50">
               <div class="min-w-0 flex-1">
                 <div class="font-medium text-gray-800 truncate">{{ g.cn }}</div>
