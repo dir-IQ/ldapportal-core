@@ -87,6 +87,7 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
     private final IsvaLinkedUserLookup linkedUserLookup;
     private final IsvaProfileOverrideService overrideService;
     private final IsvaSecUserPlans secUserPlans;
+    private final IsvaGroupShapeCheck groupShapeCheck;
 
     // ── user create ──────────────────────────────────────────────────
 
@@ -318,6 +319,25 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
         VendorIntegrationIsvaConfig cfg = activeConfigOrNull(dir);
         if (cfg == null || isExempt(ctx)) {
             return BaselinePlans.groupMembership(groupDn, memberAttribute, memberValue);
+        }
+
+        // require_sec_group gate (both topologies): a membership in a group
+        // without the secGroup overlay succeeds at the LDAP level but is
+        // invisible to ISVA — a loud refusal beats silently-wrong ACLs.
+        // "Can't read the group" deliberately proceeds: the MODIFY then
+        // fails with the server's own (clearer) error if the group really
+        // is missing.
+        if (cfg.isRequireSecGroup()) {
+            Optional<Boolean> hasSecGroup =
+                    groupShapeCheck.hasObjectClass(dir, groupDn, "secGroup");
+            if (hasSecGroup.isPresent() && !hasSecGroup.get()) {
+                return GroupMemberPlan.refuse(
+                        "Group " + groupDn + " does not carry objectClass secGroup, and this "
+                                + "directory's IVIA integration is configured to require it "
+                                + "(memberships in non-secGroup groups are ignored by ISVA). "
+                                + "Add the secGroup objectClass to the group (pdadmin group "
+                                + "import), or turn off 'Require secGroup' in the IVIA config.");
+            }
         }
 
         return switch (cfg.getTopologyMode()) {

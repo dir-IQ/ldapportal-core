@@ -85,8 +85,14 @@ public class VendorIntegrationIsvaConfig {
     @Column(name = "delete_policy", nullable = false, length = 16)
     private IsvaDeletePolicy deletePolicy = IsvaDeletePolicy.DISABLE;
 
+    /** Gate group-membership writes on the target group carrying
+     * {@code objectClass: secGroup} (refuse otherwise — ISVA ignores
+     * memberships in non-secGroup groups). Opt-in: V504 reset all rows
+     * to FALSE when enforcement first shipped, because the flag had
+     * been persisted-but-unread since V500 and defaulting the gate ON
+     * would have broken every deployment's plain-group memberships. */
     @Column(name = "require_sec_group", nullable = false)
-    private boolean requireSecGroup = true;
+    private boolean requireSecGroup = false;
 
     /** ObjectClass set defining the secUser identity. Applies to both
      * modes — inline overlays these onto the demographic entry, linked
