@@ -176,11 +176,10 @@ describe('isAttributeEditable', () => {
     expect(isAttributeEditable(userEntry(), 'someUnknownAttr', schema)).toBe(false)
   })
 
-  it('locks a schema-multi-valued attribute only while the entry holds 2+ values', () => {
-    // Standard LDAP schema marks nearly every person attribute (cn, sn,
-    // mail, givenName, ...) multi-valued — locking on the schema flag alone
-    // froze the whole editor. A single-input REPLACE is safe while the
-    // entry holds at most one value; 2+ stays locked (chip editor, 1.5).
+  it('allows schema-multi-valued attributes regardless of value count (chip editor)', () => {
+    // Standard LDAP schema marks nearly every person attribute multi-valued;
+    // the chip editor handles any value count, so the predicate no longer
+    // locks on the schema flag. (Which widget renders is the table's call.)
     const twoValues: DirectoryEntry = {
       dn: 'cn=alice,ou=people,dc=example,dc=com',
       attributes: {
@@ -189,16 +188,18 @@ describe('isAttributeEditable', () => {
         description: ['first', 'second'],
       },
     }
-    expect(isAttributeEditable(twoValues, 'description', schema)).toBe(false)
-
-    const oneValue: DirectoryEntry = {
-      ...twoValues,
-      attributes: { ...twoValues.attributes, description: ['only'] },
-    }
-    expect(isAttributeEditable(oneValue, 'description', schema)).toBe(true)
-
-    // Absent entirely (count 0) → editable: typing a first value is safe.
+    expect(isAttributeEditable(twoValues, 'description', schema)).toBe(true)
     expect(isAttributeEditable(userEntry(), 'description', schema)).toBe(true)
+  })
+
+  it('locks group-membership attributes — memberships have their own flows', () => {
+    const memberSchema = schemaWith([
+      { name: 'member', singleValued: false },
+      { name: 'uniqueMember', singleValued: false },
+    ])
+    expect(isAttributeEditable(groupEntry(), 'member', memberSchema)).toBe(false)
+    expect(isAttributeEditable(groupEntry(), 'uniqueMember', memberSchema)).toBe(false)
+    expect(isAttributeEditable(groupEntry(), 'uniquemember', memberSchema)).toBe(false)
   })
 
   it('allows a non-RDN, single-valued, schema-known string attribute on a user', () => {

@@ -110,8 +110,12 @@ public class GroupController {
             @DirectoryId @PathVariable UUID directoryId,
             @AuthenticationPrincipal AuthPrincipal principal,
             @RequestParam String dn,
+            // Optional optimistic-concurrency precondition: the modifyTimestamp
+            // the client loaded. Mismatch → 412; absent → unconditional update.
+            @org.springframework.web.bind.annotation.RequestHeader(
+                    value = "If-Unmodified-Since-LDAP", required = false) String ifUnmodifiedSince,
             @Valid @RequestBody UpdateEntryRequest req) {
-        return service.updateGroup(directoryId, principal, dn, req);
+        return service.updateGroup(directoryId, principal, dn, req, ifUnmodifiedSince);
     }
 
     // NOTE (M4): Group delete and member remove intentionally have NO approval workflow.

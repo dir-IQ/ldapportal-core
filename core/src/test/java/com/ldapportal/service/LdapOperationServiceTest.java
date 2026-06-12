@@ -146,7 +146,7 @@ class LdapOperationServiceTest {
         DirectoryConnection dc = enabledDir(true);
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
         LdapUser user = new LdapUser(dn, Map.of("mail", List.of("d@example.com")));
-        when(userService.getUser(dc, dn)).thenReturn(user);
+        when(userService.getUser(dc, dn, "*", "modifyTimestamp")).thenReturn(user);
 
         UpdateEntryRequest req = new UpdateEntryRequest(List.of(
                 new AttributeModification(AttributeModification.Operation.REPLACE,
@@ -156,6 +156,67 @@ class LdapOperationServiceTest {
 
         verify(userService).updateUser(eq(dc), eq(dn), any());
         assertThat(resp.dn()).isEqualTo(dn);
+    }
+
+    // ── If-Unmodified-Since-LDAP precondition (inline edit, Phase 1.5) ────────
+
+    @Test
+    void updateUser_preconditionMismatch_throws412AndSkipsWrite() {
+        String dn = "cn=Dave,ou=Users,dc=example,dc=com";
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        when(userService.getUser(dc, dn, "modifyTimestamp")).thenReturn(
+                new LdapUser(dn, Map.of("modifytimestamp", List.of("20260612200000Z"))));
+
+        UpdateEntryRequest req = new UpdateEntryRequest(List.of(
+                new AttributeModification(AttributeModification.Operation.REPLACE,
+                        "mail", List.of("dave@example.com"))));
+
+        assertThatThrownBy(() -> service.updateUser(
+                        dirId, adminPrincipal(), dn, req, "20260612180000Z"))
+                .isInstanceOf(com.ldapportal.exception.PreconditionFailedException.class)
+                .hasMessageContaining("changed since it was loaded");
+        verify(userService, never()).updateUser(any(), anyString(), any());
+    }
+
+    @Test
+    void updateUser_preconditionMatch_proceeds() {
+        String dn = "cn=Dave,ou=Users,dc=example,dc=com";
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        when(userService.getUser(dc, dn, "modifyTimestamp")).thenReturn(
+                new LdapUser(dn, Map.of("modifytimestamp", List.of("20260612200000Z"))));
+        when(userService.getUser(dc, dn, "*", "modifyTimestamp")).thenReturn(
+                new LdapUser(dn, Map.of("mail", List.of("dave@example.com"))));
+
+        UpdateEntryRequest req = new UpdateEntryRequest(List.of(
+                new AttributeModification(AttributeModification.Operation.REPLACE,
+                        "mail", List.of("dave@example.com"))));
+
+        service.updateUser(dirId, adminPrincipal(), dn, req, "20260612200000Z");
+
+        verify(userService).updateUser(eq(dc), eq(dn), any());
+    }
+
+    @Test
+    void updateUser_preconditionWithoutServerTimestamp_degradesToUnconditional() {
+        // A directory that withholds modifyTimestamp must not block every
+        // save — the check degrades to last-write-wins.
+        String dn = "cn=Dave,ou=Users,dc=example,dc=com";
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        when(userService.getUser(dc, dn, "modifyTimestamp")).thenReturn(
+                new LdapUser(dn, Map.of()));
+        when(userService.getUser(dc, dn, "*", "modifyTimestamp")).thenReturn(
+                new LdapUser(dn, Map.of("mail", List.of("dave@example.com"))));
+
+        UpdateEntryRequest req = new UpdateEntryRequest(List.of(
+                new AttributeModification(AttributeModification.Operation.REPLACE,
+                        "mail", List.of("dave@example.com"))));
+
+        service.updateUser(dirId, adminPrincipal(), dn, req, "20260612180000Z");
+
+        verify(userService).updateUser(eq(dc), eq(dn), any());
     }
 
     @Test

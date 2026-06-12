@@ -69,6 +69,13 @@ const OPERATIONAL_ATTRS = new Set([
   'objectguid',
 ])
 
+// Group-membership attributes are excluded from inline editing even
+// though they're schema-multi-valued like everything else: memberships
+// have their own management flows (the Groups page, the user form's
+// Groups tab) with audit trails and IVIA-aware routing that a raw
+// attribute REPLACE would bypass. Lowercase keys.
+const MEMBERSHIP_ATTRS = new Set(['member', 'uniquemember'])
+
 /**
  * Reads {@code objectClass} (case-insensitive) and returns the
  * classification used to dispatch a typed update. {@code 'unknown'}
@@ -139,23 +146,12 @@ export function isAttributeEditable(
   if (OPERATIONAL_ATTRS.has(lower)) return false
   if (classify(entry) === 'unknown') return false
   if (lower === rdnAttribute(entry.dn)) return false
+  if (MEMBERSHIP_ATTRS.has(lower)) return false
   const schema = schemaByName.get(lower)
   if (!schema) return false
-  // A schema-multi-valued attribute stays editable while the entry holds
-  // at most ONE value — a single-input REPLACE can't discard sibling
-  // values that aren't there. This matters because in standard LDAP
-  // schema nearly every person attribute (cn, sn, mail, givenName, ...) is
-  // multi-valued, so locking on the schema flag alone froze the entire
-  // editor in practice. Cells actually holding 2+ values stay locked
-  // until the chip editor (Phase 1.5).
-  if (schema.singleValued === false && valueCount(entry, lower) > 1) return false
+  // Schema-multi-valued attributes are editable too: single-value cells
+  // get the plain input, cells with values route through the chip editor
+  // (EditableResultsTable decides the widget; this predicate only says
+  // whether the cell may be edited at all).
   return true
-}
-
-/** Number of values the entry currently holds for {@code lowerAttr} (case-insensitive). */
-function valueCount(entry: DirectoryEntry, lowerAttr: string): number {
-  for (const [key, values] of Object.entries(entry.attributes ?? {})) {
-    if (key.toLowerCase() === lowerAttr) return values?.length ?? 0
-  }
-  return 0
 }

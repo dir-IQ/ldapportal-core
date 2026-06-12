@@ -28,23 +28,43 @@ type EditableClassification = Exclude<EntryClassification, 'unknown'>
  * consumers can read .data and .status uniformly with the rest of
  * the codebase.
  */
+/** Header carrying the modifyTimestamp the client loaded with the row. */
+export const IF_UNMODIFIED_HEADER = 'If-Unmodified-Since-LDAP'
+
+export interface UpdateEntryOptions {
+  /**
+   * Optimistic-concurrency precondition: the {@code modifyTimestamp} the
+   * row was loaded with. The server refuses with 412 when the entry has
+   * changed since, so the caller reloads instead of overwriting blind.
+   * Omit for an unconditional update.
+   */
+  ifUnmodifiedSince?: string
+}
+
 export function updateEntry(
   directoryId: string,
   classification: EditableClassification,
   dn: string,
   modifications: AttributeModification[],
+  options?: UpdateEntryOptions,
 ): Promise<AxiosResponse<LdapEntryResponse>> {
+  const config = {
+    params: { dn },
+    headers: options?.ifUnmodifiedSince
+      ? { [IF_UNMODIFIED_HEADER]: options.ifUnmodifiedSince }
+      : undefined,
+  }
   if (classification === 'user') {
     return apiPut(
       (`/api/v1/directories/${directoryId}/users/entry` as '/api/v1/directories/{directoryId}/users/entry'),
       { modifications },
-      { params: { dn } },
+      config,
     )
   }
   return apiPut(
     (`/api/v1/directories/${directoryId}/groups/entry` as '/api/v1/directories/{directoryId}/groups/entry'),
     { modifications },
-    { params: { dn } },
+    config,
   )
 }
 

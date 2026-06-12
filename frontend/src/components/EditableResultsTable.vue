@@ -39,12 +39,14 @@ import {
 } from '@/composables/useEntryClassification'
 import {
   updateEntry,
+  getEntry,
   type AttributeModification,
   type LdapEntryResponse,
 } from '@/api/ldapEntry'
 import type { ColumnDef } from './ResultsTable.vue'
 import type { SortableRow } from '@/composables/useTablePreferences'
 import EmptyState from '@/components/EmptyState.vue'
+import MultiValueChipCell from '@/components/MultiValueChipCell.vue'
 
 interface Props {
   /** Stable namespace; reserved for future per-table preference persistence. */
@@ -69,9 +71,9 @@ interface Props {
   directoryId?: string
   /**
    * Schema map from lowercased attribute name → {@link AttributeTypeInfo}.
-   * Phase 1's editable predicate locks any attribute the schema doesn't
-   * cover (conservative); Phase 1.5 will route multi-valued attrs
-   * through the chip editor when this map says so.
+   * The editable predicate locks any attribute the schema doesn't cover
+   * (conservative), and schema-multi-valued attributes route through the
+   * chip editor instead of the plain input.
    */
   schemaMap?: Map<string, AttributeTypeInfo>
 }
@@ -97,11 +99,11 @@ const emit = defineEmits<{
 }>()
 
 /**
- * Per-row dirty map: dn → attr → newValue. Phase 1 stores the typed
- * input string here; Phase 1.5 will widen the value type to
- * {@code string | string[]} for the chip-editor branch.
+ * Per-row dirty map: dn → attr → pending value. Plain inputs store the
+ * typed string; chip cells (schema-multi-valued attributes) store the
+ * full pending value list.
  */
-const dirtyMap = ref<Map<string, Map<string, string>>>(new Map())
+const dirtyMap = ref<Map<string, Map<string, string | string[]>>>(new Map())
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 const saveState = ref<Map<string, SaveState>>(new Map())
@@ -129,6 +131,44 @@ function isCellEditable(row: SortableRow, attr: string): boolean {
   return isAttributeEditable(rowEntry(row), attr, props.schemaMap)
 }
 
+/** Editable AND schema-multi-valued → render the chip editor, not the plain input. */
+function isChipCell(row: SortableRow, attr: string): boolean {
+  return isCellEditable(row, attr)
+    && props.schemaMap.get(attr.toLowerCase())?.singleValued === false
+}
+
+/** The entry's current values for {@code attr}, case-insensitive. */
+function entryValues(row: SortableRow, attr: string): string[] {
+  const lower = attr.toLowerCase()
+  for (const [key, values] of Object.entries(rowEntry(row).attributes ?? {})) {
+    if (key.toLowerCase() === lower) return values ?? []
+  }
+  return []
+}
+
+/** Chip-cell value list: pending edit if present, else the loaded values. */
+function cellValues(row: SortableRow, attr: string): string[] {
+  const rowDn = String(row[props.rowKey] ?? row.dn ?? '')
+  const pending = dirtyMap.value.get(rowDn)?.get(attr)
+  if (Array.isArray(pending)) return pending
+  return entryValues(row, attr)
+}
+
+function onChipInput(row: SortableRow, attr: string, values: string[]): void {
+  const rowDn = String(row[props.rowKey] ?? row.dn ?? '')
+  if (!dirtyMap.value.has(rowDn)) dirtyMap.value.set(rowDn, new Map())
+  dirtyMap.value.get(rowDn)!.set(attr, values)
+}
+
+/** Escape in the chip editor — drop the cell's pending edit, back to loaded values. */
+function onChipCancel(row: SortableRow, attr: string): void {
+  const rowDn = String(row[props.rowKey] ?? row.dn ?? '')
+  const dirty = dirtyMap.value.get(rowDn)
+  if (!dirty) return
+  dirty.delete(attr)
+  if (dirty.size === 0) dirtyMap.value.delete(rowDn)
+}
+
 /**
  * Lookup precedence for the value displayed in a cell:
  *   1. dirty value (user-typed pending edit)
@@ -138,7 +178,7 @@ function isCellEditable(row: SortableRow, attr: string): boolean {
 function cellValue(row: SortableRow, attr: string): string {
   const rowDn = String(row[props.rowKey] ?? row.dn ?? '')
   const pending = dirtyMap.value.get(rowDn)?.get(attr)
-  if (pending !== undefined) return pending
+  if (typeof pending === 'string') return pending
   const raw = row[attr]
   return raw == null ? '' : String(raw)
 }
@@ -172,17 +212,19 @@ function lockReason(row: SortableRow, attr: string): string {
   // changes need a modrdn instead of a modify.
   const rdnAttr = (entry.dn.split(',')[0] ?? '').split('=')[0].trim().toLowerCase()
   if (lower === rdnAttr) return 'RDN attribute — rename via the dedicated rename flow'
+  if (lower === 'member' || lower === 'uniquemember') {
+    return 'group membership — manage via the Groups page'
+  }
   if (props.schemaMap.size === 0) return 'schema unavailable — editing locked'
   if (!props.schemaMap.has(lower)) return 'attribute not in schema'
-  if (props.schemaMap.get(lower)?.singleValued === false) {
-    return 'holds multiple values — multi-value editing lands in Phase 1.5'
-  }
   return 'cannot edit this attribute on this entry'
 }
 
 /**
  * Build the {@link AttributeModification} list for a row's pending
- * edits. Phase 1 single-valued semantics:
+ * edits.
+ *
+ * Plain (string) cells:
  *   - non-empty value          → REPLACE attr [value]
  *   - empty + schema-optional  → DELETE attr [] (LDAP empty-string
  *                                ≠ unset, so blanking removes
@@ -190,17 +232,29 @@ function lockReason(row: SortableRow, attr: string): string {
  *                                the literal "")
  *   - empty + schema-required  → REPLACE attr [""] (server will
  *                                reject; user sees a per-cell error)
+ *
+ * Chip (string[]) cells REPLACE with the full pending list — atomic in
+ * one modification; the If-Unmodified-Since-LDAP precondition guards
+ * against clobbering a concurrent change. An emptied list follows the
+ * same blank semantics as above.
  */
-function buildModifications(dirty: Map<string, string>): AttributeModification[] {
+function buildModifications(dirty: Map<string, string | string[]>): AttributeModification[] {
   const out: AttributeModification[] = []
   for (const [attr, raw] of dirty) {
     const lower = attr.toLowerCase()
-    const trimmed = raw.trim()
     const schema = props.schemaMap.get(lower)
-    // singleValued is implicitly true unless the schema says otherwise;
-    // Phase 1 only edits single-valued attrs so we don't branch on it
-    // here. (Phase 1.5 will, for the chip editor.)
-    if (trimmed === '' && schema && (schema as { required?: boolean }).required !== true) {
+    const optional = !(schema && (schema as { required?: boolean }).required === true)
+    if (Array.isArray(raw)) {
+      const values = [...new Set(raw.map(v => v.trim()).filter(v => v.length > 0))]
+      if (values.length === 0 && optional) {
+        out.push({ operation: 'DELETE', attribute: attr, values: [] })
+      } else {
+        out.push({ operation: 'REPLACE', attribute: attr, values: values.length ? values : [''] })
+      }
+      continue
+    }
+    const trimmed = raw.trim()
+    if (trimmed === '' && schema && optional) {
       out.push({ operation: 'DELETE', attribute: attr, values: [] })
     } else {
       out.push({ operation: 'REPLACE', attribute: attr, values: [raw] })
@@ -246,14 +300,17 @@ async function saveRow(row: SortableRow): Promise<void> {
   saveState.value.set(dn, 'saving')
   cellErrors.value.delete(dn)
   rowError.value.delete(dn)
+  conflictDns.value.delete(dn)
 
   try {
-    const { data: updated } = await updateEntry(
-      props.directoryId,
-      cls,
-      dn,
-      buildModifications(dirty),
-    )
+    // Conditional save: send the modifyTimestamp the row was loaded
+    // with so a concurrent change comes back as 412 instead of being
+    // silently overwritten. Rows without it save unconditionally.
+    const loadedTs = entryValues(row, 'modifytimestamp')[0]
+    const mods = buildModifications(dirty)
+    const { data: updated } = loadedTs
+      ? await updateEntry(props.directoryId, cls, dn, mods, { ifUnmodifiedSince: loadedTs })
+      : await updateEntry(props.directoryId, cls, dn, mods)
     dirtyMap.value.delete(dn)
     saveState.value.set(dn, 'saved')
     emit('row-saved', dn, updated)
@@ -267,14 +324,51 @@ async function saveRow(row: SortableRow): Promise<void> {
     }, SAVED_INDICATOR_MS)
   } catch (err) {
     saveState.value.set(dn, 'error')
+    const status = (err as { response?: { status?: number } }).response?.status
     const body = extractErrorBody(err)
-    if (body.attribute && body.message) {
+    if (status === 412) {
+      // Precondition failed — the entry changed since this row was
+      // loaded. Offer reload-and-redo instead of a blind retry.
+      conflictDns.value.add(dn)
+      rowError.value.set(dn,
+        'Changed on the server since this row was loaded — reload it and reapply your edit.')
+    } else if (body.attribute && body.message) {
       if (!cellErrors.value.has(dn)) cellErrors.value.set(dn, new Map())
       cellErrors.value.get(dn)!.set(body.attribute, body.message)
     } else {
       rowError.value.set(dn, body.message ?? body.detail ?? 'Save failed.')
     }
     // Keep the dirty map populated so the user can retry.
+  }
+}
+
+/** Rows whose last save failed the modifyTimestamp precondition (412). */
+const conflictDns = ref<Set<string>>(new Set())
+
+function isConflicted(row: SortableRow): boolean {
+  return conflictDns.value.has(String(row[props.rowKey] ?? row.dn ?? ''))
+}
+
+/**
+ * Conflict recovery: re-fetch the entry (all attributes plus
+ * modifyTimestamp, which operational reads don't include by default),
+ * drop the row's pending edits, and hand the fresh entry to the parent
+ * through the same {@code row-saved} merge a successful save uses.
+ */
+async function reloadRow(row: SortableRow): Promise<void> {
+  const dn = String(row[props.rowKey] ?? row.dn ?? '')
+  const cls: EntryClassification = classify(rowEntry(row))
+  if (cls === 'unknown' || !props.directoryId) return
+  try {
+    const { data } = await getEntry(props.directoryId, cls, dn, '*,modifyTimestamp')
+    dirtyMap.value.delete(dn)
+    cellErrors.value.delete(dn)
+    rowError.value.delete(dn)
+    conflictDns.value.delete(dn)
+    saveState.value.set(dn, 'idle')
+    emit('row-saved', dn, data)
+  } catch {
+    rowError.value.set(dn, 'Reload failed — re-run the search.')
   }
 }
 
@@ -376,10 +470,23 @@ defineExpose({
               :key="col.key"
               class="px-3 py-2 align-top break-all"
             >
-              <!-- Edit-mode editable input. Branch chosen first so the
-                   slot fallbacks below only fire on read-only cells. -->
+              <!-- Edit-mode editable cell. Branch chosen first so the
+                   slot fallbacks below only fire on read-only cells.
+                   Schema-multi-valued attributes get the chip editor;
+                   everything else keeps the plain input. -->
               <template v-if="isCellEditable(row, col.key)">
+                <MultiValueChipCell
+                  v-if="isChipCell(row, col.key)"
+                  :model-value="cellValues(row, col.key)"
+                  :input-label="`${col.key} for ${row.dn}`"
+                  :error="!!cellSaveError(row, col.key)"
+                  :data-edit-chips="col.key"
+                  :data-row-dn="String(row[rowKey] ?? row.dn)"
+                  @update:model-value="onChipInput(row, col.key, $event)"
+                  @cancel="onChipCancel(row, col.key)"
+                />
                 <input
+                  v-else
                   :value="cellValue(row, col.key)"
                   @input="onCellInput(row, col.key, ($event.target as HTMLInputElement).value)"
                   :data-edit-cell="col.key"
@@ -455,6 +562,15 @@ defineExpose({
                 class="bg-red-50 border-l-4 border-red-400 px-3 py-2 text-xs text-red-800"
               >
                 {{ rowSaveError(row) }}
+                <!-- 412 recovery: re-fetch the row, dropping its pending
+                     edits, so the user redoes the edit on fresh data. -->
+                <button
+                  v-if="isConflicted(row)"
+                  type="button"
+                  class="ml-2 font-medium text-red-700 underline hover:text-red-900"
+                  :data-reload-row="String(row[rowKey] ?? row.dn)"
+                  @click="reloadRow(row)"
+                >Reload row</button>
               </td>
             </tr>
           </template>

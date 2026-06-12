@@ -288,8 +288,25 @@ public class LdapOperationService {
 
     public LdapEntryResponse updateUser(UUID directoryId, AuthPrincipal principal,
                                         String dn, UpdateEntryRequest req) {
+        return updateUser(directoryId, principal, dn, req, null);
+    }
+
+    /**
+     * Conditional-update overload. {@code ifUnmodifiedSince} carries the
+     * {@code modifyTimestamp} the client loaded (the
+     * {@code If-Unmodified-Since-LDAP} header from the inline-edit table);
+     * when present and the entry has changed since, the update is refused
+     * with 412 so the caller reloads instead of overwriting blind.
+     */
+    public LdapEntryResponse updateUser(UUID directoryId, AuthPrincipal principal,
+                                        String dn, UpdateEntryRequest req,
+                                        String ifUnmodifiedSince) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
+        if (ifUnmodifiedSince != null && !ifUnmodifiedSince.isBlank()) {
+            requireUnmodifiedSince(
+                    userService.getUser(dc, dn, "modifyTimestamp"), dn, ifUnmodifiedSince);
+        }
 
         // Enforce the matched profile's value rules (length/regex/allowed) on
         // the attributes being modified. Required-on-create is intentionally
@@ -313,7 +330,11 @@ public class LdapOperationService {
 
         List<Modification> mods = toModifications(req);
         userService.updateUser(dc, dn, mods);
-        LdapEntryResponse result = LdapEntryResponse.from(userService.getUser(dc, dn));
+        // "*" + modifyTimestamp: the operational timestamp isn't returned by
+        // default, but conditional callers (the inline-edit table) need the
+        // fresh value to keep guarding their next save.
+        LdapEntryResponse result = LdapEntryResponse.from(
+                userService.getUser(dc, dn, "*", "modifyTimestamp"));
         auditService.record(principal, directoryId, AuditAction.USER_UPDATE, dn,
                 Map.of("modifiedAttributes", req.modifications().stream()
                         .map(AttributeModification::attribute).toList()));
@@ -322,18 +343,51 @@ public class LdapOperationService {
 
     public LdapEntryResponse updateGroup(UUID directoryId, AuthPrincipal principal,
                                          String dn, UpdateEntryRequest req) {
+        return updateGroup(directoryId, principal, dn, req, null);
+    }
+
+    /** Conditional-update overload — see {@link #updateUser(UUID, AuthPrincipal, String, UpdateEntryRequest, String)}. */
+    public LdapEntryResponse updateGroup(UUID directoryId, AuthPrincipal principal,
+                                         String dn, UpdateEntryRequest req,
+                                         String ifUnmodifiedSince) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
+        if (ifUnmodifiedSince != null && !ifUnmodifiedSince.isBlank()) {
+            requireUnmodifiedSince(
+                    groupService.getGroup(dc, dn, "modifyTimestamp"), dn, ifUnmodifiedSince);
+        }
         LdapAttributeValidator.validateSyntax(
                 dc.getDirectoryType(), modifiedAttributeValues(req), Map.of());
 
         List<Modification> mods = toModifications(req);
         groupService.updateGroup(dc, dn, mods);
-        LdapEntryResponse result = LdapEntryResponse.from(groupService.getGroup(dc, dn));
+        LdapEntryResponse result = LdapEntryResponse.from(
+                groupService.getGroup(dc, dn, "*", "modifyTimestamp"));
         auditService.record(principal, directoryId, AuditAction.GROUP_UPDATE, dn,
                 Map.of("modifiedAttributes", req.modifications().stream()
                         .map(AttributeModification::attribute).toList()));
         return result;
+    }
+
+    /**
+     * The pre-write half of the optimistic-concurrency check: compare the
+     * entry's current {@code modifyTimestamp} against the one the client
+     * loaded. An entry that doesn't expose {@code modifyTimestamp} skips the
+     * check — degrading to today's last-write-wins is better than blocking
+     * every save on a directory that withholds operational attributes.
+     */
+    private static void requireUnmodifiedSince(com.ldapportal.ldap.model.LdapEntry current,
+                                               String dn, String expected) {
+        String actual = current.getFirstValue("modifytimestamp");
+        if (actual == null || actual.isBlank()) {
+            return;
+        }
+        if (!actual.trim().equalsIgnoreCase(expected.trim())) {
+            throw new com.ldapportal.exception.PreconditionFailedException(
+                    "Entry [" + dn + "] changed since it was loaded (modifyTimestamp now "
+                            + actual + ", was " + expected
+                            + "). Reload the row and reapply the edit.");
+        }
     }
 
     public BulkAttributeUpdateResult bulkUpdateAttributes(UUID directoryId, AuthPrincipal principal,
