@@ -464,6 +464,7 @@ import PasswordPolicyStatus from '@/components/PasswordPolicyStatus.vue'
 import GroupChips from '@/components/GroupChips.vue'
 import { rdnValue } from '@/composables/useEntryClassification'
 import { ensureNamingValues } from '@/utils/dn'
+import { resolveGroupMembers } from '@/utils/groupMembers'
 
 interface ProfileLite {
   id: string
@@ -1184,16 +1185,19 @@ function openBulkMembership() {
   showBulkMembership.value = true
 }
 
-/** Map a group search entry to a BulkGroup, resolving its membership attribute. */
+/**
+ * Map a group search entry to a BulkGroup, resolving its membership
+ * attribute. resolveGroupMembers handles the backend's lower-cased
+ * attribute keys (`uniquemember`) — a camelCase lookup here resolved
+ * every groupOfUniqueNames group to `member` and bulk-added against
+ * the wrong attribute.
+ */
 function toBulkGroup(e: { dn: string, attributes?: Record<string, string[] | undefined> }): BulkGroup {
   const attrs = e.attributes || {}
   return {
     dn: e.dn,
     cn: attrs.cn?.[0] || rdnValue(e.dn) || e.dn,
-    memberAttr: attrs.member ? 'member'
-      : attrs.uniqueMember ? 'uniqueMember'
-      : attrs.memberUid ? 'memberUid'
-      : 'member',
+    memberAttr: resolveGroupMembers(attrs).memberAttr,
   }
 }
 

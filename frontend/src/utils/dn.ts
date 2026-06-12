@@ -104,3 +104,37 @@ export function ensureNamingValues(
   }
   return out
 }
+
+/**
+ * Canonical comparison form of a DN: every RDN's AVAs parsed escape-aware,
+ * names and values trimmed and lower-cased, and AVAs *within* each RDN
+ * sorted — so the as-written `o=0001+cn=Jim Moffett, ou=People,…` equals
+ * the server-normalized `cn=jim moffett+o=0001,ou=People,…` (RFC 4514: AVA
+ * order inside a multi-valued RDN is not significant).
+ *
+ * Approximate by design: assumes caseIgnore matching (true of the string
+ * syntaxes DNs are built from in practice) and ignores exotic differences
+ * like hex-escaped vs raw characters resolving unequally. For advisory
+ * client-side matching only — the directory server stays authoritative.
+ */
+export function normalizeDnForCompare(dn: string): string {
+  if (!dn) return ''
+  return splitUnescaped(dn, ',')
+    .map(rdn =>
+      splitUnescaped(rdn, '+')
+        .map(component => {
+          const fields = splitUnescaped(component, '=')
+          if (fields.length < 2) return component.trim().toLowerCase()
+          const name = fields[0].trim().toLowerCase()
+          const value = unescapeDnValue(fields.slice(1).join('=').trim()).toLowerCase()
+          return `${name}=${value}`
+        })
+        .sort()
+        .join('+'))
+    .join(',')
+}
+
+/** Whether two DN strings name the same entry (see {@link normalizeDnForCompare}). */
+export function dnEquals(a: string, b: string): boolean {
+  return normalizeDnForCompare(a) === normalizeDnForCompare(b)
+}
