@@ -18,6 +18,13 @@ vi.mock('@/api/users', () => ({
   applyMemberships: vi.fn().mockResolvedValue({
     data: { applied: 1, queued: 0, refused: 0, blocked: 0, errored: 0, items: [] },
   }),
+  getUser: vi.fn(),
+}))
+// IVIA tab gating consults the auth store; report the integration as licensed
+// so visibility is driven purely by the (mocked) per-directory config —
+// enabled:false by default, overridden per test.
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ isIsvaIntegrationEnabled: true }),
 }))
 vi.mock('@/api/profiles', () => ({ generatePassword: vi.fn() }))
 vi.mock('@/api/isvaConfig', () => ({
@@ -712,5 +719,47 @@ describe('UserForm DN field layout', () => {
   it('honors a designer-configured DN width', () => {
     const wrapper = mountWithDn({ dnColumnSpan: 6 })
     expect(wrapper.html()).toContain('grid-column: span 6')
+  })
+})
+
+describe('UserForm IVIA attribute refresh', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  it('re-pulls ivia.* enrichment after an IVIA account action', async () => {
+    // The regression: suspending the IVIA account updated the IVIA tab, but
+    // the read-only ivia.* attributes on the Attributes tab kept the values
+    // loaded when the modal opened (ivia.secacctvalid stayed TRUE).
+    const { getIsvaConfig } = await import('@/api/isvaConfig')
+    vi.mocked(getIsvaConfig).mockResolvedValueOnce(
+      { data: { enabled: true } } as Awaited<ReturnType<typeof getIsvaConfig>>)
+    vi.mocked(usersApi.getUser).mockResolvedValue({
+      data: { attributes: { uid: ['jsmith'], 'isva.secacctvalid': ['FALSE'] } },
+    } as Awaited<ReturnType<typeof usersApi.getUser>>)
+
+    const wrapper = mount(UserForm, {
+      props: {
+        data: {
+          dn: 'uid=jsmith,ou=people,dc=x',
+          attributes: { uid: 'jsmith', 'isva.secacctvalid': 'TRUE' },
+        },
+        isEdit: true,
+        userTemplateConfig: {
+          rdnAttribute: 'uid',
+          attributeConfigs: [{ attributeName: 'uid', inputType: 'TEXT' }],
+        },
+        dirId: 'd1',
+        profileId: null,
+      },
+      global: { stubs: { IsvaAccountPanel: true } },
+    })
+    await flushPromises()
+
+    wrapper.findComponent({ name: 'IsvaAccountPanel' }).vm.$emit('status-changed', { linked: true })
+    await flushPromises()
+
+    expect(usersApi.getUser).toHaveBeenCalledWith('d1', 'uid=jsmith,ou=people,dc=x')
+    // The form state the parent receives carries the refreshed value.
+    const last = wrapper.emitted('update')?.at(-1)?.[0] as { attributes: Record<string, string> }
+    expect(last.attributes['isva.secacctvalid']).toBe('FALSE')
   })
 })

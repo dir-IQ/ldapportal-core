@@ -641,16 +641,26 @@ const editOriginalAttributes = ref<Record<string, unknown>>({})
 // unsaved-changes guard: dirty = the form differs from this snapshot, or
 // group-membership changes are staged. Empty string = not yet captured =
 // never dirty, so the guard can't misfire while the form is still seeding.
+//
+// isva.* enrichment is excluded from the comparison: it's read-only and
+// refreshed in place after IVIA account actions (suspend flips
+// ivia.secacctvalid, etc.), and a server-side refresh must never make an
+// untouched dialog claim unsaved work.
+function dirtyComparable(state: UserFormState): string {
+  const attrs = Object.fromEntries(
+    Object.entries(state?.attributes || {}).filter(([k]) => !isIviaAttr(k)))
+  return JSON.stringify({ ...state, attributes: attrs })
+}
 const formSnapshot = ref('')
 watch(showModal, (open) => {
   formSnapshot.value = ''
   if (open) {
-    nextTick(() => { formSnapshot.value = JSON.stringify(form.value) })
+    nextTick(() => { formSnapshot.value = dirtyComparable(form.value) })
   }
 })
 const modalDirty = computed(() =>
   showModal.value && formSnapshot.value !== '' && (
-    JSON.stringify(form.value) !== formSnapshot.value
+    dirtyComparable(form.value) !== formSnapshot.value
     || !!userFormRef.value?.hasPendingMembershipChanges
   ))
 const deleteTarget   = ref<UserRow | null>(null)
