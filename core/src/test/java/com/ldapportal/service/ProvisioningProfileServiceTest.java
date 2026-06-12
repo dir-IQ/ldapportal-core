@@ -64,6 +64,7 @@ class ProvisioningProfileServiceTest {
     @Mock private com.ldapportal.ldap.LdapUserService ldapUserService;
     @Mock private com.ldapportal.ldap.LdapGroupService ldapGroupService;
     @Mock private com.ldapportal.ldap.LdapBrowseService ldapBrowseService;
+    @Mock private com.ldapportal.ldap.LdapSchemaService ldapSchemaService;
     @Mock private AuditService auditService;
 
     private ProvisioningProfileService service;
@@ -78,7 +79,7 @@ class ProvisioningProfileServiceTest {
                 approvalConfigRepo, approverRepo, dirRepo, accountRepo,
                 adminProfileRoleRepo, new ObjectMapper(), usageLimitService,
                 passwordGenerator, ldapUserService, ldapGroupService,
-                ldapBrowseService, auditService);
+                ldapBrowseService, ldapSchemaService, auditService);
 
         profile = new ProvisioningProfile();
         profile.setId(profileId);
@@ -316,5 +317,64 @@ class ProvisioningProfileServiceTest {
         assertThat(returned).isNull();
         assertThat(attrs.get("userPassword")).containsExactly("operator-typed");
         org.mockito.Mockito.verifyNoInteractions(passwordGenerator);
+    }
+
+    // ── Seed defaults vs live schema ─────────────────────────────────────────
+
+    private com.ldapportal.entity.DirectoryConnection seedDirectory(UUID dirId) {
+        var dir = new com.ldapportal.entity.DirectoryConnection();
+        dir.setId(dirId);
+        dir.setDirectoryType(com.ldapportal.entity.enums.DirectoryType.GENERIC);
+        profile.setDirectory(dir);
+        profile.setObjectClassNames(new ArrayList<>(List.of("inetOrgPerson")));
+        given(profileRepo.findByIdAndDirectoryId(profileId, dirId)).willReturn(Optional.of(profile));
+        given(attrConfigRepo.countByProfileId(profileId)).willReturn(0L);
+        return dir;
+    }
+
+    @Test
+    void seedAttributeDefaults_filtersRowsNotPermittedByLiveSchema() {
+        UUID dirId = UUID.randomUUID();
+        var dir = seedDirectory(dirId);
+        // Standard inetOrgPerson chain: everything in the curated seed except
+        // 'c' (countryName), which the chain does not permit.
+        java.util.Set<String> required = java.util.Set.of("cn", "sn", "objectClass");
+        java.util.Set<String> optional = java.util.Set.of(
+                "uid", "givenName", "displayName", "initials", "employeeNumber",
+                "employeeType", "mail", "telephoneNumber", "mobile", "pager",
+                "facsimileTelephoneNumber", "homePhone", "postalAddress", "street",
+                "l", "st", "postalCode", "title", "ou", "o", "departmentNumber",
+                "manager", "description", "userPassword");
+        given(ldapSchemaService.getAttributesForObjectClasses(dir, List.of("inetOrgPerson")))
+                .willReturn(new com.ldapportal.ldap.LdapSchemaService.ObjectClassAttributes(
+                        "inetOrgPerson", null, required, optional));
+
+        service.seedAttributeDefaults(dirId, profileId, "inetOrgPerson", null);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(ProfileAttributeConfig.class);
+        org.mockito.Mockito.verify(attrConfigRepo, org.mockito.Mockito.atLeastOnce())
+                .save(captor.capture());
+        List<String> saved = captor.getAllValues().stream()
+                .map(ProfileAttributeConfig::getAttributeName).toList();
+        assertThat(saved).contains("cn", "l", "st", "postalCode");
+        assertThat(saved).doesNotContain("c");
+    }
+
+    @Test
+    void seedAttributeDefaults_seedsUnfilteredWhenSchemaLookupFails() {
+        UUID dirId = UUID.randomUUID();
+        var dir = seedDirectory(dirId);
+        given(ldapSchemaService.getAttributesForObjectClasses(dir, List.of("inetOrgPerson")))
+                .willThrow(new RuntimeException("directory unreachable"));
+
+        service.seedAttributeDefaults(dirId, profileId, "inetOrgPerson", null);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(ProfileAttributeConfig.class);
+        org.mockito.Mockito.verify(attrConfigRepo, org.mockito.Mockito.atLeastOnce())
+                .save(captor.capture());
+        // Graceful fallback: schema unknown must mean "skip filtering",
+        // never "nothing permitted".
+        assertThat(captor.getAllValues().stream()
+                .map(ProfileAttributeConfig::getAttributeName).toList()).contains("c", "cn");
     }
 }
