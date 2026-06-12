@@ -463,6 +463,7 @@ import EntryTimeline from '@/components/EntryTimeline.vue'
 import PasswordPolicyStatus from '@/components/PasswordPolicyStatus.vue'
 import GroupChips from '@/components/GroupChips.vue'
 import { rdnValue } from '@/composables/useEntryClassification'
+import { ensureNamingValues } from '@/utils/dn'
 
 interface ProfileLite {
   id: string
@@ -1001,15 +1002,23 @@ async function save() {
           attributes[k] = [String(v)]
         }
       }
-      // Include the RDN attribute in the attributes map
-      if (f.rdnAttribute && f.rdnValue !== undefined) {
-        attributes[f.rdnAttribute] = [f.rdnValue]
+      // The designated RDN field's value is still an entry attribute even
+      // when an overridden DN no longer uses that attribute for naming.
+      const rdnAttrName = f.rdnAttribute
+      if (rdnAttrName && f.rdnValue
+          && !Object.keys(attributes).some(k => k.toLowerCase() === rdnAttrName.toLowerCase())) {
+        attributes[rdnAttrName] = [f.rdnValue]
       }
       // Include objectClasses from the selected user template
       if (profileConfig.value?.objectClassNames?.length) {
         attributes.objectClass = profileConfig.value.objectClassNames
       }
-      const createRes = await usersApi.createUser(dirId, { dn, attributes })
+      // Naming consistency: every AVA in the DN's leading RDN must be present
+      // among the entry's attribute values or the directory rejects the add
+      // with a naming violation. Derived from the actual (possibly overridden,
+      // possibly multi-valued) RDN — e.g. o=0001+cn=Sanjay Mishra adds both —
+      // rather than blindly injecting the profile's designated rdnAttribute.
+      const createRes = await usersApi.createUser(dirId, { dn, attributes: ensureNamingValues(dn, attributes) })
       if (createRes.status === 202) {
         // Approval workflow intercepted — user creation is pending approval
         notif.success('User creation submitted for approval')

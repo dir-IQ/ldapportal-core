@@ -382,6 +382,113 @@ describe('UserForm editable DN (create mode)', () => {
   })
 })
 
+// Naming behaviour derives from the entry's *actual* DN, not the profile's
+// designated rdnAttribute: a multi-valued RDN (o=0001+cn=…) locks every
+// component in edit mode, and a designated attribute an overridden DN no
+// longer uses stays editable.
+describe('UserForm DN-derived naming attributes', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  const multiRdnTemplate = {
+    rdnAttribute: 'cn',
+    attributeConfigs: [
+      { attributeName: 'cn', inputType: 'TEXT', editableOnUpdate: true },
+      { attributeName: 'o', inputType: 'TEXT', editableOnUpdate: true },
+      { attributeName: 'mail', inputType: 'TEXT', editableOnUpdate: true },
+    ],
+  }
+
+  function mountMultiRdnEdit(dn: string) {
+    return mount(UserForm, {
+      props: {
+        data: { dn, attributes: { cn: 'Sanjay Mishra', o: '0001', mail: 'sm@example.com' } },
+        isEdit: true,
+        userTemplateConfig: multiRdnTemplate,
+        dirId: null,
+        profileId: null,
+      },
+    })
+  }
+
+  function fieldByLabel(wrapper: ReturnType<typeof mountMultiRdnEdit>, label: string) {
+    return wrapper.findAllComponents({ name: 'FormField' })
+      .find(c => String(c.props('label') || '').startsWith(label))!
+  }
+
+  it('locks every component of a multi-valued RDN in edit mode', () => {
+    const wrapper = mountMultiRdnEdit('o=0001+cn=Sanjay Mishra,ou=People,dc=oud1,dc=example,dc=com')
+    expect(fieldByLabel(wrapper, 'cn').find('input').attributes('disabled')).toBeDefined()
+    expect(fieldByLabel(wrapper, 'o').find('input').attributes('disabled')).toBeDefined()
+    expect(fieldByLabel(wrapper, 'mail').find('input').attributes('disabled')).toBeUndefined()
+  })
+
+  it('marks both naming fields with the (RDN) label suffix', () => {
+    const wrapper = mountMultiRdnEdit('o=0001+cn=Sanjay Mishra,ou=People,dc=oud1,dc=example,dc=com')
+    expect(String(fieldByLabel(wrapper, 'cn').props('label'))).toBe('cn (RDN)')
+    expect(String(fieldByLabel(wrapper, 'o').props('label'))).toBe('o (RDN)')
+    expect(String(fieldByLabel(wrapper, 'mail').props('label'))).toBe('mail')
+  })
+
+  it('keeps the designated attribute editable when the entry DN does not use it', () => {
+    // Entry created under an operator-overridden DN naming uid, not cn (the
+    // designated rdnAttribute) — cn must not be wrongly locked.
+    const wrapper = mountMultiRdnEdit('uid=smishra,ou=People,dc=oud1,dc=example,dc=com')
+    expect(fieldByLabel(wrapper, 'cn').find('input').attributes('disabled')).toBeUndefined()
+  })
+
+  it('skips validation rules for actual naming attributes in edit mode', () => {
+    const wrapper = mount(UserForm, {
+      props: {
+        data: {
+          dn: 'o=0001+cn=Sanjay Mishra,ou=People,dc=oud1,dc=example,dc=com',
+          attributes: { cn: 'Sanjay Mishra', o: '0001' },
+        },
+        isEdit: true,
+        userTemplateConfig: {
+          rdnAttribute: 'cn',
+          attributeConfigs: [
+            { attributeName: 'cn', inputType: 'TEXT', editableOnUpdate: true },
+            // o="0001" violates the rule, but o names the entry (its field is
+            // disabled), so the rule must not block saving other edits.
+            { attributeName: 'o', inputType: 'TEXT', editableOnUpdate: true, validationRegex: '^[a-z]+$', validationMessage: 'letters only' },
+          ],
+        },
+        dirId: null,
+        profileId: null,
+      },
+    })
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(true)
+  })
+
+  // Create mode: an overridden DN whose naming value disagrees with the typed
+  // field value would be rejected by the directory as a naming violation —
+  // the form must surface the conflict instead.
+  it('flags a conflict between an overridden DN naming value and the typed field', async () => {
+    Element.prototype.scrollIntoView = vi.fn()
+    const wrapper = mount(UserForm, {
+      props: {
+        data: { rdnAttribute: 'uid', rdnValue: 'jsmith', parentDn: 'ou=people,dc=example,dc=com', attributes: {} },
+        isEdit: false,
+        userTemplateConfig: {
+          rdnAttribute: 'uid',
+          attributeConfigs: [
+            { attributeName: 'uid', requiredOnCreate: true, editableOnCreate: true, inputType: 'TEXT' },
+          ],
+        },
+        dirId: null,
+        profileId: null,
+      },
+    })
+    await wrapper.vm.$nextTick()
+    const dnInput = wrapper.findAll('input')
+      .find(i => i.attributes('placeholder') === 'uid=jsmith,ou=people,dc=example,dc=com')!
+    await dnInput.setValue('uid=different,ou=people,dc=example,dc=com')
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('conflicts with the DN naming value uid=different')
+  })
+})
+
 interface ExposedStaged {
   validate: () => boolean
   applyMembershipChanges: () => Promise<unknown>

@@ -99,10 +99,13 @@
                   v-for="attr in section.fields"
                   :key="attr.id || attr.attributeName"
                 >
-                  <!-- RDN field -->
+                  <!-- RDN field. The "(RDN)" suffix tracks the effective DN:
+                       it disappears when an overridden DN no longer names this
+                       attribute, and other fields gain it when a multi-valued
+                       RDN (o=…+cn=…) names them too. -->
                   <div v-if="attr.rdn" :style="{ gridColumn: showDnField ? 'span 2' : `span ${attr.columnSpan || 6}` }">
                     <FormField
-                      :label="(attr.customLabel || attr.attributeName) + ' (RDN)'"
+                      :label="fieldLabel(attr)"
                       v-model="local.rdnValue"
                       :type="mapInputType(attr.inputType)"
                       required
@@ -204,7 +207,7 @@
                     </template>
                     <FormField
                       v-else
-                      :label="attr.customLabel || attr.attributeName"
+                      :label="fieldLabel(attr)"
                       :model-value="attr.computedExpression ? computedAttrValues[attr.attributeName] : local.attributes[attr.attributeName]"
                       @update:model-value="v => { if (!attr.computedExpression) local.attributes[attr.attributeName] = v }"
                       :type="mapInputType(attr.inputType)"
@@ -249,16 +252,19 @@
                   v-for="attr in section.fields"
                   :key="attr.id || attr.attributeName"
                 >
-                  <!-- RDN field in edit mode -->
+                  <!-- RDN field in edit mode. Locked only while it actually
+                       names the entry — an entry created under an overridden
+                       DN that doesn't use the designated attribute keeps this
+                       field editable. -->
                   <div v-if="attr.rdn" :style="{ gridColumn: showDnField ? 'span 2' : `span ${attr.columnSpan || 6}` }">
                     <FormField
-                      :label="attr.customLabel || attr.attributeName"
+                      :label="fieldLabel(attr)"
                       v-model="local.attributes[attr.attributeName]"
                       :type="mapInputType(attr.inputType)"
                       :required="attr.requiredOnCreate"
-                      disabled
+                      :disabled="isNamingAttr(attr.attributeName) || attr.editableOnUpdate === false"
                       :rows="attr.inputType === 'TEXTAREA' || attr.inputType === 'MULTI_VALUE' ? 3 : undefined"
-                      :hint="attr.inputType === 'MULTI_VALUE' ? 'One value per line' : undefined"
+                      :hint="editFieldHint(attr)"
                     />
                   </div>
                   <!-- DN field (shown after RDN when enabled, edit mode) -->
@@ -269,33 +275,36 @@
                       disabled
                     />
                   </div>
-                  <!-- Regular field -->
+                  <!-- Regular field. Locked when it names the entry: with a
+                       multi-valued RDN (o=0001+cn=…) every component is a
+                       naming attribute, not just the designated one, and a
+                       modify against any of them fails with notAllowedOnRDN. -->
                   <div
                     v-if="!attr.rdn"
                     :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <!-- DN Lookup: use DnPicker instead of text input -->
                     <template v-if="attr.inputType === 'DN_LOOKUP'">
-                      <label class="block text-sm font-medium text-gray-700 mb-1">{{ attr.customLabel || attr.attributeName }}</label>
+                      <label class="block text-sm font-medium text-gray-700 mb-1">{{ fieldLabel(attr) }}</label>
                       <DnPicker
                         v-model="local.attributes[attr.attributeName]"
                         :directory-id="dirId ?? undefined"
                         :placeholder="'Select a DN'"
                         :superadmin="false"
-                        :disabled="!attr.editableOnUpdate"
+                        :disabled="!attr.editableOnUpdate || isNamingAttr(attr.attributeName)"
                       />
                       <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                     </template>
                     <FormField
                       v-else
-                      :label="attr.customLabel || attr.attributeName"
+                      :label="fieldLabel(attr)"
                       v-model="local.attributes[attr.attributeName]"
                       :type="mapInputType(attr.inputType)"
                       :options="attr.inputType === 'SELECT' ? parseOptions(attr.allowedValues) : undefined"
                       :required="attr.requiredOnCreate"
-                      :disabled="!attr.editableOnUpdate"
+                      :disabled="!attr.editableOnUpdate || isNamingAttr(attr.attributeName)"
                       :rows="attr.inputType === 'TEXTAREA' || attr.inputType === 'MULTI_VALUE' ? 3 : undefined"
-                      :hint="attr.inputType === 'MULTI_VALUE' ? 'One value per line' : undefined"
+                      :hint="editFieldHint(attr)"
                       :field-key="attr.attributeName"
                       :error="fieldErrors[attr.attributeName]"
                     />
@@ -499,6 +508,7 @@ import { getIsvaConfig } from '@/api/isvaConfig'
 import { IVIA_ABBR, isIviaAttr, iviaAttrLabel } from '@/constants/productNames'
 import type { IsvaAccountStatus } from '@/api/isvaAccount'
 import { validateAttributeValue, type AttributeRules } from '@/utils/attributeValidation'
+import { parseLeadingRdn } from '@/utils/dn'
 import { useAttributeSyntaxStore } from '@/stores/attributeSyntax'
 
 /** A single profile attribute config. Only `attributeName` is guaranteed;
@@ -959,6 +969,38 @@ function resetDn() {
 }
 
 /**
+ * The attribute-value assertions of the effective DN's leading RDN — the
+ * entry's *actual* naming attributes. With an operator-overridden DN or a
+ * multi-valued-RDN template (o=0001+cn=Sanjay Mishra,…) this differs from the
+ * profile's single designated rdnAttribute: several fields can be naming, or
+ * the designated one can stop being naming. Create mode tracks the live
+ * effective DN; edit mode reads the entry's immutable DN.
+ */
+const namingAvas = computed(() => parseLeadingRdn(props.isEdit ? (local.dn || '') : effectiveDn.value))
+
+const namingAttrNames = computed(() => new Set(namingAvas.value.map(a => a.name.toLowerCase())))
+
+/** Whether the attribute appears in the effective DN's leading RDN. */
+function isNamingAttr(name: string): boolean {
+  return namingAttrNames.value.has(name.toLowerCase())
+}
+
+/**
+ * Field label with an "(RDN)" suffix only while the attribute actually names
+ * the entry — i.e. appears in the effective DN's leading RDN.
+ */
+function fieldLabel(attr: AttributeConfig): string {
+  const base = attr.customLabel || attr.attributeName
+  return isNamingAttr(attr.attributeName) ? `${base} (RDN)` : base
+}
+
+/** Hint for edit-mode fields locked because they name the entry. */
+function editFieldHint(attr: AttributeConfig): string | undefined {
+  if (isNamingAttr(attr.attributeName)) return 'Part of the entry DN — changing it requires a rename'
+  return attr.inputType === 'MULTI_VALUE' ? 'One value per line' : undefined
+}
+
+/**
  * Client-side mirror of the server's profile-DIT check: the DN must stay within
  * the profile's target OU (parentDn). Purely advisory — the server
  * (ProvisioningProfileService.requireDnWithinProfileDit) is authoritative.
@@ -1194,14 +1236,15 @@ function runValidation(): boolean {
   for (const attr of configs) {
     if (attr.hidden || attr.computedExpression) continue
     const isRdn = attr.attributeName === rdnName
-    // The RDN is immutable in edit mode (its field is disabled), so don't
-    // validate it there — a length/regex rule on the RDN attribute must not
-    // block edits to an existing entry whose RDN predates the rule.
-    if (isRdn && !forCreate) continue
+    // Naming attributes — those in the entry DN's leading RDN, not necessarily
+    // the designated rdnAttribute — are immutable in edit mode (their fields
+    // are disabled), so don't validate them there: a length/regex rule must
+    // not block edits to an existing entry whose RDN predates the rule.
+    if (!forCreate && isNamingAttr(attr.attributeName)) continue
     // Skip fields the user can't edit in this mode (their value is fixed or
     // server-managed) — except the RDN, which is always entered on create.
     const editable = forCreate ? attr.editableOnCreate !== false : attr.editableOnUpdate !== false
-    if (!editable && !isRdn) continue
+    if (!editable && !(isRdn && forCreate)) continue
 
     const value = isRdn && forCreate
       ? local.rdnValue
@@ -1210,6 +1253,27 @@ function runValidation(): boolean {
     if (err) {
       fieldErrors[attr.attributeName] = err
       ok = false
+    }
+  }
+  // Naming consistency on create: each AVA in the (possibly overridden) DN's
+  // leading RDN becomes an entry attribute value at submit, so a different
+  // value typed into the same single-valued field is a conflict the directory
+  // would reject as a naming violation — surface it here instead.
+  if (forCreate) {
+    for (const ava of namingAvas.value) {
+      const cfg = configs.find(a => a.attributeName.toLowerCase() === ava.name.toLowerCase())
+      if (!cfg || cfg.inputType === 'MULTI_VALUE') continue
+      const typed = cfg.attributeName === rdnName
+        ? local.rdnValue
+        : (cfg.computedExpression ? computedAttrValues.value[cfg.attributeName] : local.attributes[cfg.attributeName])
+      if (typed && typed.trim() && typed.trim().toLowerCase() !== ava.value.toLowerCase()) {
+        // Point at the field when the operator can fix it there; otherwise
+        // (hidden/computed value) the DN override itself is the thing to fix.
+        const target = (cfg.hidden || cfg.computedExpression) ? 'dn' : cfg.attributeName
+        fieldErrors[target] =
+          `${cfg.customLabel || cfg.attributeName} ("${typed.trim()}") conflicts with the DN naming value ${ava.name}=${ava.value}`
+        ok = false
+      }
     }
   }
   return ok

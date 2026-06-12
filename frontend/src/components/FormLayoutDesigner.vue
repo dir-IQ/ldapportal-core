@@ -37,6 +37,9 @@
         <code>${'{'}attr{'}'}</code> tokens resolve to the new user's values (reserved characters such as
         <code>+</code> and <code>,</code> are escaped automatically). Leave blank to use
         <code>&lt;rdn&gt;=&lt;value&gt;,&lt;target OU&gt;</code>. The DN stays editable and must remain within the profile's target OU.
+        A literal <code>+</code> between tokens in the first component — e.g.
+        <code>o=${'{'}o{'}'}+cn=${'{'}cn{'}'},ou=People,…</code> — creates entries with a
+        multi-valued RDN; each referenced attribute then names the entry and becomes required.
       </p>
     </div>
 
@@ -76,6 +79,10 @@
                   <label class="block text-sm font-medium text-gray-700 mb-1">
                     {{ field.customLabel || field.attributeName }}
                     <span v-if="field.requiredOnCreate" class="text-red-500">*</span>
+                    <!-- Naming badge: the attribute is referenced by the DN
+                         template's leading RDN (multi-valued RDNs mark several
+                         fields beyond the designated one). -->
+                    <span v-if="field.naming" class="text-xs bg-amber-100 text-amber-700 rounded px-1 ml-1">RDN</span>
                   </label>
                   <div v-if="field.inputType === 'TEXTAREA' || field.inputType === 'MULTI_VALUE'" class="w-full h-16 border border-gray-200 rounded-lg bg-gray-50"></div>
                   <div v-else-if="field.inputType === 'BOOLEAN'" class="flex items-center gap-2">
@@ -226,7 +233,7 @@
                     <span class="text-sm font-medium text-gray-500">DN</span>
                     <span class="text-[10px] bg-gray-100 text-gray-600 rounded px-1 font-medium">computed</span>
                   </div>
-                  <div class="text-[10px] text-gray-500">Auto-generated from RDN · {{ spanLabel(field.columnSpan || 4) }}</div>
+                  <div class="text-[10px] text-gray-500">Auto-generated from the DN template / RDN · {{ spanLabel(field.columnSpan || 4) }}</div>
                 </div>
                 <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
@@ -269,6 +276,7 @@
                   <div class="flex items-center gap-1.5">
                     <span class="text-sm font-medium text-gray-800 truncate">{{ field.customLabel || field.attributeName }}</span>
                     <span class="text-[13px] font-mono text-gray-500" v-if="field.customLabel">{{ field.attributeName }}</span>
+                    <span v-if="field.naming" class="text-[10px] bg-amber-100 text-amber-700 rounded px-1 font-medium">RDN</span>
                     <span v-if="field.requiredOnCreate" class="text-red-400 text-xs">*</span>
                   </div>
                   <div class="text-[10px] text-gray-500">{{ field.inputType }}</div>
