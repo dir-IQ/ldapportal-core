@@ -78,6 +78,17 @@ public class ProvisioningProfile {
     @Column(name = "show_dn_field", nullable = false)
     private boolean showDnField = true;
 
+    /**
+     * Optional template for the new-user DN, evaluated as a {@code ${attr}}
+     * expression by the same engine that drives attribute computed-expressions
+     * (e.g. {@code uid=${uid},ou=people,dc=example,dc=com}). When null/blank the
+     * DN defaults to {@code <rdnAttribute>=<rdnValue>,<targetUserDn>}. The admin
+     * create form seeds its editable DN field from this; whatever DN is finally
+     * submitted is validated to remain within {@link #targetUserDn}.
+     */
+    @Column(name = "dn_template", length = 500)
+    private String dnTemplate;
+
     @Column(nullable = false)
     private boolean enabled = true;
 

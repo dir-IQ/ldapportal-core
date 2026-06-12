@@ -64,6 +64,7 @@ interface ProfileForm {
   objectClassNames: string[]
   rdnAttribute: string
   showDnField: boolean
+  dnTemplate: string
   enabled: boolean
   selfRegistrationAllowed: boolean
   passwordLength: number
@@ -102,6 +103,7 @@ interface ProfileRow {
   objectClassNames: string[]
   rdnAttribute: string
   showDnField: boolean
+  dnTemplate?: string | null
   enabled: boolean
   selfRegistrationAllowed: boolean
   passwordLength?: number | null
@@ -195,7 +197,7 @@ function emptyProfile(): ProfileForm {
   return {
     name: '', description: '', targetUserDn: '', targetGroupDn: '',
     objectClassNames: [], rdnAttribute: '',
-    showDnField: true, enabled: true, selfRegistrationAllowed: false,
+    showDnField: true, dnTemplate: '', enabled: true, selfRegistrationAllowed: false,
     passwordLength: 16, passwordUppercase: true, passwordLowercase: true,
     passwordDigits: true, passwordSpecial: true, passwordSpecialChars: '!@#$%^&*',
     emailPasswordToUser: false,
@@ -270,7 +272,7 @@ async function openEdit(p: ProfileRow) {
     name: p.name, description: p.description || '', targetUserDn: p.targetUserDn,
     targetGroupDn: p.targetGroupDn || '',
     objectClassNames: [...p.objectClassNames], rdnAttribute: p.rdnAttribute,
-    showDnField: p.showDnField, enabled: p.enabled,
+    showDnField: p.showDnField, dnTemplate: p.dnTemplate || '', enabled: p.enabled,
     selfRegistrationAllowed: p.selfRegistrationAllowed,
     passwordLength: p.passwordLength ?? 16,
     passwordUppercase: p.passwordUppercase ?? true,
@@ -1543,6 +1545,7 @@ function toggleApprover(accountId: string) {
             v-if="layoutMode === 'admin'"
             v-model:attributeConfigs="layoutAttributeConfigs"
             v-model:showDnField="profile.showDnField"
+            v-model:dnTemplate="profile.dnTemplate"
           />
 
           <!-- Self-service layout -->

@@ -17,6 +17,7 @@ public record CreateProfileRequest(
         @NotEmpty List<@NotBlank String> objectClassNames,
         @NotBlank @Size(max = 100) String rdnAttribute,
         boolean showDnField,
+        @Size(max = 500) String dnTemplate,
         boolean enabled,
         boolean selfRegistrationAllowed,
         Integer passwordLength,

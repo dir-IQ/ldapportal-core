@@ -469,6 +469,8 @@ interface ProfileLite {
   name: string
   targetUserDn?: string | null
   rdnAttribute?: string
+  showDnField?: boolean
+  dnTemplate?: string | null
   enabled?: boolean
   objectClassNames?: string[]
   attributeConfigs?: Array<{ attributeName: string, defaultValue?: string }>
@@ -983,7 +985,12 @@ async function save() {
       await userFormRef.value?.applyMembershipChanges?.()
     } else {
       const f = form.value
-      const dn = `${f.rdnAttribute}=${f.rdnValue},${f.parentDn}`
+      // The DN is editable on the create form (UserForm seeds it from the
+      // profile's computed default / dnTemplate, but the admin may override it).
+      // Honour that value when present; fall back to composing it otherwise.
+      const dn = (f.dn && f.dn.trim())
+        ? f.dn.trim()
+        : `${f.rdnAttribute}=${f.rdnValue},${f.parentDn}`
       const attributes: Record<string, string[]> = {}
       for (const [k, v] of Object.entries(f.attributes || {})) {
         if (!v && v !== false) continue

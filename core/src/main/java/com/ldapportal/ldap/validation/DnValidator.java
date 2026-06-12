@@ -84,6 +84,25 @@ public final class DnValidator {
      *
      * @throws IllegalArgumentException if the RDN is null, blank, or malformed
      */
+    /**
+     * @return {@code true} if {@code dn} is equal to, or a descendant of,
+     * {@code baseDn} — i.e. lies within the {@code baseDn} subtree. Uses the
+     * UnboundID parser so the comparison is RDN-boundary aware (a naive string
+     * suffix check would let {@code uid=x,ou=people2,dc=…} masquerade as being
+     * under {@code ou=people,dc=…}). Returns {@code false} when either DN is
+     * malformed.
+     */
+    public static boolean isWithinSubtree(String dn, String baseDn) {
+        if (dn == null || dn.isBlank() || baseDn == null || baseDn.isBlank()) {
+            return false;
+        }
+        try {
+            return new DN(dn).isDescendantOf(new DN(baseDn), true);
+        } catch (LDAPException e) {
+            return false;
+        }
+    }
+
     public static void requireValidRdn(String rdn, DirectoryType directoryType) {
         if (directoryType == DirectoryType.ENTRA_ID) {
             return;

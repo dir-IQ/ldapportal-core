@@ -180,6 +180,84 @@ describe('UserForm syntax validation', () => {
   })
 })
 
+// The DN is editable on create: it seeds from the profile's dnTemplate (or the
+// default "<rdn>=<value>,<parentDn>" composition), tracks the RDN until the
+// admin overrides it, and an override must stay within the profile's target OU.
+describe('UserForm editable DN (create mode)', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  const BASE = 'ou=people,dc=example,dc=com'
+
+  const dnTemplateConfig = {
+    rdnAttribute: 'uid',
+    dnTemplate: 'uid=${uid},ou=people,dc=example,dc=com',
+    attributeConfigs: [
+      { attributeName: 'uid', requiredOnCreate: true, editableOnCreate: true, inputType: 'TEXT' },
+    ],
+  }
+  const plainConfig = {
+    rdnAttribute: 'uid',
+    attributeConfigs: [
+      { attributeName: 'uid', requiredOnCreate: true, editableOnCreate: true, inputType: 'TEXT' },
+    ],
+  }
+
+  function mountDn(config: object, parentDn = BASE) {
+    return mount(UserForm, {
+      props: {
+        data: { rdnAttribute: 'uid', rdnValue: 'jsmith', parentDn, attributes: {} },
+        isEdit: false,
+        userTemplateConfig: config,
+        dirId: null,
+        profileId: null,
+      },
+    })
+  }
+
+  // The DN FormField carries a unique placeholder.
+  function dnInput(wrapper: ReturnType<typeof mountDn>) {
+    return wrapper.findAll('input')
+      .find(i => i.attributes('placeholder') === 'uid=jsmith,ou=people,dc=example,dc=com')!
+  }
+
+  it('seeds the DN from the profile dnTemplate', async () => {
+    const wrapper = mountDn(dnTemplateConfig)
+    await wrapper.vm.$nextTick()
+    expect((dnInput(wrapper).element as HTMLInputElement).value)
+      .toBe('uid=jsmith,ou=people,dc=example,dc=com')
+  })
+
+  it('seeds from the default composition when no template is set', async () => {
+    const wrapper = mountDn(plainConfig, 'ou=staff,dc=example,dc=com')
+    await wrapper.vm.$nextTick()
+    expect((dnInput(wrapper).element as HTMLInputElement).value)
+      .toBe('uid=jsmith,ou=staff,dc=example,dc=com')
+  })
+
+  it('rejects an overridden DN outside the target OU', async () => {
+    const wrapper = mountDn(dnTemplateConfig)
+    await wrapper.vm.$nextTick()
+    await dnInput(wrapper).setValue('uid=jsmith,ou=evil,dc=example,dc=com')
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain(`DN must be within ${BASE}`)
+  })
+
+  it('accepts an overridden DN within the target OU (deeper sub-OU)', async () => {
+    const wrapper = mountDn(dnTemplateConfig)
+    await wrapper.vm.$nextTick()
+    await dnInput(wrapper).setValue('uid=jsmith,ou=eng,ou=people,dc=example,dc=com')
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(true)
+  })
+
+  it('rejects an RDN-boundary near-miss (ou=people2)', async () => {
+    const wrapper = mountDn(dnTemplateConfig)
+    await wrapper.vm.$nextTick()
+    await dnInput(wrapper).setValue('uid=jsmith,ou=people2,dc=example,dc=com')
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
+  })
+})
+
 interface ExposedStaged {
   validate: () => boolean
   applyMembershipChanges: () => Promise<unknown>

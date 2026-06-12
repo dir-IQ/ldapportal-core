@@ -79,6 +79,37 @@ class DnValidatorTest {
                 .doesNotThrowAnyException();
     }
 
+    // ── isWithinSubtree ─────────────────────────────────────────────────────
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "uid=jsmith,ou=people,dc=example,dc=com",   // direct child
+            "uid=jsmith,ou=eng,ou=people,dc=example,dc=com", // deeper descendant
+            "ou=people,dc=example,dc=com",              // the base itself
+            "uid=jsmith,OU=People,DC=Example,DC=Com",   // case-insensitive
+    })
+    void isWithinSubtreeAcceptsDescendantsAndBase(String dn) {
+        assertThat(DnValidator.isWithinSubtree(dn, "ou=people,dc=example,dc=com")).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "uid=jsmith,ou=admins,dc=example,dc=com",   // sibling OU
+            "uid=jsmith,ou=people2,dc=example,dc=com",  // RDN-boundary near-miss
+            "uid=jsmith,dc=example,dc=com",             // ancestor, not descendant
+            "uid=jsmith,ou=people,dc=other,dc=com",     // different suffix
+    })
+    void isWithinSubtreeRejectsOutsideAndBoundaryNearMisses(String dn) {
+        assertThat(DnValidator.isWithinSubtree(dn, "ou=people,dc=example,dc=com")).isFalse();
+    }
+
+    @Test
+    void isWithinSubtreeRejectsMalformedOrBlank() {
+        assertThat(DnValidator.isWithinSubtree("not-a-dn", "ou=people,dc=example,dc=com")).isFalse();
+        assertThat(DnValidator.isWithinSubtree("uid=x,ou=people,dc=example,dc=com", "")).isFalse();
+        assertThat(DnValidator.isWithinSubtree(null, "ou=people,dc=example,dc=com")).isFalse();
+    }
+
     // ── requireValidRdn ─────────────────────────────────────────────────────
 
     @ParameterizedTest

@@ -8,12 +8,14 @@ import com.ldapportal.dto.profile.CreateProfileRequest.GroupAssignmentEntry;
 import com.ldapportal.entity.*;
 import com.ldapportal.entity.enums.ApproverMode;
 import com.ldapportal.entity.enums.AuditAction;
+import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.ExpiryAction;
 import com.ldapportal.entity.enums.InputType;
 import com.ldapportal.entity.enums.PasswordDisposition;
 import com.ldapportal.exception.ConflictException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapGroupService;
+import com.ldapportal.ldap.validation.DnValidator;
 import com.ldapportal.ldap.LdapUserService;
 import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.repository.*;
@@ -153,7 +155,7 @@ public class ProvisioningProfileService {
         profile.setDirectory(dir);
         applyCommonFields(profile, req.name(), req.description(), req.targetUserDn(),
                 req.targetGroupDn(), req.objectClassNames(), req.rdnAttribute(), req.showDnField(),
-                req.enabled(), req.selfRegistrationAllowed(),
+                req.dnTemplate(), req.enabled(), req.selfRegistrationAllowed(),
                 req.passwordLength(), req.passwordUppercase(), req.passwordLowercase(),
                 req.passwordDigits(), req.passwordSpecial(), req.passwordSpecialChars(),
                 req.emailPasswordToUser(), req.passwordDisposition());
@@ -223,7 +225,7 @@ public class ProvisioningProfileService {
 
         applyCommonFields(profile, req.name(), req.description(), req.targetUserDn(),
                 req.targetGroupDn(), req.objectClassNames(), req.rdnAttribute(), req.showDnField(),
-                req.enabled(), req.selfRegistrationAllowed(),
+                req.dnTemplate(), req.enabled(), req.selfRegistrationAllowed(),
                 req.passwordLength(), req.passwordUppercase(), req.passwordLowercase(),
                 req.passwordDigits(), req.passwordSpecial(), req.passwordSpecialChars(),
                 req.emailPasswordToUser(), req.passwordDisposition());
@@ -293,6 +295,7 @@ public class ProvisioningProfileService {
         copy.setObjectClassNames(new ArrayList<>(source.getObjectClassNames()));
         copy.setRdnAttribute(source.getRdnAttribute());
         copy.setShowDnField(source.isShowDnField());
+        copy.setDnTemplate(source.getDnTemplate());
         copy.setEnabled(false); // clones start disabled
         copy.setSelfRegistrationAllowed(false);
         copy.setPasswordLength(source.getPasswordLength());
@@ -540,6 +543,29 @@ public class ProvisioningProfileService {
         return profiles.stream()
                 .filter(p -> dnLower.endsWith(p.getTargetUserDn().toLowerCase()))
                 .max(Comparator.comparingInt(p -> p.getTargetUserDn().length()));
+    }
+
+    /**
+     * Enforces that {@code dn} — typically an admin-overridden new-user DN —
+     * stays within the profile's target-OU subtree. The admin create form lets
+     * the (otherwise computed) DN be edited, so this is the server-side
+     * guardrail that a hand-edited DN can't drop a user outside the profile's
+     * DIT. No-op for Entra ID, whose objects are addressed by id/UPN, not DN.
+     *
+     * @throws IllegalArgumentException (mapped to 400) when the DN lies outside
+     *                                  the profile's {@code targetUserDn} subtree
+     */
+    @Transactional(readOnly = true)
+    public void requireDnWithinProfileDit(UUID profileId, String dn) {
+        ProvisioningProfile profile = requireProfile(profileId);
+        if (profile.getDirectory().getDirectoryType() == DirectoryType.ENTRA_ID) {
+            return;
+        }
+        if (!DnValidator.isWithinSubtree(dn, profile.getTargetUserDn())) {
+            throw new IllegalArgumentException(
+                    "User DN [" + dn + "] is outside the profile's target OU ["
+                            + profile.getTargetUserDn() + "]");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -891,7 +917,7 @@ public class ProvisioningProfileService {
     private void applyCommonFields(ProvisioningProfile profile, String name, String description,
                                     String targetUserDn, String targetGroupDn,
                                     List<String> objectClassNames,
-                                    String rdnAttribute, boolean showDnField,
+                                    String rdnAttribute, boolean showDnField, String dnTemplate,
                                     boolean enabled, boolean selfRegistrationAllowed,
                                     Integer passwordLength, Boolean passwordUppercase,
                                     Boolean passwordLowercase, Boolean passwordDigits,
@@ -909,6 +935,9 @@ public class ProvisioningProfileService {
         profile.setObjectClassNames(new ArrayList<>(objectClassNames));
         profile.setRdnAttribute(rdnAttribute);
         profile.setShowDnField(showDnField);
+        // Blank collapses to null so the create form falls back to the default
+        // "<rdn>=<value>,<targetUserDn>" composition rather than an empty template.
+        profile.setDnTemplate((dnTemplate != null && !dnTemplate.isBlank()) ? dnTemplate.trim() : null);
         profile.setEnabled(enabled);
         profile.setSelfRegistrationAllowed(selfRegistrationAllowed);
         if (passwordLength != null)       profile.setPasswordLength(passwordLength);
