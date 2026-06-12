@@ -508,7 +508,8 @@ import { getIsvaConfig } from '@/api/isvaConfig'
 import { IVIA_ABBR, isIviaAttr, iviaAttrLabel } from '@/constants/productNames'
 import type { IsvaAccountStatus } from '@/api/isvaAccount'
 import { validateAttributeValue, type AttributeRules } from '@/utils/attributeValidation'
-import { parseLeadingRdn } from '@/utils/dn'
+import { parseLeadingRdn, dnEquals } from '@/utils/dn'
+import { resolveGroupMembers } from '@/utils/groupMembers'
 import { useAttributeSyntaxStore } from '@/stores/attributeSyntax'
 
 /** A single profile attribute config. Only `attributeName` is guaranteed;
@@ -1330,15 +1331,18 @@ async function loadGroups() {
     // The backend caps at GROUP_LOAD_LIMIT; hitting it means the membership
     // view (and copy-from-user) may be missing groups beyond the cap.
     groupsTruncated.value = entries.length >= GROUP_LOAD_LIMIT
-    allGroups.value = entries.map((e: { dn: string, attributes?: Record<string, string[] | undefined> }): GroupItem => ({
-      dn: e.dn,
-      cn: e.attributes?.cn?.[0] || '—',
-      members: e.attributes?.member || e.attributes?.uniqueMember || e.attributes?.memberUid || [],
-      memberAttr: e.attributes?.member ? 'member'
-        : e.attributes?.uniqueMember ? 'uniqueMember'
-        : e.attributes?.memberUid ? 'memberUid'
-        : 'member',
-    }))
+    allGroups.value = entries.map((e: { dn: string, attributes?: Record<string, string[] | undefined> }): GroupItem => {
+      // resolveGroupMembers handles the backend's lower-cased attribute
+      // keys (`uniquemember`) — a camelCase lookup here rendered every
+      // groupOfUniqueNames group as empty.
+      const { members, memberAttr } = resolveGroupMembers(e.attributes)
+      return {
+        dn: e.dn,
+        cn: e.attributes?.cn?.[0] || '—',
+        members,
+        memberAttr,
+      }
+    })
     refreshMemberships()
   } catch (e) { console.warn('Failed to load groups:', e) }
   finally { loadingGroups.value = false }
@@ -1347,8 +1351,12 @@ async function loadGroups() {
 function refreshMemberships() {
   if (props.isEdit) {
     const userDn = local.dn || ''
+    // dnEquals, not string equality: the stored member value keeps the
+    // AVA order / spacing it was written with (`o=0001+cn=Jim Moffett,…`)
+    // while the UI holds the server-normalized DN (`cn=jim moffett+o=0001,…`)
+    // — the same entry, different strings.
     memberGroups.value = allGroups.value.filter(g =>
-      g.members.some(m => m.toLowerCase() === userDn.toLowerCase())
+      g.members.some(m => dnEquals(m, userDn))
     )
   }
   filterAvailableGroups()
@@ -1442,9 +1450,8 @@ function copyFromSelectedUser() {
     notif.info('Pick a different user — that is this user.')
     return
   }
-  const sourceLower = sourceDn.toLowerCase()
   const sourceGroups = allGroups.value.filter(g =>
-    g.members.some(m => m.toLowerCase() === sourceLower))
+    g.members.some(m => dnEquals(m, sourceDn)))
   const label = sourceLabel(sourceDn)
   if (!sourceGroups.length) {
     notif.info(`${label} has no groups to copy (or none are visible here).`)

@@ -195,6 +195,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import { validateDn } from '@/utils/attributeValidation'
+import { resolveGroupMembers, type MemberAttr } from '@/utils/groupMembers'
 
 interface ProfileLite {
   id: string
@@ -211,7 +212,7 @@ interface GroupRow {
   description?: string
   _owner: string
   _members: string[]
-  _memberAttr: 'member' | 'uniqueMember'
+  _memberAttr: MemberAttr
   __entry: { dn: string, attributes?: Record<string, string[] | string | null> }
   [key: string]: unknown
 }
@@ -415,11 +416,13 @@ async function load() {
         row[attr] = arr.join(', ')
       }
       const owner = attrs.owner
-      const memberAttr = attrs.member
-      const uniqueMemberAttr = attrs.uniqueMember
+      // resolveGroupMembers handles the backend's lower-cased attribute
+      // keys (`uniquemember`) — a camelCase lookup here rendered every
+      // groupOfUniqueNames group's member list as empty.
+      const { members, memberAttr } = resolveGroupMembers(attrs)
       row._owner      = Array.isArray(owner) ? (owner[0] || '') : (owner || '')
-      row._members    = (Array.isArray(memberAttr) ? memberAttr : Array.isArray(uniqueMemberAttr) ? uniqueMemberAttr : [])
-      row._memberAttr = memberAttr ? 'member' : uniqueMemberAttr ? 'uniqueMember' : 'member'
+      row._members    = members
+      row._memberAttr = memberAttr
       return row as unknown as GroupRow
     })
   })
