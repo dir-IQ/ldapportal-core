@@ -26,6 +26,7 @@
       >&times;</button>
     </span>
     <input
+      ref="inputEl"
       v-model="draft"
       type="text"
       class="min-w-20 flex-1 border-0 bg-transparent p-0 text-sm focus:outline-none focus:ring-0"
@@ -38,7 +39,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, ref } from 'vue'
 
 const props = withDefaults(defineProps<{
   modelValue: string[]
@@ -55,9 +56,15 @@ const emit = defineEmits<{
 }>()
 
 const draft = ref('')
+const inputEl = ref<HTMLInputElement | null>(null)
 
 function removeAt(index: number): void {
   emit('update:modelValue', props.modelValue.filter((_, i) => i !== index))
+  // The clicked x button is about to leave the DOM. Browsers drop focus
+  // from a removed element to <body> WITHOUT firing focusout, so the
+  // owning row's save-on-focusout would never run — the removal would
+  // stay pending forever. Keep focus inside the cell instead.
+  void nextTick(() => inputEl.value?.focus())
 }
 
 /** Append the trimmed draft as a chip; exact duplicates are dropped silently. */
