@@ -33,10 +33,12 @@ All IVIA account state (`secAcctValid`, `secPwdValid`, `secValidUntil`,
 status from the matched `secUser`. So an anomaly is a property of the `secUser`
 entry, its **absence** (orphan), or its **duplication**.
 
-> `secUser` is STRUCTURAL in the linked fixture schema
+> `secUser` is STRUCTURAL `SUP eUser` in the linked fixture schema
 > (`isva-schema-opendj-linked.ldif`), as IBM ships it. Each management-DIT
 > `secUser` leaf is therefore a standalone `top` + `secUser` entry — the same
-> shape the app's linked-grant writes. (The inline fixture,
+> shape the app's linked-grant writes — and a config that also lists `eUser`
+> (e.g. to name entries on `principalName`) keeps both classes on one
+> structural chain instead of two conflicting ones. (The inline fixture,
 > `isva-schema-opendj-inline.ldif`, keeps `secUser` AUXILIARY for overlay onto
 > a demographic entry.) The app keys on the `secUser` objectClass **name** +
 > `secDN`, not the structural carrier.

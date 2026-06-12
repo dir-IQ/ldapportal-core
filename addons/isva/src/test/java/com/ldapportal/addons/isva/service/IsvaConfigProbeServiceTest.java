@@ -189,6 +189,41 @@ class IsvaConfigProbeServiceTest {
                 assertThat(w).contains("principalName").contains("not permitted"));
     }
 
+    @Test
+    void schemaValid_whenStructuralClassesShareOneChain() throws Exception {
+        // IBM-shaped schema: secUser is STRUCTURAL SUP eUser, so listing
+        // both classes puts them on a single structural chain — valid.
+        VendorIntegrationIsvaConfig cfg = config(IsvaTopologyMode.LINKED);
+        cfg.setSecuserObjectClasses(java.util.List.of("secUser", "eUser"));
+        cfg.setSecuserRdnAttribute("principalName");
+        cfg.setSecuserRdnValueSource(IsvaRdnValueSource.UID);
+
+        ProbeResult result = probeWithSchema(structuralSchema(true), cfg);
+
+        assertThat(result.schemaValid()).isTrue();
+        assertThat(result.warnings()).noneMatch(w -> w.contains("STRUCTURAL"));
+    }
+
+    @Test
+    void schemaInvalid_whenTwoUnrelatedStructuralClasses() throws Exception {
+        // Both secUser and eUser STRUCTURAL but on separate chains
+        // (secUser SUP top instead of SUP eUser): the server would
+        // reject every secUser ADD with "multiple conflicting structural
+        // objectclasses" — the probe must surface that at config time,
+        // not at the first user create.
+        VendorIntegrationIsvaConfig cfg = config(IsvaTopologyMode.LINKED);
+        cfg.setSecuserObjectClasses(java.util.List.of("secUser", "eUser"));
+        cfg.setSecuserRdnAttribute("principalName");
+        cfg.setSecuserRdnValueSource(IsvaRdnValueSource.UID);
+
+        ProbeResult result = probeWithSchema(structuralSchema(false), cfg);
+
+        assertThat(result.schemaValid()).isFalse();
+        assertThat(result.warnings()).anySatisfy(w ->
+                assertThat(w).contains("both STRUCTURAL")
+                        .contains("secUser").contains("eUser"));
+    }
+
     // ── helpers ────────────────────────────────────────────────────
 
     /**
@@ -218,6 +253,30 @@ class IsvaConfigProbeServiceTest {
                     "( 1.3.6.1.4.1.99999.1.2.2 NAME 'eUser' SUP top AUXILIARY "
                             + "MAY ( principalName ) )");
         }
+        return new Schema(e);
+    }
+
+    /**
+     * A schema where secUser and eUser are both STRUCTURAL — chained
+     * ({@code secUser SUP eUser}, IBM's real shape) or on two unrelated
+     * chains ({@code secUser SUP top}, the broken-fixture shape that
+     * makes the server reject entries carrying both).
+     */
+    private static Schema structuralSchema(boolean secUserSupEUser) throws Exception {
+        Entry e = Schema.getDefaultStandardSchema().getSchemaEntry().duplicate();
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.1 NAME 'secUUID' EQUALITY caseIgnoreMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )");
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.4 NAME 'principalName' EQUALITY caseIgnoreMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )");
+        e.addAttribute("objectClasses",
+                "( 1.3.6.1.4.1.99999.1.2.2 NAME 'eUser' SUP top STRUCTURAL "
+                        + "MAY ( principalName ) )");
+        e.addAttribute("objectClasses",
+                "( 1.3.6.1.4.1.99999.1.2.1 NAME 'secUser' SUP "
+                        + (secUserSupEUser ? "eUser" : "top")
+                        + " STRUCTURAL MAY ( secUUID ) )");
         return new Schema(e);
     }
 
