@@ -377,4 +377,27 @@ class ProvisioningProfileServiceTest {
         assertThat(captor.getAllValues().stream()
                 .map(ProfileAttributeConfig::getAttributeName).toList()).contains("c", "cn");
     }
+
+    // ── evaluateExpression — must never hang on a malformed expression ─────────
+
+    @Test
+    void evaluateExpressionTreatsStrayDollarAsLiteralAndTerminates() {
+        // Regression: a '$' not followed by '{' fell into the literal-text branch
+        // whose scan broke immediately, never advancing the cursor — an infinite
+        // loop that pegged a CPU core and hung user creation (no LDAP, no log).
+        org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(
+                java.time.Duration.ofSeconds(2), () -> {
+            assertThat(service.evaluateExpression("$foo", Map.of())).isEqualTo("$foo");
+            assertThat(service.evaluateExpression("price is $5", Map.of()))
+                    .isEqualTo("price is $5");
+            assertThat(service.evaluateExpression("${a}$", Map.of("a", List.of("X"))))
+                    .isEqualTo("X$");
+            // Trailing bare '$' at end-of-string is the other trigger.
+            assertThat(service.evaluateExpression("$", Map.of())).isEqualTo("$");
+            // Well-formed references still resolve normally.
+            assertThat(service.evaluateExpression("${a}.${b}@corp.com",
+                    Map.of("a", List.of("jane"), "b", List.of("smith"))))
+                    .isEqualTo("jane.smith@corp.com");
+        });
+    }
 }

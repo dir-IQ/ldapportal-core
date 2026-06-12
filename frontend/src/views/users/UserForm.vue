@@ -1028,8 +1028,11 @@ function evaluateExpression(expr: string): string {
       parts.push(expr.substring(i + 1, end))
       i = end + 1
     } else {
-      // Literal text (e.g. dots, @domain, etc.)
-      let j = i
+      // Literal text (dots, @domain, or a lone '$'/operator char that didn't
+      // start a ${...} reference). Scan from i+1 so the current char is always
+      // consumed — otherwise a '$' not followed by '{' would never advance i
+      // and the loop would spin forever (mirrors the server-side fix).
+      let j = i + 1
       while (j < expr.length && expr[j] !== '$' && expr[j] !== '+' && expr[j] !== '"' && expr[j] !== "'") {
         j++
       }
