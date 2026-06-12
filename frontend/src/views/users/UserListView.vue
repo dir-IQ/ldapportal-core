@@ -72,7 +72,10 @@
       </template>
       <template #cell-dn="{ value, row }">
         <span class="inline-flex items-center gap-1">
-          <span class="text-xs truncate max-w-xs" :title="value as string">{{ value }}</span>
+          <!-- No max-width cap: the DN truncates against the column's actual
+               width (the table is fixed-layout with resizable columns), so a
+               widened column shows the full value. -->
+          <span class="min-w-0 truncate" :title="value as string">{{ value }}</span>
           <CopyButton :text="value as string" />
           <!-- IVIA orphan chip — surfaces the enricher's
                isva.orphaned=true tag so admins can spot linked-mode
