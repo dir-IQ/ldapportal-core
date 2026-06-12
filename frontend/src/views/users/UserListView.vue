@@ -1024,12 +1024,19 @@ async function save() {
         notif.success('User creation submitted for approval')
       } else {
         // Group assignments are applied server-side by UserController.create
-        // (it consults the matched profile's effective group set). The
-        // previous per-group addGroupMember loop here is gone — the
-        // backend handles it for manual create, bulk import, and the
-        // approval-approved path uniformly.
-        const expected = (f._pendingGroups || []).length
-        notif.success(expected ? `User created and added to ${expected} group(s)` : 'User created')
+        // (it consults the matched profile's effective group set) and the
+        // 201 body reports the actual outcome. Count what really happened
+        // rather than echoing the profile's intent, and surface per-group
+        // failures — the entry exists either way, so a silent miss here
+        // stays invisible until someone audits the group.
+        const created = createRes.data as
+          { groupsAdded?: number; groupWarnings?: string[] } | undefined
+        const groupsAdded = created?.groupsAdded ?? 0
+        const groupWarnings = created?.groupWarnings ?? []
+        notif.success(groupsAdded ? `User created and added to ${groupsAdded} group(s)` : 'User created')
+        if (groupWarnings.length) {
+          notif.error(`Some profile group assignments failed — ${groupWarnings.join('; ')}`)
+        }
       }
     }
     showModal.value = false

@@ -13,6 +13,7 @@ import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.dto.ldap.MoveUserRequest;
 import com.ldapportal.dto.ldap.ResetPasswordLdapRequest;
 import com.ldapportal.dto.ldap.UpdateEntryRequest;
+import com.ldapportal.dto.ldap.UserCreateResponse;
 import com.ldapportal.entity.PendingApproval;
 import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.entity.enums.ApprovalRequestType;
@@ -130,10 +131,16 @@ public class UserController {
         // group memberships the profile declared. Doing it server-side
         // here (and in ApprovalWorkflowService.executeUserCreate for
         // the approval path) makes the behaviour consistent across
-        // all entry points.
+        // all entry points. Per-group failures don't fail the create —
+        // the entry exists — but ride back on the response so the UI
+        // can tell the operator which memberships are missing.
+        int groupsAdded = 0;
+        List<String> groupWarnings = List.of();
         if (profile.isPresent()) {
-            profileService.applyGroupAssignmentsToUser(
+            var groupResult = profileService.applyGroupAssignmentsToUser(
                     directoryId, profile.get().getId(), req.dn(), principal);
+            groupsAdded = groupResult.added();
+            groupWarnings = groupResult.warnings();
         }
 
         // Email the password to the user when the profile delivers by email —
@@ -157,7 +164,8 @@ public class UserController {
             }
         }
 
-        return ResponseEntity.status(HttpStatus.CREATED).body(result);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(new UserCreateResponse(result, groupsAdded, groupWarnings));
     }
 
     @GetMapping("/entry")
