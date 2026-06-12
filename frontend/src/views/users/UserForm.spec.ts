@@ -64,6 +64,23 @@ describe('UserForm validation', () => {
     expect(wrapper.text()).toContain('uid is required')
   })
 
+  it('shows a top-of-form summary listing failing fields after a failed save', async () => {
+    // scrollIntoView isn't implemented in the test DOM; stub it so the
+    // post-validation scroll is a no-op.
+    Element.prototype.scrollIntoView = vi.fn()
+    const wrapper = mountForm({ rdnValue: 'jsmith', attributes: { mail: 'nope' } })
+    // No summary until a save is attempted.
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
+    await wrapper.vm.$nextTick()
+
+    const alert = wrapper.find('[role="alert"]')
+    expect(alert.exists()).toBe(true)
+    expect(alert.text()).toContain('Please fix')
+    expect(alert.text()).toContain('Enter a valid email') // the failing field's message
+  })
+
   it('fails and renders the custom message when a regex field is invalid', async () => {
     const wrapper = mountForm({ rdnValue: 'jsmith', attributes: { mail: 'nope' } })
     expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)

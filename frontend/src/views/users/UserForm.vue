@@ -1,6 +1,25 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <div>
+    <!-- Validation summary — surfaced at the top so an error on a field that's
+         scrolled out of view is never missed. -->
+    <div
+      v-if="validationFailed && validationErrors.length"
+      ref="validationSummaryRef"
+      role="alert"
+      aria-live="assertive"
+      class="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3"
+    >
+      <p class="text-sm font-semibold text-red-800">
+        Please fix {{ validationErrors.length }} field{{ validationErrors.length === 1 ? '' : 's' }} before saving:
+      </p>
+      <ul class="mt-1.5 list-disc pl-5 space-y-0.5">
+        <li v-for="e in validationErrors" :key="e.name" class="text-sm text-red-700">
+          <span class="font-medium">{{ e.label }}</span>: {{ e.message }}
+        </li>
+      </ul>
+    </div>
+
     <!-- Identity header — only meaningful in edit mode (create mode
          has no DN yet). Sits above the tab strip so it stays visible
          across Attributes / Groups / IVIA tabs. -->
@@ -1082,6 +1101,22 @@ const computedAttrValues = computed<Record<string, string>>(() => {
 // authoritatively; this only gates the form submit and renders inline errors.
 const fieldErrors = reactive<Record<string, string>>({})
 
+// True once a save attempt has failed validation; drives the summary banner at
+// the top of the form so an error on a scrolled-out field is never missed.
+const validationFailed = ref(false)
+const validationSummaryRef = ref<HTMLElement | null>(null)
+
+/** Failing fields as { label, message }, for the top-of-form summary. */
+const validationErrors = computed(() => {
+  const configs = props.userTemplateConfig?.attributeConfigs ?? []
+  const labelFor = (name: string): string => {
+    if (name === 'dn') return 'DN'
+    const c = configs.find(a => a.attributeName === name)
+    return c?.customLabel || name
+  }
+  return Object.entries(fieldErrors).map(([name, message]) => ({ name, label: labelFor(name), message }))
+})
+
 function rulesFor(attr: AttributeConfig, forCreate: boolean): AttributeRules {
   return {
     attributeName: attr.attributeName,
@@ -1105,6 +1140,19 @@ function rulesFor(attr: AttributeConfig, forCreate: boolean): AttributeRules {
  * has no attribute template (the fallback path relies on native `required`).
  */
 function validate(): boolean {
+  const ok = runValidation()
+  validationFailed.value = !ok
+  if (!ok) {
+    // Field errors all live on the Attributes tab; surface them and bring the
+    // top-of-form summary into view so an off-screen error is never missed.
+    activeTab.value = 'attributes'
+    nextTick(() => validationSummaryRef.value?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }))
+  }
+  return ok
+}
+
+/** Populates {@link fieldErrors}; returns true when the form is valid. */
+function runValidation(): boolean {
   for (const k of Object.keys(fieldErrors)) delete fieldErrors[k]
   // The editable DN must stay within the profile's target OU on create. This
   // gate applies even on the fallback path (no attribute template).
