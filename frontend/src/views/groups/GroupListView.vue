@@ -61,7 +61,9 @@
       </template>
       <template #cell-dn="{ value }">
         <span class="inline-flex items-center gap-1">
-          <span class="text-xs truncate max-w-xs" :title="value as string">{{ value }}</span>
+          <!-- No max-width cap: the DN truncates against the column's actual
+               width, so a widened column shows the full value. -->
+          <span class="min-w-0 truncate" :title="value as string">{{ value }}</span>
           <CopyButton :text="value as string" />
         </span>
       </template>
