@@ -44,6 +44,9 @@ const aliceEntry: DirectoryEntry = {
     cn: ['alice'],
     mail: ['alice@x.example'],
     givenName: ['Alice'],
+    // Two values: schema-multi-valued attrs only lock while the entry
+    // actually holds 2+ values (single-input REPLACE is safe otherwise).
+    description: ['first', 'second'],
   },
 }
 const aliceRow = buildRow(aliceEntry, {
@@ -51,7 +54,7 @@ const aliceRow = buildRow(aliceEntry, {
   mail: 'alice@x.example',
   givenName: 'Alice',
   objectClass: 'inetOrgPerson',
-  description: '',
+  description: 'first, second',
   modifyTimestamp: '20260504T143022Z',
 })
 
@@ -162,7 +165,7 @@ describe('EditableResultsTable — editable cells (Task 5)', () => {
     expect(w.find('input[data-edit-cell="givenName"]').exists()).toBe(true)
   })
 
-  it('keeps dn / objectClass / RDN cn / operational / multi-valued cells read-only', () => {
+  it('keeps dn / objectClass / RDN cn / operational / multiple-value cells read-only', () => {
     const w = mount(EditableResultsTable, { props: editableProps })
     expect(w.find('input[data-edit-cell="dn"]').exists()).toBe(false)
     expect(w.find('input[data-edit-cell="objectClass"]').exists()).toBe(false)

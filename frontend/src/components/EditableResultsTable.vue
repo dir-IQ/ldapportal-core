@@ -175,7 +175,7 @@ function lockReason(row: SortableRow, attr: string): string {
   if (props.schemaMap.size === 0) return 'schema unavailable — editing locked'
   if (!props.schemaMap.has(lower)) return 'attribute not in schema'
   if (props.schemaMap.get(lower)?.singleValued === false) {
-    return 'multi-valued — editing lands in Phase 1.5'
+    return 'holds multiple values — multi-value editing lands in Phase 1.5'
   }
   return 'cannot edit this attribute on this entry'
 }
