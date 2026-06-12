@@ -95,7 +95,7 @@ const filteredFeatures = computed(() => {
 
 <template>
   <AppModal :model-value="modelValue" @update:model-value="$emit('update:modelValue', $event)"
-            :title="`Effective permissions — ${adminLabel}`" size="xl" fixed-height="80vh">
+            :title="`Effective permissions — ${adminLabel}`" size="xl">
 
     <div v-if="loading" class="text-sm text-gray-500 py-8 text-center">Loading…</div>
     <div v-else-if="error" class="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">{{ error }}</div>

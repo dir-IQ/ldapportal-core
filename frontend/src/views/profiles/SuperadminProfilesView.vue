@@ -1301,11 +1301,6 @@ watch(() => profile.value.selfRegistrationAllowed, (allowed) => {
   if (!allowed && layoutMode.value === 'registration') layoutMode.value = 'admin'
 })
 
-// Fixed initial modal height so switching tabs doesn't resize the dialog.
-// Sized to fit the General panel in the 'new profile' state without a
-// scrollbar; operators can drag-resize from there.
-const modalHeight = '800px'
-
 const modalTabs = [
   { id: 'general', label: 'General' },
   { id: 'attributes', label: 'Attributes' },
@@ -1357,7 +1352,7 @@ function toggleApprover(accountId: string) {
     </DataTable>
 
     <!-- Create/Edit Modal -->
-    <AppModal v-model="showModal" size="xl" :fixedHeight="modalHeight" movable resizable>
+    <AppModal v-model="showModal" size="xl" movable resizable>
       <template #title>
         <span>{{ editing ? 'Edit Profile' : 'Create Profile' }}</span>
         <span v-if="editing && profile.name" class="text-gray-500 font-normal"> — </span>

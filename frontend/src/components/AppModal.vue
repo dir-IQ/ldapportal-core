@@ -14,8 +14,10 @@
         -->
         <div class="fixed inset-0 bg-black/40" />
         <!-- Panel is a flex column: header/footer are fixed, the body flexes
-             and scrolls. This lets fixedHeight (and a future resize) size the
-             whole panel while the body reflows into the remaining space. -->
+             and scrolls. Height is dynamic: the panel takes its content's
+             natural height (no inner scrollbar while everything fits) capped
+             at the padded viewport, where the body starts scrolling. A
+             drag-resize sizes the whole panel instead. -->
         <div ref="panelRef"
              :class="['relative bg-white rounded-xl shadow-xl w-full flex flex-col overflow-hidden', sizeClass]"
              :style="panelStyle">
@@ -56,7 +58,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, useId } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useDialogA11y } from '@/composables/useDialogA11y'
 import { useDraggableModal } from '@/composables/useDraggableModal'
 import { usePreferencesStore } from '@/stores/preferences'
@@ -66,7 +68,6 @@ const props = withDefaults(
     modelValue?: boolean
     title?: string
     size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl'
-    fixedHeight?: string
     /** Drag the header to reposition the modal. On by default; ignored on
      *  narrow viewports (phones keep modals put). Pass :movable="false" to opt out. */
     movable?: boolean
@@ -83,7 +84,7 @@ const props = withDefaults(
      *  (A non-resizable modal never persists anyway.) */
     storageKey?: string
   }>(),
-  { modelValue: false, title: '', size: 'md', fixedHeight: '', movable: true, resizable: true,
+  { modelValue: false, title: '', size: 'md', movable: true, resizable: true,
     fill: false, storageKey: '' },
 )
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
@@ -181,10 +182,57 @@ const { offset, size, onHandlePointerDown, onResizePointerDown } = useDraggableM
   onPersist: persistSize,
 })
 
+// ── Grow-only height lock ──
+// Once open, the panel never shrinks: it keeps the largest height its
+// content has needed, so a tabbed modal doesn't bounce when switching to a
+// shorter tab — after the tallest tab has rendered, the height simply never
+// changes. It still grows when content genuinely needs more room (capped at
+// the padded viewport), which also covers modals that open on a small
+// loading overlay before their real content arrives. Resets on close; a
+// drag-resize takes over entirely.
+const grownMinHeight = ref(0)
+let panelObserver: ResizeObserver | null = null
+
+function viewportCap(): number {
+  // The p-4 wrapper leaves a 1rem margin all round.
+  return window.innerHeight - 32
+}
+
+function clampGrownHeight(): void {
+  if (grownMinHeight.value > viewportCap()) grownMinHeight.value = viewportCap()
+}
+
+watch(() => props.modelValue, (open) => {
+  grownMinHeight.value = 0
+  panelObserver?.disconnect()
+  panelObserver = null
+  window.removeEventListener('resize', clampGrownHeight)
+  if (!open) return
+  window.addEventListener('resize', clampGrownHeight)
+  nextTick(() => {
+    if (!panelRef.value || typeof ResizeObserver === 'undefined') return
+    panelObserver = new ResizeObserver(() => {
+      if (size.value) return // an explicit drag-resize owns the size
+      const h = panelRef.value?.offsetHeight ?? 0
+      if (h > grownMinHeight.value) grownMinHeight.value = Math.min(h, viewportCap())
+    })
+    panelObserver.observe(panelRef.value)
+  })
+}, { immediate: true })
+
+onBeforeUnmount(() => {
+  panelObserver?.disconnect()
+  window.removeEventListener('resize', clampGrownHeight)
+})
+
 // Sizing precedence: an explicit drag-resize wins (and drops the max-w/max-h
-// caps); otherwise fixedHeight, else a viewport cap. The drag offset is applied
-// as a transform — but only once moved/resized, so the open/close scale
-// transition (which also animates `transform`) is left alone in the common case.
+// caps). Otherwise the height is dynamic: the panel takes its content's
+// natural height — no inner scrollbar while everything fits — capped at 100%
+// of the p-4 inset wrapper, i.e. the window minus a 1rem margin all round,
+// beyond which the body scrolls. The grow-only lock above holds the height
+// steady once reached. The drag offset is applied as a transform — but only
+// once moved/resized, so the open/close scale transition (which also
+// animates `transform`) is left alone in the common case.
 const panelStyle = computed(() => {
   const style: Record<string, string> = {}
   if (size.value) {
@@ -192,10 +240,9 @@ const panelStyle = computed(() => {
     style.height = `${size.value.h}px`
     style.maxWidth = 'none'
     style.maxHeight = 'none'
-  } else if (props.fixedHeight) {
-    style.height = props.fixedHeight
   } else {
-    style.maxHeight = '90vh'
+    style.maxHeight = '100%'
+    if (grownMinHeight.value) style.minHeight = `${grownMinHeight.value}px`
   }
   const { x, y } = offset.value
   if (x || y) style.transform = `translate(${x}px, ${y}px)`

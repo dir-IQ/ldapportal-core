@@ -6,7 +6,7 @@
  * query document.body. Pointer-drag math depends on real layout (absent in
  * jsdom), so it's covered by manual/e2e testing rather than here.
  */
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import AppModal from './AppModal.vue'
@@ -66,6 +66,56 @@ describe('AppModal', () => {
   })
 
   const panelEl = () => document.body.querySelector('.rounded-xl') as HTMLElement
+
+  it('sizes dynamically by default: no fixed height, capped at the padded viewport', () => {
+    setActivePinia(createPinia())
+    // The panel must take its content's natural height (so short content
+    // shows no inner scrollbar) and cap at 100% of the p-4 wrapper — the
+    // window minus a 1rem margin all round — where the body starts
+    // scrolling instead.
+    const w = mountModal({}, { default: '<p>hi</p>' })
+    expect(panelEl().style.height).toBe('')
+    expect(panelEl().style.maxHeight).toBe('100%')
+    w.unmount()
+  })
+
+  it('grows with content but never shrinks while open (stable across tab switches)', async () => {
+    setActivePinia(createPinia())
+    // jsdom has no ResizeObserver/layout; stub the observer and drive its
+    // callback with mocked panel heights. The contract: the largest height
+    // the content has needed becomes a min-height, so switching to a
+    // shorter tab doesn't bounce the modal.
+    let trigger: (() => void) | null = null
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(cb: () => void) { trigger = cb }
+      observe() {}
+      disconnect() {}
+    })
+    try {
+      const w = mountModal({}, { default: '<p>hi</p>' })
+      await flushPromises()
+      const panel = panelEl()
+      Object.defineProperty(panel, 'offsetHeight', { configurable: true, value: 500 })
+      trigger!()
+      await w.vm.$nextTick()
+      expect(panel.style.minHeight).toBe('500px')
+
+      // Content gets shorter (e.g. a shorter tab) → height holds.
+      Object.defineProperty(panel, 'offsetHeight', { configurable: true, value: 300 })
+      trigger!()
+      await w.vm.$nextTick()
+      expect(panel.style.minHeight).toBe('500px')
+
+      // Content gets taller → grows (still viewport-capped via maxHeight).
+      Object.defineProperty(panel, 'offsetHeight', { configurable: true, value: 600 })
+      trigger!()
+      await w.vm.$nextTick()
+      expect(panel.style.minHeight).toBe('600px')
+      w.unmount()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 
   it('fills the content area with an explicit size when `fill` is set', async () => {
     setActivePinia(createPinia())
