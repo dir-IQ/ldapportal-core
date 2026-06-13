@@ -158,6 +158,46 @@ services:
       - "9080:8080"
     restart: unless-stopped
 
+  # ── Simulated WebSEAL / IVIA Web Reverse Proxy (LOCAL DEV ONLY) ─────────────
+  # A lightweight stand-in for a real WebSEAL junction: it fronts the frontend
+  # and injects an `iv-user` (+ `iv-groups`) header on every request, so you can
+  # test LDAPPortal's WEBSEAL login method without running a real IVIA appliance.
+  # See docker/webseal-sim/default.conf.template for the topology.
+  #
+  #   • Browse  http://localhost:9081  → "behind WebSEAL" (SSO as WEBSEAL_SIM_IV_USER)
+  #   • Browse  http://localhost:9080  → frontend directly = LOCAL / superadmin login
+  #
+  # ONE-TIME SETUP after the stack is up (the trust + accounts are DB-persisted):
+  #   1. Log in at :9080 as the bootstrap superadmin.
+  #   2. Settings → Authentication → WebSEAL: enable the WEBSEAL method (keep
+  #      LOCAL on), and set Trusted Proxies to the Docker bridge CIDR
+  #      `172.16.0.0/12` (broad, dev-only — the app refuses iv-user when this is
+  #      empty). Header names stay iv-user / iv-groups.
+  #   3. Create an admin account with Auth Type = WEBSEAL and username = the
+  #      exact WEBSEAL_SIM_IV_USER value below (no auto-provisioning).
+  # Then load http://localhost:9081 and you're SSO'd as that user.
+  #
+  # SECURITY: the trust CIDR above spans the whole Docker bridge, so anything on
+  # it (incl. a curl to :9080 with a forged iv-user) would be trusted. That's
+  # fine for a laptop; never expose this stack.
+  webseal-sim:
+    image: nginx:alpine
+    container_name: ldap-portal-webseal-sim
+    depends_on:
+      - frontend
+    environment:
+      # The identity the simulated junction asserts. Override in .env.
+      WEBSEAL_SIM_IV_USER:   ${WEBSEAL_SIM_IV_USER:-webseal.admin}
+      WEBSEAL_SIM_IV_GROUPS: ${WEBSEAL_SIM_IV_GROUPS:-}
+      # Restrict the stock entrypoint's envsubst to just the identity vars so
+      # the nginx runtime vars ($host, $remote_addr, …) in the template survive.
+      NGINX_ENVSUBST_FILTER: WEBSEAL_SIM_IV
+    volumes:
+      - ./docker/webseal-sim/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    ports:
+      - "${WEBSEAL_SIM_PORT:-9081}:8080"
+    restart: unless-stopped
+
   # ── OpenLDAP fixtures ─────────────────────────────────────────────────────
   # Empty OpenLDAP directories (base dc=openldap,dc=example,dc=com) with the
   # IVIA/ISVA fixture schema loaded on first init. primary + alternate are
