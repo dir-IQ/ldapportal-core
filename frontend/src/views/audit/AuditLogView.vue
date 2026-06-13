@@ -51,9 +51,9 @@
       <template #cell-action="{ value }">
         <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" :class="actionColor(value)">{{ actionLabel(value) }}</span>
       </template>
-      <template #cell-targetDn="{ value }"><span class="text-xs truncate block max-w-xs" :title="value">{{ value }}</span></template>
+      <template #cell-targetDn="{ value }"><span class="truncate block max-w-xs" :title="value">{{ value }}</span></template>
       <template #cell-detail="{ value }">
-        <span v-if="value" class="text-xs whitespace-pre-wrap">{{ formatDetail(value) }}</span>
+        <span v-if="value" class="cell-muted whitespace-pre-wrap">{{ formatDetail(value) }}</span>
       </template>
     </DataTable>
 

@@ -62,10 +62,10 @@
               <span class="font-medium text-gray-900">{{ s.name }}</span>
             </template>
             <template #cell-objectScopeBaseDn="{ row: s }">
-              <span class="font-mono text-xs">{{ s.objectScopeBaseDn || '—' }}</span>
+              <span class="font-mono">{{ s.objectScopeBaseDn || '—' }}</span>
             </template>
             <template #cell-targetBaseDn="{ row: s }">
-              <span class="font-mono text-xs">{{ s.targetBaseDn || '—' }}</span>
+              <span class="font-mono">{{ s.targetBaseDn || '—' }}</span>
             </template>
             <template #cell-health="{ row: s }">
               <span class="inline-flex items-center gap-1.5 text-xs font-medium"

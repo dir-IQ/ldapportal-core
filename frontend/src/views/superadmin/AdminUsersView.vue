@@ -13,7 +13,7 @@
       <template #cell-displayName="{ row }">
         <div>
           <p class="font-medium text-gray-900">{{ (row as AdminRow).displayName || (row as AdminRow).username }}</p>
-          <p class="text-xs text-gray-500">{{ (row as AdminRow).username }}</p>
+          <p class="cell-muted">{{ (row as AdminRow).username }}</p>
         </div>
       </template>
       <template #cell-active="{ value }">
@@ -23,10 +23,10 @@
         <span :class="value === 'SUPERADMIN' ? 'badge-blue' : 'badge-gray'">{{ value }}</span>
       </template>
       <template #cell-authType="{ value }">
-        <span class="text-xs text-gray-500 uppercase">{{ value }}</span>
+        <span class="cell-muted uppercase">{{ value }}</span>
       </template>
       <template #cell-lastLoginAt="{ value }">
-        <span class="text-xs text-gray-500">{{ value ? new Date(value as string).toLocaleString() : '—' }}</span>
+        <span class="cell-muted">{{ value ? new Date(value as string).toLocaleString() : '—' }}</span>
       </template>
       <template #actions="{ row }">
         <ActionMenu :items="[

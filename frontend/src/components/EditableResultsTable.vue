@@ -468,7 +468,7 @@ defineExpose({
             <td
               v-for="col in columns"
               :key="col.key"
-              class="px-3 py-2 align-top break-all"
+              class="px-3 py-2 align-top break-all text-[13px]"
             >
               <!-- Edit-mode editable cell. Branch chosen first so the
                    slot fallbacks below only fire on read-only cells.

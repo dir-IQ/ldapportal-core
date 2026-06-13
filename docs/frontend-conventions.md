@@ -264,6 +264,34 @@ one to `main.css`** rather than inlining the styles. The cost of a
 new utility class is small; the cost of every consumer hand-rolling
 their own variant is large.
 
+### Table cell typography
+
+The three shared tables — `ResultsTable`, `DataTable`,
+`EditableResultsTable` — render body cells at one baseline, **13px**
+(`text-[13px]` on each `<td>`). A row reads as a single size no
+matter which table component drew it; don't re-set the cell font
+size in a `cell-<key>` slot just to match a neighbour.
+
+For a **secondary column** — the de-emphasised metadata that sits
+beside the primary identifier columns (a group's description next to
+its DN, an audit row's detail, a sub-line username) — use the single
+`.cell-muted` class rather than hand-rolling `text-xs text-gray-5xx`:
+
+```html
+<!-- secondary column: one documented knob -->
+<template #cell-description="{ value }">
+  <span class="cell-muted">{{ value }}</span>
+</template>
+```
+
+`.cell-muted` steps the text to 12px + muted grey (with a dark-mode
+layer). Keeping it as one class means the primary/secondary
+hierarchy is uniform across every table instead of each view picking
+its own size — the size mismatches it replaces were the original
+"why do columns have different fonts?" report. Status pills
+(`.badge-*`, inline status dots) are a separate concern and keep
+their own smaller size; `.cell-muted` is for plain text only.
+
 ### When adding a new utility class
 
 A class isn't "done" until it has all six layers (matching the
