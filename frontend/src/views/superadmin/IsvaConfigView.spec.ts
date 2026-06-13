@@ -158,6 +158,22 @@ describe('IsvaConfigView topology exposure', () => {
     // INLINE config → the linked-only secUser panel is hidden.
     expect(wrapper.text()).not.toContain('Paired secUser settings')
   })
+
+  it('describes the secUser object-class write target for the active topology only', async () => {
+    hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['INLINE', 'LINKED'] } })
+
+    // Inline: the demographic entry is overlaid; no linked ("paired") phrasing.
+    hoisted.getIsvaConfig.mockResolvedValue({ data: inlineConfigDto() })
+    let help = (await mountView()).find('[data-testid="secuser-oc-help"]').text()
+    expect(help).toContain('overlaid onto')
+    expect(help).not.toContain('paired')
+
+    // Linked: the paired secUser entry is stamped; no inline ("overlaid") phrasing.
+    hoisted.getIsvaConfig.mockResolvedValue({ data: linkedConfigDto() })
+    help = (await mountView()).find('[data-testid="secuser-oc-help"]').text()
+    expect(help).toContain('paired')
+    expect(help).not.toContain('overlaid onto')
+  })
 })
 
 describe('IsvaConfigView save / discard flow', () => {
