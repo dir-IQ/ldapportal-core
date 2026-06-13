@@ -1,1 +1,0 @@
-ALTER TABLE user_template ADD COLUMN show_dn_field BOOLEAN NOT NULL DEFAULT TRUE;
