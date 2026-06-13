@@ -128,14 +128,14 @@
           Move fire would either silently ignore the selection or act on
           just one row.
         -->
-        <!-- inline-threshold=2 keeps the actions column compact:
-             Edit (primary) + Disable (first item, prominent because
-             it's the most-used non-edit action) + kebab for the
-             rest. Default of 3 inlines Reset Password too, which
-             pushes the column past the 200px width and clipped the
-             kebab. -->
+        <!-- inline-threshold=1 keeps the actions column as narrow as
+             possible: only the Edit primary button stays inline, and every
+             item below — Disable/Enable included — folds into the kebab.
+             (The primary slot counts as the one inline button, leaving a
+             budget of zero item slots.) This is what lets the pinned actions
+             column shrink to ~120px without clipping the kebab. -->
         <ActionMenu :disabled="bulkSelectActive"
-                    :inline-threshold="2"
+                    :inline-threshold="1"
                     :items="[
           { label: (row as unknown as UserRow).enabled !== false ? 'Disable' : 'Enable', onClick: () => toggleEnabled(row as unknown as UserRow),
             variant: (row as unknown as UserRow).enabled !== false ? 'warning' : 'success', hidden: !can.enableDisable },
@@ -788,13 +788,12 @@ const cols = computed(() => {
     // IVIA enrichment columns (keyed `isva.*` by the backend) keep their
     // stable internal key but display the marketing `ivia.` prefix.
     ...extras.map(k => ({ key: k, label: iviaAttrLabel(k), defaultHidden: true, defaultWidth: 180 })),
-    // The actions cell renders three elements side-by-side: the
-    // primary Edit button, the variant Disable/Enable button (the
-    // first ActionMenu item), and the kebab dropdown trigger. 140px
-    // fits roughly the first two but cuts off the kebab; 200px gives
-    // breathing room across the longest variant labels (e.g.
-    // "Disable" + "Reset password" surfaces).
-    { key: 'actions', label: '', alwaysVisible: true, sortable: false, defaultWidth: 200 },
+    // The actions cell renders just two elements side-by-side now: the
+    // primary Edit button and the kebab dropdown trigger (Disable and the
+    // rest live inside the kebab — see inlineThreshold below). 120px fits
+    // both comfortably. `pinned` keeps the column stuck to the right edge so
+    // the row actions stay reachable no matter how far the table is scrolled.
+    { key: 'actions', label: '', alwaysVisible: true, sortable: false, defaultWidth: 120, pinned: true },
   ]
 })
 
