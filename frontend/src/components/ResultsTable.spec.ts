@@ -8,7 +8,7 @@
  * filters via the toolbar, and emits selection updates.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 
 // ResultsTable persists column prefs through the preferences store; stub it so
@@ -239,5 +239,37 @@ describe('ResultsTable.vue', () => {
     // disabled and clicking it should be a no-op.
     const idItem = w.findAll('div.cursor-not-allowed').find(d => d.text().includes('ID'))
     expect(idItem).toBeTruthy()
+  })
+
+  // "Fit columns" measures each visible column's content and persists a width.
+  // jsdom has no layout (getBoundingClientRect is 0), so the measured value
+  // clamps to the floor — the point of the test is the wiring: clicking the
+  // action persists a width for every visible column through the prefs store.
+  it('"Fit columns" persists a width for every visible column', async () => {
+    const key = 'fit-' + Math.random()
+    const w = mount(ResultsTable, { props: { tableKey: key, columns, rows } })
+    await w.findAll('button').find(b => b.text().includes('Fit columns'))!.trigger('click')
+    await flushPromises()
+    expect(Object.keys(tablePrefs[key] ? (tablePrefs[key] as { widths: object }).widths : {}))
+      .toEqual(expect.arrayContaining(['id', 'name', 'dept']))
+  })
+
+  it('double-clicking a column resize handle fits only that column', async () => {
+    const key = 'fit-one-' + Math.random()
+    const w = mount(ResultsTable, { props: { tableKey: key, columns, rows } })
+    const handle = w.find('th[data-col-key="name"] span[role="separator"]')
+    await handle.trigger('dblclick')
+    await flushPromises()
+    expect(Object.keys((tablePrefs[key] as { widths: object }).widths)).toEqual(['name'])
+  })
+
+  it('"Reset column widths" clears persisted widths', async () => {
+    const key = 'reset-' + Math.random()
+    tablePrefs[key] = { widths: { id: 120, name: 200 }, hidden: [], pageSize: 50, sortKey: '', sortAsc: true, seenColumns: [] }
+    const w = mount(ResultsTable, { props: { tableKey: key, columns, rows } })
+    await w.findAll('button').find(b => b.text().includes('Columns'))!.trigger('click')
+    await w.findAll('button').find(b => b.text().includes('Reset column widths'))!.trigger('click')
+    await flushPromises()
+    expect((tablePrefs[key] as { widths: object }).widths).toEqual({})
   })
 })
