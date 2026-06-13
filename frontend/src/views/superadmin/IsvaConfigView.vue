@@ -455,12 +455,15 @@ function extractErrorMessage(e: unknown, fallback: string): string {
 
         <div>
           <label class="label" for="newObjectClass">secUser object classes</label>
-          <p class="text-xs text-gray-500 mb-2">
-            Object classes written to the <code>secUser</code> identity. Applies to
-            both topologies — overlaid onto the demographic entry (inline) or stamped
-            on the paired <code>secUser</code> entry (linked). <code>secUser</code> is
-            required; add others your schema needs (e.g. <code>eUser</code>, which
-            defines <code>principalName</code>).
+          <!-- Write-target phrasing tracks the selected topology so only the
+               relevant mode's behaviour is described (inline overlays the
+               demographic entry; linked stamps the paired secUser entry). -->
+          <p class="text-xs text-gray-500 mb-2" data-testid="secuser-oc-help">
+            Object classes written to the <code>secUser</code> identity,
+            <template v-if="isLinkedMode">stamped on the paired <code>secUser</code> entry</template>
+            <template v-else>overlaid onto the user's demographic entry</template>.
+            <code>secUser</code> is required; add others your schema needs (e.g.
+            <code>eUser</code>, which defines <code>principalName</code>).
           </p>
           <div class="flex flex-wrap gap-2 mb-2">
             <span
