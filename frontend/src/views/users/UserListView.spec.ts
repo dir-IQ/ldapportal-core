@@ -163,6 +163,32 @@ describe('UserListView feature gating', () => {
     // No column should expose the internal isva. prefix as its label.
     expect(cols.some(c => c.label.startsWith('isva.'))).toBe(false)
   })
+
+  // Regression: ResultsTable is table-layout:fixed, where a column that falls
+  // back to width:auto only gets a share of the *leftover* space. Once the
+  // fixed-width columns (Groups, Actions, the select checkbox) fill the
+  // container, the auto columns collapse to 0px and render invisibly — so a
+  // discovered "extra" the user enables in the picker silently never appears.
+  // Every column must therefore carry an explicit defaultWidth.
+  it('gives every column an explicit defaultWidth so none collapse in the fixed-layout table', async () => {
+    vi.mocked(usersApi.searchUsers).mockResolvedValueOnce({ data: [{
+      dn: 'uid=jdoe,ou=people,dc=x',
+      attributes: {
+        cn: ['Alice'], sn: ['Anderson'],
+        objectclass: ['inetOrgPerson'], entryuuid: ['abc-123'], 'isva.seclogin': ['a.a'],
+      },
+    }] } as never)
+    const wrapper = await mountWith(ALL)
+    const cols = wrapper.findComponent({ name: 'ResultsTable' })
+      .props('columns') as Array<{ key: string, defaultWidth?: number }>
+    // Curated defaults, the discovered extras (objectclass / entryuuid),
+    // the IVIA column, dn, groups and actions should all be present...
+    expect(cols.length).toBeGreaterThan(5)
+    // ...and not a single one may rely on the collapsing auto fallback.
+    for (const c of cols) {
+      expect(typeof c.defaultWidth, `column "${c.key}" needs a defaultWidth`).toBe('number')
+    }
+  })
 })
 
 describe('UserListView bulk group membership', () => {
