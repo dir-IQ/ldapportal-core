@@ -7,8 +7,6 @@ import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.repository.SyncLinkRepository;
 import com.ldapportal.repository.SyncSetRepository;
-import com.unboundid.ldap.sdk.DN;
-import com.unboundid.ldap.sdk.LDAPException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -43,7 +41,7 @@ public class SyncWriteCaptor {
         try {
             for (SyncLink link : syncLinkRepo.findAllBySourceDirIdAndEnabledTrue(sourceDirectoryId)) {
                 for (SyncSet set : syncSetRepo.findAllByLinkId(link.getId())) {
-                    if (set.isEnabled() && inScope(set, dn)) {
+                    if (set.isEnabled() && SyncScopes.inScope(set, dn)) {
                         enqueuer.enqueue(set.getId(), dn, null);
                     }
                 }
@@ -51,18 +49,6 @@ public class SyncWriteCaptor {
         } catch (Exception ex) {
             log.warn("Sync capture enqueue failed for {} on directory {}: {}",
                     dn, sourceDirectoryId, ex.toString());
-        }
-    }
-
-    private static boolean inScope(SyncSet set, String dn) {
-        String base = set.getObjectScopeBaseDn();
-        if (base == null) {
-            return true;
-        }
-        try {
-            return new DN(dn).isDescendantOf(new DN(base), true);
-        } catch (LDAPException ex) {
-            return false;
         }
     }
 }
