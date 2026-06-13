@@ -764,8 +764,16 @@ const cols = computed(() => {
   // duplicate.
   const extras = discoveredAttrs.value.filter(k =>
     !DEFAULT_USER_COLUMNS_LC.has(k.toLowerCase()) && k.toLowerCase() !== 'memberof')
+  // Every column carries an explicit defaultWidth. ResultsTable is
+  // table-layout:fixed, where a column that falls back to width:auto only
+  // gets a *share of the leftover* space — and once the fixed-width columns
+  // (Groups 280 + Actions 200 + the select checkbox + any resized columns)
+  // fill the container, the auto columns collapse to 0px and render
+  // invisibly. Giving each column a real width means the table fills the
+  // container when there's room and scrolls horizontally when there isn't,
+  // but never zero-collapses a column the user just enabled in the picker.
   return [
-    { key: 'dn', label: 'DN', alwaysVisible: true },
+    { key: 'dn', label: 'DN', alwaysVisible: true, defaultWidth: 360 },
     // Row cells are keyed by the backend's lower-cased attribute names
     // (see load(): `row[attr]` where attr comes straight from the
     // server, which lower-cases keys). DEFAULT_USER_COLUMNS keeps the
@@ -773,13 +781,13 @@ const cols = computed(() => {
     // so the column key must be lower-cased to match the row data —
     // otherwise `row['givenName']` is undefined and the cell renders
     // blank even though the attribute is populated.
-    ...defaults.map(k => ({ key: k.toLowerCase(), label: k })),
+    ...defaults.map(k => ({ key: k.toLowerCase(), label: k, defaultWidth: 180 })),
     // Group membership as name pills. Default-hidden (opt-in via the
     // column picker); not sortable (a list has no natural order).
     { key: '__groups', label: 'Groups', sortable: false, defaultHidden: true, defaultWidth: 280 },
     // IVIA enrichment columns (keyed `isva.*` by the backend) keep their
     // stable internal key but display the marketing `ivia.` prefix.
-    ...extras.map(k => ({ key: k, label: iviaAttrLabel(k), defaultHidden: true })),
+    ...extras.map(k => ({ key: k, label: iviaAttrLabel(k), defaultHidden: true, defaultWidth: 180 })),
     // The actions cell renders three elements side-by-side: the
     // primary Edit button, the variant Disable/Enable button (the
     // first ActionMenu item), and the kebab dropdown trigger. 140px
