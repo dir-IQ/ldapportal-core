@@ -60,6 +60,8 @@ function normalize(parsed: Partial<TablePrefs> | null | undefined): TablePrefs {
 export interface UseTablePreferences {
   prefs: Ref<TablePrefs>
   setWidth: (col: string, px: number) => void
+  /** Clear all persisted column widths, reverting to defaults / auto. */
+  resetWidths: () => void
   toggleHidden: (col: string) => void
   setHidden: (cols: string[]) => void
   setPageSize: (size: number) => void
@@ -95,6 +97,10 @@ export function useTablePreferences(tableKey: string): UseTablePreferences {
     // Clone to trigger watcher; assigning to nested key on a deep ref also
     // works but cloning is more predictable across Vue versions.
     prefs.value = { ...prefs.value, widths: { ...prefs.value.widths, [col]: Math.max(40, Math.round(px)) } }
+  }
+
+  function resetWidths(): void {
+    prefs.value = { ...prefs.value, widths: {} }
   }
 
   function toggleHidden(col: string): void {
@@ -136,7 +142,7 @@ export function useTablePreferences(tableKey: string): UseTablePreferences {
     }
   }
 
-  return { prefs, setWidth, toggleHidden, setHidden, setPageSize, setSort, recordSeen, reset }
+  return { prefs, setWidth, resetWidths, toggleHidden, setHidden, setPageSize, setSort, recordSeen, reset }
 }
 
 // ── Pure helpers (exported so tests can exercise them without mounting) ──
