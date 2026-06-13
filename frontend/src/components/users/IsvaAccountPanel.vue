@@ -517,10 +517,18 @@ function formatDate(s: string | null): string {
         </div>
       </div>
 
+      <!-- Consequence text tracks the directory's topology (status.topology),
+           so only the relevant mode's behaviour is described. Note this keys
+           off the topology, not status.linked (which is "this account has a
+           secUser", a different axis). -->
       <p v-if="canForceReset" class="text-xs text-gray-500">
-        Force-reset writes <code>secPwdValid=FALSE</code>. In <strong>linked</strong> mode the
-        {{ IVIA_ABBR }} bind path is invalidated; in <strong>inline</strong> mode the
-        plain-LDAP bind still succeeds but {{ IVIA_ABBR }} may refuse.
+        Force-reset writes <code>secPwdValid=FALSE</code>.
+        <template v-if="status?.topology === 'LINKED'">
+          The {{ IVIA_ABBR }} bind path is invalidated.
+        </template>
+        <template v-else>
+          The plain-LDAP bind still succeeds but {{ IVIA_ABBR }} may refuse.
+        </template>
       </p>
     </template>
 

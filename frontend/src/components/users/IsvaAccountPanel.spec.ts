@@ -297,3 +297,26 @@ describe('refusal code → inline help', () => {
     expect(hoisted.notifError).toHaveBeenCalledWith('boom')
   })
 })
+
+// ── force-reset help text is topology-specific ─────────────────
+describe('force-reset consequence help by topology', () => {
+  it('inline topology → only the plain-LDAP-bind consequence is shown', async () => {
+    hoisted.getIsvaConfig.mockResolvedValue({ data: { enabled: true } })
+    hoisted.getStatus.mockResolvedValue({ data: statusPresent({ topology: 'INLINE' }) })
+    const w = mountPanel()
+    await flushPromises()
+    expect(w.text()).toContain('plain-LDAP bind still succeeds')
+    expect(w.text()).not.toContain('bind path is invalidated')
+  })
+
+  it('linked topology → only the invalidated-bind-path consequence is shown', async () => {
+    hoisted.getIsvaConfig.mockResolvedValue({ data: { enabled: true } })
+    hoisted.getStatus.mockResolvedValue({
+      data: statusPresent({ topology: 'LINKED', secUserDn: 'secUUID=x,secAuthority=Default,o=acme,c=us' }),
+    })
+    const w = mountPanel()
+    await flushPromises()
+    expect(w.text()).toContain('bind path is invalidated')
+    expect(w.text()).not.toContain('plain-LDAP bind still succeeds')
+  })
+})
