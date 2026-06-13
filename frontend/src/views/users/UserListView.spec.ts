@@ -57,6 +57,7 @@ const stubs = {
   // Surface non-hidden items as buttons + the primary slot, so we can assert
   // exactly which row actions the gating leaves visible.
   ActionMenu: {
+    name: 'ActionMenu',
     props: ['items', 'disabled', 'inlineThreshold'],
     template: `<div><slot name="primary" :disabled="disabled" /><button v-for="it in items.filter(i => !i.hidden)"
                  :key="it.label" :data-action="it.label">{{ it.label }}</button></div>`,
@@ -188,6 +189,21 @@ describe('UserListView feature gating', () => {
     for (const c of cols) {
       expect(typeof c.defaultWidth, `column "${c.key}" needs a defaultWidth`).toBe('number')
     }
+  })
+
+  // The actions column is pinned to the right (so it stays reachable on a
+  // horizontally-scrolled wide table) and slimmed: only Edit stays inline and
+  // everything else — Disable/Enable included — folds into the kebab, so the
+  // column can be narrow without clipping.
+  it('pins and slims the actions column and folds Disable into the kebab', async () => {
+    const wrapper = await mountWith(ALL)
+    const cols = wrapper.findComponent({ name: 'ResultsTable' })
+      .props('columns') as Array<{ key: string, pinned?: boolean, defaultWidth?: number }>
+    const actions = cols.find(c => c.key === 'actions')
+    expect(actions).toMatchObject({ pinned: true, defaultWidth: 120 })
+    // inlineThreshold 1 = only the Edit primary button stays inline; all menu
+    // items (Disable, Reset password, …) move into the kebab.
+    expect(wrapper.findComponent({ name: 'ActionMenu' }).props('inlineThreshold')).toBe(1)
   })
 })
 

@@ -272,4 +272,24 @@ describe('ResultsTable.vue', () => {
     await flushPromises()
     expect((tablePrefs[key] as { widths: object }).widths).toEqual({})
   })
+
+  it('pins a column flagged `pinned` to the right with sticky classes; others stay relative', () => {
+    const pinnedCols: ColumnDef[] = [
+      { key: 'id', label: 'ID' },
+      { key: 'actions', label: '', pinned: true, alwaysVisible: true },
+    ]
+    const w = mount(ResultsTable, {
+      props: { tableKey: 'pin-' + Math.random(), columns: pinnedCols, rows: [{ id: 1 }], rowKey: 'id' },
+    })
+    // Pinned header: sticky to the right edge.
+    const pinnedHead = w.find('th[data-col-key="actions"]')
+    expect(pinnedHead.classes()).toEqual(expect.arrayContaining(['sticky', 'right-0']))
+    // Non-pinned header: positioned relative (so its resize handle anchors), not sticky.
+    const plainHead = w.find('th[data-col-key="id"]')
+    expect(plainHead.classes()).toContain('relative')
+    expect(plainHead.classes()).not.toContain('sticky')
+    // Pinned body cell is sticky too (so it occludes scrolled content).
+    const bodyCells = w.findAll('tbody td')
+    expect(bodyCells.some(td => td.classes().includes('sticky') && td.classes().includes('right-0'))).toBe(true)
+  })
 })
