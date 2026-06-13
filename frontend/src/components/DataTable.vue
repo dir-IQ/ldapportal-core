@@ -54,7 +54,7 @@
                 @change="toggleRow(row)" :aria-label="`Select row ${rowKey ? row[rowKey] : i + 1}`"
                 class="rounded text-blue-600 focus:ring-blue-500" />
             </td>
-            <td v-for="col in columns" :key="col.key" class="px-4 py-3 text-gray-700">
+            <td v-for="col in columns" :key="col.key" class="px-4 py-3 text-[13px] text-gray-700">
               <slot :name="`cell-${col.key}`" :row="row" :value="row[col.key]">
                 {{ row[col.key] ?? '—' }}
               </slot>

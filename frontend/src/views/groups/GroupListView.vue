@@ -68,7 +68,7 @@
         </span>
       </template>
       <template #cell-description="{ value }">
-        <span class="text-gray-600 text-xs">{{ value }}</span>
+        <span class="cell-muted">{{ value }}</span>
       </template>
       <template #cell-actions="{ row }">
         <ActionMenu :items="[

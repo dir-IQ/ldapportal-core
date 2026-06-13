@@ -118,14 +118,14 @@
             <span class="badge" :class="opClass(row.op)">{{ row.op }}</span>
           </template>
           <template #cell-dn="{ row }">
-            <span class="font-mono text-[13px] text-gray-700 break-all">{{ row.dn || '—' }}</span>
+            <span class="font-mono text-gray-700 break-all">{{ row.dn || '—' }}</span>
           </template>
           <template #cell-detail="{ row }">
-            <span v-if="row.memberDelta" class="text-[13px]">
+            <span v-if="row.memberDelta">
               member <span class="text-green-700 font-medium">+{{ row.memberDelta.added }}</span>
               <span class="text-red-700 font-medium ml-1">−{{ row.memberDelta.removed }}</span>
             </span>
-            <span v-else-if="row.memberCount != null" class="text-[13px] text-gray-600">{{ row.memberCount }} members</span>
+            <span v-else-if="row.memberCount != null" class="text-gray-600">{{ row.memberCount }} members</span>
             <span v-else class="text-[13px] text-gray-500">
               {{ row.attrCount }} attr{{ row.attrCount === 1 ? '' : 's' }}
               <span v-if="row.objectClasses.length" class="text-gray-400 ml-1">· {{ row.objectClasses.join(', ') }}</span>

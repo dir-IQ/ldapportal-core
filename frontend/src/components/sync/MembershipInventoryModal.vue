@@ -34,19 +34,19 @@
       <DataTable :columns="cols" :rows="rows" :loading="loading" row-key="identity"
                  empty-text="No membership rows match." empty-icon="users">
         <template #cell-identity="{ row }">
-          <span class="font-mono text-xs">{{ row.identity }}</span>
+          <span class="font-mono">{{ row.identity }}</span>
         </template>
         <template #cell-state="{ row }">
           <span class="px-2 py-0.5 rounded text-xs" :class="stateClass(row.state)">{{ row.state }}</span>
         </template>
         <template #cell-sourceDn="{ row }">
-          <span class="font-mono text-xs">{{ row.sourceDn }}</span>
+          <span class="font-mono">{{ row.sourceDn }}</span>
         </template>
         <template #cell-targetDn="{ row }">
-          <span class="font-mono text-xs">{{ row.targetDn }}</span>
+          <span class="font-mono">{{ row.targetDn }}</span>
         </template>
         <template #cell-failReason="{ row }">
-          <span class="text-xs text-gray-500 line-clamp-2" :title="row.failReason || undefined">{{ row.failReason || '—' }}</span>
+          <span class="cell-muted line-clamp-2" :title="row.failReason || undefined">{{ row.failReason || '—' }}</span>
         </template>
         <template #actions="{ row }">
           <ActionMenu :items="[{ label: 'Dismiss', onClick: () => dismiss(row.identity) }]">

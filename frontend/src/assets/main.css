@@ -322,6 +322,31 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .badge-amber  { display: inline-flex; align-items: center; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; background-color: #fef3c7; color: #92400e; }
 .badge-gray   { display: inline-flex; align-items: center; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; background-color: #f3f4f6; color: #374151; }
 
+/* ── Table cell typography ──────────────────────────────────────────────────
+   The shared tables (ResultsTable / DataTable / EditableResultsTable) all
+   render body cells at one baseline — 13px — so a row reads as a single size
+   regardless of which table component drew it.
+
+   `.cell-muted` is the ONE documented treatment for a *secondary* column: the
+   de-emphasised metadata that sits beside the primary identifier columns — a
+   group's description next to its DN, an audit row's detail, a sub-line
+   username. It steps the text down to 12px + muted grey. Reach for this class
+   instead of hand-rolling `text-xs text-gray-5xx` in each view's cell slot, so
+   the primary/secondary hierarchy is uniform across every table rather than a
+   per-view accident (the size differences this consolidates were the original
+   "why do columns have different fonts?" complaint).
+
+   Unlike the interactive `.btn-*` / `.input` families, this is static text:
+   there is no hover / disabled / compact dimension to a muted cell, so the
+   only state layer beyond the base is dark mode. The "six layers" rule in
+   docs/frontend-conventions.md applies to controls, not typography tokens. */
+.cell-muted {
+  font-size: 0.75rem;
+  line-height: 1rem;
+  color: #6b7280;
+}
+[data-theme="dark"] .cell-muted { color: #9ca3af; }
+
 /* Dark mode button overrides */
 [data-theme="dark"] .btn-secondary {
   background-color: #334155;

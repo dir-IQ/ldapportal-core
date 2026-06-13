@@ -219,7 +219,7 @@
           </div>
         </template>
         <template #cell-dn="{ value }">
-          <span class="font-mono text-[13px] text-blue-600 break-all">{{ value }}</span>
+          <span class="font-mono text-blue-600 break-all">{{ value }}</span>
         </template>
       </ResultsTable>
 
@@ -257,7 +257,7 @@
                of edit first, then export. -->
         </template>
         <template #cell-dn="{ value }">
-          <span class="font-mono text-[13px] text-blue-600 break-all">{{ value }}</span>
+          <span class="font-mono text-blue-600 break-all">{{ value }}</span>
         </template>
       </EditableResultsTable>
     </div>
