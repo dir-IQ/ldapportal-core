@@ -7,12 +7,17 @@ import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.AccountType;
 import com.ldapportal.repository.AccountRepository;
 import com.ldapportal.repository.ApplicationSettingsRepository;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.BadCredentialsException;
 
 import java.util.EnumSet;
@@ -198,7 +203,58 @@ class WebSealAuthenticationServiceTest {
         assertThat(service.logoutUrlFor(AccountType.LOCAL)).isEmpty();
     }
 
+    // ── Rejection diagnostics (operator-facing logging) ─────────────────────
+    // When a junction IS in front (an iv-user header is present) but auth is
+    // rejected, log a WARN so an admin can diagnose a misconfigured CIDR — but
+    // stay silent on a plain login-page visit with no header (no junction).
+
+    @Test
+    void logs_warning_when_iv_user_present_but_peer_untrusted() {
+        when(settingsRepo.findFirstBy())
+                .thenReturn(Optional.of(settings(EnumSet.of(AccountType.WEBSEAL), "10.0.0.0/8")));
+        when(request.getHeader("iv-user")).thenReturn("alice");
+        when(request.getRemoteAddr()).thenReturn("203.0.113.5");
+
+        ListAppender<ILoggingEvent> logs = attachAppender();
+        try {
+            assertThat(service.authenticate(request)).isEmpty();
+            assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.WARN
+                    && e.getFormattedMessage().contains("203.0.113.5")   // the rejected peer
+                    && e.getFormattedMessage().contains("10.0.0.0/8"));   // the configured CIDR
+        } finally {
+            detachAppender(logs);
+        }
+    }
+
+    @Test
+    void stays_silent_when_no_iv_user_header_and_peer_untrusted() {
+        when(settingsRepo.findFirstBy())
+                .thenReturn(Optional.of(settings(EnumSet.of(AccountType.WEBSEAL), "10.0.0.0/8")));
+        when(request.getHeader("iv-user")).thenReturn(null);
+        when(request.getRemoteAddr()).thenReturn("203.0.113.5");
+
+        ListAppender<ILoggingEvent> logs = attachAppender();
+        try {
+            assertThat(service.authenticate(request)).isEmpty();
+            assertThat(logs.list).noneMatch(e -> e.getLevel() == Level.WARN);
+        } finally {
+            detachAppender(logs);
+        }
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private static ListAppender<ILoggingEvent> attachAppender() {
+        Logger logger = (Logger) LoggerFactory.getLogger(WebSealAuthenticationService.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    private static void detachAppender(ListAppender<ILoggingEvent> appender) {
+        ((Logger) LoggerFactory.getLogger(WebSealAuthenticationService.class)).detachAppender(appender);
+    }
 
     private ApplicationSettings settings(Set<AccountType> enabled, String proxies) {
         ApplicationSettings s = new ApplicationSettings();
