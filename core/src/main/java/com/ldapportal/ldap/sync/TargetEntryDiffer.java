@@ -22,12 +22,6 @@ import java.util.Set;
  */
 public final class TargetEntryDiffer {
 
-    private static final Set<String> OPERATIONAL = Set.of(
-            "entryuuid", "entrydn", "createtimestamp", "modifytimestamp",
-            "creatorsname", "modifiersname", "subschemasubentry", "hassubordinates",
-            "numsubordinates", "structuralobjectclass", "entrycsn",
-            "pwdchangedtime", "ds-entry-unique-id");
-
     private TargetEntryDiffer() {
     }
 
@@ -45,7 +39,9 @@ public final class TargetEntryDiffer {
 
         for (Attribute current : target.getAttributes()) {
             String lower = current.getName().toLowerCase(Locale.ROOT);
-            if (OPERATIONAL.contains(lower) || desiredNames.contains(lower)) {
+            // Leave attributes the desired set keeps, and never delete a
+            // server-maintained operational attribute (see SyncOperationalAttributes).
+            if (desiredNames.contains(lower) || SyncOperationalAttributes.contains(lower)) {
                 continue;
             }
             mods.add(new Modification(ModificationType.DELETE, current.getName()));

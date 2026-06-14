@@ -15,8 +15,6 @@ import com.ldapportal.ldap.changelog.DseeChangelogStrategy;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.SyncLinkRepository;
 import com.ldapportal.repository.SyncSetRepository;
-import com.unboundid.ldap.sdk.DN;
-import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.RootDSE;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResultEntry;
@@ -123,7 +121,7 @@ public class SyncChangelogPoller {
                     }
                     long cn = Long.parseLong(id);
                     for (SyncSet set : sets) {
-                        if (inScope(set, dn)) {
+                        if (SyncScopes.inScope(set, dn)) {
                             enqueuer.enqueue(set.getId(), dn, cn);
                         }
                     }
@@ -175,18 +173,6 @@ public class SyncChangelogPoller {
 
     private static ChangelogStrategy strategyFor(ChangelogFormat format) {
         return format == ChangelogFormat.DSEE_CHANGELOG ? DSEE : null;
-    }
-
-    private static boolean inScope(SyncSet set, String dn) {
-        String base = set.getObjectScopeBaseDn();
-        if (base == null) {
-            return true;
-        }
-        try {
-            return new DN(dn).isDescendantOf(new DN(base), true);
-        } catch (LDAPException ex) {
-            return false;
-        }
     }
 
     private record PollResult(long maxChangeNumber, Long sourceHead, boolean gap, boolean cursorReset) {

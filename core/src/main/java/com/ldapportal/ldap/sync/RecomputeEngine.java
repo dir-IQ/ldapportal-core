@@ -111,6 +111,26 @@ public class RecomputeEngine {
         }
     }
 
+    /**
+     * One convergence attempt (the body the optimistic-retry loop wraps).
+     *
+     * <p>The {@code key} can be either a source DN (from the changelog / app
+     * intercept / closure) or an already-normalized identity (from the reconcile
+     * not-seen sweep). The first job is to land on the <em>current</em> source
+     * {@link Entry} and its stable {@code identity}:
+     * <ul>
+     *   <li>DN key, entry present → read it, derive identity.</li>
+     *   <li>DN key, entry absent but identity is tracked in the index → the entry
+     *       likely <b>moved</b> and the feed reported the pre-move DN; re-search by
+     *       identity so a rename converges as a MODDN, not a destructive
+     *       delete-then-recreate.</li>
+     *   <li>identity key → search the source by that identity.</li>
+     * </ul>
+     * With the (entry, identity, current index row) in hand it evaluates
+     * membership and hands off to {@link #apply}; a genuinely absent + never-
+     * tracked key is a no-op. On an actual target change it fans out closure for
+     * referrers of the changed source DN.
+     */
     private void processOnce(SyncSet set, SyncLink link, DirectoryConnection source,
                              DirectoryConnection target, IdentityStrategy strategy, String key) {
         // ── Resolve the current source entry and the identity ──
@@ -156,7 +176,37 @@ public class RecomputeEngine {
         }
     }
 
-    /** @return true when the target was actually changed (drives closure). */
+    /**
+     * The diff-and-converge core: given the membership {@code decision} and the
+     * {@code current} index row, perform the single idempotent target operation
+     * that closes the gap, then commit the index transition. Every branch returns
+     * to a consistent index state; the two-step (target then index) order means a
+     * crash in between is healed by the next idempotent recompute.
+     *
+     * <p>Decision tree:
+     * <ul>
+     *   <li><b>OUT</b>: no row → no-op; {@code deletePolicy=REVIEW} → quarantine
+     *       the pending delete; otherwise DELETE the target (a NO_SUCH_OBJECT is
+     *       treated as already-converged) and drop the index row.</li>
+     *   <li><b>IN, brownfield</b>: on a first encounter (or while in REVIEW) with a
+     *       configured {@code sourceAnchor}, correlate by anchor to <em>adopt</em> a
+     *       pre-existing target rather than duplicate it. Ambiguity (multiple anchor
+     *       matches, or an unanchored entry already at the placement DN) quarantines
+     *       for REVIEW — never auto-overwrites.</li>
+     *   <li><b>IN, hash gate</b>: APPLIED + same placement + same content hash →
+     *       no target I/O at all (just refresh a moved source DN). This is the
+     *       no-op that makes duplicate/at-least-once triggers cheap and terminates
+     *       closure cascades.</li>
+     *   <li><b>IN, placement moved</b>: MODDN the target to the new DN first, then
+     *       reconcile attributes.</li>
+     *   <li><b>IN, apply</b>: read target → ADD (falling through to MODIFY on
+     *       ENTRY_ALREADY_EXISTS) or MODIFY via {@link TargetEntryDiffer}; on
+     *       success upsert the row APPLIED, on failure mark it FAILED.</li>
+     * </ul>
+     *
+     * @return {@code true} when the target was actually changed — the signal that
+     *         drives {@link ClosureResolver closure} fan-out for referrers.
+     */
     private boolean apply(SyncSet set, DirectoryConnection target, String identity,
                           Membership current, MembershipDecision decision, Entry entry) {
         if (!decision.member()) {
@@ -257,7 +307,12 @@ public class RecomputeEngine {
     }
 
     // ── Index persistence ──────────────────────────────────────────────────────
+    // Every index write goes through upsert(); markFailed/markReview are thin
+    // wrappers that re-read the row, preserve the prior content hash when none is
+    // supplied, and log. The state column drives the inventory UI and the next
+    // recompute's branch (e.g. REVIEW re-runs brownfield correlation).
 
+    /** Insert-or-update the index row for {@code identity} in the given {@code state}. */
     private void upsert(SyncSet set, String identity, String sourceDn, String targetDn,
                         byte[] hash, MembershipState state, String failReason, Membership current) {
         Membership m = current != null ? current : new Membership();
@@ -335,12 +390,7 @@ public class RecomputeEngine {
             return null;
         }
         String base = set.getObjectScopeBaseDn() != null ? set.getObjectScopeBaseDn() : source.getBaseDn();
-        SearchScope scope = switch (set.getObjectScope() == null
-                ? com.ldapportal.entity.enums.SyncScope.SUB : set.getObjectScope()) {
-            case BASE -> SearchScope.BASE;
-            case ONE -> SearchScope.ONE;
-            case SUB -> SearchScope.SUB;
-        };
+        SearchScope scope = SyncScopes.searchScope(set);
         return connectionFactory.withConnectionUnreplicated(source, conn -> {
             try {
                 com.unboundid.ldap.sdk.Filter f = com.unboundid.ldap.sdk.Filter.createEqualityFilter(idAttr, identity);

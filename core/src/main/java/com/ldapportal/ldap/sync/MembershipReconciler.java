@@ -6,7 +6,6 @@ import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.MembershipId;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
-import com.ldapportal.entity.enums.SyncScope;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.sync.identity.IdentityStrategy;
 import com.ldapportal.ldap.sync.identity.IdentityStrategyRegistry;
@@ -120,7 +119,7 @@ public class MembershipReconciler {
     private List<Enumerated> enumerateSource(DirectoryConnection source, SyncSet set,
                                              IdentityStrategy strategy) {
         String base = set.getObjectScopeBaseDn() != null ? set.getObjectScopeBaseDn() : source.getBaseDn();
-        SearchScope scope = scopeOf(set);
+        SearchScope scope = SyncScopes.searchScope(set);
         String idAttr = SyncIdentity.attribute(set, strategy);
         return connectionFactory.withConnectionUnreplicated(source, conn -> {
             SearchRequest req = new SearchRequest(base, scope,
@@ -134,15 +133,6 @@ public class MembershipReconciler {
             }
             return out;
         });
-    }
-
-    private static SearchScope scopeOf(SyncSet set) {
-        SyncScope s = set.getObjectScope() == null ? SyncScope.SUB : set.getObjectScope();
-        return switch (s) {
-            case BASE -> SearchScope.BASE;
-            case ONE -> SearchScope.ONE;
-            case SUB -> SearchScope.SUB;
-        };
     }
 
     private record Enumerated(String dn, String identity) {
