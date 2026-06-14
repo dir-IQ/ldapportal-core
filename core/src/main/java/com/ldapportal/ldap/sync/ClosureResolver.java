@@ -4,7 +4,6 @@ package com.ldapportal.ldap.sync;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
-import com.ldapportal.entity.enums.SyncScope;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.SyncSetRepository;
@@ -56,7 +55,7 @@ public class ClosureResolver {
                 continue;
             }
             String base = set.getObjectScopeBaseDn() != null ? set.getObjectScopeBaseDn() : source.getBaseDn();
-            SearchScope scope = scopeOf(set);
+            SearchScope scope = SyncScopes.searchScope(set);
             try {
                 List<String> referrers = connectionFactory.withConnectionUnreplicated(source, conn -> {
                     // "1.1" => return DNs only, no attributes.
@@ -89,14 +88,5 @@ public class ClosureResolver {
             ors.add(Filter.createEqualityFilter(attr, changedDn));
         }
         return ors.size() == 1 ? ors.get(0) : Filter.createORFilter(ors);
-    }
-
-    private static SearchScope scopeOf(SyncSet set) {
-        SyncScope s = set.getObjectScope() == null ? SyncScope.SUB : set.getObjectScope();
-        return switch (s) {
-            case BASE -> SearchScope.BASE;
-            case ONE -> SearchScope.ONE;
-            case SUB -> SearchScope.SUB;
-        };
     }
 }
