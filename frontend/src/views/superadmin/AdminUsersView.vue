@@ -53,6 +53,11 @@
       :title="editing ? 'Edit Admin User' : 'New Admin User'"
       size="lg"
     >
+      <!-- Server-side validation failures (e.g. a malformed email) surface here
+           as a friendly, per-field summary instead of a generic error toast;
+           each failing field is also flagged inline below. -->
+      <FormValidationSummary v-if="showSummary" :errors="validationSummary" />
+
       <!-- Tab nav. Permissions tab is hidden for SUPERADMIN role
            (their access isn't profile- or feature-scoped). For
            create flows on ADMIN it's available too — selections are
@@ -77,9 +82,12 @@
       <!-- ── Details tab ─────────────────────────────────────── -->
       <form v-show="activeTab === 'details'" @submit.prevent="save" class="space-y-0.5">
         <FormField label="Username" v-model="form.username" required :disabled="!!editing"
+          field-key="username" :error="fieldErrors.username"
           hint="Used to log in. Cannot be changed after creation." />
-        <FormField label="Display name" v-model="form.displayName" placeholder="Optional" />
-        <FormField label="Email" v-model="form.email" type="email" placeholder="Optional" />
+        <FormField label="Display name" v-model="form.displayName" placeholder="Optional"
+          field-key="displayName" :error="fieldErrors.displayName" />
+        <FormField label="Email" v-model="form.email" type="email" placeholder="Optional"
+          field-key="email" :error="fieldErrors.email" />
         <FormField label="Role" v-model="form.role" type="select" required :disabled="!!editing"
           :options="[{ value: 'ADMIN', label: 'Admin' }, { value: 'SUPERADMIN', label: 'Superadmin' }]"
           :hint="editing
@@ -92,9 +100,11 @@
           :options="authTypeOptions"
           hint="LOCAL uses a portal password. LDAP authenticates against the configured LDAP directory. OIDC authenticates via SSO. WEBSEAL trusts the iv-user header from IBM Verify Identity Access. Only methods configured in Settings are shown." />
         <FormField v-if="form.authType === 'LOCAL'" label="Password" v-model="form.password" type="password"
+          field-key="password" :error="fieldErrors.password"
           :placeholder="editing ? 'Leave blank to keep current' : 'Enter password'"
           :hint="editing ? 'Only fill in to change the password.' : 'Set the initial password for this account.'" />
         <FormField v-if="form.authType === 'LDAP'" label="LDAP DN" v-model="form.ldapDn"
+          field-key="ldapDn" :error="fieldErrors.ldapDn"
           placeholder="e.g. uid=jdoe,ou=People,dc=example,dc=com"
           hint="Distinguished name used to bind against the LDAP auth directory." />
         <p v-if="form.authType === 'OIDC'" class="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
@@ -249,8 +259,10 @@ import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import AppModal from '@/components/AppModal.vue'
 import FormField from '@/components/FormField.vue'
+import FormValidationSummary from '@/components/FormValidationSummary.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import EffectivePermissionsDialog from '@/components/EffectivePermissionsDialog.vue'
+import { useFormErrors, serverFieldErrors } from '@/composables/useFormErrors'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -318,6 +330,32 @@ function errMsg(e: unknown): string {
 const auth     = useAuthStore()
 const notif    = useNotificationStore()
 const settings = useSettingsStore()
+
+// Friendly labels for the server's validation field keys (which are the
+// AdminAccountRequest / *SuperadminRequest record components — username, email,
+// …) so a 400 surfaces e.g. "Email: must be a well-formed email address" rather
+// than the bare "Validation failed" toast. Keys must match the DTO field names.
+const FIELD_LABELS: Record<string, string> = {
+  username: 'Username',
+  displayName: 'Display name',
+  email: 'Email',
+  password: 'Password',
+  ldapDn: 'LDAP DN',
+  role: 'Role',
+  authType: 'Auth type',
+}
+
+// Shared form-validation plumbing (see useFormErrors + FormValidationSummary):
+// `fieldErrors` feeds each FormField's inline message, `summary`/`showSummary`
+// drive the top-of-form banner, and `reportErrors()` focuses the first bad field.
+const {
+  errors: fieldErrors,
+  summary: validationSummary,
+  showSummary,
+  setErrors,
+  clear: clearFieldErrors,
+  report: reportErrors,
+} = useFormErrors({ labelFor: (k) => FIELD_LABELS[k] ?? k })
 
 // Auth-type options for the create/edit dropdown. Filtered by
 // settings.enabledAuthTypes so operators don't see LDAP / OIDC /
@@ -461,6 +499,7 @@ function resetModalState(): void {
   newProfileId.value = ''
   newProfileRole.value = 'ADMIN'
   activeTab.value = 'details'
+  clearFieldErrors()
 }
 
 function openCreate(): void {
@@ -504,6 +543,7 @@ function openEditWithPermissions(row: AdminRow): void {
 async function save(): Promise<void> {
   if (!form.value.username.trim()) return
   saving.value = true
+  clearFieldErrors()
   try {
     if (editing.value && form.value.role === 'SUPERADMIN') {
       // SUPERADMIN edit routes to the superadmin endpoints, which enforce
@@ -569,7 +609,18 @@ async function save(): Promise<void> {
     showForm.value = false
     await load()
   } catch (e) {
-    notif.error(errMsg(e))
+    // A bean-validation 400 carries a per-field `errors` map — surface it inline
+    // + in the summary banner (and jump to the first bad field on the Details
+    // tab) instead of a generic "Validation failed" toast. Anything else stays
+    // a toast.
+    const fieldErrs = serverFieldErrors(e)
+    if (fieldErrs) {
+      setErrors(fieldErrs)
+      activeTab.value = 'details'
+      reportErrors()
+    } else {
+      notif.error(errMsg(e))
+    }
   } finally {
     saving.value = false
   }
