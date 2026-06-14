@@ -75,22 +75,44 @@ public class WebSealAuthenticationService {
         if (settings == null) return Optional.empty();
         if (!settings.getEnabledAuthTypes().contains(AccountType.WEBSEAL)) return Optional.empty();
 
+        String userHeader  = headerName(settings.getWebsealUserHeader(),   "iv-user");
+        String groupHeader = headerName(settings.getWebsealGroupsHeader(), "iv-groups");
+
+        // Is an identity header present at all? If so, the request reached us
+        // through *something* that injects it (a WebSEAL junction / reverse
+        // proxy), so a subsequent rejection is almost certainly a
+        // misconfiguration worth logging for the operator — as opposed to a
+        // plain login-page visit with no junction in front, which stays silent.
+        // The header is NOT trusted here; presence only gates the diagnostics
+        // below (the trust decision is still the peer-IP check).
+        String rawUser = request.getHeader(userHeader);
+        boolean junctionPresent = rawUser != null && !rawUser.isBlank();
+
         CidrChecker trust = CidrChecker.parse(settings.getWebsealTrustedProxies());
         if (trust.isEmpty()) {
             // Empty allow-list = fail closed. Prevents a deployment mistake
             // (feature ticked on but no proxies configured) from silently
             // accepting arbitrary iv-user headers.
+            if (junctionPresent) {
+                log.warn("WebSEAL sign-in rejected: peer {} presented a '{}' header but the WebSEAL "
+                        + "Trusted Proxies allow-list is empty. Set Settings -> Authentication -> "
+                        + "WebSEAL -> Trusted Proxies to the junction's source IP/CIDR.",
+                        request.getRemoteAddr(), userHeader);
+            }
             return Optional.empty();
         }
 
         String peer = request.getRemoteAddr();
-        if (!trust.contains(peer)) return Optional.empty();
+        if (!trust.contains(peer)) {
+            if (junctionPresent) {
+                log.warn("WebSEAL sign-in rejected: peer {} presented a '{}' header but is not within "
+                        + "the configured Trusted Proxies [{}]. Verify the CIDR matches the junction's "
+                        + "source IP.", peer, userHeader, settings.getWebsealTrustedProxies());
+            }
+            return Optional.empty();
+        }
 
-        String userHeader  = headerName(settings.getWebsealUserHeader(),   "iv-user");
-        String groupHeader = headerName(settings.getWebsealGroupsHeader(), "iv-groups");
-
-        String rawUser = request.getHeader(userHeader);
-        if (rawUser == null || rawUser.isBlank()) return Optional.empty();
+        if (!junctionPresent) return Optional.empty();
         final String username = rawUser.trim();
 
         // Pre-provisioning: the account must exist with authType=WEBSEAL and
@@ -98,8 +120,14 @@ public class WebSealAuthenticationService {
         // Account row's profile assignments, same as LOCAL/LDAP/OIDC admins.
         Account account = accountRepo.findByUsernameAndActiveTrue(username)
                 .filter(a -> a.getAuthType() == AccountType.WEBSEAL)
-                .orElseThrow(() -> new BadCredentialsException(
-                        "No active WebSEAL-linked admin account matches iv-user=" + username));
+                .orElseThrow(() -> {
+                    log.warn("WebSEAL sign-in rejected: trusted peer {} presented {}={} but no active "
+                            + "WEBSEAL-type admin account matches. Pre-create the account with Auth "
+                            + "Type = WEBSEAL and username = the exact iv-user value.",
+                            peer, userHeader, username);
+                    return new BadCredentialsException(
+                            "No active WebSEAL-linked admin account matches iv-user=" + username);
+                });
 
         account.setLastLoginAt(Instant.now());
 
