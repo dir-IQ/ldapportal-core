@@ -16,7 +16,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * The pure membership function: {@code membership(syncSet, sourceEntry) -> IN | OUT}.
@@ -34,16 +33,6 @@ import java.util.Set;
 public class MembershipFunction {
 
     private static final String VALUE_TOKEN = "${value}";
-
-    /**
-     * Operational / server-maintained attributes never copied to the target.
-     * Lower-cased for case-insensitive matching.
-     */
-    private static final Set<String> OPERATIONAL = Set.of(
-            "entryuuid", "entrydn", "createtimestamp", "modifytimestamp",
-            "creatorsname", "modifiersname", "subschemasubentry", "hassubordinates",
-            "numsubordinates", "structuralobjectclass", "entrycsn",
-            "pwdchangedtime", "pwdaccountlockedtime", "ds-entry-unique-id");
 
     /**
      * Evaluate membership for a present source entry. (Absent entries are OUT and
@@ -92,7 +81,9 @@ public class MembershipFunction {
 
         for (Attribute a : entry.getAttributes()) {
             String name = a.getName();
-            if (OPERATIONAL.contains(name.toLowerCase(Locale.ROOT))) {
+            // Never project server-maintained operational attributes (timestamps,
+            // entryUUID, structural metadata, …) — see SyncOperationalAttributes.
+            if (SyncOperationalAttributes.contains(name)) {
                 continue;
             }
             if (idAttr != null && name.equalsIgnoreCase(idAttr)) {

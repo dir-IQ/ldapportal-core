@@ -233,6 +233,47 @@ flag in code review when you see it.
 
 ---
 
+## Form validation errors
+
+Field-level validation errors on a data-entry form are shown **inline +
+in a summary banner**, not as a generic toast. The pieces:
+
+- **`useFormErrors()`** (`composables/useFormErrors.ts`) — holds the reactive
+  `errors` map (`fieldKey → message`), exposes `summary` / `showSummary` for the
+  banner, and `report()` which reveals the banner and focuses/scrolls to the
+  first failing field (matched by its `data-field`).
+- **`<FormValidationSummary :errors="summary" v-if="showSummary" />`** — the
+  top-of-form `role="alert"` banner listing every failing field, so an error on
+  a scrolled-out field is never missed.
+- **`<FormField :field-key="..." :error="fieldErrors[...]" />`** — sets
+  `data-field` (the focus target) and renders the inline red message.
+
+There are two error sources, both feeding the same `setErrors()`:
+
+1. **Client-side**, before submit — validate locally and `setErrors(...)` +
+   `report()` (see `RegisterView` / `UserForm`'s `validateAttributes`).
+2. **Server-side**, on a 400 — the backend's `GlobalExceptionHandler` returns an
+   RFC 7807 ProblemDetail whose `errors` property is a `{ field: message }` map
+   (this is what bean-validation annotations like `@Email` produce). Map it with
+   **`serverFieldErrors(err)`** (also in `useFormErrors.ts`) and fall back to a
+   `notif.error` toast only when it returns `null`:
+
+   ```ts
+   } catch (e) {
+     const fieldErrs = serverFieldErrors(e)
+     if (fieldErrs) { setErrors(fieldErrs); reportErrors() }
+     else { notif.error(errMsg(e)) }
+   }
+   ```
+
+   Field keys must match the backend DTO's property names so the messages land
+   on the right controls. Reserve the toast for non-field errors (conflicts,
+   network, 500s); a bare "Validation failed" toast is the anti-pattern this
+   replaces. Adopted by `AdminUsersView`, `UserForm`, `RegisterView`,
+   `SelfServiceProfileView`.
+
+---
+
 ## Density mode and utility classes
 
 LDAP Portal has a sitewide Compact density preference (User Preferences
