@@ -1,0 +1,18 @@
+-- Drop the stale, narrow CHECK constraint on accounts.auth_type.
+--
+-- The V1 baseline shipped TWO check constraints on accounts.auth_type:
+--   * chk_auth_type          — the complete, correct allow-list:
+--                              LOCAL, LDAP, OIDC, WEBSEAL
+--   * chk_account_auth_type  — an older, narrower copy: LOCAL, LDAP only
+--
+-- chk_account_auth_type was never widened when OIDC and WEBSEAL auth types were
+-- added, so it rejects any attempt to insert an OIDC- or WEBSEAL-authenticated
+-- account — Postgres SQLSTATE 23514, "new row for relation \"accounts\"
+-- violates check constraint \"chk_account_auth_type\"" — even though the value
+-- is valid and chk_auth_type already permits it. This blocked creating WEBSEAL
+-- admin accounts.
+--
+-- Drop the redundant stale constraint. chk_auth_type remains and continues to
+-- enforce the full, correct set, so auth_type stays constrained to valid values.
+-- IF EXISTS keeps this safe on any environment where it was already removed.
+ALTER TABLE accounts DROP CONSTRAINT IF EXISTS chk_account_auth_type;
