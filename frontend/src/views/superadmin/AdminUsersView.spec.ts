@@ -140,3 +140,33 @@ describe('AdminUsersView role-based routing', () => {
     expect(superApi.deleteSuperadmin).not.toHaveBeenCalled()
   })
 })
+
+describe('AdminUsersView server validation errors', () => {
+  it('surfaces a per-field validation 400 in the summary instead of a generic toast', async () => {
+    // Backend bean-validation failure: RFC 7807 ProblemDetail with a per-field
+    // `errors` map (this is what `@Email` on AdminAccountRequest produces).
+    adminApi.updateAdmin.mockRejectedValueOnce({
+      response: {
+        data: {
+          detail: 'Validation failed',
+          errors: { email: 'must be a well-formed email address' },
+        },
+      },
+    })
+
+    const wrapper = mount(AdminUsersView, { global: { stubs } })
+    await flushPromises()
+
+    await editButtons(wrapper)[0].trigger('click') // admin row → form prefilled
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    // The friendly, field-specific message is shown (FormValidationSummary is a
+    // real component here) — not the bare "Validation failed".
+    const summary = wrapper.find('[role="alert"]')
+    expect(summary.exists()).toBe(true)
+    expect(summary.text()).toContain('Email')
+    expect(summary.text()).toContain('must be a well-formed email address')
+    expect(summary.text()).not.toContain('Validation failed')
+  })
+})
