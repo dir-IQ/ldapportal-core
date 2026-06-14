@@ -69,6 +69,15 @@ export const useSettingsStore = defineStore('settings', () => {
     logoUrl.value         = branding.logoUrl || null
     primaryColour.value   = branding.primaryColour  || DEFAULT_PRIMARY
     secondaryColour.value = branding.secondaryColour || DEFAULT_SECONDARY
+    // Refresh the enabled auth methods too, so changes saved in Settings →
+    // Authentication (e.g. turning on WEBSEAL) take effect immediately. Without
+    // this, init()'s fetch-once guard leaves the cached boot-time list in place
+    // until a full page reload — so the new method is missing from the login
+    // page and the admin-user "Auth type" dropdown. Only overwrite when the
+    // caller supplies the list, so a branding-only apply() doesn't blank it.
+    if (Array.isArray(branding.enabledAuthTypes)) {
+      enabledAuthTypes.value = [...branding.enabledAuthTypes]
+    }
     applyColours()
   }
 
