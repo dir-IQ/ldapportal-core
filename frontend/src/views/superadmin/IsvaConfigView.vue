@@ -315,9 +315,9 @@ function extractErrorMessage(e: unknown, fallback: string): string {
 </script>
 
 <template>
-  <!-- Bottom padding leaves room for the sticky action bar so the
-       last form fields aren't covered when the bar is up. -->
-  <div class="max-w-3xl p-6 pb-28 space-y-6">
+  <!-- Full-width, left-aligned (the standard `list`-style page width) to
+       stay consistent with the other admin pages. -->
+  <div class="p-6 space-y-6">
     <!-- Header + back button. Back is plain navigation; the route
          guard intercepts if the form is dirty. -->
     <header>
@@ -659,8 +659,11 @@ function extractErrorMessage(e: unknown, fallback: string): string {
 
     <!-- Sticky action bar — visible only when the form has unsaved
          changes. Its visibility doubles as the dirty-state indicator;
-         no separate badge needed. Fixed to the viewport bottom so the
-         operator's eye finds it regardless of scroll position. -->
+         no separate badge needed. Sticky to the bottom of the scrollable
+         content area (not the viewport) so it spans the page column and its
+         contents line up with the form above, rather than centering over the
+         sidebar. `-mx-6` lets the bar bleed to the content edges through the
+         page's p-6 padding. -->
     <Transition
       enter-active-class="transition duration-150 ease-out"
       enter-from-class="translate-y-full"
@@ -671,9 +674,9 @@ function extractErrorMessage(e: unknown, fallback: string): string {
     >
       <div
         v-if="isDirty"
-        class="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-gray-200 shadow-lg"
+        class="sticky bottom-0 z-30 -mx-6 bg-white border-t border-gray-200 shadow-lg"
       >
-        <div class="max-w-3xl mx-auto px-6 py-3 flex items-center justify-between gap-4">
+        <div class="px-6 py-3 flex items-center justify-between gap-4">
           <span class="text-sm font-medium text-amber-700 inline-flex items-center gap-2">
             <span aria-hidden="true">●</span>
             Unsaved changes

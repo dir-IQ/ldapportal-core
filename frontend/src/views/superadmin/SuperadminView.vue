@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
-  <PageContainer variant="form">
+  <PageContainer>
     <div class="flex items-center justify-between mb-6">
       <h1 class="text-2xl font-bold text-gray-900">Superadmins</h1>
       <button @click="openCreate" class="btn-primary">+ Add Superadmin</button>
