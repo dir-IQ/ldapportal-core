@@ -1450,7 +1450,7 @@ function toggleApprover(accountId: string) {
             <div v-else-if="targetGroupProbeState === 'checking'"
                  class="mt-2 text-xs text-gray-500">Checking…</div>
           </div>
-          <div class="grid grid-cols-3 gap-4 items-end">
+          <div class="grid grid-cols-3 gap-4 items-start">
             <div class="col-span-2">
               <label class="block text-sm font-medium text-gray-700 mb-1">Object Classes</label>
               <div v-if="profile.objectClassNames.length" class="flex gap-2 mb-2 flex-wrap">
