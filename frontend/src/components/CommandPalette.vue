@@ -103,7 +103,6 @@ const LABEL_MAP: Record<string, string> = {
   'audit': 'Audit Log',
   'bulk': 'Bulk Operations',
   'approvals': 'Approvals',
-  'notifications': 'Notifications',
   'cross-campaign-report': 'Cross-Campaign Report',
 }
 
