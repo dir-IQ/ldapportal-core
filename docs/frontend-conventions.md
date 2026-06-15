@@ -5,10 +5,10 @@ top-level docs and have caught implementers by surprise. Treat this
 as living documentation: when you discover or evolve a pattern, edit
 the relevant section here.
 
-Currently scoped to patterns visible on `main`. As feature branches
-land, additional patterns will be promoted here when they meet the
-"applied 3+ times across the codebase" bar — see "When to update
-this doc" at the bottom.
+These are the shipped conventions, not a single-branch snapshot:
+patterns are promoted here once they clear the "applied 3+ times
+across the codebase" bar — see "When to update this doc" at the
+bottom.
 
 For the high-level setup (Vue 3, Pinia, Tailwind 4, axios, OpenAPI
 codegen), see the **Frontend** section of `CLAUDE.md`.
@@ -195,6 +195,32 @@ membership modal, and the playbook result/history modals.
 or above `z-40` for modal dialogs so they render above any ancestor
 panels. Toast notifications sit higher still (managed by the
 notification store).
+
+### AppModal — the standard dialog
+
+Prefer `AppModal.vue` over a hand-rolled `fixed inset-0` panel for any
+dialog. It bundles Teleport, z-index, dark mode, and Compact density with
+three behaviours you'd otherwise reimplement (and get subtly wrong):
+
+- **Dirty-close guard.** Pass `:dirty="isDirty"` and every dismissal path
+  — the × button, the backdrop, and Esc — funnels through an in-panel
+  "Discard unsaved changes?" `alertdialog` instead of silently dropping
+  edits. Don't build a second confirm path on top of it. (`:dirty="false"`,
+  the default, closes immediately.)
+- **Dynamic height.** The panel fits its content, capped at the padded
+  viewport, grow-only once open. This is *why* scroll regions inside must
+  use `min-h-0 overflow-y-auto` with no `max-h-*` — see *Modal scroll
+  regions* above.
+- **Movable / resizable, on by default.** `movable` and `resizable` both
+  default to `true` (and self-disable below the `sm` breakpoint so phones
+  keep modals put); drag-resized sizes persist per user, keyed by title or
+  an explicit `storageKey`. Pass `:movable="false"` / `:resizable="false"`
+  to opt a dialog out — e.g. a small fixed confirm.
+
+Other props: `size` (`'sm' | 'md' | 'lg' | 'xl' | '2xl'`, default `md`)
+and `fill` (use the full padded viewport instead of the size cap). The
+footer slot receives a `close` prop that routes through the same
+dirty-aware dismissal.
 
 ---
 
@@ -388,6 +414,17 @@ in compact-mode density reduction. Don't replace `<PageContainer>`
 with a bare `<div class="p-8">` or similar — you'll opt out of
 sitewide spacing AND compact mode.
 
+Pick the `variant` by content type so width is consistent site-wide:
+
+- `list` (default) — full width; data tables and dense lists where the
+  user wants every pixel.
+- `form` — `max-w-3xl` centred; narrow forms where long inputs would
+  otherwise stretch to an uncomfortable reading width.
+- `wizard` — `max-w-5xl` centred; multi-step flows and mixed
+  configuration/detail pages.
+
+All three still emit the `.p-6` density wrapper.
+
 ### Auditing for utility-class compliance
 
 When a "Compact didn't work for me on page X" report comes in, three
@@ -448,6 +485,41 @@ pages with compact toggled on and asserts measurable height
 shrinkage. This catches the height-override class of bug that the
 ESLint rules might miss if the override sneaks past the `.btn-*` /
 `.input` token check.
+
+---
+
+## Shared data tables
+
+Three table components share one baseline; reach for an existing one
+before hand-rolling a `<table>`.
+
+- **`DataTable`** — read-only lists. Built-in keyboard navigation
+  (arrows / Enter / Space / Esc) and a `row-click` event that fires on
+  both click and keyboard activation. Cells render at 13px.
+- **`ResultsTable`** — directory-search-style result grids. Adds
+  per-user **persisted column widths**, **"Fit columns" auto-sizing**
+  (`fitColumns()`), a **right-pinned column** (`pinned` — the rightmost
+  column, typically row actions, stays visible while the rest scrolls),
+  hidden-column and page-size memory, and CSV export.
+- **`EditableResultsTable`** — `ResultsTable` plus inline cell editing
+  (single-value cells and a chip editor for multi-valued attributes).
+
+What this buys you, and the rules:
+
+- **Column state is persisted, not component-local.** `ResultsTable` /
+  `EditableResultsTable` take a required `tableKey` and route all width /
+  hidden / sort / page-size state through `useTablePreferences`
+  (`composables/useTablePreferences.ts`). Don't keep column widths in a
+  local ref — give the table a stable `tableKey` and let the composable
+  persist it. Widths have a 40px floor so a column can't collapse to zero.
+- **Don't re-set cell typography in a slot.** Body cells are 13px; a
+  secondary column uses `.cell-muted`. See *Table cell typography* under
+  *Density mode and utility classes*.
+- **Flexible columns need a width source.** A column left to flex (e.g.
+  chips) can starve its neighbours toward zero width without a min — reuse
+  the table's column-sizing knobs rather than hand-rolled `style="width:"`.
+- **Pin actions, don't float them.** A row-actions column belongs in the
+  single `pinned` rightmost column, not a hand-positioned overlay.
 
 ---
 
