@@ -64,7 +64,10 @@
           <!-- No max-width cap: the DN truncates against the column's actual
                width, so a widened column shows the full value. -->
           <span class="min-w-0 truncate" :title="value as string">{{ value }}</span>
-          <CopyButton :text="value as string" />
+          <CopyButton
+            :text="value as string"
+            class="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+          />
         </span>
       </template>
       <template #cell-description="{ value }">
