@@ -765,13 +765,13 @@ const cols = computed(() => {
   const extras = discoveredAttrs.value.filter(k =>
     !DEFAULT_USER_COLUMNS_LC.has(k.toLowerCase()) && k.toLowerCase() !== 'memberof')
   // Every column carries an explicit defaultWidth. ResultsTable is
-  // table-layout:fixed, where a column that falls back to width:auto only
-  // gets a *share of the leftover* space — and once the fixed-width columns
-  // (Groups 280 + Actions 200 + the select checkbox + any resized columns)
-  // fill the container, the auto columns collapse to 0px and render
-  // invisibly. Giving each column a real width means the table fills the
-  // container when there's room and scrolls horizontally when there isn't,
-  // but never zero-collapses a column the user just enabled in the picker.
+  // table-layout:fixed and renders columns at exactly their set widths (a
+  // single trailing filler column soaks up any slack), so a column without a
+  // width would fall back to width:auto and compete with that filler for the
+  // leftover space — sizing unpredictably. Giving each column a real width
+  // means every column (including one the user just enabled in the picker)
+  // renders at a known size; the table scrolls horizontally when the columns
+  // outgrow the container and parks any spare width to the right otherwise.
   return [
     { key: 'dn', label: 'DN', alwaysVisible: true, defaultWidth: 360 },
     // Row cells are keyed by the backend's lower-cased attribute names

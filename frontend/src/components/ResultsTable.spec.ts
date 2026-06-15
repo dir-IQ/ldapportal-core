@@ -292,4 +292,65 @@ describe('ResultsTable.vue', () => {
     const bodyCells = w.findAll('tbody td')
     expect(bodyCells.some(td => td.classes().includes('sticky') && td.classes().includes('right-0'))).toBe(true)
   })
+
+  it('does not pin a column while the table fits (no horizontal overflow)', async () => {
+    // Simulate a table no wider than its scroll container: scrollWidth ===
+    // clientWidth, so there's nothing to scroll and pinning should disengage.
+    const cw = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+    const sw = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth')
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 1000 })
+    Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, get: () => 1000 })
+    try {
+      const pinnedCols: ColumnDef[] = [
+        { key: 'id', label: 'ID' },
+        { key: 'actions', label: '', pinned: true, alwaysVisible: true },
+      ]
+      const w = mount(ResultsTable, {
+        props: { tableKey: 'fit-pin-' + Math.random(), columns: pinnedCols, rows: [{ id: 1 }], rowKey: 'id' },
+      })
+      await nextTick()
+      const head = w.find('th[data-col-key="actions"]')
+      // Flush to data, not detached to the container edge with a gap before it.
+      expect(head.classes()).not.toContain('sticky')
+      expect(head.classes()).toContain('relative')
+    } finally {
+      if (cw) Object.defineProperty(HTMLElement.prototype, 'clientWidth', cw)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth')
+      if (sw) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', sw)
+      else Reflect.deleteProperty(HTMLElement.prototype, 'scrollWidth')
+    }
+  })
+
+  it('renders a trailing filler cell so real columns keep their exact widths', () => {
+    const w = makeWrapper()
+    // The filler is the last header cell: aria-hidden and not a real column.
+    const headerCells = w.findAll('thead th')
+    const fillerHead = headerCells[headerCells.length - 1]
+    expect(fillerHead.attributes('aria-hidden')).toBe('true')
+    expect(fillerHead.attributes('data-col-key')).toBeUndefined()
+    // And a matching filler cell trails each body row.
+    const firstRowCells = w.findAll('tbody tr')[0].findAll('td')
+    expect(firstRowCells[firstRowCells.length - 1].attributes('aria-hidden')).toBe('true')
+  })
+
+  it('scrolls a newly revealed column into view', async () => {
+    const scrollSpy = vi.fn()
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = scrollSpy
+    try {
+      const key = 'reveal-' + Math.random()
+      tablePrefs[key] = {
+        widths: {}, hidden: ['dept'], pageSize: 50, sortKey: '', sortAsc: true,
+        seenColumns: ['id', 'name', 'dept'],
+      }
+      const w = mount(ResultsTable, { props: { tableKey: key, columns, rows } })
+      await w.findAll('button').find(b => b.text().includes('Columns'))!.trigger('click')
+      const deptRow = w.findAll('div.cursor-pointer').find(d => d.text().includes('Department'))!
+      await deptRow.trigger('click')
+      await flushPromises()
+      expect(scrollSpy).toHaveBeenCalled()
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
+  })
 })
