@@ -77,16 +77,21 @@
                width (the table is fixed-layout with resizable columns), so a
                widened column shows the full value. -->
           <span class="min-w-0 truncate" :title="value as string">{{ value }}</span>
-          <CopyButton :text="value as string" />
+          <CopyButton
+            :text="value as string"
+            class="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+          />
           <!-- IVIA orphan chip — surfaces the enricher's
                isva.orphaned=true tag so admins can spot linked-mode
                accounts whose paired secUser entry is missing without
                opening each user. Renders only when the addon is on
                and the row carries the flag (community / non-addon
-               directories never get the attribute). -->
+               directories never get the attribute). shrink-0 +
+               whitespace-nowrap keep the chip intact (no wrap/clip) and
+               let the DN text truncate to make room for it instead. -->
           <span
             v-if="auth.isIsvaIntegrationEnabled && isvaOrphaned(row)"
-            class="badge-yellow text-[10px]"
+            class="badge-yellow text-[10px] shrink-0 whitespace-nowrap"
             :title="`No paired ${IVIA_ABBR} secUser entry found — run Integrity reconcile to repair`"
           >{{ IVIA_ABBR }} orphan</span>
         </span>
