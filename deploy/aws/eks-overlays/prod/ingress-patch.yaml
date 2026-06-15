@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Sets the ACM certificate ARN and the public hostname on the base Ingress.
+# The path rules are inherited from the base (/api/v1 → backend, / → SPA);
+# they are restated here because a strategic-merge patch on a list replaces
+# the whole `rules` list, and we want the host set on each rule.
+#
+# EDIT: certificate-arn (REGION/ACCOUNT_ID/CERT_ID) and the hostname (×2).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ldapportal
+  annotations:
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/REPLACE_ME
+spec:
+  tls:
+    - hosts:
+        - ldapportal.example.com
+  rules:
+    - host: ldapportal.example.com
+      http:
+        paths:
+          - path: /api/v1
+            pathType: Prefix
+            backend:
+              service:
+                name: ldapportal-backend
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ldapportal-frontend
+                port:
+                  number: 80

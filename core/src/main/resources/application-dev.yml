@@ -1,0 +1,22 @@
+# Local-development profile. Activate with: SPRING_PROFILES_ACTIVE=dev
+# (or -Dspring-boot.run.profiles=dev for the spring-boot:run goal).
+#
+# Wires the checked-in dev license so a local commercial run unlocks the
+# enterprise feature set through the real signed-license path — the same
+# FileLicenseProvider + LicenseVerifier code that runs in production, just
+# trusting a dev keypair instead of the production one.
+#
+# NOT FOR PRODUCTION. The dev private key is committed to the repo
+# (dev/licensing/), so a dev license grants nothing of value to anyone who
+# couldn't already build the source. Production keeps the default trust
+# anchor (license/license-public-key.pem) whose private key is held only by
+# release engineering.
+#
+# The license path is resolved against the process working directory, which
+# is assumed to be the repository root (the usual cwd for
+# `./mvnw -pl distribution/commercial spring-boot:run`). Override with
+# LDAPPORTAL_DEV_LICENSE if you run from elsewhere.
+ldapportal:
+  license:
+    public-key-resource: license/dev-public-key.pem
+    path: ${LDAPPORTAL_DEV_LICENSE:dev/licensing/dev-license.jwt}

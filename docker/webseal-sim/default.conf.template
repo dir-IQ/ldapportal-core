@@ -1,0 +1,39 @@
+# Simulated WebSEAL / IVIA Web Reverse Proxy junction — LOCAL DEV ONLY.
+#
+# A real WebSEAL (IVIA Web Reverse Proxy) junction terminates IdP auth and
+# injects an `iv-user` (and optionally `iv-groups`) header on every request it
+# forwards to the back end. This stand-in does exactly that — and nothing else
+# — so you can exercise LDAPPortal's WEBSEAL login method without standing up a
+# real IVIA appliance (which is a half-dozen containers + an entitlement key).
+#
+# Topology (mirrors the dual-frontend production model in
+# docs/deployment-webseal-dual-frontend.md):
+#
+#   browser ──▶ :9081 (this sim, injects iv-user) ──▶ frontend ──▶ app   = WEBSEAL SSO
+#   browser ──▶ :9080 (frontend directly, no iv-user)         ──▶ app   = LOCAL / superadmin
+#
+# The injected identity is set from env (WEBSEAL_SIM_IV_USER / _GROUPS in
+# compose.yaml). `proxy_set_header` OVERRIDES anything the browser sent, so a
+# client can't smuggle its own identity *through this proxy*.
+#
+# The stock nginx entrypoint envsubsts this template; NGINX_ENVSUBST_FILTER is
+# pinned to WEBSEAL_SIM_IV so only the two identity vars expand and the nginx
+# runtime vars ($host, $remote_addr, …) survive.
+
+server {
+    listen 8080;
+
+    location / {
+        proxy_pass http://frontend:8080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # The simulated WebSEAL identity. The app trusts these only when the
+        # request's peer IP is inside the WebSEAL "Trusted Proxies" CIDR
+        # (Settings → Authentication → WebSEAL) — see the compose comment.
+        proxy_set_header iv-user   "${WEBSEAL_SIM_IV_USER}";
+        proxy_set_header iv-groups "${WEBSEAL_SIM_IV_GROUPS}";
+    }
+}

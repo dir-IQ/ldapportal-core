@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Production overlay for an internal-fork EKS deploy that:
+#   - pulls the community-plus-isva backend + frontend from AWS ECR,
+#   - sources the four runtime secrets from AWS Secrets Manager (CSI driver),
+#   - enables Directory Sync via the self-host entitlement grant.
+#
+# It layers on top of the upstream base (../../eks) so registry, tag, hostname,
+# DB and secret edits live HERE and upstream merges of the base stay clean.
+# (Overlays live in a sibling tree, not under the base dir, because kustomize
+# forbids an overlay from referencing a base that is its own ancestor.)
+#
+# Apply with:   kubectl apply -k deploy/aws/eks-overlays/prod
+#
+# EDIT BEFORE APPLYING (all placeholders also called out in README.md):
+#   - images[].newName / newTag : your ECR registry + pinned release tag
+#   - configmap-patch.yaml       : DB_URL (RDS endpoint), CORS origin
+#   - serviceaccount-patch.yaml  : IRSA role ARN
+#   - secretproviderclass.yaml   : region, ACCOUNT_ID, secret ARNs
+#   - ingress-patch.yaml         : ACM certificate ARN + public hostname
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../eks                 # the upstream base (namespace, SA, config, deploys, svc, ingress)
+  - secretproviderclass.yaml  # not wired into the base; added here
+
+# Repoint both images from GHCR to ECR and pin a released tag (never :latest
+# in prod). The names on the left must match the base image refs exactly.
+images:
+  - name: ghcr.io/dir-iq/ldapportal-community-plus-isva
+    newName: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/ldapportal-community-plus-isva
+    newTag: "v1.0.0"
+  - name: ghcr.io/dir-iq/ldapportal-frontend
+    newName: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/ldapportal-frontend
+    newTag: "v1.0.0"
+
+# Environment-specific edits as strategic-merge patches (each targets a base
+# object by kind+name).
+patches:
+  - path: configmap-patch.yaml
+  - path: serviceaccount-patch.yaml
+  - path: backend-csi-patch.yaml
+  - path: ingress-patch.yaml

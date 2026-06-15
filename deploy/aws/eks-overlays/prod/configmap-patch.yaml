@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Overrides the base ConfigMap's environment-specific values. Only the keys
+# listed here are changed; everything else in the base ConfigMap is kept.
+#
+#   DB_URL              → your RDS endpoint (keep ?sslmode=require).
+#   CORS_ALLOWED_ORIGIN → the public https:// origin (your ingress hostname).
+#
+# LDAPPORTAL_ENTITLEMENTS_GRANT is already "DIRECTORY_SYNC" in the base, which
+# turns on Directory Sync without a signed license — restated here so the
+# intent is obvious at the overlay level. Set to "" for the pure community
+# baseline.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ldapportal-config
+data:
+  DB_URL: "jdbc:postgresql://REPLACE_RDS_ENDPOINT:5432/ldapportal?sslmode=require"
+  CORS_ALLOWED_ORIGIN: "https://ldapportal.example.com"
+  LDAPPORTAL_ENTITLEMENTS_GRANT: "DIRECTORY_SYNC"

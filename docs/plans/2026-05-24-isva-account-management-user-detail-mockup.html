@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>User detail — alice.contractor (IVIA-linked) — mockup</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .mono, code { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+  /* Buttons — match the project's .btn-* utility shapes */
+  .btn-primary   { @apply inline-flex items-center justify-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:bg-gray-300 disabled:cursor-not-allowed disabled:shadow-none; }
+  .btn-secondary { @apply inline-flex items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed disabled:shadow-none; }
+  .btn-danger    { @apply inline-flex items-center justify-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1; }
+  .btn-ghost     { @apply inline-flex items-center justify-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900; }
+  .btn-compact   { @apply px-2 py-1 text-xs; }
+  .btn-icon      { @apply inline-flex items-center justify-center rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700; }
+
+  /* Form inputs */
+  .input         { @apply block w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm shadow-sm placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-500; }
+  .input-static  { @apply block w-full rounded-md border border-transparent bg-transparent px-0 py-1.5 text-sm text-gray-900; }
+
+  /* Badges */
+  .badge        { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium; }
+  .badge-green  { @apply badge bg-green-50 text-green-700 ring-1 ring-inset ring-green-200; }
+  .badge-amber  { @apply badge bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200; }
+  .badge-red    { @apply badge bg-red-50 text-red-700 ring-1 ring-inset ring-red-200; }
+  .badge-blue   { @apply badge bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200; }
+  .badge-purple { @apply badge bg-purple-50 text-purple-700 ring-1 ring-inset ring-purple-200; }
+  .badge-gray   { @apply badge bg-gray-100 text-gray-700 ring-1 ring-inset ring-gray-200; }
+
+  /* Cards & fieldsets — mirrors the .panel + .fieldset shapes used in SuperadminProfilesView */
+  .card         { @apply rounded-lg border border-gray-200 bg-white shadow-sm; }
+  .card-header  { @apply flex items-center justify-between border-b border-gray-200 px-5 py-3; }
+  .card-body    { @apply px-5 py-4; }
+  .fieldset     { @apply rounded-lg border border-gray-300 bg-white p-4; }
+  .legend       { @apply px-2 text-sm font-semibold text-gray-800; }
+  .grid6        { @apply grid grid-cols-6 gap-x-4 gap-y-3; }
+  .col-2 { @apply col-span-2; }
+  .col-3 { @apply col-span-3; }
+  .col-4 { @apply col-span-4; }
+  .col-6 { @apply col-span-6; }
+  .field-label  { @apply block text-xs font-medium text-gray-500 mb-1; }
+  .help-text    { @apply mt-1 text-xs text-gray-500; }
+
+  /* Misc */
+  .ring-row:hover { background-color: rgb(249 250 251); }
+  .alert-amber  { @apply rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 flex items-start gap-2; }
+  .alert-red    { @apply rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900 flex items-start gap-2; }
+  .alert-blue   { @apply rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 flex items-start gap-2; }
+  .divider-label { @apply flex items-center gap-3 text-[11px] uppercase tracking-wider font-semibold text-gray-500; }
+  .divider-label::before, .divider-label::after { content: ""; height: 1px; background-color: rgb(229 231 235); flex: 1; }
+</style>
+</head>
+<body class="bg-gray-50 text-gray-900 antialiased">
+
+<!-- ────────── App chrome (sidebar + top bar) ────────── -->
+<div class="flex min-h-screen">
+
+  <!-- Sidebar -->
+  <aside class="w-56 bg-gray-900 text-gray-300 flex flex-col flex-shrink-0">
+    <div class="px-4 py-4 border-b border-gray-800">
+      <div class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded bg-blue-500 flex items-center justify-center text-white font-bold text-sm">L</div>
+        <div>
+          <div class="text-white font-semibold text-sm leading-tight">LDAPPortal</div>
+          <div class="text-[10px] text-gray-500 leading-tight">acme-corp · prod</div>
+        </div>
+      </div>
+    </div>
+    <nav class="flex-1 px-2 py-3 space-y-0.5 text-sm">
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">Dashboard</a>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">Directories</a>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded bg-gray-800 text-white font-medium">Users</a>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">Groups</a>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">Profiles</a>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">Approvals <span class="ml-auto badge bg-amber-500/20 text-amber-300 ring-amber-500/30">3</span></a>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">Reports</a>
+      <div class="pt-3 pb-1 px-2.5 text-[10px] uppercase tracking-wider text-gray-500">Integrations</div>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">IVIA <span class="ml-auto badge-purple text-[10px]">addon</span></a>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">HR sync</a>
+    </nav>
+    <div class="px-3 py-3 border-t border-gray-800 text-xs">
+      <div class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded-full bg-purple-600 flex items-center justify-center text-white text-xs font-bold">SM</div>
+        <div class="flex-1 min-w-0">
+          <div class="text-white truncate">Sanjay Mishra</div>
+          <div class="text-gray-500 truncate">Superadmin</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <div class="flex-1 flex flex-col min-w-0">
+
+    <!-- Top bar / breadcrumb -->
+    <header class="bg-white border-b border-gray-200">
+      <div class="px-8 py-3 flex items-center gap-2 text-sm">
+        <a href="#" class="text-gray-500 hover:text-gray-700">Directories</a>
+        <svg class="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg>
+        <a href="#" class="text-gray-500 hover:text-gray-700">acmecorp-ldap</a>
+        <svg class="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg>
+        <a href="#" class="text-gray-500 hover:text-gray-700">Users</a>
+        <svg class="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5"/></svg>
+        <span class="text-gray-900 font-medium">alice.contractor</span>
+      </div>
+    </header>
+
+    <!-- Page header -->
+    <div class="bg-white border-b border-gray-200">
+      <div class="px-8 py-5">
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex items-start gap-4">
+            <div class="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xl font-semibold flex-shrink-0">AC</div>
+            <div>
+              <div class="flex items-center gap-2 flex-wrap">
+                <h1 class="text-2xl font-bold text-gray-900">Alice Contractor</h1>
+                <span class="badge-green">
+                  <svg class="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3"/></svg>
+                  Enabled
+                </span>
+                <span class="badge-green">
+                  <svg class="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3"/></svg>
+                  IVIA linked
+                </span>
+              </div>
+              <p class="text-sm text-gray-500 mt-1">
+                <span class="mono">uid=alice.contractor,ou=Contractors,dc=acmecorp,dc=com</span>
+                <button class="btn-icon ml-1 align-middle" title="Copy DN"><svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184"/></svg></button>
+              </p>
+              <div class="flex items-center gap-x-4 gap-y-1 mt-2 text-xs text-gray-600 flex-wrap">
+                <span class="flex items-center gap-1"><svg class="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75"/></svg> alice.contractor@acme.example</span>
+                <span class="flex items-center gap-1"><svg class="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z"/></svg> Profile: <span class="badge-gray">contractors-ext</span></span>
+                <span class="flex items-center gap-1"><svg class="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg> Last login 2 hours ago</span>
+                <span class="flex items-center gap-1"><svg class="w-3.5 h-3.5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5"/></svg> Created 2025-09-14 by mishra.sanjayk</span>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <button class="btn-secondary"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 0 0-3.7-3.7 48.678 48.678 0 0 0-7.324 0 4.006 4.006 0 0 0-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 0 0 3.7 3.7 48.656 48.656 0 0 0 7.324 0 4.006 4.006 0 0 0 3.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3-3 3"/></svg>Reset password</button>
+            <button class="btn-secondary"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 8.25H7.5a2.25 2.25 0 0 0-2.25 2.25v9a2.25 2.25 0 0 0 2.25 2.25h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25H15M9 12l3 3m0 0 3-3m-3 3V2.25"/></svg>Move…</button>
+            <button class="btn-secondary"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"/></svg>Disable</button>
+            <button class="btn-icon" title="More actions">
+              <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 12.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5ZM12 18.75a.75.75 0 1 1 0-1.5.75.75 0 0 1 0 1.5Z"/></svg>
+            </button>
+            <span class="w-px h-6 bg-gray-300 mx-1"></span>
+            <button class="btn-danger"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"/></svg>Delete</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="px-8 -mb-px">
+        <nav class="flex gap-6 text-sm">
+          <a href="#" class="border-b-2 border-blue-600 px-1 pb-3 font-medium text-blue-600">Overview</a>
+          <a href="#" class="border-b-2 border-transparent px-1 pb-3 text-gray-500 hover:text-gray-700">Attributes</a>
+          <a href="#" class="border-b-2 border-transparent px-1 pb-3 text-gray-500 hover:text-gray-700">Groups <span class="badge-gray ml-1">7</span></a>
+          <a href="#" class="border-b-2 border-transparent px-1 pb-3 text-gray-500 hover:text-gray-700">IVIA</a>
+          <a href="#" class="border-b-2 border-transparent px-1 pb-3 text-gray-500 hover:text-gray-700">Audit</a>
+          <a href="#" class="border-b-2 border-transparent px-1 pb-3 text-gray-500 hover:text-gray-700">Approvals <span class="badge-amber ml-1">1</span></a>
+        </nav>
+      </div>
+    </div>
+
+    <!-- Page body — 12-col grid, main + right rail -->
+    <main class="flex-1 px-8 py-6">
+      <div class="grid grid-cols-12 gap-6 max-w-[1500px] mx-auto">
+
+        <!-- ────────── MAIN COLUMN (8/12) ────────── -->
+        <div class="col-span-12 xl:col-span-8 space-y-6">
+
+          <!-- ===== IVIA Account card ===== -->
+          <section class="card">
+            <header class="card-header">
+              <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded bg-blue-50 flex items-center justify-center">
+                  <svg class="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/></svg>
+                </div>
+                <div>
+                  <h2 class="font-semibold text-gray-900">IVIA Account</h2>
+                  <p class="text-xs text-gray-500">IBM Verify Identity Access — secUser side of this identity</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="badge-green"><svg class="w-2.5 h-2.5" fill="currentColor" viewBox="0 0 8 8"><circle cx="4" cy="4" r="3"/></svg>Linked · Active</span>
+                <button class="btn-icon" title="Refresh status"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></svg></button>
+              </div>
+            </header>
+
+            <div class="card-body space-y-4">
+
+              <fieldset class="fieldset">
+                <legend class="legend">Account state</legend>
+                <div class="grid6">
+                  <div class="col-2">
+                    <span class="field-label">Topology</span>
+                    <p class="text-sm font-medium">Linked <span class="text-gray-400 text-xs font-normal">(paired secUser entry)</span></p>
+                  </div>
+                  <div class="col-2">
+                    <span class="field-label">Authority</span>
+                    <p class="text-sm font-medium">Default</p>
+                  </div>
+                  <div class="col-2">
+                    <span class="field-label">Account valid</span>
+                    <p class="text-sm font-medium text-green-700 flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clip-rule="evenodd"/></svg>TRUE</p>
+                  </div>
+                  <div class="col-3">
+                    <span class="field-label">Valid until <span class="text-gray-400 normal-case">(secValidUntil)</span></span>
+                    <p class="text-sm font-medium">2027-05-24 <span class="text-gray-400 text-xs font-normal">· 365d remaining</span></p>
+                    <div class="mt-1 h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">
+                      <div class="h-full bg-green-500" style="width: 100%"></div>
+                    </div>
+                  </div>
+                  <div class="col-3">
+                    <span class="field-label">Password last changed</span>
+                    <p class="text-sm font-medium">2026-04-12 <span class="text-gray-400 text-xs font-normal">· 42d ago</span></p>
+                    <div class="mt-1 h-1.5 w-full rounded-full bg-gray-100 overflow-hidden">
+                      <div class="h-full bg-green-500" style="width: 53%"></div>
+                    </div>
+                  </div>
+                  <div class="col-3">
+                    <span class="field-label">Password valid <span class="text-gray-400 normal-case">(secPwdValid)</span></span>
+                    <p class="text-sm font-medium text-green-700 flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clip-rule="evenodd"/></svg>TRUE</p>
+                  </div>
+                  <div class="col-3">
+                    <span class="field-label">Cert mapping</span>
+                    <p class="text-sm">
+                      <span class="badge-gray">Not set</span>
+                      <button class="btn-ghost btn-compact ml-1">Set…</button>
+                    </p>
+                  </div>
+                  <div class="col-6 pt-2 border-t border-gray-100 mt-1">
+                    <span class="field-label">secUser DN</span>
+                    <p class="mono text-xs text-gray-700 break-all">secUUID=8f3b1a2c-4d5e-6789-abcd-ef0123456789,cn=Users,secAuthority=Default,o=isva</p>
+                  </div>
+                </div>
+              </fieldset>
+
+              <!-- Actions row -->
+              <div class="flex flex-wrap items-center gap-2 px-1">
+                <button class="btn-secondary" disabled title="Already linked">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>
+                  Grant
+                </button>
+                <button class="btn-secondary">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M14.25 9v6m-4.5 0V9M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+                  Suspend
+                </button>
+                <button class="btn-secondary">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>
+                  Renew…
+                </button>
+                <button class="btn-secondary">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z"/></svg>
+                  Force password reset
+                </button>
+                <button class="btn-secondary">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 0 1-1.043 3.296 3.745 3.745 0 0 1-3.296 1.043A3.745 3.745 0 0 1 12 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 0 1-3.296-1.043 3.745 3.745 0 0 1-1.043-3.296A3.745 3.745 0 0 1 3 12c0-1.268.63-2.39 1.593-3.068a3.745 3.745 0 0 1 1.043-3.296 3.746 3.746 0 0 1 3.296-1.043A3.746 3.746 0 0 1 12 3c1.268 0 2.39.63 3.068 1.593a3.746 3.746 0 0 1 3.296 1.043 3.746 3.746 0 0 1 1.043 3.296A3.745 3.745 0 0 1 21 12Z"/></svg>
+                  Set cert mapping…
+                </button>
+                <span class="flex-1"></span>
+                <button class="btn-danger">
+                  <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"/></svg>
+                  Revoke…
+                </button>
+              </div>
+
+            </div>
+          </section>
+
+          <!-- ===== Demographic attributes card ===== -->
+          <section class="card">
+            <header class="card-header">
+              <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded bg-purple-50 flex items-center justify-center">
+                  <svg class="w-4 h-4 text-purple-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17.982 18.725A7.488 7.488 0 0 0 12 15.75a7.488 7.488 0 0 0-5.982 2.975m11.963 0a9 9 0 1 0-11.963 0m11.963 0A8.966 8.966 0 0 1 12 21a8.966 8.966 0 0 1-5.982-2.275M15 9.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/></svg>
+                </div>
+                <div>
+                  <h2 class="font-semibold text-gray-900">Demographic attributes</h2>
+                  <p class="text-xs text-gray-500">LDAP entry · <span class="mono">inetOrgPerson</span>, <span class="mono">organizationalPerson</span>, <span class="mono">person</span>, <span class="mono">top</span></p>
+                </div>
+              </div>
+              <div class="flex items-center gap-1">
+                <button class="btn-ghost btn-compact">Switch to raw LDIF</button>
+                <button class="btn-secondary"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10"/></svg>Edit</button>
+              </div>
+            </header>
+
+            <div class="card-body space-y-5">
+
+              <!-- Identity -->
+              <fieldset class="fieldset">
+                <legend class="legend">Identity</legend>
+                <div class="grid6">
+                  <div class="col-2"><label class="field-label">uid <span class="text-red-500">*</span></label><input class="input" value="alice.contractor" disabled /></div>
+                  <div class="col-2"><label class="field-label">cn (Common name) <span class="text-red-500">*</span></label><input class="input" value="Alice Contractor" disabled /></div>
+                  <div class="col-2"><label class="field-label">displayName</label><input class="input" value="Alice Contractor" disabled /></div>
+                  <div class="col-2"><label class="field-label">givenName</label><input class="input" value="Alice" disabled /></div>
+                  <div class="col-2"><label class="field-label">sn (Surname) <span class="text-red-500">*</span></label><input class="input" value="Contractor" disabled /></div>
+                  <div class="col-2"><label class="field-label">employeeType</label><input class="input" value="Contractor" disabled /></div>
+                  <div class="col-3"><label class="field-label">employeeNumber</label><input class="input" value="C-04812" disabled /></div>
+                  <div class="col-3"><label class="field-label">title</label><input class="input" value="Senior Software Engineer" disabled /></div>
+                </div>
+              </fieldset>
+
+              <!-- Contact -->
+              <fieldset class="fieldset">
+                <legend class="legend">Contact</legend>
+                <div class="grid6">
+                  <div class="col-3">
+                    <label class="field-label">mail <span class="text-red-500">*</span></label>
+                    <div class="flex gap-1">
+                      <input class="input flex-1" value="alice.contractor@acme.example" disabled />
+                      <button class="btn-icon flex-shrink-0" title="Copy"><svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15.666 3.888A2.25 2.25 0 0 0 13.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 0 1-.75.75H9a.75.75 0 0 1-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 0 1-2.25 2.25H6.75A2.25 2.25 0 0 1 4.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 0 1 1.927-.184"/></svg></button>
+                    </div>
+                  </div>
+                  <div class="col-3"><label class="field-label">mailAlternateAddress</label><input class="input" value="alice@acme.example" disabled /></div>
+                  <div class="col-2"><label class="field-label">telephoneNumber</label><input class="input" value="+1 415 555 0142" disabled /></div>
+                  <div class="col-2"><label class="field-label">mobile</label><input class="input" value="+1 415 555 7821" disabled /></div>
+                  <div class="col-2"><label class="field-label">facsimileTelephoneNumber</label><input class="input" value="" placeholder="—" disabled /></div>
+                  <div class="col-6"><label class="field-label">postalAddress</label><textarea class="input" rows="2" disabled>1234 Market St$Suite 500$San Francisco, CA 94103$USA</textarea></div>
+                </div>
+              </fieldset>
+
+              <!-- Organization -->
+              <fieldset class="fieldset">
+                <legend class="legend">Organization</legend>
+                <div class="grid6">
+                  <div class="col-3"><label class="field-label">o (Organization)</label><input class="input" value="Acme Corp" disabled /></div>
+                  <div class="col-3"><label class="field-label">ou (Organizational unit)</label><input class="input" value="Contractors" disabled /></div>
+                  <div class="col-2"><label class="field-label">departmentNumber</label><input class="input" value="ENG-Platform" disabled /></div>
+                  <div class="col-2"><label class="field-label">manager</label>
+                    <div class="flex items-center gap-1.5 h-[34px] px-3 rounded-md border border-gray-300 bg-gray-50">
+                      <div class="w-5 h-5 rounded-full bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-[10px] font-bold">BH</div>
+                      <a href="#" class="text-xs text-blue-600 hover:underline truncate">bob.henderson</a>
+                    </div>
+                  </div>
+                  <div class="col-2"><label class="field-label">businessCategory</label><input class="input" value="External Workforce" disabled /></div>
+                </div>
+              </fieldset>
+
+              <!-- Account / lifecycle -->
+              <fieldset class="fieldset">
+                <legend class="legend">Account &amp; lifecycle</legend>
+                <div class="grid6">
+                  <div class="col-2">
+                    <label class="field-label">pwdAccountLockedTime</label>
+                    <p class="input-static text-gray-400 italic">— not locked —</p>
+                  </div>
+                  <div class="col-2">
+                    <label class="field-label">pwdChangedTime</label>
+                    <p class="input-static">2026-04-12 14:22 UTC</p>
+                  </div>
+                  <div class="col-2">
+                    <label class="field-label">pwdGraceUseTime</label>
+                    <p class="input-static text-gray-400 italic">— none —</p>
+                  </div>
+                  <div class="col-2">
+                    <label class="field-label">createTimestamp</label>
+                    <p class="input-static">2025-09-14 09:01 UTC</p>
+                  </div>
+                  <div class="col-2">
+                    <label class="field-label">modifyTimestamp</label>
+                    <p class="input-static">2026-05-22 11:03 UTC</p>
+                  </div>
+                  <div class="col-2">
+                    <label class="field-label">creatorsName</label>
+                    <p class="input-static mono text-xs truncate">uid=mishra.sanjayk,ou=Admins</p>
+                  </div>
+                </div>
+              </fieldset>
+
+              <!-- Custom -->
+              <fieldset class="fieldset">
+                <legend class="legend">Custom attributes <span class="text-xs text-gray-400 font-normal ml-1">(profile-defined)</span></legend>
+                <div class="grid6">
+                  <div class="col-2"><label class="field-label">acmeContractorEndDate</label><input class="input" value="2027-03-31" disabled /></div>
+                  <div class="col-2"><label class="field-label">acmeContractingAgency</label><input class="input" value="Riverbend Tech LLC" disabled /></div>
+                  <div class="col-2"><label class="field-label">acmeCostCenter</label><input class="input" value="CC-7733-PLAT" disabled /></div>
+                </div>
+              </fieldset>
+
+            </div>
+          </section>
+
+          <!-- ===== Group memberships card ===== -->
+          <section class="card">
+            <header class="card-header">
+              <div class="flex items-center gap-3">
+                <div class="w-8 h-8 rounded bg-emerald-50 flex items-center justify-center">
+                  <svg class="w-4 h-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.74.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z"/></svg>
+                </div>
+                <div>
+                  <h2 class="font-semibold text-gray-900">Group memberships</h2>
+                  <p class="text-xs text-gray-500">7 groups · 4 from profile (auto), 2 manual, 1 IVIA-side</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-1">
+                <div class="relative">
+                  <input type="text" class="input pl-8" placeholder="Filter…" style="width: 200px" />
+                  <svg class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></svg>
+                </div>
+                <button class="btn-secondary"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/></svg>Add group…</button>
+              </div>
+            </header>
+
+            <div class="overflow-hidden rounded-b-lg">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-50 border-b border-gray-200">
+                  <tr class="text-left text-xs uppercase tracking-wider text-gray-500">
+                    <th class="px-5 py-2 font-medium w-8"><input type="checkbox" class="rounded border-gray-300" /></th>
+                    <th class="px-3 py-2 font-medium">Group</th>
+                    <th class="px-3 py-2 font-medium">Source</th>
+                    <th class="px-3 py-2 font-medium">DIT</th>
+                    <th class="px-3 py-2 font-medium">Added</th>
+                    <th class="px-3 py-2 font-medium w-12"></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100">
+                  <tr class="ring-row">
+                    <td class="px-5 py-2.5"><input type="checkbox" class="rounded border-gray-300" /></td>
+                    <td class="px-3 py-2.5"><div class="font-medium text-gray-900">acme-employees</div><div class="mono text-[11px] text-gray-500 truncate max-w-md">cn=acme-employees,ou=Groups,dc=acmecorp,dc=com</div></td>
+                    <td class="px-3 py-2.5"><span class="badge-blue">Profile auto-include</span></td>
+                    <td class="px-3 py-2.5 text-gray-600 text-xs">Demographic</td>
+                    <td class="px-3 py-2.5 text-gray-500 text-xs">2025-09-14</td>
+                    <td class="px-3 py-2.5"><button class="btn-icon" title="Group not removable — comes from profile" disabled><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/></svg></button></td>
+                  </tr>
+                  <tr class="ring-row">
+                    <td class="px-5 py-2.5"><input type="checkbox" class="rounded border-gray-300" /></td>
+                    <td class="px-3 py-2.5"><div class="font-medium text-gray-900">contractors-ext</div><div class="mono text-[11px] text-gray-500 truncate max-w-md">cn=contractors-ext,ou=Groups,dc=acmecorp,dc=com</div></td>
+                    <td class="px-3 py-2.5"><span class="badge-blue">Profile</span></td>
+                    <td class="px-3 py-2.5 text-gray-600 text-xs">Demographic</td>
+                    <td class="px-3 py-2.5 text-gray-500 text-xs">2025-09-14</td>
+                    <td class="px-3 py-2.5"><button class="btn-icon" disabled><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/></svg></button></td>
+                  </tr>
+                  <tr class="ring-row">
+                    <td class="px-5 py-2.5"><input type="checkbox" class="rounded border-gray-300" /></td>
+                    <td class="px-3 py-2.5"><div class="font-medium text-gray-900">platform-eng</div><div class="mono text-[11px] text-gray-500 truncate max-w-md">cn=platform-eng,ou=Teams,dc=acmecorp,dc=com</div></td>
+                    <td class="px-3 py-2.5"><span class="badge-blue">Profile</span></td>
+                    <td class="px-3 py-2.5 text-gray-600 text-xs">Demographic</td>
+                    <td class="px-3 py-2.5 text-gray-500 text-xs">2025-09-14</td>
+                    <td class="px-3 py-2.5"><button class="btn-icon" disabled><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/></svg></button></td>
+                  </tr>
+                  <tr class="ring-row">
+                    <td class="px-5 py-2.5"><input type="checkbox" class="rounded border-gray-300" /></td>
+                    <td class="px-3 py-2.5"><div class="font-medium text-gray-900">vpn-users</div><div class="mono text-[11px] text-gray-500 truncate max-w-md">cn=vpn-users,ou=Access,dc=acmecorp,dc=com</div></td>
+                    <td class="px-3 py-2.5"><span class="badge-blue">Profile auto-include</span></td>
+                    <td class="px-3 py-2.5 text-gray-600 text-xs">Demographic</td>
+                    <td class="px-3 py-2.5 text-gray-500 text-xs">2025-09-14</td>
+                    <td class="px-3 py-2.5"><button class="btn-icon" disabled><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z"/></svg></button></td>
+                  </tr>
+                  <tr class="ring-row">
+                    <td class="px-5 py-2.5"><input type="checkbox" class="rounded border-gray-300" /></td>
+                    <td class="px-3 py-2.5"><div class="font-medium text-gray-900">aws-readonly</div><div class="mono text-[11px] text-gray-500 truncate max-w-md">cn=aws-readonly,ou=Cloud,dc=acmecorp,dc=com</div></td>
+                    <td class="px-3 py-2.5"><span class="badge-gray">Manual</span></td>
+                    <td class="px-3 py-2.5 text-gray-600 text-xs">Demographic</td>
+                    <td class="px-3 py-2.5 text-gray-500 text-xs">2026-01-08</td>
+                    <td class="px-3 py-2.5"><button class="btn-icon hover:text-red-600" title="Remove from group"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg></button></td>
+                  </tr>
+                  <tr class="ring-row">
+                    <td class="px-5 py-2.5"><input type="checkbox" class="rounded border-gray-300" /></td>
+                    <td class="px-3 py-2.5"><div class="font-medium text-gray-900">github-enterprise</div><div class="mono text-[11px] text-gray-500 truncate max-w-md">cn=github-enterprise,ou=SaaS,dc=acmecorp,dc=com</div></td>
+                    <td class="px-3 py-2.5"><span class="badge-gray">Manual</span></td>
+                    <td class="px-3 py-2.5 text-gray-600 text-xs">Demographic</td>
+                    <td class="px-3 py-2.5 text-gray-500 text-xs">2026-02-21</td>
+                    <td class="px-3 py-2.5"><button class="btn-icon hover:text-red-600"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg></button></td>
+                  </tr>
+                  <tr class="ring-row bg-purple-50/40">
+                    <td class="px-5 py-2.5"><input type="checkbox" class="rounded border-gray-300" /></td>
+                    <td class="px-3 py-2.5"><div class="font-medium text-gray-900 flex items-center gap-1.5">webseal-engineers <span class="badge-purple text-[10px]">IVIA</span></div><div class="mono text-[11px] text-gray-500 truncate max-w-md">cn=webseal-engineers,cn=Groups,secAuthority=Default,o=isva</div></td>
+                    <td class="px-3 py-2.5"><span class="badge-purple">IVIA-side · manual</span></td>
+                    <td class="px-3 py-2.5 text-gray-600 text-xs">secUser</td>
+                    <td class="px-3 py-2.5 text-gray-500 text-xs">2026-03-04</td>
+                    <td class="px-3 py-2.5"><button class="btn-icon hover:text-red-600"><svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg></button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <div class="border-t border-gray-100 px-5 py-2.5 flex items-center justify-between bg-gray-50 rounded-b-lg">
+              <p class="text-xs text-gray-500">Selected: <span class="font-semibold text-gray-900">0</span></p>
+              <div class="flex items-center gap-2">
+                <button class="btn-secondary btn-compact" disabled>Remove selected</button>
+                <button class="btn-ghost btn-compact">Evaluate against profile…</button>
+              </div>
+            </div>
+          </section>
+
+        </div>
+
+        <!-- ────────── RIGHT RAIL (4/12) ────────── -->
+        <aside class="col-span-12 xl:col-span-4 space-y-6">
+
+          <!-- Quick stats -->
+          <section class="card">
+            <header class="card-header">
+              <h2 class="font-semibold text-gray-900">At a glance</h2>
+            </header>
+            <div class="card-body grid grid-cols-2 gap-4">
+              <div>
+                <div class="text-xs text-gray-500">Status</div>
+                <div class="font-semibold text-green-700 mt-0.5">Active</div>
+              </div>
+              <div>
+                <div class="text-xs text-gray-500">IVIA</div>
+                <div class="font-semibold text-green-700 mt-0.5">Linked</div>
+              </div>
+              <div>
+                <div class="text-xs text-gray-500">Groups</div>
+                <div class="font-semibold mt-0.5">7</div>
+              </div>
+              <div>
+                <div class="text-xs text-gray-500">IVIA expires</div>
+                <div class="font-semibold mt-0.5">365d</div>
+              </div>
+            </div>
+          </section>
+
+          <!-- IVIA timeline / lifecycle -->
+          <section class="card">
+            <header class="card-header">
+              <h2 class="font-semibold text-gray-900 flex items-center gap-2">IVIA lifecycle <span class="badge-purple text-[10px]">addon</span></h2>
+              <button class="btn-ghost btn-compact">View all →</button>
+            </header>
+            <div class="card-body">
+              <ol class="relative border-l-2 border-gray-200 ml-3 space-y-4 pl-5">
+                <li class="relative">
+                  <div class="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-blue-500 ring-4 ring-white"></div>
+                  <div class="text-sm font-medium">Account granted</div>
+                  <p class="text-xs text-gray-500 mt-0.5">linked · by mishra.sanjayk · 2025-09-14 09:01</p>
+                </li>
+                <li class="relative">
+                  <div class="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-gray-300 ring-4 ring-white"></div>
+                  <div class="text-sm font-medium">Password reset</div>
+                  <p class="text-xs text-gray-500 mt-0.5">self-service · 2026-04-12 14:22</p>
+                </li>
+                <li class="relative">
+                  <div class="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-gray-300 ring-4 ring-white"></div>
+                  <div class="text-sm font-medium">Renewed</div>
+                  <p class="text-xs text-gray-500 mt-0.5">+1 year · by mishra.sanjayk · 2026-05-22 11:03</p>
+                </li>
+                <li class="relative">
+                  <div class="absolute -left-[27px] top-0.5 w-4 h-4 rounded-full bg-gray-200 ring-4 ring-white"></div>
+                  <div class="text-sm font-medium text-gray-500">Will expire</div>
+                  <p class="text-xs text-gray-400 mt-0.5">2027-05-24 — 365d from now</p>
+                </li>
+              </ol>
+            </div>
+          </section>
+
+          <!-- Profile / scope -->
+          <section class="card">
+            <header class="card-header">
+              <h2 class="font-semibold text-gray-900">Profile &amp; scope</h2>
+            </header>
+            <div class="card-body space-y-3 text-sm">
+              <div>
+                <div class="text-xs text-gray-500">Provisioning profile</div>
+                <a href="#" class="text-blue-600 hover:underline font-medium">contractors-ext</a>
+                <p class="text-xs text-gray-500 mt-0.5">Target OU <span class="mono">ou=Contractors,dc=acmecorp,dc=com</span></p>
+              </div>
+              <div class="pt-3 border-t border-gray-100">
+                <div class="text-xs text-gray-500">IVIA policy</div>
+                <div class="flex items-center gap-2 mt-1">
+                  <span class="badge-green">Inherit (provisioning enabled)</span>
+                  <button class="btn-ghost btn-compact">Override…</button>
+                </div>
+                <p class="text-xs text-gray-500 mt-1">This profile follows the directory's IVIA setting (currently enabled). Flipping to FORCE_OFF would block future grants here.</p>
+              </div>
+              <div class="pt-3 border-t border-gray-100">
+                <div class="text-xs text-gray-500">Effective access (sample)</div>
+                <ul class="mt-1 space-y-0.5 text-sm">
+                  <li class="flex justify-between"><span>USER_EDIT</span><span class="text-green-600">✓</span></li>
+                  <li class="flex justify-between"><span>USER_RESET_PASSWORD</span><span class="text-green-600">✓</span></li>
+                  <li class="flex justify-between"><span>USER_DELETE</span><span class="text-gray-300">—</span></li>
+                  <li class="flex justify-between text-xs text-gray-500 pt-1"><button class="btn-ghost btn-compact px-0">All permissions →</button></li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <!-- Recent activity -->
+          <section class="card">
+            <header class="card-header">
+              <h2 class="font-semibold text-gray-900">Recent activity</h2>
+              <button class="btn-ghost btn-compact">Full audit →</button>
+            </header>
+            <ul class="divide-y divide-gray-100 text-sm">
+              <li class="px-5 py-3">
+                <div class="flex items-baseline justify-between">
+                  <span class="font-medium">USER_UPDATE</span>
+                  <span class="text-xs text-gray-500">2h ago</span>
+                </div>
+                <p class="text-xs text-gray-600 mt-0.5">acmeContractorEndDate · by mishra.sanjayk</p>
+              </li>
+              <li class="px-5 py-3">
+                <div class="flex items-baseline justify-between">
+                  <span class="font-medium">GROUP_MEMBER_ADD</span>
+                  <span class="text-xs text-gray-500">3 days ago</span>
+                </div>
+                <p class="text-xs text-gray-600 mt-0.5">webseal-engineers · source: ivia · by mishra.sanjayk</p>
+              </li>
+              <li class="px-5 py-3">
+                <div class="flex items-baseline justify-between">
+                  <span class="font-medium">PASSWORD_RESET</span>
+                  <span class="text-xs text-gray-500">42 days ago</span>
+                </div>
+                <p class="text-xs text-gray-600 mt-0.5">self-service via /me/change-password</p>
+              </li>
+              <li class="px-5 py-3">
+                <div class="flex items-baseline justify-between">
+                  <span class="font-medium">USER_UPDATE</span>
+                  <span class="text-xs text-gray-500">52 days ago</span>
+                </div>
+                <p class="text-xs text-gray-600 mt-0.5">source: ivia · ivia_op: renew · validUntil → 2027-05-24</p>
+              </li>
+              <li class="px-5 py-3">
+                <div class="flex items-baseline justify-between">
+                  <span class="font-medium">USER_CREATE</span>
+                  <span class="text-xs text-gray-500">8 months ago</span>
+                </div>
+                <p class="text-xs text-gray-600 mt-0.5">source: profile_create · profile: contractors-ext</p>
+              </li>
+            </ul>
+          </section>
+
+        </aside>
+
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="px-8 py-4 border-t border-gray-200 bg-white text-xs text-gray-500 flex justify-between">
+      <div>Mockup only. All identities, DNs and dates are fictional.</div>
+      <div>LDAPPortal · build mock-1 · IVIA addon present</div>
+    </footer>
+
+  </div>
+</div>
+
+</body>
+</html>

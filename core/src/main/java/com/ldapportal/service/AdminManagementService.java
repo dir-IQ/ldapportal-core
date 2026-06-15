@@ -1,0 +1,768 @@
+// SPDX-License-Identifier: Apache-2.0
+package com.ldapportal.service;
+
+import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.dto.admin.AdminAccountRequest;
+import com.ldapportal.dto.admin.AdminAccountResponse;
+import com.ldapportal.dto.admin.AdminPermissionsResponse;
+
+import com.ldapportal.dto.admin.FeaturePermissionRequest;
+import com.ldapportal.dto.admin.ProfileRoleRequest;
+import com.ldapportal.dto.admin.ProfileRoleResponse;
+import com.ldapportal.entity.Account;
+
+import com.ldapportal.entity.AdminFeaturePermission;
+import com.ldapportal.entity.AdminProfileRole;
+import com.ldapportal.entity.ProvisioningProfile;
+import com.ldapportal.entity.enums.AccountRole;
+import com.ldapportal.entity.enums.AccountType;
+import com.ldapportal.entity.enums.AuditAction;
+import com.ldapportal.entity.enums.FeatureKey;
+import com.ldapportal.exception.ConflictException;
+import com.ldapportal.exception.ResourceNotFoundException;
+import com.ldapportal.repository.AccountRepository;
+
+import com.ldapportal.repository.AdminFeaturePermissionRepository;
+import com.ldapportal.repository.AdminProfileRoleRepository;
+import com.ldapportal.repository.ProvisioningProfileRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+@Service
+@RequiredArgsConstructor
+public class AdminManagementService {
+
+    private final AccountRepository               accountRepo;
+    private final ProvisioningProfileRepository   profileRepo;
+    private final AdminProfileRoleRepository      profileRoleRepo;
+    private final com.ldapportal.core.entitlement.UsageLimitService usageLimitService;
+
+    private final AdminFeaturePermissionRepository featureRepo;
+    private final PasswordEncoder                 passwordEncoder;
+    private final AuditService                    auditService;
+    private final ApprovalNotificationService     notificationService;
+
+    // ── Admin account CRUD ────────────────────────────────────────────────────
+
+    /**
+     * Lists all admin accounts. Filters by {@link AccountRole#ADMIN} so
+     * the response doesn't conflate admins with superadmins — the endpoint
+     * is mounted at {@code /superadmin/admins} and the table view treats
+     * the result as the admin roster.
+     */
+    @Transactional(readOnly = true)
+    public List<AdminAccountResponse> listAdmins() {
+        // Returns BOTH admin and superadmin accounts. The endpoint is
+        // mounted at /superadmin/admins for legacy reasons, but the UI
+        // (AdminUsersView.vue) is titled "Manage Accounts" with the
+        // subtitle "Create and manage superadmin and admin accounts"
+        // and the new/edit modal explicitly offers SUPERADMIN as a
+        // role option. A prior cleanup commit (38c0e9b, item #1)
+        // tightened this to findAllByRole(ADMIN) on the rationale that
+        // the path name should match its data — but that hid the
+        // bootstrap superadmin from the roster while leaving the
+        // create form able to mint new superadmin rows that then
+        // vanished after save. findAll() puts the API back in step
+        // with what the view promises; the frontend decides which
+        // row-level actions to expose for SUPERADMIN rows.
+        return accountRepo.findAll().stream()
+                .map(AdminAccountResponse::from)
+                .toList();
+    }
+
+    /**
+     * Lists admins who have at least one profile role in the given directory.
+     */
+    @Transactional(readOnly = true)
+    public List<AdminAccountResponse> listAdminsByDirectory(UUID directoryId) {
+        return profileRoleRepo.findAllByProfileDirectoryId(directoryId).stream()
+                .map(apr -> apr.getAdminAccount())
+                .distinct()
+                .map(AdminAccountResponse::from)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public AdminAccountResponse getAdmin(UUID adminId) {
+        return AdminAccountResponse.from(requireAccount(adminId));
+    }
+
+    @Transactional
+    public AdminAccountResponse createAdmin(AdminAccountRequest req) {
+        return createAdmin(req, null);
+    }
+
+    @Transactional
+    public AdminAccountResponse createAdmin(AdminAccountRequest req, AuthPrincipal principal) {
+        // License cap applies only to admin-role accounts. Superadmin
+        // accounts (operator / break-glass) are out of scope — they're
+        // always permitted regardless of license.
+        if (req.role() == AccountRole.ADMIN) {
+            usageLimitService.requireWithinLimit(
+                    com.ldapportal.core.entitlement.LimitType.ADMIN_ACCOUNTS,
+                    accountRepo.countByRoleAndActiveTrue(AccountRole.ADMIN));
+        }
+        if (accountRepo.existsByUsername(req.username())) {
+            throw new ConflictException("Account [" + req.username() + "] already exists");
+        }
+        Account a = new Account();
+        a.setUsername(req.username());
+        a.setDisplayName(req.displayName());
+        a.setEmail(req.email());
+        a.setRole(req.role());
+        a.setAuthType(req.authType());
+        a.setActive(req.activeForCreate());
+        if (req.authType() == AccountType.LOCAL && req.password() != null && !req.password().isBlank()) {
+            AccountPasswordPolicy.validate(req.password());
+            a.setPasswordHash(passwordEncoder.encode(req.password()));
+        }
+        if (req.authType() == AccountType.LDAP) {
+            a.setLdapDn(req.ldapDn());
+        }
+        // OIDC accounts need no password or ldapDn — username is matched against IdP claim
+        Account saved = accountRepo.save(a);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_CREATE,
+                    Map.of("accountId", saved.getId(),
+                            "username", saved.getUsername(),
+                            "role", saved.getRole().name(),
+                            "authType", saved.getAuthType().name(),
+                            "active", saved.isActive()));
+        }
+
+        return AdminAccountResponse.from(saved);
+    }
+
+    /**
+     * Creates an admin and applies its initial profile roles and feature
+     * permission overrides in a single transaction. If any step fails the
+     * whole thing rolls back — no half-created admin sitting in the table
+     * with no permissions.
+     *
+     * <p>Per-profile feature overrides are only meaningful when the admin
+     * has a role on that profile; this method validates that constraint
+     * up-front rather than silently letting the override become inert.</p>
+     */
+    @Transactional
+    public AdminAccountResponse createAdminWithPermissions(
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req) {
+        return createAdminWithPermissions(req, null);
+    }
+
+    @Transactional
+    public AdminAccountResponse createAdminWithPermissions(
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            AuthPrincipal principal) {
+        AdminAccountResponse created = createAdmin(req.account(), principal);
+
+        var roles = req.profileRolesOrEmpty();
+        var features = req.featurePermissionsOrEmpty();
+
+        // Per-profile feature overrides require the admin to hold a role
+        // on that profile. The orchestrated create lets us catch the
+        // mismatch up-front instead of silently storing inert override
+        // rows.
+        java.util.Set<UUID> assignedProfileIds = roles.stream()
+                .map(ProfileRoleRequest::profileId)
+                .collect(java.util.stream.Collectors.toSet());
+        for (FeaturePermissionRequest fp : features) {
+            if (fp.profileId() != null && !assignedProfileIds.contains(fp.profileId())) {
+                throw new IllegalArgumentException(
+                        "Feature permission for profile [" + fp.profileId()
+                                + "] requires a profile role on the same profile");
+            }
+        }
+
+        for (ProfileRoleRequest r : roles) {
+            assignProfileRole(created.id(), r, principal);
+        }
+        if (!features.isEmpty()) {
+            setFeaturePermissions(created.id(), features, principal);
+        }
+
+        return AdminAccountResponse.from(requireAccount(created.id()));
+    }
+
+    /**
+     * Idempotent create-or-update of an admin account and its full permission
+     * set, keyed by the stable {@code username} external key (§4.1). The
+     * account username is already unique, so no surrogate slug is needed.
+     * Re-applying the same declaration converges to identical state: profile
+     * roles and feature-permission overrides are <em>replaced</em> to match
+     * the request exactly (entries absent from the request are removed),
+     * giving the full-replace semantics IaC reconciliation needs (§4.2). The
+     * {@code created} flag lets the controller report 201 vs 200.
+     *
+     * <p>Scoped to {@link AccountRole#ADMIN}: a non-ADMIN role in the body is
+     * rejected, and a username already held by a non-admin (superadmin)
+     * account yields a conflict rather than silently shadowing it.</p>
+     */
+    @Transactional
+    public AdminUpsertOutcome upsertByUsername(
+            String username,
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            AuthPrincipal principal) {
+        return upsertByUsername(username, req, principal, null);
+    }
+
+    /**
+     * By-username upsert with an optional {@code If-Match} precondition (§4.4).
+     * {@code expectedVersion}, when non-null, must equal the existing account's
+     * current version or the update is rejected with a 412. The check applies
+     * only on the update path — a create has no prior version to match.
+     */
+    @Transactional
+    public AdminUpsertOutcome upsertByUsername(
+            String username,
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            AuthPrincipal principal,
+            Long expectedVersion) {
+        if (req.account() == null || !username.equals(req.account().username())) {
+            throw new IllegalArgumentException(
+                    "username in the path must match the account username in the body");
+        }
+        if (req.account().role() != AccountRole.ADMIN) {
+            throw new IllegalArgumentException("by-username upsert manages ADMIN accounts only");
+        }
+
+        Optional<Account> existing = accountRepo.findByUsername(username);
+        if (existing.isEmpty()) {
+            return new AdminUpsertOutcome(createAdminWithPermissions(req, principal), true);
+        }
+        Account account = existing.get();
+        if (account.getRole() != AccountRole.ADMIN) {
+            throw new ConflictException(
+                    "Account [" + username + "] already exists with a non-admin role");
+        }
+        return new AdminUpsertOutcome(
+                updateAdminWithPermissions(account.getId(), req, principal, expectedVersion), false);
+    }
+
+    /** Result of an idempotent admin upsert: the saved view plus whether a row was created. */
+    public record AdminUpsertOutcome(AdminAccountResponse response, boolean created) {
+    }
+
+    /**
+     * Updates an existing admin's account fields and fully replaces its
+     * profile roles and feature-permission overrides to match the request.
+     * Ordered account → profile roles → feature permissions so the
+     * per-profile override invariant (an override requires a matching profile
+     * role) holds throughout: roles are reconciled before overrides are
+     * validated and written.
+     */
+    @Transactional
+    public AdminAccountResponse updateAdminWithPermissions(
+            UUID adminId,
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            AuthPrincipal principal) {
+        return updateAdminWithPermissions(adminId, req, principal, null);
+    }
+
+    @Transactional
+    public AdminAccountResponse updateAdminWithPermissions(
+            UUID adminId,
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            AuthPrincipal principal,
+            Long expectedVersion) {
+        updateAdmin(adminId, req.account(), principal, expectedVersion);
+
+        var roles = req.profileRolesOrEmpty();
+        var features = req.featurePermissionsOrEmpty();
+
+        // Per-profile overrides are inert without a matching profile role.
+        // Validate up-front against the requested role set so a mismatch is a
+        // 400 rather than a half-applied reconcile.
+        java.util.Set<UUID> declaredProfileIds = roles.stream()
+                .map(ProfileRoleRequest::profileId)
+                .collect(java.util.stream.Collectors.toSet());
+        for (FeaturePermissionRequest fp : features) {
+            if (fp.profileId() != null && !declaredProfileIds.contains(fp.profileId())) {
+                throw new IllegalArgumentException(
+                        "Feature permission for profile [" + fp.profileId()
+                                + "] requires a profile role on the same profile");
+            }
+        }
+
+        // Full-replace of profile roles: drop any role not in the request,
+        // then assign/update the declared ones. removeProfileRole also clears
+        // that profile's now-inert per-profile feature overrides.
+        for (AdminProfileRole existingRole : profileRoleRepo.findAllByAdminAccountId(adminId)) {
+            UUID profileId = existingRole.getProfile().getId();
+            if (!declaredProfileIds.contains(profileId)) {
+                removeProfileRole(adminId, profileId, principal);
+            }
+        }
+        for (ProfileRoleRequest r : roles) {
+            assignProfileRole(adminId, r, principal);
+        }
+
+        // Full-replace of feature overrides (wipe-and-recreate). Called
+        // unconditionally — an empty list clears every override.
+        setFeaturePermissions(adminId, features, principal);
+
+        return AdminAccountResponse.from(requireAccount(adminId));
+    }
+
+    @Transactional
+    public AdminAccountResponse updateAdmin(UUID adminId, AdminAccountRequest req) {
+        return updateAdmin(adminId, req, null);
+    }
+
+    @Transactional
+    public AdminAccountResponse updateAdmin(UUID adminId, AdminAccountRequest req,
+                                             AuthPrincipal principal) {
+        return updateAdmin(adminId, req, principal, null);
+    }
+
+    @Transactional
+    public AdminAccountResponse updateAdmin(UUID adminId, AdminAccountRequest req,
+                                             AuthPrincipal principal, Long expectedVersion) {
+        Account a = requireAccount(adminId);
+        com.ldapportal.web.ETagSupport.requireMatch(expectedVersion, a.getVersion());
+
+        // Self-mutation guard. After requireAccount tightens to ADMIN-only,
+        // a SUPERADMIN principal's id can't match an ADMIN row id anyway,
+        // but we assert defensively for clarity and to catch any future
+        // role overlap.
+        if (principal != null && adminId.equals(principal.id())) {
+            throw new IllegalArgumentException(
+                    "Cannot modify your own account through this endpoint");
+        }
+
+        // Role is immutable through this endpoint. Promotion to SUPERADMIN
+        // (or demotion away from ADMIN) is sensitive enough to belong on a
+        // dedicated path with its own guards. Closes the license-cap bypass
+        // where role changes silently sidestepped the create-time check.
+        if (req.role() != a.getRole()) {
+            throw new IllegalArgumentException(
+                    "Role cannot be changed via this endpoint");
+        }
+
+        // Resolve effective active flag: null in the request body means
+        // "preserve current" rather than "set to false" (#16 — the old
+        // primitive boolean silently flipped omitted active to false).
+        boolean nextActive = req.active() == null ? a.isActive() : req.active();
+
+        // License cap re-check on activate: an inactive admin doesn't count
+        // toward the cap; activating it does, so an org at-limit can't
+        // re-light an inactive row to slip past the cap.
+        if (nextActive && !a.isActive()) {
+            usageLimitService.requireWithinLimit(
+                    com.ldapportal.core.entitlement.LimitType.ADMIN_ACCOUNTS,
+                    accountRepo.countByRoleAndActiveTrue(AccountRole.ADMIN));
+        }
+
+        if (!a.getUsername().equals(req.username()) && accountRepo.existsByUsername(req.username())) {
+            throw new ConflictException("Account [" + req.username() + "] already exists");
+        }
+        // Detect credential-changing edits so we can bump credentialsVersion
+        // and invalidate any JWT issued before the change. authType-switch
+        // also clears the password hash; both are credential-affecting.
+        boolean authTypeChanged = a.getAuthType() != req.authType();
+        boolean passwordSet = req.authType() == AccountType.LOCAL
+                && req.password() != null && !req.password().isBlank();
+
+        // No-op fast path: nothing the request would change differs from the
+        // stored row (and no credential is being (re)set). Returning before the
+        // save + audit keeps a re-applied IaC declaration from writing an
+        // ACCOUNT_UPDATE audit row on every reconcile. ldapDn only matters for
+        // LDAP auth; for other types it's cleared and compared as absent.
+        boolean fieldsChanged =
+                !a.getUsername().equals(req.username())
+                || !java.util.Objects.equals(a.getDisplayName(), req.displayName())
+                || !java.util.Objects.equals(a.getEmail(), req.email())
+                || authTypeChanged
+                || a.isActive() != nextActive
+                || passwordSet
+                || (req.authType() == AccountType.LDAP
+                        && !java.util.Objects.equals(a.getLdapDn(), req.ldapDn()));
+        if (!fieldsChanged) {
+            return AdminAccountResponse.from(a);
+        }
+
+        a.setUsername(req.username());
+        a.setDisplayName(req.displayName());
+        a.setEmail(req.email());
+        // a.setRole(req.role()) intentionally omitted — role is immutable here.
+        a.setAuthType(req.authType());
+        a.setActive(nextActive);
+        // Single pass over authType: only LOCAL keeps a passwordHash,
+        // only LDAP keeps an ldapDn; everything else is cleared. Avoids
+        // the prior pair-of-branches where the LDAP path set ldapDn and
+        // then a second branch wiped passwordHash anyway.
+        switch (req.authType()) {
+            case LOCAL -> {
+                a.setLdapDn(null);
+                if (passwordSet) {
+                    AccountPasswordPolicy.validate(req.password());
+                    a.setPasswordHash(passwordEncoder.encode(req.password()));
+                }
+            }
+            case LDAP -> {
+                a.setLdapDn(req.ldapDn());
+                a.setPasswordHash(null);
+            }
+            case OIDC, WEBSEAL -> {
+                a.setLdapDn(null);
+                a.setPasswordHash(null);
+            }
+        }
+        if (authTypeChanged || passwordSet) {
+            bumpCredentialsVersion(a);
+        }
+        // saveAndFlush so the @Version increment lands before the response (and
+        // its ETag) is built — a plain save would return the pre-update version
+        // and the caller's next If-Match would spuriously 412.
+        Account saved = accountRepo.saveAndFlush(a);
+
+        if (principal != null) {
+            List<String> changed = new ArrayList<>();
+            if (authTypeChanged) changed.add("authType");
+            if (passwordSet) changed.add("password");
+            // The other fields are always assigned from req; we don't try to
+            // compute a precise diff. The audit log carries the actor and
+            // timestamp, and the new state is in the response.
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_UPDATE,
+                    Map.of("accountId", saved.getId(),
+                            "username", saved.getUsername(),
+                            "role", saved.getRole().name(),
+                            "credentialFieldsChanged", changed));
+        }
+
+        return AdminAccountResponse.from(saved);
+    }
+
+    @Transactional
+    public void resetAdminPassword(UUID adminId, String newPassword) {
+        resetAdminPassword(adminId, newPassword, null);
+    }
+
+    @Transactional
+    public void resetAdminPassword(UUID adminId, String newPassword, AuthPrincipal principal) {
+        Account a = requireAccount(adminId);
+        if (a.getAuthType() != AccountType.LOCAL) {
+            throw new IllegalArgumentException("Password reset is only supported for LOCAL accounts");
+        }
+        AccountPasswordPolicy.validate(newPassword);
+        a.setPasswordHash(passwordEncoder.encode(newPassword));
+        bumpCredentialsVersion(a);
+        accountRepo.save(a);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.PASSWORD_RESET,
+                    Map.of("accountId", a.getId(),
+                            "username", a.getUsername(),
+                            "role", a.getRole().name(),
+                            "selfChange", false));
+            notificationService.notifyPasswordReset(a, principal);
+        }
+    }
+
+    /**
+     * Bumps the account's credentials-version counter so any JWT issued
+     * before this point fails the next request. Called by every
+     * credential-changing op (password set/reset, authType switch).
+     */
+    private void bumpCredentialsVersion(Account a) {
+        Long current = a.getCredentialsVersion();
+        a.setCredentialsVersion((current != null ? current : 0L) + 1L);
+    }
+
+    @Transactional
+    public void deleteAdmin(UUID adminId) {
+        deleteAdmin(adminId, null);
+    }
+
+    @Transactional
+    public void deleteAdmin(UUID adminId, AuthPrincipal principal) {
+        if (principal != null && adminId.equals(principal.id())) {
+            throw new IllegalArgumentException(
+                    "Cannot delete your own account through this endpoint");
+        }
+        Account a = requireAccount(adminId);
+        String username = a.getUsername();
+        AccountRole role = a.getRole();
+        accountRepo.delete(a);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_DELETE,
+                    Map.of("accountId", adminId,
+                            "username", username,
+                            "role", role.name()));
+        }
+    }
+
+    // ── Permission management — summary ───────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public AdminPermissionsResponse getPermissions(UUID adminId) {
+        requireAccount(adminId);
+        return AdminPermissionsResponse.from(
+                profileRoleRepo.findAllByAdminAccountId(adminId),
+                featureRepo.findAllByAdminAccountId(adminId));
+    }
+
+    // ── Dimension 1+2: profile roles ──────────────────────────────────────────
+
+    @Transactional
+    public ProfileRoleResponse assignProfileRole(UUID adminId, ProfileRoleRequest req) {
+        return assignProfileRole(adminId, req, null);
+    }
+
+    @Transactional
+    public ProfileRoleResponse assignProfileRole(UUID adminId, ProfileRoleRequest req,
+                                                  AuthPrincipal principal) {
+        Account admin = requireAccount(adminId);
+
+        AdminProfileRole existing = profileRoleRepo
+                .findByAdminAccountIdAndProfileId(adminId, req.profileId())
+                .orElse(null);
+
+        // No-op fast path: already at the requested role. Skipping the write
+        // and audit keeps a re-applied IaC declaration from churning rows and
+        // spamming the audit log every reconcile.
+        if (existing != null && existing.getBaseRole() == req.baseRole()) {
+            return ProfileRoleResponse.from(existing);
+        }
+
+        AdminProfileRole role = existing != null ? existing : new AdminProfileRole();
+        boolean isNew = role.getId() == null;
+        if (isNew) {
+            role.setAdminAccount(admin);
+            role.setProfile(requireProfile(req.profileId()));
+        }
+        role.setBaseRole(req.baseRole());
+        AdminProfileRole saved = profileRoleRepo.save(role);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_PERMISSION_CHANGED,
+                    Map.of("accountId", adminId,
+                            "username", admin.getUsername(),
+                            "op", isNew ? "assign_profile_role" : "update_profile_role",
+                            "profileId", req.profileId(),
+                            "baseRole", req.baseRole().name()));
+        }
+
+        return ProfileRoleResponse.from(saved);
+    }
+
+    @Transactional
+    public void removeProfileRole(UUID adminId, UUID profileId) {
+        removeProfileRole(adminId, profileId, null);
+    }
+
+    @Transactional
+    public void removeProfileRole(UUID adminId, UUID profileId, AuthPrincipal principal) {
+        Account admin = requireAccount(adminId);
+        profileRoleRepo.deleteByAdminAccountIdAndProfileId(adminId, profileId);
+        // Per-profile feature overrides are inert without the matching
+        // profile role (the resolver only applies them on profiles the
+        // admin has a role on). Drop them so the effective-permissions
+        // viewer doesn't show stale rows.
+        featureRepo.deleteAllProfileOverrides(adminId, profileId);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_PERMISSION_CHANGED,
+                    Map.of("accountId", adminId,
+                            "username", admin.getUsername(),
+                            "op", "remove_profile_role",
+                            "profileId", profileId));
+        }
+    }
+
+    // ── Dimension 4: feature permissions ─────────────────────────────────────
+
+    @Transactional
+    public void setFeaturePermissions(UUID adminId, List<FeaturePermissionRequest> permissions) {
+        setFeaturePermissions(adminId, permissions, null);
+    }
+
+    @Transactional
+    public void setFeaturePermissions(UUID adminId, List<FeaturePermissionRequest> permissions,
+                                       AuthPrincipal principal) {
+        Account admin = requireAccount(adminId);
+
+        // Reject duplicates up-front. The DB has partial-unique indexes on
+        // (admin, feature) for admin-wide and (admin, profile, feature) for
+        // per-profile rows; a duplicate would otherwise fail at INSERT time
+        // and surface as a 500 instead of a useful 400. Compose a key the
+        // same way as the index.
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (FeaturePermissionRequest p : permissions) {
+            String key = p.featureKey().name() + "@" + (p.profileId() == null ? "global" : p.profileId());
+            if (!seen.add(key)) {
+                throw new IllegalArgumentException(
+                        "Duplicate feature permission entry for [" + p.featureKey().name()
+                                + (p.profileId() != null ? "] on profile [" + p.profileId() : "] (admin-wide")
+                                + "]");
+            }
+        }
+
+        // Per-profile overrides are inert without a matching profile role
+        // — the resolver only applies them on profiles the admin has a
+        // role on. Reject them at write time so the DB doesn't accumulate
+        // orphan rows that confuse the effective-permissions viewer.
+        for (FeaturePermissionRequest p : permissions) {
+            if (p.profileId() != null
+                    && !profileRoleRepo.existsByAdminAccountIdAndProfileId(adminId, p.profileId())) {
+                throw new IllegalArgumentException(
+                        "Feature override for profile [" + p.profileId()
+                                + "] requires a profile role on the same profile");
+            }
+        }
+
+        // No-op fast path: the stored override set already equals the desired
+        // one. Skipping the wipe-and-recreate (and the audit row) keeps a
+        // re-applied IaC declaration from rewriting the whole permission table
+        // and spamming the audit log every reconcile.
+        if (featureOverridesMatch(featureRepo.findAllByAdminAccountId(adminId), permissions)) {
+            return;
+        }
+
+        // Replace every override (admin-wide and per-profile) with the list
+        // the caller sent. The permissions dialog loads then re-submits the
+        // whole set, so wipe-and-recreate keeps client and server in sync
+        // without needing patch semantics for delete/update/insert.
+        featureRepo.deleteAllByAdminAccountId(adminId);
+        featureRepo.flush();
+
+        permissions.forEach(req -> {
+            AdminFeaturePermission fp = new AdminFeaturePermission();
+            fp.setAdminAccount(admin);
+            fp.setFeatureKey(req.featureKey());
+            fp.setEnabled(req.enabled());
+            if (req.profileId() != null) {
+                ProvisioningProfile profileRef = profileRepo.findById(req.profileId())
+                        .orElseThrow(() -> new ResourceNotFoundException(
+                                "ProvisioningProfile", req.profileId()));
+                fp.setProfile(profileRef);
+            }
+            featureRepo.save(fp);
+        });
+
+        if (principal != null) {
+            // The wipe-and-recreate model means one audit row covers the
+            // whole new override set. Include the count and the keys so the
+            // log carries useful detail without exploding the row.
+            List<Map<String, Object>> summary = new ArrayList<>();
+            for (FeaturePermissionRequest p : permissions) {
+                Map<String, Object> entry = new HashMap<>();
+                entry.put("featureKey", p.featureKey().name());
+                entry.put("enabled", p.enabled());
+                if (p.profileId() != null) entry.put("profileId", p.profileId());
+                summary.add(entry);
+            }
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_PERMISSION_CHANGED,
+                    Map.of("accountId", adminId,
+                            "username", admin.getUsername(),
+                            "op", "set_feature_permissions",
+                            "count", permissions.size(),
+                            "overrides", summary));
+        }
+    }
+
+    @Transactional
+    public void clearFeaturePermission(UUID adminId, FeatureKey featureKey) {
+        clearFeaturePermission(adminId, featureKey, null);
+    }
+
+    @Transactional
+    public void clearFeaturePermission(UUID adminId, FeatureKey featureKey,
+                                        AuthPrincipal principal) {
+        Account admin = requireAccount(adminId);
+        // Clears the admin-wide override only. Per-profile overrides are
+        // addressed by clearProfileFeaturePermission below.
+        featureRepo.deleteAdminWideOverride(adminId, featureKey);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_PERMISSION_CHANGED,
+                    Map.of("accountId", adminId,
+                            "username", admin.getUsername(),
+                            "op", "clear_admin_wide_feature",
+                            "featureKey", featureKey.name()));
+        }
+    }
+
+    @Transactional
+    public void clearProfileFeaturePermission(UUID adminId, UUID profileId, FeatureKey featureKey) {
+        clearProfileFeaturePermission(adminId, profileId, featureKey, null);
+    }
+
+    @Transactional
+    public void clearProfileFeaturePermission(UUID adminId, UUID profileId, FeatureKey featureKey,
+                                                AuthPrincipal principal) {
+        Account admin = requireAccount(adminId);
+        featureRepo.deleteProfileOverride(adminId, profileId, featureKey);
+
+        if (principal != null) {
+            auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_PERMISSION_CHANGED,
+                    Map.of("accountId", adminId,
+                            "username", admin.getUsername(),
+                            "op", "clear_profile_feature",
+                            "profileId", profileId,
+                            "featureKey", featureKey.name()));
+        }
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    /**
+     * Resolves an admin row by id. Critically, this is the <em>only</em>
+     * lookup used by every mutating method on this service, and it 404s
+     * on anything other than {@link AccountRole#ADMIN}. That closes the
+     * cross-endpoint bypass where {@code PUT /superadmin/admins/{id}} or
+     * {@code DELETE /superadmin/admins/{id}} would otherwise act on a
+     * superadmin row (skipping the last-LOCAL-superadmin and self-delete
+     * guards that live on {@link SuperadminManagementService}).
+     */
+    private Account requireAccount(UUID adminId) {
+        Account a = accountRepo.findById(adminId)
+                .orElseThrow(() -> new ResourceNotFoundException("Account", adminId));
+        if (a.getRole() != AccountRole.ADMIN) {
+            throw new ResourceNotFoundException("Account", adminId);
+        }
+        return a;
+    }
+
+    private ProvisioningProfile requireProfile(UUID profileId) {
+        return profileRepo.findById(profileId)
+                .orElseThrow(() -> new ResourceNotFoundException("ProvisioningProfile", profileId));
+    }
+
+    /**
+     * True when the stored override rows already represent exactly the
+     * requested set — same {@code (featureKey, profileId, enabled)} triples,
+     * order-independent. Lets {@link #setFeaturePermissions} no-op an
+     * unchanged re-apply instead of wiping and recreating the whole set.
+     */
+    private static boolean featureOverridesMatch(List<AdminFeaturePermission> current,
+                                                 List<FeaturePermissionRequest> desired) {
+        java.util.Set<String> currentKeys = current.stream()
+                .map(fp -> overrideKey(fp.getFeatureKey().name(),
+                        fp.getProfile() != null ? fp.getProfile().getId() : null,
+                        fp.isEnabled()))
+                .collect(java.util.stream.Collectors.toSet());
+        java.util.Set<String> desiredKeys = desired.stream()
+                .map(p -> overrideKey(p.featureKey().name(), p.profileId(), p.enabled()))
+                .collect(java.util.stream.Collectors.toSet());
+        // Size guards defend against a duplicate collapsing two rows into one
+        // key (the dedup check upstream already rejects duplicate desired rows).
+        return currentKeys.size() == current.size()
+                && desiredKeys.size() == desired.size()
+                && currentKeys.equals(desiredKeys);
+    }
+
+    private static String overrideKey(String featureKey, UUID profileId, boolean enabled) {
+        return featureKey + "@" + (profileId == null ? "global" : profileId) + "=" + enabled;
+    }
+}

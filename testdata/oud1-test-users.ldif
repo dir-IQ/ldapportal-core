@@ -1,0 +1,1830 @@
+# =============================================================================
+# oud1-test-users.ldif — 100 inetOrgPerson test users for the oud1 directory.
+#
+# Base DN:  dc=oud1,dc=example,dc=com   (OUD / OpenDJ; auto-created by the container at init)
+# Loads into: ou=People,dc=oud1,dc=example,dc=com
+#
+# Composition: 100 users, evenly split across 5 departments (20 each:
+# Engineering, Sales, Marketing, HumanResources, Finance). 10 of them are
+# department managers (title "<Dept> Manager"). Names are deterministic
+# (10 given x 10 surnames = 100 unique uid/mail).
+#
+# Convention (matches testdata/oud-bootstrap.ldif): each user's
+# userPassword is their uid (e.g. alice.anderson -> alice.anderson).
+# Scramble before exposing anywhere non-local.
+#
+# The suffix root entry (dc=oud1,dc=example,dc=com) is intentionally NOT included — the
+# OpenDJ entrypoint creates it from BASE_DN before the import runs;
+# re-adding it returns code 68 (Already exists) and aborts the import.
+#
+# Load (then load oud1-test-groups.ldif afterwards):
+#   ldapadd -c -x -H ldap://localhost:3389 \
+#     -D "cn=Directory Manager" -w <password> -f testdata/oud1-test-users.ldif
+# =============================================================================
+
+dn: ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: People
+description: Test user accounts for the oud1 directory
+
+dn: uid=alice.anderson,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice.anderson
+cn: Alice Anderson
+sn: Anderson
+givenName: Alice
+displayName: Alice Anderson
+mail: alice.anderson@example.com
+userPassword: alice.anderson
+employeeNumber: 1001
+title: Engineering Manager
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0100
+
+dn: uid=alice.brooks,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice.brooks
+cn: Alice Brooks
+sn: Brooks
+givenName: Alice
+displayName: Alice Brooks
+mail: alice.brooks@example.com
+userPassword: alice.brooks
+employeeNumber: 1002
+title: Sales Representative
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0101
+
+dn: uid=alice.chen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice.chen
+cn: Alice Chen
+sn: Chen
+givenName: Alice
+displayName: Alice Chen
+mail: alice.chen@example.com
+userPassword: alice.chen
+employeeNumber: 1003
+title: Brand Manager
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0102
+
+dn: uid=alice.diaz,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice.diaz
+cn: Alice Diaz
+sn: Diaz
+givenName: Alice
+displayName: Alice Diaz
+mail: alice.diaz@example.com
+userPassword: alice.diaz
+employeeNumber: 1004
+title: HR Business Partner
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0103
+
+dn: uid=alice.evans,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice.evans
+cn: Alice Evans
+sn: Evans
+givenName: Alice
+displayName: Alice Evans
+mail: alice.evans@example.com
+userPassword: alice.evans
+employeeNumber: 1005
+title: Financial Analyst
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0104
+
+dn: uid=alice.foster,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice.foster
+cn: Alice Foster
+sn: Foster
+givenName: Alice
+displayName: Alice Foster
+mail: alice.foster@example.com
+userPassword: alice.foster
+employeeNumber: 1006
+title: Senior Software Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0105
+
+dn: uid=alice.gupta,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice.gupta
+cn: Alice Gupta
+sn: Gupta
+givenName: Alice
+displayName: Alice Gupta
+mail: alice.gupta@example.com
+userPassword: alice.gupta
+employeeNumber: 1007
+title: Sales Engineer
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0106
+
+dn: uid=alice.hansen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice.hansen
+cn: Alice Hansen
+sn: Hansen
+givenName: Alice
+displayName: Alice Hansen
+mail: alice.hansen@example.com
+userPassword: alice.hansen
+employeeNumber: 1008
+title: Growth Analyst
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0107
+
+dn: uid=alice.ito,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice.ito
+cn: Alice Ito
+sn: Ito
+givenName: Alice
+displayName: Alice Ito
+mail: alice.ito@example.com
+userPassword: alice.ito
+employeeNumber: 1009
+title: HR Generalist
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0108
+
+dn: uid=alice.jones,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: alice.jones
+cn: Alice Jones
+sn: Jones
+givenName: Alice
+displayName: Alice Jones
+mail: alice.jones@example.com
+userPassword: alice.jones
+employeeNumber: 1010
+title: Accountant
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0109
+
+dn: uid=brian.anderson,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: brian.anderson
+cn: Brian Anderson
+sn: Anderson
+givenName: Brian
+displayName: Brian Anderson
+mail: brian.anderson@example.com
+userPassword: brian.anderson
+employeeNumber: 1011
+title: DevOps Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0110
+
+dn: uid=brian.brooks,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: brian.brooks
+cn: Brian Brooks
+sn: Brooks
+givenName: Brian
+displayName: Brian Brooks
+mail: brian.brooks@example.com
+userPassword: brian.brooks
+employeeNumber: 1012
+title: Sales Manager
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0111
+
+dn: uid=brian.chen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: brian.chen
+cn: Brian Chen
+sn: Chen
+givenName: Brian
+displayName: Brian Chen
+mail: brian.chen@example.com
+userPassword: brian.chen
+employeeNumber: 1013
+title: Marketing Specialist
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0112
+
+dn: uid=brian.diaz,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: brian.diaz
+cn: Brian Diaz
+sn: Diaz
+givenName: Brian
+displayName: Brian Diaz
+mail: brian.diaz@example.com
+userPassword: brian.diaz
+employeeNumber: 1014
+title: Recruiter
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0113
+
+dn: uid=brian.evans,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: brian.evans
+cn: Brian Evans
+sn: Evans
+givenName: Brian
+displayName: Brian Evans
+mail: brian.evans@example.com
+userPassword: brian.evans
+employeeNumber: 1015
+title: Controller
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0114
+
+dn: uid=brian.foster,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: brian.foster
+cn: Brian Foster
+sn: Foster
+givenName: Brian
+displayName: Brian Foster
+mail: brian.foster@example.com
+userPassword: brian.foster
+employeeNumber: 1016
+title: QA Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0115
+
+dn: uid=brian.gupta,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: brian.gupta
+cn: Brian Gupta
+sn: Gupta
+givenName: Brian
+displayName: Brian Gupta
+mail: brian.gupta@example.com
+userPassword: brian.gupta
+employeeNumber: 1017
+title: Account Executive
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0116
+
+dn: uid=brian.hansen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: brian.hansen
+cn: Brian Hansen
+sn: Hansen
+givenName: Brian
+displayName: Brian Hansen
+mail: brian.hansen@example.com
+userPassword: brian.hansen
+employeeNumber: 1018
+title: Content Strategist
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0117
+
+dn: uid=brian.ito,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: brian.ito
+cn: Brian Ito
+sn: Ito
+givenName: Brian
+displayName: Brian Ito
+mail: brian.ito@example.com
+userPassword: brian.ito
+employeeNumber: 1019
+title: People Operations Specialist
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0118
+
+dn: uid=brian.jones,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: brian.jones
+cn: Brian Jones
+sn: Jones
+givenName: Brian
+displayName: Brian Jones
+mail: brian.jones@example.com
+userPassword: brian.jones
+employeeNumber: 1020
+title: Payroll Specialist
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0119
+
+dn: uid=carol.anderson,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol.anderson
+cn: Carol Anderson
+sn: Anderson
+givenName: Carol
+displayName: Carol Anderson
+mail: carol.anderson@example.com
+userPassword: carol.anderson
+employeeNumber: 1021
+title: Software Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0120
+
+dn: uid=carol.brooks,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol.brooks
+cn: Carol Brooks
+sn: Brooks
+givenName: Carol
+displayName: Carol Brooks
+mail: carol.brooks@example.com
+userPassword: carol.brooks
+employeeNumber: 1022
+title: Sales Representative
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0121
+
+dn: uid=carol.chen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol.chen
+cn: Carol Chen
+sn: Chen
+givenName: Carol
+displayName: Carol Chen
+mail: carol.chen@example.com
+userPassword: carol.chen
+employeeNumber: 1023
+title: Marketing Manager
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0122
+
+dn: uid=carol.diaz,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol.diaz
+cn: Carol Diaz
+sn: Diaz
+givenName: Carol
+displayName: Carol Diaz
+mail: carol.diaz@example.com
+userPassword: carol.diaz
+employeeNumber: 1024
+title: HR Business Partner
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0123
+
+dn: uid=carol.evans,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol.evans
+cn: Carol Evans
+sn: Evans
+givenName: Carol
+displayName: Carol Evans
+mail: carol.evans@example.com
+userPassword: carol.evans
+employeeNumber: 1025
+title: Financial Analyst
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0124
+
+dn: uid=carol.foster,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol.foster
+cn: Carol Foster
+sn: Foster
+givenName: Carol
+displayName: Carol Foster
+mail: carol.foster@example.com
+userPassword: carol.foster
+employeeNumber: 1026
+title: Senior Software Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0125
+
+dn: uid=carol.gupta,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol.gupta
+cn: Carol Gupta
+sn: Gupta
+givenName: Carol
+displayName: Carol Gupta
+mail: carol.gupta@example.com
+userPassword: carol.gupta
+employeeNumber: 1027
+title: Sales Engineer
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0126
+
+dn: uid=carol.hansen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol.hansen
+cn: Carol Hansen
+sn: Hansen
+givenName: Carol
+displayName: Carol Hansen
+mail: carol.hansen@example.com
+userPassword: carol.hansen
+employeeNumber: 1028
+title: Growth Analyst
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0127
+
+dn: uid=carol.ito,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol.ito
+cn: Carol Ito
+sn: Ito
+givenName: Carol
+displayName: Carol Ito
+mail: carol.ito@example.com
+userPassword: carol.ito
+employeeNumber: 1029
+title: HR Generalist
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0128
+
+dn: uid=carol.jones,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: carol.jones
+cn: Carol Jones
+sn: Jones
+givenName: Carol
+displayName: Carol Jones
+mail: carol.jones@example.com
+userPassword: carol.jones
+employeeNumber: 1030
+title: Accountant
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0129
+
+dn: uid=david.anderson,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: david.anderson
+cn: David Anderson
+sn: Anderson
+givenName: David
+displayName: David Anderson
+mail: david.anderson@example.com
+userPassword: david.anderson
+employeeNumber: 1031
+title: DevOps Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0130
+
+dn: uid=david.brooks,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: david.brooks
+cn: David Brooks
+sn: Brooks
+givenName: David
+displayName: David Brooks
+mail: david.brooks@example.com
+userPassword: david.brooks
+employeeNumber: 1032
+title: Regional Sales Lead
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0131
+
+dn: uid=david.chen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: david.chen
+cn: David Chen
+sn: Chen
+givenName: David
+displayName: David Chen
+mail: david.chen@example.com
+userPassword: david.chen
+employeeNumber: 1033
+title: Marketing Specialist
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0132
+
+dn: uid=david.diaz,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: david.diaz
+cn: David Diaz
+sn: Diaz
+givenName: David
+displayName: David Diaz
+mail: david.diaz@example.com
+userPassword: david.diaz
+employeeNumber: 1034
+title: HumanResources Manager
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0133
+
+dn: uid=david.evans,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: david.evans
+cn: David Evans
+sn: Evans
+givenName: David
+displayName: David Evans
+mail: david.evans@example.com
+userPassword: david.evans
+employeeNumber: 1035
+title: Controller
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0134
+
+dn: uid=david.foster,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: david.foster
+cn: David Foster
+sn: Foster
+givenName: David
+displayName: David Foster
+mail: david.foster@example.com
+userPassword: david.foster
+employeeNumber: 1036
+title: QA Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0135
+
+dn: uid=david.gupta,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: david.gupta
+cn: David Gupta
+sn: Gupta
+givenName: David
+displayName: David Gupta
+mail: david.gupta@example.com
+userPassword: david.gupta
+employeeNumber: 1037
+title: Account Executive
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0136
+
+dn: uid=david.hansen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: david.hansen
+cn: David Hansen
+sn: Hansen
+givenName: David
+displayName: David Hansen
+mail: david.hansen@example.com
+userPassword: david.hansen
+employeeNumber: 1038
+title: Content Strategist
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0137
+
+dn: uid=david.ito,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: david.ito
+cn: David Ito
+sn: Ito
+givenName: David
+displayName: David Ito
+mail: david.ito@example.com
+userPassword: david.ito
+employeeNumber: 1039
+title: People Operations Specialist
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0138
+
+dn: uid=david.jones,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: david.jones
+cn: David Jones
+sn: Jones
+givenName: David
+displayName: David Jones
+mail: david.jones@example.com
+userPassword: david.jones
+employeeNumber: 1040
+title: Payroll Specialist
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0139
+
+dn: uid=emma.anderson,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: emma.anderson
+cn: Emma Anderson
+sn: Anderson
+givenName: Emma
+displayName: Emma Anderson
+mail: emma.anderson@example.com
+userPassword: emma.anderson
+employeeNumber: 1041
+title: Software Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0140
+
+dn: uid=emma.brooks,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: emma.brooks
+cn: Emma Brooks
+sn: Brooks
+givenName: Emma
+displayName: Emma Brooks
+mail: emma.brooks@example.com
+userPassword: emma.brooks
+employeeNumber: 1042
+title: Sales Representative
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0141
+
+dn: uid=emma.chen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: emma.chen
+cn: Emma Chen
+sn: Chen
+givenName: Emma
+displayName: Emma Chen
+mail: emma.chen@example.com
+userPassword: emma.chen
+employeeNumber: 1043
+title: Brand Manager
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0142
+
+dn: uid=emma.diaz,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: emma.diaz
+cn: Emma Diaz
+sn: Diaz
+givenName: Emma
+displayName: Emma Diaz
+mail: emma.diaz@example.com
+userPassword: emma.diaz
+employeeNumber: 1044
+title: HR Business Partner
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0143
+
+dn: uid=emma.evans,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: emma.evans
+cn: Emma Evans
+sn: Evans
+givenName: Emma
+displayName: Emma Evans
+mail: emma.evans@example.com
+userPassword: emma.evans
+employeeNumber: 1045
+title: Finance Manager
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0144
+
+dn: uid=emma.foster,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: emma.foster
+cn: Emma Foster
+sn: Foster
+givenName: Emma
+displayName: Emma Foster
+mail: emma.foster@example.com
+userPassword: emma.foster
+employeeNumber: 1046
+title: Senior Software Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0145
+
+dn: uid=emma.gupta,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: emma.gupta
+cn: Emma Gupta
+sn: Gupta
+givenName: Emma
+displayName: Emma Gupta
+mail: emma.gupta@example.com
+userPassword: emma.gupta
+employeeNumber: 1047
+title: Sales Engineer
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0146
+
+dn: uid=emma.hansen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: emma.hansen
+cn: Emma Hansen
+sn: Hansen
+givenName: Emma
+displayName: Emma Hansen
+mail: emma.hansen@example.com
+userPassword: emma.hansen
+employeeNumber: 1048
+title: Growth Analyst
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0147
+
+dn: uid=emma.ito,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: emma.ito
+cn: Emma Ito
+sn: Ito
+givenName: Emma
+displayName: Emma Ito
+mail: emma.ito@example.com
+userPassword: emma.ito
+employeeNumber: 1049
+title: HR Generalist
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0148
+
+dn: uid=emma.jones,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: emma.jones
+cn: Emma Jones
+sn: Jones
+givenName: Emma
+displayName: Emma Jones
+mail: emma.jones@example.com
+userPassword: emma.jones
+employeeNumber: 1050
+title: Accountant
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0149
+
+dn: uid=frank.anderson,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: frank.anderson
+cn: Frank Anderson
+sn: Anderson
+givenName: Frank
+displayName: Frank Anderson
+mail: frank.anderson@example.com
+userPassword: frank.anderson
+employeeNumber: 1051
+title: DevOps Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0150
+
+dn: uid=frank.brooks,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: frank.brooks
+cn: Frank Brooks
+sn: Brooks
+givenName: Frank
+displayName: Frank Brooks
+mail: frank.brooks@example.com
+userPassword: frank.brooks
+employeeNumber: 1052
+title: Regional Sales Lead
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0151
+
+dn: uid=frank.chen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: frank.chen
+cn: Frank Chen
+sn: Chen
+givenName: Frank
+displayName: Frank Chen
+mail: frank.chen@example.com
+userPassword: frank.chen
+employeeNumber: 1053
+title: Marketing Specialist
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0152
+
+dn: uid=frank.diaz,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: frank.diaz
+cn: Frank Diaz
+sn: Diaz
+givenName: Frank
+displayName: Frank Diaz
+mail: frank.diaz@example.com
+userPassword: frank.diaz
+employeeNumber: 1054
+title: Recruiter
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0153
+
+dn: uid=frank.evans,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: frank.evans
+cn: Frank Evans
+sn: Evans
+givenName: Frank
+displayName: Frank Evans
+mail: frank.evans@example.com
+userPassword: frank.evans
+employeeNumber: 1055
+title: Controller
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0154
+
+dn: uid=frank.foster,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: frank.foster
+cn: Frank Foster
+sn: Foster
+givenName: Frank
+displayName: Frank Foster
+mail: frank.foster@example.com
+userPassword: frank.foster
+employeeNumber: 1056
+title: Engineering Manager
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0155
+
+dn: uid=frank.gupta,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: frank.gupta
+cn: Frank Gupta
+sn: Gupta
+givenName: Frank
+displayName: Frank Gupta
+mail: frank.gupta@example.com
+userPassword: frank.gupta
+employeeNumber: 1057
+title: Account Executive
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0156
+
+dn: uid=frank.hansen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: frank.hansen
+cn: Frank Hansen
+sn: Hansen
+givenName: Frank
+displayName: Frank Hansen
+mail: frank.hansen@example.com
+userPassword: frank.hansen
+employeeNumber: 1058
+title: Content Strategist
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0157
+
+dn: uid=frank.ito,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: frank.ito
+cn: Frank Ito
+sn: Ito
+givenName: Frank
+displayName: Frank Ito
+mail: frank.ito@example.com
+userPassword: frank.ito
+employeeNumber: 1059
+title: People Operations Specialist
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0158
+
+dn: uid=frank.jones,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: frank.jones
+cn: Frank Jones
+sn: Jones
+givenName: Frank
+displayName: Frank Jones
+mail: frank.jones@example.com
+userPassword: frank.jones
+employeeNumber: 1060
+title: Payroll Specialist
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0159
+
+dn: uid=grace.anderson,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: grace.anderson
+cn: Grace Anderson
+sn: Anderson
+givenName: Grace
+displayName: Grace Anderson
+mail: grace.anderson@example.com
+userPassword: grace.anderson
+employeeNumber: 1061
+title: Software Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0160
+
+dn: uid=grace.brooks,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: grace.brooks
+cn: Grace Brooks
+sn: Brooks
+givenName: Grace
+displayName: Grace Brooks
+mail: grace.brooks@example.com
+userPassword: grace.brooks
+employeeNumber: 1062
+title: Sales Representative
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0161
+
+dn: uid=grace.chen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: grace.chen
+cn: Grace Chen
+sn: Chen
+givenName: Grace
+displayName: Grace Chen
+mail: grace.chen@example.com
+userPassword: grace.chen
+employeeNumber: 1063
+title: Brand Manager
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0162
+
+dn: uid=grace.diaz,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: grace.diaz
+cn: Grace Diaz
+sn: Diaz
+givenName: Grace
+displayName: Grace Diaz
+mail: grace.diaz@example.com
+userPassword: grace.diaz
+employeeNumber: 1064
+title: HR Business Partner
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0163
+
+dn: uid=grace.evans,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: grace.evans
+cn: Grace Evans
+sn: Evans
+givenName: Grace
+displayName: Grace Evans
+mail: grace.evans@example.com
+userPassword: grace.evans
+employeeNumber: 1065
+title: Financial Analyst
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0164
+
+dn: uid=grace.foster,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: grace.foster
+cn: Grace Foster
+sn: Foster
+givenName: Grace
+displayName: Grace Foster
+mail: grace.foster@example.com
+userPassword: grace.foster
+employeeNumber: 1066
+title: Senior Software Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0165
+
+dn: uid=grace.gupta,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: grace.gupta
+cn: Grace Gupta
+sn: Gupta
+givenName: Grace
+displayName: Grace Gupta
+mail: grace.gupta@example.com
+userPassword: grace.gupta
+employeeNumber: 1067
+title: Sales Manager
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0166
+
+dn: uid=grace.hansen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: grace.hansen
+cn: Grace Hansen
+sn: Hansen
+givenName: Grace
+displayName: Grace Hansen
+mail: grace.hansen@example.com
+userPassword: grace.hansen
+employeeNumber: 1068
+title: Growth Analyst
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0167
+
+dn: uid=grace.ito,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: grace.ito
+cn: Grace Ito
+sn: Ito
+givenName: Grace
+displayName: Grace Ito
+mail: grace.ito@example.com
+userPassword: grace.ito
+employeeNumber: 1069
+title: HR Generalist
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0168
+
+dn: uid=grace.jones,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: grace.jones
+cn: Grace Jones
+sn: Jones
+givenName: Grace
+displayName: Grace Jones
+mail: grace.jones@example.com
+userPassword: grace.jones
+employeeNumber: 1070
+title: Accountant
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0169
+
+dn: uid=henry.anderson,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: henry.anderson
+cn: Henry Anderson
+sn: Anderson
+givenName: Henry
+displayName: Henry Anderson
+mail: henry.anderson@example.com
+userPassword: henry.anderson
+employeeNumber: 1071
+title: DevOps Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0170
+
+dn: uid=henry.brooks,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: henry.brooks
+cn: Henry Brooks
+sn: Brooks
+givenName: Henry
+displayName: Henry Brooks
+mail: henry.brooks@example.com
+userPassword: henry.brooks
+employeeNumber: 1072
+title: Regional Sales Lead
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0171
+
+dn: uid=henry.chen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: henry.chen
+cn: Henry Chen
+sn: Chen
+givenName: Henry
+displayName: Henry Chen
+mail: henry.chen@example.com
+userPassword: henry.chen
+employeeNumber: 1073
+title: Marketing Specialist
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0172
+
+dn: uid=henry.diaz,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: henry.diaz
+cn: Henry Diaz
+sn: Diaz
+givenName: Henry
+displayName: Henry Diaz
+mail: henry.diaz@example.com
+userPassword: henry.diaz
+employeeNumber: 1074
+title: Recruiter
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0173
+
+dn: uid=henry.evans,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: henry.evans
+cn: Henry Evans
+sn: Evans
+givenName: Henry
+displayName: Henry Evans
+mail: henry.evans@example.com
+userPassword: henry.evans
+employeeNumber: 1075
+title: Controller
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0174
+
+dn: uid=henry.foster,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: henry.foster
+cn: Henry Foster
+sn: Foster
+givenName: Henry
+displayName: Henry Foster
+mail: henry.foster@example.com
+userPassword: henry.foster
+employeeNumber: 1076
+title: QA Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0175
+
+dn: uid=henry.gupta,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: henry.gupta
+cn: Henry Gupta
+sn: Gupta
+givenName: Henry
+displayName: Henry Gupta
+mail: henry.gupta@example.com
+userPassword: henry.gupta
+employeeNumber: 1077
+title: Account Executive
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0176
+
+dn: uid=henry.hansen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: henry.hansen
+cn: Henry Hansen
+sn: Hansen
+givenName: Henry
+displayName: Henry Hansen
+mail: henry.hansen@example.com
+userPassword: henry.hansen
+employeeNumber: 1078
+title: Marketing Manager
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0177
+
+dn: uid=henry.ito,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: henry.ito
+cn: Henry Ito
+sn: Ito
+givenName: Henry
+displayName: Henry Ito
+mail: henry.ito@example.com
+userPassword: henry.ito
+employeeNumber: 1079
+title: People Operations Specialist
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0178
+
+dn: uid=henry.jones,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: henry.jones
+cn: Henry Jones
+sn: Jones
+givenName: Henry
+displayName: Henry Jones
+mail: henry.jones@example.com
+userPassword: henry.jones
+employeeNumber: 1080
+title: Payroll Specialist
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0179
+
+dn: uid=irene.anderson,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: irene.anderson
+cn: Irene Anderson
+sn: Anderson
+givenName: Irene
+displayName: Irene Anderson
+mail: irene.anderson@example.com
+userPassword: irene.anderson
+employeeNumber: 1081
+title: Software Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0180
+
+dn: uid=irene.brooks,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: irene.brooks
+cn: Irene Brooks
+sn: Brooks
+givenName: Irene
+displayName: Irene Brooks
+mail: irene.brooks@example.com
+userPassword: irene.brooks
+employeeNumber: 1082
+title: Sales Representative
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0181
+
+dn: uid=irene.chen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: irene.chen
+cn: Irene Chen
+sn: Chen
+givenName: Irene
+displayName: Irene Chen
+mail: irene.chen@example.com
+userPassword: irene.chen
+employeeNumber: 1083
+title: Brand Manager
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0182
+
+dn: uid=irene.diaz,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: irene.diaz
+cn: Irene Diaz
+sn: Diaz
+givenName: Irene
+displayName: Irene Diaz
+mail: irene.diaz@example.com
+userPassword: irene.diaz
+employeeNumber: 1084
+title: HR Business Partner
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0183
+
+dn: uid=irene.evans,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: irene.evans
+cn: Irene Evans
+sn: Evans
+givenName: Irene
+displayName: Irene Evans
+mail: irene.evans@example.com
+userPassword: irene.evans
+employeeNumber: 1085
+title: Financial Analyst
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0184
+
+dn: uid=irene.foster,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: irene.foster
+cn: Irene Foster
+sn: Foster
+givenName: Irene
+displayName: Irene Foster
+mail: irene.foster@example.com
+userPassword: irene.foster
+employeeNumber: 1086
+title: Senior Software Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0185
+
+dn: uid=irene.gupta,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: irene.gupta
+cn: Irene Gupta
+sn: Gupta
+givenName: Irene
+displayName: Irene Gupta
+mail: irene.gupta@example.com
+userPassword: irene.gupta
+employeeNumber: 1087
+title: Sales Engineer
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0186
+
+dn: uid=irene.hansen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: irene.hansen
+cn: Irene Hansen
+sn: Hansen
+givenName: Irene
+displayName: Irene Hansen
+mail: irene.hansen@example.com
+userPassword: irene.hansen
+employeeNumber: 1088
+title: Growth Analyst
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0187
+
+dn: uid=irene.ito,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: irene.ito
+cn: Irene Ito
+sn: Ito
+givenName: Irene
+displayName: Irene Ito
+mail: irene.ito@example.com
+userPassword: irene.ito
+employeeNumber: 1089
+title: HumanResources Manager
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0188
+
+dn: uid=irene.jones,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: irene.jones
+cn: Irene Jones
+sn: Jones
+givenName: Irene
+displayName: Irene Jones
+mail: irene.jones@example.com
+userPassword: irene.jones
+employeeNumber: 1090
+title: Accountant
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0189
+
+dn: uid=jack.anderson,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jack.anderson
+cn: Jack Anderson
+sn: Anderson
+givenName: Jack
+displayName: Jack Anderson
+mail: jack.anderson@example.com
+userPassword: jack.anderson
+employeeNumber: 1091
+title: DevOps Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0190
+
+dn: uid=jack.brooks,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jack.brooks
+cn: Jack Brooks
+sn: Brooks
+givenName: Jack
+displayName: Jack Brooks
+mail: jack.brooks@example.com
+userPassword: jack.brooks
+employeeNumber: 1092
+title: Regional Sales Lead
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0191
+
+dn: uid=jack.chen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jack.chen
+cn: Jack Chen
+sn: Chen
+givenName: Jack
+displayName: Jack Chen
+mail: jack.chen@example.com
+userPassword: jack.chen
+employeeNumber: 1093
+title: Marketing Specialist
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0192
+
+dn: uid=jack.diaz,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jack.diaz
+cn: Jack Diaz
+sn: Diaz
+givenName: Jack
+displayName: Jack Diaz
+mail: jack.diaz@example.com
+userPassword: jack.diaz
+employeeNumber: 1094
+title: Recruiter
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0193
+
+dn: uid=jack.evans,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jack.evans
+cn: Jack Evans
+sn: Evans
+givenName: Jack
+displayName: Jack Evans
+mail: jack.evans@example.com
+userPassword: jack.evans
+employeeNumber: 1095
+title: Controller
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0194
+
+dn: uid=jack.foster,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jack.foster
+cn: Jack Foster
+sn: Foster
+givenName: Jack
+displayName: Jack Foster
+mail: jack.foster@example.com
+userPassword: jack.foster
+employeeNumber: 1096
+title: QA Engineer
+ou: Engineering
+departmentNumber: ENG
+telephoneNumber: +1 555 0195
+
+dn: uid=jack.gupta,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jack.gupta
+cn: Jack Gupta
+sn: Gupta
+givenName: Jack
+displayName: Jack Gupta
+mail: jack.gupta@example.com
+userPassword: jack.gupta
+employeeNumber: 1097
+title: Account Executive
+ou: Sales
+departmentNumber: SAL
+telephoneNumber: +1 555 0196
+
+dn: uid=jack.hansen,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jack.hansen
+cn: Jack Hansen
+sn: Hansen
+givenName: Jack
+displayName: Jack Hansen
+mail: jack.hansen@example.com
+userPassword: jack.hansen
+employeeNumber: 1098
+title: Content Strategist
+ou: Marketing
+departmentNumber: MAR
+telephoneNumber: +1 555 0197
+
+dn: uid=jack.ito,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jack.ito
+cn: Jack Ito
+sn: Ito
+givenName: Jack
+displayName: Jack Ito
+mail: jack.ito@example.com
+userPassword: jack.ito
+employeeNumber: 1099
+title: People Operations Specialist
+ou: HumanResources
+departmentNumber: HUM
+telephoneNumber: +1 555 0198
+
+dn: uid=jack.jones,ou=People,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+uid: jack.jones
+cn: Jack Jones
+sn: Jones
+givenName: Jack
+displayName: Jack Jones
+mail: jack.jones@example.com
+userPassword: jack.jones
+employeeNumber: 1100
+title: Finance Manager
+ou: Finance
+departmentNumber: FIN
+telephoneNumber: +1 555 0199
+

@@ -1,0 +1,42 @@
+# Portable nginx config template for the published frontend image.
+#
+# nginx:alpine's stock entrypoint envsubsts files under
+# /etc/nginx/templates/*.template into /etc/nginx/conf.d/ at container
+# start, expanding ${BACKEND_APP} against the container's environment.
+# BACKEND_APP is the backend *host* the SPA proxies /api/v1 to; the port
+# is fixed at 8080 (both backend editions bind 8080). One image works on
+# every platform — only BACKEND_APP changes:
+#
+#   - docker-compose   → app                       (the service name; default below)
+#   - Kubernetes / EKS → ldapportal-backend        (the backend Service name)
+#   - Fly.io           → <backend-app>.flycast     (route via flycast, not .internal)
+#
+# The Dockerfile pins NGINX_ENVSUBST_FILTER=BACKEND_APP so envsubst only
+# touches ${BACKEND_APP} and leaves the nginx runtime variables ($host,
+# $remote_addr, $scheme, …) untouched.
+#
+# The backend host is resolved at startup. That suits a stable address —
+# a compose/K8s service name (stable ClusterIP) or a Fly flycast address
+# (stable, fronted by fly-proxy). It does NOT chase an upstream whose IP
+# changes under a live nginx (e.g. Fly .internal direct 6PN); use .flycast.
+
+server {
+    listen 8080;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    client_max_body_size 50m;
+
+    location /api/v1 {
+        proxy_pass http://${BACKEND_APP}:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

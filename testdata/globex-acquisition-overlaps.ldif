@@ -1,0 +1,190 @@
+# =============================================================================
+# Globex acquisition overlaps — curated demo personas.
+#
+# This is a thin scenarios layer on top of globex-250-users.ldif. The bulk file
+# already exercises every cross-directory tier statistically (75 EXACT, 25 HIGH,
+# 10 AMBIGUOUS, 140 Globex-only); this file adds a handful of NAMED users that
+# are easy to point at during a demo or assert on in an integration test.
+#
+# Schema: stock inetOrgPerson only. AD-shape concepts ride in employeeType +
+# description annotations (see README-globex.md).
+#
+# Load order:
+#   1. testdata/acmecorp-5000-users.ldif
+#   2. testdata/globex-250-users.ldif
+#   3. testdata/globex-acquisition-overlaps.ldif    (this file)
+# =============================================================================
+
+
+# ── Demo persona: clean EXACT-tier ─────────────────────────────────────────
+# Joins to acmecorp/jack.roberts (EMP000100, jack.roberts@acmecorp.com) by
+# primary key (mail).
+
+dn: uid=glx-demo-exact,ou=Engineering,ou=People,dc=globex,dc=com
+objectClass: top
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: glx-demo-exact
+cn: Jack Roberts
+givenName: Jack
+sn: Roberts
+displayName: Jack Roberts (Globex)
+mail: jack.roberts@acmecorp.com
+employeeNumber: EMP000100
+employeeType: Full-Time
+title: Engineering Manager (post-acquisition)
+ou: Engineering
+l: London
+description: DEMO — EXACT-tier joiner (mail match to acmecorp/jack.roberts)
+userPassword: {SSHA}placeholder
+
+
+# ── Demo persona: clean HIGH-tier ──────────────────────────────────────────
+# Joins to acmecorp/danielle.perez (EMP000200) by employeeNumber only;
+# mail @globex.com differs from her acmecorp address.
+
+dn: uid=glx-demo-high,ou=Engineering,ou=People,dc=globex,dc=com
+objectClass: top
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: glx-demo-high
+cn: Danielle Perez
+givenName: Danielle
+sn: Perez
+displayName: Danielle Perez (Globex)
+mail: danielle.perez@globex.com
+employeeNumber: EMP000200
+employeeType: Full-Time
+title: Senior Software Engineer
+ou: Engineering
+l: Berlin
+description: DEMO — HIGH-tier joiner (employeeNumber match to acmecorp/danielle.perez)
+userPassword: {SSHA}placeholder
+
+
+# ── Demo persona: AMBIGUOUS pair ───────────────────────────────────────────
+# Two Globex users share employeeNumber EMP000500 — which exists on the
+# acmecorp side as marie.anderson. Resolver cannot uniquely pair the
+# acmecorp record with either Globex candidate → AMBIGUOUS group.
+
+dn: uid=glx-demo-ambig-1,ou=Engineering,ou=People,dc=globex,dc=com
+objectClass: top
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: glx-demo-ambig-1
+cn: Marie Anderson
+givenName: Marie
+sn: Anderson
+displayName: Marie Anderson (Globex - record A)
+mail: marie.anderson@globex.com
+employeeNumber: EMP000500
+employeeType: Full-Time
+title: Senior Software Engineer
+ou: Engineering
+l: Paris
+description: DEMO — AMBIGUOUS pair member 1 (collides with glx-demo-ambig-2 on EMP000500)
+userPassword: {SSHA}placeholder
+
+dn: uid=glx-demo-ambig-2,ou=Engineering,ou=People,dc=globex,dc=com
+objectClass: top
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: glx-demo-ambig-2
+cn: Marie Andersen
+givenName: Marie
+sn: Andersen
+displayName: Marie Andersen (Globex - record B)
+mail: marie.andersen@globex.com
+employeeNumber: EMP000500
+employeeType: Full-Time
+title: Senior Software Engineer
+ou: Engineering
+l: Madrid
+description: DEMO — AMBIGUOUS pair member 2 (duplicate EMP000500; spelling diverged at migration)
+userPassword: {SSHA}placeholder
+
+
+# ── Demo persona: Globex-only (orphan) ─────────────────────────────────────
+# No acmecorp counterpart — the resolver returns this row as a single-
+# directory candidate without a confidence badge.
+
+dn: uid=glx-demo-orphan,ou=Sales,ou=People,dc=globex,dc=com
+objectClass: top
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: glx-demo-orphan
+cn: Imani Okonkwo
+givenName: Imani
+sn: Okonkwo
+displayName: Imani Okonkwo
+mail: imani.okonkwo@globex.com
+employeeNumber: GLX-DEMO-001
+employeeType: Full-Time
+title: Sales Director — EMEA (Globex-native role)
+ou: Sales
+l: Dublin
+description: DEMO — Globex-only (no acmecorp counterpart; renders as unresolved candidate)
+userPassword: {SSHA}placeholder
+
+
+# ── Demo persona: offboarding target ───────────────────────────────────────
+# Disabled (employeeType=Disabled) but still a member of sensitive groups.
+# Stages data for a Feature 2 (multi-system orchestrated offboarding) demo
+# when that feature ships. Today renders as "disabled but in sensitive group"
+# in the integrity-check view.
+
+dn: uid=glx-demo-offboard,ou=Finance,ou=People,dc=globex,dc=com
+objectClass: top
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+uid: glx-demo-offboard
+cn: Reginald Holcombe
+givenName: Reginald
+sn: Holcombe
+displayName: Reginald Holcombe
+mail: reginald.holcombe@globex.com
+employeeNumber: GLX-DEMO-002
+employeeType: Disabled
+title: Former CFO — Globex (terminated 2025-12-15)
+ou: Finance
+l: Zurich
+description: DEMO — offboarding target | ad-shape: UAC=514 (DISABLED) | ad-shape: accountExpires past
+
+
+# ── Group memberships for the demo personas ────────────────────────────────
+
+dn: cn=globex-engineering,ou=Groups,dc=globex,dc=com
+changetype: modify
+add: member
+member: uid=glx-demo-exact,ou=Engineering,ou=People,dc=globex,dc=com
+member: uid=glx-demo-high,ou=Engineering,ou=People,dc=globex,dc=com
+member: uid=glx-demo-ambig-1,ou=Engineering,ou=People,dc=globex,dc=com
+member: uid=glx-demo-ambig-2,ou=Engineering,ou=People,dc=globex,dc=com
+
+dn: cn=globex-sales,ou=Groups,dc=globex,dc=com
+changetype: modify
+add: member
+member: uid=glx-demo-orphan,ou=Sales,ou=People,dc=globex,dc=com
+
+dn: cn=globex-finance,ou=Groups,dc=globex,dc=com
+changetype: modify
+add: member
+member: uid=glx-demo-offboard,ou=Finance,ou=People,dc=globex,dc=com
+
+dn: cn=globex-leadership,ou=Groups,dc=globex,dc=com
+changetype: modify
+add: member
+member: uid=glx-demo-exact,ou=Engineering,ou=People,dc=globex,dc=com
+member: uid=glx-demo-orphan,ou=Sales,ou=People,dc=globex,dc=com
+member: uid=glx-demo-offboard,ou=Finance,ou=People,dc=globex,dc=com
+
+dn: cn=globex-finance-readonly,ou=Groups,dc=globex,dc=com
+changetype: modify
+add: member
+member: uid=glx-demo-offboard,ou=Finance,ou=People,dc=globex,dc=com

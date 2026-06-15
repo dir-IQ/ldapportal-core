@@ -1,0 +1,5 @@
+cn,description,owner,members
+engineering,"Engineering team","uid=bob.johnson,ou=people,dc=example,dc=com","uid=alice.smith,ou=people,dc=example,dc=com|uid=david.miller,ou=people,dc=example,dc=com|uid=frank.garcia,ou=people,dc=example,dc=com|uid=henry.martin,ou=people,dc=example,dc=com"
+design,"Design team","uid=carol.davis,ou=people,dc=example,dc=com","uid=carol.davis,ou=people,dc=example,dc=com"
+analytics,"Data and analytics","uid=grace.lee,ou=people,dc=example,dc=com","uid=eve.wilson,ou=people,dc=example,dc=com|uid=grace.lee,ou=people,dc=example,dc=com"
+managers,"All people-managers","uid=bob.johnson,ou=people,dc=example,dc=com","uid=bob.johnson,ou=people,dc=example,dc=com|uid=grace.lee,ou=people,dc=example,dc=com"

@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.ldapportal</groupId>
+        <artifactId>ldapportal-parent</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+        <relativePath>../../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>ldapportal-community-plus-isva</artifactId>
+    <packaging>jar</packaging>
+    <name>ldapportal-community-plus-isva</name>
+    <description>
+        Community-plus-ISVA distribution — Apache-2.0 fat JAR that ships
+        core/ plus addons/isva. Same edition shape as community/ but with
+        the ISVA full-mode integration bundled in, so an operator who
+        wants the OSS-only baseline AND ISVA provisioning gets a single
+        deployable. No ee/ bytecode — verified by the antrun check below,
+        mirroring distribution/community.
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.ldapportal</groupId>
+            <artifactId>ldapportal-core</artifactId>
+        </dependency>
+        <!-- The thing that distinguishes this distribution from the plain
+             community one: the open-source ISVA addon. Present on the
+             classpath, the IsvaAddonProbe registers and grants
+             VENDOR_INTEGRATIONS_ISVA to operators of this build. -->
+        <dependency>
+            <groupId>com.ldapportal</groupId>
+            <artifactId>ldapportal-addons-isva</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>ldapportal-community-plus-isva-${project.version}</finalName>
+        <plugins>
+            <!-- Resolves the git short-SHA before spring-boot's build-info
+                 goal runs, so it gets baked into the JAR's
+                 META-INF/build-info.properties (see parent pom additionalProperties). -->
+            <plugin>
+                <groupId>io.github.git-commit-id</groupId>
+                <artifactId>git-commit-id-maven-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>com.ldapportal.LDAPPortalApplication</mainClass>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>build-info</id>
+                        <goals><goal>build-info</goal></goals>
+                    </execution>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- License-line guard: same shape as distribution/community.
+                 The community-plus-isva JAR ships under Apache 2.0
+                 (core + addons/isva are both Apache-2.0). ee/ bytecode
+                 leaking in would re-license a chunk of the artifact
+                 against the project's edition boundary. Fail the build
+                 here so the bad artifact never reaches the Docker image. -->
+            <plugin>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>verify-no-ee-bytecode</id>
+                        <phase>verify</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <resourcecount property="communityPlusIsva.eeClasses">
+                                    <zipfileset src="${project.build.directory}/${project.build.finalName}.jar"
+                                                includes="BOOT-INF/classes/com/ldapportal/ee/**/*.class,
+                                                          com/ldapportal/ee/**/*.class"/>
+                                </resourcecount>
+                                <resourcecount property="communityPlusIsva.eeJars">
+                                    <zipfileset src="${project.build.directory}/${project.build.finalName}.jar"
+                                                includes="BOOT-INF/lib/ldapportal-ee-*.jar"/>
+                                </resourcecount>
+                                <fail message="community-plus-isva JAR contains ee bytecode: com/ldapportal/ee/**/*.class entries=${communityPlusIsva.eeClasses} (expected 0), BOOT-INF/lib/ldapportal-ee-*.jar entries=${communityPlusIsva.eeJars} (expected 0). The community-plus-isva distribution must ship Apache-2.0 code only — see docs/edition-boundary.md. Check this module's dependencies; ldapportal-ee must not appear directly or transitively.">
+                                    <condition>
+                                        <or>
+                                            <not><equals arg1="${communityPlusIsva.eeClasses}" arg2="0"/></not>
+                                            <not><equals arg1="${communityPlusIsva.eeJars}" arg2="0"/></not>
+                                        </or>
+                                    </condition>
+                                </fail>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Structured JSON logging via logstash-logback-encoder.
+  All output goes to stdout; log aggregation (ELK, Splunk, CloudWatch)
+  is the responsibility of the hosting environment.
+  Sensitive values (passwords, tokens) must never be passed to log statements.
+-->
+<configuration>
+
+    <springProperty scope="context" name="appName"  source="spring.application.name" defaultValue="ldap-portal"/>
+    <springProperty scope="context" name="logLevel" source="logging.level.root"       defaultValue="INFO"/>
+
+    <appender name="JSON_STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeCallerData>false</includeCallerData>
+            <!-- Add the application name to every log event -->
+            <customFields>{"application":"${appName}"}</customFields>
+            <fieldNames>
+                <timestamp>timestamp</timestamp>
+                <version>[ignore]</version>
+            </fieldNames>
+        </encoder>
+    </appender>
+
+    <root level="${logLevel}">
+        <appender-ref ref="JSON_STDOUT"/>
+    </root>
+
+</configuration>

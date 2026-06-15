@@ -1,0 +1,116 @@
+Third-Party Licenses
+====================
+
+LDAPPortal uses the following open source libraries. This file documents
+their licenses for compliance purposes.
+
+LDAPPortal's own source code is split across two licensing tracks. The
+edition-boundary doc (docs/edition-boundary.md) is the source of truth;
+this section is a short pointer for anyone reading the licensing files
+without reading the design docs:
+
+  core/         Apache License 2.0
+  addons/*      Apache License 2.0  (open-source optional modules;
+                                     ISVA full-mode integration today,
+                                     more to come — see edition-boundary.md)
+  ee/           Proprietary, commercial license
+                (LicenseRef-LDAPPortal-Commercial)
+
+Every .java file under core/ and addons/ carries
+`SPDX-License-Identifier: Apache-2.0`; every .java file under ee/ carries
+`SPDX-License-Identifier: LicenseRef-LDAPPortal-Commercial`. CI grep
+enforces the addons/ side.
+
+The community distribution and the community-plus-isva distribution ship
+nothing but Apache-2.0 code (boundary checks in each distribution module
+fail the build if ee/ bytecode leaks in). The commercial distribution
+bundles all three.
+
+BACKEND (Java / Maven)
+----------------------
+
+Spring Boot, Spring Framework, Spring Security, Spring Data JPA
+  License: Apache License 2.0
+  https://www.apache.org/licenses/LICENSE-2.0
+
+PostgreSQL JDBC Driver
+  License: BSD 2-Clause
+  https://jdbc.postgresql.org/about/license.html
+
+Flyway
+  License: Apache License 2.0
+  https://flywaydb.org/licenses
+
+UnboundID LDAP SDK for Java (7.0.1)
+  License: Apache License 2.0 (selected from triple-license:
+           Apache 2.0 / GPLv2 / LGPLv2.1)
+  https://github.com/pingidentity/ldapsdk
+
+JJWT (0.12.6)
+  License: Apache License 2.0
+  https://github.com/jwtk/jjwt
+
+OpenPDF (2.0.3)
+  License: LGPL 2.1 with MPL 2.0 dual-license option
+  https://github.com/LibrePDF/OpenPDF
+  Note: Used under LGPL 2.1. Distributed as a separate JAR within the
+  Spring Boot fat JAR (BOOT-INF/lib/), satisfying the LGPL relinkability
+  requirement. Source code available at the URL above.
+
+Lombok (1.18.42)
+  License: MIT
+  https://projectlombok.org
+
+springdoc-openapi (2.6.0)
+  License: Apache License 2.0
+  https://springdoc.org
+
+logstash-logback-encoder (7.4)
+  License: Apache License 2.0 / MIT
+  https://github.com/logfellow/logstash-logback-encoder
+
+Byte Buddy (1.18.7)
+  License: Apache License 2.0
+  https://bytebuddy.net
+
+Jackson (managed by Spring Boot)
+  License: Apache License 2.0
+  https://github.com/FasterXML/jackson
+
+FRONTEND (JavaScript / npm)
+----------------------------
+
+Vue.js (3.x)
+  License: MIT
+  https://vuejs.org
+
+Vue Router (5.x)
+  License: MIT
+  https://router.vuejs.org
+
+Pinia (3.x)
+  License: MIT
+  https://pinia.vuejs.org
+
+Axios
+  License: MIT
+  https://axios-http.com
+
+Tailwind CSS (4.x)
+  License: MIT
+  https://tailwindcss.com
+
+Vite (7.x)
+  License: MIT
+  https://vitejs.dev
+
+DOCKER BASE IMAGES
+-------------------
+
+eclipse-temurin:21-jre-alpine
+  License: GPLv2 with Classpath Exception (OpenJDK)
+  The Classpath Exception permits use in proprietary applications.
+
+nginx:alpine
+  License: BSD 2-Clause
+  https://nginx.org/LICENSE

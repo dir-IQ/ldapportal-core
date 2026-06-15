@@ -1,0 +1,86 @@
+# =============================================================================
+# Cleanup LDIF — removes test scenario data so it can be re-imported
+# Run with: ldapmodify -x -D "cn=admin,dc=acmecorp,dc=com" -w <pw> -f acmecorp-test-cleanup.ldif
+# Then delete entries with: ldapdelete -x -D "cn=admin,dc=acmecorp,dc=com" -w <pw> -r <dn>
+#   for each entry listed in acmecorp-test-cleanup-delete.txt
+# =============================================================================
+
+# --- Remove anomalous/broken members from existing groups ---
+
+dn: cn=AWS-Developers,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=nancy.watanabe,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=zachary.weber,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+member: uid=disabled.marcus,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=disabled.tom,ou=IT,ou=People,dc=acmecorp,dc=com
+
+dn: cn=DataAccess-Financial,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=pierre.gupta,ou=Marketing,ou=People,dc=acmecorp,dc=com
+member: uid=alyssa.davis,ou=Marketing,ou=People,dc=acmecorp,dc=com
+member: uid=disabled.jane,ou=Finance,ou=People,dc=acmecorp,dc=com
+
+dn: cn=DataAccess-PII,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=james.richardson,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=disabled.priya,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+
+dn: cn=GitHub-Users,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=howard.blanc,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=bobby.harris2,ou=Finance,ou=People,dc=acmecorp,dc=com
+
+dn: cn=BuildSystem-Users,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=ann.roux,ou=Legal,ou=People,dc=acmecorp,dc=com
+
+dn: cn=SecurityChampions,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=disabled.tom,ou=IT,ou=People,dc=acmecorp,dc=com
+member: uid=old.securitylead,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=past.ciso,ou=IT,ou=People,dc=acmecorp,dc=com
+
+dn: cn=OnCall-Rotation,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=deleted.user1,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=terminated.employee,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=former.contractor,ou=IT,ou=People,dc=acmecorp,dc=com
+
+dn: cn=AWS-ReadOnly,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=susan.schimdt,ou=Engineering,ou=People,dc=acmecorp,dc=com
+
+dn: cn=AllEmployees,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=missing.dept.kyle,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=missing.dept.anna,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=missing.dept.lucas,ou=Sales,ou=People,dc=acmecorp,dc=com
+
+dn: cn=dept-finance,ou=Departments,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=disabled.jane,ou=Finance,ou=People,dc=acmecorp,dc=com
+
+dn: cn=dept-engineering,ou=Departments,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=disabled.marcus,ou=Engineering,ou=People,dc=acmecorp,dc=com
+
+dn: cn=dept-humanresources,ou=Departments,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=disabled.priya,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+
+dn: cn=dept-it,ou=Departments,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+delete: member
+member: uid=disabled.tom,ou=IT,ou=People,dc=acmecorp,dc=com

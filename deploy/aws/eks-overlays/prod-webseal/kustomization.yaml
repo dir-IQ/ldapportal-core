@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Dual-frontend WebSEAL overlay (admins via WebSEAL SSO, superadmins via LOCAL
+# on a separate non-WebSEAL path). Same ECR/Secrets-Manager setup as the prod
+# overlay, but replaces the single frontend + single ingress with two of each:
+#
+#   admin.example.com  → (external WebSEAL junction) → admin frontend  ─┐  passes iv-user
+#                          internet-facing ALB                          ├─► shared backend
+#   sa.example.com     → INTERNAL ALB (VPN/bastion)  → superadmin FE   ─┘  STRIPS iv-*
+#
+# Both frontends serve their SPA AND proxy /api/v1 to the backend, so the
+# backend's peer (getRemoteAddr) is the frontend pod — NOT the shared ALB.
+# Peer-IP model here is "iv-* strip only": both frontends share the pod CIDR,
+# so Trusted Proxies (set in the UI post-deploy) is that whole CIDR, and the
+# superadmin nginx stripping iv-* is what keeps the non-WebSEAL path from ever
+# presenting a trusted identity. See README.md.
+#
+# Self-contained on the base directory (../../eks) — it does NOT chain off the
+# prod overlay, so every operator-edited file lives here. The WebSEAL TRUST
+# settings (enabledAuthTypes, websealTrustedProxies, header names) are
+# DB/UI-persisted, NOT env — a post-deploy step (README.md §"Post-deploy").
+#
+# Apply with:   kubectl apply -k deploy/aws/eks-overlays/prod-webseal
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ldapportal
+
+resources:
+  - ../../eks                  # the upstream base (backend + the single frontend/ingress we replace)
+  - secretproviderclass.yaml   # secrets from AWS Secrets Manager
+  # Admin frontend (behind WebSEAL) — passes iv-* through.
+  - admin-frontend-nginx-configmap.yaml
+  - admin-frontend-deployment.yaml
+  - admin-frontend-service.yaml
+  - admin-frontend-pdb.yaml
+  # Superadmin frontend (NOT behind WebSEAL) — strips iv-*.
+  - superadmin-frontend-nginx-configmap.yaml
+  - superadmin-frontend-deployment.yaml
+  - superadmin-frontend-service.yaml
+  - superadmin-frontend-pdb.yaml
+  # Two ingresses / hostnames.
+  - admin-ingress.yaml
+  - superadmin-ingress.yaml
+
+# Repoint both images to ECR and pin the release tag (same names as the base).
+images:
+  - name: ghcr.io/dir-iq/ldapportal-community-plus-isva
+    newName: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/ldapportal-community-plus-isva
+    newTag: "v1.0.0"
+  - name: ghcr.io/dir-iq/ldapportal-frontend
+    newName: ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/ldapportal-frontend
+    newTag: "v1.0.0"
+
+# Resource deletions use patchesStrategicMerge — it handles a multi-doc
+# `$patch: delete` file reliably (the newer `patches:` field can choke on it).
+patchesStrategicMerge:
+  - remove-base-single-frontend.yaml          # drop the base single frontend + ingress
+
+patches:
+  - path: serviceaccount-patch.yaml           # IRSA annotation
+  - path: backend-csi-patch.yaml              # CSI secret mount on the backend
+  - path: configmap-patch.yaml                # backend DB/CORS/entitlement

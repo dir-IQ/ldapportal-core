@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>User edit — IVIA Account tab — mockup (option 1++)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .mono, code { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+  /* Buttons — match the project's .btn-* utility shapes */
+  .btn-primary   { @apply inline-flex items-center justify-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:bg-gray-300 disabled:cursor-not-allowed disabled:shadow-none; }
+  .btn-secondary { @apply inline-flex items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed disabled:shadow-none; }
+  .btn-danger    { @apply inline-flex items-center justify-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-1; }
+  .btn-ghost     { @apply inline-flex items-center justify-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900; }
+  .btn-icon      { @apply inline-flex items-center justify-center rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700; }
+
+  /* Badges */
+  .badge        { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium; }
+  .badge-green  { @apply badge bg-green-50 text-green-700 ring-1 ring-inset ring-green-200; }
+  .badge-amber  { @apply badge bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200; }
+  .badge-red    { @apply badge bg-red-50 text-red-700 ring-1 ring-inset ring-red-200; }
+  .badge-blue   { @apply badge bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200; }
+  .badge-gray   { @apply badge bg-gray-100 text-gray-700 ring-1 ring-inset ring-gray-200; }
+  .dot          { @apply inline-block w-1.5 h-1.5 rounded-full; }
+
+  /* Cards */
+  .card         { @apply rounded-lg border border-gray-200 bg-white shadow-sm; }
+  .card-header  { @apply flex items-center justify-between border-b border-gray-200 px-5 py-3; }
+  .card-body    { @apply px-5 py-4; }
+  .section      { @apply rounded-lg border border-gray-200 bg-gray-50/60 p-4; }
+  .section-title { @apply text-xs uppercase tracking-wider font-semibold text-gray-500 mb-3; }
+
+  /* At-a-glance pills */
+  .pill         { @apply inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-700 shadow-sm; }
+  .pill strong  { @apply font-semibold text-gray-900; }
+
+  /* Alerts */
+  .alert-amber  { @apply rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 flex items-start gap-2; }
+  .alert-red    { @apply rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900 flex items-start gap-2; }
+  .alert-blue   { @apply rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 flex items-start gap-2; }
+
+  /* Tab strip */
+  .tab          { @apply px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors; }
+  .tab-active   { @apply border-blue-600 text-blue-600; }
+  .tab-inactive { @apply border-transparent text-gray-500 hover:text-gray-700; }
+
+  /* Timeline */
+  .tl-marker    { @apply absolute -left-[5px] top-1.5 w-2.5 h-2.5 rounded-full ring-2 ring-white; }
+  .tl-row       { @apply relative pl-5 pb-3; }
+  .tl-row:not(:last-child)::before { content: ""; @apply absolute left-0 top-3 bottom-0 w-px bg-gray-300; }
+
+  .divider-label { @apply flex items-center gap-3 text-[11px] uppercase tracking-wider font-semibold text-gray-500; }
+  .divider-label::before, .divider-label::after { content: ""; height: 1px; background-color: rgb(229 231 235); flex: 1; }
+</style>
+</head>
+<body class="bg-gray-50 text-gray-900 antialiased">
+
+<!-- ────────── App chrome (sidebar + top bar) ────────── -->
+<div class="flex min-h-screen">
+
+  <!-- Sidebar -->
+  <aside class="w-56 bg-gray-900 text-gray-300 flex flex-col flex-shrink-0">
+    <div class="px-4 py-4 border-b border-gray-800">
+      <div class="flex items-center gap-2">
+        <div class="w-7 h-7 rounded bg-blue-500 flex items-center justify-center text-white font-bold text-sm">L</div>
+        <div>
+          <div class="text-white font-semibold text-sm leading-tight">LDAPPortal</div>
+          <div class="text-[10px] text-gray-500 leading-tight">acme-corp · prod</div>
+        </div>
+      </div>
+    </div>
+    <nav class="flex-1 px-2 py-3 space-y-0.5 text-sm">
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">Dashboard</a>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">Directories</a>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded bg-gray-800 text-white font-medium">Users</a>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">Groups</a>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">Profiles</a>
+      <a href="#" class="flex items-center gap-2 px-2.5 py-1.5 rounded text-gray-300 hover:bg-gray-800">Audit</a>
+    </nav>
+    <div class="border-t border-gray-800 px-3 py-3 text-xs text-gray-500">v2.4.0 · IVIA addon</div>
+  </aside>
+
+  <!-- Main column -->
+  <main class="flex-1 min-w-0">
+
+    <!-- Top bar -->
+    <header class="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
+      <nav class="text-sm text-gray-500 flex items-center gap-1">
+        <a href="#" class="hover:text-gray-700">Directories</a>
+        <span>›</span>
+        <a href="#" class="hover:text-gray-700">acmecorp-prod</a>
+        <span>›</span>
+        <a href="#" class="hover:text-gray-700">Users</a>
+        <span>›</span>
+        <span class="text-gray-900 font-medium">Alice Contractor</span>
+      </nav>
+      <div class="flex items-center gap-3">
+        <button class="btn-ghost">Help</button>
+        <div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center text-xs font-medium text-gray-700">SA</div>
+      </div>
+    </header>
+
+    <div class="p-6 space-y-8">
+
+      <!-- ════════════════════════════════════════════════════════════
+           Page 1 of 3 — happy path: Linked + Active
+           ════════════════════════════════════════════════════════════ -->
+
+      <section class="card">
+        <!-- ─── Header (sans last-login + created-by) ─── -->
+        <div class="px-6 pt-6 pb-4 border-b border-gray-200">
+          <div class="flex items-start gap-4">
+            <!-- Avatar: gradient circle with initials -->
+            <div class="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0"
+                 style="background-image: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);">AC</div>
+
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-3 flex-wrap">
+                <h1 class="text-2xl font-bold tracking-tight">Alice Contractor</h1>
+                <span class="badge-green"><span class="dot bg-green-500"></span>Enabled</span>
+                <span class="badge-blue"><span class="dot bg-blue-500"></span>IVIA linked</span>
+              </div>
+
+              <!-- DN + copy -->
+              <div class="mt-1 flex items-center gap-1.5">
+                <code class="text-sm text-gray-600 truncate">uid=alice.contractor,ou=Contractors,dc=acmecorp,dc=com</code>
+                <button class="btn-icon" title="Copy DN" aria-label="Copy DN">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                       class="w-3.5 h-3.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                </button>
+              </div>
+
+              <!-- Metadata strip (only the two items we have data for) -->
+              <div class="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-gray-600">
+                <span class="inline-flex items-center gap-1.5">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                       class="w-4 h-4 text-gray-400"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                  <span>alice.contractor@acme.example</span>
+                </span>
+                <span class="inline-flex items-center gap-1.5">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                       class="w-4 h-4 text-gray-400"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                  <span>Profile: <span class="font-medium text-gray-900">contractors-ext</span></span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ─── Tabs ─── -->
+        <div class="px-6 pt-3 border-b border-gray-200 flex">
+          <button class="tab tab-inactive">Attributes</button>
+          <button class="tab tab-inactive">Groups</button>
+          <button class="tab tab-active">IVIA Account</button>
+        </div>
+
+        <!-- ─── IVIA tab content ─── -->
+        <div class="p-6 space-y-5">
+
+          <!-- At-a-glance strip -->
+          <div class="section">
+            <div class="section-title">At a glance</div>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="badge-green"><span class="dot bg-green-500"></span>Linked</span>
+              <span class="badge-green"><span class="dot bg-green-500"></span>Active</span>
+              <span class="pill">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     class="w-3.5 h-3.5 text-gray-400"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>
+                Expires in <strong>287 days</strong>
+              </span>
+              <span class="pill">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     class="w-3.5 h-3.5 text-gray-400"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+                Password set <strong>12 days ago</strong>
+              </span>
+            </div>
+          </div>
+
+          <!-- Lifecycle timeline -->
+          <div class="section">
+            <div class="section-title flex items-center justify-between">
+              <span>Lifecycle</span>
+              <a href="#" class="text-xs text-blue-600 hover:text-blue-700 font-medium normal-case tracking-normal">View full audit →</a>
+            </div>
+            <ol class="ml-2 text-sm">
+              <li class="tl-row">
+                <span class="tl-marker bg-blue-500"></span>
+                <div class="flex items-baseline justify-between flex-wrap gap-2">
+                  <div>
+                    <span class="font-medium text-gray-900">Granted</span>
+                    <span class="text-gray-500"> &middot; by <span class="mono">ops-alice</span></span>
+                  </div>
+                  <time class="text-xs text-gray-500 mono">2026-03-12&nbsp;09:14&nbsp;UTC</time>
+                </div>
+              </li>
+              <li class="tl-row">
+                <span class="tl-marker bg-blue-500"></span>
+                <div class="flex items-baseline justify-between flex-wrap gap-2">
+                  <div>
+                    <span class="font-medium text-gray-900">Renewed</span>
+                    <span class="text-gray-500"> &middot; by <span class="mono">ops-bob</span> &middot; <span class="mono">validUntil&nbsp;=&nbsp;2027-03-12</span></span>
+                  </div>
+                  <time class="text-xs text-gray-500 mono">2026-05-02&nbsp;14:22&nbsp;UTC</time>
+                </div>
+              </li>
+              <li class="tl-row">
+                <span class="tl-marker bg-amber-500"></span>
+                <div class="flex items-baseline justify-between flex-wrap gap-2">
+                  <div>
+                    <span class="font-medium text-gray-900">Force credential reset</span>
+                    <span class="text-gray-500"> &middot; by <span class="mono">ops-alice</span></span>
+                  </div>
+                  <time class="text-xs text-gray-500 mono">2026-05-19&nbsp;11:08&nbsp;UTC</time>
+                </div>
+              </li>
+              <li class="tl-row">
+                <span class="tl-marker bg-gray-300"></span>
+                <div class="flex items-baseline justify-between flex-wrap gap-2">
+                  <div>
+                    <span class="italic text-gray-500">Will expire</span>
+                    <span class="text-gray-500"> &middot; <span class="mono">2027-03-12</span> &middot; in 287 days</span>
+                  </div>
+                  <time class="text-xs text-gray-400 mono">scheduled</time>
+                </div>
+              </li>
+            </ol>
+            <p class="text-xs text-gray-500 mt-3">
+              Events sourced from the audit log filtered to <code class="mono">source = ivia</code> for this DN.
+              <code class="mono">ops-alice</code> / <code class="mono">ops-bob</code> are the actors recorded on each event.
+            </p>
+          </div>
+
+          <!-- Actions -->
+          <div class="flex flex-wrap items-center gap-2 pt-2">
+            <button class="btn-secondary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+              Suspend
+            </button>
+            <button class="btn-secondary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+              Renew
+            </button>
+            <button class="btn-secondary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+              Force credential reset
+            </button>
+            <div class="ml-auto flex items-center gap-2">
+              <button class="btn-danger">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+                Revoke
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3 h-3"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            </div>
+          </div>
+          <p class="text-xs text-gray-500">
+            <strong class="font-medium text-gray-700">Revoke</strong> opens a SOFT / HARD picker; HARD requires typing the account name.
+            <span class="text-gray-400">·</span>
+            <strong class="font-medium text-gray-700">Renew</strong> opens a date picker defaulted to today + <span class="mono">defaultValidUntilYears</span>, capped at +10y.
+          </p>
+        </div>
+      </section>
+
+      <div class="divider-label">State variants</div>
+
+      <!-- ════════════════════════════════════════════════════════════
+           Page 2 of 3 — Orphaned (grant available)
+           ════════════════════════════════════════════════════════════ -->
+      <section class="card">
+        <div class="px-6 pt-6 pb-4 border-b border-gray-200">
+          <div class="flex items-start gap-4">
+            <div class="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0"
+                 style="background-image: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);">BC</div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-3 flex-wrap">
+                <h1 class="text-2xl font-bold tracking-tight">Bob Crockett</h1>
+                <span class="badge-green"><span class="dot bg-green-500"></span>Enabled</span>
+                <span class="badge-amber"><span class="dot bg-amber-500"></span>IVIA orphaned</span>
+              </div>
+              <div class="mt-1 flex items-center gap-1.5">
+                <code class="text-sm text-gray-600 truncate">uid=bob.crockett,ou=People,dc=acmecorp,dc=com</code>
+                <button class="btn-icon" title="Copy DN" aria-label="Copy DN"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+              </div>
+              <div class="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-gray-600">
+                <span class="inline-flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 text-gray-400"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg><span>bob.crockett@acmecorp.com</span></span>
+                <span class="inline-flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 text-gray-400"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>Profile: <span class="font-medium text-gray-900">employees</span></span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="px-6 pt-3 border-b border-gray-200 flex">
+          <button class="tab tab-inactive">Attributes</button>
+          <button class="tab tab-inactive">Groups</button>
+          <button class="tab tab-active">IVIA Account</button>
+        </div>
+        <div class="p-6 space-y-5">
+          <div class="section">
+            <div class="section-title">At a glance</div>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="badge-amber"><span class="dot bg-amber-500"></span>Orphaned</span>
+              <span class="text-xs text-gray-500">No IVIA account exists for this identity.</span>
+            </div>
+          </div>
+
+          <div class="alert-amber">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 class="w-5 h-5 flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <div>
+              <div class="font-medium">This identity has no IVIA account.</div>
+              <div class="text-xs mt-0.5 text-amber-800">
+                Grant one now, or open <a href="#" class="underline">Integrity reconcile</a> to repair in bulk.
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Lifecycle</div>
+            <p class="text-sm text-gray-500 italic">No IVIA events recorded for this DN.</p>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2 pt-2">
+            <button class="btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><circle cx="12" cy="12" r="10"/><polyline points="9 12 12 15 16 10"/></svg>
+              Grant IVIA account
+            </button>
+            <button class="btn-secondary" disabled title="Not applicable — no IVIA account">Suspend</button>
+            <button class="btn-secondary" disabled title="Not applicable — no IVIA account">Renew</button>
+            <button class="btn-secondary" disabled title="Not applicable — no IVIA account">Force credential reset</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════════════════════════════════════════════════════════════
+           Page 3 of 3 — Suspended (restore CTA)
+           ════════════════════════════════════════════════════════════ -->
+      <section class="card">
+        <div class="px-6 pt-6 pb-4 border-b border-gray-200">
+          <div class="flex items-start gap-4">
+            <div class="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xl flex-shrink-0"
+                 style="background-image: linear-gradient(135deg, #0ea5e9 0%, #6366f1 100%);">CD</div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-3 flex-wrap">
+                <h1 class="text-2xl font-bold tracking-tight">Carla Diaz</h1>
+                <span class="badge-green"><span class="dot bg-green-500"></span>Enabled</span>
+                <span class="badge-red"><span class="dot bg-red-500"></span>IVIA suspended</span>
+              </div>
+              <div class="mt-1 flex items-center gap-1.5">
+                <code class="text-sm text-gray-600 truncate">uid=carla.diaz,ou=People,dc=acmecorp,dc=com</code>
+                <button class="btn-icon" title="Copy DN" aria-label="Copy DN"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg></button>
+              </div>
+              <div class="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-gray-600">
+                <span class="inline-flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 text-gray-400"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg><span>carla.diaz@acmecorp.com</span></span>
+                <span class="inline-flex items-center gap-1.5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4 text-gray-400"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span>Profile: <span class="font-medium text-gray-900">employees</span></span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="px-6 pt-3 border-b border-gray-200 flex">
+          <button class="tab tab-inactive">Attributes</button>
+          <button class="tab tab-inactive">Groups</button>
+          <button class="tab tab-active">IVIA Account</button>
+        </div>
+        <div class="p-6 space-y-5">
+          <div class="section">
+            <div class="section-title">At a glance</div>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="badge-green"><span class="dot bg-green-500"></span>Linked</span>
+              <span class="badge-red"><span class="dot bg-red-500"></span>Suspended</span>
+              <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5 text-gray-400"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg>Expires in <strong>92 days</strong></span>
+              <span class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3.5 h-3.5 text-gray-400"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>Password set <strong>61 days ago</strong></span>
+            </div>
+          </div>
+          <div class="section">
+            <div class="section-title">Lifecycle</div>
+            <ol class="ml-2 text-sm">
+              <li class="tl-row"><span class="tl-marker bg-blue-500"></span>
+                <div class="flex items-baseline justify-between flex-wrap gap-2">
+                  <div><span class="font-medium text-gray-900">Granted</span><span class="text-gray-500"> &middot; by <span class="mono">ops-alice</span></span></div>
+                  <time class="text-xs text-gray-500 mono">2025-12-01&nbsp;08:00&nbsp;UTC</time>
+                </div>
+              </li>
+              <li class="tl-row"><span class="tl-marker bg-red-500"></span>
+                <div class="flex items-baseline justify-between flex-wrap gap-2">
+                  <div><span class="font-medium text-gray-900">Suspended</span><span class="text-gray-500"> &middot; by <span class="mono">ops-bob</span></span></div>
+                  <time class="text-xs text-gray-500 mono">2026-05-14&nbsp;16:42&nbsp;UTC</time>
+                </div>
+              </li>
+              <li class="tl-row"><span class="tl-marker bg-gray-300"></span>
+                <div class="flex items-baseline justify-between flex-wrap gap-2">
+                  <div><span class="italic text-gray-500">Will expire</span><span class="text-gray-500"> &middot; <span class="mono">2026-08-28</span> &middot; in 92 days</span></div>
+                  <time class="text-xs text-gray-400 mono">scheduled</time>
+                </div>
+              </li>
+            </ol>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2 pt-2">
+            <button class="btn-primary">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Restore
+            </button>
+            <button class="btn-secondary">Renew</button>
+            <button class="btn-secondary">Force credential reset</button>
+            <div class="ml-auto">
+              <button class="btn-danger">Revoke
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-3 h-3"><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────── Fidelity caveats ────────── -->
+      <footer class="text-xs text-gray-500 border-t border-gray-200 pt-4 space-y-1">
+        <div><strong>Mockup scope:</strong> the IVIA Account tab inside the existing user-edit
+        modal (UserForm.vue), preceded by an identity header that lives above the tab strip.
+        Sibling tabs (Attributes, Groups) keep their current behaviour — only the IVIA tab
+        and the header are new.</div>
+        <div><strong>Not in this mockup (deliberate):</strong> the standalone user-detail page's
+        right rail (Profile &amp; scope, Recent activity), the fieldset split of demographic
+        attributes, and the Audit / Approvals tabs. Those land in a separate follow-up if the
+        team wants the full-page layout.</div>
+        <div><strong>Header omissions:</strong> <em>Last login</em> and <em>Created … by</em> are
+        not surfaced because neither datapoint is exposed by <code class="mono">LdapUser</code>
+        today (OpenLDAP <code class="mono">authTimestamp</code> / AD <code class="mono">lastLogon</code>
+        and LDAP <code class="mono">createTimestamp</code> need a backend extension). Add them
+        in a follow-up when the backend surfaces the fields.</div>
+        <div><strong>Not displayed in the IVIA tab (per requirement):</strong>
+        <code class="mono">authority</code> and <code class="mono">topology</code> — the design
+        spec carries them; the UI does not.</div>
+        <div><strong>Styling:</strong> approximates Tailwind 4 defaults via CDN. Production
+        uses the project's <code class="mono">.btn-*</code> / <code class="mono">.input</code>
+        utility classes (six state layers including Compact density) per
+        <code class="mono">docs/frontend-conventions.md</code>.</div>
+        <div><strong>Data shape:</strong> at-a-glance pills bind to fields already on the
+        <code class="mono">getStatus</code> response (<code class="mono">linked</code> /
+        <code class="mono">acctValid</code> / <code class="mono">validUntil</code> /
+        <code class="mono">daysRemaining</code> / <code class="mono">pwdValid</code> /
+        <code class="mono">pwdLastChanged</code>). Lifecycle events come from the existing
+        audit-log API filtered to <code class="mono">directoryId</code> +
+        <code class="mono">targetDn</code>, with client-side filter for
+        <code class="mono">detail.source === 'ivia'</code>.</div>
+        <div><strong>All identities, DNs, emails, dates are fictional.</strong></div>
+      </footer>
+
+    </div>
+  </main>
+</div>
+
+</body>
+</html>

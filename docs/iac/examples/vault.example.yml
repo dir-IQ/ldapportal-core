@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+# ─────────────────────────────────────────────────────────────────────────────
+# Template for the encrypted secrets file. DO NOT commit a filled-in copy.
+#
+#   cp vault.example.yml group_vars/all/vault.yml
+#   # edit real values, then encrypt in place:
+#   ansible-vault encrypt group_vars/all/vault.yml
+#
+# (group_vars/all/vault.yml auto-loads for every host; this template, sitting
+# outside group_vars/, does not.)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# SUPERADMIN login — used ONLY by the `tokens` play to mint/rotate API tokens
+# (API tokens cannot manage other tokens).
+ldapportal_superadmin_username: "superadmin"
+ldapportal_superadmin_password: "CHANGE-ME"
+
+# The automation API token plaintext (starts with ldap_pat_) — used by the
+# provisioning play for directories/admins/ISVA. Obtain it from the one-time
+# output of the `tokens` play, then store it here.
+ldapportal_api_token: "ldap_pat_CHANGE-ME"
+
+# Per-directory bind passwords, keyed by directory slug. Sent only on first
+# create (preserved on re-apply).
+ldapportal_directory_bind_passwords:
+  corp-ldap: "CHANGE-ME"
+
+# Per-admin initial passwords for LOCAL accounts, keyed by username. Sent only
+# on first create (preserved on re-apply).
+ldapportal_admin_passwords:
+  jdoe: "CHANGE-ME"

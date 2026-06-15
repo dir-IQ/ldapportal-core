@@ -1,0 +1,16 @@
+{
+  "name": "Sample inetOrgPerson",
+  "objectClass": "inetOrgPerson,organizationalPerson,person,top",
+  "targetKeyAttribute": "uid",
+  "conflictHandling": "SKIP",
+  "skipHeaderRow": true,
+  "entries": [
+    { "csvColumn": "username",   "ldapAttribute": "uid",             "ignored": false },
+    { "csvColumn": "first_name", "ldapAttribute": "givenName",       "ignored": false },
+    { "csvColumn": "last_name",  "ldapAttribute": "sn",              "ignored": false },
+    { "csvColumn": "full_name",  "ldapAttribute": "cn",              "ignored": false },
+    { "csvColumn": "email",      "ldapAttribute": "mail",            "ignored": false },
+    { "csvColumn": "title",      "ldapAttribute": "title",           "ignored": false },
+    { "csvColumn": "phone",      "ldapAttribute": "telephoneNumber", "ignored": false }
+  ]
+}

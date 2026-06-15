@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: Apache-2.0
+package com.ldapportal.repository;
+
+import com.ldapportal.entity.SyncLink;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Persistence for {@link SyncLink}, including the changelog-capture poll lease.
+ */
+public interface SyncLinkRepository extends JpaRepository<SyncLink, UUID> {
+
+    List<SyncLink> findAllBySourceDirIdAndEnabledTrue(UUID sourceDirId);
+
+    /** Enabled links in CHANGELOG capture mode (the poller's work list). */
+    @Query("select l.id from SyncLink l where l.enabled = true and l.captureMode = "
+            + "com.ldapportal.entity.enums.SyncCaptureMode.CHANGELOG")
+    List<UUID> findChangelogCaptureLinkIds();
+
+    /**
+     * Atomically claim the poll lease for one link: succeeds if unclaimed or the
+     * existing claim is stale (a crashed poller). Returns 1 if claimed, 0 otherwise.
+     */
+    @Transactional
+    @Modifying
+    @Query("update SyncLink l set l.changelogPollClaimedAt = :now where l.id = :id and l.enabled = true "
+            + "and (l.changelogPollClaimedAt is null or l.changelogPollClaimedAt < :staleBefore)")
+    int claimChangelogPoll(@Param("id") UUID id, @Param("now") OffsetDateTime now,
+                           @Param("staleBefore") OffsetDateTime staleBefore);
+}

@@ -1,0 +1,585 @@
+# =============================================================================
+# LDIF Test Data — Access Drift Visualization Scenarios
+# Apply with: ldapmodify -x -D "cn=admin,dc=acmecorp,dc=com" -w <password> -f testdata/acmecorp-drift-test.ldif
+#
+# This LDIF:
+# 1. Adds 'departmentNumber' attribute to users (needed for peer-group analysis)
+# 2. Creates drift-specific access groups
+# 3. Adds anomalous group memberships to create detectable drift outliers
+#
+# Expected drift findings after analysis:
+# - Engineering: 3 outliers with Finance/HR access (Payroll-Admin, HR-DataAdmin, DataAccess-Financial)
+# - Finance: 2 outliers with Engineering access (Code-Deploy-Prod, AWS-Developers)
+# - Sales: 2 outliers with sensitive data access (DataAccess-PII, DataAccess-Financial)
+# - HR: 1 outlier with production access (Code-Deploy-Prod, AWS-Developers)
+# =============================================================================
+
+# ─── Step 1: Add departmentNumber attribute to users ───────────────────────────
+# (needed because the peer group analysis groups by 'departmentNumber')
+# We add it to a representative sample from each department.
+
+# --- Engineering users (20 users) ---
+dn: uid=laura.miller,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=brian.moreau,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=susan.schmidt,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=maria.dubois,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=roy.bailey,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=deborah.alvarez,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=amy.long,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=emily.lopez,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=noah.bailey,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=austin.jackson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=noah.cooper,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=thomas.watson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=petra.jenkins,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=sean.becker,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=stephen.chen,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=samantha.henderson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=jennifer.robinson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=takeshi.green,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=carolyn.liu,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+dn: uid=brandon.myers,ou=Engineering,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Engineering
+
+# --- Finance users (15 users) ---
+dn: uid=howard.blanc,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=heather.fontaine,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=madison.castro,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=jason.ross2,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=judy.williams,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=jennifer.wood,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=diego.hernandez,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=carolyn.cooper2,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=victoria.smith,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=lisa.james,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=ali.ortiz,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=joan.brown,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=nancy.ruiz,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=victor.evans,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+dn: uid=jerry.vasquez,ou=Finance,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Finance
+
+# --- Sales users (15 users) ---
+dn: uid=nancy.watanabe,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=stephanie.brown,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=noor.kumar,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=james.richardson,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=brittany.durand,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=tyler.allen,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=kevin.harris,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=keith.mitchell,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=austin.king,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=sarah.foster,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=sarah.stewart,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=louis.carter,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=luis.ortiz,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=connor.gray,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+dn: uid=sofia.harris,ou=Sales,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Sales
+
+# --- HR users (10 users) ---
+dn: uid=keith.king,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Human Resources
+
+dn: uid=jeremy.chavez,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Human Resources
+
+dn: uid=patricia.cox,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Human Resources
+
+dn: uid=alexis.meyer,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Human Resources
+
+dn: uid=hiroshi.price,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Human Resources
+
+dn: uid=albert.gonzales,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Human Resources
+
+dn: uid=diana.tanaka,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Human Resources
+
+dn: uid=johnny.fisher,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Human Resources
+
+dn: uid=elizabeth.chen,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Human Resources
+
+dn: uid=henry.brooks,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+changetype: modify
+add: departmentNumber
+departmentNumber: Human Resources
+
+# ─── Step 2: Create drift-specific access groups ──────────────────────────────
+# These groups represent typical per-department access patterns.
+# Most department members should be in the groups typical for their role.
+# A few outliers will be added to groups outside their department norm.
+
+# Engineering-typical groups: GitHub-Users, AWS-Developers, BuildSystem-Users, Jira-Users
+# Finance-typical groups: DataAccess-Financial, Jira-Users, Confluence-Users
+# Sales-typical groups: Jira-Users, Slack-Users, Confluence-Users
+# HR-typical groups: DataAccess-PII, HR-DataAdmin, Jira-Users
+
+# ─── Step 3: Add members to groups to create drift patterns ──────────────────
+
+# --- Add ALL Engineering users to their expected groups ---
+# GitHub-Users: all 20 engineering users (100% peer membership)
+dn: cn=GitHub-Users,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=laura.miller,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=brian.moreau,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=susan.schmidt,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=maria.dubois,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=roy.bailey,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=deborah.alvarez,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=amy.long,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=emily.lopez,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=noah.bailey,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=austin.jackson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=noah.cooper,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=thomas.watson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=petra.jenkins,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=sean.becker,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=stephen.chen,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=samantha.henderson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=jennifer.robinson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=takeshi.green,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=carolyn.liu,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=brandon.myers,ou=Engineering,ou=People,dc=acmecorp,dc=com
+
+# AWS-Developers: 18 of 20 engineering users (90% peer membership)
+dn: cn=AWS-Developers,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=laura.miller,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=brian.moreau,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=susan.schmidt,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=maria.dubois,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=roy.bailey,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=deborah.alvarez,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=amy.long,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=emily.lopez,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=noah.bailey,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=austin.jackson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=noah.cooper,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=thomas.watson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=petra.jenkins,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=sean.becker,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=stephen.chen,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=samantha.henderson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=jennifer.robinson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=takeshi.green,ou=Engineering,ou=People,dc=acmecorp,dc=com
+
+# BuildSystem-Users: 16 of 20 engineering users (80% peer membership)
+dn: cn=BuildSystem-Users,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=laura.miller,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=brian.moreau,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=susan.schmidt,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=maria.dubois,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=roy.bailey,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=deborah.alvarez,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=amy.long,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=emily.lopez,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=noah.bailey,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=austin.jackson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=noah.cooper,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=thomas.watson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=petra.jenkins,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=sean.becker,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=stephen.chen,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=samantha.henderson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+
+# --- Add ALL Finance users to their expected groups ---
+# DataAccess-Financial: all 15 finance users (100% peer membership)
+dn: cn=DataAccess-Financial,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=howard.blanc,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=heather.fontaine,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=madison.castro,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=jason.ross2,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=judy.williams,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=jennifer.wood,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=diego.hernandez,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=carolyn.cooper2,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=victoria.smith,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=lisa.james,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=ali.ortiz,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=joan.brown,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=nancy.ruiz,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=victor.evans,ou=Finance,ou=People,dc=acmecorp,dc=com
+member: uid=jerry.vasquez,ou=Finance,ou=People,dc=acmecorp,dc=com
+
+# --- Add ALL Sales users to their expected groups ---
+# Jira-Users: all 15 sales users + 10 engineering users (shared group)
+dn: cn=Jira-Users,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=nancy.watanabe,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=stephanie.brown,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=noor.kumar,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=james.richardson,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=brittany.durand,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=tyler.allen,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=kevin.harris,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=keith.mitchell,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=austin.king,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=sarah.foster,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=sarah.stewart,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=louis.carter,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=luis.ortiz,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=connor.gray,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=sofia.harris,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=laura.miller,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=brian.moreau,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=susan.schmidt,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=maria.dubois,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=roy.bailey,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=deborah.alvarez,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=amy.long,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=emily.lopez,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=noah.bailey,ou=Engineering,ou=People,dc=acmecorp,dc=com
+member: uid=austin.jackson,ou=Engineering,ou=People,dc=acmecorp,dc=com
+
+# Slack-Users: all 15 sales users (100% peer membership for Sales)
+dn: cn=Slack-Users,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=nancy.watanabe,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=stephanie.brown,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=noor.kumar,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=james.richardson,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=brittany.durand,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=tyler.allen,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=kevin.harris,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=keith.mitchell,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=austin.king,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=sarah.foster,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=sarah.stewart,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=louis.carter,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=luis.ortiz,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=connor.gray,ou=Sales,ou=People,dc=acmecorp,dc=com
+member: uid=sofia.harris,ou=Sales,ou=People,dc=acmecorp,dc=com
+
+# --- Add ALL HR users to their expected groups ---
+# DataAccess-PII: all 10 HR users (100% peer membership)
+dn: cn=DataAccess-PII,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=keith.king,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+member: uid=jeremy.chavez,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+member: uid=patricia.cox,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+member: uid=alexis.meyer,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+member: uid=hiroshi.price,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+member: uid=albert.gonzales,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+member: uid=diana.tanaka,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+member: uid=johnny.fisher,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+member: uid=elizabeth.chen,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+member: uid=henry.brooks,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+
+# ─── Step 4: Create ANOMALOUS memberships (drift outliers) ───────────────────
+# These users have access OUTSIDE their department norm.
+
+# DRIFT OUTLIER 1: Engineering user with Finance access
+# Roy Bailey (Engineering) has Payroll-Admin and DataAccess-Financial access
+# → Only 1 of 20 (5%) of Engineering peers have this — should flag as HIGH drift
+dn: cn=Payroll-Admin,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=roy.bailey,ou=Engineering,ou=People,dc=acmecorp,dc=com
+
+# DRIFT OUTLIER 2: Engineering user with HR data access
+# Deborah Alvarez (Engineering) has HR-DataAdmin access
+# → Only 1 of 20 (5%) — should flag as HIGH drift
+dn: cn=HR-DataAdmin,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=deborah.alvarez,ou=Engineering,ou=People,dc=acmecorp,dc=com
+
+# DRIFT OUTLIER 3: Engineering user with both Finance AND HR access
+# Amy Long (Engineering) has DataAccess-Financial + DataAccess-PII
+# → Only 1 of 20 (5%) — should flag as HIGH drift on both groups
+dn: cn=DataAccess-PII,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=amy.long,ou=Engineering,ou=People,dc=acmecorp,dc=com
+
+dn: cn=DataAccess-Financial,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=amy.long,ou=Engineering,ou=People,dc=acmecorp,dc=com
+
+# DRIFT OUTLIER 4: Finance user with production Engineering access
+# Howard Blanc (Finance) has Code-Deploy-Prod + AWS-Developers
+# → Only 1 of 15 (6.7%) — should flag as HIGH drift
+dn: cn=Code-Deploy-Prod,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=howard.blanc,ou=Finance,ou=People,dc=acmecorp,dc=com
+
+dn: cn=AWS-Developers,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=howard.blanc,ou=Finance,ou=People,dc=acmecorp,dc=com
+
+# DRIFT OUTLIER 5: Finance user with engineering tools
+# Heather Fontaine (Finance) has GitHub-Users + BuildSystem-Users
+# → Only 1 of 15 (6.7%) — should flag as MEDIUM drift
+dn: cn=GitHub-Users,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=heather.fontaine,ou=Finance,ou=People,dc=acmecorp,dc=com
+
+dn: cn=BuildSystem-Users,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=heather.fontaine,ou=Finance,ou=People,dc=acmecorp,dc=com
+
+# DRIFT OUTLIER 6: Sales user with sensitive data access
+# Nancy Watanabe (Sales) has DataAccess-PII + DataAccess-Financial
+# → Only 1 of 15 (6.7%) — should flag as HIGH drift
+dn: cn=DataAccess-PII,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=nancy.watanabe,ou=Sales,ou=People,dc=acmecorp,dc=com
+
+dn: cn=DataAccess-Financial,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=nancy.watanabe,ou=Sales,ou=People,dc=acmecorp,dc=com
+
+# DRIFT OUTLIER 7: Sales user with production deploy access
+# Stephanie Brown (Sales) has Code-Deploy-Prod
+# → Only 1 of 15 (6.7%) — should flag as HIGH drift
+dn: cn=Code-Deploy-Prod,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=stephanie.brown,ou=Sales,ou=People,dc=acmecorp,dc=com
+
+# DRIFT OUTLIER 8: HR user with engineering production access
+# Keith King (HR) has Code-Deploy-Prod + AWS-Developers
+# → Only 1 of 10 (10%) — should flag as MEDIUM drift
+dn: cn=Code-Deploy-Prod,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=keith.king,ou=HumanResources,ou=People,dc=acmecorp,dc=com
+
+dn: cn=AWS-Developers,ou=Access,ou=Groups,dc=acmecorp,dc=com
+changetype: modify
+add: member
+member: uid=keith.king,ou=HumanResources,ou=People,dc=acmecorp,dc=com

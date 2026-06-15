@@ -1,0 +1,103 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# OPTIONAL, DEV/TEST ONLY — an in-cluster Postgres so you can exercise the
+# deployment without standing up RDS. NOT for production: single replica,
+# no backups, no HA, no encryption-at-rest guarantees beyond the PV.
+#
+# Apply on its own (not part of the base kustomization):
+#   kubectl apply -n ldapportal -f deploy/eks/optional/postgres-dev.yaml
+#
+# Then point the backend at it by setting, in configmap.yaml:
+#   DB_URL: "jdbc:postgresql://ldapportal-db:5432/ldapportal"
+# and in the secret: DB_PASSWORD must equal POSTGRES_PASSWORD below.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ldapportal-db
+  labels:
+    app.kubernetes.io/name: ldapportal
+    app.kubernetes.io/component: database
+type: Opaque
+stringData:
+  POSTGRES_DB: ldapportal
+  POSTGRES_USER: ldapportal
+  POSTGRES_PASSWORD: REPLACE_WITH_DB_PASSWORD
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ldapportal-db
+  labels:
+    app.kubernetes.io/name: ldapportal
+    app.kubernetes.io/component: database
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: ldapportal
+    app.kubernetes.io/component: database
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ldapportal-db
+  labels:
+    app.kubernetes.io/name: ldapportal
+    app.kubernetes.io/component: database
+spec:
+  serviceName: ldapportal-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ldapportal
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ldapportal
+        app.kubernetes.io/component: database
+    spec:
+      securityContext:
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: ldapportal-db
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi

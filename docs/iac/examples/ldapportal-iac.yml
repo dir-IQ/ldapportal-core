@@ -1,0 +1,157 @@
+# SPDX-License-Identifier: Apache-2.0
+# ─────────────────────────────────────────────────────────────────────────────
+# Declaratively reconcile LDAPPortal configuration against its REST API.
+#
+#   ansible-playbook -i inventory.ini ldapportal-iac.yml --ask-vault-pass --check
+#   ansible-playbook -i inventory.ini ldapportal-iac.yml --ask-vault-pass
+#
+# Tags: tokens | directories | admins | isva. See ../README.md for the contract
+# (idempotency, ETag/If-Match, write-only secrets, full-replace).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Play 1 — API token bootstrap (needs an interactive SUPERADMIN) ────────────
+# API tokens cannot manage other tokens, so this play authenticates with a
+# SUPERADMIN login (JWT cookie) rather than the automation token.
+- name: LDAPPortal — manage automation API tokens
+  hosts: ldapportal
+  gather_facts: false
+  tags: [tokens]
+  tasks:
+    - name: Log in as SUPERADMIN (JWT returned as an httpOnly cookie)
+      ansible.builtin.uri:
+        url: "{{ ldapportal_base_url }}/api/v1/auth/login"
+        method: POST
+        body_format: json
+        body:
+          username: "{{ ldapportal_superadmin_username }}"
+          password: "{{ ldapportal_superadmin_password }}"
+        validate_certs: "{{ ldapportal_validate_certs }}"
+        status_code: 200
+      register: ldapportal_login
+      no_log: true
+
+    - name: Upsert API tokens (by name)
+      ansible.builtin.uri:
+        url: "{{ ldapportal_base_url }}/api/v1/superadmin/api-tokens/by-name/{{ item.name }}"
+        method: PUT
+        headers:
+          Cookie: "{{ ldapportal_login.cookies_string }}"
+        body_format: json
+        body:
+          description: "{{ item.description | default('') }}"
+          expiresAt: "{{ item.expiresAt }}"
+        validate_certs: "{{ ldapportal_validate_certs }}"
+        status_code: [200, 201]      # 201 = created (plaintext returned), 200 = updated
+      loop: "{{ ldapportal_api_tokens | default([]) }}"
+      loop_control: { label: "{{ item.name }}" }
+      register: ldapportal_token_results
+
+    - name: Show the one-time plaintext of any NEWLY CREATED token (201)
+      ansible.builtin.debug:
+        msg: >-
+          Token '{{ item.item.name }}' was created — store this plaintext NOW,
+          it is shown only once: {{ item.json.plaintext }}
+      loop: "{{ ldapportal_token_results.results }}"
+      loop_control: { label: "{{ item.item.name }}" }
+      when: item.status == 201
+
+# ── Play 2 — Directories, admins, ISVA (uses the automation API token) ────────
+- name: LDAPPortal — provision directories, admins, ISVA
+  hosts: ldapportal
+  gather_facts: false
+  vars:
+    auth: { Authorization: "Bearer {{ ldapportal_api_token }}" }
+  tasks:
+    # ── Directories ──────────────────────────────────────────────────────────
+    - name: Read current directories (so we can preserve secrets on re-apply)
+      ansible.builtin.uri:
+        url: "{{ ldapportal_base_url }}/api/v1/superadmin/directories"
+        method: GET
+        headers: "{{ auth }}"
+        validate_certs: "{{ ldapportal_validate_certs }}"
+        status_code: 200
+      register: ldapportal_current_dirs
+      tags: [directories]
+
+    - name: Build slug -> bind-password-already-set map
+      ansible.builtin.set_fact:
+        ldapportal_dir_pw_set: >-
+          {{ ldapportal_current_dirs.json
+             | items2dict(key_name='slug', value_name='bindPasswordSet') }}
+      tags: [directories]
+
+    - name: Upsert directories (by slug)
+      ansible.builtin.uri:
+        url: "{{ ldapportal_base_url }}/api/v1/superadmin/directories/by-slug/{{ item.slug }}"
+        method: PUT
+        headers: "{{ auth }}"
+        body_format: json
+        # Send the bind password only when the directory has no stored secret
+        # yet (first create). Omitting it on re-apply preserves the secret AND
+        # keeps the apply a true no-op — a re-sent password would re-evict the
+        # connection pool and re-probe the directory.
+        body: >-
+          {{ item | combine({'bindPassword': ldapportal_directory_bind_passwords[item.slug]})
+             if not (ldapportal_dir_pw_set[item.slug] | default(false))
+             else item }}
+        validate_certs: "{{ ldapportal_validate_certs }}"
+        status_code: [200, 201]      # 201 = created, 200 = updated
+      loop: "{{ ldapportal_directories | default([]) }}"
+      loop_control: { label: "{{ item.slug }}" }
+      no_log: true                   # body carries a bind password on first create
+      tags: [directories]
+
+    # ── Admin accounts + permissions ─────────────────────────────────────────
+    - name: Read current admins (so we can preserve passwords on re-apply)
+      ansible.builtin.uri:
+        url: "{{ ldapportal_base_url }}/api/v1/superadmin/admins"
+        method: GET
+        headers: "{{ auth }}"
+        validate_certs: "{{ ldapportal_validate_certs }}"
+        status_code: 200
+      register: ldapportal_current_admins
+      tags: [admins]
+
+    - name: Build username -> password-already-set map
+      ansible.builtin.set_fact:
+        ldapportal_admin_pw_set: >-
+          {{ ldapportal_current_admins.json
+             | items2dict(key_name='username', value_name='passwordSet') }}
+      tags: [admins]
+
+    - name: Upsert admins (by username) — full-replace roles + features
+      ansible.builtin.uri:
+        url: "{{ ldapportal_base_url }}/api/v1/superadmin/admins/by-username/{{ item.account.username }}"
+        method: PUT
+        headers: "{{ auth }}"
+        body_format: json
+        body:
+          # Inject the LOCAL password only on first create.
+          account: >-
+            {{ item.account | combine(
+                 {'password': ldapportal_admin_passwords[item.account.username]}
+                 if (item.account.authType | default('LOCAL')) == 'LOCAL'
+                    and not (ldapportal_admin_pw_set[item.account.username] | default(false))
+                 else {}) }}
+          profileRoles: "{{ item.profileRoles | default([]) }}"
+          featurePermissions: "{{ item.featurePermissions | default([]) }}"
+        validate_certs: "{{ ldapportal_validate_certs }}"
+        status_code: [200, 201]
+      loop: "{{ ldapportal_admins | default([]) }}"
+      loop_control: { label: "{{ item.account.username }}" }
+      no_log: true
+      tags: [admins]
+
+    # ── ISVA vendor config (no-op / skipped on community builds → 402/403) ────
+    - name: Upsert ISVA config (by directory slug)
+      ansible.builtin.uri:
+        url: "{{ ldapportal_base_url }}/api/v1/directories/by-slug/{{ item.directory_slug }}/isva-config"
+        method: PUT
+        headers: "{{ auth }}"
+        body_format: json
+        body: "{{ item.config }}"
+        validate_certs: "{{ ldapportal_validate_certs }}"
+        status_code: 200              # ISVA returns 200 for both create and update
+      loop: "{{ ldapportal_isva | default([]) }}"
+      loop_control: { label: "{{ item.directory_slug }}" }
+      tags: [isva]

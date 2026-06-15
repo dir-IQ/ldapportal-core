@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<extensions xmlns="http://maven.apache.org/EXTENSIONS/1.1.0"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="http://maven.apache.org/EXTENSIONS/1.1.0 http://maven.apache.org/xsd/core-extensions-1.1.0.xsd">
+  <!--
+    Apache Maven Build Cache Extension. Hashes each module's inputs
+    (effective POM, source tree, dependencies, plugin config) and
+    restores cached outputs (target/, including skipping test
+    execution) when the hash is unchanged. For a 6-module build where
+    most PRs touch one module, the untouched modules become near
+    no-ops.
+
+    Local cache lives at ~/.m2/build-cache; CI persists it across runs
+    via actions/cache (see .github/workflows/ci.yml). Disable ad hoc
+    with -Dmaven.build.cache.enabled=false.
+  -->
+  <extension>
+    <groupId>org.apache.maven.extensions</groupId>
+    <artifactId>maven-build-cache-extension</artifactId>
+    <version>1.2.3</version>
+  </extension>
+</extensions>

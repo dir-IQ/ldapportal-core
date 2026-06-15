@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Backend (shared) environment for the dual-frontend deploy. Only env-settable
+# values live here.
+#
+# The WebSEAL TRUST settings — enabledAuthTypes (LOCAL+WEBSEAL), the
+# websealTrustedProxies CIDR allow-list, and the iv-user/iv-groups header names
+# — are DB/UI-persisted, NOT env. Configure them post-deploy in Settings →
+# Authentication (see README.md §"Post-deploy"). They are intentionally absent
+# from this ConfigMap.
+#
+#   DB_URL              → your RDS endpoint (keep ?sslmode=require).
+#   CORS_ALLOWED_ORIGIN → each frontend is served same-origin with its /api/v1
+#                         proxy, so the browser never makes a cross-origin API
+#                         call and CORS is not exercised. Left as the admin
+#                         origin for completeness.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ldapportal-config
+data:
+  DB_URL: "jdbc:postgresql://REPLACE_RDS_ENDPOINT:5432/ldapportal?sslmode=require"
+  CORS_ALLOWED_ORIGIN: "https://admin.example.com"
+  LDAPPORTAL_ENTITLEMENTS_GRANT: "DIRECTORY_SYNC"

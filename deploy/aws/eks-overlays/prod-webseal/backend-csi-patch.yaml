@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Mounts the SecretProviderClass on the backend pod. The synced Secret
+# (`ldapportal-secrets`) is created by the CSI driver only when a pod mounts
+# the volume, so this mount is what makes the Deployment's `envFrom:
+# secretRef` resolve. kubelet mounts CSI volumes before resolving container
+# env, so the backend reads the freshly-synced values on first start; if a
+# pod ever races ahead it fails CreateContainerConfigError and kubelet
+# retries until the Secret exists, so the rollout self-heals.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ldapportal-backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets-store
+              readOnly: true
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: ldapportal-aws-secrets

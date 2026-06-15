@@ -1,0 +1,2 @@
+com.ldapportal.core.CoreNoopSpiAutoConfiguration
+com.ldapportal.core.entitlement.LicenseAutoConfiguration

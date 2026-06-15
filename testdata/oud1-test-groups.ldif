@@ -1,0 +1,332 @@
+# =============================================================================
+# oud1-test-groups.ldif — representative group memberships for the 100 test
+# users in oud1-test-users.ldif.
+#
+# Base DN:  dc=oud1,dc=example,dc=com
+# Loads into: ou=Groups,dc=oud1,dc=example,dc=com
+# Group type: groupOfUniqueNames / uniqueMember (OUD / OpenDJ convention,
+#   matches testdata/oud-bootstrap.ldif).
+#
+# Groups:
+#   - 5 department groups (Engineering, Sales, Marketing, HumanResources,
+#     Finance) — 20 members each.
+#   - AllEmployees           — all 100 users.
+#   - Managers               — the 10 department managers.
+#   - RemoteAccess           — a representative cross-department subset.
+#   - SecurityAdmins         — a small subset PLUS a NESTED group membership
+#                              (contains cn=Managers as a uniqueMember), to
+#                              exercise nested-group resolution (isMemberOf).
+#
+# Load AFTER oud1-test-users.ldif so the referenced user entries exist:
+#   ldapadd -c -x -H ldap://localhost:3389 \
+#     -D "cn=Directory Manager" -w <password> -f testdata/oud1-test-groups.ldif
+# =============================================================================
+
+dn: ou=Groups,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: organizationalUnit
+ou: Groups
+description: Test security and distribution groups for the oud1 directory
+
+dn: cn=Engineering,ou=Groups,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: Engineering
+description: Engineering department — all Engineering staff and managers.
+uniqueMember: uid=alice.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.foster,ou=People,dc=oud1,dc=example,dc=com
+
+dn: cn=Sales,ou=Groups,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: Sales
+description: Sales department — all Sales staff and managers.
+uniqueMember: uid=alice.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.gupta,ou=People,dc=oud1,dc=example,dc=com
+
+dn: cn=Marketing,ou=Groups,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: Marketing
+description: Marketing department — all Marketing staff and managers.
+uniqueMember: uid=alice.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.hansen,ou=People,dc=oud1,dc=example,dc=com
+
+dn: cn=HumanResources,ou=Groups,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: HumanResources
+description: HumanResources department — all HumanResources staff and managers.
+uniqueMember: uid=alice.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.ito,ou=People,dc=oud1,dc=example,dc=com
+
+dn: cn=Finance,ou=Groups,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: Finance
+description: Finance department — all Finance staff and managers.
+uniqueMember: uid=alice.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.jones,ou=People,dc=oud1,dc=example,dc=com
+
+dn: cn=AllEmployees,ou=Groups,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: AllEmployees
+description: All test employees (every user).
+uniqueMember: uid=alice.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.jones,ou=People,dc=oud1,dc=example,dc=com
+
+dn: cn=Managers,ou=Groups,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: Managers
+description: All department managers.
+uniqueMember: uid=alice.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.jones,ou=People,dc=oud1,dc=example,dc=com
+
+dn: cn=RemoteAccess,ou=Groups,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: RemoteAccess
+description: Users granted remote/VPN access — representative cross-department subset.
+uniqueMember: uid=alice.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=alice.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=brian.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=carol.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=david.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=emma.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=grace.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.chen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.foster,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=henry.ito,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.brooks,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.evans,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=irene.hansen,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.diaz,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.gupta,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.jones,ou=People,dc=oud1,dc=example,dc=com
+
+dn: cn=SecurityAdmins,ou=Groups,dc=oud1,dc=example,dc=com
+objectClass: top
+objectClass: groupOfUniqueNames
+cn: SecurityAdmins
+description: Security administrators — 3 named users plus the nested cn=Managers group.
+uniqueMember: uid=alice.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=frank.anderson,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: uid=jack.jones,ou=People,dc=oud1,dc=example,dc=com
+uniqueMember: cn=Managers,ou=Groups,dc=oud1,dc=example,dc=com
+
