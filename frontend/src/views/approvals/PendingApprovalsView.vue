@@ -66,6 +66,26 @@
           <strong>Reject Reason:</strong> {{ selectedApproval.rejectReason }}
         </div>
 
+        <!-- Friendly request summary — the "what's changing", rendered from
+             the payload per request type so reviewers don't have to read the
+             raw JSON. Hidden in edit mode and for unmapped types (which fall
+             back to the JSON block below). -->
+        <div v-if="!editMode && summaryRows.length"
+             data-testid="request-summary"
+             class="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 space-y-3">
+          <div v-for="row in summaryRows" :key="row.label">
+            <div class="text-[11px] font-medium uppercase tracking-wide text-gray-500">{{ row.label }}</div>
+            <template v-if="row.dn">
+              <div class="flex items-center gap-1 text-sm font-medium text-gray-900">
+                <span class="truncate" :title="row.value">{{ dnLeaf(row.value) }}</span>
+                <CopyButton :text="row.value" />
+              </div>
+              <div class="text-xs text-gray-500 font-mono break-all">{{ row.value }}</div>
+            </template>
+            <div v-else class="text-sm text-gray-900 break-words">{{ row.value }}</div>
+          </div>
+        </div>
+
         <!-- Provisioning Error -->
         <div v-if="selectedApproval.provisionError"
           class="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
@@ -91,9 +111,12 @@
           </div>
         </div>
 
-        <!-- Read-only payload -->
-        <details v-if="!editMode" class="mt-4">
-          <summary class="cursor-pointer text-sm text-blue-600 hover:text-blue-800">Show Payload</summary>
+        <!-- Raw payload — demoted to an advanced toggle now that the summary
+             above covers the common case. Opens by default only when there's
+             no structured summary (an unmapped request type), so that case is
+             never left blank. -->
+        <details v-if="!editMode" class="mt-2" :open="summaryRows.length === 0">
+          <summary class="cursor-pointer text-xs text-gray-500 hover:text-gray-700">Show raw JSON (advanced)</summary>
           <pre class="mt-2 bg-gray-50 border rounded p-3 text-xs overflow-auto max-h-64">{{ formatPayload(selectedApproval.payload) }}</pre>
         </details>
 
@@ -151,6 +174,7 @@ import ActionMenu from '@/components/ActionMenu.vue'
 import AppModal from '@/components/AppModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
+import CopyButton from '@/components/CopyButton.vue'
 
 type PendingApproval = components['schemas']['PendingApprovalResponse']
 
@@ -233,6 +257,77 @@ function formatPayload(payload: string | undefined): string {
     return payload
   }
 }
+
+// ── Friendly request summary ────────────────────────────────────────────────
+// Renders the request payload as a few readable rows per request type so a
+// reviewer sees *what's changing* (which member, which group, …) without
+// reading raw JSON. Unmapped types yield no rows and fall back to the JSON
+// block, so a new ApprovalRequestType never shows blank.
+interface SummaryRow {
+  label: string
+  value: string
+  /** When true, `value` is a DN: render its readable leaf + full DN + copy. */
+  dn?: boolean
+}
+
+/**
+ * Readable leaf of a DN — the value of its first RDN, preferring the cn=
+ * component of a multi-valued RDN (e.g. "o=0001+cn=Jim Moffett" → "Jim
+ * Moffett", "cn=SecurityAdmins,ou=Groups,…" → "SecurityAdmins"). Display
+ * only; the full DN is always shown alongside it.
+ */
+function dnLeaf(dn: string): string {
+  if (!dn) return ''
+  const firstRdn = dn.split(',')[0] ?? ''
+  const parts = firstRdn.split('+').map(s => s.trim())
+  const chosen = parts.find(p => /^cn=/i.test(p)) ?? parts[0] ?? ''
+  const eq = chosen.indexOf('=')
+  return eq >= 0 ? chosen.slice(eq + 1).trim() : chosen
+}
+
+// Don't surface password values in the read-only summary.
+function maskAttr(name: string, value: string): string {
+  return /password/i.test(name) ? '••••••••' : value
+}
+
+const summaryRows = computed<SummaryRow[]>(() => {
+  const a = selectedApproval.value
+  if (!a) return []
+  let p: Record<string, unknown>
+  try { p = JSON.parse(a.payload ?? '{}') } catch { return [] }
+  const str = (v: unknown): string => (v == null ? '' : String(v))
+  const rows: SummaryRow[] = []
+  switch (a.requestType) {
+    case 'GROUP_MEMBER_ADD':
+      if (p.memberValue) rows.push({ label: 'Add member', value: str(p.memberValue), dn: true })
+      if (p.groupDn) rows.push({ label: 'To group', value: str(p.groupDn), dn: true })
+      if (p.memberAttribute) rows.push({ label: 'Via attribute', value: str(p.memberAttribute) })
+      break
+    case 'USER_CREATE':
+    case 'SELF_REGISTRATION': {
+      if (p.dn) rows.push({ label: 'New user', value: str(p.dn), dn: true })
+      const attrs = (p.attributes ?? {}) as Record<string, unknown>
+      for (const [k, v] of Object.entries(attrs)) {
+        const joined = Array.isArray(v) ? v.join(', ') : str(v)
+        if (joined) rows.push({ label: k, value: maskAttr(k, joined) })
+      }
+      break
+    }
+    case 'USER_MOVE':
+      if (p.dn) rows.push({ label: 'Move user', value: str(p.dn), dn: true })
+      if (p.newParentDn) rows.push({ label: 'To container', value: str(p.newParentDn), dn: true })
+      break
+    case 'PLAYBOOK_EXECUTE':
+      if (p.playbookName) rows.push({ label: 'Playbook', value: str(p.playbookName) })
+      if (p.targetDn) rows.push({ label: 'Target', value: str(p.targetDn), dn: true })
+      break
+    case 'BULK_IMPORT':
+      if (p.count != null) rows.push({ label: 'Entries', value: str(p.count) })
+      if (p.operation) rows.push({ label: 'Operation', value: str(p.operation) })
+      break
+  }
+  return rows
+})
 
 function isOwnRequest(approval: PendingApproval): boolean {
   const myId = (auth.principal as { id?: string } | null)?.id
