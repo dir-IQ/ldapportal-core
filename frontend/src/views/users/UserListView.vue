@@ -59,6 +59,7 @@
       :rows="users"
       row-key="dn"
       selectable
+      auto-fit-first-view
       v-model:selectedKeys="selectedDns"
       empty-text="No users found"
     >
