@@ -292,4 +292,31 @@ describe('ResultsTable.vue', () => {
     const bodyCells = w.findAll('tbody td')
     expect(bodyCells.some(td => td.classes().includes('sticky') && td.classes().includes('right-0'))).toBe(true)
   })
+
+  it('autoFitFirstView sizes columns on first view when no widths are saved', async () => {
+    const key = 'autofit-' + Math.random()
+    mount(ResultsTable, { props: { tableKey: key, columns, rows, autoFitFirstView: true } })
+    await flushPromises()
+    await flushPromises()
+    const saved = (tablePrefs[key] as { widths?: Record<string, number> } | undefined)?.widths ?? {}
+    expect(Object.keys(saved)).toEqual(expect.arrayContaining(['id', 'name', 'dept']))
+  })
+
+  it('autoFitFirstView leaves already-saved column widths untouched', async () => {
+    const key = 'autofit-saved-' + Math.random()
+    tablePrefs[key] = { widths: { id: 222 }, hidden: [], pageSize: 50, sortKey: '', sortAsc: true, seenColumns: [] }
+    mount(ResultsTable, { props: { tableKey: key, columns, rows, autoFitFirstView: true } })
+    await flushPromises()
+    await flushPromises()
+    expect((tablePrefs[key] as { widths: Record<string, number> }).widths).toEqual({ id: 222 })
+  })
+
+  it('does not auto-fit when autoFitFirstView is off (default)', async () => {
+    const key = 'no-autofit-' + Math.random()
+    mount(ResultsTable, { props: { tableKey: key, columns, rows } })
+    await flushPromises()
+    await flushPromises()
+    const saved = (tablePrefs[key] as { widths?: Record<string, number> } | undefined)?.widths ?? {}
+    expect(Object.keys(saved)).toHaveLength(0)
+  })
 })
