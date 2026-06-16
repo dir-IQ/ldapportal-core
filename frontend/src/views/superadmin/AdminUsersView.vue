@@ -226,8 +226,8 @@
             <h3 class="font-semibold text-gray-700 mb-2">Feature permission overrides</h3>
             <p class="text-xs text-gray-500 mb-2">Override the default feature permissions for this admin. Leave as "Default" to use the role-based default.</p>
             <div class="grid grid-cols-2 gap-x-6 gap-y-2">
-              <div v-for="f in featureCatalog" :key="f.key" class="flex items-center justify-between">
-                <span class="text-xs text-gray-700 font-mono">{{ f.dbValue }}</span>
+              <div v-for="f in featureCatalog" :key="f.key" class="flex items-center justify-between gap-2">
+                <span class="text-xs text-gray-700 truncate" :title="f.dbValue">{{ featurePermissionLabel(f.dbValue) }}</span>
                 <select :value="featureState(f.key)" @change="changeFeature(f.key, ($event.target as HTMLSelectElement).value as 'default' | 'enabled' | 'disabled')" :aria-label="`Permission for ${f.dbValue}`" class="input text-xs py-0.5 w-28">
                   <option value="default">Default</option>
                   <option value="enabled">Enabled</option>
@@ -313,6 +313,7 @@ import {
   SUPERADMIN_PERMISSION_LABELS,
   superadminPermissionLabel,
 } from '@/constants/superadminPermissions'
+import { featurePermissionLabel } from '@/constants/featurePermissions'
 import { listAllProfiles } from '@/api/profiles'
 import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
