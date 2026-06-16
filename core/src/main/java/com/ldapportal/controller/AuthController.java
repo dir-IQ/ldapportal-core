@@ -94,6 +94,7 @@ public class AuthController {
     private final com.ldapportal.service.AuditService             auditService;
     private final com.ldapportal.core.entitlement.EntitlementService entitlementService;
     private final com.ldapportal.service.UserPreferencesService   userPreferencesService;
+    private final com.ldapportal.service.SuperadminPermissionService superadminPermissionService;
 
     /**
      * Non-httpOnly hint cookie carrying just "{@code <theme>.<density>}" so an
@@ -267,6 +268,13 @@ public class AuthController {
             body.put("features", java.util.Arrays.stream(com.ldapportal.entity.enums.FeatureKey.values())
                     .map(com.ldapportal.entity.enums.FeatureKey::getDbValue)
                     .toList());
+            // System-scoped superadmin permissions (effective — owners get all)
+            // so the SPA can hide/disable superadmin actions the account can't perform.
+            body.put("superadminPermissions",
+                    superadminPermissionService.effective(principal.id()).stream()
+                            .map(com.ldapportal.entity.enums.SuperadminPermission::getDbValue)
+                            .sorted()
+                            .toList());
         } else if (principal.type() == PrincipalType.SELF_SERVICE) {
             body.put("features", List.of());
         } else {

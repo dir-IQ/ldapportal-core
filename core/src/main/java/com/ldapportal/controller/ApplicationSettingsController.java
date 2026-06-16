@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller;
 
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.dto.settings.ApplicationSettingsDto;
 import com.ldapportal.dto.settings.BrandingDto;
 import com.ldapportal.dto.settings.UpdateApplicationSettingsRequest;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.service.ApplicationSettingsService;
 import com.ldapportal.service.ApprovalWorkflowService;
 import com.ldapportal.core.siem.service.SiemExportService;
@@ -54,6 +56,7 @@ public class ApplicationSettingsController {
 
     @PutMapping
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_SETTINGS)
     public ApplicationSettingsDto upsert(@Valid @RequestBody UpdateApplicationSettingsRequest req) {
         ApplicationSettingsDto result = service.upsert(req);
         siemExportService.invalidateCache();
@@ -74,6 +77,7 @@ public class ApplicationSettingsController {
     /** Marks first-run setup as complete. Called by the setup wizard on the final step. */
     @PostMapping("/complete-setup")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_SETTINGS)
     public ApplicationSettingsDto completeSetup() {
         return service.markSetupComplete();
     }
@@ -81,6 +85,7 @@ public class ApplicationSettingsController {
     /** Tests SIEM connectivity by sending a synthetic audit event. */
     @PostMapping("/siem/test")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_SETTINGS)
     public Map<String, String> testSiem() {
         String connectivity = siemExportService.testConnectivity();
         String delivery = siemExportService.sendTestEvent();
@@ -93,6 +98,7 @@ public class ApplicationSettingsController {
      */
     @PostMapping("/siem/backfill")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_SETTINGS)
     public Map<String, Object> siemBackfill(
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime from,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime to) {
