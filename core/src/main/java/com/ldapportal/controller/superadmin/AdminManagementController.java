@@ -159,6 +159,21 @@ public class AdminManagementController {
         return ResponseEntity.noContent().build();
     }
 
+    // ── Feature catalogue ─────────────────────────────────────────────────────
+
+    /**
+     * The full catalogue of feature keys an override can target. The editor's
+     * "feature permission overrides" grid renders from this rather than a
+     * hand-maintained list, so it stays in lock-step with {@link FeatureKey}
+     * (and matches the catalogue shown by the effective-permissions view).
+     */
+    @GetMapping("/permissions/feature-catalog")
+    public List<com.ldapportal.dto.admin.FeatureCatalogEntry> featureCatalog() {
+        return java.util.Arrays.stream(FeatureKey.values())
+                .map(com.ldapportal.dto.admin.FeatureCatalogEntry::of)
+                .toList();
+    }
+
     // ── Permission summary ────────────────────────────────────────────────────
 
     @GetMapping("/{adminId}/permissions")

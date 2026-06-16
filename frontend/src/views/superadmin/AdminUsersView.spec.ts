@@ -15,6 +15,7 @@ const adminApi = vi.hoisted(() => ({
   updateAdmin: vi.fn(),
   deleteAdmin: vi.fn(),
   getPermissions: vi.fn(),
+  getFeatureCatalog: vi.fn(),
 }))
 const superApi = vi.hoisted(() => ({
   createSuperadmin: vi.fn(),
@@ -84,6 +85,11 @@ function saveButton(wrapper: ReturnType<typeof mount>) {
 beforeEach(() => {
   vi.clearAllMocks()
   adminApi.listAdmins.mockResolvedValue({ data: rows() })
+  adminApi.getFeatureCatalog.mockResolvedValue({ data: [
+    { key: 'USER_CREATE', dbValue: 'user.create' },
+    { key: 'AUDITOR_MANAGE', dbValue: 'auditor.manage' },
+  ] })
+  adminApi.getPermissions.mockResolvedValue({ data: { profileRoles: [], featurePermissions: [] } })
   adminApi.updateAdmin.mockResolvedValue({ data: {} })
   adminApi.deleteAdmin.mockResolvedValue({ data: undefined })
   superApi.updateSuperadmin.mockResolvedValue({ data: {} })
@@ -228,6 +234,23 @@ describe('AdminUsersView superadmin permissions tab', () => {
     await flushPromises()
 
     expect((ownerToggle(wrapper).element as HTMLInputElement).disabled).toBe(false)
+  })
+})
+
+describe('AdminUsersView feature-override grid', () => {
+  it('renders the override grid from the backend catalogue, not a hardcoded list', async () => {
+    const wrapper = mount(AdminUsersView, { global: { stubs } })
+    await flushPromises()
+
+    await editButtons(wrapper)[0].trigger('click') // admin row
+    await wrapper.findAll('button').find(b => b.text() === 'Permissions')!.trigger('click')
+    await flushPromises()
+
+    // dbValues from the catalogue are shown — including auditor.manage, which the
+    // old hand-maintained list omitted entirely.
+    expect(wrapper.text()).toContain('user.create')
+    expect(wrapper.text()).toContain('auditor.manage')
+    expect(adminApi.getFeatureCatalog).toHaveBeenCalled()
   })
 })
 
