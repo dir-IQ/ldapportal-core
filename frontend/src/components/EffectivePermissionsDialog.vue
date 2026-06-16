@@ -115,9 +115,12 @@ const filteredFeatures = computed(() => {
           No profile roles assigned — this admin cannot access any directory. Grant profile access from the Permissions dialog to activate the account.
         </div>
 
+        <!-- Fill the modal body and let only the feature table scroll: the
+             profile tabs, header and filter stay pinned while the (often long)
+             feature list scrolls within the panel. -->
         <template v-else>
           <!-- Profile tab bar -->
-          <div class="flex flex-wrap gap-1 mb-4 border-b border-gray-200">
+          <div class="flex flex-wrap gap-1 mb-4 border-b border-gray-200 shrink-0">
             <button v-for="(p, i) in profiles" :key="p.profileId"
                     type="button"
                     @click="selectedProfileIdx = i; filter = ''"
@@ -132,7 +135,7 @@ const filteredFeatures = computed(() => {
           </div>
 
           <!-- Profile header -->
-          <div v-if="selected" class="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs space-y-1">
+          <div v-if="selected" class="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs space-y-1 shrink-0">
             <div class="flex items-baseline justify-between">
               <p>
                 <span class="font-semibold">Base role:</span>
@@ -146,10 +149,11 @@ const filteredFeatures = computed(() => {
             </p>
           </div>
 
-          <!-- Feature matrix -->
-          <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <!-- Feature matrix. Owns the remaining height and scrolls; the
+               header row sticks so columns stay labelled while scrolling. -->
+          <div class="bg-white border border-gray-200 rounded-xl flex-1 min-h-0 overflow-y-auto">
             <table class="w-full text-sm">
-              <thead class="bg-gray-50">
+              <thead class="bg-gray-50 sticky top-0 z-10">
                 <tr>
                   <th class="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Feature</th>
                   <th class="px-4 py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Allowed</th>

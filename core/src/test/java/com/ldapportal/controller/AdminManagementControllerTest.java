@@ -167,6 +167,25 @@ class AdminManagementControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void featureCatalog_superadmin_returnsAllFeatureKeys() throws Exception {
+        mockMvc.perform(get(BASE_URL + "/permissions/feature-catalog")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()")
+                        .value(com.ldapportal.entity.enums.FeatureKey.values().length))
+                // Each entry carries the enum-name key + its dot-notation dbValue.
+                .andExpect(jsonPath("$[?(@.key=='USER_CREATE')].dbValue").value("user.create"))
+                .andExpect(jsonPath("$[?(@.key=='AUDITOR_MANAGE')].dbValue").value("auditor.manage"));
+    }
+
+    @Test
+    void featureCatalog_admin_returns403() throws Exception {
+        mockMvc.perform(get(BASE_URL + "/permissions/feature-catalog")
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void getPermissions_superadmin_returns200() throws Exception {
         given(service.getPermissions(eq(ADMIN_ID)))
                 .willReturn(new AdminPermissionsResponse(List.of(), List.of()));

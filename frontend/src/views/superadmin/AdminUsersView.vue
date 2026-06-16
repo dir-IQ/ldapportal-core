@@ -132,8 +132,11 @@
             <p v-if="!editing" class="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
               Permission selections here are committed together with the new superadmin when you click Create.
             </p>
+            <!-- Owner + scoped permissions share one checkbox column so every
+                 control lines up vertically; the Owner row is set apart by a
+                 divider and its emphasized label rather than a bordered card. -->
             <label
-              class="flex items-start gap-2 rounded-lg border border-gray-200 p-3"
+              class="flex items-start gap-2 pb-3 mb-1 border-b border-gray-200"
               :class="ownerToggleLocked ? 'cursor-not-allowed' : 'cursor-pointer'"
             >
               <input
@@ -223,9 +226,9 @@
             <h3 class="font-semibold text-gray-700 mb-2">Feature permission overrides</h3>
             <p class="text-xs text-gray-500 mb-2">Override the default feature permissions for this admin. Leave as "Default" to use the role-based default.</p>
             <div class="grid grid-cols-2 gap-x-6 gap-y-2">
-              <div v-for="fk in allFeatureKeys" :key="fk" class="flex items-center justify-between">
-                <span class="text-xs text-gray-700 font-mono">{{ fk }}</span>
-                <select :value="featureState(fk)" @change="changeFeature(fk, ($event.target as HTMLSelectElement).value as 'default' | 'enabled' | 'disabled')" :aria-label="`Permission for ${fk}`" class="input text-xs py-0.5 w-28">
+              <div v-for="f in featureCatalog" :key="f.key" class="flex items-center justify-between">
+                <span class="text-xs text-gray-700 font-mono">{{ f.dbValue }}</span>
+                <select :value="featureState(f.key)" @change="changeFeature(f.key, ($event.target as HTMLSelectElement).value as 'default' | 'enabled' | 'disabled')" :aria-label="`Permission for ${f.dbValue}`" class="input text-xs py-0.5 w-28">
                   <option value="default">Default</option>
                   <option value="enabled">Enabled</option>
                   <option value="disabled">Disabled</option>
@@ -285,6 +288,7 @@ import {
   updateAdmin,
   deleteAdmin,
   getPermissions,
+  getFeatureCatalog,
 } from '@/api/adminManagement'
 import {
   setProfileRole,
@@ -802,12 +806,24 @@ const availableProfiles = computed<ProfileSummary[]>(() => {
 
 const newProfileId   = ref<string>('')
 const newProfileRole = ref<BaseRole>('ADMIN')
-const allFeatureKeys: string[] = [
-  'USER_CREATE', 'USER_EDIT', 'USER_DELETE', 'USER_ENABLE_DISABLE', 'USER_MOVE',
-  'GROUP_MANAGE_MEMBERS', 'GROUP_CREATE_DELETE',
-  'BULK_IMPORT', 'BULK_EXPORT', 'BULK_ATTRIBUTE_UPDATE', 'BULK_DELETE',
-  'REPORTS_RUN', 'REPORTS_EXPORT', 'REPORTS_SCHEDULE',
-]
+
+// The feature-override catalogue is backend-driven (GET …/permissions/feature-catalog)
+// so it stays in lock-step with the FeatureKey enum — the same full set the
+// "What can they do?" view shows — instead of a hand-maintained list that drifts.
+// `key` is the stable enum name sent to the override endpoints; `dbValue` is the
+// dot-notation identifier shown in the grid.
+interface FeatureCatalogEntry {
+  key: string
+  dbValue: string
+}
+const featureCatalog = ref<FeatureCatalogEntry[]>([])
+
+onMounted(async () => {
+  try {
+    const { data } = await getFeatureCatalog()
+    featureCatalog.value = data as FeatureCatalogEntry[]
+  } catch (e) { console.warn('Failed to load feature catalogue:', e) }
+})
 
 function featureState(fk: string): 'default' | 'enabled' | 'disabled' {
   const f = perms.value?.featurePermissions?.find(p => p.featureKey === fk && !p.profileId)
