@@ -204,6 +204,23 @@
             <TransformRulesEditor v-model:rules="setForm.transformRules" />
           </div>
         </details>
+        <details class="border border-gray-200 rounded-lg">
+          <summary class="px-4 py-2 text-sm font-medium text-gray-700 cursor-pointer">
+            Excluded attributes <span class="text-gray-400 font-normal">(optional)</span>
+          </summary>
+          <div class="px-4 pb-4 pt-2 space-y-2">
+            <p class="text-xs text-gray-500">
+              Attributes never copied from the source nor deleted from the target. Defaults to
+              server-maintained operational attributes plus password values
+              (<span class="font-mono">userPassword</span>, …) — passwords belong to native directory
+              replication, not attribute sync. Edit the list to suit this sync set.
+            </p>
+            <ExcludedAttributesEditor
+              v-model:attributes="setForm.excludedAttributes"
+              :defaults="excludedDefaults"
+            />
+          </div>
+        </details>
         <div class="flex items-center gap-1">
           <label class="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" v-model="setForm.enabled" class="rounded" /> Enabled
@@ -228,12 +245,13 @@ import HelpTip from '@/components/HelpTip.vue'
 import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import TransformRulesEditor from '@/components/TransformRulesEditor.vue'
+import ExcludedAttributesEditor from '@/components/sync/ExcludedAttributesEditor.vue'
 import MembershipInventoryModal from '@/components/sync/MembershipInventoryModal.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
 import {
   listSyncLinks, createSyncLink, updateSyncLink, deleteSyncLink,
-  listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet,
+  listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet, getExcludedAttributeDefaults,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
   type SyncTransformRule,
 } from '@/api/sync'
@@ -413,16 +431,20 @@ interface SetForm {
   deletePolicy: 'DELETE' | 'REVIEW'
   objectScope: SyncSet['objectScope']
   transformRules: SyncTransformRule[]
+  // null ⇒ use the engine defaults (operational + password values).
+  excludedAttributes: string[] | null
   enabled: boolean
 }
 const showSetModal = ref(false)
 const editingSet = ref<SyncSet | null>(null)
 const setForm = ref<SetForm>(blankSet())
+// Backend-driven default exclusion list, used to seed/show the editor.
+const excludedDefaults = ref<string[]>([])
 function blankSet(): SetForm {
   return {
     name: '', identityKey: '', objectScopeBaseDn: '', targetBaseDn: '', applicabilityFilter: '',
     referenceAttributes: '', sourceAnchorAttribute: '', reconcileCadenceSeconds: '',
-    deletePolicy: 'DELETE', objectScope: null, transformRules: [], enabled: true,
+    deletePolicy: 'DELETE', objectScope: null, transformRules: [], excludedAttributes: null, enabled: true,
   }
 }
 function openSetModal(s?: SyncSet) {
@@ -435,6 +457,7 @@ function openSetModal(s?: SyncSet) {
         reconcileCadenceSeconds: s.reconcileCadenceSeconds != null ? String(s.reconcileCadenceSeconds) : '',
         deletePolicy: s.deletePolicy, objectScope: s.objectScope,
         transformRules: (s.transformRules ?? []).map((r) => ({ ...r })),
+        excludedAttributes: s.excludedAttributes ? [...s.excludedAttributes] : null,
         enabled: s.enabled,
       }
     : blankSet()
@@ -467,6 +490,7 @@ function toPayload(f: SetForm): SyncSetPayload {
     sourceAnchorAttribute: nn(f.sourceAnchorAttribute),
     deletePolicy: f.deletePolicy,
     transformRules: cleanRules(f.transformRules),
+    excludedAttributes: f.excludedAttributes,
     reconcileCadenceSeconds: f.reconcileCadenceSeconds.trim() ? Number(f.reconcileCadenceSeconds) : null,
     enabled: f.enabled,
   }
@@ -501,8 +525,11 @@ function selectSet(id: string) {
 
 onMounted(async () => {
   try {
-    const [dirs] = await Promise.all([listDirectories(), loadLinks(), loadSetHealth()])
+    const [dirs, defaults] = await Promise.all([
+      listDirectories(), getExcludedAttributeDefaults(), loadLinks(), loadSetHealth(),
+    ])
     directories.value = dirs.data.map((d) => ({ id: d.id ?? '', displayName: d.displayName ?? '' }))
+    excludedDefaults.value = defaults.data
   } catch (e) {
     notif.error(errMsg(e))
   }

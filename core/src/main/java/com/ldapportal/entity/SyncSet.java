@@ -120,6 +120,16 @@ public class SyncSet {
     @Column(name = "transform_rules", columnDefinition = "jsonb")
     private List<SyncTransformRule> transformRules;
 
+    /**
+     * Attribute names never copied from source nor deleted from target.
+     * {@code null} => the engine defaults (operational + password values, see
+     * {@link com.ldapportal.ldap.sync.SyncExcludedAttributes}); a non-null list
+     * (including empty) is used verbatim — empty means "exclude nothing".
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "excluded_attributes", columnDefinition = "jsonb")
+    private List<String> excludedAttributes;
+
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;
 

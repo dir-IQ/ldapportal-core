@@ -39,6 +39,7 @@ vi.mock('@/api/sync', () => ({
   createSyncSet: vi.fn(() => Promise.resolve({ data: set })),
   updateSyncSet: vi.fn(() => Promise.resolve({ data: set })),
   deleteSyncSet: vi.fn(() => Promise.resolve({ data: undefined })),
+  getExcludedAttributeDefaults: vi.fn(() => Promise.resolve({ data: ['userPassword', 'entryUUID'] })),
   listMemberships: vi.fn(() => Promise.resolve({
     data: { content: [membership], totalElements: 8, totalPages: 1, number: 0, size: 50 },
   })),

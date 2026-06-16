@@ -61,12 +61,12 @@ class SyncControllerTest extends BaseControllerTest {
 
     private SyncSetRequest setReq() {
         return new SyncSetRequest(LINK, "people", "ou=people,dc=src", null, null, "ou=Users,dc=dst",
-                "(objectClass=inetOrgPerson)", null, null, null, null, null, true);
+                "(objectClass=inetOrgPerson)", null, null, null, null, null, null, true);
     }
 
     private SyncSetResponse setResp() {
         return new SyncSetResponse(SET, LINK, "people", "ou=people,dc=src", null, null, "ou=Users,dc=dst",
-                null, null, null, null, null, null, null, true, OffsetDateTime.now(), OffsetDateTime.now(), 0L,
+                null, null, null, null, null, null, null, null, true, OffsetDateTime.now(), OffsetDateTime.now(), 0L,
                 java.util.Map.of());
     }
 

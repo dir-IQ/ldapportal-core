@@ -42,6 +42,16 @@ public class SyncSetController {
         return service.listSets(linkId);
     }
 
+    /**
+     * Default excluded-attribute list (operational + password values). The editor
+     * seeds a new sync set and its "reset to defaults" action from this so it
+     * stays in lock-step with the engine.
+     */
+    @GetMapping("/excluded-attribute-defaults")
+    public List<String> excludedAttributeDefaults() {
+        return com.ldapportal.ldap.sync.SyncExcludedAttributes.DEFAULT_EXCLUDED;
+    }
+
     @PostMapping
     public ResponseEntity<SyncSetResponse> create(@Valid @RequestBody SyncSetRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.createSet(req));

@@ -25,6 +25,8 @@ public record SyncSetResponse(
         String sourceAnchorAttribute,
         SyncDeletePolicy deletePolicy,
         List<SyncTransformRule> transformRules,
+        // Excluded-attribute override; null => engine defaults are in effect.
+        List<String> excludedAttributes,
         Long reconcileCadenceSeconds,
         OffsetDateTime reconcileLastRunAt,
         boolean enabled,
@@ -43,7 +45,8 @@ public record SyncSetResponse(
         return new SyncSetResponse(s.getId(), s.getLinkId(), s.getName(), s.getObjectScopeBaseDn(),
                 s.getObjectScope(), s.getIdentityKey(), s.getTargetBaseDn(), s.getApplicabilityFilter(),
                 s.getReferenceAttributes(), s.getSourceAnchorAttribute(), s.getDeletePolicy(),
-                s.getTransformRules(), s.getReconcileCadenceSeconds(), s.getReconcileLastRunAt(),
+                s.getTransformRules(), s.getExcludedAttributes(),
+                s.getReconcileCadenceSeconds(), s.getReconcileLastRunAt(),
                 s.isEnabled(), s.getCreatedAt(), s.getUpdatedAt(), s.getVersion(),
                 stateCounts == null ? Map.of() : stateCounts);
     }

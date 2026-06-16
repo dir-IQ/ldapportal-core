@@ -285,6 +285,7 @@ public class RecomputeEngine {
             targetModifyDn(target, current.getTargetDn(), targetDn);
         }
 
+        java.util.Set<String> protectedAttrs = SyncExcludedAttributes.effectiveFor(set);
         Entry tgt = readTarget(target, targetDn);
         ApplyOutcome res;
         if (tgt == null) {
@@ -292,10 +293,12 @@ public class RecomputeEngine {
             if (LdapResultInterpreter.addNeedsModify(res.code())) {
                 tgt = readTarget(target, targetDn);
                 res = (tgt == null) ? res
-                        : targetModify(target, targetDn, TargetEntryDiffer.diff(tgt, decision.desiredAttrs()));
+                        : targetModify(target, targetDn,
+                                TargetEntryDiffer.diff(tgt, decision.desiredAttrs(), protectedAttrs));
             }
         } else {
-            res = targetModify(target, targetDn, TargetEntryDiffer.diff(tgt, decision.desiredAttrs()));
+            res = targetModify(target, targetDn,
+                    TargetEntryDiffer.diff(tgt, decision.desiredAttrs(), protectedAttrs));
         }
 
         if (!LdapResultInterpreter.success(res.code())) {

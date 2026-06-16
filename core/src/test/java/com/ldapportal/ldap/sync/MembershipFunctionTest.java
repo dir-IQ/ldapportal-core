@@ -58,6 +58,45 @@ class MembershipFunctionTest {
                 .contains("uid", "cn", "objectClass", "employeeType");
     }
 
+    private Entry personWithSecrets() {
+        return new Entry("uid=alice,ou=people,dc=src",
+                new Attribute("objectClass", "top", "inetOrgPerson"),
+                new Attribute("entryUUID", "1111-AAAA"),
+                new Attribute("uid", "alice"),
+                new Attribute("cn", "Alice Adams"),
+                new Attribute("userPassword", "{SSHA}abc123"),
+                new Attribute("telephoneNumber", "555-0100"));
+    }
+
+    @Test
+    void userPassword_excludedByDefault() {
+        MembershipDecision d = fn.evaluate(baseSet(), strategy, personWithSecrets(), none());
+        assertThat(d.desiredAttrs()).extracting(Attribute::getName)
+                .doesNotContain("userPassword")
+                .contains("uid", "cn", "telephoneNumber");
+    }
+
+    @Test
+    void customExclusionList_overridesDefaults() {
+        SyncSet set = baseSet();
+        // Operator excludes telephoneNumber and opts into syncing userPassword
+        // (e.g. same-vendor failover with allow-pre-encoded on the target).
+        set.setExcludedAttributes(List.of("telephoneNumber"));
+        MembershipDecision d = fn.evaluate(set, strategy, personWithSecrets(), none());
+        assertThat(d.desiredAttrs()).extracting(Attribute::getName)
+                .doesNotContain("telephoneNumber")
+                .contains("userPassword");
+    }
+
+    @Test
+    void emptyExclusionList_excludesNothing() {
+        SyncSet set = baseSet();
+        set.setExcludedAttributes(List.of());
+        MembershipDecision d = fn.evaluate(set, strategy, personWithSecrets(), none());
+        assertThat(d.desiredAttrs()).extracting(Attribute::getName)
+                .contains("userPassword", "telephoneNumber");
+    }
+
     @Test
     void applicabilityFilter_excludesNonMatching() {
         SyncSet set = baseSet();

@@ -7,7 +7,8 @@ import MembershipInventoryModal from './MembershipInventoryModal.vue'
 const set = {
   id: 'set-1', linkId: 'link-1', name: 'people', objectScopeBaseDn: null, objectScope: 'SUB' as const,
   identityKey: null, targetBaseDn: null, applicabilityFilter: null, referenceAttributes: null,
-  sourceAnchorAttribute: null, deletePolicy: 'DELETE' as const, transformRules: null, reconcileCadenceSeconds: null,
+  sourceAnchorAttribute: null, deletePolicy: 'DELETE' as const, transformRules: null,
+  excludedAttributes: null, reconcileCadenceSeconds: null,
   reconcileLastRunAt: null, enabled: true, createdAt: '', updatedAt: '', version: 0,
   stateCounts: { APPLIED: 5, FAILED: 2, REVIEW: 1 },
 }
