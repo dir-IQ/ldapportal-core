@@ -9,6 +9,7 @@ import com.ldapportal.entity.enums.AccountType;
 import com.ldapportal.exception.ConflictException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.AccountRepository;
+import com.ldapportal.repository.SuperadminPermissionGrantRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -35,13 +36,14 @@ class SuperadminManagementServiceTest {
     @Mock private AccountRepository           repo;
     @Mock private AuditService                auditService;
     @Mock private ApprovalNotificationService notificationService;
+    @Mock private SuperadminPermissionGrantRepository grantRepo;
 
     private PasswordEncoder             encoder = new BCryptPasswordEncoder();
     private SuperadminManagementService service;
 
     @BeforeEach
     void setUp() {
-        service = new SuperadminManagementService(repo, encoder, auditService, notificationService);
+        service = new SuperadminManagementService(repo, encoder, auditService, notificationService, grantRepo);
     }
 
     @Test

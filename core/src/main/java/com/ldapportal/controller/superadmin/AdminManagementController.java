@@ -8,7 +8,9 @@ import com.ldapportal.dto.admin.AdminPermissionsResponse;
 import com.ldapportal.dto.admin.FeaturePermissionRequest;
 import com.ldapportal.dto.admin.ProfileRoleRequest;
 import com.ldapportal.dto.admin.ProfileRoleResponse;
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.entity.enums.FeatureKey;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.service.AdminManagementService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +49,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/superadmin/admins")
 @PreAuthorize("hasRole('SUPERADMIN')")
+@RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)
 @RequiredArgsConstructor
 public class AdminManagementController {
 

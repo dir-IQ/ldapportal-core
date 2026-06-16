@@ -99,4 +99,38 @@ describe('useAuthStore', () => {
       expect(store.setupPending).toBe(true)
     })
   })
+
+  describe('superadmin permissions', () => {
+    it('exposes hasSuperadminPermission and isSuperadminOwner from /me', async () => {
+      me.mockResolvedValue({ data: {
+        id: 'a6', username: 'owner', accountType: 'SUPERADMIN',
+        superadminPermissions: [
+          'superadmin.manage_superadmins',
+          'superadmin.manage_application_accounts',
+        ],
+      } })
+      getSetupStatus.mockResolvedValue({ data: { setupCompleted: true } })
+
+      const store = useAuthStore()
+      await store.init()
+
+      expect(store.hasSuperadminPermission('superadmin.manage_application_accounts')).toBe(true)
+      expect(store.hasSuperadminPermission('superadmin.manage_directories')).toBe(false)
+      expect(store.isSuperadminOwner).toBe(true)
+    })
+
+    it('reports no superadmin permissions for a scoped account', async () => {
+      me.mockResolvedValue({ data: {
+        id: 'a7', username: 'scoped', accountType: 'SUPERADMIN',
+        superadminPermissions: ['superadmin.manage_application_settings'],
+      } })
+      getSetupStatus.mockResolvedValue({ data: { setupCompleted: true } })
+
+      const store = useAuthStore()
+      await store.init()
+
+      expect(store.hasSuperadminPermission('superadmin.manage_application_settings')).toBe(true)
+      expect(store.isSuperadminOwner).toBe(false)
+    })
+  })
 })

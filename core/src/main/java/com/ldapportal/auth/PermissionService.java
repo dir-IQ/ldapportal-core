@@ -2,11 +2,14 @@
 package com.ldapportal.auth;
 
 import com.ldapportal.entity.AdminProfileRole;
+import com.ldapportal.entity.SuperadminPermissionGrant;
 import com.ldapportal.entity.enums.BaseRole;
 import com.ldapportal.entity.enums.FeatureKey;
+import com.ldapportal.entity.enums.SuperadminPermission;
 
 import com.ldapportal.repository.AdminFeaturePermissionRepository;
 import com.ldapportal.repository.AdminProfileRoleRepository;
+import com.ldapportal.repository.SuperadminPermissionGrantRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.access.AccessDeniedException;
@@ -14,10 +17,12 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -63,7 +68,48 @@ public class PermissionService {
 
     private final AdminProfileRoleRepository        profileRoleRepo;
     private final AdminFeaturePermissionRepository   featurePermissionRepo;
+    private final SuperadminPermissionGrantRepository superadminPermissionRepo;
     private final ObjectProvider<RequestScopedPermissionCache> cacheProvider;
+
+    // ── Superadmin (system-scoped) permissions ──────────────────────────────────
+
+    /**
+     * Whether {@code principal} holds the given system-scoped superadmin
+     * permission. Non-superadmins never hold one. Owners (holders of
+     * {@link SuperadminPermission#MANAGE_SUPERADMINS}) implicitly hold all.
+     */
+    public boolean hasSuperadminPermission(AuthPrincipal principal, SuperadminPermission permission) {
+        if (principal == null || !principal.isSuperadmin()) return false;
+        UUID id = principal.id();
+        if (superadminPermissionRepo.existsByAccountIdAndPermission(
+                id, SuperadminPermission.MANAGE_SUPERADMINS)) {
+            return true; // owner ⇒ all
+        }
+        return superadminPermissionRepo.existsByAccountIdAndPermission(id, permission);
+    }
+
+    /**
+     * @throws AccessDeniedException if {@code principal} lacks the permission.
+     */
+    public void requireSuperadminPermission(AuthPrincipal principal, SuperadminPermission permission) {
+        if (!hasSuperadminPermission(principal, permission)) {
+            throw new AccessDeniedException("Missing superadmin permission: " + permission.name());
+        }
+    }
+
+    /**
+     * Effective permission set for a superadmin account — the granted rows,
+     * expanded to the full catalogue when the account is an owner.
+     */
+    public Set<SuperadminPermission> effectiveSuperadminPermissions(UUID accountId) {
+        Set<SuperadminPermission> granted = superadminPermissionRepo.findAllByAccountId(accountId).stream()
+                .map(SuperadminPermissionGrant::getPermission)
+                .collect(Collectors.toCollection(() -> EnumSet.noneOf(SuperadminPermission.class)));
+        if (granted.contains(SuperadminPermission.MANAGE_SUPERADMINS)) {
+            return EnumSet.allOf(SuperadminPermission.class);
+        }
+        return granted;
+    }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
