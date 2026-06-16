@@ -132,8 +132,11 @@
             <p v-if="!editing" class="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
               Permission selections here are committed together with the new superadmin when you click Create.
             </p>
+            <!-- Owner + scoped permissions share one checkbox column so every
+                 control lines up vertically; the Owner row is set apart by a
+                 divider and its emphasized label rather than a bordered card. -->
             <label
-              class="flex items-start gap-2 rounded-lg border border-gray-200 p-3"
+              class="flex items-start gap-2 pb-3 mb-1 border-b border-gray-200"
               :class="ownerToggleLocked ? 'cursor-not-allowed' : 'cursor-pointer'"
             >
               <input
