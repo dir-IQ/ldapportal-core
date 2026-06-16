@@ -31,6 +31,9 @@
       <template #actions="{ row }">
         <ActionMenu :items="[
           { label: 'Permissions',      onClick: () => openEditWithPermissions(row as AdminRow), hidden: (row as AdminRow).role !== 'ADMIN' },
+          { label: 'Superadmin permissions', onClick: () => openSuperadminPermissions(row as AdminRow),
+            hidden: (row as AdminRow).role !== 'SUPERADMIN' || !auth.isSuperadminOwner,
+            title: 'Grant or restrict this superadmin\'s system-wide permissions' },
           { label: 'What can they do?', onClick: () => openEffectivePermissions(row as AdminRow),
             title: 'Show the computed ‘what can this admin actually do?’ breakdown per profile' },
           { label: 'Delete',           onClick: () => confirmDelete(row as AdminRow), danger: true,
@@ -222,6 +225,41 @@
     <EffectivePermissionsDialog v-model="showEffective"
                                 :admin-id="effectiveAdmin.id ?? undefined"
                                 :admin-label="effectiveAdmin.username" />
+
+    <!-- Superadmin (system-scoped) permission editor — owner-only. -->
+    <AppModal v-model="showSaPerms" :title="`Superadmin permissions — ${saPermTarget?.username ?? ''}`" size="md">
+      <div v-if="saPermLoading" class="p-6 text-center text-sm text-gray-500">Loading…</div>
+      <div v-else class="space-y-4">
+        <label class="flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer">
+          <input type="checkbox" v-model="saPermIsOwner" class="mt-0.5 rounded border-gray-300" />
+          <span>
+            <span class="block text-sm font-medium text-gray-900">Owner (full access)</span>
+            <span class="block text-xs text-gray-500">Holds every permission and can manage other superadmins' permissions.</span>
+          </span>
+        </label>
+
+        <fieldset :disabled="saPermIsOwner" :class="saPermIsOwner ? 'opacity-50' : ''">
+          <legend class="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">Or grant specific permissions</legend>
+          <div class="space-y-1.5">
+            <label v-for="key in saScopedCatalog" :key="key" class="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                :checked="saPermIsOwner || saPermChecked.has(key)"
+                @change="toggleSaPerm(key)"
+                class="rounded border-gray-300"
+              />
+              <span class="text-gray-700">{{ saPermLabel(key) }}</span>
+            </label>
+          </div>
+        </fieldset>
+      </div>
+      <template #footer>
+        <button @click="showSaPerms = false" class="btn-neutral">Cancel</button>
+        <button @click="saveSaPerms" :disabled="saPermSaving || saPermLoading" class="btn-primary">
+          {{ saPermSaving ? 'Saving…' : 'Save' }}
+        </button>
+      </template>
+    </AppModal>
   </div>
 </template>
 
@@ -253,7 +291,10 @@ import {
   updateSuperadmin,
   resetSuperadminPassword,
   deleteSuperadmin,
+  getSuperadminPermissions,
+  updateSuperadminPermissions,
 } from '@/api/superadmin'
+import { SUPERADMIN_OWNER_KEY, superadminPermissionLabel } from '@/constants/superadminPermissions'
 import { listAllProfiles } from '@/api/profiles'
 import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
@@ -403,6 +444,60 @@ function openEffectivePermissions(row: AdminRow): void {
   effectiveAdmin.value = { id: row.id, username: row.username }
   showEffective.value = true
 }
+
+// ── Superadmin (system-scoped) permission editor — owner-only ───────────────
+const showSaPerms    = ref(false)
+const saPermLoading  = ref(false)
+const saPermSaving   = ref(false)
+const saPermTarget   = ref<AdminRow | null>(null)
+const saPermCatalog  = ref<string[]>([])
+const saPermChecked  = ref<Set<string>>(new Set())
+const saPermIsOwner  = ref(false)
+
+const saScopedCatalog = computed(() => saPermCatalog.value.filter(k => k !== SUPERADMIN_OWNER_KEY))
+function saPermLabel(key: string): string { return superadminPermissionLabel(key) }
+
+function toggleSaPerm(key: string): void {
+  const next = new Set(saPermChecked.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  saPermChecked.value = next
+}
+
+async function openSuperadminPermissions(row: AdminRow): Promise<void> {
+  saPermTarget.value = row
+  showSaPerms.value = true
+  saPermLoading.value = true
+  try {
+    const { data } = await getSuperadminPermissions(row.id)
+    saPermCatalog.value = data.all
+    saPermIsOwner.value = data.owner
+    saPermChecked.value = new Set(data.granted.filter(k => k !== SUPERADMIN_OWNER_KEY))
+  } catch (e) {
+    notif.error(errMsg(e))
+    showSaPerms.value = false
+  } finally {
+    saPermLoading.value = false
+  }
+}
+
+async function saveSuperadminPermissions(): Promise<void> {
+  if (!saPermTarget.value) return
+  // Owner ⇒ store just the owner key (implies all); otherwise the checklist.
+  const keys = saPermIsOwner.value ? [SUPERADMIN_OWNER_KEY] : [...saPermChecked.value]
+  saPermSaving.value = true
+  try {
+    await updateSuperadminPermissions(saPermTarget.value.id, keys)
+    notif.success('Superadmin permissions updated')
+    showSaPerms.value = false
+  } catch (e) {
+    notif.error(errMsg(e))
+  } finally {
+    saPermSaving.value = false
+  }
+}
+// Template alias.
+const saveSaPerms = saveSuperadminPermissions
 
 const editing: Ref<string | null> = ref(null) // admin id when editing, null when creating
 const form: Ref<AdminForm> = ref(emptyForm())

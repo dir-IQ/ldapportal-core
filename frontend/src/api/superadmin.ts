@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { apiGet, apiPost, apiPut, apiDelete } from './apiClient';
+import client from './client';
 import type { components } from './openapi';
 import type { AxiosResponse } from 'axios';
 
@@ -22,3 +23,24 @@ export const resetSuperadminPassword = (id: string, data: ResetPasswordRequest):
 
 export const deleteSuperadmin = (id: string): Promise<AxiosResponse<void>> =>
   apiDelete(`/api/v1/superadmin/superadmins/${id}` as '/api/v1/superadmin/superadmins/{id}');
+
+// System-scoped superadmin permission grants. Hand-typed (not in the generated
+// OpenAPI client yet); `client` already sets baseURL='/api/v1'.
+export interface SuperadminPermissionsDto {
+  /** Full catalogue of permission keys (dot-notation dbValues). */
+  all: string[];
+  /** Keys actually granted on this account (the editable set). */
+  granted: string[];
+  /** Effective keys — granted, expanded to `all` for owners. */
+  effective: string[];
+  /** True when the account holds MANAGE_SUPERADMINS. */
+  owner: boolean;
+}
+
+export const getSuperadminPermissions = (id: string): Promise<AxiosResponse<SuperadminPermissionsDto>> =>
+  client.get(`/superadmin/superadmins/${id}/permissions`);
+
+export const updateSuperadminPermissions = (
+  id: string, permissions: string[],
+): Promise<AxiosResponse<SuperadminPermissionsDto>> =>
+  client.put(`/superadmin/superadmins/${id}/permissions`, { permissions });

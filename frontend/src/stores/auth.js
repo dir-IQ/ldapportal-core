@@ -86,6 +86,9 @@ export const useAuthStore = defineStore('auth', () => {
       directorySearchInlineEditEnabled: data.directorySearchInlineEditEnabled !== false,
       approvalsEnabled: data.approvalsEnabled !== false,
       selfRegistrationApprovalEnabled: data.selfRegistrationApprovalEnabled !== false,
+      // Effective system-scoped superadmin permissions (already owner-expanded
+      // server-side). Empty for non-superadmins.
+      superadminPermissions: data.superadminPermissions || [],
     }
   }
 
@@ -241,11 +244,23 @@ export const useAuthStore = defineStore('auth', () => {
     return principal.value?.features?.includes(featureDbValue) ?? false
   }
 
+  // System-scoped superadmin permission check (dot-notation key, e.g.
+  // 'superadmin.manage_application_accounts'). /me returns the effective set
+  // (owners already expanded to all), so this is a direct membership test.
+  function hasSuperadminPermission(permissionKey) {
+    return principal.value?.superadminPermissions?.includes(permissionKey) ?? false
+  }
+  // An owner holds MANAGE_SUPERADMINS and may edit other superadmins' permissions.
+  const isSuperadminOwner = computed(
+    () => hasSuperadminPermission('superadmin.manage_superadmins'),
+  )
+
   return {
     principal, isLoggedIn, isSuperadmin, isSelfService, username,
     themePreference, authType, hasFeature, isHrEnabled, isComplianceEnabled,
     isAlertingEnabled, isDirectorySyncEnabled, isIsvaIntegrationEnabled, isCommunityDistribution, isDirectorySearchInlineEditEnabled,
     isApprovalsEnabled, isSelfRegistrationApprovalEnabled, isAnyApprovalEnabled,
+    hasSuperadminPermission, isSuperadminOwner,
     setupPending, init, reinit, login, selfServiceLogin, logout,
     markSetupComplete, updatePrincipal,
   }
