@@ -43,18 +43,19 @@ public class SiemClient {
     private static final int MAX_RETRIES = 3;
     private static final int MAX_UDP_SAFE_SIZE = 1024; // RFC 5426 recommendation
 
-    // Persistent TCP/TLS socket (guarded by synchronized methods)
-    private volatile Socket persistentSocket;
-    private volatile OutputStream persistentOut;
-    private volatile String persistentHost;
-    private volatile int persistentPort;
-    private volatile boolean persistentTls;
+    // Persistent TCP/TLS connection. The socket, its output stream and the
+    // target it was opened for move as a unit, so they live in a single
+    // immutable holder published through one volatile reference — a reader
+    // sees either a fully-built connection or none, never a half-updated set.
+    // All mutation happens under this instance's monitor (sendTcpWithRetry and
+    // shutdown are synchronized).
+    private volatile Connection connection;
 
     // Shared HTTP client for webhook
     private volatile HttpClient sharedHttpClient;
 
     @PreDestroy
-    void shutdown() {
+    synchronized void shutdown() {
         closePersistentSocket();
         if (sharedHttpClient != null) {
             sharedHttpClient.close();
@@ -110,11 +111,12 @@ public class SiemClient {
                 ensureConnected(host, targetPort, tls);
 
                 // RFC 6587 octet-counting framing
+                Connection conn = connection;
                 byte[] data = message.getBytes(StandardCharsets.UTF_8);
                 String frame = data.length + " ";
-                persistentOut.write(frame.getBytes(StandardCharsets.UTF_8));
-                persistentOut.write(data);
-                persistentOut.flush();
+                conn.out.write(frame.getBytes(StandardCharsets.UTF_8));
+                conn.out.write(data);
+                conn.out.flush();
                 return; // success
             } catch (Exception e) {
                 closePersistentSocket();
@@ -131,10 +133,11 @@ public class SiemClient {
     }
 
     private void ensureConnected(String host, int port, boolean tls) throws Exception {
-        if (persistentSocket != null && !persistentSocket.isClosed()
-                && persistentSocket.isConnected()
-                && host.equals(persistentHost) && port == persistentPort
-                && tls == persistentTls) {
+        Connection current = connection;
+        if (current != null && !current.socket.isClosed()
+                && current.socket.isConnected()
+                && host.equals(current.host) && port == current.port
+                && tls == current.tls) {
             return; // reuse existing connection
         }
 
@@ -161,22 +164,18 @@ public class SiemClient {
         socket.connect(new InetSocketAddress(host, port), (int) CONNECT_TIMEOUT.toMillis());
         socket.setSoTimeout((int) REQUEST_TIMEOUT.toMillis());
 
-        persistentSocket = socket;
-        persistentOut = socket.getOutputStream();
-        persistentHost = host;
-        persistentPort = port;
-        persistentTls = tls;
+        connection = new Connection(socket, socket.getOutputStream(), host, port, tls);
 
         log.info("SIEM {} connection established to {}:{}", tls ? "TLS" : "TCP", host, port);
     }
 
     private void closePersistentSocket() {
-        if (persistentSocket != null) {
+        Connection current = connection;
+        if (current != null) {
             try {
-                persistentSocket.close();
+                current.socket.close();
             } catch (Exception ignored) {}
-            persistentSocket = null;
-            persistentOut = null;
+            connection = null;
         }
     }
 
@@ -308,6 +307,28 @@ public class SiemClient {
             Thread.sleep(millis);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Immutable snapshot of a live persistent TCP/TLS connection and the target
+     * it was opened for. Grouping these into one object published via a single
+     * {@code volatile} reference guarantees readers never see a torn set of
+     * fields (e.g. a socket without its matching host/port).
+     */
+    private static final class Connection {
+        final Socket socket;
+        final OutputStream out;
+        final String host;
+        final int port;
+        final boolean tls;
+
+        Connection(Socket socket, OutputStream out, String host, int port, boolean tls) {
+            this.socket = socket;
+            this.out = out;
+            this.host = host;
+            this.port = port;
+            this.tls = tls;
         }
     }
 }
