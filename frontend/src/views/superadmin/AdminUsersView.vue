@@ -132,11 +132,23 @@
             <p v-if="!editing" class="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
               Permission selections here are committed together with the new superadmin when you click Create.
             </p>
-            <label class="flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer">
-              <input type="checkbox" v-model="saPermIsOwner" class="mt-0.5 rounded border-gray-300" />
+            <label
+              class="flex items-start gap-2 rounded-lg border border-gray-200 p-3"
+              :class="ownerToggleLocked ? 'cursor-not-allowed' : 'cursor-pointer'"
+            >
+              <input
+                type="checkbox"
+                v-model="saPermIsOwner"
+                :disabled="ownerToggleLocked"
+                class="mt-0.5 rounded border-gray-300"
+              />
               <span>
                 <span class="block text-sm font-medium text-gray-900">Owner (full access)</span>
                 <span class="block text-xs text-gray-500">Holds every permission and can manage other superadmins' permissions.</span>
+                <span v-if="ownerToggleLocked" class="mt-1 block text-xs text-amber-600">
+                  This is the only superadmin account, so it must stay an owner. Add another
+                  superadmin and grant them owner access before removing this one's.
+                </span>
               </span>
             </label>
             <fieldset :disabled="saPermIsOwner" :class="saPermIsOwner ? 'opacity-50' : ''">
@@ -497,6 +509,22 @@ async function loadSaPerms(): Promise<void> {
 function saPermKeys(): string[] {
   return saPermIsOwner.value ? [SUPERADMIN_OWNER_KEY] : [...saPermChecked.value]
 }
+
+// Number of superadmin accounts currently listed.
+const superadminCount = computed(
+  () => admins.value.filter(a => a.role === 'SUPERADMIN').length,
+)
+
+// The backend refuses to drop the last owner (manage_superadmins). Mirror that
+// in the UI: when editing the sole superadmin account — which is necessarily
+// that last owner — lock the Owner toggle on so it can't be unchecked, and
+// explain why. (Create flows and multi-superadmin setups are unaffected.)
+const ownerToggleLocked = computed(
+  () => !!editing.value
+    && form.value.role === 'SUPERADMIN'
+    && saPermIsOwner.value
+    && superadminCount.value <= 1,
+)
 
 const editing: Ref<string | null> = ref(null) // admin id when editing, null when creating
 const form: Ref<AdminForm> = ref(emptyForm())

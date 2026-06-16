@@ -190,6 +190,45 @@ describe('AdminUsersView superadmin permissions tab', () => {
     expect(superApi.updateSuperadmin).toHaveBeenCalled()
     expect(superApi.updateSuperadminPermissions).not.toHaveBeenCalled()
   })
+
+  function ownerToggle(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('label')
+      .find(l => l.text().includes('Owner (full access)'))!
+      .find('input[type="checkbox"]')
+  }
+
+  it('locks the Owner toggle when editing the only superadmin account', async () => {
+    superApi.getSuperadminPermissions.mockResolvedValue({
+      data: { all: [], granted: ['superadmin.manage_superadmins'], effective: [], owner: true },
+    })
+    const wrapper = mount(AdminUsersView, { global: { stubs } })
+    await flushPromises()
+
+    await editButtons(wrapper)[1].trigger('click') // the lone superadmin row
+    await wrapper.findAll('button').find(b => b.text() === 'Permissions')!.trigger('click')
+    await flushPromises()
+
+    expect((ownerToggle(wrapper).element as HTMLInputElement).disabled).toBe(true)
+    expect(wrapper.text()).toContain('only superadmin account')
+  })
+
+  it('keeps the Owner toggle editable when another superadmin exists', async () => {
+    adminApi.listAdmins.mockResolvedValue({ data: [
+      ...rows(),
+      { id: 's2', username: 'root2', displayName: 'Root2', email: 'r2@x', role: 'SUPERADMIN', authType: 'LOCAL', active: true },
+    ] })
+    superApi.getSuperadminPermissions.mockResolvedValue({
+      data: { all: [], granted: ['superadmin.manage_superadmins'], effective: [], owner: true },
+    })
+    const wrapper = mount(AdminUsersView, { global: { stubs } })
+    await flushPromises()
+
+    await editButtons(wrapper)[1].trigger('click') // first of two superadmin rows
+    await wrapper.findAll('button').find(b => b.text() === 'Permissions')!.trigger('click')
+    await flushPromises()
+
+    expect((ownerToggle(wrapper).element as HTMLInputElement).disabled).toBe(false)
+  })
 })
 
 describe('AdminUsersView server validation errors', () => {
