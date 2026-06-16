@@ -622,21 +622,48 @@ public class AdminManagementService {
         }
 
         // No-op fast path: the stored override set already equals the desired
-        // one. Skipping the wipe-and-recreate (and the audit row) keeps a
-        // re-applied IaC declaration from rewriting the whole permission table
-        // and spamming the audit log every reconcile.
-        if (featureOverridesMatch(featureRepo.findAllByAdminAccountId(adminId), permissions)) {
+        // one. Skipping the work (and the audit row) keeps a re-applied IaC
+        // declaration from rewriting the whole permission table and spamming
+        // the audit log every reconcile.
+        List<AdminFeaturePermission> current = featureRepo.findAllByAdminAccountId(adminId);
+        if (featureOverridesMatch(current, permissions)) {
             return;
         }
 
-        // Replace every override (admin-wide and per-profile) with the list
-        // the caller sent. The permissions dialog loads then re-submits the
-        // whole set, so wipe-and-recreate keeps client and server in sync
-        // without needing patch semantics for delete/update/insert.
-        featureRepo.deleteAllByAdminAccountId(adminId);
-        featureRepo.flush();
+        // Diff in place rather than wipe-and-recreate. Flipping an existing
+        // override (e.g. deny→allow) must UPDATE the row, not delete it and
+        // re-insert the same (admin, profile, feature) key in one transaction —
+        // the latter trips the partial-unique indexes (uq_admin_feature_global /
+        // uq_admin_feature_per_profile) and surfaces as a 409. Diffing also
+        // leaves untouched rows alone and cleans up any duplicate scope rows.
+        Map<String, FeaturePermissionRequest> desiredByScope = new java.util.LinkedHashMap<>();
+        for (FeaturePermissionRequest p : permissions) {
+            desiredByScope.put(scopeKey(p.featureKey(), p.profileId()), p);
+        }
 
-        permissions.forEach(req -> {
+        java.util.Set<String> kept = new java.util.HashSet<>();
+        for (AdminFeaturePermission cur : current) {
+            String scope = scopeKey(cur.getFeatureKey(),
+                    cur.getProfile() != null ? cur.getProfile().getId() : null);
+            FeaturePermissionRequest want = desiredByScope.get(scope);
+            if (want != null && kept.add(scope)) {
+                // Keep this row; update its flag in place if it changed.
+                if (cur.isEnabled() != want.enabled()) {
+                    cur.setEnabled(want.enabled());
+                    featureRepo.save(cur);
+                }
+            } else {
+                // Not wanted, or a duplicate of an already-kept scope → drop.
+                featureRepo.delete(cur);
+            }
+        }
+
+        // Insert the desired scopes that had no existing row. These are brand-new
+        // keys (anything matching a current row was kept above), so they can't
+        // collide with the rows just deleted.
+        for (Map.Entry<String, FeaturePermissionRequest> e : desiredByScope.entrySet()) {
+            if (kept.contains(e.getKey())) continue;
+            FeaturePermissionRequest req = e.getValue();
             AdminFeaturePermission fp = new AdminFeaturePermission();
             fp.setAdminAccount(admin);
             fp.setFeatureKey(req.featureKey());
@@ -648,7 +675,7 @@ public class AdminManagementService {
                 fp.setProfile(profileRef);
             }
             featureRepo.save(fp);
-        });
+        }
 
         if (principal != null) {
             // The wipe-and-recreate model means one audit row covers the
@@ -764,5 +791,11 @@ public class AdminManagementService {
 
     private static String overrideKey(String featureKey, UUID profileId, boolean enabled) {
         return featureKey + "@" + (profileId == null ? "global" : profileId) + "=" + enabled;
+    }
+
+    /** Scope identity for a feature override: (feature, scope) ignoring the
+     *  enabled flag. Matches the partial-unique index grouping. */
+    private static String scopeKey(FeatureKey featureKey, UUID profileId) {
+        return featureKey.name() + "@" + (profileId == null ? "global" : profileId);
     }
 }
