@@ -3,11 +3,14 @@ package com.ldapportal.auth;
 
 import com.ldapportal.entity.AdminFeaturePermission;
 import com.ldapportal.entity.AdminProfileRole;
+import com.ldapportal.entity.SuperadminPermissionGrant;
 import com.ldapportal.entity.enums.BaseRole;
 import com.ldapportal.entity.enums.FeatureKey;
+import com.ldapportal.entity.enums.SuperadminPermission;
 
 import com.ldapportal.repository.AdminFeaturePermissionRepository;
 import com.ldapportal.repository.AdminProfileRoleRepository;
+import com.ldapportal.repository.SuperadminPermissionGrantRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,6 +32,7 @@ class PermissionServiceTest {
 
     @Mock private AdminProfileRoleRepository       profileRoleRepo;
     @Mock private AdminFeaturePermissionRepository featurePermissionRepo;
+    @Mock private SuperadminPermissionGrantRepository superadminPermissionRepo;
     @SuppressWarnings("unchecked")
     @Mock private ObjectProvider<RequestScopedPermissionCache> cacheProvider;
 
@@ -40,7 +44,8 @@ class PermissionServiceTest {
 
     @BeforeEach
     void setUp() {
-        permissionService = new PermissionService(profileRoleRepo, featurePermissionRepo, cacheProvider);
+        permissionService = new PermissionService(
+                profileRoleRepo, featurePermissionRepo, superadminPermissionRepo, cacheProvider);
     }
 
     // ── Superadmin bypass ─────────────────────────────────────────────────────
@@ -304,6 +309,50 @@ class PermissionServiceTest {
                 .thenReturn(List.of(roleWithOuDn(BaseRole.ADMIN, "ou=engineering,dc=example,dc=com")));
 
         permissionService.requireDnWithinScope(admin(), dirId, "ou=engineering,dc=example,dc=com");
+    }
+
+    // ── Superadmin (system-scoped) permissions ──────────────────────────────────
+
+    @Test
+    void hasSuperadminPermission_owner_holdsEveryPermission() {
+        AuthPrincipal p = superadmin();
+        when(superadminPermissionRepo.existsByAccountIdAndPermission(
+                p.id(), SuperadminPermission.MANAGE_SUPERADMINS)).thenReturn(true);
+
+        assertThat(permissionService.hasSuperadminPermission(
+                p, SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)).isTrue();
+    }
+
+    @Test
+    void effectiveSuperadminPermissions_owner_expandsToAll() {
+        UUID id = UUID.randomUUID();
+        SuperadminPermissionGrant ownerGrant = new SuperadminPermissionGrant();
+        ownerGrant.setPermission(SuperadminPermission.MANAGE_SUPERADMINS);
+        when(superadminPermissionRepo.findAllByAccountId(id)).thenReturn(List.of(ownerGrant));
+
+        assertThat(permissionService.effectiveSuperadminPermissions(id))
+                .containsExactlyInAnyOrder(SuperadminPermission.values());
+    }
+
+    @Test
+    void hasSuperadminPermission_scoped_onlyGrantedKeys() {
+        AuthPrincipal p = superadmin();
+        when(superadminPermissionRepo.existsByAccountIdAndPermission(
+                p.id(), SuperadminPermission.MANAGE_SUPERADMINS)).thenReturn(false);
+        when(superadminPermissionRepo.existsByAccountIdAndPermission(
+                p.id(), SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)).thenReturn(true);
+
+        assertThat(permissionService.hasSuperadminPermission(
+                p, SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)).isTrue();
+        assertThat(permissionService.hasSuperadminPermission(
+                p, SuperadminPermission.MANAGE_DIRECTORIES)).isFalse();
+    }
+
+    @Test
+    void hasSuperadminPermission_nonSuperadmin_isFalse() {
+        assertThat(permissionService.hasSuperadminPermission(
+                admin(), SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)).isFalse();
+        verifyNoInteractions(superadminPermissionRepo);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

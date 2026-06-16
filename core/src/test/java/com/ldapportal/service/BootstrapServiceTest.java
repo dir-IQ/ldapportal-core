@@ -6,6 +6,7 @@ import com.ldapportal.entity.Account;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.AccountType;
 import com.ldapportal.repository.AccountRepository;
+import com.ldapportal.repository.SuperadminPermissionGrantRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,6 +26,9 @@ class BootstrapServiceTest {
     @Mock
     private AccountRepository accountRepo;
 
+    @Mock
+    private SuperadminPermissionGrantRepository grantRepo;
+
     private AppProperties   appProperties;
     private PasswordEncoder passwordEncoder;
     private BootstrapService bootstrapService;
@@ -36,7 +40,7 @@ class BootstrapServiceTest {
         appProperties.getBootstrap().getSuperadmin().setPassword("s3cr3t!");
 
         passwordEncoder  = new BCryptPasswordEncoder();
-        bootstrapService = new BootstrapService(accountRepo, appProperties, passwordEncoder);
+        bootstrapService = new BootstrapService(accountRepo, appProperties, passwordEncoder, grantRepo);
     }
 
     @Test

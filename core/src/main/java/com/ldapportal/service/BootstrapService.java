@@ -3,9 +3,12 @@ package com.ldapportal.service;
 
 import com.ldapportal.config.AppProperties;
 import com.ldapportal.entity.Account;
+import com.ldapportal.entity.SuperadminPermissionGrant;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.AccountType;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.repository.AccountRepository;
+import com.ldapportal.repository.SuperadminPermissionGrantRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -33,6 +36,7 @@ public class BootstrapService implements ApplicationRunner {
     private final AccountRepository accountRepo;
     private final AppProperties     appProperties;
     private final PasswordEncoder   passwordEncoder;
+    private final SuperadminPermissionGrantRepository grantRepo;
 
     @Override
     @Transactional
@@ -57,6 +61,17 @@ public class BootstrapService implements ApplicationRunner {
         account.setActive(true);
 
         accountRepo.save(account);
-        log.info("Bootstrap: created LOCAL superadmin [{}]", cfg.getUsername());
+
+        // The migration backfill only covers superadmins that existed at
+        // migration time; the bootstrap account is created here at startup, so
+        // grant it owner (MANAGE_SUPERADMINS ⇒ all) directly — otherwise the
+        // first superadmin would have no permissions and be locked out.
+        SuperadminPermissionGrant grant = new SuperadminPermissionGrant();
+        grant.setAccount(account);
+        grant.setPermission(SuperadminPermission.MANAGE_SUPERADMINS);
+        grantRepo.save(grant);
+
+        log.info("Bootstrap: created LOCAL superadmin [{}] with owner permissions",
+                cfg.getUsername());
     }
 }

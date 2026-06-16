@@ -7,12 +7,15 @@ import com.ldapportal.dto.superadmin.ResetPasswordRequest;
 import com.ldapportal.dto.superadmin.SuperadminResponse;
 import com.ldapportal.dto.superadmin.UpdateSuperadminRequest;
 import com.ldapportal.entity.Account;
+import com.ldapportal.entity.SuperadminPermissionGrant;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.AccountType;
 import com.ldapportal.entity.enums.AuditAction;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.exception.ConflictException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.AccountRepository;
+import com.ldapportal.repository.SuperadminPermissionGrantRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -30,6 +33,7 @@ public class SuperadminManagementService {
     private final PasswordEncoder             passwordEncoder;
     private final AuditService                auditService;
     private final ApprovalNotificationService notificationService;
+    private final SuperadminPermissionGrantRepository grantRepo;
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -66,6 +70,14 @@ public class SuperadminManagementService {
         a.setAuthType(AccountType.LOCAL);
         a.setActive(true);
         Account saved = accountRepo.save(a);
+
+        // New superadmins default to owner (MANAGE_SUPERADMINS ⇒ all), preserving
+        // the historical "superadmins are fully privileged" behaviour. An owner
+        // can then restrict the account from the permission editor.
+        SuperadminPermissionGrant grant = new SuperadminPermissionGrant();
+        grant.setAccount(saved);
+        grant.setPermission(SuperadminPermission.MANAGE_SUPERADMINS);
+        grantRepo.save(grant);
 
         if (principal != null) {
             auditService.recordSystemEvent(principal, AuditAction.ACCOUNT_CREATE,
