@@ -79,6 +79,16 @@ public class RecomputeEngine {
      * can retry.
      */
     public void process(UUID syncSetId, String key) {
+        process(syncSetId, key, false);
+    }
+
+    /**
+     * @param suppressDeletes when true, a scope-exit (OUT) is quarantined for
+     *                        REVIEW instead of deleting the target — used by the
+     *                        reconciler's blast-radius / zero-enumeration guards
+     *                        so a misconfiguration can't mass-delete.
+     */
+    public void process(UUID syncSetId, String key, boolean suppressDeletes) {
         SyncSet set = syncSetRepo.findById(syncSetId).orElse(null);
         if (set == null || !set.isEnabled()) {
             return;
@@ -97,7 +107,7 @@ public class RecomputeEngine {
 
         for (int attempt = 1; ; attempt++) {
             try {
-                processOnce(set, link, source, target, strategy, key);
+                processOnce(set, link, source, target, strategy, key, suppressDeletes);
                 return;
             } catch (OptimisticLockingFailureException | DataIntegrityViolationException race) {
                 if (attempt >= MAX_OPTIMISTIC_RETRIES) {
@@ -132,7 +142,8 @@ public class RecomputeEngine {
      * referrers of the changed source DN.
      */
     private void processOnce(SyncSet set, SyncLink link, DirectoryConnection source,
-                             DirectoryConnection target, IdentityStrategy strategy, String key) {
+                             DirectoryConnection target, IdentityStrategy strategy, String key,
+                             boolean suppressDeletes) {
         // ── Resolve the current source entry and the identity ──
         Entry entry;
         String identity;
@@ -170,7 +181,7 @@ public class RecomputeEngine {
                 ? SyncDnUtil.normalize(entry.getDN())
                 : (current != null ? current.getSourceDn() : null);
 
-        boolean changed = apply(set, target, identity, current, decision, entry);
+        boolean changed = apply(set, target, identity, current, decision, entry, suppressDeletes);
         if (changed && changedSourceDn != null) {
             closureResolver.fanOut(link, changedSourceDn);
         }
@@ -208,18 +219,22 @@ public class RecomputeEngine {
      *         drives {@link ClosureResolver closure} fan-out for referrers.
      */
     private boolean apply(SyncSet set, DirectoryConnection target, String identity,
-                          Membership current, MembershipDecision decision, Entry entry) {
+                          Membership current, MembershipDecision decision, Entry entry,
+                          boolean suppressDeletes) {
         if (!decision.member()) {
             if (current == null) {
                 return false; // (OUT, none) — no-op
             }
-            if (set.getDeletePolicy() == SyncDeletePolicy.REVIEW) {
+            if (suppressDeletes || set.getDeletePolicy() == SyncDeletePolicy.REVIEW) {
                 // Quarantine the pending delete so it surfaces in the inventory for
-                // an operator decision, rather than silently retaining the target.
+                // an operator decision, rather than deleting. suppressDeletes is the
+                // reconciler's blast-radius / zero-enumeration guard tripping.
                 if (current.getState() != MembershipState.REVIEW) {
                     markReview(set, identity, current.getSourceDn(), current.getTargetDn(),
                             current.getContentHash(),
-                            "scope-exit held for review (deletePolicy=REVIEW)");
+                            suppressDeletes
+                                    ? "scope-exit held for review (delete guard tripped)"
+                                    : "scope-exit held for review (deletePolicy=REVIEW)");
                 }
                 return false;
             }

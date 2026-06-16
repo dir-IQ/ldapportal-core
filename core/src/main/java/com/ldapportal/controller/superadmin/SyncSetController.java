@@ -91,6 +91,12 @@ public class SyncSetController {
         return Map.of("enumerated", service.reconcileNow(id));
     }
 
+    /** Dry-run preview of a reconcile (counts + sample deletions, no writes). */
+    @GetMapping("/{id}/preview")
+    public com.ldapportal.dto.sync.SyncReconcilePreview preview(@PathVariable UUID id) {
+        return service.previewReconcile(id);
+    }
+
     @PostMapping("/{id}/recompute")
     public ResponseEntity<Void> recompute(@PathVariable UUID id, @Valid @RequestBody RecomputeKeyRequest req) {
         service.recompute(id, req.key());

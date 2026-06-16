@@ -225,8 +225,55 @@
           <label class="flex items-center gap-2 text-sm text-gray-700">
             <input type="checkbox" v-model="setForm.enabled" class="rounded" /> Enabled
           </label>
-          <HelpTip text="When off, this set is not reconciled or applied, and existing target entries are left untouched." />
+          <HelpTip text="New sets start disabled. When off, this set is not reconciled or applied, and existing target entries are left untouched." />
         </div>
+
+        <!-- Dry-run preview (existing sets only — needs a persisted set to plan against). -->
+        <div v-if="editingSet" class="rounded-lg border border-gray-200 p-3 space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-medium text-gray-700">Impact preview</span>
+            <button type="button" class="btn-secondary btn-compact" :disabled="previewLoading"
+                    @click="runPreview">{{ previewLoading ? 'Checking…' : 'Preview impact' }}</button>
+          </div>
+          <div v-if="previewResult" class="text-xs text-gray-600 space-y-1">
+            <p>
+              Source entries: <span class="font-medium">{{ previewResult.sourceCount }}</span> ·
+              Managed: <span class="font-medium">{{ previewResult.managedCount }}</span> ·
+              Would add: <span class="font-medium text-emerald-700">{{ previewResult.plannedAdds }}</span> ·
+              Would delete:
+              <span class="font-medium" :class="previewResult.plannedDeletes > 0 ? 'text-rose-700' : 'text-gray-700'">
+                {{ previewResult.plannedDeletes }}
+              </span>
+            </p>
+            <p v-if="!previewResult.completeScan" class="text-amber-600">
+              Source enumeration failed — no deletions would run this cycle.
+            </p>
+            <p v-if="previewResult.guardTripped" class="text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+              Delete guard would trip: {{ previewResult.guardReason }}. These deletions would be
+              held for review, not applied.
+            </p>
+            <ul v-if="previewResult.sampleDeleteDns.length" class="font-mono text-[11px] text-gray-500 list-disc pl-4">
+              <li v-for="dn in previewResult.sampleDeleteDns" :key="dn">{{ dn }}</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Enable confirmation: surfaced when turning a set on would delete entries. -->
+        <div v-if="confirmEnable && previewResult"
+             class="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 space-y-2">
+          <p class="font-semibold">Enabling this set will affect existing target entries.</p>
+          <p>
+            {{ previewResult.guardTripped
+              ? `${previewResult.plannedDeletes} deletion(s) would be held for review (delete guard).`
+              : `${previewResult.plannedDeletes} target entry(ies) would be deleted.` }}
+            Review the preview above before continuing.
+          </p>
+          <div class="flex justify-end gap-2">
+            <button type="button" class="btn-neutral btn-compact" @click="confirmEnable = false">Back</button>
+            <button type="button" class="btn-danger btn-compact" @click="doSaveSet">Enable anyway</button>
+          </div>
+        </div>
+
         <div class="flex justify-end gap-2 pt-2">
           <button type="button" class="btn-neutral" @click="showSetModal = false">Cancel</button>
           <button type="submit" class="btn-primary">{{ editingSet ? 'Save' : 'Create' }}</button>
@@ -252,8 +299,9 @@ import { listDirectories } from '@/api/directories'
 import {
   listSyncLinks, createSyncLink, updateSyncLink, deleteSyncLink,
   listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet, getExcludedAttributeDefaults,
+  previewReconcile,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
-  type SyncTransformRule,
+  type SyncTransformRule, type SyncReconcilePreview,
 } from '@/api/sync'
 
 interface DirOption { id: string; displayName: string }
@@ -444,7 +492,9 @@ function blankSet(): SetForm {
   return {
     name: '', identityKey: '', objectScopeBaseDn: '', targetBaseDn: '', applicabilityFilter: '',
     referenceAttributes: '', sourceAnchorAttribute: '', reconcileCadenceSeconds: '',
-    deletePolicy: 'DELETE', objectScope: null, transformRules: [], excludedAttributes: null, enabled: true,
+    // Safe defaults: quarantine deletes for review, and start disabled so the
+    // operator validates (and can Preview the impact) before turning it on.
+    deletePolicy: 'REVIEW', objectScope: null, transformRules: [], excludedAttributes: null, enabled: false,
   }
 }
 function openSetModal(s?: SyncSet) {
@@ -461,6 +511,8 @@ function openSetModal(s?: SyncSet) {
         enabled: s.enabled,
       }
     : blankSet()
+  previewResult.value = null
+  confirmEnable.value = false
   showSetModal.value = true
 }
 // Trim rows, drop blank-source rows, and collapse blank target/template to null
@@ -495,12 +547,48 @@ function toPayload(f: SetForm): SyncSetPayload {
     enabled: f.enabled,
   }
 }
+// ── Dry-run preview + enable confirmation ──
+const previewResult = ref<SyncReconcilePreview | null>(null)
+const previewLoading = ref(false)
+const confirmEnable = ref(false) // showing the "enable will delete N" confirmation
+
+async function runPreview() {
+  if (!editingSet.value) return null
+  previewLoading.value = true
+  try {
+    const { data } = await previewReconcile(editingSet.value.id)
+    previewResult.value = data
+    return data
+  } catch (e) {
+    notif.error(errMsg(e))
+    return null
+  } finally {
+    previewLoading.value = false
+  }
+}
+
 async function saveSet() {
+  // Turning an existing set on is the moment deletions could start. Preview the
+  // impact first and make the operator confirm if anything would be deleted (or
+  // the guard would quarantine).
+  const enabling = !!editingSet.value && setForm.value.enabled && !editingSet.value.enabled
+  if (enabling && !confirmEnable.value) {
+    const p = await runPreview()
+    if (p && (p.plannedDeletes > 0 || p.guardTripped)) {
+      confirmEnable.value = true
+      return
+    }
+  }
+  await doSaveSet()
+}
+
+async function doSaveSet() {
   try {
     const payload = toPayload(setForm.value)
     if (editingSet.value) await updateSyncSet(editingSet.value.id, payload)
     else await createSyncSet(payload)
     notif.success(editingSet.value ? 'Sync set updated' : 'Sync set created')
+    confirmEnable.value = false
     showSetModal.value = false
     await refreshHealth()
   } catch (e) {

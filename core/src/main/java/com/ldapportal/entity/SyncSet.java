@@ -97,9 +97,11 @@ public class SyncSet {
     @Column(name = "source_anchor_attribute")
     private String sourceAnchorAttribute;
 
+    // Safe default: quarantine scope-exit deletions for operator review rather
+    // than applying them. An operator opts into hard DELETE per set.
     @Enumerated(EnumType.STRING)
     @Column(name = "delete_policy", nullable = false)
-    private SyncDeletePolicy deletePolicy = SyncDeletePolicy.DELETE;
+    private SyncDeletePolicy deletePolicy = SyncDeletePolicy.REVIEW;
 
     /**
      * How often anti-entropy reconcile runs for this set, in seconds. Null => the

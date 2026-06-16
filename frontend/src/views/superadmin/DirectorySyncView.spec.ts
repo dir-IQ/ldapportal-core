@@ -40,6 +40,10 @@ vi.mock('@/api/sync', () => ({
   updateSyncSet: vi.fn(() => Promise.resolve({ data: set })),
   deleteSyncSet: vi.fn(() => Promise.resolve({ data: undefined })),
   getExcludedAttributeDefaults: vi.fn(() => Promise.resolve({ data: ['userPassword', 'entryUUID'] })),
+  previewReconcile: vi.fn(() => Promise.resolve({ data: {
+    sourceCount: 3, managedCount: 3, plannedAdds: 0, plannedDeletes: 0,
+    sampleDeleteDns: [], guardTripped: false, guardReason: null, completeScan: true,
+  } })),
   listMemberships: vi.fn(() => Promise.resolve({
     data: { content: [membership], totalElements: 8, totalPages: 1, number: 0, size: 50 },
   })),
