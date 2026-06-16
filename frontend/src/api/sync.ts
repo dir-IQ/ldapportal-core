@@ -116,6 +116,21 @@ export const deleteSyncSet = (id: string) => client.delete(`/superadmin/sync/set
 export const getExcludedAttributeDefaults = () =>
   client.get<string[]>('/superadmin/sync/sets/excluded-attribute-defaults')
 
+/** Dry-run summary of what a reconcile of a sync set would change (no writes). */
+export interface SyncReconcilePreview {
+  sourceCount: number
+  managedCount: number
+  plannedAdds: number
+  plannedDeletes: number
+  sampleDeleteDns: string[]
+  guardTripped: boolean
+  guardReason: string | null
+  completeScan: boolean
+}
+
+export const previewReconcile = (setId: string) =>
+  client.get<SyncReconcilePreview>(`/superadmin/sync/sets/${setId}/preview`)
+
 // ── Inventory + operator triggers ───────────────────────────────────────────
 
 /** Spring Data Page envelope (the subset the UI consumes). */

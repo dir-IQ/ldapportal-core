@@ -193,7 +193,8 @@ public class SyncConfigService {
         s.setApplicabilityFilter(blankToNull(req.applicabilityFilter()));
         s.setReferenceAttributes(blankToNull(req.referenceAttributes()));
         s.setSourceAnchorAttribute(blankToNull(req.sourceAnchorAttribute()));
-        s.setDeletePolicy(req.deletePolicy() != null ? req.deletePolicy() : SyncDeletePolicy.DELETE);
+        // Default to the safe REVIEW policy (quarantine deletes) when unspecified.
+        s.setDeletePolicy(req.deletePolicy() != null ? req.deletePolicy() : SyncDeletePolicy.REVIEW);
         s.setTransformRules(normalizeTransformRules(req.transformRules()));
         s.setExcludedAttributes(normalizeExcludedAttributes(req.excludedAttributes()));
         s.setReconcileCadenceSeconds(req.reconcileCadenceSeconds());
@@ -314,6 +315,12 @@ public class SyncConfigService {
     public int reconcileNow(UUID syncSetId) {
         requireSet(syncSetId);
         return reconciler.reconcile(syncSetId);
+    }
+
+    /** Dry-run preview of what a reconcile would change (no target writes). */
+    public com.ldapportal.dto.sync.SyncReconcilePreview previewReconcile(UUID syncSetId) {
+        requireSet(syncSetId);
+        return reconciler.preview(syncSetId);
     }
 
     /** Enqueue a recompute for a key (a source DN or a normalized identity). */

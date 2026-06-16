@@ -494,6 +494,8 @@ class SyncEngineIntegrationTest {
         s.setTargetBaseDn(dstBase);
         s.setApplicabilityFilter(filter);
         s.setReferenceAttributes(refAttrs);
+        // These lifecycle tests assert hard deletes; the default is now REVIEW.
+        s.setDeletePolicy(com.ldapportal.entity.enums.SyncDeletePolicy.DELETE);
         s.setEnabled(true);
         return s;
     }
