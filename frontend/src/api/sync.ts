@@ -65,6 +65,9 @@ export interface SyncSet {
   sourceAnchorAttribute: string | null
   deletePolicy: SyncDeletePolicy
   transformRules: SyncTransformRule[] | null
+  // Attributes never copied from source nor deleted from target. null ⇒ engine
+  // defaults (operational + password values); a list (incl. []) is used verbatim.
+  excludedAttributes: string[] | null
   reconcileCadenceSeconds: number | null
   reconcileLastRunAt: string | null
   enabled: boolean
@@ -108,6 +111,10 @@ export const createSyncSet = (data: SyncSetPayload) =>
 export const updateSyncSet = (id: string, data: SyncSetPayload) =>
   client.put<SyncSet>(`/superadmin/sync/sets/${id}`, data)
 export const deleteSyncSet = (id: string) => client.delete(`/superadmin/sync/sets/${id}`)
+
+/** Default excluded attributes (operational + password values) — seeds the editor. */
+export const getExcludedAttributeDefaults = () =>
+  client.get<string[]>('/superadmin/sync/sets/excluded-attribute-defaults')
 
 // ── Inventory + operator triggers ───────────────────────────────────────────
 

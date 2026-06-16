@@ -195,8 +195,33 @@ public class SyncConfigService {
         s.setSourceAnchorAttribute(blankToNull(req.sourceAnchorAttribute()));
         s.setDeletePolicy(req.deletePolicy() != null ? req.deletePolicy() : SyncDeletePolicy.DELETE);
         s.setTransformRules(normalizeTransformRules(req.transformRules()));
+        s.setExcludedAttributes(normalizeExcludedAttributes(req.excludedAttributes()));
         s.setReconcileCadenceSeconds(req.reconcileCadenceSeconds());
         s.setEnabled(req.enabled());
+    }
+
+    /**
+     * Trim/dedupe the excluded-attribute override. {@code null} is preserved
+     * (engine defaults apply); a non-null list — including empty after cleaning
+     * (operator chose to exclude nothing) — is kept. Case-insensitive dedupe,
+     * preserving the operator's casing and order.
+     */
+    private static List<String> normalizeExcludedAttributes(List<String> names) {
+        if (names == null) {
+            return null;
+        }
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        List<String> out = new java.util.ArrayList<>();
+        for (String n : names) {
+            if (n == null || n.isBlank()) {
+                continue;
+            }
+            String trimmed = n.trim();
+            if (seen.add(trimmed.toLowerCase(java.util.Locale.ROOT))) {
+                out.add(trimmed);
+            }
+        }
+        return out;
     }
 
     private void validateSet(SyncSetRequest req) {

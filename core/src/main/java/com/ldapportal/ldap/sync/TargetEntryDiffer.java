@@ -18,14 +18,21 @@ import java.util.Set;
  * than blindly replaying a source delta) keeps MODIFY exact and idempotent:
  * re-applying the same desired state yields an empty modification list.
  *
- * <p>Operational attributes the target server maintains are never touched.
+ * <p>Excluded attributes (operational + the sync set's configured exclusions,
+ * e.g. password values) are never touched — neither replaced nor deleted.
  */
 public final class TargetEntryDiffer {
 
     private TargetEntryDiffer() {
     }
 
-    public static List<Modification> diff(Entry target, List<Attribute> desired) {
+    /**
+     * @param protectedAttrs lower-cased attribute names that must never be
+     *                       deleted from the target (the sync set's effective
+     *                       exclusions — see {@link SyncExcludedAttributes})
+     */
+    public static List<Modification> diff(Entry target, List<Attribute> desired,
+                                          Set<String> protectedAttrs) {
         List<Modification> mods = new ArrayList<>();
         Set<String> desiredNames = new LinkedHashSet<>();
 
@@ -39,9 +46,9 @@ public final class TargetEntryDiffer {
 
         for (Attribute current : target.getAttributes()) {
             String lower = current.getName().toLowerCase(Locale.ROOT);
-            // Leave attributes the desired set keeps, and never delete a
-            // server-maintained operational attribute (see SyncOperationalAttributes).
-            if (desiredNames.contains(lower) || SyncOperationalAttributes.contains(lower)) {
+            // Leave attributes the desired set keeps, and never delete an excluded
+            // attribute (operational, or a sync-set exclusion like userPassword).
+            if (desiredNames.contains(lower) || protectedAttrs.contains(lower)) {
                 continue;
             }
             mods.add(new Modification(ModificationType.DELETE, current.getName()));

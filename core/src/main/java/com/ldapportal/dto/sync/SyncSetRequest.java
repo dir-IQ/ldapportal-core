@@ -29,6 +29,9 @@ public record SyncSetRequest(
         @Size(max = 255) String sourceAnchorAttribute,
         SyncDeletePolicy deletePolicy,
         List<SyncTransformRule> transformRules,
+        // Attributes excluded from projection/diff. null => engine defaults
+        // (operational + password values); a list (incl. empty) is used verbatim.
+        List<@Size(max = 255) String> excludedAttributes,
         @Min(60) Long reconcileCadenceSeconds,
         boolean enabled) {
 }

@@ -234,7 +234,7 @@
  * <p><b>Helpers:</b>
  * {@link com.ldapportal.ldap.sync.SyncDnUtil},
  * {@link com.ldapportal.ldap.sync.SyncScopes},
- * {@link com.ldapportal.ldap.sync.SyncOperationalAttributes},
+ * {@link com.ldapportal.ldap.sync.SyncExcludedAttributes},
  * {@link com.ldapportal.ldap.sync.SyncChangelogCursor},
  * {@link com.ldapportal.ldap.sync.identity.IdentityStrategy} (+ per-type impls).
  *

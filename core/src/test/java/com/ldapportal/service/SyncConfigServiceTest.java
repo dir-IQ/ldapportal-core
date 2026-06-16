@@ -58,7 +58,7 @@ class SyncConfigServiceTest {
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
         return new SyncSetRequest(UUID.randomUUID(), "people", null, null, null, null, null, null, null,
-                SyncDeletePolicy.DELETE, rules, null, true);
+                SyncDeletePolicy.DELETE, rules, null, null, true);
     }
 
     @Test

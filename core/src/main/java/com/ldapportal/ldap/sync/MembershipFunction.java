@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * The pure membership function: {@code membership(syncSet, sourceEntry) -> IN | OUT}.
@@ -72,6 +73,7 @@ public class MembershipFunction {
 
     private List<Attribute> project(SyncSet set, IdentityStrategy strategy, Entry entry,
                                     String identity, ReferenceResolver resolver) {
+        Set<String> excluded = SyncExcludedAttributes.effectiveFor(set);
         List<String> refAttrs = SyncReferenceAttributes.forSet(set);
         String idAttr = SyncIdentity.attribute(set, strategy);
         // Preserve insertion order; merge values when two source attrs collide on
@@ -81,9 +83,10 @@ public class MembershipFunction {
 
         for (Attribute a : entry.getAttributes()) {
             String name = a.getName();
-            // Never project server-maintained operational attributes (timestamps,
-            // entryUUID, structural metadata, …) — see SyncOperationalAttributes.
-            if (SyncOperationalAttributes.contains(name)) {
+            // Never project excluded attributes — server-maintained operational
+            // attributes and password values by default, plus any the sync set
+            // configures. See SyncExcludedAttributes.
+            if (excluded.contains(name.toLowerCase(Locale.ROOT))) {
                 continue;
             }
             if (idAttr != null && name.equalsIgnoreCase(idAttr)) {
