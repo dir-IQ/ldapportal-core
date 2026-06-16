@@ -30,10 +30,6 @@
       </template>
       <template #actions="{ row }">
         <ActionMenu :items="[
-          { label: 'Permissions',      onClick: () => openEditWithPermissions(row as AdminRow), hidden: (row as AdminRow).role !== 'ADMIN' },
-          { label: 'Superadmin permissions', onClick: () => openSuperadminPermissions(row as AdminRow),
-            hidden: (row as AdminRow).role !== 'SUPERADMIN' || !auth.isSuperadminOwner,
-            title: 'Grant or restrict this superadmin\'s system-wide permissions' },
           { label: 'What can they do?', onClick: () => openEffectivePermissions(row as AdminRow),
             title: 'Show the computed ‘what can this admin actually do?’ breakdown per profile' },
           { label: 'Delete',           onClick: () => confirmDelete(row as AdminRow), danger: true,
@@ -61,11 +57,11 @@
            each failing field is also flagged inline below. -->
       <FormValidationSummary v-if="showSummary" :errors="validationSummary" />
 
-      <!-- Tab nav. Permissions tab is hidden for SUPERADMIN role
-           (their access isn't profile- or feature-scoped). For
-           create flows on ADMIN it's available too — selections are
-           kept in a local draft and committed alongside the account
-           via POST /admins/with-permissions. -->
+      <!-- Tab nav. The Permissions tab is role-aware: ADMIN rows edit
+           profile roles + feature overrides; SUPERADMIN rows (owner-only)
+           edit the system-scoped superadmin permission grants. In both
+           cases create flows keep a local draft committed alongside the
+           account on save. -->
       <div
         v-if="tabs.length > 1"
         class="flex gap-1 mb-4 bg-gray-100 p-1 rounded-lg w-fit"
@@ -125,8 +121,43 @@
         </div>
       </form>
 
-      <!-- ── Permissions tab (visible on create + edit for ADMIN). -->
+      <!-- ── Permissions tab ─────────────────────────────────────
+           Role-aware: SUPERADMIN (owner-only) edits system-scoped
+           grants; ADMIN edits profile roles + feature overrides. -->
       <div v-show="activeTab === 'permissions'" class="space-y-4 text-sm">
+        <!-- Superadmin (system-scoped) permission editor. -->
+        <template v-if="form.role === 'SUPERADMIN'">
+          <div v-if="saPermLoading" class="py-8 text-center text-sm text-gray-500">Loading…</div>
+          <template v-else>
+            <p v-if="!editing" class="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+              Permission selections here are committed together with the new superadmin when you click Create.
+            </p>
+            <label class="flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer">
+              <input type="checkbox" v-model="saPermIsOwner" class="mt-0.5 rounded border-gray-300" />
+              <span>
+                <span class="block text-sm font-medium text-gray-900">Owner (full access)</span>
+                <span class="block text-xs text-gray-500">Holds every permission and can manage other superadmins' permissions.</span>
+              </span>
+            </label>
+            <fieldset :disabled="saPermIsOwner" :class="saPermIsOwner ? 'opacity-50' : ''">
+              <legend class="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">Or grant specific permissions</legend>
+              <div class="space-y-1.5">
+                <label v-for="key in saScopedCatalog" :key="key" class="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    :checked="saPermIsOwner || saPermChecked.has(key)"
+                    @change="toggleSaPerm(key)"
+                    class="rounded border-gray-300"
+                  />
+                  <span class="text-gray-700">{{ saPermLabel(key) }}</span>
+                </label>
+              </div>
+            </fieldset>
+          </template>
+        </template>
+
+        <!-- Admin (profile/feature-scoped) permission editor. -->
+        <template v-else>
         <div v-if="permsLoading" class="py-8 text-center text-sm text-gray-500">Loading…</div>
         <template v-else-if="perms">
           <p v-if="!editing" class="text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
@@ -191,18 +222,20 @@
             </div>
           </section>
         </template>
+        </template>
       </div>
 
       <template #footer>
         <!-- Footer is consistent across tabs so the operator can fill
              Details, switch to Permissions, and commit from there
              without a forced trip back. save() routes per (editing ×
-             role): ADMIN rows use the /admins endpoints (edit re-PUTs
-             account details with perms inline-saved as the operator
-             interacts; create posts account + draft perms atomically via
-             createAdminWithPermissions). SUPERADMIN rows use the dedicated
+             role): ADMIN rows use the /admins endpoints (create posts
+             account + draft perms atomically via createAdminWithPermissions;
+             edit re-PUTs account details with perms inline-saved as the
+             operator interacts). SUPERADMIN rows use the dedicated
              /superadmins endpoints (which carry the last-active /
-             last-LOCAL guards) — the Permissions tab is hidden for them. -->
+             last-LOCAL guards); their system-scoped permission grants are
+             committed from the Permissions tab as part of save (owner-only). -->
         <button @click="showForm = false" class="btn-neutral">Cancel</button>
         <button
           @click="save"
@@ -225,41 +258,6 @@
     <EffectivePermissionsDialog v-model="showEffective"
                                 :admin-id="effectiveAdmin.id ?? undefined"
                                 :admin-label="effectiveAdmin.username" />
-
-    <!-- Superadmin (system-scoped) permission editor — owner-only. -->
-    <AppModal v-model="showSaPerms" :title="`Superadmin permissions — ${saPermTarget?.username ?? ''}`" size="md">
-      <div v-if="saPermLoading" class="p-6 text-center text-sm text-gray-500">Loading…</div>
-      <div v-else class="space-y-4">
-        <label class="flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer">
-          <input type="checkbox" v-model="saPermIsOwner" class="mt-0.5 rounded border-gray-300" />
-          <span>
-            <span class="block text-sm font-medium text-gray-900">Owner (full access)</span>
-            <span class="block text-xs text-gray-500">Holds every permission and can manage other superadmins' permissions.</span>
-          </span>
-        </label>
-
-        <fieldset :disabled="saPermIsOwner" :class="saPermIsOwner ? 'opacity-50' : ''">
-          <legend class="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">Or grant specific permissions</legend>
-          <div class="space-y-1.5">
-            <label v-for="key in saScopedCatalog" :key="key" class="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                :checked="saPermIsOwner || saPermChecked.has(key)"
-                @change="toggleSaPerm(key)"
-                class="rounded border-gray-300"
-              />
-              <span class="text-gray-700">{{ saPermLabel(key) }}</span>
-            </label>
-          </div>
-        </fieldset>
-      </div>
-      <template #footer>
-        <button @click="showSaPerms = false" class="btn-neutral">Cancel</button>
-        <button @click="saveSaPerms" :disabled="saPermSaving || saPermLoading" class="btn-primary">
-          {{ saPermSaving ? 'Saving…' : 'Save' }}
-        </button>
-      </template>
-    </AppModal>
   </div>
 </template>
 
@@ -294,7 +292,11 @@ import {
   getSuperadminPermissions,
   updateSuperadminPermissions,
 } from '@/api/superadmin'
-import { SUPERADMIN_OWNER_KEY, superadminPermissionLabel } from '@/constants/superadminPermissions'
+import {
+  SUPERADMIN_OWNER_KEY,
+  SUPERADMIN_PERMISSION_LABELS,
+  superadminPermissionLabel,
+} from '@/constants/superadminPermissions'
 import { listAllProfiles } from '@/api/profiles'
 import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
@@ -445,16 +447,21 @@ function openEffectivePermissions(row: AdminRow): void {
   showEffective.value = true
 }
 
-// ── Superadmin (system-scoped) permission editor — owner-only ───────────────
-const showSaPerms    = ref(false)
-const saPermLoading  = ref(false)
-const saPermSaving   = ref(false)
-const saPermTarget   = ref<AdminRow | null>(null)
-const saPermCatalog  = ref<string[]>([])
-const saPermChecked  = ref<Set<string>>(new Set())
-const saPermIsOwner  = ref(false)
+// ── Superadmin (system-scoped) permissions — edited inline in the Permissions
+// tab, owner-only. Mirrors the ADMIN permissions pattern: edit mode lazy-loads
+// the account's current grants on tab activation; create mode starts from an
+// empty draft. Either way the selection is committed from the modal footer's
+// Save (see save()), not via a separate modal. The scoped catalogue comes from
+// the static label map, which mirrors the backend SuperadminPermission enum, so
+// it's available before any account exists (create flow has no id to query).
+const saPermLoading = ref(false)
+const saPermLoaded  = ref(false)
+const saPermChecked = ref<Set<string>>(new Set())
+const saPermIsOwner = ref(false)
 
-const saScopedCatalog = computed(() => saPermCatalog.value.filter(k => k !== SUPERADMIN_OWNER_KEY))
+const saScopedCatalog: string[] = Object.keys(SUPERADMIN_PERMISSION_LABELS)
+  .filter(k => k !== SUPERADMIN_OWNER_KEY)
+
 function saPermLabel(key: string): string { return superadminPermissionLabel(key) }
 
 function toggleSaPerm(key: string): void {
@@ -464,40 +471,32 @@ function toggleSaPerm(key: string): void {
   saPermChecked.value = next
 }
 
-async function openSuperadminPermissions(row: AdminRow): Promise<void> {
-  saPermTarget.value = row
-  showSaPerms.value = true
+function resetSaPermDraft(): void {
+  saPermChecked.value = new Set()
+  saPermIsOwner.value = false
+  saPermLoaded.value  = false
+}
+
+async function loadSaPerms(): Promise<void> {
+  if (!editing.value) return
   saPermLoading.value = true
   try {
-    const { data } = await getSuperadminPermissions(row.id)
-    saPermCatalog.value = data.all
+    const { data } = await getSuperadminPermissions(editing.value)
     saPermIsOwner.value = data.owner
     saPermChecked.value = new Set(data.granted.filter(k => k !== SUPERADMIN_OWNER_KEY))
+    saPermLoaded.value  = true
   } catch (e) {
     notif.error(errMsg(e))
-    showSaPerms.value = false
+    activeTab.value = 'details'
   } finally {
     saPermLoading.value = false
   }
 }
 
-async function saveSuperadminPermissions(): Promise<void> {
-  if (!saPermTarget.value) return
-  // Owner ⇒ store just the owner key (implies all); otherwise the checklist.
-  const keys = saPermIsOwner.value ? [SUPERADMIN_OWNER_KEY] : [...saPermChecked.value]
-  saPermSaving.value = true
-  try {
-    await updateSuperadminPermissions(saPermTarget.value.id, keys)
-    notif.success('Superadmin permissions updated')
-    showSaPerms.value = false
-  } catch (e) {
-    notif.error(errMsg(e))
-  } finally {
-    saPermSaving.value = false
-  }
+// Owner ⇒ store just the owner key (implies all); otherwise the checklist.
+function saPermKeys(): string[] {
+  return saPermIsOwner.value ? [SUPERADMIN_OWNER_KEY] : [...saPermChecked.value]
 }
-// Template alias.
-const saveSaPerms = saveSuperadminPermissions
 
 const editing: Ref<string | null> = ref(null) // admin id when editing, null when creating
 const form: Ref<AdminForm> = ref(emptyForm())
@@ -516,14 +515,16 @@ const perms: Ref<PermissionsDraft | null> = ref(null)
 
 // Tabs visibility:
 //   - Details: always.
-//   - Permissions: visible for ADMIN role (both create + edit).
-//     SUPERADMIN access isn't profile- or feature-scoped so the tab
-//     stays hidden there.
+//   - Permissions: ADMIN edits profile roles + feature overrides;
+//     SUPERADMIN edits the system-scoped permission grants but only the
+//     owner (manage_superadmins) may do so, so the tab is gated on that.
 const tabs = computed(() => {
   const out: Array<{ key: 'details' | 'permissions'; label: string }> = [
     { key: 'details', label: 'Details' },
   ]
-  if (form.value.role === 'ADMIN') {
+  const canEditPerms = form.value.role === 'ADMIN'
+    || (form.value.role === 'SUPERADMIN' && auth.isSuperadminOwner)
+  if (canEditPerms) {
     out.push({ key: 'permissions', label: 'Permissions' })
   }
   return out
@@ -531,22 +532,26 @@ const tabs = computed(() => {
 
 function switchTab(key: 'details' | 'permissions'): void {
   activeTab.value = key
-  if (key === 'permissions' && perms.value === null && !permsLoading.value && editing.value) {
+  if (key !== 'permissions') return
+  if (form.value.role === 'SUPERADMIN') {
+    // Lazy-load the account's current grants once per modal open (edit mode).
+    if (!saPermLoaded.value && !saPermLoading.value && editing.value) void loadSaPerms()
+  } else if (perms.value === null && !permsLoading.value && editing.value) {
     void loadPerms()
   }
 }
 
-// If the operator flips role from ADMIN → SUPERADMIN while the
-// Permissions tab is open, the tab disappears (SUPERADMINs aren't
-// profile-scoped). Fall back to Details so the modal body isn't
-// empty.
+// When the operator flips role, the Permissions tab may no longer be
+// offered (e.g. SUPERADMIN for a non-owner). Fall back to Details so the
+// modal body isn't left on a hidden tab.
 watch(() => form.value.role, (role) => {
-  if (role === 'SUPERADMIN') {
-    if (activeTab.value === 'permissions') activeTab.value = 'details'
-    // Superadmins are created LOCAL-only via the dedicated endpoint; force
-    // LOCAL on create. On edit the auth type is fixed and not submitted.
-    if (!editing.value) form.value.authType = 'LOCAL'
+  if (activeTab.value === 'permissions'
+      && !tabs.value.some(t => t.key === 'permissions')) {
+    activeTab.value = 'details'
   }
+  // Superadmins are created LOCAL-only via the dedicated endpoint; force
+  // LOCAL on create. On edit the auth type is fixed and not submitted.
+  if (role === 'SUPERADMIN' && !editing.value) form.value.authType = 'LOCAL'
 })
 
 const cols = [
@@ -594,6 +599,7 @@ function resetModalState(): void {
   newProfileId.value = ''
   newProfileRole.value = 'ADMIN'
   activeTab.value = 'details'
+  resetSaPermDraft()
   clearFieldErrors()
 }
 
@@ -624,17 +630,6 @@ function openEdit(row: AdminRow): void {
   showForm.value = true
 }
 
-/**
- * Shortcut for the row-action "Permissions" menu item: opens the
- * combined modal pre-switched to the Permissions tab. Equivalent to
- * openEdit(row) followed by clicking the Permissions tab — the
- * lazy-load happens via switchTab.
- */
-function openEditWithPermissions(row: AdminRow): void {
-  openEdit(row)
-  switchTab('permissions')
-}
-
 async function save(): Promise<void> {
   if (!form.value.username.trim()) return
   saving.value = true
@@ -652,6 +647,13 @@ async function save(): Promise<void> {
       })
       if (form.value.authType === 'LOCAL' && form.value.password) {
         await resetSuperadminPassword(editing.value, { newPassword: form.value.password })
+      }
+      // Commit system-scoped permission grants from the Permissions tab.
+      // Only when the operator is an owner (tab is gated on it) and the tab
+      // was actually loaded — otherwise the empty draft would clobber the
+      // account's existing grants.
+      if (auth.isSuperadminOwner && saPermLoaded.value) {
+        await updateSuperadminPermissions(editing.value, saPermKeys())
       }
       notif.success('Superadmin updated')
     } else if (editing.value) {
@@ -675,13 +677,19 @@ async function save(): Promise<void> {
       notif.success('Admin user created')
     } else {
       // SUPERADMIN create — LOCAL-only with a password, via the dedicated
-      // endpoint (no profile/feature scoping applies to superadmins).
-      await createSuperadmin({
+      // endpoint. System-scoped permission grants drafted in the Permissions
+      // tab are committed in a follow-up call once the account exists (there's
+      // no atomic create-with-permissions endpoint for superadmins).
+      const { data: created } = await createSuperadmin({
         username: form.value.username,
         password: form.value.password,
         displayName: form.value.displayName,
         email: form.value.email,
       })
+      if (auth.isSuperadminOwner && created.id
+          && (saPermIsOwner.value || saPermChecked.value.size > 0)) {
+        await updateSuperadminPermissions(created.id, saPermKeys())
+      }
       notif.success('Superadmin created')
     }
 

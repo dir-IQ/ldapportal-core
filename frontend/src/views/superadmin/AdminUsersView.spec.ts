@@ -21,6 +21,8 @@ const superApi = vi.hoisted(() => ({
   updateSuperadmin: vi.fn(),
   resetSuperadminPassword: vi.fn(),
   deleteSuperadmin: vi.fn(),
+  getSuperadminPermissions: vi.fn(),
+  updateSuperadminPermissions: vi.fn(),
 }))
 
 vi.mock('@/api/adminManagement', () => adminApi)
@@ -34,7 +36,8 @@ vi.mock('@/stores/notifications', () => ({
   useNotificationStore: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }),
 }))
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ principal: { id: 'me' } }),
+  // Owner so the SUPERADMIN Permissions tab is offered (it's owner-gated).
+  useAuthStore: () => ({ principal: { id: 'me' }, isSuperadminOwner: true }),
 }))
 vi.mock('@/stores/settings', () => ({
   useSettingsStore: () => ({ enabledAuthTypes: ['LOCAL'] }),
@@ -85,6 +88,11 @@ beforeEach(() => {
   adminApi.deleteAdmin.mockResolvedValue({ data: undefined })
   superApi.updateSuperadmin.mockResolvedValue({ data: {} })
   superApi.deleteSuperadmin.mockResolvedValue({ data: undefined })
+  superApi.createSuperadmin.mockResolvedValue({ data: { id: 's-new' } })
+  superApi.getSuperadminPermissions.mockResolvedValue({
+    data: { all: [], granted: [], effective: [], owner: false },
+  })
+  superApi.updateSuperadminPermissions.mockResolvedValue({ data: {} })
 })
 
 describe('AdminUsersView role-based routing', () => {
@@ -138,6 +146,49 @@ describe('AdminUsersView role-based routing', () => {
 
     expect(adminApi.deleteAdmin).toHaveBeenCalledWith('a1')
     expect(superApi.deleteSuperadmin).not.toHaveBeenCalled()
+  })
+})
+
+describe('AdminUsersView superadmin permissions tab', () => {
+  it('no longer offers the Permissions / Superadmin permissions row actions', async () => {
+    const wrapper = mount(AdminUsersView, { global: { stubs } })
+    await flushPromises()
+
+    expect(wrapper.find('[data-action="Permissions"]').exists()).toBe(false)
+    expect(wrapper.find('[data-action="Superadmin permissions"]').exists()).toBe(false)
+  })
+
+  it('loads grants on tab open for a superadmin row and commits them on save', async () => {
+    const wrapper = mount(AdminUsersView, { global: { stubs } })
+    await flushPromises()
+
+    await editButtons(wrapper)[1].trigger('click') // superadmin row
+    const permsTab = wrapper.findAll('button').find(b => b.text() === 'Permissions')!
+    await permsTab.trigger('click')
+    await flushPromises()
+    // Lazy-load of the account's current grants.
+    expect(superApi.getSuperadminPermissions).toHaveBeenCalledWith('s1')
+
+    // Grant a single scoped permission, then save from the modal footer.
+    const licenseLabel = wrapper.findAll('label').find(l => l.text().includes('View license'))!
+    await licenseLabel.find('input[type="checkbox"]').setValue(true)
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(superApi.updateSuperadminPermissions)
+      .toHaveBeenCalledWith('s1', ['superadmin.view_license'])
+  })
+
+  it('does not clobber grants when the Permissions tab was never opened', async () => {
+    const wrapper = mount(AdminUsersView, { global: { stubs } })
+    await flushPromises()
+
+    await editButtons(wrapper)[1].trigger('click') // superadmin row
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(superApi.updateSuperadmin).toHaveBeenCalled()
+    expect(superApi.updateSuperadminPermissions).not.toHaveBeenCalled()
   })
 })
 
