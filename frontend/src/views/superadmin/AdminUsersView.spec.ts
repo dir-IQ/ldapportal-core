@@ -246,10 +246,10 @@ describe('AdminUsersView feature-override grid', () => {
     await wrapper.findAll('button').find(b => b.text() === 'Permissions')!.trigger('click')
     await flushPromises()
 
-    // dbValues from the catalogue are shown — including auditor.manage, which the
-    // old hand-maintained list omitted entirely.
-    expect(wrapper.text()).toContain('user.create')
-    expect(wrapper.text()).toContain('auditor.manage')
+    // Friendly labels from the catalogue are shown — including "Manage auditing"
+    // (auditor.manage), which the old hand-maintained list omitted entirely.
+    expect(wrapper.text()).toContain('Create users')
+    expect(wrapper.text()).toContain('Manage auditing')
     expect(adminApi.getFeatureCatalog).toHaveBeenCalled()
   })
 })

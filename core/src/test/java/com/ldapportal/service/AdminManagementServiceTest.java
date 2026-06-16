@@ -185,12 +185,50 @@ class AdminManagementServiceTest {
         service.setFeaturePermissions(adminId,
                 List.of(new FeaturePermissionRequest(FeatureKey.USER_CREATE, true)));
 
-        verify(featureRepo).deleteAllByAdminAccountId(adminId);
+        // No existing rows → a single insert, and no blanket wipe.
+        verify(featureRepo, never()).deleteAllByAdminAccountId(any());
         ArgumentCaptor<AdminFeaturePermission> captor =
                 ArgumentCaptor.forClass(AdminFeaturePermission.class);
         verify(featureRepo).save(captor.capture());
         assertThat(captor.getValue().isEnabled()).isTrue();
         assertThat(captor.getValue().getFeatureKey()).isEqualTo(FeatureKey.USER_CREATE);
+    }
+
+    @Test
+    void setFeaturePermissions_flipExistingOverride_updatesInPlace() {
+        // Regression: flipping an existing override must UPDATE the row, not
+        // delete + re-insert the same (admin, profile, feature) key — the
+        // delete/reinsert tripped the partial-unique index (a 409) in Postgres.
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(adminAccount("alice")));
+        AdminFeaturePermission existing = new AdminFeaturePermission();
+        existing.setFeatureKey(FeatureKey.USER_CREATE);
+        existing.setEnabled(false); // admin-wide deny
+        when(featureRepo.findAllByAdminAccountId(adminId))
+                .thenReturn(new java.util.ArrayList<>(List.of(existing)));
+        when(featureRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.setFeaturePermissions(adminId,
+                List.of(new FeaturePermissionRequest(FeatureKey.USER_CREATE, true)));
+
+        verify(featureRepo, never()).delete(any());
+        verify(featureRepo, never()).deleteAllByAdminAccountId(any());
+        assertThat(existing.isEnabled()).isTrue();
+        verify(featureRepo).save(existing);
+    }
+
+    @Test
+    void setFeaturePermissions_removedScope_deletedNotWiped() {
+        when(accountRepo.findById(adminId)).thenReturn(Optional.of(adminAccount("alice")));
+        AdminFeaturePermission existing = new AdminFeaturePermission();
+        existing.setFeatureKey(FeatureKey.USER_CREATE);
+        existing.setEnabled(true);
+        when(featureRepo.findAllByAdminAccountId(adminId))
+                .thenReturn(new java.util.ArrayList<>(List.of(existing)));
+
+        service.setFeaturePermissions(adminId, List.of()); // clear all overrides
+
+        verify(featureRepo).delete(existing);
+        verify(featureRepo, never()).save(any());
     }
 
     // ── Guard bypass closure: target-role + self-mutation ────────────────────
