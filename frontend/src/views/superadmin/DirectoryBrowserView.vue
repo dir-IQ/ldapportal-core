@@ -52,6 +52,27 @@
 
       <!-- Right panel: Entry details or create form (2/3) -->
       <div class="w-2/3 bg-white border border-gray-200 rounded-xl overflow-y-auto p-5">
+        <!-- Missing-base warning. An entry that the server returned has at
+             least an objectClass, so an empty attribute set means the selected
+             DN was not returned at all — typically the configured Base DN does
+             not exist in this directory (or the bind account can't read it).
+             Surfaced here, above every mode, so it's visible while creating a
+             child too — otherwise the only signal is the add failing with
+             "parent entry … does not exist". -->
+        <div v-if="selectedDn && entryDetail && !detailLoading
+                   && Object.keys(entryDetail.attributes).length === 0"
+             class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <p class="font-semibold">This entry was not found in the directory.</p>
+          <p class="mt-1">
+            <span class="font-mono break-all">{{ entryDetail.dn }}</span>
+            doesn't exist on this server (or the bind account can't read it). It's
+            shown because it's the connection's configured Base DN — the tree root
+            is taken from configuration, not verified against the server. Creating
+            entries under it will fail until the entry itself exists. Create the
+            base entry / load data on the server, or correct the directory's Base DN.
+          </p>
+        </div>
+
         <!-- Create form mode -->
         <CreateEntryForm
           v-if="creatingEntry && selectedDirId && selectedDn"
