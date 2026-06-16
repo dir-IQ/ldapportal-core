@@ -158,3 +158,81 @@ describe('PendingApprovalsView action gating', () => {
     expect(wrapper.find('.dt-type').text()).toBe('Playbook Execution')
   })
 })
+
+describe('PendingApprovalsView friendly summary', () => {
+  // Render AppModal's default slot so the detail body (summary card) shows.
+  const AppModalSlotStub = {
+    props: ['modelValue', 'title', 'size'],
+    template: '<div class="modal"><slot /></div>',
+  }
+
+  function mountWithModal() {
+    return mount(PendingApprovalsView, {
+      global: {
+        stubs: {
+          DataTable: DataTableStub,
+          ActionMenu: ActionMenuStub,
+          AppModal: AppModalSlotStub,
+          RelativeTime: true,
+          ConfirmDialog: true,
+          CopyButton: true,
+        },
+      },
+    })
+  }
+
+  async function openDetail(payloadObj: unknown, requestType = 'GROUP_MEMBER_ADD') {
+    hoisted.listPendingApprovals.mockResolvedValue({
+      data: [pending({ requestType, payload: JSON.stringify(payloadObj) })],
+    })
+    const w = mountWithModal()
+    await flushPromises()
+    // The first primary row action is "View" → opens the detail modal.
+    await w.find('.dt-actions button').trigger('click')
+    await flushPromises()
+    return w
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    hoisted.principal = { id: 'reviewer-1', accountType: 'SUPERADMIN' }
+    hoisted.isSuperadmin = true
+  })
+
+  it('surfaces group + member readably without opening raw JSON', async () => {
+    const w = await openDetail({
+      groupDn: 'cn=SecurityAdmins,ou=Groups,dc=oud1,dc=example,dc=com',
+      memberValue: 'o=0001+cn=Jim Moffett,ou=People,dc=oud1,dc=example,dc=com',
+      memberAttribute: 'uniqueMember',
+    })
+    const text = w.text()
+    expect(text).toContain('SecurityAdmins')
+    expect(text).toContain('Jim Moffett')
+    expect(text).toContain('uniqueMember')
+    expect(text).toContain('cn=SecurityAdmins,ou=Groups,dc=oud1,dc=example,dc=com')
+    // Raw JSON is demoted + collapsed for a mapped type.
+    const details = w.find('details')
+    expect(details.exists()).toBe(true)
+    expect(details.attributes('open')).toBeUndefined()
+  })
+
+  it('masks password attributes in a user-create summary', async () => {
+    const w = await openDetail({
+      dn: 'uid=jrowe,ou=People,dc=oud1,dc=example,dc=com',
+      attributes: { cn: ['Jane Rowe'], userPassword: ['s3cr3t'] },
+    }, 'USER_CREATE')
+    // Assert on the friendly summary card specifically — the raw-JSON block
+    // (advanced) still holds the literal payload.
+    const summary = w.get('[data-testid="request-summary"]').text()
+    expect(summary).toContain('Jane Rowe')
+    expect(summary).not.toContain('s3cr3t')
+    expect(summary).toContain('••••••••')
+  })
+
+  it('opens the raw-JSON block by default for an unmapped type', async () => {
+    const w = await openDetail({ foo: 'bar' }, 'SOMETHING_NEW')
+    const details = w.find('details')
+    expect(details.attributes('open')).toBeDefined()
+    expect(w.text()).toContain('foo')
+  })
+})
