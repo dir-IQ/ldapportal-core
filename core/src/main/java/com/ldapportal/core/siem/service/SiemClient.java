@@ -51,15 +51,17 @@ public class SiemClient {
     // shutdown are synchronized).
     private volatile Connection connection;
 
-    // Shared HTTP client for webhook
-    private volatile HttpClient sharedHttpClient;
+    // Shared HTTP client for webhook delivery. Eagerly built and tied to this
+    // bean's lifecycle (closed in shutdown). The component is a Spring singleton,
+    // so a single client is shared across all sends.
+    private final HttpClient sharedHttpClient = HttpClient.newBuilder()
+            .connectTimeout(CONNECT_TIMEOUT)
+            .build();
 
     @PreDestroy
     synchronized void shutdown() {
         closePersistentSocket();
-        if (sharedHttpClient != null) {
-            sharedHttpClient.close();
-        }
+        sharedHttpClient.close();
     }
 
     /**
@@ -210,7 +212,7 @@ public class SiemClient {
                     reqBuilder.header("Authorization", authHeader);
                 }
 
-                HttpResponse<String> resp = getHttpClient().send(reqBuilder.build(),
+                HttpResponse<String> resp = sharedHttpClient.send(reqBuilder.build(),
                         HttpResponse.BodyHandlers.ofString());
 
                 if (resp.statusCode() < 400) {
@@ -239,19 +241,6 @@ public class SiemClient {
 
             sleepQuietly(attempt * 1000L);
         }
-    }
-
-    private HttpClient getHttpClient() {
-        if (sharedHttpClient == null) {
-            synchronized (this) {
-                if (sharedHttpClient == null) {
-                    sharedHttpClient = HttpClient.newBuilder()
-                            .connectTimeout(CONNECT_TIMEOUT)
-                            .build();
-                }
-            }
-        }
-        return sharedHttpClient;
     }
 
     // ── Connectivity test ───────────────────────────────────────────────────
