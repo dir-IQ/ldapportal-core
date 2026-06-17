@@ -281,11 +281,11 @@ public class SiemClient {
                     } else {
                         socket = new Socket();
                     }
-                    try {
+                    // try-with-resources so a failing close() is suppressed rather
+                    // than masking the connect() exception we're actually testing.
+                    try (socket) {
                         socket.connect(new InetSocketAddress(settings.getSiemHost(), port),
                                 (int) CONNECT_TIMEOUT.toMillis());
-                    } finally {
-                        socket.close();
                     }
                     String label = tls ? "TLS" : "TCP";
                     return label + ": Connected to " + settings.getSiemHost() + ":" + port + " successfully.";
