@@ -11,9 +11,52 @@
     <div class="space-y-3">
       <div class="flex items-center justify-between gap-2 flex-wrap -mt-1">
         <p class="text-xs text-gray-500 font-mono">{{ sourceName }} → {{ targetName }}</p>
-        <button class="btn-secondary btn-compact" :disabled="reconciling" @click="reconcile">
-          {{ reconciling ? 'Reconciling…' : 'Reconcile now' }}
-        </button>
+        <div class="flex items-center gap-2">
+          <button class="btn-secondary btn-compact" :disabled="verifying" @click="verify">
+            {{ verifying ? 'Verifying…' : 'Verify contents' }}
+          </button>
+          <button class="btn-secondary btn-compact" :disabled="reconciling" @click="reconcile">
+            {{ reconciling ? 'Reconciling…' : 'Reconcile now' }}
+          </button>
+        </div>
+      </div>
+
+      <!--
+        Independent verification: re-reads both directories and compares them
+        directly (no membership index), surfacing drift the index thinks is
+        converged. Belts-and-suspenders beyond the inventory above.
+      -->
+      <div v-if="verifyResult" class="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs space-y-1.5">
+        <div class="flex items-center justify-between">
+          <span class="font-medium text-gray-700">Content verification</span>
+          <button type="button" class="text-gray-400 hover:text-gray-600" aria-label="Dismiss verification"
+                  @click="verifyResult = null">✕</button>
+        </div>
+        <p class="text-gray-600">
+          Source members: <span class="font-medium tabular-nums">{{ verifyResult.sourceMembers }}</span> ·
+          Target entries: <span class="font-medium tabular-nums">{{ verifyResult.targetEntries }}</span> ·
+          In sync: <span class="font-medium tabular-nums text-emerald-700">{{ verifyResult.inSync }}</span>
+        </p>
+        <p :class="hasMismatches ? 'text-rose-700' : 'text-emerald-700'">
+          <template v-if="hasMismatches">
+            Missing on target: <span class="font-medium tabular-nums">{{ verifyResult.missingOnTarget }}</span> ·
+            Orphaned on target: <span class="font-medium tabular-nums">{{ verifyResult.orphanOnTarget }}</span> ·
+            Content drift: <span class="font-medium tabular-nums">{{ verifyResult.contentMismatches }}</span>
+          </template>
+          <template v-else>✓ Source and target agree — no mismatches found.</template>
+        </p>
+        <p v-if="verifyResult.note" class="text-amber-700">{{ verifyResult.note }}</p>
+        <p v-if="!verifyResult.sourceComplete || !verifyResult.targetComplete" class="text-amber-600">
+          Enumeration was incomplete (a directory read failed); counts may be partial.
+        </p>
+        <div v-for="g in sampleGroups" :key="g.label">
+          <template v-if="g.dns.length">
+            <p class="text-gray-500">{{ g.label }}:</p>
+            <ul class="font-mono text-[11px] text-gray-500 list-disc pl-4">
+              <li v-for="dn in g.dns" :key="dn">{{ dn }}</li>
+            </ul>
+          </template>
+        </div>
       </div>
 
       <!-- State filter chips with counts -->
@@ -95,8 +138,8 @@ import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import {
-  listMemberships, reconcileSet, recomputeKey, dismissMembership,
-  type SyncSet, type Membership, type MembershipState,
+  listMemberships, reconcileSet, recomputeKey, dismissMembership, verifyContents,
+  type SyncSet, type Membership, type MembershipState, type SyncVerifyResult,
 } from '@/api/sync'
 
 const show = defineModel<boolean>('show', { default: false })
@@ -114,6 +157,20 @@ const stateFilter = ref<'' | MembershipState>('')
 const search = ref('')
 const loading = ref(false)
 const reconciling = ref(false)
+const verifying = ref(false)
+const verifyResult = ref<SyncVerifyResult | null>(null)
+
+const hasMismatches = computed(() =>
+  !!verifyResult.value
+  && (verifyResult.value.missingOnTarget
+    + verifyResult.value.orphanOnTarget
+    + verifyResult.value.contentMismatches) > 0)
+
+const sampleGroups = computed(() => [
+  { label: 'Missing on target', dns: verifyResult.value?.sampleMissing ?? [] },
+  { label: 'Orphaned on target', dns: verifyResult.value?.sampleOrphans ?? [] },
+  { label: 'Content drift', dns: verifyResult.value?.sampleMismatches ?? [] },
+])
 
 const cols = [
   { key: 'identity', label: 'Identity' },
@@ -190,6 +247,7 @@ watch([show, () => props.set?.id], ([open]) => {
     stateFilter.value = ''
     search.value = ''
     page.value = 0
+    verifyResult.value = null
     load()
   }
 }, { immediate: true })
@@ -214,6 +272,24 @@ async function reconcile() {
     notif.error(errMsg(e))
   } finally {
     reconciling.value = false
+  }
+}
+async function verify() {
+  if (!props.set) return
+  verifying.value = true
+  try {
+    const { data } = await verifyContents(props.set.id)
+    verifyResult.value = data
+    const mismatches = data.missingOnTarget + data.orphanOnTarget + data.contentMismatches
+    if (mismatches > 0) {
+      notif.error(`Verification found ${mismatches} mismatch(es) between source and target`)
+    } else {
+      notif.success('Verification passed — source and target agree')
+    }
+  } catch (e) {
+    notif.error(errMsg(e))
+  } finally {
+    verifying.value = false
   }
 }
 async function recompute(identity: string) {

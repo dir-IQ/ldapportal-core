@@ -8,6 +8,7 @@ import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
+import com.ldapportal.ldap.sync.SyncContentVerifier;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.MembershipRepository;
 import com.ldapportal.repository.SyncLinkRepository;
@@ -47,13 +48,15 @@ class SyncConfigServiceTest {
     @Mock private MembershipRepository membershipRepo;
     @Mock private DirectoryConnectionRepository directoryRepo;
     @Mock private MembershipReconciler reconciler;
+    @Mock private SyncContentVerifier verifier;
     @Mock private RecomputeEnqueuer enqueuer;
 
     private SyncConfigService service;
 
     @BeforeEach
     void setUp() {
-        service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo, reconciler, enqueuer);
+        service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo,
+                reconciler, verifier, enqueuer);
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {

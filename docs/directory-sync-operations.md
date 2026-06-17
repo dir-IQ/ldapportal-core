@@ -251,9 +251,15 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
 - **Membership inventory modal** (per set): state-filter chips (All / Applied /
   Pending / Review / Failed with counts), a search box (identity or DN),
   per-row Identity / State / Source DN / Target DN / **Reason**, and per-row
-  **Recompute** and **Dismiss** actions. Header has **Reconcile now**.
+  **Recompute** and **Dismiss** actions. Header has **Reconcile now** and
+  **Verify contents**.
 - **Untracked search** — searching a DN/identity that isn't tracked offers
   `Recompute "<term>"` to pull it in on demand.
+- **Verify contents** — a belts-and-suspenders check that re-reads *both*
+  directories and compares them directly (it ignores the membership index, so it
+  catches drift the index believes is already converged). Reports counts of
+  in-sync / **missing on target** / **orphaned on target** / **content drift**
+  entries, with sample DNs for each. Read-only; never writes.
 
 ### 7.2 REST (superadmin, `DIRECTORY_SYNC`-entitled)
 ```
@@ -271,6 +277,8 @@ DELETE /api/v1/superadmin/sync/sets/{id}
 
 # Inventory + operator triggers
 GET    /api/v1/superadmin/sync/sets/{id}/memberships?state=&q=&page=&size=   # size capped 1..200
+GET    /api/v1/superadmin/sync/sets/{id}/preview          # dry-run reconcile plan (index-based, no writes)
+GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source↔target compare (no writes)
 POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}
 POST   /api/v1/superadmin/sync/sets/{id}/recompute        # body {"key": "<dn-or-identity>"} → 202
 DELETE /api/v1/superadmin/sync/sets/{id}/memberships/{identity}   # dismiss
@@ -380,6 +388,11 @@ behind (raise throughput or lower batch latency).
   `FAILED`/`REVIEW` cause.
 - **Reconcile now (set)** — full enumeration + not-seen sweep; the heavy
   "make this set correct" button. Returns the count enumerated.
+- **Verify contents (set)** — independent read-only audit: enumerate + project
+  the source scope, enumerate the target base, and compare them directly by
+  target DN. Flags entries missing on the target, orphaned on the target, and
+  content drift — *without* trusting the membership index. Use to confirm a set
+  is truly converged (or to expose drift the index can't see). Never writes.
 - **Dismiss (row)** — drop the index row *without touching the target*; use to
   clear a quarantine you've handled out-of-band. (The next reconcile/recompute
   may re-derive it if the source still qualifies.)

@@ -97,6 +97,15 @@ public class SyncSetController {
         return service.previewReconcile(id);
     }
 
+    /**
+     * Independent content verification: re-reads the live source and target and
+     * flags missing / orphaned / drifted entries (belts-and-suspenders, no writes).
+     */
+    @GetMapping("/{id}/verify")
+    public com.ldapportal.dto.sync.SyncVerifyResult verify(@PathVariable UUID id) {
+        return service.verifyContents(id);
+    }
+
     @PostMapping("/{id}/recompute")
     public ResponseEntity<Void> recompute(@PathVariable UUID id, @Valid @RequestBody RecomputeKeyRequest req) {
         service.recompute(id, req.key());
