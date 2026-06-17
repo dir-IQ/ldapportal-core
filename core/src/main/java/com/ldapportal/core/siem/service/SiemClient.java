@@ -41,7 +41,7 @@ public class SiemClient {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
     private static final int MAX_RETRIES = 3;
-    private static final int MAX_UDP_SAFE_SIZE = 1024; // RFC 5426 recommendation
+    private static final int MAX_UDP_SAFE_SIZE = 512; // RFC 5426 recommendation
 
     // Persistent TCP/TLS connection. The socket, its output stream and the
     // target it was opened for move as a unit, so they live in a single
@@ -85,6 +85,12 @@ public class SiemClient {
     // ── UDP ──────────────────────────────────────────────────────────────────
 
     private void sendUdp(String host, Integer port, String message) {
+
+        if (host == null || host.isBlank()) {
+            log.warn("SIEM host not configured, skipping UDP send");
+            return;
+        }
+        
         int targetPort = port != null ? port : 514;
         byte[] data = message.getBytes(StandardCharsets.UTF_8);
 
@@ -239,7 +245,7 @@ public class SiemClient {
                 }
             }
 
-            sleepQuietly(attempt * 1000L);
+            sleepQuietly((long) Math.pow(2, attempt - 1) * 1000L);
         }
     }
 
