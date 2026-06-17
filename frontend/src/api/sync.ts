@@ -131,6 +131,29 @@ export interface SyncReconcilePreview {
 export const previewReconcile = (setId: string) =>
   client.get<SyncReconcilePreview>(`/superadmin/sync/sets/${setId}/preview`)
 
+/**
+ * Independent content verification: re-reads the live source and target and flags
+ * missing / orphaned / drifted entries, without consulting the membership index.
+ * A belts-and-suspenders check beyond the reconcile preview (no writes).
+ */
+export interface SyncVerifyResult {
+  sourceMembers: number
+  targetEntries: number
+  inSync: number
+  missingOnTarget: number
+  orphanOnTarget: number
+  contentMismatches: number
+  sampleMissing: string[]
+  sampleOrphans: string[]
+  sampleMismatches: string[]
+  sourceComplete: boolean
+  targetComplete: boolean
+  note: string | null
+}
+
+export const verifyContents = (setId: string) =>
+  client.get<SyncVerifyResult>(`/superadmin/sync/sets/${setId}/verify`)
+
 // ── Inventory + operator triggers ───────────────────────────────────────────
 
 /** Spring Data Page envelope (the subset the UI consumes). */

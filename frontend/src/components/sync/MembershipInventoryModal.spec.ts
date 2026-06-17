@@ -26,6 +26,15 @@ vi.mock('@/api/sync', () => ({
   reconcileSet: vi.fn(() => Promise.resolve({ data: { enumerated: 3 } })),
   recomputeKey: vi.fn(() => Promise.resolve({ data: undefined })),
   dismissMembership: vi.fn(() => Promise.resolve({ data: undefined })),
+  verifyContents: vi.fn(() => Promise.resolve({
+    data: {
+      sourceMembers: 5, targetEntries: 4, inSync: 3,
+      missingOnTarget: 1, orphanOnTarget: 0, contentMismatches: 1,
+      sampleMissing: ['uid=gone,ou=Users,dc=dst'], sampleOrphans: [],
+      sampleMismatches: ['uid=drift,ou=Users,dc=dst'],
+      sourceComplete: true, targetComplete: true, note: null,
+    },
+  })),
 }))
 
 import * as syncApi from '@/api/sync'
@@ -73,6 +82,19 @@ describe('MembershipInventoryModal', () => {
     byText('Recompute')!.click()
     await flushPromises()
     expect(syncApi.recomputeKey).toHaveBeenCalledWith('set-1', '1111')
+    wrapper.unmount()
+  })
+
+  it('Verify contents calls the API and renders the mismatch summary', async () => {
+    const wrapper = open()
+    await flushPromises()
+    byText('Verify contents')!.click()
+    await flushPromises()
+    expect(syncApi.verifyContents).toHaveBeenCalledWith('set-1')
+    const txt = document.body.textContent ?? ''
+    expect(txt).toContain('Content verification')
+    expect(txt).toContain('uid=gone,ou=Users,dc=dst') // sample missing DN
+    expect(txt).toContain('uid=drift,ou=Users,dc=dst') // sample drift DN
     wrapper.unmount()
   })
 

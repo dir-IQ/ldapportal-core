@@ -15,6 +15,7 @@ import com.ldapportal.entity.enums.SyncDeletePolicy;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
+import com.ldapportal.ldap.sync.SyncContentVerifier;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.MembershipRepository;
 import com.ldapportal.repository.MembershipStateCount;
@@ -58,6 +59,7 @@ public class SyncConfigService {
     private final MembershipRepository membershipRepo;
     private final DirectoryConnectionRepository directoryRepo;
     private final MembershipReconciler reconciler;
+    private final SyncContentVerifier verifier;
     private final RecomputeEnqueuer enqueuer;
 
     // ── Links ────────────────────────────────────────────────────────────────
@@ -321,6 +323,16 @@ public class SyncConfigService {
     public com.ldapportal.dto.sync.SyncReconcilePreview previewReconcile(UUID syncSetId) {
         requireSet(syncSetId);
         return reconciler.preview(syncSetId);
+    }
+
+    /**
+     * Independent content verification: compares the live source scope against the
+     * live target base and flags missing / orphaned / drifted entries, without
+     * consulting the membership index. Read-only.
+     */
+    public com.ldapportal.dto.sync.SyncVerifyResult verifyContents(UUID syncSetId) {
+        requireSet(syncSetId);
+        return verifier.verify(syncSetId);
     }
 
     /** Enqueue a recompute for a key (a source DN or a normalized identity). */
