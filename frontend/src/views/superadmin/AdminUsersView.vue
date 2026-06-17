@@ -224,14 +224,14 @@
           <!-- Feature overrides -->
           <section>
             <h3 class="font-semibold text-gray-700 mb-2">Feature permission overrides</h3>
-            <p class="text-xs text-gray-500 mb-2">Override the default feature permissions for this admin. Leave as "Default" to use the role-based default.</p>
+            <p class="text-xs text-gray-500 mb-2">These apply across all of this admin's profiles. Leave as "Inherit" to use the role default; a per-profile override (set from the Effective permissions view) takes precedence over an Allow / Deny set here.</p>
             <div class="grid grid-cols-2 gap-x-6 gap-y-2">
               <div v-for="f in featureCatalog" :key="f.key" class="flex items-center justify-between gap-2">
                 <span class="text-xs text-gray-700 truncate" :title="f.dbValue">{{ featurePermissionLabel(f.dbValue) }}</span>
-                <select :value="featureState(f.key)" @change="changeFeature(f.key, ($event.target as HTMLSelectElement).value as 'default' | 'enabled' | 'disabled')" :aria-label="`Permission for ${f.dbValue}`" class="input text-xs py-0.5 w-28">
-                  <option value="default">Default</option>
-                  <option value="enabled">Enabled</option>
-                  <option value="disabled">Disabled</option>
+                <select :value="featureState(f.key)" @change="changeFeature(f.key, ($event.target as HTMLSelectElement).value as 'inherit' | 'allow' | 'deny')" :aria-label="`Permission for ${f.dbValue}`" class="input text-xs py-0.5 w-28">
+                  <option value="inherit">Inherit</option>
+                  <option value="allow">Allow</option>
+                  <option value="deny">Deny</option>
                 </select>
               </div>
             </div>
@@ -826,10 +826,10 @@ onMounted(async () => {
   } catch (e) { console.warn('Failed to load feature catalogue:', e) }
 })
 
-function featureState(fk: string): 'default' | 'enabled' | 'disabled' {
+function featureState(fk: string): 'inherit' | 'allow' | 'deny' {
   const f = perms.value?.featurePermissions?.find(p => p.featureKey === fk && !p.profileId)
-  if (!f) return 'default'
-  return f.enabled ? 'enabled' : 'disabled'
+  if (!f) return 'inherit'
+  return f.enabled ? 'allow' : 'deny'
 }
 
 async function loadPerms(): Promise<void> {
@@ -920,15 +920,15 @@ async function doRemoveProfileRole(profileId: string): Promise<void> {
 
 async function changeFeature(
   featureKey: string,
-  state: 'default' | 'enabled' | 'disabled',
+  state: 'inherit' | 'allow' | 'deny',
 ): Promise<void> {
   if (editing.value) {
     try {
-      if (state === 'default') {
+      if (state === 'inherit') {
         await clearFeaturePermission(editing.value, featureKey)
       } else {
         await setFeaturePermissions(editing.value, [
-          { featureKey, enabled: state === 'enabled' },
+          { featureKey, enabled: state === 'allow' },
         ])
       }
       await reloadPerms()
@@ -941,8 +941,8 @@ async function changeFeature(
     const draft = perms.value
     draft.featurePermissions = draft.featurePermissions
       .filter(f => !(f.featureKey === featureKey && !f.profileId))
-    if (state !== 'default') {
-      draft.featurePermissions.push({ featureKey, enabled: state === 'enabled' })
+    if (state !== 'inherit') {
+      draft.featurePermissions.push({ featureKey, enabled: state === 'allow' })
     }
   }
 }
