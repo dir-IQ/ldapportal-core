@@ -56,6 +56,7 @@ public class EffectivePermissionsService {
     private final AccountRepository                  accountRepo;
     private final AdminProfileRoleRepository         profileRoleRepo;
     private final AdminFeaturePermissionRepository   featurePermissionRepo;
+    private final com.ldapportal.core.entitlement.EntitlementService entitlementService;
 
     @Transactional(readOnly = true)
     public EffectivePermissionsResponse resolve(UUID adminId) {
@@ -110,7 +111,10 @@ public class EffectivePermissionsService {
                                         BaseRole baseRole,
                                         Map<FeatureKey, AdminFeaturePermission> adminWideOverrides,
                                         Map<ProfileFeatureKey, AdminFeaturePermission> profileOverrides) {
+        // Hide keys whose backing capability isn't entitled in this edition
+        // (e.g. HR/SoD outside Enterprise), matching the assignment catalogue.
         List<FeatureEffective> features = Arrays.stream(FeatureKey.values())
+                .filter(entitlementService::exposesFeature)
                 .map(fk -> resolveFeature(fk, baseRole, profile.getId(),
                         adminWideOverrides, profileOverrides))
                 .sorted(Comparator.comparing(FeatureEffective::dbValue))

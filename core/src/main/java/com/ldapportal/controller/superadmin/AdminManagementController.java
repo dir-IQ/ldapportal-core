@@ -55,6 +55,7 @@ public class AdminManagementController {
 
     private final AdminManagementService service;
     private final com.ldapportal.service.EffectivePermissionsService effectivePermissionsService;
+    private final com.ldapportal.core.entitlement.EntitlementService entitlementService;
 
     // ── Account CRUD ──────────────────────────────────────────────────────────
 
@@ -162,14 +163,19 @@ public class AdminManagementController {
     // ── Feature catalogue ─────────────────────────────────────────────────────
 
     /**
-     * The full catalogue of feature keys an override can target. The editor's
+     * The catalogue of feature keys an override can target. The editor's
      * "feature permission overrides" grid renders from this rather than a
      * hand-maintained list, so it stays in lock-step with {@link FeatureKey}
      * (and matches the catalogue shown by the effective-permissions view).
+     *
+     * <p>Keys whose backing capability isn't entitled in the current edition
+     * (e.g. HR and SoD keys outside Enterprise) are filtered out, so the grid
+     * never offers a toggle that can't take effect.</p>
      */
     @GetMapping("/permissions/feature-catalog")
     public List<com.ldapportal.dto.admin.FeatureCatalogEntry> featureCatalog() {
         return java.util.Arrays.stream(FeatureKey.values())
+                .filter(entitlementService::exposesFeature)
                 .map(com.ldapportal.dto.admin.FeatureCatalogEntry::of)
                 .toList();
     }

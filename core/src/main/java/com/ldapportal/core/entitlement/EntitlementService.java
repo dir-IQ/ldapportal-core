@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.core.entitlement;
 
+import com.ldapportal.entity.enums.FeatureKey;
+
 /**
  * Runtime access to the current license and entitlement checks.
  *
@@ -37,5 +39,21 @@ public interface EntitlementService {
         if (!lic.has(e)) {
             throw new EntitlementMissingException(e, lic.edition());
         }
+    }
+
+    /**
+     * Whether {@code feature} should be exposed in the permission-assignment
+     * catalogue and effective-permissions viewer for the current license. A
+     * feature gated by an entitlement (e.g. HR or SoD keys) is hidden when that
+     * entitlement is absent, so non-Enterprise installs don't surface toggles
+     * whose backing capability can never run. Core features (no required
+     * entitlement) are always exposed.
+     *
+     * <p>This governs visibility only; execution stays gated by
+     * {@link Entitled}.</p>
+     */
+    default boolean exposesFeature(FeatureKey feature) {
+        Entitlement required = feature.getRequiredEntitlement();
+        return required == null || has(required);
     }
 }
