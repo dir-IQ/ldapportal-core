@@ -45,6 +45,7 @@ class AdminManagementControllerTest extends BaseControllerTest {
 
     @MockitoBean AdminManagementService service;
     @MockitoBean EffectivePermissionsService effectivePermissionsService;
+    @MockitoBean com.ldapportal.core.entitlement.EntitlementService entitlementService;
 
     static final UUID ADMIN_ID   = UUID.fromString("30000000-0000-0000-0000-000000000003");
     static final UUID PROFILE_ID = UUID.fromString("40000000-0000-0000-0000-000000000004");
@@ -167,7 +168,12 @@ class AdminManagementControllerTest extends BaseControllerTest {
     }
 
     @Test
-    void featureCatalog_superadmin_returnsAllFeatureKeys() throws Exception {
+    void featureCatalog_entitledEdition_returnsAllFeatureKeys() throws Exception {
+        // Exercise the real exposure predicate against an "everything entitled"
+        // license — every key, including the governance/HR ones, is exposed.
+        given(entitlementService.exposesFeature(any())).willCallRealMethod();
+        given(entitlementService.has(any())).willReturn(true);
+
         mockMvc.perform(get(BASE_URL + "/permissions/feature-catalog")
                         .with(authentication(superadminAuth())))
                 .andExpect(status().isOk())
@@ -175,7 +181,31 @@ class AdminManagementControllerTest extends BaseControllerTest {
                         .value(com.ldapportal.entity.enums.FeatureKey.values().length))
                 // Each entry carries the enum-name key + its dot-notation dbValue.
                 .andExpect(jsonPath("$[?(@.key=='USER_CREATE')].dbValue").value("user.create"))
+                .andExpect(jsonPath("$[?(@.key=='SOD_MANAGE')].dbValue").value("sod.manage"))
                 .andExpect(jsonPath("$[?(@.key=='AUDITOR_MANAGE')].dbValue").value("auditor.manage"));
+    }
+
+    @Test
+    void featureCatalog_communityEdition_hidesGovernanceAndHrKeys() throws Exception {
+        // No entitlements: the GOVERNANCE (SoD) and HR_SYNC (HR) keys must be
+        // filtered out, while the core surface stays.
+        given(entitlementService.exposesFeature(any())).willCallRealMethod();
+        given(entitlementService.has(any())).willReturn(false);
+
+        long gated = java.util.Arrays.stream(com.ldapportal.entity.enums.FeatureKey.values())
+                .filter(k -> k.getRequiredEntitlement() != null)
+                .count();
+
+        mockMvc.perform(get(BASE_URL + "/permissions/feature-catalog")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()")
+                        .value(com.ldapportal.entity.enums.FeatureKey.values().length - gated))
+                .andExpect(jsonPath("$[?(@.key=='USER_CREATE')].dbValue").value("user.create"))
+                .andExpect(jsonPath("$[?(@.key=='SOD_MANAGE')]").isEmpty())
+                .andExpect(jsonPath("$[?(@.key=='SOD_VIEW')]").isEmpty())
+                .andExpect(jsonPath("$[?(@.key=='HR_MANAGE')]").isEmpty())
+                .andExpect(jsonPath("$[?(@.key=='HR_VIEW')]").isEmpty());
     }
 
     @Test

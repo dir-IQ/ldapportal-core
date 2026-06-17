@@ -1,12 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.entity.enums;
 
+import com.ldapportal.core.entitlement.Entitlement;
+
 import java.util.Arrays;
 
 /**
- * The twelve feature permission keys defined in §3.2.
+ * The feature permission keys an admin override can target.
  * DB values use dot notation (e.g. "user.create"); a custom JPA converter
  * handles the mapping because Java enum constants cannot contain dots.
+ *
+ * <p>A key may carry a {@link #getRequiredEntitlement() required entitlement}:
+ * the capability it gates only exists in editions/licenses that hold that
+ * entitlement, so the key is hidden from the assignment catalogue and the
+ * effective-permissions viewer when the entitlement is absent. (Execution is
+ * gated independently by {@code @Entitled}; this only governs whether the
+ * toggle is <em>shown</em>.) Keys with no required entitlement are part of the
+ * core, edition-agnostic surface.</p>
  */
 public enum FeatureKey {
 
@@ -35,20 +45,37 @@ public enum FeatureKey {
     SCHEMA_READ          ("schema.read"),
     USER_READ            ("user.read"),
     GROUP_READ           ("group.read"),
-    SOD_MANAGE           ("sod.manage"),
-    SOD_VIEW             ("sod.view"),
-    HR_MANAGE            ("hr.manage"),
-    HR_VIEW              ("hr.view"),
+    SOD_MANAGE           ("sod.manage",  Entitlement.GOVERNANCE),
+    SOD_VIEW             ("sod.view",    Entitlement.GOVERNANCE),
+    HR_MANAGE            ("hr.manage",   Entitlement.HR_SYNC),
+    HR_VIEW              ("hr.view",     Entitlement.HR_SYNC),
     AUDITOR_MANAGE       ("auditor.manage");
 
     private final String dbValue;
 
+    /** Entitlement that must be present for this key to be exposed, or null
+     *  if the key is part of the core, edition-agnostic surface. */
+    private final Entitlement requiredEntitlement;
+
     FeatureKey(String dbValue) {
+        this(dbValue, null);
+    }
+
+    FeatureKey(String dbValue, Entitlement requiredEntitlement) {
         this.dbValue = dbValue;
+        this.requiredEntitlement = requiredEntitlement;
     }
 
     public String getDbValue() {
         return dbValue;
+    }
+
+    /**
+     * The entitlement gating exposure of this key, or {@code null} when the
+     * key is always exposed (core surface).
+     */
+    public Entitlement getRequiredEntitlement() {
+        return requiredEntitlement;
     }
 
     public static FeatureKey fromDbValue(String value) {
