@@ -26,9 +26,9 @@
         directly (no membership index), surfacing drift the index thinks is
         converged. Belts-and-suspenders beyond the inventory above.
       -->
-      <div v-if="verifyResult" class="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs space-y-1.5">
+      <div v-if="verifyResult" class="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm space-y-1.5">
         <div class="flex items-center justify-between">
-          <span class="font-medium text-gray-700">Content verification</span>
+          <span class="text-base font-semibold text-gray-800">Content verification</span>
           <button type="button" class="text-gray-400 hover:text-gray-600" aria-label="Dismiss verification"
                   @click="verifyResult = null">✕</button>
         </div>
@@ -52,7 +52,7 @@
         <div v-for="g in sampleGroups" :key="g.label">
           <template v-if="g.dns.length">
             <p class="text-gray-500">{{ g.label }}:</p>
-            <ul class="font-mono text-[11px] text-gray-500 list-disc pl-4">
+            <ul class="font-mono text-xs text-gray-500 list-disc pl-4">
               <li v-for="dn in g.dns" :key="dn">{{ dn }}</li>
             </ul>
           </template>

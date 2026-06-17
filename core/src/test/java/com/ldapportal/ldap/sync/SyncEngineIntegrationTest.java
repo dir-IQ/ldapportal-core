@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.RecomputeRequest;
@@ -71,6 +72,7 @@ class SyncEngineIntegrationTest {
     @Autowired private RecomputeRequestRepository requestRepo;
     @Autowired private RecomputeEngine engine;
     @Autowired private MembershipReconciler reconciler;
+    @Autowired private SyncContentVerifier verifier;
     @Autowired private RecomputeEnqueuer enqueuer;
 
     private InMemoryDirectoryServer source;
@@ -262,6 +264,53 @@ class SyncEngineIntegrationTest {
         engine.process(groupsSet.getId(), "cn=eng," + SRC_GROUPS);
         assertThat(membershipRepo.findAllBySyncSetId(groupsSet.getId()).get(0).getContentHash())
                 .isEqualTo(groupHashBefore);
+    }
+
+    // ── Verify: a correctly-synced set reports in-sync (references included) ─────
+
+    @Test
+    void verify_groupWithReferences_reportsInSync() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("carol", "staff", "carol@src");
+        source.add(new Entry("cn=eng," + SRC_GROUPS,
+                new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("cn", "eng"),
+                new Attribute("member", "uid=alice," + SRC_PEOPLE, "uid=carol," + SRC_PEOPLE)));
+
+        engine.process(peopleSet.getId(), dn("alice"));
+        engine.process(peopleSet.getId(), dn("carol"));
+        engine.process(groupsSet.getId(), "cn=eng," + SRC_GROUPS);
+
+        // Regression: the group's member references must resolve through the index
+        // exactly as the engine projected them. With NO_RESOLVER the member values
+        // were dropped from the desired image, so every group showed spurious drift.
+        SyncVerifyResult g = verifier.verify(groupsSet.getId());
+        assertThat(g.sourceMembers()).isEqualTo(1);
+        assertThat(g.targetEntries()).isEqualTo(1);
+        assertThat(g.inSync()).isEqualTo(1);
+        assertThat(g.contentMismatches()).isZero();
+        assertThat(g.missingOnTarget()).isZero();
+        assertThat(g.orphanOnTarget()).isZero();
+
+        // The people set verifies clean too (no references involved).
+        SyncVerifyResult p = verifier.verify(peopleSet.getId());
+        assertThat(p.inSync()).isEqualTo(2);
+        assertThat(p.contentMismatches()).isZero();
+    }
+
+    @Test
+    void verify_detectsOutOfBandTargetDrift() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        assertThat(verifier.verify(peopleSet.getId()).contentMismatches()).isZero();
+
+        // Someone edits the target out of band — verification flags the real drift.
+        target.modify("uid=alice," + DST_USERS,
+                new Modification(ModificationType.REPLACE, "mail", "tampered@dst"));
+
+        SyncVerifyResult r = verifier.verify(peopleSet.getId());
+        assertThat(r.contentMismatches()).isEqualTo(1);
+        assertThat(r.sampleMismatches()).anyMatch(d -> d.contains("uid=alice"));
     }
 
     // ── Reconcile: not-seen sweep removes an orphan left by a missed delete ──────
