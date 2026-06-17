@@ -41,24 +41,27 @@ public class SiemClient {
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(10);
     private static final int MAX_RETRIES = 3;
-    private static final int MAX_UDP_SAFE_SIZE = 1024; // RFC 5426 recommendation
+    private static final int MAX_UDP_SAFE_SIZE = 512; // RFC 5426 recommendation
 
-    // Persistent TCP/TLS socket (guarded by synchronized methods)
-    private volatile Socket persistentSocket;
-    private volatile OutputStream persistentOut;
-    private volatile String persistentHost;
-    private volatile int persistentPort;
-    private volatile boolean persistentTls;
+    // Persistent TCP/TLS connection. The socket, its output stream and the
+    // target it was opened for move as a unit, so they live in a single
+    // immutable holder published through one volatile reference — a reader
+    // sees either a fully-built connection or none, never a half-updated set.
+    // All mutation happens under this instance's monitor (sendTcpWithRetry and
+    // shutdown are synchronized).
+    private volatile Connection connection;
 
-    // Shared HTTP client for webhook
-    private volatile HttpClient sharedHttpClient;
+    // Shared HTTP client for webhook delivery. Eagerly built and tied to this
+    // bean's lifecycle (closed in shutdown). The component is a Spring singleton,
+    // so a single client is shared across all sends.
+    private final HttpClient sharedHttpClient = HttpClient.newBuilder()
+            .connectTimeout(CONNECT_TIMEOUT)
+            .build();
 
     @PreDestroy
-    void shutdown() {
+    synchronized void shutdown() {
         closePersistentSocket();
-        if (sharedHttpClient != null) {
-            sharedHttpClient.close();
-        }
+        sharedHttpClient.close();
     }
 
     /**
@@ -82,6 +85,12 @@ public class SiemClient {
     // ── UDP ──────────────────────────────────────────────────────────────────
 
     private void sendUdp(String host, Integer port, String message) {
+
+        if (host == null || host.isBlank()) {
+            log.warn("SIEM host not configured, skipping UDP send");
+            return;
+        }
+        
         int targetPort = port != null ? port : 514;
         byte[] data = message.getBytes(StandardCharsets.UTF_8);
 
@@ -110,11 +119,12 @@ public class SiemClient {
                 ensureConnected(host, targetPort, tls);
 
                 // RFC 6587 octet-counting framing
+                Connection conn = connection;
                 byte[] data = message.getBytes(StandardCharsets.UTF_8);
                 String frame = data.length + " ";
-                persistentOut.write(frame.getBytes(StandardCharsets.UTF_8));
-                persistentOut.write(data);
-                persistentOut.flush();
+                conn.out.write(frame.getBytes(StandardCharsets.UTF_8));
+                conn.out.write(data);
+                conn.out.flush();
                 return; // success
             } catch (Exception e) {
                 closePersistentSocket();
@@ -131,10 +141,11 @@ public class SiemClient {
     }
 
     private void ensureConnected(String host, int port, boolean tls) throws Exception {
-        if (persistentSocket != null && !persistentSocket.isClosed()
-                && persistentSocket.isConnected()
-                && host.equals(persistentHost) && port == persistentPort
-                && tls == persistentTls) {
+        Connection current = connection;
+        if (current != null && !current.socket.isClosed()
+                && current.socket.isConnected()
+                && host.equals(current.host) && port == current.port
+                && tls == current.tls) {
             return; // reuse existing connection
         }
 
@@ -161,22 +172,18 @@ public class SiemClient {
         socket.connect(new InetSocketAddress(host, port), (int) CONNECT_TIMEOUT.toMillis());
         socket.setSoTimeout((int) REQUEST_TIMEOUT.toMillis());
 
-        persistentSocket = socket;
-        persistentOut = socket.getOutputStream();
-        persistentHost = host;
-        persistentPort = port;
-        persistentTls = tls;
+        connection = new Connection(socket, socket.getOutputStream(), host, port, tls);
 
         log.info("SIEM {} connection established to {}:{}", tls ? "TLS" : "TCP", host, port);
     }
 
     private void closePersistentSocket() {
-        if (persistentSocket != null) {
+        Connection current = connection;
+        if (current != null) {
             try {
-                persistentSocket.close();
+                current.socket.close();
             } catch (Exception ignored) {}
-            persistentSocket = null;
-            persistentOut = null;
+            connection = null;
         }
     }
 
@@ -211,7 +218,7 @@ public class SiemClient {
                     reqBuilder.header("Authorization", authHeader);
                 }
 
-                HttpResponse<String> resp = getHttpClient().send(reqBuilder.build(),
+                HttpResponse<String> resp = sharedHttpClient.send(reqBuilder.build(),
                         HttpResponse.BodyHandlers.ofString());
 
                 if (resp.statusCode() < 400) {
@@ -238,21 +245,8 @@ public class SiemClient {
                 }
             }
 
-            sleepQuietly(attempt * 1000L);
+            sleepQuietly((long) Math.pow(2, attempt - 1) * 1000L);
         }
-    }
-
-    private HttpClient getHttpClient() {
-        if (sharedHttpClient == null) {
-            synchronized (this) {
-                if (sharedHttpClient == null) {
-                    sharedHttpClient = HttpClient.newBuilder()
-                            .connectTimeout(CONNECT_TIMEOUT)
-                            .build();
-                }
-            }
-        }
-        return sharedHttpClient;
     }
 
     // ── Connectivity test ───────────────────────────────────────────────────
@@ -282,11 +276,11 @@ public class SiemClient {
                     } else {
                         socket = new Socket();
                     }
-                    try {
+                    // try-with-resources so a failing close() is suppressed rather
+                    // than masking the connect() exception we're actually testing.
+                    try (socket) {
                         socket.connect(new InetSocketAddress(settings.getSiemHost(), port),
                                 (int) CONNECT_TIMEOUT.toMillis());
-                    } finally {
-                        socket.close();
                     }
                     String label = tls ? "TLS" : "TCP";
                     return label + ": Connected to " + settings.getSiemHost() + ":" + port + " successfully.";
@@ -308,6 +302,28 @@ public class SiemClient {
             Thread.sleep(millis);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
+     * Immutable snapshot of a live persistent TCP/TLS connection and the target
+     * it was opened for. Grouping these into one object published via a single
+     * {@code volatile} reference guarantees readers never see a torn set of
+     * fields (e.g. a socket without its matching host/port).
+     */
+    private static final class Connection {
+        final Socket socket;
+        final OutputStream out;
+        final String host;
+        final int port;
+        final boolean tls;
+
+        Connection(Socket socket, OutputStream out, String host, int port, boolean tls) {
+            this.socket = socket;
+            this.out = out;
+            this.host = host;
+            this.port = port;
+            this.tls = tls;
         }
     }
 }
