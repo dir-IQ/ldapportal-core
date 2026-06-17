@@ -1,0 +1,178 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!--
+  MOCKUP — Effective Permissions ("what can they do") dialog with the proposed
+  standardized Allow / Deny / Inherit vocabulary.
+
+  Not wired to anything; static HTML for design review only. Mirrors the layout
+  of frontend/src/components/EffectivePermissionsDialog.vue. Two changes vs the
+  current UI are illustrated:
+    1. The per-profile override control becomes an explicit tri-state segmented
+       control: Allow / Deny / Inherit (today the neutral state is a hidden
+       click-to-clear).
+    2. The Source chips are re-phrased to the same verbs + an explicit scope:
+       "Allow · this profile", "Deny · all profiles", "Role default", etc.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mockup — Effective permissions (Allow / Deny / Inherit)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #eef1f5; }
+    .seg { box-shadow: 0 1px 1px rgba(0,0,0,.03); }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col items-center py-10 px-4 font-sans text-gray-900">
+
+  <p class="text-xs text-gray-500 mb-3 max-w-3xl text-center">
+    Design mockup — static. Demonstrates the standardized
+    <span class="font-semibold">Allow / Deny / Inherit</span> wording in the
+    "what can they do" (Effective Permissions) dialog.
+  </p>
+
+  <!-- ── Modal shell ────────────────────────────────────────────────────── -->
+  <div class="w-full max-w-4xl bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden">
+
+    <!-- Title bar -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+      <h2 class="text-base font-semibold">Effective permissions — <span class="font-mono text-gray-700">j.okafor</span></h2>
+      <button class="text-gray-400 hover:text-gray-600" aria-label="Close">
+        <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>
+      </button>
+    </div>
+
+    <div class="p-6">
+
+      <!-- Precedence explainer callout -->
+      <div class="mb-4 rounded-xl bg-blue-50 border border-blue-200 px-4 py-3 text-xs text-blue-900">
+        <p class="font-semibold mb-0.5">How a row resolves</p>
+        <p>
+          Per-profile override → admin-wide override → role default, then
+          <span class="font-semibold">most-permissive wins</span> across the admin's profiles.
+          <span class="font-semibold">Inherit</span> is an input, not an outcome — when a level inherits,
+          the Source shows whichever lower level actually decided it.
+        </p>
+      </div>
+
+      <!-- Profile tab bar -->
+      <div class="flex flex-wrap gap-1 mb-4 border-b border-gray-200">
+        <button class="px-3 py-1.5 text-xs border-b-2 -mb-px rounded-t border-blue-500 text-blue-700 bg-blue-50/50">
+          <span class="font-medium">Helpdesk</span>
+          <span class="text-gray-500 ml-1.5">·</span>
+          <span class="text-gray-500 ml-1">Corp Directory</span>
+        </button>
+        <button class="px-3 py-1.5 text-xs border-b-2 -mb-px rounded-t border-transparent text-gray-600 hover:text-gray-900">
+          <span class="font-medium">Approvals</span>
+          <span class="text-gray-500 ml-1.5">·</span>
+          <span class="text-gray-500 ml-1">Corp Directory</span>
+        </button>
+      </div>
+
+      <!-- Profile header -->
+      <div class="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs space-y-1">
+        <div class="flex items-baseline justify-between">
+          <p><span class="font-semibold">Base role:</span>
+            <span class="ml-1 font-mono text-blue-700">ADMIN</span>
+          </p>
+          <input type="search" placeholder="Filter features…"
+                 class="border border-gray-300 rounded-md px-2 py-1 text-xs w-56 bg-white" />
+        </div>
+        <p><span class="font-semibold">Target User DN:</span>
+          <code class="ml-1 text-[11px] bg-white border border-gray-200 rounded px-1 py-0.5">ou=Engineering,ou=Users,dc=corp,dc=example,dc=com</code>
+        </p>
+      </div>
+
+      <!-- Feature matrix -->
+      <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-2 text-left  text-xs font-semibold text-gray-500 uppercase tracking-wider">Feature</th>
+              <th class="px-4 py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider w-20">Allowed</th>
+              <th class="px-4 py-2 text-left  text-xs font-semibold text-gray-500 uppercase tracking-wider">Source</th>
+              <th class="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider w-64"
+                  title="Set a per-profile override. Applies within this profile only; most-permissive wins across profiles.">
+                Profile override
+              </th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-100" id="rows"><!-- injected --></tbody>
+        </table>
+      </div>
+
+      <!-- Legend -->
+      <div class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] text-gray-600">
+        <span class="font-semibold text-gray-500 uppercase tracking-wider">Source key</span>
+        <span class="inline-flex items-center gap-1"><span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-medium">Allow · this profile</span> per-profile override</span>
+        <span class="inline-flex items-center gap-1"><span class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-medium">Deny · all profiles</span> admin-wide override</span>
+        <span class="inline-flex items-center gap-1"><span class="px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 font-medium">Role default</span> from the base role</span>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // Each row: feature label, allowed (bool), source key, and which override
+    // state is active at THIS profile level (allow|deny|inherit).
+    const SOURCES = {
+      PROFILE_ALLOW: { chip: 'bg-emerald-100 text-emerald-800', text: 'Allow · this profile' },
+      PROFILE_DENY:  { chip: 'bg-rose-100 text-rose-800',       text: 'Deny · this profile' },
+      ADMIN_ALLOW:   { chip: 'bg-emerald-100 text-emerald-800', text: 'Allow · all profiles' },
+      ADMIN_DENY:    { chip: 'bg-rose-100 text-rose-800',       text: 'Deny · all profiles' },
+      ROLE_ADMIN:    { chip: 'bg-blue-100 text-blue-800',       text: 'Role default (ADMIN)' },
+      ROLE_READONLY: { chip: 'bg-slate-100 text-slate-600',     text: 'Role default (read-only)' },
+    };
+
+    const rows = [
+      { f: 'View users',            allowed: true,  src: 'ROLE_ADMIN',  state: 'inherit' },
+      { f: 'Edit users',            allowed: true,  src: 'ROLE_ADMIN',  state: 'inherit' },
+      { f: 'Reset user passwords',  allowed: true,  src: 'PROFILE_ALLOW', state: 'allow' },
+      // Inherit-as-input: this profile inherits, the admin-wide Deny decides.
+      { f: 'Delete users',          allowed: false, src: 'ADMIN_DENY',  state: 'inherit',
+        note: 'Profile inherits; the admin-wide Deny is what actually denies it.' },
+      // Precedence demo: admin-wide Deny on this feature, but a per-profile Allow overrides it.
+      { f: 'Move users',            allowed: true,  src: 'PROFILE_ALLOW', state: 'allow',
+        note: 'Per-profile Allow overrides the admin-wide Deny — so "always" would be wrong.' },
+      { f: 'Create / delete groups',allowed: false, src: 'PROFILE_DENY', state: 'deny' },
+      { f: 'Manage group members',  allowed: true,  src: 'ROLE_ADMIN',  state: 'inherit' },
+      { f: 'Run reports',           allowed: true,  src: 'ROLE_ADMIN',  state: 'inherit' },
+      { f: 'Bulk delete',           allowed: false, src: 'ADMIN_DENY',  state: 'inherit' },
+    ];
+
+    const check = `<span class="inline-flex text-emerald-600"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>`;
+    const cross = `<span class="inline-flex text-rose-500"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M6 18L18 6"/></svg></span>`;
+
+    // Segmented tri-state control. The active state is filled; others are neutral.
+    function seg(state) {
+      const base = 'px-2.5 py-1 text-[11px] font-medium border focus:outline-none';
+      const off  = 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50';
+      const on = {
+        allow:   'bg-emerald-100 text-emerald-800 border-emerald-300 z-10',
+        deny:    'bg-rose-100 text-rose-800 border-rose-300 z-10',
+        inherit: 'bg-slate-200 text-slate-700 border-slate-300 z-10',
+      };
+      const cls = s => `${base} ${state === s ? on[s] : off}`;
+      return `<div class="inline-flex seg rounded-md overflow-hidden -space-x-px">
+        <button class="${cls('allow')} rounded-l-md"   title="Allow this feature in this profile only">Allow</button>
+        <button class="${cls('deny')}"                 title="Deny this feature in this profile only">Deny</button>
+        <button class="${cls('inherit')} rounded-r-md" title="No override — inherit the admin-wide setting or role default">Inherit</button>
+      </div>`;
+    }
+
+    document.getElementById('rows').innerHTML = rows.map(r => {
+      const s = SOURCES[r.src];
+      const note = r.note ? `<span class="ml-1 align-middle text-gray-400 cursor-help" title="${r.note}">ⓘ</span>` : '';
+      return `<tr class="${r.allowed ? '' : 'bg-gray-50/50 text-gray-500'}">
+        <td class="px-4 py-2 text-xs">${r.f}</td>
+        <td class="px-4 py-2 text-center">${r.allowed ? check : cross}</td>
+        <td class="px-4 py-2">
+          <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${s.chip}">${s.text}</span>${note}
+        </td>
+        <td class="px-4 py-2 text-right whitespace-nowrap">${seg(r.state)}</td>
+      </tr>`;
+    }).join('');
+  </script>
+</body>
+</html>
