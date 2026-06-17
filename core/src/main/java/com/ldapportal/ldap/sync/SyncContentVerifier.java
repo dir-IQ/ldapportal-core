@@ -3,12 +3,14 @@ package com.ldapportal.ldap.sync;
 
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.sync.identity.IdentityStrategy;
 import com.ldapportal.ldap.sync.identity.IdentityStrategyRegistry;
 import com.ldapportal.repository.DirectoryConnectionRepository;
+import com.ldapportal.repository.MembershipRepository;
 import com.ldapportal.repository.SyncLinkRepository;
 import com.ldapportal.repository.SyncSetRepository;
 import com.unboundid.ldap.sdk.Attribute;
@@ -25,6 +27,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -54,6 +57,13 @@ import java.util.UUID;
  *       MODIFY uses — see {@link TargetEntryDiffer}).</li>
  * </ul>
  *
+ * <p>DN-valued reference attributes (e.g. {@code member}, {@code uniqueMember},
+ * {@code secDN}) are remapped through the membership index during projection
+ * exactly as the engine does — so the desired image matches what a real apply
+ * produced and a correctly-synced entry verifies as in-sync rather than showing
+ * spurious drift. Presence (missing/orphan) is still index-independent; only the
+ * <em>value</em> of reference attributes consults the index mapping.
+ *
  * <p>This never writes; it is purely a read-side consistency report.
  */
 @Component
@@ -64,11 +74,10 @@ public class SyncContentVerifier {
     /** Cap on how many sample DNs each mismatch category returns. */
     static final int SAMPLE_LIMIT = 25;
 
-    private static final ReferenceResolver NO_RESOLVER = dn -> Optional.empty();
-
     private final SyncSetRepository syncSetRepo;
     private final SyncLinkRepository syncLinkRepo;
     private final DirectoryConnectionRepository directoryRepo;
+    private final MembershipRepository membershipRepo;
     private final IdentityStrategyRegistry identityStrategies;
     private final LdapConnectionFactory connectionFactory;
     private final MembershipFunction membershipFunction;
@@ -81,11 +90,14 @@ public class SyncContentVerifier {
         }
 
         // Source side: enumerate + project members, keyed by normalized target DN.
+        // Reference attributes resolve through the index exactly as the engine does,
+        // so the desired image matches what was actually applied (see class doc).
+        ReferenceResolver resolver = referenceResolver(ctx);
         Map<String, Expected> expected = new LinkedHashMap<>();
         boolean sourceComplete = true;
         try {
             for (SearchResultEntry e : enumerateSource(ctx)) {
-                var decision = membershipFunction.evaluate(ctx.set, ctx.strategy, e, NO_RESOLVER);
+                var decision = membershipFunction.evaluate(ctx.set, ctx.strategy, e, resolver);
                 if (decision.member() && decision.targetDn() != null) {
                     expected.put(normDn(decision.targetDn()),
                             new Expected(decision.targetDn(), decision.desiredAttrs()));
@@ -203,6 +215,25 @@ public class SyncContentVerifier {
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────
+
+    /**
+     * The engine's DN-reference resolver, rebuilt from the membership index: a
+     * source DN value maps to its target DN across all sets on the link (an
+     * unsynced referent resolves to empty and is dropped from the projection,
+     * mirroring {@code RecomputeEngine}). Preloaded into a map to avoid an N+1
+     * lookup while projecting the whole scope.
+     */
+    private ReferenceResolver referenceResolver(Context ctx) {
+        Map<String, String> targetBySource = new HashMap<>();
+        for (SyncSet s : syncSetRepo.findAllByLinkId(ctx.link.getId())) {
+            for (Membership m : membershipRepo.findAllBySyncSetId(s.getId())) {
+                if (m.getSourceDn() != null && m.getTargetDn() != null) {
+                    targetBySource.putIfAbsent(SyncDnUtil.normalize(m.getSourceDn()), m.getTargetDn());
+                }
+            }
+        }
+        return srcDn -> Optional.ofNullable(targetBySource.get(SyncDnUtil.normalize(srcDn)));
+    }
 
     private Context loadContext(UUID syncSetId) {
         SyncSet set = syncSetRepo.findById(syncSetId).orElse(null);
