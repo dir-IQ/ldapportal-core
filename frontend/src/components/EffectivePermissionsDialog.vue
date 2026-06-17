@@ -105,17 +105,27 @@ async function setProfileOverride(
 // the user can understand why each feature resolved the way it did.
 interface SourceMeta { chip: string; label: string; hint: string }
 const SOURCE_META: Record<string, SourceMeta> = {
-  PROFILE_OVERRIDE_ALLOW:       { chip: 'bg-emerald-100 text-emerald-800', label: 'Profile override',  hint: 'Explicitly allowed for this admin in this profile.' },
-  PROFILE_OVERRIDE_DENY:        { chip: 'bg-rose-100 text-rose-800',       label: 'Profile override',  hint: 'Explicitly denied for this admin in this profile.' },
-  ADMIN_OVERRIDE_ALLOW:         { chip: 'bg-emerald-100 text-emerald-800', label: 'Admin override',    hint: 'Explicitly allowed for this admin across all profiles.' },
-  ADMIN_OVERRIDE_DENY:          { chip: 'bg-rose-100 text-rose-800',       label: 'Admin override',    hint: 'Explicitly denied for this admin across all profiles.' },
-  BASE_ROLE_ADMIN:              { chip: 'bg-blue-100 text-blue-800',       label: 'Base role: ADMIN',  hint: "Granted by the profile's ADMIN base role." },
-  BASE_ROLE_READ_ONLY_DEFAULT:  { chip: 'bg-slate-100 text-slate-700',     label: 'Read-only default', hint: 'Read-only base role grants this feature by default.' },
-  BASE_ROLE_DENIED:             { chip: 'bg-slate-100 text-slate-500',     label: 'Base role: READ_ONLY', hint: 'Read-only base role does not grant this feature.' },
+  PROFILE_OVERRIDE_ALLOW:       { chip: 'bg-emerald-100 text-emerald-800', label: 'Allow · this profile',  hint: 'Explicitly allowed for this admin in this profile.' },
+  PROFILE_OVERRIDE_DENY:        { chip: 'bg-rose-100 text-rose-800',       label: 'Deny · this profile',   hint: 'Explicitly denied for this admin in this profile.' },
+  ADMIN_OVERRIDE_ALLOW:         { chip: 'bg-emerald-100 text-emerald-800', label: 'Allow · all profiles',  hint: 'Explicitly allowed for this admin across all profiles.' },
+  ADMIN_OVERRIDE_DENY:          { chip: 'bg-rose-100 text-rose-800',       label: 'Deny · all profiles',   hint: 'Explicitly denied for this admin across all profiles.' },
+  BASE_ROLE_ADMIN:              { chip: 'bg-blue-100 text-blue-800',       label: 'Role default (ADMIN)',  hint: "Inherited — granted by the profile's ADMIN base role." },
+  BASE_ROLE_READ_ONLY_DEFAULT:  { chip: 'bg-slate-100 text-slate-700',     label: 'Role default (read-only)', hint: 'Inherited — the read-only base role grants this feature by default.' },
+  BASE_ROLE_DENIED:             { chip: 'bg-slate-100 text-slate-500',     label: 'Role default (read-only)', hint: 'Inherited — the read-only base role does not grant this feature.' },
 }
 function sourceChip(src: string): string  { return SOURCE_META[src]?.chip  || 'bg-gray-100 text-gray-700' }
 function sourceLabel(src: string): string { return SOURCE_META[src]?.label || src }
 function sourceHint(src: string): string  { return SOURCE_META[src]?.hint  || src }
+
+// Which per-profile override state the tri-state control should show as active.
+// "inherit" means no per-profile override — the feature resolves from the
+// admin-wide override or the base role instead.
+type OverrideState = 'allow' | 'deny' | 'inherit'
+function profileOverrideState(src: string): OverrideState {
+  if (src === 'PROFILE_OVERRIDE_ALLOW') return 'allow'
+  if (src === 'PROFILE_OVERRIDE_DENY')  return 'deny'
+  return 'inherit'
+}
 
 const featureLabel = featurePermissionLabel
 
@@ -228,21 +238,26 @@ const filteredFeatures = computed<FeatureEffective[]>(() => {
                     </span>
                   </td>
                   <td class="px-4 py-2 text-right whitespace-nowrap">
-                    <!-- Tri-state toggle. Highlights the active state; clicking an active
-                         state again clears the per-profile override. -->
+                    <!-- Explicit tri-state control. The active state is filled; the
+                         other two recede. "Inherit" clears the per-profile override
+                         so the feature falls back to the admin-wide setting or the
+                         role default. -->
                     <div class="inline-flex gap-1">
                       <button type="button" :disabled="saving"
-                              @click="setProfileOverride(selected!.profileId, f.key,
-                                        f.source === 'PROFILE_OVERRIDE_ALLOW' ? 'clear' : 'allow')"
-                              :class="f.source === 'PROFILE_OVERRIDE_ALLOW' ? 'btn-success-soft' : 'btn-secondary'"
+                              @click="setProfileOverride(selected!.profileId, f.key, 'allow')"
+                              :class="profileOverrideState(f.source) === 'allow' ? 'btn-success-soft' : 'btn-neutral'"
                               class="btn-compact"
                               title="Allow this feature in this profile only">Allow</button>
                       <button type="button" :disabled="saving"
-                              @click="setProfileOverride(selected!.profileId, f.key,
-                                        f.source === 'PROFILE_OVERRIDE_DENY' ? 'clear' : 'deny')"
-                              :class="f.source === 'PROFILE_OVERRIDE_DENY' ? 'btn-danger-soft' : 'btn-secondary'"
+                              @click="setProfileOverride(selected!.profileId, f.key, 'deny')"
+                              :class="profileOverrideState(f.source) === 'deny' ? 'btn-danger-soft' : 'btn-neutral'"
                               class="btn-compact"
                               title="Deny this feature in this profile only">Deny</button>
+                      <button type="button" :disabled="saving"
+                              @click="setProfileOverride(selected!.profileId, f.key, 'clear')"
+                              :class="profileOverrideState(f.source) === 'inherit' ? 'btn-secondary' : 'btn-neutral'"
+                              class="btn-compact"
+                              title="No override — inherit the admin-wide setting or role default">Inherit</button>
                     </div>
                   </td>
                 </tr>
