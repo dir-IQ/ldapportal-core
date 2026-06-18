@@ -265,7 +265,10 @@ public class AuthController {
 
         // Include effective feature permissions (mirrors PermissionService.requireFeature logic)
         if (principal.isSuperadmin()) {
-            body.put("features", java.util.Arrays.stream(com.ldapportal.entity.enums.FeatureKey.values())
+            // Edition-filtered: a superadmin on the community edition must not be
+            // handed feature keys (access reviews, SoD, HR) whose capability isn't
+            // entitled — they'd surface UI for features with no backend.
+            body.put("features", entitlementService.exposed(com.ldapportal.entity.enums.FeatureKey.class).stream()
                     .map(com.ldapportal.entity.enums.FeatureKey::getDbValue)
                     .toList());
             // System-scoped superadmin permissions (effective — owners get all)
@@ -290,7 +293,10 @@ public class AuthController {
                     "bulk.export", "reports.run", "directory.browse", "schema.read",
                     "user.read", "group.read", "approval.manage");
 
-            List<String> features = java.util.Arrays.stream(com.ldapportal.entity.enums.FeatureKey.values())
+            // Iterate the edition-exposed keys only, so an entitlement-gated key
+            // (e.g. access_review.*) never reaches the SPA on the community
+            // edition even when the admin's base role/override would include it.
+            List<String> features = entitlementService.exposed(com.ldapportal.entity.enums.FeatureKey.class).stream()
                     .filter(fk -> {
                         Boolean override = overrides.get(fk);
                         if (override != null) return override; // explicit override

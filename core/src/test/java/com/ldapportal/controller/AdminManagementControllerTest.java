@@ -171,7 +171,8 @@ class AdminManagementControllerTest extends BaseControllerTest {
     void featureCatalog_entitledEdition_returnsAllFeatureKeys() throws Exception {
         // Exercise the real exposure predicate against an "everything entitled"
         // license — every key, including the governance/HR ones, is exposed.
-        given(entitlementService.exposesFeature(any())).willCallRealMethod();
+        given(entitlementService.exposed(any())).willCallRealMethod();
+        given(entitlementService.exposes(any())).willCallRealMethod();
         given(entitlementService.has(any())).willReturn(true);
 
         mockMvc.perform(get(BASE_URL + "/permissions/feature-catalog")
@@ -189,7 +190,8 @@ class AdminManagementControllerTest extends BaseControllerTest {
     void featureCatalog_communityEdition_hidesGovernanceAndHrKeys() throws Exception {
         // No entitlements: the GOVERNANCE (SoD) and HR_SYNC (HR) keys must be
         // filtered out, while the core surface stays.
-        given(entitlementService.exposesFeature(any())).willCallRealMethod();
+        given(entitlementService.exposed(any())).willCallRealMethod();
+        given(entitlementService.exposes(any())).willCallRealMethod();
         given(entitlementService.has(any())).willReturn(false);
 
         long gated = java.util.Arrays.stream(com.ldapportal.entity.enums.FeatureKey.values())

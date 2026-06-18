@@ -1,13 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.entity.enums;
 
+import com.ldapportal.core.entitlement.EditionScoped;
+import com.ldapportal.core.entitlement.Entitlement;
+
 import java.util.Arrays;
 
 /**
  * All recordable audit actions.
  * DB values use dot-notation; a custom JPA converter handles the mapping.
+ *
+ * <p>Implements {@link EditionScoped}: actions emitted only by non-community
+ * features (access reviews, segregation of duties, HR sync, the auditor portal)
+ * carry the entitlement that gates them, so the audit-action filter catalogue is
+ * filtered through {@link com.ldapportal.core.entitlement.EntitlementService#exposed(Class)}
+ * rather than a hand-maintained exclude list on the client.</p>
  */
-public enum AuditAction {
+public enum AuditAction implements EditionScoped {
 
     // ── User operations ───────────────────────────────────────────────────────
     USER_CREATE          ("user.create"),
@@ -43,25 +52,25 @@ public enum AuditAction {
     APPROVAL_REJECTED    ("approval.rejected"),
     APPROVAL_REQUEST_EDITED("approval.request_edited"),
 
-    // ── Access review campaigns ─────────────────────────────────────────────
-    CAMPAIGN_CREATED     ("campaign.created"),
-    CAMPAIGN_ACTIVATED   ("campaign.activated"),
-    CAMPAIGN_CLOSED      ("campaign.closed"),
-    CAMPAIGN_CANCELLED   ("campaign.cancelled"),
-    CAMPAIGN_EXPIRED     ("campaign.expired"),
-    REVIEW_CONFIRMED     ("review.confirmed"),
-    REVIEW_REVOKED       ("review.revoked"),
-    REVIEW_AUTO_REVOKED  ("review.auto_revoked"),
+    // ── Access review campaigns (GOVERNANCE) ────────────────────────────────
+    CAMPAIGN_CREATED     ("campaign.created",        Entitlement.GOVERNANCE),
+    CAMPAIGN_ACTIVATED   ("campaign.activated",      Entitlement.GOVERNANCE),
+    CAMPAIGN_CLOSED      ("campaign.closed",         Entitlement.GOVERNANCE),
+    CAMPAIGN_CANCELLED   ("campaign.cancelled",      Entitlement.GOVERNANCE),
+    CAMPAIGN_EXPIRED     ("campaign.expired",        Entitlement.GOVERNANCE),
+    REVIEW_CONFIRMED     ("review.confirmed",        Entitlement.GOVERNANCE),
+    REVIEW_REVOKED       ("review.revoked",          Entitlement.GOVERNANCE),
+    REVIEW_AUTO_REVOKED  ("review.auto_revoked",     Entitlement.GOVERNANCE),
 
-    // ── SoD policy engine ──────────────────────────────────────────────────
-    SOD_POLICY_CREATED   ("sod.policy_created"),
-    SOD_POLICY_UPDATED   ("sod.policy_updated"),
-    SOD_POLICY_DELETED   ("sod.policy_deleted"),
-    SOD_SCAN_EXECUTED    ("sod.scan_executed"),
-    SOD_VIOLATION_DETECTED("sod.violation_detected"),
-    SOD_VIOLATION_EXEMPTED("sod.violation_exempted"),
-    SOD_VIOLATION_BLOCKED ("sod.violation_blocked"),
-    SOD_VIOLATION_RESOLVED("sod.violation_resolved"),
+    // ── SoD policy engine (GOVERNANCE) ──────────────────────────────────────
+    SOD_POLICY_CREATED   ("sod.policy_created",      Entitlement.GOVERNANCE),
+    SOD_POLICY_UPDATED   ("sod.policy_updated",      Entitlement.GOVERNANCE),
+    SOD_POLICY_DELETED   ("sod.policy_deleted",      Entitlement.GOVERNANCE),
+    SOD_SCAN_EXECUTED    ("sod.scan_executed",       Entitlement.GOVERNANCE),
+    SOD_VIOLATION_DETECTED("sod.violation_detected", Entitlement.GOVERNANCE),
+    SOD_VIOLATION_EXEMPTED("sod.violation_exempted", Entitlement.GOVERNANCE),
+    SOD_VIOLATION_BLOCKED ("sod.violation_blocked",  Entitlement.GOVERNANCE),
+    SOD_VIOLATION_RESOLVED("sod.violation_resolved", Entitlement.GOVERNANCE),
 
     // ── Lifecycle playbooks ─────────────────────────────────────────────────
     PLAYBOOK_EXECUTED    ("playbook.executed"),
@@ -79,17 +88,17 @@ public enum AuditAction {
     ACCOUNT_DELETE              ("account.delete"),
     ACCOUNT_PERMISSION_CHANGED  ("account.permission_changed"),
 
-    // ── HR integration ──────────────────────────────────────────────────────
-    HR_SYNC_STARTED      ("hr.sync_started"),
-    HR_SYNC_COMPLETED    ("hr.sync_completed"),
-    HR_SYNC_FAILED       ("hr.sync_failed"),
-    HR_EMPLOYEE_MATCHED  ("hr.employee_matched"),
-    HR_ORPHAN_DETECTED   ("hr.orphan_detected"),
+    // ── HR integration (HR_SYNC) ────────────────────────────────────────────
+    HR_SYNC_STARTED      ("hr.sync_started",     Entitlement.HR_SYNC),
+    HR_SYNC_COMPLETED    ("hr.sync_completed",   Entitlement.HR_SYNC),
+    HR_SYNC_FAILED       ("hr.sync_failed",      Entitlement.HR_SYNC),
+    HR_EMPLOYEE_MATCHED  ("hr.employee_matched", Entitlement.HR_SYNC),
+    HR_ORPHAN_DETECTED   ("hr.orphan_detected",  Entitlement.HR_SYNC),
 
-    // ── Auditor portal ──────────────────────────────────────────────────────
-    AUDITOR_LINK_CREATED ("auditor.link_created"),
-    AUDITOR_LINK_REVOKED ("auditor.link_revoked"),
-    AUDITOR_LINK_ACCESSED("auditor.link_accessed"),
+    // ── Auditor portal (GOVERNANCE) ─────────────────────────────────────────
+    AUDITOR_LINK_CREATED ("auditor.link_created",  Entitlement.GOVERNANCE),
+    AUDITOR_LINK_REVOKED ("auditor.link_revoked",  Entitlement.GOVERNANCE),
+    AUDITOR_LINK_ACCESSED("auditor.link_accessed", Entitlement.GOVERNANCE),
 
     // ── Changelog-sourced (raw LDAP changelog entry) ──────────────────────────
     LDAP_CHANGE          ("ldap.change"),
@@ -105,12 +114,26 @@ public enum AuditAction {
 
     private final String dbValue;
 
+    /** Entitlement gating exposure of this action in the filter catalogue, or
+     *  null when it's part of the core, edition-agnostic surface. */
+    private final Entitlement requiredEntitlement;
+
     AuditAction(String dbValue) {
+        this(dbValue, null);
+    }
+
+    AuditAction(String dbValue, Entitlement requiredEntitlement) {
         this.dbValue = dbValue;
+        this.requiredEntitlement = requiredEntitlement;
     }
 
     public String getDbValue() {
         return dbValue;
+    }
+
+    @Override
+    public Entitlement requiredEntitlement() {
+        return requiredEntitlement;
     }
 
     public static AuditAction fromDbValue(String value) {

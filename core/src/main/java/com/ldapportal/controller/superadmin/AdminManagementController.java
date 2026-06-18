@@ -174,8 +174,7 @@ public class AdminManagementController {
      */
     @GetMapping("/permissions/feature-catalog")
     public List<com.ldapportal.dto.admin.FeatureCatalogEntry> featureCatalog() {
-        return java.util.Arrays.stream(FeatureKey.values())
-                .filter(entitlementService::exposesFeature)
+        return entitlementService.exposed(FeatureKey.class).stream()
                 .map(com.ldapportal.dto.admin.FeatureCatalogEntry::of)
                 .toList();
     }

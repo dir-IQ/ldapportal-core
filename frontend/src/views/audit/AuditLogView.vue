@@ -11,7 +11,7 @@
       <label class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
       <select v-model="selectedDir" class="input w-64" aria-label="Directory">
         <option value="">All Directories</option>
-        <option v-for="d in directories" :key="d.id" :value="d.id">{{ d.displayName }}</option>
+        <option v-for="d in directoryOptions" :key="d.id" :value="d.id">{{ d.displayName }}</option>
       </select>
     </div>
     <div v-else-if="!auth.isSuperadmin && selectedProfile"
@@ -77,18 +77,39 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import type { LocationQueryValue } from 'vue-router'
 import { useApi } from '@/composables/useApi'
 import { useDirectoryPicker } from '@/composables/useDirectoryPicker'
 import { useAuthStore } from '@/stores/auth'
 import { useProfilePickerStore } from '@/stores/profilePicker'
-import { getAuditLog } from '@/api/audit'
-import { ACTION_LABELS, actionLabel, actionColor } from '@/components/dashboard/auditLabels'
+import { getAuditLog, getAuditActions } from '@/api/audit'
+import { actionLabel, actionColor } from '@/components/dashboard/auditLabels'
 import DataTable from '@/components/DataTable.vue'
 import FormField from '@/components/FormField.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
+
+interface AuditFilters {
+  from: string
+  to: string
+  action: string
+  source: string
+}
+
+interface AuditEvent {
+  id: string
+  occurredAt?: string
+  actorUsername?: string
+  action?: string
+  targetDn?: string
+  detail?: Record<string, unknown>
+}
+
+interface ActionOption { value: string; label: string }
+interface ActionGroup { label: string; options: ActionOption[] }
+interface DirectoryOption { id: string; displayName: string }
 
 const route = useRoute()
 const router = useRouter()
@@ -103,32 +124,41 @@ const profilePicker = useProfilePickerStore()
 // other admin view — rather than offering a directory picker (which doesn't
 // map to the profile-scoped admin model).
 const { dirId, directories, selectedDir, showPicker } = useDirectoryPicker()
+// useDirectoryPicker is a plain-JS composable; give the list a shape for the
+// template (the superadmin directory picker).
+const directoryOptions = computed<DirectoryOption[]>(() => directories.value as DirectoryOption[])
 const selectedProfile = computed(() => profilePicker.selectedProfile)
 const scopeDirectoryId = computed(() =>
   auth.isSuperadmin ? (dirId.value || '') : (selectedProfile.value?.directoryId || ''))
 // Admins need a profile selected before there's anything to scope to.
 const needsProfile = computed(() => !auth.isSuperadmin && !selectedProfile.value)
 
-const events     = ref([])
+const events     = ref<AuditEvent[]>([])
 const page       = ref(0)
 const totalPages = ref(1)
 const pageSize   = 20
 
-const filters = ref({ from: '', to: '', action: '', source: '' })
+const filters = ref<AuditFilters>({ from: '', to: '', action: '', source: '' })
 
 // Correlation id arrives as a query param from the Directory Sync
 // "trace" link; it narrows the log to a single originating operation.
 // vue-router types a query value as string | string[] | null, so a
 // hand-crafted ?correlationId=a&correlationId=b would arrive as an array
 // — collapse to the first value so we always bind a single string.
-const firstQueryValue = (v) => (Array.isArray(v) ? v[0] : v) || ''
-const correlationId = ref(firstQueryValue(route.query.correlationId))
+const firstQueryValue = (v: LocationQueryValue | LocationQueryValue[]): string =>
+  (Array.isArray(v) ? v[0] : v) || ''
+const correlationId = ref<string>(firstQueryValue(route.query.correlationId))
 
-// Group every AuditAction known to the frontend into operator-friendly
-// buckets. Prefix matching keeps this in sync with the backend enum
-// automatically — adding a new ACTION_LABELS entry under an existing
-// prefix shows up in the right group without code changes here.
-const ACTION_CATEGORIES = [
+// The audit-action filter catalogue is edition-filtered on the backend
+// (GET /audit/actions returns AuditAction names the current edition exposes),
+// so non-community actions (access reviews, SoD, HR, auditor portal) never
+// reach the picker without the client maintaining its own exclude list.
+const exposedActions = ref<string[]>([])
+
+// Display-only grouping of the backend-provided action names into
+// operator-friendly buckets. Prefix matching keeps grouping in sync with the
+// enum; the *set* of actions comes from the backend, not from these prefixes.
+const ACTION_CATEGORIES: { label: string; prefixes: string[] }[] = [
   { label: 'Users',                  prefixes: ['USER_', 'PASSWORD_'] },
   { label: 'Groups',                 prefixes: ['GROUP_'] },
   { label: 'Directory entries',      prefixes: ['ENTRY_', 'LDIF_', 'INTEGRITY_', 'BULK_', 'LDAP_'] },
@@ -140,32 +170,27 @@ const ACTION_CATEGORIES = [
   { label: 'Directory sync',         prefixes: ['REPLICATION_'] },
 ]
 
-// Action families for governance/compliance features that don't ship in the
-// community edition (access reviews, segregation of duties, HR integration,
-// auditor portal). Hidden from the picker — including the catch-all — so
-// operators aren't offered actions that never occur here.
-const NON_COMMUNITY_PREFIXES = ['CAMPAIGN_', 'REVIEW_', 'SOD_', 'HR_', 'AUDITOR_']
-const isCommunityAction = (k) => !NON_COMMUNITY_PREFIXES.some(p => k.startsWith(p))
-
-const actionGroups = (() => {
-  const claimed = new Set()
-  const groups = ACTION_CATEGORIES.map(cat => {
-    const options = Object.keys(ACTION_LABELS)
-      .filter(k => cat.prefixes.some(p => k.startsWith(p)))
-      .map(k => { claimed.add(k); return { value: k, label: ACTION_LABELS[k] } })
-      .sort((a, b) => a.label.localeCompare(b.label))
-    return { label: cat.label, options }
-  }).filter(g => g.options.length > 0)
-  // Catch-all so any future enum value not covered by a prefix above still
-  // appears in the picker rather than going missing — minus the non-community
-  // families, which would otherwise resurface here.
-  const orphans = Object.keys(ACTION_LABELS)
-    .filter(k => !claimed.has(k) && isCommunityAction(k))
-    .map(k => ({ value: k, label: ACTION_LABELS[k] }))
+const actionGroups = computed<ActionGroup[]>(() => {
+  const allowed = exposedActions.value
+  const claimed = new Set<string>()
+  const groups: ActionGroup[] = ACTION_CATEGORIES
+    .map(cat => {
+      const options = allowed
+        .filter(k => cat.prefixes.some(p => k.startsWith(p)))
+        .map(k => { claimed.add(k); return { value: k, label: actionLabel(k) } })
+        .sort((a, b) => a.label.localeCompare(b.label))
+      return { label: cat.label, options }
+    })
+    .filter(g => g.options.length > 0)
+  // Catch-all for any exposed action no category prefix claimed, so a new enum
+  // value still appears in the picker rather than going missing.
+  const orphans = allowed
+    .filter(k => !claimed.has(k))
+    .map(k => ({ value: k, label: actionLabel(k) }))
     .sort((a, b) => a.label.localeCompare(b.label))
   if (orphans.length) groups.push({ label: 'Other', options: orphans })
   return groups
-})()
+})
 
 const sourceOptions = [
   { value: '',                 label: 'All sources' },
@@ -181,17 +206,13 @@ const cols = [
   { key: 'detail',        label: 'Detail' },
 ]
 
-function fmtDate(v) {
-  if (!v) return '—'
-  return new Date(v).toLocaleString()
-}
-
-function formatDetail(detail) {
+function formatDetail(detail: unknown): string {
   if (!detail || typeof detail !== 'object') return ''
-  return Object.entries(detail).map(([k, v]) => `${k}: ${v}`).join('\n')
+  return Object.entries(detail as Record<string, unknown>)
+    .map(([k, v]) => `${k}: ${v}`).join('\n')
 }
 
-function clearFilters() {
+function clearFilters(): void {
   filters.value = { from: '', to: '', action: '', source: '' }
   // Also drop an active correlation trace so "Clear" means clear
   // everything. When no trace is active this is a no-op (the route
@@ -204,13 +225,23 @@ function clearFilters() {
 // each `from`/`to` to OffsetDateTime (zone required). new Date(v)
 // parses the value in the browser's local zone and toISOString()
 // normalises to ISO-8601 + UTC `Z` — exactly what the backend wants.
-function toIsoZoned(v) {
+function toIsoZoned(v: string): string | undefined {
   if (!v) return undefined
   const d = new Date(v)
   return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
 }
 
-async function load(p = 0) {
+async function loadActions(): Promise<void> {
+  try {
+    const { data } = await getAuditActions()
+    exposedActions.value = data
+  } catch {
+    // Non-fatal: leave the picker with no action options if the catalogue
+    // can't load; the rest of the log still works.
+  }
+}
+
+async function load(p = 0): Promise<void> {
   // Admin view scopes to the sidebar-selected profile; until one is chosen
   // (e.g. while it loads after mount) there's nothing to query.
   if (needsProfile.value) {
@@ -244,7 +275,7 @@ async function load(p = 0) {
   }
 }
 
-function clearCorrelation() {
+function clearCorrelation(): void {
   // Drop the query param; the route watcher reloads with it removed.
   const q = { ...route.query }
   delete q.correlationId
@@ -265,7 +296,7 @@ watch(() => selectedProfile.value?.directoryId, () => {
   if (!auth.isSuperadmin) load(0)
 })
 
-onMounted(() => load(0))
+onMounted(() => { loadActions(); load(0) })
 </script>
 
 <style scoped>
