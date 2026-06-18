@@ -788,6 +788,7 @@ public class LdapOperationService {
         permissionService.requireDnWithinScope(principal, directoryId, req.parentDn());
 
         String targetKeyAttr = "uid";
+        String dnSourceColumn = null;
         List<CsvColumnMappingDto> mappings = req.columnMappings() != null
                 ? new ArrayList<>(req.columnMappings()) : new ArrayList<>();
         List<String> objectClasses = List.of();
@@ -798,6 +799,7 @@ public class LdapOperationService {
             List<CsvMappingTemplateEntry> entries =
                     csvTemplateService.loadEntries(req.templateId());
             targetKeyAttr = template.getTargetKeyAttribute();
+            dnSourceColumn = template.getDnSourceColumn();
             if (mappings.isEmpty()) {
                 mappings = entries.stream()
                         .map(e -> new CsvColumnMappingDto(
@@ -810,6 +812,8 @@ public class LdapOperationService {
         }
 
         if (req.targetKeyAttribute() != null) targetKeyAttr = req.targetKeyAttribute();
+        if (req.dnSourceColumn() != null) dnSourceColumn = req.dnSourceColumn();
+        if (dnSourceColumn != null && dnSourceColumn.isBlank()) dnSourceColumn = null;
 
         boolean skipHeader = resolveSkipHeaderRow(req.skipHeaderRow(), req.templateId(), directoryId, principal);
 
@@ -830,7 +834,7 @@ public class LdapOperationService {
         }
 
         return bulkUserService.previewImport(
-                csvInput, req.parentDn(), targetKeyAttr, mappings, skipHeader, requiredAttrs);
+                csvInput, req.parentDn(), targetKeyAttr, mappings, skipHeader, requiredAttrs, dnSourceColumn);
     }
 
     /**
@@ -850,6 +854,7 @@ public class LdapOperationService {
         String            targetKeyAttr    = "uid";
         ConflictHandling  conflictHandling = ConflictHandling.SKIP;
         List<String>      objectClasses    = List.of();
+        String            dnSourceColumn   = null;
         List<CsvColumnMappingDto> mappings = req.columnMappings() != null
                 ? new ArrayList<>(req.columnMappings()) : new ArrayList<>();
 
@@ -860,6 +865,7 @@ public class LdapOperationService {
                     csvTemplateService.loadEntries(req.templateId());
             targetKeyAttr    = template.getTargetKeyAttribute();
             conflictHandling = template.getConflictHandling();
+            dnSourceColumn   = template.getDnSourceColumn();
             if (template.getObjectClass() != null && !template.getObjectClass().isBlank()) {
                 objectClasses = List.of(template.getObjectClass().split(","));
             }
@@ -875,6 +881,8 @@ public class LdapOperationService {
         // Request-level fields take final precedence
         if (req.targetKeyAttribute() != null)  targetKeyAttr    = req.targetKeyAttribute();
         if (req.conflictHandling()    != null)  conflictHandling = req.conflictHandling();
+        if (req.dnSourceColumn()      != null)  dnSourceColumn   = req.dnSourceColumn();
+        if (dnSourceColumn != null && dnSourceColumn.isBlank()) dnSourceColumn = null;
 
         boolean skipHeader = resolveSkipHeaderRow(req.skipHeaderRow(), req.templateId(), directoryId, principal);
 
@@ -895,7 +903,7 @@ public class LdapOperationService {
 
         BulkImportResult result = bulkUserService.importCsv(
                 dc, csvInput, req.parentDn(), targetKeyAttr, conflictHandling, mappings,
-                objectClasses, skipHeader, profileContext);
+                objectClasses, skipHeader, dnSourceColumn, profileContext);
 
         auditService.record(principal, directoryId, AuditAction.USER_CREATE, req.parentDn(),
                 Map.of("operation", "bulkImport",

@@ -9,6 +9,7 @@ import com.ldapportal.entity.enums.ConflictHandling;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdapUserService;
 import com.ldapportal.ldap.model.LdapUser;
+import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ResultCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -296,6 +297,125 @@ class BulkUserServiceTest {
         service.exportCsv(dc, null, null, List.of("cn"));
 
         verify(userService).processUsers(eq(dc), eq("(objectClass=*)"), isNull(), any(), eq("cn"));
+    }
+
+    // ── Import — DN from a CSV column ──────────────────────────────────────────
+
+    /** Import using the deepest overload so the dnSourceColumn override is exercised. */
+    private BulkImportResult importWithDnColumn(String csvContent, String parentDn,
+                                                ConflictHandling conflict, String dnColumn) throws IOException {
+        return service.importCsv(dc, csv(csvContent), parentDn, "uid", conflict,
+                List.of(), List.of(), true, dnColumn, null);
+    }
+
+    @Test
+    void importCsv_dnFromColumn_usesColumnDnAndSkipsItAsAttribute() throws IOException {
+        // DN value carries commas → must be CSV-quoted.
+        String csvContent = "dn,cn,mail\n"
+                + "\"cn=John Doe,ou=people,dc=example,dc=com\",John Doe,jd@example.com\n";
+
+        BulkImportResult result = importWithDnColumn(
+                csvContent, "ou=people,dc=example,dc=com", ConflictHandling.SKIP, "dn");
+
+        assertThat(result.created()).isEqualTo(1);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> attrs = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(eq(dc),
+                eq("cn=John Doe,ou=people,dc=example,dc=com"), attrs.capture());
+        // The DN column is not written as an attribute; real attributes still are.
+        assertThat(attrs.getValue()).doesNotContainKey("dn");
+        assertThat(attrs.getValue().get("mail")).containsExactly("jd@example.com");
+        assertThat(attrs.getValue().get("cn")).containsExactly("John Doe");
+    }
+
+    @Test
+    void importCsv_dnFromColumn_injectsRdnAttributeWhenAbsent() throws IOException {
+        // No cn column — the RDN attribute must be derived from the DN so the ADD
+        // satisfies LDAP naming rules.
+        String csvContent = "dn,mail\n"
+                + "\"cn=Jane,ou=people,dc=example,dc=com\",jane@example.com\n";
+
+        importWithDnColumn(csvContent, "ou=people,dc=example,dc=com", ConflictHandling.SKIP, "dn");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> attrs = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(eq(dc),
+                eq("cn=Jane,ou=people,dc=example,dc=com"), attrs.capture());
+        assertThat(attrs.getValue().get("cn")).containsExactly("Jane");
+    }
+
+    @Test
+    void importCsv_dnFromColumn_rejectsDnOutsideParentContainer() throws IOException {
+        String csvContent = "dn,cn\n\"cn=Bad,ou=other,dc=example,dc=com\",Bad\n";
+
+        BulkImportResult result = importWithDnColumn(
+                csvContent, "ou=people,dc=example,dc=com", ConflictHandling.SKIP, "dn");
+
+        assertThat(result.errors()).isEqualTo(1);
+        assertThat(result.rows().get(0).message()).contains("not within");
+        verify(userService, never()).createUser(any(), anyString(), any());
+    }
+
+    @Test
+    void importCsv_dnFromColumn_rejectsInvalidDnSyntax() throws IOException {
+        String csvContent = "dn,cn\nnot-a-dn,Bob\n";
+
+        BulkImportResult result = importWithDnColumn(
+                csvContent, "ou=people,dc=example,dc=com", ConflictHandling.SKIP, "dn");
+
+        assertThat(result.errors()).isEqualTo(1);
+        assertThat(result.rows().get(0).message()).contains("Invalid DN");
+        verify(userService, never()).createUser(any(), anyString(), any());
+    }
+
+    @Test
+    void importCsv_dnFromColumn_missingDnValue_isError() throws IOException {
+        String csvContent = "dn,cn\n,Bob\n";
+
+        BulkImportResult result = importWithDnColumn(
+                csvContent, "ou=people,dc=example,dc=com", ConflictHandling.SKIP, "dn");
+
+        assertThat(result.errors()).isEqualTo(1);
+        assertThat(result.rows().get(0).message()).contains("Missing DN value");
+        verify(userService, never()).createUser(any(), anyString(), any());
+    }
+
+    @Test
+    void importCsv_dnFromColumn_overwriteProtectsParsedRdnAttribute() throws IOException {
+        String csvContent = "dn,cn,mail\n"
+                + "\"cn=John,ou=people,dc=example,dc=com\",John,new@example.com\n";
+        doThrow(entryAlreadyExists("cn=John,ou=people,dc=example,dc=com"))
+                .when(userService).createUser(eq(dc), anyString(), any());
+
+        BulkImportResult result = importWithDnColumn(
+                csvContent, "ou=people,dc=example,dc=com", ConflictHandling.OVERWRITE, "dn");
+
+        assertThat(result.updated()).isEqualTo(1);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<Modification>> mods = ArgumentCaptor.forClass(List.class);
+        verify(userService).updateUser(eq(dc),
+                eq("cn=John,ou=people,dc=example,dc=com"), mods.capture());
+        // The RDN attribute (cn, from the DN) must never be REPLACEd; mail is.
+        assertThat(mods.getValue()).noneMatch(m -> m.getAttributeName().equalsIgnoreCase("cn"));
+        assertThat(mods.getValue()).anyMatch(m -> m.getAttributeName().equalsIgnoreCase("mail"));
+    }
+
+    @Test
+    void previewImport_dnFromColumn_resolvesDnAndInjectsRequiredRdn() throws IOException {
+        // cn is schema-required but supplied only via the DN's RDN, not a column.
+        String csvContent = "dn,mail\n"
+                + "\"cn=Jane,ou=people,dc=example,dc=com\",jane@example.com\n"
+                + "\"cn=Bad,ou=other,dc=example,dc=com\",bad@example.com\n";
+
+        var result = service.previewImport(csv(csvContent), "ou=people,dc=example,dc=com",
+                "uid", List.of(), true, List.of("cn"), "dn");
+
+        // Row 1: in scope, RDN cn injected → no missing required, DN computed.
+        assertThat(result.rows().get(0).computedDn()).isEqualTo("cn=Jane,ou=people,dc=example,dc=com");
+        assertThat(result.rows().get(0).missingRequired()).isEmpty();
+        // Row 2: out of scope → DN unresolved, flagged via the dn column label.
+        assertThat(result.rows().get(1).computedDn()).isNull();
+        assertThat(result.rows().get(1).missingRequired()).contains("dn");
     }
 
     // ── Preview — required-attribute validation ──────────────────────────────

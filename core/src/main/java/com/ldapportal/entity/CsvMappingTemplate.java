@@ -54,6 +54,15 @@ public class CsvMappingTemplate {
     @Column(name = "object_class")
     private String objectClass;
 
+    /**
+     * When set, each entry's full DN is taken verbatim from this CSV column
+     * instead of being constructed from the RDN (key) attribute + the import's
+     * parent DN. The DN must still fall within the import's parent container.
+     * Null (the default) keeps the construct-from-RDN behaviour.
+     */
+    @Column(name = "dn_source_column")
+    private String dnSourceColumn;
+
     /** Whether to treat the first row of the CSV as column headers (true) or data (false). */
     @Column(name = "skip_header_row", nullable = false)
     private boolean skipHeaderRow = true;
