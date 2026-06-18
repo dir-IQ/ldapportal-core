@@ -23,6 +23,39 @@
         See docs/refactor-plan.md Phase 5 for the module boundary rationale.
     </description>
 
+    <!-- Maven Central publishing metadata, shared by every published module
+         (core and the open-source addons). Inert for normal/CI builds; the
+         `release` profile below consumes it, and flatten (flattenMode=ossrh)
+         inlines it into each module's self-contained published POM. The parent
+         itself is never published — it's the aggregator. -->
+    <!-- The <scm> inherit.append.path="false" attributes keep the clone
+         connection/url verbatim in every child (a module-path append would
+         break `git clone`). The project <url> takes Maven's default child
+         append (…/<module>); harmless and Central-valid, so left as-is. -->
+    <url>https://github.com/dir-IQ/ldapportal-core</url>
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+    <developers>
+        <developer>
+            <name>Sanjay Mishra</name>
+            <email>mishra.sanjayk@gmail.com</email>
+            <organization>dir-IQ</organization>
+            <organizationUrl>https://github.com/dir-IQ</organizationUrl>
+        </developer>
+    </developers>
+    <scm child.scm.connection.inherit.append.path="false"
+         child.scm.developerConnection.inherit.append.path="false"
+         child.scm.url.inherit.append.path="false">
+        <connection>scm:git:https://github.com/dir-IQ/ldapportal-core.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/dir-IQ/ldapportal-core.git</developerConnection>
+        <url>https://github.com/dir-IQ/ldapportal-core</url>
+    </scm>
+
     <modules>
         <module>core</module>
         <!--
@@ -224,5 +257,109 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <profiles>
+        <!--
+            Maven Central release profile (Phase 5b). Activated only with
+            `-Prelease`, so dev/CI/reactor builds are entirely unaffected and
+            need no GPG key. Lives in the parent so every published module —
+            core and the open-source addons (addons/isva) — inherits the same
+            flatten + sign + central-publishing machinery without copying it.
+            Run from the release workflow, which scopes the deploy to the
+            publishable modules:
+
+              ./mvnw -Prelease -DskipTests -pl core,addons/isva deploy
+
+            The `-pl` scoping is what keeps the never-published assembly
+            modules (distribution/*) and the aggregator parent out of the
+            upload; do not run `-Prelease deploy` over the full reactor.
+
+            - flatten: published modules inherit the aggregator ldapportal-parent,
+              which is NOT published. flatten resolves the parent and emits a
+              self-contained POM (flattenMode=ossrh keeps the name/description/
+              url/scm/licenses/developers Central requires).
+            - source + javadoc jars: required by Central.
+            - gpg: signs all artifacts (key supplied via env in CI).
+            - central-publishing-maven-plugin: uploads to the Central Portal;
+              autoPublish=false leaves the deployment in a droppable staging
+              state for a dry-run before manual release.
+        -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>flatten-maven-plugin</artifactId>
+                        <version>1.7.3</version>
+                        <configuration>
+                            <flattenMode>ossrh</flattenMode>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>flatten</id>
+                                <phase>process-resources</phase>
+                                <goals><goal>flatten</goal></goals>
+                            </execution>
+                            <execution>
+                                <id>flatten-clean</id>
+                                <phase>clean</phase>
+                                <goals><goal>clean</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals><goal>jar-no-fork</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <configuration>
+                            <!-- Don't let strict doclint or a single bad
+                                 @link fail a release; publishing the jar
+                                 matters more than pristine javadoc. -->
+                            <doclint>none</doclint>
+                            <failOnError>false</failOnError>
+                            <quiet>true</quiet>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals><goal>jar</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals><goal>sign</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <version>0.10.0</version>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>false</autoPublish>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 
 </project>
