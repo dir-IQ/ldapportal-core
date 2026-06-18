@@ -31,7 +31,7 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
               AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
               AND (CAST(:from AS TIMESTAMPTZ) IS NULL OR e.occurred_at >= CAST(:from AS TIMESTAMPTZ))
               AND (CAST(:to AS TIMESTAMPTZ)   IS NULL OR e.occurred_at <= CAST(:to AS TIMESTAMPTZ))
-            ORDER BY e.occurred_at DESC
+            ORDER BY e.occurred_at DESC, e.recorded_at DESC
             """,
             countQuery = """
             SELECT COUNT(*) FROM audit_events e
@@ -72,7 +72,7 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
               AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
               AND (CAST(:from AS TIMESTAMPTZ) IS NULL OR e.occurred_at >= CAST(:from AS TIMESTAMPTZ))
               AND (CAST(:to AS TIMESTAMPTZ)   IS NULL OR e.occurred_at <= CAST(:to AS TIMESTAMPTZ))
-            ORDER BY e.occurred_at DESC
+            ORDER BY e.occurred_at DESC, e.recorded_at DESC
             """,
             countQuery = """
             SELECT COUNT(*) FROM audit_events e
