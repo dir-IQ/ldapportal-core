@@ -4,13 +4,20 @@
     <h1 class="text-2xl font-bold text-gray-900 mb-4">Audit Log</h1>
     <p class="text-sm text-gray-500 mt-1">Directory change events and administrative actions</p>
 
-    <!-- Directory picker (superadmin only) -->
-    <div v-if="showPicker" class="mb-4">
+    <!-- Scope control. Superadmins pick a directory (incl. "All Directories").
+         Admins work against a sidebar-selected provisioning profile, so the
+         audit log inherits that and shows the scope read-only. -->
+    <div v-if="auth.isSuperadmin && showPicker" class="mb-4">
       <label class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
-      <select v-model="selectedDir" class="input w-64">
+      <select v-model="selectedDir" class="input w-64" aria-label="Directory">
         <option value="">All Directories</option>
         <option v-for="d in directories" :key="d.id" :value="d.id">{{ d.displayName }}</option>
       </select>
+    </div>
+    <div v-else-if="!auth.isSuperadmin && selectedProfile"
+         class="mb-3 bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-600">
+      Showing audit events for profile
+      <span class="font-medium text-gray-800">{{ selectedProfile.name }}</span>.
     </div>
 
     <!-- Correlation-trace banner: shown when arriving via a "trace" link
@@ -31,7 +38,7 @@
       <FormField label="To"   type="datetime-local" v-model="filters.to" />
       <div class="mb-2">
         <label class="block text-sm font-medium text-gray-700 mb-1">Action</label>
-        <select v-model="filters.action" class="input block w-full">
+        <select v-model="filters.action" class="input block w-full" aria-label="Action">
           <option value="">All actions</option>
           <optgroup v-for="group in actionGroups" :key="group.label" :label="group.label">
             <option v-for="opt in group.options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
@@ -45,7 +52,11 @@
       <button @click="clearFilters" class="btn-secondary">Clear</button>
     </div>
 
-    <DataTable :columns="cols" :rows="events" :loading="loading" row-key="id"
+    <div v-if="needsProfile"
+         class="bg-white border border-gray-200 rounded-xl p-8 text-center text-sm text-gray-500">
+      Select a profile in the sidebar to view its audit log.
+    </div>
+    <DataTable v-else :columns="cols" :rows="events" :loading="loading" row-key="id"
       empty-text="No audit events found" empty-icon="clipboard">
       <template #cell-occurredAt="{ value }"><RelativeTime :value="value" /></template>
       <template #cell-action="{ value }">
@@ -58,7 +69,7 @@
     </DataTable>
 
     <!-- Pagination -->
-    <div class="flex items-center justify-between mt-4">
+    <div v-if="!needsProfile" class="flex items-center justify-between mt-4">
       <button :disabled="page === 0" @click="load(page - 1)" class="btn-secondary">← Prev</button>
       <span class="text-sm text-gray-500">Page {{ page + 1 }} of {{ totalPages }}</span>
       <button :disabled="page >= totalPages - 1" @click="load(page + 1)" class="btn-secondary">Next →</button>
@@ -67,10 +78,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useApi } from '@/composables/useApi'
 import { useDirectoryPicker } from '@/composables/useDirectoryPicker'
+import { useAuthStore } from '@/stores/auth'
+import { useProfilePickerStore } from '@/stores/profilePicker'
 import { getAuditLog } from '@/api/audit'
 import { ACTION_LABELS, actionLabel, actionColor } from '@/components/dashboard/auditLabels'
 import DataTable from '@/components/DataTable.vue'
@@ -80,7 +93,21 @@ import RelativeTime from '@/components/RelativeTime.vue'
 const route = useRoute()
 const router = useRouter()
 const { loading, call } = useApi()
-const { dirId, directories, selectedDir, loadingDirs, showPicker } = useDirectoryPicker()
+const auth = useAuthStore()
+const profilePicker = useProfilePickerStore()
+
+// Two scoping models, by role. Superadmins pick a directory (or "All
+// Directories") via the existing directory picker. Admins work against a
+// provisioning profile chosen in the sidebar; the audit log inherits that
+// selection and scopes to the profile's directory — consistent with every
+// other admin view — rather than offering a directory picker (which doesn't
+// map to the profile-scoped admin model).
+const { dirId, directories, selectedDir, showPicker } = useDirectoryPicker()
+const selectedProfile = computed(() => profilePicker.selectedProfile)
+const scopeDirectoryId = computed(() =>
+  auth.isSuperadmin ? (dirId.value || '') : (selectedProfile.value?.directoryId || ''))
+// Admins need a profile selected before there's anything to scope to.
+const needsProfile = computed(() => !auth.isSuperadmin && !selectedProfile.value)
 
 const events     = ref([])
 const page       = ref(0)
@@ -106,16 +133,19 @@ const ACTION_CATEGORIES = [
   { label: 'Groups',                 prefixes: ['GROUP_'] },
   { label: 'Directory entries',      prefixes: ['ENTRY_', 'LDIF_', 'INTEGRITY_', 'BULK_', 'LDAP_'] },
   { label: 'Approvals',              prefixes: ['APPROVAL_'] },
-  { label: 'Access reviews',         prefixes: ['CAMPAIGN_', 'REVIEW_'] },
-  { label: 'Segregation of duties',  prefixes: ['SOD_'] },
   { label: 'Lifecycle playbooks',    prefixes: ['PLAYBOOK_'] },
-  { label: 'HR integration',         prefixes: ['HR_'] },
   { label: 'Provisioning profiles',  prefixes: ['PROFILE_'] },
   { label: 'Application accounts',   prefixes: ['ACCOUNT_'] },
-  { label: 'Auditor links',          prefixes: ['AUDITOR_'] },
   { label: 'API tokens',             prefixes: ['API_TOKEN_'] },
   { label: 'Directory sync',         prefixes: ['REPLICATION_'] },
 ]
+
+// Action families for governance/compliance features that don't ship in the
+// community edition (access reviews, segregation of duties, HR integration,
+// auditor portal). Hidden from the picker — including the catch-all — so
+// operators aren't offered actions that never occur here.
+const NON_COMMUNITY_PREFIXES = ['CAMPAIGN_', 'REVIEW_', 'SOD_', 'HR_', 'AUDITOR_']
+const isCommunityAction = (k) => !NON_COMMUNITY_PREFIXES.some(p => k.startsWith(p))
 
 const actionGroups = (() => {
   const claimed = new Set()
@@ -126,10 +156,11 @@ const actionGroups = (() => {
       .sort((a, b) => a.label.localeCompare(b.label))
     return { label: cat.label, options }
   }).filter(g => g.options.length > 0)
-  // Catch-all so any future enum value not covered by a prefix above
-  // still appears in the picker rather than going missing.
+  // Catch-all so any future enum value not covered by a prefix above still
+  // appears in the picker rather than going missing — minus the non-community
+  // families, which would otherwise resurface here.
   const orphans = Object.keys(ACTION_LABELS)
-    .filter(k => !claimed.has(k))
+    .filter(k => !claimed.has(k) && isCommunityAction(k))
     .map(k => ({ value: k, label: ACTION_LABELS[k] }))
     .sort((a, b) => a.label.localeCompare(b.label))
   if (orphans.length) groups.push({ label: 'Other', options: orphans })
@@ -180,12 +211,19 @@ function toIsoZoned(v) {
 }
 
 async function load(p = 0) {
+  // Admin view scopes to the sidebar-selected profile; until one is chosen
+  // (e.g. while it loads after mount) there's nothing to query.
+  if (needsProfile.value) {
+    events.value = []
+    totalPages.value = 1
+    return
+  }
   page.value = p
   try {
     await call(async () => {
       const params = {
         page: p, size: pageSize,
-        directoryId:   dirId.value || undefined,
+        directoryId:   scopeDirectoryId.value || undefined,
         // datetime-local yields `YYYY-MM-DDTHH:MM` with no zone, but
         // the backend's @RequestParam OffsetDateTime requires a zone
         // offset. Interpret the picker value in the user's local zone
@@ -219,6 +257,12 @@ function clearCorrelation() {
 watch(() => route.query.correlationId, (v) => {
   correlationId.value = firstQueryValue(v)
   load(0)
+})
+
+// Admins: the sidebar profile populates asynchronously after mount and can be
+// switched while on this view — reload whenever its directory changes.
+watch(() => selectedProfile.value?.directoryId, () => {
+  if (!auth.isSuperadmin) load(0)
 })
 
 onMounted(() => load(0))
