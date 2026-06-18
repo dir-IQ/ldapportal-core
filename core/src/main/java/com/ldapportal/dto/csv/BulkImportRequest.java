@@ -34,6 +34,13 @@ public record BulkImportRequest(
         ConflictHandling conflictHandling,
         /** Whether to treat the first CSV row as headers (true, default) or data (false). */
         Boolean skipHeaderRow,
+        /**
+         * Optional override. When set, each entry's full DN is read from this CSV
+         * column instead of being constructed from the RDN attribute + {@code parentDn}.
+         * The DN must still fall within {@code parentDn} (scope guard). Overrides the
+         * template's {@code dnSourceColumn}.
+         */
+        String dnSourceColumn,
         /** Ad-hoc column mappings. When non-empty these override any template entries. */
         @Valid List<CsvColumnMappingDto> columnMappings) {
 }

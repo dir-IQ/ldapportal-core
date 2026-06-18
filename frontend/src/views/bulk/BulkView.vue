@@ -139,6 +139,12 @@
           </div>
         </div>
 
+        <p v-if="selectedTemplate && selectedTemplate.dnSourceColumn" class="text-xs text-gray-600 -mt-1">
+          DN is read from CSV column
+          <span class="font-mono text-gray-800">{{ selectedTemplate.dnSourceColumn }}</span>
+          (must fall within the parent container).
+        </p>
+
         <button @click="doPreview" :disabled="!canImport || previewing" class="btn-primary">
           {{ previewing ? 'Loading preview…' : 'Preview Import' }}
         </button>
@@ -386,7 +392,19 @@
         <div class="grid grid-cols-2 gap-2 items-start">
           <div class="space-y-2">
             <FormField label="Template Name" v-model="templateForm.name" required />
-            <FormField label="RDN Attribute" v-model="templateForm.targetKeyAttribute" placeholder="uid" />
+            <FormField label="RDN Attribute" v-model="templateForm.targetKeyAttribute" placeholder="uid"
+                       :disabled="dnFromColumn" />
+            <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input type="checkbox" v-model="dnFromColumn" class="rounded text-blue-600" />
+              Read DN from a CSV column
+            </label>
+            <div v-if="dnFromColumn">
+              <FormField label="DN column" v-model="templateForm.dnSourceColumn" placeholder="dn" />
+              <p class="text-xs text-gray-500 mt-1">
+                Each row's full DN is taken from this column instead of being built
+                from the RDN attribute. The DN must fall within the import's parent container.
+              </p>
+            </div>
             <div>
               <label for="bulk-template-form-conflict-handling" class="block text-sm font-medium text-gray-700 mb-1">Conflict Handling</label>
               <select id="bulk-template-form-conflict-handling" v-model="templateForm.conflictHandling" class="input w-full">
@@ -512,6 +530,8 @@ interface CsvTemplate {
   targetKeyAttribute: string
   conflictHandling: string
   skipHeaderRow?: boolean
+  // When set, the DN is read from this CSV column instead of RDN + parent DN.
+  dnSourceColumn?: string | null
   entries?: TemplateEntry[]
 }
 interface ImportForm { parentDn: string }
@@ -524,6 +544,8 @@ interface TemplateForm {
   targetKeyAttribute: string
   conflictHandling: string
   skipHeaderRow: boolean
+  // CSV column holding the full DN; '' means construct from RDN + parent DN.
+  dnSourceColumn: string
   entries: TemplateEntry[]
 }
 interface PreviewRow {
@@ -657,8 +679,12 @@ const templateSaving      = ref(false)
 const deleteTemplateTarget = ref<CsvTemplate | null>(null)
 const templateForm = ref<TemplateForm>({
   name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
-  skipHeaderRow: true, entries: []
+  skipHeaderRow: true, dnSourceColumn: '', entries: []
 })
+// Whether the template reads the DN from a CSV column (vs constructing it from
+// the RDN attribute + parent DN). Kept separate so toggling off preserves the
+// typed column name until save.
+const dnFromColumn = ref(false)
 
 // ObjectClass picker state
 const objectClasses       = ref<string[]>([])
@@ -770,8 +796,9 @@ function openCreateTemplate() {
   availableOcHighlight.value = null
   templateForm.value = {
     name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
-    skipHeaderRow: true, entries: []
+    skipHeaderRow: true, dnSourceColumn: '', entries: []
   }
+  dnFromColumn.value = false
   showTemplateModal.value = true
 }
 
@@ -785,8 +812,10 @@ function openEditTemplate(t: CsvTemplate) {
     targetKeyAttribute: t.targetKeyAttribute,
     conflictHandling: t.conflictHandling,
     skipHeaderRow: t.skipHeaderRow !== false,
+    dnSourceColumn: t.dnSourceColumn ?? '',
     entries: (t.entries ?? []).map(e => ({ ...e, _required: false })),
   }
+  dnFromColumn.value = !!t.dnSourceColumn
   showTemplateModal.value = true
 }
 
@@ -832,6 +861,9 @@ async function saveTemplate() {
       targetKeyAttribute: templateForm.value.targetKeyAttribute,
       conflictHandling: templateForm.value.conflictHandling,
       skipHeaderRow: templateForm.value.skipHeaderRow,
+      dnSourceColumn: dnFromColumn.value
+        ? (templateForm.value.dnSourceColumn.trim() || null)
+        : null,
       entries: templateForm.value.entries
         .filter(e => e.csvColumn && e.csvColumn.trim())
         .map(e => ({ csvColumn: e.csvColumn, ldapAttribute: e.ldapAttribute, ignored: false })),

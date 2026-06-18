@@ -21,5 +21,11 @@ public record CreateCsvMappingTemplateRequest(
         ConflictHandling conflictHandling,
         /** Whether to treat the first CSV row as headers (true, default) or data (false). */
         Boolean skipHeaderRow,
+        /**
+         * Optional. When set, the importer reads each entry's full DN from this CSV
+         * column instead of constructing it from the RDN attribute + parent DN.
+         * Blank/null keeps the default construct-from-RDN behaviour.
+         */
+        String dnSourceColumn,
         @NotNull @Valid List<CsvColumnMappingDto> entries) {
 }

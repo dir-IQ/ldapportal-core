@@ -13,7 +13,9 @@ import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdapUserService;
 import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.util.CsvUtils;
+import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.Filter;
+import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.RDN;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
@@ -31,6 +33,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -87,7 +90,7 @@ public class BulkUserService {
                                       List<String> objectClasses,
                                       boolean skipHeaderRow) throws IOException {
         return importCsv(dc, csvInput, parentDn, targetKeyAttr, conflictHandling,
-                columnMappings, objectClasses, skipHeaderRow, null);
+                columnMappings, objectClasses, skipHeaderRow, null, null);
     }
 
     /**
@@ -100,6 +103,10 @@ public class BulkUserService {
      * @param conflictHandling action when an entry with the given key already exists
      * @param columnMappings  CSV column → LDAP attribute mapping;
      *                        empty list = use CSV header names as attribute names directly
+     * @param dnSourceColumn  optional. When set, each row's full DN is read verbatim
+     *                        from this CSV column instead of being constructed from
+     *                        {@code targetKeyAttr} + {@code parentDn}. The DN must
+     *                        still fall within {@code parentDn} (scope guard).
      * @param profileContext  optional. When non-null, each row gets the profile's
      *                        attribute defaults applied before create (matching the
      *                        manual-create path) and the profile's effective group
@@ -113,6 +120,7 @@ public class BulkUserService {
                                       List<CsvColumnMappingDto> columnMappings,
                                       List<String> objectClasses,
                                       boolean skipHeaderRow,
+                                      String dnSourceColumn,
                                       ProfileContext profileContext) throws IOException {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
@@ -127,7 +135,7 @@ public class BulkUserService {
         for (Map<String, String> row : rows) {
             rowNum++;
             rowResults.add(processRow(dc, row, colToAttr, targetKeyAttr,
-                    parentDn, conflictHandling, objectClasses, rowNum, profileContext));
+                    parentDn, conflictHandling, objectClasses, dnSourceColumn, rowNum, profileContext));
         }
 
         long created = countByStatus(rowResults, BulkImportRowResult.Status.CREATED);
@@ -162,6 +170,22 @@ public class BulkUserService {
                                                   List<CsvColumnMappingDto> columnMappings,
                                                   boolean skipHeaderRow,
                                                   List<String> requiredAttrs) throws IOException {
+        return previewImport(csvInput, parentDn, targetKeyAttr, columnMappings,
+                skipHeaderRow, requiredAttrs, null);
+    }
+
+    /**
+     * Preview variant with the optional {@code dnSourceColumn} override: when set,
+     * the per-row DN is read from that CSV column (and scope-checked against
+     * {@code parentDn}) instead of being constructed from the RDN attribute.
+     */
+    public BulkImportPreviewResult previewImport(InputStream csvInput,
+                                                  String parentDn,
+                                                  String targetKeyAttr,
+                                                  List<CsvColumnMappingDto> columnMappings,
+                                                  boolean skipHeaderRow,
+                                                  List<String> requiredAttrs,
+                                                  String dnSourceColumn) throws IOException {
 
         Map<String, String> colToAttr = resolveColumnMap(columnMappings);
         List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow);
@@ -179,11 +203,14 @@ public class BulkUserService {
 
         for (Map<String, String> row : rows) {
             rowNum++;
+            boolean dnFromColumn = dnSourceColumn != null && !dnSourceColumn.isBlank();
             Map<String, String> attrs = new LinkedHashMap<>();
             for (Map.Entry<String, String> cell : row.entrySet()) {
                 String csvCol = cell.getKey();
                 String rawVal = cell.getValue();
                 if (rawVal == null || rawVal.isBlank()) continue;
+                // The DN-source column carries the DN, not an attribute value.
+                if (dnFromColumn && csvCol.equalsIgnoreCase(dnSourceColumn)) continue;
 
                 String ldapAttr;
                 if (colToAttr.containsKey(csvCol)) {
@@ -195,10 +222,19 @@ public class BulkUserService {
                 attrs.put(ldapAttr, rawVal);
             }
 
-            String keyValue = attrs.get(targetKeyAttr);
-            String dn = (keyValue != null && !keyValue.isBlank())
-                    ? buildDn(targetKeyAttr, keyValue, parentDn)
-                    : null;
+            List<String> missing = new ArrayList<>();
+            String dn;
+            try {
+                dn = resolveDn(row, dnSourceColumn, targetKeyAttr, attrs.get(targetKeyAttr), parentDn);
+                // An explicit DN supplies the RDN attribute(s); reflect them in the
+                // attribute set so the required-attribute check matches the import,
+                // which injects them before the add.
+                if (dnFromColumn) {
+                    injectRdnAttributes(dn, attrs);
+                }
+            } catch (IllegalArgumentException ex) {
+                dn = null;
+            }
 
             // Compare attrs (case-insensitive) against the required set.
             // Preserve the original casing of the missing attribute names so
@@ -206,15 +242,13 @@ public class BulkUserService {
             java.util.Set<String> present = attrs.keySet().stream()
                     .map(s -> s.toLowerCase(java.util.Locale.ROOT))
                     .collect(java.util.stream.Collectors.toSet());
-            List<String> missing = new ArrayList<>();
-            // Missing RDN/key attribute is surfaced through the same channel
-            // as schema MUSTs so the row gets the amber highlight + Issues
-            // column + banner count. The orchestrator excludes the key attr
-            // from `requiredAttrs` (it has its own dedicated error path at
-            // confirm-time), but at preview time we still want it to look
-            // the same as any other missing required value.
+            // An unresolved DN is surfaced through the same channel as schema
+            // MUSTs so the row gets the amber highlight + Issues column + banner
+            // count. The orchestrator excludes the key attr from `requiredAttrs`
+            // (it has its own dedicated error path at confirm-time), but at
+            // preview time we still want it to look like any other missing value.
             if (dn == null) {
-                missing.add(targetKeyAttr);
+                missing.add(dnFromColumn ? dnSourceColumn : targetKeyAttr);
             }
             required.stream()
                     .filter(a -> !present.contains(a.toLowerCase(java.util.Locale.ROOT)))
@@ -409,8 +443,11 @@ public class BulkUserService {
                                            String parentDn,
                                            ConflictHandling conflictHandling,
                                            List<String> objectClasses,
+                                           String dnSourceColumn,
                                            int rowNum,
                                            ProfileContext profileContext) {
+        boolean dnFromColumn = dnSourceColumn != null && !dnSourceColumn.isBlank();
+
         // Build ldapAttribute→[value] map from the CSV row
         Map<String, List<String>> attrMap = new LinkedHashMap<>();
 
@@ -423,6 +460,8 @@ public class BulkUserService {
             String csvCol  = cell.getKey();
             String rawVal  = cell.getValue();
             if (rawVal == null || rawVal.isBlank()) continue;
+            // The DN-source column carries the DN, not an attribute value.
+            if (dnFromColumn && csvCol.equalsIgnoreCase(dnSourceColumn)) continue;
 
             // colToAttr: null value = explicitly ignored; absent key = passthrough
             String ldapAttr;
@@ -453,14 +492,27 @@ public class BulkUserService {
             }
         }
 
-        // The key attribute value drives both DN construction and duplicate detection
-        List<String> keyValues = attrMap.get(targetKeyAttr);
-        if (keyValues == null || keyValues.isEmpty()) {
-            return BulkImportRowResult.error(rowNum, null,
-                    "Missing value for key attribute '" + targetKeyAttr + "'");
+        // Resolve the DN: constructed from RDN + parent DN, or read verbatim from
+        // the configured column (scope-checked against parentDn). Any failure is a
+        // per-row error.
+        String dn;
+        try {
+            dn = resolveDn(row, dnSourceColumn, targetKeyAttr, firstOrNull(attrMap.get(targetKeyAttr)), parentDn);
+        } catch (IllegalArgumentException ex) {
+            return BulkImportRowResult.error(rowNum, null, ex.getMessage());
         }
-        String keyValue = keyValues.get(0);
-        String dn = buildDn(targetKeyAttr, keyValue, parentDn);
+
+        // RDN attribute(s): for a constructed DN this is the key attribute (already
+        // present). For a column DN, derive them from the DN and ensure they're in
+        // the attribute set so the ADD satisfies LDAP naming rules. These are also
+        // the attributes OVERWRITE must never REPLACE.
+        Set<String> rdnAttrs = dnFromColumn
+                ? ensureRdnAttributes(dn, attrMap)
+                : Set.of(targetKeyAttr);
+        Set<String> rdnAttrsLower = new HashSet<>();
+        for (String a : rdnAttrs) {
+            rdnAttrsLower.add(a.toLowerCase(Locale.ROOT));
+        }
 
         try {
             // Optimistic create: attempt the add first and handle the ENTRY_ALREADY_EXISTS
@@ -482,7 +534,7 @@ public class BulkUserService {
                 // Entry exists — apply conflict strategy
                 if (conflictHandling == ConflictHandling.OVERWRITE) {
                     List<Modification> mods = attrMap.entrySet().stream()
-                            .filter(e -> !e.getKey().equals(targetKeyAttr))
+                            .filter(e -> !rdnAttrsLower.contains(e.getKey().toLowerCase(Locale.ROOT)))
                             .map(e -> new Modification(
                                     ModificationType.REPLACE,
                                     e.getKey(),
@@ -559,6 +611,109 @@ public class BulkUserService {
      */
     private String buildDn(String rdnAttr, String rdnValue, String parentDn) {
         return new RDN(rdnAttr, rdnValue).toString() + "," + parentDn;
+    }
+
+    /**
+     * Resolves the DN for a row. Default: construct from {@code keyAttr} +
+     * {@code keyValue} + {@code parentDn}. Override: when {@code dnSourceColumn}
+     * is set, the full DN is read verbatim from that CSV column. In both cases the
+     * result must fall <em>within</em> {@code parentDn} — for a constructed DN that
+     * is true by construction; for a column DN it is enforced as a scope guard so
+     * an explicit-DN import can't place entries outside the operator-selected (and
+     * permission-checked) container.
+     *
+     * @throws IllegalArgumentException with a row-friendly message on any failure
+     */
+    private String resolveDn(Map<String, String> row, String dnSourceColumn,
+                             String keyAttr, String keyValue, String parentDn) {
+        if (dnSourceColumn == null || dnSourceColumn.isBlank()) {
+            if (keyValue == null || keyValue.isBlank()) {
+                throw new IllegalArgumentException("Missing value for key attribute '" + keyAttr + "'");
+            }
+            return buildDn(keyAttr, keyValue, parentDn);
+        }
+        String raw = row.get(dnSourceColumn);
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalArgumentException("Missing DN value in column '" + dnSourceColumn + "'");
+        }
+        DN dn;
+        try {
+            dn = new DN(raw.trim());
+        } catch (LDAPException e) {
+            throw new IllegalArgumentException("Invalid DN in column '" + dnSourceColumn + "': " + raw.trim());
+        }
+        DN parent;
+        try {
+            parent = new DN(parentDn);
+        } catch (LDAPException e) {
+            throw new IllegalArgumentException("Invalid import container DN '" + parentDn + "'");
+        }
+        // allowEqual=false: an imported entry must live strictly below the container.
+        if (!dn.isDescendantOf(parent, false)) {
+            throw new IllegalArgumentException(
+                    "DN '" + dn + "' is not within the import container '" + parentDn + "'");
+        }
+        return dn.toString();
+    }
+
+    /**
+     * Ensures the leftmost RDN's attribute(s) of {@code dn} are present in
+     * {@code attrMap} (LDAP requires the naming attribute value to exist in the
+     * entry), injecting any that are missing. Returns the RDN attribute names so
+     * the caller can protect them from a REPLACE on OVERWRITE.
+     */
+    private static Set<String> ensureRdnAttributes(String dn, Map<String, List<String>> attrMap) {
+        Set<String> names = new LinkedHashSet<>();
+        RDN rdn = leftmostRdn(dn);
+        if (rdn == null) {
+            return names;
+        }
+        Set<String> present = lowerKeys(attrMap.keySet());
+        String[] attrNames = rdn.getAttributeNames();
+        String[] attrValues = rdn.getAttributeValues();
+        for (int i = 0; i < attrNames.length; i++) {
+            names.add(attrNames[i]);
+            if (!present.contains(attrNames[i].toLowerCase(Locale.ROOT))) {
+                attrMap.put(attrNames[i], List.of(attrValues[i]));
+            }
+        }
+        return names;
+    }
+
+    /** Preview counterpart of {@link #ensureRdnAttributes} for the single-valued attribute map. */
+    private static void injectRdnAttributes(String dn, Map<String, String> attrs) {
+        RDN rdn = leftmostRdn(dn);
+        if (rdn == null) {
+            return;
+        }
+        Set<String> present = lowerKeys(attrs.keySet());
+        String[] attrNames = rdn.getAttributeNames();
+        String[] attrValues = rdn.getAttributeValues();
+        for (int i = 0; i < attrNames.length; i++) {
+            if (!present.contains(attrNames[i].toLowerCase(Locale.ROOT))) {
+                attrs.put(attrNames[i], attrValues[i]);
+            }
+        }
+    }
+
+    private static RDN leftmostRdn(String dn) {
+        try {
+            return new DN(dn).getRDN();
+        } catch (LDAPException e) {
+            return null; // DN was validated upstream; unreachable in practice
+        }
+    }
+
+    private static Set<String> lowerKeys(Set<String> keys) {
+        Set<String> out = new HashSet<>();
+        for (String k : keys) {
+            out.add(k.toLowerCase(Locale.ROOT));
+        }
+        return out;
+    }
+
+    private static String firstOrNull(List<String> values) {
+        return (values == null || values.isEmpty()) ? null : values.get(0);
     }
 
     /**

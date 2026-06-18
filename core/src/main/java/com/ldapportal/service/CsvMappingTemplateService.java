@@ -76,6 +76,7 @@ public class CsvMappingTemplateService {
                 req.conflictHandling() != null ? req.conflictHandling() : ConflictHandling.SKIP);
         template.setObjectClass(req.objectClass());
         template.setSkipHeaderRow(req.skipHeaderRow() != null ? req.skipHeaderRow() : true);
+        template.setDnSourceColumn(blankToNull(req.dnSourceColumn()));
         template = templateRepo.save(template);
 
         List<CsvMappingTemplateEntry> entries = saveEntries(template, req.entries());
@@ -108,6 +109,8 @@ public class CsvMappingTemplateService {
         if (req.skipHeaderRow() != null) {
             template.setSkipHeaderRow(req.skipHeaderRow());
         }
+        // Set unconditionally (blank → null) so the override can be cleared.
+        template.setDnSourceColumn(blankToNull(req.dnSourceColumn()));
         template = templateRepo.save(template);
 
         entryRepo.deleteAllByTemplateId(templateId);
@@ -184,8 +187,13 @@ public class CsvMappingTemplateService {
                 t.getTargetKeyAttribute(),
                 t.getConflictHandling(),
                 t.isSkipHeaderRow(),
+                t.getDnSourceColumn(),
                 entryDtos,
                 t.getCreatedAt(),
                 t.getUpdatedAt());
+    }
+
+    private static String blankToNull(String s) {
+        return (s == null || s.isBlank()) ? null : s.trim();
     }
 }

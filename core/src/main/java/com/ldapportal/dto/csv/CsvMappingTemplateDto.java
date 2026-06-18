@@ -18,6 +18,8 @@ public record CsvMappingTemplateDto(
         String targetKeyAttribute,
         ConflictHandling conflictHandling,
         boolean skipHeaderRow,
+        /** When set, the DN is read from this CSV column instead of constructed from RDN + parent DN. */
+        String dnSourceColumn,
         List<CsvColumnMappingDto> entries,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt) {

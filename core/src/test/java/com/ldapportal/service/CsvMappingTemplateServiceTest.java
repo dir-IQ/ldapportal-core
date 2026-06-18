@@ -166,7 +166,7 @@ class CsvMappingTemplateServiceTest {
         List<CsvColumnMappingDto> mappings = List.of(
                 new CsvColumnMappingDto("email", "mail", false));
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "New Template", "inetOrgPerson", "uid", ConflictHandling.OVERWRITE, true, mappings);
+                "New Template", "inetOrgPerson", "uid", ConflictHandling.OVERWRITE, true, null, mappings);
 
         CsvMappingTemplateDto result = service.create(dirId, req, adminPrincipal);
 
@@ -188,7 +188,7 @@ class CsvMappingTemplateServiceTest {
         when(templateRepo.save(any())).thenReturn(saved);
 
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "T", null, null, null, null, List.of());
+                "T", null, null, null, null, null, List.of());
 
         service.create(dirId, req, adminPrincipal);
 
@@ -206,7 +206,7 @@ class CsvMappingTemplateServiceTest {
         when(templateRepo.existsByDirectoryIdAndName(dirId, "Existing")).thenReturn(true);
 
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "Existing", null, null, null, null, List.of());
+                "Existing", null, null, null, null, null, List.of());
 
         assertThatThrownBy(() -> service.create(dirId, req, adminPrincipal))
                 .isInstanceOf(ConflictException.class)
@@ -232,7 +232,7 @@ class CsvMappingTemplateServiceTest {
         when(entryRepo.save(any())).thenReturn(newEntry);
 
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "Renamed", "inetOrgPerson", "sAMAccountName", ConflictHandling.OVERWRITE, true,
+                "Renamed", "inetOrgPerson", "sAMAccountName", ConflictHandling.OVERWRITE, true, null,
                 List.of(new CsvColumnMappingDto("sn", "sn", false)));
 
         CsvMappingTemplateDto result = service.update(dirId, templateId, req, adminPrincipal);
@@ -250,7 +250,7 @@ class CsvMappingTemplateServiceTest {
         when(templateRepo.existsByDirectoryIdAndName(dirId, "Other")).thenReturn(true);
 
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "Other", null, null, null, null, List.of());
+                "Other", null, null, null, null, null, List.of());
 
         assertThatThrownBy(() -> service.update(dirId, templateId, req, adminPrincipal))
                 .isInstanceOf(ConflictException.class);
