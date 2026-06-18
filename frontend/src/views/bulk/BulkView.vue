@@ -163,12 +163,12 @@
             {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row is' : 'rows are' }}
             missing required attributes — they will fail at import.
           </p>
-          <div class="max-h-64 overflow-auto">
+          <div class="max-h-[60vh] overflow-auto">
             <table class="w-full text-xs">
               <thead class="bg-blue-100 sticky top-0">
                 <tr>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">#</th>
-                  <th class="px-2 py-1 text-left font-medium text-blue-700">Computed DN</th>
+                  <th class="px-2 py-1 text-left font-medium text-blue-700">DN</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Attributes</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Issues</th>
                 </tr>
@@ -177,7 +177,7 @@
                 <tr v-for="row in previewResult.rows" :key="row.rowNumber"
                     :class="row.missingRequired?.length ? 'bg-amber-50' : ''">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
-                  <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(missing RDN)' }}</td>
+                  <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td class="px-2 py-1 text-gray-600">{{ formatAttrs(row.attributes) }}</td>
                   <td class="px-2 py-1 text-amber-700">
                     <span v-if="row.missingRequired?.length"
@@ -191,7 +191,7 @@
           </div>
           <div class="flex gap-2 mt-3">
             <button @click="doConfirmImport" :disabled="importing" class="btn-primary">
-              {{ importing ? 'Importing…' : 'Confirm Import' }}
+              {{ importing ? 'Importing…' : 'Perform Import' }}
             </button>
             <button @click="previewResult = null" class="btn-neutral">Cancel</button>
           </div>
@@ -301,12 +301,12 @@
             {{ groupPreviewWarningCount }} {{ groupPreviewWarningCount === 1 ? 'row is' : 'rows are' }}
             missing required attributes — they will fail at import.
           </p>
-          <div class="max-h-64 overflow-auto">
+          <div class="max-h-[60vh] overflow-auto">
             <table class="w-full text-xs">
               <thead class="bg-blue-100 sticky top-0">
                 <tr>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">#</th>
-                  <th class="px-2 py-1 text-left font-medium text-blue-700">Computed DN</th>
+                  <th class="px-2 py-1 text-left font-medium text-blue-700">DN</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Attributes</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Issues</th>
                 </tr>
@@ -315,7 +315,7 @@
                 <tr v-for="row in groupPreviewResult.rows" :key="row.rowNumber"
                     :class="row.missingRequired?.length ? 'bg-amber-50' : ''">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
-                  <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(missing cn)' }}</td>
+                  <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td class="px-2 py-1 text-gray-600">{{ formatAttrs(row.attributes) }}</td>
                   <td class="px-2 py-1 text-amber-700">
                     <span v-if="row.missingRequired?.length"
@@ -329,7 +329,7 @@
           </div>
           <div class="flex gap-2 mt-3">
             <button @click="doGroupConfirmImport" :disabled="groupImporting" class="btn-primary">
-              {{ groupImporting ? 'Importing…' : 'Confirm Import' }}
+              {{ groupImporting ? 'Importing…' : 'Perform Import' }}
             </button>
             <button @click="groupPreviewResult = null" class="btn-neutral">Cancel</button>
           </div>
@@ -383,13 +383,13 @@
 
     <!-- Template create/edit modal -->
     <AppModal v-model="showTemplateModal" :title="editTemplate ? 'Edit Template' : 'New Template'" size="xl">
-      <form @submit.prevent="saveTemplate" class="space-y-2">
+      <form @submit.prevent="saveTemplate" class="space-y-2 flex flex-col min-h-0 flex-1">
         <!-- Top-aligned 2-col grid: scalar fields on the left stack
              from the top, the Object Class dual-list picker on the
              right takes whatever vertical space it needs. items-start
              so the left column doesn't get pushed down to match the
              picker's height. -->
-        <div class="grid grid-cols-2 gap-2 items-start">
+        <div class="grid grid-cols-2 gap-2 items-start shrink-0">
           <div class="space-y-2">
             <FormField label="Template Name" v-model="templateForm.name" required />
             <FormField label="RDN Attribute" v-model="templateForm.targetKeyAttribute" placeholder="uid"
@@ -458,15 +458,15 @@
           </div>
         </div>
 
-        <div>
-          <div class="flex items-center justify-between mb-2">
+        <div class="flex flex-col min-h-0 flex-1">
+          <div class="flex items-center justify-between mb-2 shrink-0">
             <label class="text-sm font-medium text-gray-700">Column Mappings</label>
             <span v-if="loadingOcAttrs" class="text-xs text-gray-500">Loading attributes…</span>
           </div>
           <div v-if="templateForm.entries.length === 0 && !loadingOcAttrs" class="text-sm text-gray-500 text-center py-3">
             Select an object class to populate attribute mappings.
           </div>
-          <div v-else class="space-y-2 max-h-96 overflow-y-scroll pr-2">
+          <div v-else class="space-y-2 min-h-0 flex-1 overflow-y-auto pr-2">
             <div v-for="(e, i) in templateForm.entries" :key="i" class="flex gap-2 items-center">
               <input v-model="e.csvColumn" placeholder="CSV column" :aria-label="`CSV column for ${e.ldapAttribute}`" class="input flex-1 text-xs" :class="{ 'border-red-300': e._required && !e.csvColumn }" />
               <span class="text-gray-500">→</span>
@@ -479,7 +479,7 @@
           </div>
         </div>
 
-        <div class="flex justify-end gap-2 pt-2">
+        <div class="flex justify-end gap-2 pt-2 shrink-0">
           <button type="button" @click="showTemplateModal = false" class="btn-neutral">Cancel</button>
           <button type="submit" :disabled="templateSaving || !canSaveTemplate" class="btn-primary">{{ templateSaving ? 'Saving…' : 'Save' }}</button>
         </div>
