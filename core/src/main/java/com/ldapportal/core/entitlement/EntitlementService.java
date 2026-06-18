@@ -3,6 +3,9 @@ package com.ldapportal.core.entitlement;
 
 import com.ldapportal.entity.enums.FeatureKey;
 
+import java.util.Arrays;
+import java.util.List;
+
 /**
  * Runtime access to the current license and entitlement checks.
  *
@@ -53,7 +56,34 @@ public interface EntitlementService {
      * {@link Entitled}.</p>
      */
     default boolean exposesFeature(FeatureKey feature) {
-        Entitlement required = feature.getRequiredEntitlement();
+        return exposes(feature);
+    }
+
+    /**
+     * Whether an {@link EditionScoped} catalogue constant should be exposed to
+     * the UI under the current license. The single gate every "enumerate a
+     * catalogue and ship it to the client" surface must consult: a constant
+     * whose {@link EditionScoped#requiredEntitlement() required entitlement} is
+     * absent is hidden so non-entitled values can't leak into the app. Core
+     * constants (no required entitlement) are always exposed.
+     *
+     * <p>Governs visibility only; execution stays gated by {@link Entitled}.</p>
+     */
+    default boolean exposes(EditionScoped item) {
+        Entitlement required = item.requiredEntitlement();
         return required == null || has(required);
+    }
+
+    /**
+     * The exposed constants of an {@link EditionScoped} catalogue enum under the
+     * current license, in declaration order. Use this instead of
+     * {@code MyEnum.values()} whenever the result is serialised to the client,
+     * so non-entitled constants are filtered out at the single, authoritative
+     * gate rather than per surface.
+     */
+    default <T extends Enum<T> & EditionScoped> List<T> exposed(Class<T> catalog) {
+        return Arrays.stream(catalog.getEnumConstants())
+                .filter(this::exposes)
+                .toList();
     }
 }

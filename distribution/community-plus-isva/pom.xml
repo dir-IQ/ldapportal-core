@@ -38,6 +38,29 @@
             <artifactId>ldapportal-addons-isva</artifactId>
             <version>${project.version}</version>
         </dependency>
+
+        <!-- Test-only: run the edition-leak guards (shipped in core's test-jar)
+             over the ASSEMBLED classpath — core + the ISVA addon together — so a
+             catalogue-enum leak from an addon controller is caught at the
+             distribution boundary, not just within core. This is the template
+             the ee/commercial distribution mirrors over its own classpath. -->
+        <dependency>
+            <groupId>com.ldapportal</groupId>
+            <artifactId>ldapportal-core</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

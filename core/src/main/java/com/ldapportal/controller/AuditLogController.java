@@ -5,6 +5,7 @@ import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PermissionService;
 import com.ldapportal.dto.audit.AuditEventResponse;
 import com.ldapportal.dto.audit.AuditQueryCriteria;
+import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.service.AuditQueryService;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -39,6 +41,23 @@ public class AuditLogController {
 
     private final AuditQueryService queryService;
     private final PermissionService permissionService;
+    private final EntitlementService entitlementService;
+
+    /**
+     * The audit-action filter catalogue — the {@link AuditAction} names the
+     * action picker offers, filtered to the current edition so non-community
+     * actions (access reviews, SoD, HR sync, the auditor portal) aren't listed
+     * where they can never occur. The client labels each name locally; the
+     * authoritative <em>set</em> comes from here rather than a hand-maintained
+     * exclude list on the client.
+     */
+    @GetMapping("/actions")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPERADMIN')")
+    public List<String> actions() {
+        return entitlementService.exposed(AuditAction.class).stream()
+                .map(Enum::name)
+                .toList();
+    }
 
     /**
      * Returns audit events with optional filters.

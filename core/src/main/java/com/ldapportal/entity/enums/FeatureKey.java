@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.entity.enums;
 
+import com.ldapportal.core.entitlement.EditionScoped;
 import com.ldapportal.core.entitlement.Entitlement;
 
 import java.util.Arrays;
@@ -18,7 +19,7 @@ import java.util.Arrays;
  * toggle is <em>shown</em>.) Keys with no required entitlement are part of the
  * core, edition-agnostic surface.</p>
  */
-public enum FeatureKey {
+public enum FeatureKey implements EditionScoped {
 
     USER_CREATE          ("user.create"),
     USER_EDIT            ("user.edit"),
@@ -49,7 +50,7 @@ public enum FeatureKey {
     SOD_VIEW             ("sod.view",    Entitlement.GOVERNANCE),
     HR_MANAGE            ("hr.manage",   Entitlement.HR_SYNC),
     HR_VIEW              ("hr.view",     Entitlement.HR_SYNC),
-    AUDITOR_MANAGE       ("auditor.manage");
+    AUDITOR_MANAGE       ("auditor.manage", Entitlement.GOVERNANCE);
 
     private final String dbValue;
 
@@ -75,6 +76,13 @@ public enum FeatureKey {
      * key is always exposed (core surface).
      */
     public Entitlement getRequiredEntitlement() {
+        return requiredEntitlement;
+    }
+
+    /** {@inheritDoc} Alias of {@link #getRequiredEntitlement()} satisfying the
+     *  {@link EditionScoped} catalogue contract. */
+    @Override
+    public Entitlement requiredEntitlement() {
         return requiredEntitlement;
     }
 
