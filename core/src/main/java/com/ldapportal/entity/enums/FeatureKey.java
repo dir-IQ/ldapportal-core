@@ -50,7 +50,7 @@ public enum FeatureKey implements EditionScoped {
     SOD_VIEW             ("sod.view",    Entitlement.GOVERNANCE),
     HR_MANAGE            ("hr.manage",   Entitlement.HR_SYNC),
     HR_VIEW              ("hr.view",     Entitlement.HR_SYNC),
-    AUDITOR_MANAGE       ("auditor.manage");
+    AUDITOR_MANAGE       ("auditor.manage", Entitlement.GOVERNANCE);
 
     private final String dbValue;
 
