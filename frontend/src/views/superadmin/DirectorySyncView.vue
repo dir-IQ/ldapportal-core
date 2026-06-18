@@ -419,7 +419,7 @@ const changelogBaseDnModel = computed<string>({
 function blankLink(): SyncLinkPayload {
   return {
     displayName: '', sourceDirId: '', targetDirId: '', enabled: true,
-    captureMode: 'APP_INTERCEPT', changelogFormat: null, changelogBaseDn: null,
+    captureMode: 'CHANGELOG', changelogFormat: null, changelogBaseDn: null,
   }
 }
 function openLinkModal(link?: SyncLink) {
