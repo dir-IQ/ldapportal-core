@@ -168,7 +168,7 @@
               <thead class="bg-blue-100 sticky top-0">
                 <tr>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">#</th>
-                  <th class="px-2 py-1 text-left font-medium text-blue-700">Computed DN</th>
+                  <th class="px-2 py-1 text-left font-medium text-blue-700">DN</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Attributes</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Issues</th>
                 </tr>
@@ -177,7 +177,7 @@
                 <tr v-for="row in previewResult.rows" :key="row.rowNumber"
                     :class="row.missingRequired?.length ? 'bg-amber-50' : ''">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
-                  <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(missing RDN)' }}</td>
+                  <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td class="px-2 py-1 text-gray-600">{{ formatAttrs(row.attributes) }}</td>
                   <td class="px-2 py-1 text-amber-700">
                     <span v-if="row.missingRequired?.length"
@@ -306,7 +306,7 @@
               <thead class="bg-blue-100 sticky top-0">
                 <tr>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">#</th>
-                  <th class="px-2 py-1 text-left font-medium text-blue-700">Computed DN</th>
+                  <th class="px-2 py-1 text-left font-medium text-blue-700">DN</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Attributes</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Issues</th>
                 </tr>
@@ -315,7 +315,7 @@
                 <tr v-for="row in groupPreviewResult.rows" :key="row.rowNumber"
                     :class="row.missingRequired?.length ? 'bg-amber-50' : ''">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
-                  <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(missing cn)' }}</td>
+                  <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td class="px-2 py-1 text-gray-600">{{ formatAttrs(row.attributes) }}</td>
                   <td class="px-2 py-1 text-amber-700">
                     <span v-if="row.missingRequired?.length"
