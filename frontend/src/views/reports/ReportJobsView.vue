@@ -371,7 +371,14 @@ const reportTypes = computed<ReportTypeDef[]>(() => {
   if (auth.isIsvaIntegrationEnabled) {
     types.push({ value: 'ORPHANED_IVIA_ACCOUNTS', label: 'Orphaned IVIA Accounts', param: null, lookback: false })
   }
-  types.push({ value: 'INTEGRITY_CHECK', label: 'Integrity Check', param: null, lookback: false })
+  // Integrity Check runs against the whole DIT via the superadmin-only
+  // Directory Browser endpoint (POST /api/v1/superadmin/.../browse/integrity-check,
+  // gated hasRole('SUPERADMIN')). Offering it to an admin meant the request was
+  // rejected by Spring Security and the SPA's 401 handler bounced them to the
+  // login screen — so only surface it for superadmins.
+  if (auth.isSuperadmin) {
+    types.push({ value: 'INTEGRITY_CHECK', label: 'Integrity Check', param: null, lookback: false })
+  }
   return types
 })
 
