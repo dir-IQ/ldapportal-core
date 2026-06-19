@@ -74,6 +74,10 @@ export const SECTIONS = [
     icon: iconPath('cloud'),
     fields: ['s3EndpointUrl', 's3BucketName', 's3AccessKey', 's3SecretKey', 's3Region', 's3PresignedUrlTtlHours'],
     component: S3Section,
+    // S3 storage only backs scheduled-report delivery, which ships with the
+    // commercial governance module. The community/core build has nothing to
+    // configure here, so hide it from the sidebar — same treatment as License.
+    hideOnCommunity: true,
   },
   {
     id: 'siem',
