@@ -1,7 +1,11 @@
-# Publishes com.ldapportal:ldapportal-core to Maven Central.
+# Publishes the open-source ldapportal artifacts (ldapportal-core +
+# ldapportal-addons-isva) to Maven Central. Both are needed downstream: the
+# commercial/ee build pins the addon at the same version as core.
 # TEMPLATE — validate end-to-end during the Phase 5b staging dry-run (the exact
 # GPG / Central secret wiring can't be exercised until the repo + secrets exist).
-# The -Prelease profile (flatten + sign + central-publishing) lives in core/pom.xml.
+# The -Prelease profile (flatten + sign + central-publishing) lives in the parent
+# pom.xml, so core and the addons inherit it; the deploy below scopes to the
+# publishable modules with -pl.
 # Requires repo secrets: CENTRAL_TOKEN_USERNAME, CENTRAL_TOKEN_PASSWORD,
 # GPG_PRIVATE_KEY, GPG_PASSPHRASE. autoPublish=false leaves a droppable staging
 # deployment to verify before releasing.
@@ -51,8 +55,8 @@ jobs:
           echo "version=$V" >> "$GITHUB_OUTPUT"
       - name: Stamp release version
         run: mvn -B -ntp versions:set -DnewVersion=${{ steps.ver.outputs.version }} -DgenerateBackupPoms=false
-      - name: Deploy core to Central (staging)
-        run: mvn -B -ntp -Prelease -DskipTests -pl core deploy
+      - name: Deploy core + addons to Central (staging)
+        run: mvn -B -ntp -Prelease -DskipTests -pl core,addons/isva deploy
         env:
           CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
           CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
