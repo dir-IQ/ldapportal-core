@@ -33,7 +33,7 @@
     </div>
 
     <!-- Filters -->
-    <div class="bg-white border border-gray-200 rounded-xl p-4 mb-2 grid grid-cols-4 gap-2">
+    <div class="bg-white border border-gray-200 rounded-xl p-4 mb-2 grid grid-cols-3 gap-2">
       <FormField label="From" type="datetime-local" v-model="filters.from" />
       <FormField label="To"   type="datetime-local" v-model="filters.to" />
       <div class="mb-2" ref="actionMenuRef">
@@ -67,10 +67,9 @@
         </div>
         <p class="text-xs text-gray-400 mt-1">Leave empty for all actions.</p>
       </div>
-      <FormField label="Source" type="select" v-model="filters.source" :options="sourceOptions" />
     </div>
     <div class="flex gap-2 mb-2">
-      <button @click="load(0)" class="btn-primary">Filter</button>
+      <button @click="load()" class="btn-primary">Filter</button>
       <button @click="clearFilters" class="btn-secondary">Clear</button>
     </div>
 
@@ -78,24 +77,28 @@
          class="bg-white border border-gray-200 rounded-xl p-8 text-center text-sm text-gray-500">
       Select a profile in the sidebar to view its audit log.
     </div>
-    <DataTable v-else :columns="cols" :rows="events" :loading="loading" row-key="id"
-      empty-text="No audit events found" empty-icon="clipboard">
-      <template #cell-occurredAt="{ value }"><RelativeTime :value="value" /></template>
-      <template #cell-action="{ value }">
-        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" :class="actionColor(value)">{{ actionLabel(value) }}</span>
-      </template>
-      <template #cell-targetDn="{ value }"><span class="truncate block max-w-xs" :title="value">{{ value }}</span></template>
-      <template #cell-detail="{ value }">
-        <span v-if="value" class="cell-muted whitespace-pre-wrap">{{ formatDetail(value) }}</span>
-      </template>
-    </DataTable>
-
-    <!-- Pagination -->
-    <div v-if="!needsProfile" class="flex items-center justify-between mt-4">
-      <button :disabled="page === 0" @click="load(page - 1)" class="btn-secondary">← Prev</button>
-      <span class="text-sm text-gray-500">Page {{ page + 1 }} of {{ totalPages }}</span>
-      <button :disabled="page >= totalPages - 1" @click="load(page + 1)" class="btn-secondary">Next →</button>
-    </div>
+    <template v-else>
+      <ResultsTable table-key="audit-log" :columns="cols" :rows="tableRows" row-key="id"
+        empty-text="No audit events found" empty-icon="clipboard" :auto-fit-first-view="true">
+        <template #toolbar>
+          <button @click="doExportCsv" :disabled="!events.length" class="btn-secondary text-xs">Export CSV</button>
+        </template>
+        <template #cell-occurredAt="{ value }"><RelativeTime :value="value as string" /></template>
+        <template #cell-action="{ value }">
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" :class="actionColor(value as string)">{{ actionLabel(value as string) }}</span>
+        </template>
+        <template #cell-targetDn="{ value }"><span class="truncate block" :title="value as string">{{ value }}</span></template>
+        <template #cell-detail="{ value }">
+          <span v-if="value" class="text-gray-500 whitespace-pre-wrap">{{ value }}</span>
+        </template>
+      </ResultsTable>
+      <!-- The log is server-paginated to the most recent matching events; the
+           rich table sorts/filters/exports that loaded set client-side. When
+           the cap is hit, prompt the operator to narrow the filter. -->
+      <p v-if="capped" class="text-xs text-gray-500 mt-2">
+        Showing the most recent {{ pageSize }} matching events. Narrow the date range or action filter to see older ones.
+      </p>
+    </template>
   </div>
 </template>
 
@@ -103,13 +106,13 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { LocationQueryValue } from 'vue-router'
-import { useApi } from '@/composables/useApi'
+import { useApi, downloadBlob } from '@/composables/useApi'
 import { useDirectoryPicker } from '@/composables/useDirectoryPicker'
 import { useAuthStore } from '@/stores/auth'
 import { useProfilePickerStore } from '@/stores/profilePicker'
 import { getAuditLog, getAuditActions } from '@/api/audit'
 import { actionLabel, actionColor } from '@/components/dashboard/auditLabels'
-import DataTable from '@/components/DataTable.vue'
+import ResultsTable, { type ColumnDef } from '@/components/ResultsTable.vue'
 import FormField from '@/components/FormField.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
 
@@ -117,7 +120,6 @@ interface AuditFilters {
   from: string
   to: string
   action: string[]
-  source: string
 }
 
 interface AuditEvent {
@@ -127,6 +129,20 @@ interface AuditEvent {
   action?: string
   targetDn?: string
   detail?: Record<string, unknown>
+}
+
+// Row shape handed to ResultsTable: detail flattened to a string so the table's
+// client-side sort/filter/CSV treat it as plain text (the raw object would
+// stringify to "[object Object]").
+interface AuditRow {
+  id: string
+  occurredAt: string
+  actorUsername: string
+  action: string
+  targetDn: string
+  detail: string
+  // Index signature so AuditRow[] satisfies ResultsTable's SortableRow[].
+  [key: string]: unknown
 }
 
 interface ActionOption { value: string; label: string }
@@ -155,12 +171,34 @@ const scopeDirectoryId = computed(() =>
 // Admins need a profile selected before there's anything to scope to.
 const needsProfile = computed(() => !auth.isSuperadmin && !selectedProfile.value)
 
-const events     = ref<AuditEvent[]>([])
-const page       = ref(0)
-const totalPages = ref(1)
-const pageSize   = 20
+const events   = ref<AuditEvent[]>([])
+// The log is server-paginated; we fetch the most recent page (up to the
+// backend's max page size) and let ResultsTable sort/filter/paginate it
+// client-side. `capped` warns when there may be older events beyond this set.
+const pageSize = 200
+const capped   = computed(() => events.value.length >= pageSize)
 
-const filters = ref<AuditFilters>({ from: '', to: '', action: [], source: '' })
+const filters = ref<AuditFilters>({ from: '', to: '', action: [] })
+
+// ResultsTable column definitions — sortable + resizable, with sensible
+// starting widths. Detail is widest (free-form JSON), When/Action narrow.
+const cols: ColumnDef[] = [
+  { key: 'occurredAt',    label: 'When',   defaultWidth: 150 },
+  { key: 'actorUsername', label: 'Actor',  defaultWidth: 140 },
+  { key: 'action',        label: 'Action', defaultWidth: 160 },
+  { key: 'targetDn',      label: 'Target', defaultWidth: 280 },
+  { key: 'detail',        label: 'Detail', defaultWidth: 360 },
+]
+
+// Flatten each event for the table: detail → newline-joined "key: value" text.
+const tableRows = computed<AuditRow[]>(() => events.value.map(e => ({
+  id:             e.id,
+  occurredAt:     e.occurredAt ?? '',
+  actorUsername:  e.actorUsername ?? '',
+  action:         e.action ?? '',
+  targetDn:       e.targetDn ?? '',
+  detail:         formatDetail(e.detail),
+})))
 
 // Correlation id arrives as a query param from the Directory Sync
 // "trace" link; it narrows the log to a single originating operation.
@@ -232,20 +270,6 @@ const actionGroups = computed<ActionGroup[]>(() => {
   return groups
 })
 
-const sourceOptions = [
-  { value: '',                 label: 'All sources' },
-  { value: 'INTERNAL',         label: 'Application' },
-  { value: 'LDAP_CHANGELOG',   label: 'LDAP changelog' },
-]
-
-const cols = [
-  { key: 'occurredAt',    label: 'When' },
-  { key: 'actorUsername', label: 'Actor' },
-  { key: 'action',        label: 'Action' },
-  { key: 'targetDn',      label: 'Target' },
-  { key: 'detail',        label: 'Detail' },
-]
-
 function formatDetail(detail: unknown): string {
   if (!detail || typeof detail !== 'object') return ''
   return Object.entries(detail as Record<string, unknown>)
@@ -253,7 +277,7 @@ function formatDetail(detail: unknown): string {
 }
 
 function clearFilters(): void {
-  filters.value = { from: '', to: '', action: [], source: '' }
+  filters.value = { from: '', to: '', action: [] }
   // Also drop an active correlation trace so "Clear" means clear
   // everything. When no trace is active this is a no-op (the route
   // watcher won't fire), preserving the apply-on-Filter behaviour.
@@ -281,19 +305,17 @@ async function loadActions(): Promise<void> {
   }
 }
 
-async function load(p = 0): Promise<void> {
+async function load(): Promise<void> {
   // Admin view scopes to the sidebar-selected profile; until one is chosen
   // (e.g. while it loads after mount) there's nothing to query.
   if (needsProfile.value) {
     events.value = []
-    totalPages.value = 1
     return
   }
-  page.value = p
   try {
     await call(async () => {
       const params = {
-        page: p, size: pageSize,
+        page: 0, size: pageSize,
         directoryId:   scopeDirectoryId.value || undefined,
         // datetime-local yields `YYYY-MM-DDTHH:MM` with no zone, but
         // the backend's @RequestParam OffsetDateTime requires a zone
@@ -302,17 +324,33 @@ async function load(p = 0): Promise<void> {
         from:          toIsoZoned(filters.value.from),
         to:            toIsoZoned(filters.value.to),
         action:        filters.value.action.length ? filters.value.action : undefined,
-        source:        filters.value.source || undefined,
         correlationId: correlationId.value || undefined,
       }
       const { data } = await getAuditLog(params)
-      const paged = data.content ? data : { content: data, totalPages: 1 }
-      events.value     = paged.content
-      totalPages.value = paged.totalPages || 1
+      events.value = data.content ?? data
     })
   } catch {
     // Error already displayed by useApi — prevent unhandled rejection
   }
+}
+
+// Client-side CSV of the loaded events (what the table is showing), built from
+// the same flattened rows. No server export endpoint for audit today; the rows
+// are already in memory, so export-what-you-see is the natural behaviour.
+function csvCell(v: string): string {
+  // RFC 4180: quote always; escape embedded quotes by doubling.
+  return '"' + String(v ?? '').replace(/"/g, '""') + '"'
+}
+function doExportCsv(): void {
+  const headers = cols.map(c => c.label ?? c.key)
+  const lines = [headers.map(csvCell).join(',')]
+  for (const r of tableRows.value) {
+    lines.push(cols.map(c => csvCell(
+      c.key === 'action' ? actionLabel(r.action) : String(r[c.key] ?? ''),
+    )).join(','))
+  }
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
+  downloadBlob(blob, 'audit-log.csv')
 }
 
 function clearCorrelation(): void {
@@ -327,16 +365,16 @@ function clearCorrelation(): void {
 // handled by onMounted, so this fires only on subsequent changes.
 watch(() => route.query.correlationId, (v) => {
   correlationId.value = firstQueryValue(v)
-  load(0)
+  load()
 })
 
 // Admins: the sidebar profile populates asynchronously after mount and can be
 // switched while on this view — reload whenever its directory changes.
 watch(() => selectedProfile.value?.directoryId, () => {
-  if (!auth.isSuperadmin) load(0)
+  if (!auth.isSuperadmin) load()
 })
 
-onMounted(() => { loadActions(); load(0) })
+onMounted(() => { loadActions(); load() })
 </script>
 
 <style scoped>
