@@ -40,6 +40,20 @@
           <label for="rj-lookback-days" class="block text-sm font-medium text-gray-700 mb-1">Lookback Days</label>
           <input id="rj-lookback-days" v-model.number="runForm.lookbackDays" type="number" min="1" class="input w-full" placeholder="30" />
         </div>
+        <div v-if="needsGroupCount">
+          <label for="rj-group-count-op" class="block text-sm font-medium text-gray-700 mb-1">Group Count</label>
+          <div class="flex gap-2">
+            <select id="rj-group-count-op" v-model="runForm.groupCountOp" class="input w-24" aria-label="Group count comparison">
+              <option value="=">=</option>
+              <option value="!=">≠</option>
+              <option value=">">&gt;</option>
+              <option value=">=">≥</option>
+              <option value="<">&lt;</option>
+              <option value="<=">≤</option>
+            </select>
+            <input v-model.number="runForm.groupCountValue" type="number" min="0" class="input w-full" aria-label="Group count value" placeholder="0" />
+          </div>
+        </div>
         <div v-if="needsObjectTypeFilter">
           <label for="rj-object-type" class="block text-sm font-medium text-gray-700 mb-1">Object Type</label>
           <select id="rj-object-type" v-model="runForm.objectType" class="input w-full">
@@ -258,6 +272,7 @@ interface ReportTypeDef {
   paramLabel?: string
   paramPlaceholder?: string
   lookback: boolean
+  groupCount?: boolean
 }
 
 interface DirectoryOption {
@@ -307,7 +322,7 @@ const reportTypes = computed<ReportTypeDef[]>(() => {
   const types: ReportTypeDef[] = [
     { value: 'USERS_IN_GROUP',       label: 'Users in Group',         param: 'groupDn',  paramLabel: 'Group DN',  paramPlaceholder: 'cn=admins,dc=example,dc=com', lookback: false },
     { value: 'USERS_IN_BRANCH',      label: 'Users in Branch',        param: 'branchDn', paramLabel: 'Branch DN', paramPlaceholder: 'ou=people,dc=example,dc=com', lookback: false },
-    { value: 'USERS_WITH_NO_GROUP',  label: 'Users with No Group',    param: null, lookback: false },
+    { value: 'USERS_WITH_NO_GROUP',  label: 'Users by Group Count',   param: null, lookback: false, groupCount: true },
     { value: 'RECENTLY_ADDED',       label: 'Recently Added',         param: null, lookback: true },
     { value: 'RECENTLY_MODIFIED',    label: 'Recently Modified',      param: null, lookback: true },
     { value: 'RECENTLY_DELETED',     label: 'Recently Deleted',       param: null, lookback: true },
@@ -337,6 +352,7 @@ function fmtDate(iso: string): string { return new Date(iso).toLocaleString() }
 
 const runForm = ref({
   reportType: 'RECENTLY_ADDED', paramValue: '', lookbackDays: 30, objectType: '',
+  groupCountOp: '=', groupCountValue: 0,
   integrityChecks: ['BROKEN_MEMBER', 'ORPHANED_ENTRY', 'EMPTY_GROUP'] as string[],
 })
 const running = ref(false)
@@ -350,6 +366,7 @@ const needsParam       = computed(() => !!currentRunType.value?.param)
 const paramLabel       = computed(() => currentRunType.value?.paramLabel ?? '')
 const paramPlaceholder = computed(() => currentRunType.value?.paramPlaceholder ?? '')
 const needsLookback    = computed(() => !!currentRunType.value?.lookback)
+const needsGroupCount  = computed(() => !!currentRunType.value?.groupCount)
 const RECENTLY_TYPES = new Set(['RECENTLY_ADDED', 'RECENTLY_MODIFIED', 'RECENTLY_DELETED'])
 const needsObjectTypeFilter = computed(() => RECENTLY_TYPES.has(runForm.value.reportType))
 const isIntegrityCheck = computed(() => runForm.value.reportType === 'INTEGRITY_CHECK')
@@ -378,6 +395,10 @@ function buildReportParams(): Record<string, unknown> {
   const params: Record<string, unknown> = { lookbackDays: runForm.value.lookbackDays || 30 }
   if (currentRunType.value?.param) params[currentRunType.value.param] = runForm.value.paramValue
   if (runForm.value.objectType) params.objectType = runForm.value.objectType
+  if (currentRunType.value?.groupCount) {
+    params.groupCountOp = runForm.value.groupCountOp
+    params.groupCountValue = runForm.value.groupCountValue ?? 0
+  }
   // Admin-view scoping: when an admin runs a report, scope unbounded
   // LDAP queries (recently-added, disabled-accounts, …) to the picked
   // profile's target OU so they only see entries inside the OUs they

@@ -42,6 +42,7 @@
           v-model="pickerValue"
           class="w-full bg-white/10 border border-white/20 text-white rounded px-2 py-1 text-sm"
         >
+          <option value="" disabled class="bg-white text-gray-900">--- select profile ---</option>
           <option v-for="p in profiles" :key="p.id" :value="p.id" class="bg-white text-gray-900">
             {{ p.name }}
           </option>
@@ -441,17 +442,17 @@ onMounted(async () => {
       return
     }
 
-    // If currently on a directory-scoped route, select the matching profile
+    // If currently on a directory-scoped route, select the matching profile.
+    // Otherwise leave the picker on the "--- select profile ---" placeholder so
+    // the admin makes an explicit choice rather than silently inheriting the
+    // first profile (which scoped views would then query without the admin
+    // having picked anything).
     const routeDirId = route.params.dirId
     if (routeDirId) {
       const match = data.find((p: ProfileSummary) => p.directoryId === routeDirId)
       if (match) pickerValue.value = match.id
     }
 
-    // Auto-select first profile if nothing matched
-    if (!pickerValue.value && data.length) {
-      pickerValue.value = data[0].id
-    }
     profilePicker.setSelectedId(pickerValue.value)
   } catch (e) {
     const err = e as { message?: string }

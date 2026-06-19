@@ -12,6 +12,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -35,7 +36,7 @@ public class AuditQueryService {
     public Page<AuditEventResponse> query(AuditQueryCriteria criteria, int page, int size) {
         PageRequest pageable = PageRequest.of(page, clampSize(size));
         return auditRepo.findAll(
-                        criteria.directoryId(), criteria.actorId(), actionDbValue(criteria.action()),
+                        criteria.directoryId(), criteria.actorId(), actionDbValues(criteria.actions()),
                         criteria.targetDn(), criteria.source(), criteria.correlationId(),
                         criteria.from(), criteria.to(), pageable)
                 .map(AuditEventResponse::from);
@@ -52,14 +53,27 @@ public class AuditQueryService {
             Set<UUID> directoryIds, AuditQueryCriteria criteria, int page, int size) {
         PageRequest pageable = PageRequest.of(page, clampSize(size));
         return auditRepo.findAllByDirectoryIds(
-                        directoryIds, criteria.actorId(), actionDbValue(criteria.action()),
+                        directoryIds, criteria.actorId(), actionDbValues(criteria.actions()),
                         criteria.targetDn(), criteria.source(), criteria.correlationId(),
                         criteria.from(), criteria.to(), pageable)
                 .map(AuditEventResponse::from);
     }
 
-    private static String actionDbValue(AuditAction action) {
-        return action != null ? action.getDbValue() : null;
+    /**
+     * Renders the optional action filter as a comma-joined list of DB values
+     * (e.g. {@code "user.create,user.update"}) for the repository's
+     * {@code string_to_array(...) = ANY} match, or {@code null} when no action
+     * filter is set. Enum DB values never contain commas, so a comma delimiter
+     * is unambiguous.
+     */
+    private static String actionDbValues(List<AuditAction> actions) {
+        if (actions == null || actions.isEmpty()) {
+            return null;
+        }
+        return actions.stream()
+                .filter(java.util.Objects::nonNull)
+                .map(AuditAction::getDbValue)
+                .collect(java.util.stream.Collectors.joining(","));
     }
 
     private int clampSize(int requested) {

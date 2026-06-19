@@ -70,15 +70,34 @@ const ACTION_LABELS = {
   'ENTRY_DELETE': 'Deleted',
   'ENTRY_MOVE': 'Moved',
   'ENTRY_RENAME': 'Renamed',
+  'LDIF_IMPORT': 'LDIF imported',
   'BULK_ATTRIBUTE_UPDATE': 'Bulk attribute update',
   'APPROVAL_SUBMITTED': 'Approval submitted',
   'APPROVAL_APPROVED': 'Approved',
+  'APPROVAL_AUTO_APPROVED': 'Auto-approved',
   'APPROVAL_REJECTED': 'Rejected',
+  'APPROVAL_REQUEST_EDITED': 'Request edited',
+  'PLAYBOOK_EXECUTED': 'Playbook executed',
+  'PLAYBOOK_ROLLED_BACK': 'Playbook rolled back',
+  'ACCOUNT_CREATE': 'Account created',
+  'ACCOUNT_UPDATE': 'Account updated',
+  'ACCOUNT_DELETE': 'Account deleted',
+  'ACCOUNT_PERMISSION_CHANGED': 'Account permissions changed',
   'LDAP_CHANGE': 'LDAP change',
 }
 
+// Fallback humanizer so an audit action without an explicit short label above
+// renders as "Playbook executed" rather than the raw PLAYBOOK_EXECUTED token —
+// keeps the entry timeline readable when a new AuditAction enum value lands on
+// the backend before this map is updated.
+function humanize(action) {
+  if (!action || typeof action !== 'string') return action
+  const lower = action.toLowerCase().replace(/_/g, ' ')
+  return lower.charAt(0).toUpperCase() + lower.slice(1)
+}
+
 function actionLabel(action) {
-  return ACTION_LABELS[action] || action
+  return ACTION_LABELS[action] || humanize(action)
 }
 
 function isDelete(action) {

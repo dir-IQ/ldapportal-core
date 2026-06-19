@@ -38,12 +38,12 @@
       <FormField label="To"   type="datetime-local" v-model="filters.to" />
       <div class="mb-2">
         <label class="block text-sm font-medium text-gray-700 mb-1">Action</label>
-        <select v-model="filters.action" class="input block w-full" aria-label="Action">
-          <option value="">All actions</option>
+        <select v-model="filters.action" multiple class="input block w-full h-24" aria-label="Action">
           <optgroup v-for="group in actionGroups" :key="group.label" :label="group.label">
             <option v-for="opt in group.options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
           </optgroup>
         </select>
+        <p class="text-xs text-gray-400 mt-1">Leave empty for all actions; Ctrl/⌘-click to select several.</p>
       </div>
       <FormField label="Source" type="select" v-model="filters.source" :options="sourceOptions" />
     </div>
@@ -94,7 +94,7 @@ import RelativeTime from '@/components/RelativeTime.vue'
 interface AuditFilters {
   from: string
   to: string
-  action: string
+  action: string[]
   source: string
 }
 
@@ -138,7 +138,7 @@ const page       = ref(0)
 const totalPages = ref(1)
 const pageSize   = 20
 
-const filters = ref<AuditFilters>({ from: '', to: '', action: '', source: '' })
+const filters = ref<AuditFilters>({ from: '', to: '', action: [], source: '' })
 
 // Correlation id arrives as a query param from the Directory Sync
 // "trace" link; it narrows the log to a single originating operation.
@@ -213,7 +213,7 @@ function formatDetail(detail: unknown): string {
 }
 
 function clearFilters(): void {
-  filters.value = { from: '', to: '', action: '', source: '' }
+  filters.value = { from: '', to: '', action: [], source: '' }
   // Also drop an active correlation trace so "Clear" means clear
   // everything. When no trace is active this is a no-op (the route
   // watcher won't fire), preserving the apply-on-Filter behaviour.
@@ -261,7 +261,7 @@ async function load(p = 0): Promise<void> {
         // and serialise to ISO with offset (toISOString → UTC `Z`).
         from:          toIsoZoned(filters.value.from),
         to:            toIsoZoned(filters.value.to),
-        action:        filters.value.action || undefined,
+        action:        filters.value.action.length ? filters.value.action : undefined,
         source:        filters.value.source || undefined,
         correlationId: correlationId.value || undefined,
       }

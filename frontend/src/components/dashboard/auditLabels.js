@@ -62,6 +62,7 @@ export const ACTION_LABELS = {
   AUDITOR_LINK_REVOKED: 'Auditor link revoked',
   AUDITOR_LINK_ACCESSED: 'Auditor link accessed',
   API_TOKEN_CREATED: 'API token created',
+  API_TOKEN_UPDATED: 'API token updated',
   API_TOKEN_REVOKED: 'API token revoked',
   API_TOKEN_ROTATED: 'API token rotated',
   REPLICATION_LINK_CREATED: 'Replication link created',

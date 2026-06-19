@@ -5,6 +5,7 @@ import com.ldapportal.entity.enums.AuditAction;
 import lombok.Builder;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -27,7 +28,7 @@ import java.util.UUID;
 public record AuditQueryCriteria(
         UUID directoryId,
         UUID actorId,
-        AuditAction action,
+        List<AuditAction> actions,
         String targetDn,
         String source,
         UUID correlationId,

@@ -68,7 +68,8 @@ public class AuditLogController {
      *
      * @param directoryId filter by directory (optional)
      * @param actorId     filter by admin actor UUID (optional)
-     * @param action      filter by action (optional)
+     * @param action      filter by one or more actions (optional; repeat the
+     *                    param — {@code ?action=USER_CREATE&action=USER_UPDATE})
      * @param from        lower bound on {@code occurredAt} (ISO-8601, optional)
      * @param to          upper bound on {@code occurredAt} (ISO-8601, optional)
      * @param page        zero-based page number (default 0)
@@ -80,7 +81,7 @@ public class AuditLogController {
             @AuthenticationPrincipal AuthPrincipal principal,
             @RequestParam(required = false) UUID directoryId,
             @RequestParam(required = false) UUID actorId,
-            @RequestParam(required = false) AuditAction action,
+            @RequestParam(required = false) List<AuditAction> action,
             @RequestParam(required = false) String targetDn,
             @RequestParam(required = false) String source,
             @RequestParam(required = false) UUID correlationId,
@@ -92,7 +93,7 @@ public class AuditLogController {
             @RequestParam(defaultValue = "50") int size) {
 
         AuditQueryCriteria criteria = AuditQueryCriteria.builder()
-                .directoryId(directoryId).actorId(actorId).action(action)
+                .directoryId(directoryId).actorId(actorId).actions(action)
                 .targetDn(targetDn).source(source).correlationId(correlationId)
                 .from(from).to(to).build();
 
