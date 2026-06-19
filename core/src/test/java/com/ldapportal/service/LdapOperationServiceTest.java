@@ -16,6 +16,9 @@ import com.ldapportal.dto.ldap.UpdateEntryRequest;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.PendingApproval;
 import com.ldapportal.entity.ProvisioningProfile;
+import com.ldapportal.dto.csv.BulkImportRequest;
+import com.ldapportal.dto.csv.BulkImportResult;
+import com.ldapportal.dto.csv.BulkImportRowResult;
 import com.ldapportal.entity.enums.ApprovalRequestType;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.exception.ResourceNotFoundException;
@@ -50,6 +53,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
@@ -652,6 +656,37 @@ class LdapOperationServiceTest {
         assertThat(detail.getValue()).containsEntry("operation", "bulkDelete");
         assertThat(detail.getValue().get("deletedDns")).asInstanceOf(
                 org.assertj.core.api.InstanceOfAssertFactories.list(String.class)).containsExactly(dn);
+    }
+
+    @Test
+    void bulkImport_recordsSummaryWithCreatedDns() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String createdDn = "uid=jdoe,ou=people,dc=example,dc=com";
+        // One created row + one errored row: only the created DN should be listed.
+        BulkImportResult importResult = new BulkImportResult(2, 1, 0, 0, 1,
+                List.of(BulkImportRowResult.created(1, createdDn),
+                        BulkImportRowResult.error(2, null, "Missing value for key attribute 'uid'")));
+        when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any())).thenReturn(importResult);
+
+        BulkImportRequest req = new BulkImportRequest(
+                null, "ou=people,dc=example,dc=com", null, null, true, null, List.of());
+        var result = service.bulkImportUsers(dirId, adminPrincipal(),
+                new java.io.ByteArrayInputStream(new byte[0]), req);
+
+        assertThat(result.created()).isEqualTo(1);
+
+        // One summary audit record naming exactly the created DN — symmetric
+        // with bulkDelete's deletedDns; the errored row is not listed.
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> detail = ArgumentCaptor.forClass(Map.class);
+        verify(auditService).record(any(), eq(dirId),
+                eq(com.ldapportal.entity.enums.AuditAction.USER_CREATE),
+                eq("ou=people,dc=example,dc=com"), detail.capture());
+        assertThat(detail.getValue()).containsEntry("operation", "bulkImport");
+        assertThat(detail.getValue().get("createdDns")).asInstanceOf(
+                org.assertj.core.api.InstanceOfAssertFactories.list(String.class)).containsExactly(createdDn);
     }
 
     @Test
