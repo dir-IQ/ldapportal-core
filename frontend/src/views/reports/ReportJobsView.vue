@@ -54,6 +54,35 @@
             <input v-model.number="runForm.groupCountValue" type="number" min="0" class="input w-full" aria-label="Group count value" placeholder="0" />
           </div>
         </div>
+        <div v-if="needsAuditFilters">
+          <label for="rj-lookback-hours" class="block text-sm font-medium text-gray-700 mb-1">Lookback (hours)</label>
+          <input id="rj-lookback-hours" v-model.number="runForm.lookbackHours" type="number" min="1" class="input w-full" placeholder="24" />
+        </div>
+        <div v-if="needsAuditFilters" ref="auditActionMenuRef">
+          <label class="block text-sm font-medium text-gray-700 mb-1">Action</label>
+          <div class="relative">
+            <button type="button" @click="auditActionMenuOpen = !auditActionMenuOpen"
+                    class="input w-full flex items-center justify-between text-left"
+                    aria-label="Action" aria-haspopup="listbox" :aria-expanded="auditActionMenuOpen">
+              <span class="truncate" :class="runForm.auditActions.length ? 'text-gray-900' : 'text-gray-500'">{{ auditActionSummary }}</span>
+              <span class="text-xs text-gray-400 ml-2">▾</span>
+            </button>
+            <div v-if="auditActionMenuOpen"
+                 class="absolute z-20 mt-1 w-full max-h-72 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg py-1"
+                 role="listbox" aria-multiselectable="true">
+              <div v-if="runForm.auditActions.length" class="px-3 py-1.5 border-b border-gray-100">
+                <button type="button" @click="runForm.auditActions = []" class="text-xs text-blue-600 hover:underline">Clear selection</button>
+              </div>
+              <label v-for="opt in auditActionOptions" :key="opt.value"
+                     class="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                <input type="checkbox" :value="opt.value" v-model="runForm.auditActions" class="rounded text-blue-600" />
+                {{ opt.label }}
+              </label>
+              <p v-if="auditActionOptions.length === 0" class="px-3 py-2 text-xs text-gray-500">No actions available</p>
+            </div>
+          </div>
+          <p class="text-xs text-gray-400 mt-1">Leave empty for all actions.</p>
+        </div>
         <div v-if="needsObjectTypeFilter">
           <label for="rj-object-type" class="block text-sm font-medium text-gray-700 mb-1">Object Type</label>
           <select id="rj-object-type" v-model="runForm.objectType" class="input w-full">
@@ -240,7 +269,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
@@ -252,6 +281,8 @@ import {
 } from '@/api/reports'
 import { listDirectories } from '@/api/directories'
 import { checkIntegrity } from '@/api/browse'
+import { getAuditActions } from '@/api/audit'
+import { actionLabel } from '@/components/dashboard/auditLabels'
 import { downloadBlob } from '@/composables/useApi'
 import {
   friendlyColumnName, formatRelativeDate, formatFullDate,
@@ -273,6 +304,8 @@ interface ReportTypeDef {
   paramPlaceholder?: string
   lookback: boolean
   groupCount?: boolean
+  /** Audit-entries report: lookback-hours + action multi-select filter. */
+  auditFilters?: boolean
 }
 
 interface DirectoryOption {
@@ -328,6 +361,7 @@ const reportTypes = computed<ReportTypeDef[]>(() => {
     { value: 'RECENTLY_DELETED',     label: 'Recently Deleted',       param: null, lookback: true },
     { value: 'DISABLED_ACCOUNTS',    label: 'Disabled Accounts',      param: null, lookback: false },
     { value: 'MISSING_PROFILE_GROUPS', label: 'Missing Profile Groups', param: null, lookback: false },
+    { value: 'AUDIT_ENTRIES',        label: 'Audit Entries',          param: null, lookback: false, auditFilters: true },
   ]
   if (auth.isIsvaIntegrationEnabled) {
     types.push({ value: 'ORPHANED_IVIA_ACCOUNTS', label: 'Orphaned IVIA Accounts', param: null, lookback: false })
@@ -353,6 +387,7 @@ function fmtDate(iso: string): string { return new Date(iso).toLocaleString() }
 const runForm = ref({
   reportType: 'RECENTLY_ADDED', paramValue: '', lookbackDays: 30, objectType: '',
   groupCountOp: '=', groupCountValue: 0,
+  lookbackHours: 24, auditActions: [] as string[],
   integrityChecks: ['BROKEN_MEMBER', 'ORPHANED_ENTRY', 'EMPTY_GROUP'] as string[],
 })
 const running = ref(false)
@@ -370,6 +405,38 @@ const needsGroupCount  = computed(() => !!currentRunType.value?.groupCount)
 const RECENTLY_TYPES = new Set(['RECENTLY_ADDED', 'RECENTLY_MODIFIED', 'RECENTLY_DELETED'])
 const needsObjectTypeFilter = computed(() => RECENTLY_TYPES.has(runForm.value.reportType))
 const isIntegrityCheck = computed(() => runForm.value.reportType === 'INTEGRITY_CHECK')
+const needsAuditFilters = computed(() => !!currentRunType.value?.auditFilters)
+
+// Action multi-select for the Audit Entries report — mirrors the Audit Log
+// page's picker (compact trigger + checkbox panel). Options come from the
+// edition-filtered audit-action catalogue.
+const auditActionMenuOpen = ref(false)
+const auditActionMenuRef = ref<HTMLElement | null>(null)
+const exposedActions = ref<string[]>([])
+const auditActionOptions = computed(() =>
+  exposedActions.value
+    .map(k => ({ value: k, label: actionLabel(k) }))
+    .sort((a, b) => a.label.localeCompare(b.label)),
+)
+const auditActionSummary = computed<string>(() => {
+  const sel = runForm.value.auditActions
+  if (!sel.length) return 'All actions'
+  if (sel.length === 1) return actionLabel(sel[0])
+  return `${sel.length} actions selected`
+})
+function onAuditActionClickOutside(e: MouseEvent): void {
+  if (auditActionMenuRef.value && !auditActionMenuRef.value.contains(e.target as Node)) {
+    auditActionMenuOpen.value = false
+  }
+}
+async function loadAuditActions(): Promise<void> {
+  try {
+    const { data } = await getAuditActions()
+    exposedActions.value = data
+  } catch { /* non-fatal: the picker just shows no options */ }
+}
+onMounted(() => { document.addEventListener('click', onAuditActionClickOutside); loadAuditActions() })
+onBeforeUnmount(() => document.removeEventListener('click', onAuditActionClickOutside))
 
 // Show max 10 columns, hide internal columns like 'id'. Use the friendly
 // column name for display (e.g. "cn" → "Name") so callers see consistent
@@ -398,6 +465,10 @@ function buildReportParams(): Record<string, unknown> {
   if (currentRunType.value?.groupCount) {
     params.groupCountOp = runForm.value.groupCountOp
     params.groupCountValue = runForm.value.groupCountValue ?? 0
+  }
+  if (currentRunType.value?.auditFilters) {
+    params.lookbackHours = runForm.value.lookbackHours || 24
+    if (runForm.value.auditActions.length) params.actions = runForm.value.auditActions
   }
   // Admin-view scoping: when an admin runs a report, scope unbounded
   // LDAP queries (recently-added, disabled-accounts, …) to the picked

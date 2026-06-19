@@ -16,6 +16,7 @@ import com.ldapportal.repository.ProvisioningProfileRepository;
 import com.ldapportal.service.ProvisioningProfileService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
@@ -65,6 +66,9 @@ public class OperationalReportService {
 
     /** Maximum LDAP entries returned per report to prevent OOM. */
     private static final int MAX_LDAP_RESULTS = 10_000;
+
+    /** Maximum audit rows returned by the audit-entries report. */
+    private static final int MAX_AUDIT_RESULTS = 5_000;
 
     private final LdapUserService                userService;
     private final LdapGroupService               groupService;
@@ -116,6 +120,7 @@ public class OperationalReportService {
                 case RECENTLY_DELETED       -> runDeletedReport(directoryId, safeParams);
                 case DISABLED_ACCOUNTS      -> runDisabledAccountsReport(dc, scope);
                 case MISSING_PROFILE_GROUPS -> runMissingProfileGroupsReport(dc, directoryId);
+                case AUDIT_ENTRIES          -> runAuditEntriesReport(directoryId, safeParams);
             };
         }
 
@@ -297,17 +302,17 @@ public class OperationalReportService {
         List<AuditEvent> allDeletes = new ArrayList<>();
         if (includeUsers) {
             allDeletes.addAll(auditEventRepo.findAll(directoryId, null,
-                    AuditAction.USER_DELETE.getDbValue(), null, null, null, from, null,
+                    AuditAction.USER_DELETE.name(), null, null, null, from, null,
                     Pageable.unpaged()).getContent());
         }
         if (includeGroups) {
             allDeletes.addAll(auditEventRepo.findAll(directoryId, null,
-                    AuditAction.GROUP_DELETE.getDbValue(), null, null, null, from, null,
+                    AuditAction.GROUP_DELETE.name(), null, null, null, from, null,
                     Pageable.unpaged()).getContent());
         }
 
         var changelogDeletes = auditEventRepo.findAll(directoryId, null,
-                AuditAction.LDAP_CHANGE.getDbValue(), null, null, null, from, null, Pageable.unpaged());
+                AuditAction.LDAP_CHANGE.name(), null, null, null, from, null, Pageable.unpaged());
 
         List<String> columns = List.of("Entry", "Deleted By", "Deleted At", "Source");
         List<Map<String, String>> rows = new ArrayList<>();
@@ -330,6 +335,80 @@ public class OperationalReportService {
                     rows.add(row);
                 });
         return new ReportData(columns, rows);
+    }
+
+    /**
+     * Audit-entries report: the directory's audit events over a lookback window
+     * (hours), optionally narrowed to specific {@link AuditAction}s — the same
+     * data the Audit Log page shows, packaged as a runnable/exportable report.
+     * Scoped to {@code directoryId} (like {@code RECENTLY_DELETED}). Capped at
+     * {@link #MAX_AUDIT_RESULTS} rows, newest first.
+     */
+    private ReportData runAuditEntriesReport(UUID directoryId, Map<String, Object> params) {
+        OffsetDateTime from = OffsetDateTime.now().minusHours(lookbackHours(params));
+        String actionFilter = auditActionFilter(params);
+
+        List<AuditEvent> events = auditEventRepo.findAll(
+                directoryId, null, actionFilter, null, null, null, from, null,
+                PageRequest.of(0, MAX_AUDIT_RESULTS)).getContent();
+
+        List<String> columns = List.of("When", "Actor", "Action", "Target", "Detail");
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (AuditEvent e : events) {
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("When",   e.getOccurredAt() != null ? e.getOccurredAt().toString() : "");
+            row.put("Actor",  e.getActorUsername() != null ? e.getActorUsername() : "");
+            row.put("Action", e.getAction() != null ? e.getAction().name() : "");
+            row.put("Target", e.getTargetDn() != null ? e.getTargetDn() : "");
+            row.put("Detail", formatAuditDetail(e.getDetail()));
+            rows.add(row);
+        }
+        return new ReportData(columns, rows);
+    }
+
+    /** Lookback window in hours for the audit-entries report; defaults to 24, min 1. */
+    private int lookbackHours(Map<String, Object> params) {
+        Object raw = params.get("lookbackHours");
+        if (raw instanceof Number n) return Math.max(1, n.intValue());
+        if (raw instanceof String s) {
+            try { return Math.max(1, Integer.parseInt(s.trim())); } catch (NumberFormatException ignored) { }
+        }
+        return 24;
+    }
+
+    /**
+     * Optional action filter for the audit-entries report. Accepts a list (or a
+     * comma-separated string) of {@link AuditAction} names and returns them
+     * comma-joined for the repository's {@code string_to_array(...) = ANY} match
+     * (the column stores enum names), or {@code null} for "all actions". Each
+     * name is validated against the enum so a bad param is a 400, not a silent
+     * no-match.
+     */
+    private static String auditActionFilter(Map<String, Object> params) {
+        Object raw = params.get("actions");
+        if (raw == null) return null;
+        List<String> names = new ArrayList<>();
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o != null && !o.toString().isBlank()) names.add(o.toString().trim());
+            }
+        } else {
+            String s = raw.toString().trim();
+            if (s.isEmpty()) return null;
+            for (String part : s.split("\\s*,\\s*")) {
+                if (!part.isBlank()) names.add(part.trim());
+            }
+        }
+        if (names.isEmpty()) return null;
+        names.forEach(AuditAction::valueOf); // validate; throws IllegalArgumentException → 400
+        return String.join(",", names);
+    }
+
+    private static String formatAuditDetail(Map<String, Object> detail) {
+        if (detail == null || detail.isEmpty()) return "";
+        return detail.entrySet().stream()
+                .map(en -> en.getKey() + ": " + en.getValue())
+                .collect(java.util.stream.Collectors.joining("; "));
     }
 
     private ReportData runMissingProfileGroupsReport(DirectoryConnection dc, UUID directoryId) {

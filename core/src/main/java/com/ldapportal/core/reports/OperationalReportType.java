@@ -21,4 +21,5 @@ public enum OperationalReportType {
     RECENTLY_DELETED,
     DISABLED_ACCOUNTS,
     MISSING_PROFILE_GROUPS,
+    AUDIT_ENTRIES,
 }
