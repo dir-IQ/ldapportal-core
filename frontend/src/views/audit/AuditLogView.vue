@@ -36,14 +36,36 @@
     <div class="bg-white border border-gray-200 rounded-xl p-4 mb-2 grid grid-cols-4 gap-2">
       <FormField label="From" type="datetime-local" v-model="filters.from" />
       <FormField label="To"   type="datetime-local" v-model="filters.to" />
-      <div class="mb-2">
+      <div class="mb-2" ref="actionMenuRef">
         <label class="block text-sm font-medium text-gray-700 mb-1">Action</label>
-        <select v-model="filters.action" multiple class="input block w-full h-24" aria-label="Action">
-          <optgroup v-for="group in actionGroups" :key="group.label" :label="group.label">
-            <option v-for="opt in group.options" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </optgroup>
-        </select>
-        <p class="text-xs text-gray-400 mt-1">Leave empty for all actions; Ctrl/⌘-click to select several.</p>
+        <div class="relative">
+          <!-- Collapsed: a single-row control showing a summary; expanded: a
+               scrollable checkbox panel that shows far more options than a
+               fixed-height <select multiple> listbox. -->
+          <button type="button" @click="actionMenuOpen = !actionMenuOpen"
+                  class="input w-full flex items-center justify-between text-left"
+                  aria-label="Action" aria-haspopup="listbox" :aria-expanded="actionMenuOpen">
+            <span class="truncate" :class="filters.action.length ? 'text-gray-900' : 'text-gray-500'">{{ actionSummary }}</span>
+            <span class="text-xs text-gray-400 ml-2">▾</span>
+          </button>
+          <div v-if="actionMenuOpen"
+               class="absolute z-20 mt-1 w-full max-h-72 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg py-1"
+               role="listbox" aria-multiselectable="true">
+            <div v-if="filters.action.length" class="px-3 py-1.5 border-b border-gray-100">
+              <button type="button" @click="filters.action = []" class="text-xs text-blue-600 hover:underline">Clear selection</button>
+            </div>
+            <div v-for="group in actionGroups" :key="group.label">
+              <div class="px-3 pt-2 pb-1 text-xs font-semibold text-gray-500 uppercase tracking-wide">{{ group.label }}</div>
+              <label v-for="opt in group.options" :key="opt.value"
+                     class="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                <input type="checkbox" :value="opt.value" v-model="filters.action" class="rounded text-blue-600" />
+                {{ opt.label }}
+              </label>
+            </div>
+            <p v-if="actionGroups.length === 0" class="px-3 py-2 text-xs text-gray-500">No actions available</p>
+          </div>
+        </div>
+        <p class="text-xs text-gray-400 mt-1">Leave empty for all actions.</p>
       </div>
       <FormField label="Source" type="select" v-model="filters.source" :options="sourceOptions" />
     </div>
@@ -78,7 +100,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { LocationQueryValue } from 'vue-router'
 import { useApi } from '@/composables/useApi'
@@ -169,6 +191,24 @@ const ACTION_CATEGORIES: { label: string; prefixes: string[] }[] = [
   { label: 'API tokens',             prefixes: ['API_TOKEN_'] },
   { label: 'Directory sync',         prefixes: ['REPLICATION_'] },
 ]
+
+// Action multi-select dropdown: a single-row trigger that opens a checkbox
+// panel. Summary text keeps the collapsed control compact.
+const actionMenuOpen = ref(false)
+const actionMenuRef = ref<HTMLElement | null>(null)
+const actionSummary = computed<string>(() => {
+  const sel = filters.value.action
+  if (!sel.length) return 'All actions'
+  if (sel.length === 1) return actionLabel(sel[0])
+  return `${sel.length} actions selected`
+})
+function onActionClickOutside(e: MouseEvent): void {
+  if (actionMenuRef.value && !actionMenuRef.value.contains(e.target as Node)) {
+    actionMenuOpen.value = false
+  }
+}
+onMounted(() => document.addEventListener('click', onActionClickOutside))
+onBeforeUnmount(() => document.removeEventListener('click', onActionClickOutside))
 
 const actionGroups = computed<ActionGroup[]>(() => {
   const allowed = exposedActions.value
