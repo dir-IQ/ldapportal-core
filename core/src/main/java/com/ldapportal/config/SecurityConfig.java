@@ -113,6 +113,18 @@ public class SecurityConfig {
                     res.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                     res.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
                     objectMapper.writeValue(res.getOutputStream(), pd);
+                })
+                // A caller who IS authenticated but lacks the required role
+                // (e.g. an admin hitting a SUPERADMIN-only /superadmin/** route)
+                // gets a clean 403 — distinct from the 401 above. Without an
+                // explicit handler this surfaced as a 401, which the SPA treats
+                // as a lost session and bounces the user to the login screen.
+                .accessDeniedHandler((req, res, e) -> {
+                    ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                            HttpStatus.FORBIDDEN, "You do not have permission to perform this action.");
+                    res.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    res.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+                    objectMapper.writeValue(res.getOutputStream(), pd);
                 }));
 
         return http.build();

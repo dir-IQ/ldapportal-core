@@ -37,6 +37,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(DirectoryConnectionController.class)
@@ -125,6 +126,17 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
     void listDirectories_adminRole_returns403() throws Exception {
         mockMvc.perform(get(BASE_URL).with(authentication(adminAuth())))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void listDirectories_adminRole_forbidden_returnsProblemDetailNotLogin() throws Exception {
+        // An authenticated-but-forbidden caller gets a clean 403 RFC-7807
+        // ProblemDetail — not a 401 (which the SPA treats as a lost session and
+        // bounces to the login screen). Guards the SecurityConfig accessDeniedHandler.
+        mockMvc.perform(get(BASE_URL).with(authentication(adminAuth())))
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(403));
     }
 
     @Test
