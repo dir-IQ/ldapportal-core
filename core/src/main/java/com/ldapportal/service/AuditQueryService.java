@@ -36,7 +36,7 @@ public class AuditQueryService {
     public Page<AuditEventResponse> query(AuditQueryCriteria criteria, int page, int size) {
         PageRequest pageable = PageRequest.of(page, clampSize(size));
         return auditRepo.findAll(
-                        criteria.directoryId(), criteria.actorId(), actionDbValues(criteria.actions()),
+                        criteria.directoryId(), criteria.actorId(), actionNames(criteria.actions()),
                         criteria.targetDn(), criteria.source(), criteria.correlationId(),
                         criteria.from(), criteria.to(), pageable)
                 .map(AuditEventResponse::from);
@@ -53,26 +53,34 @@ public class AuditQueryService {
             Set<UUID> directoryIds, AuditQueryCriteria criteria, int page, int size) {
         PageRequest pageable = PageRequest.of(page, clampSize(size));
         return auditRepo.findAllByDirectoryIds(
-                        directoryIds, criteria.actorId(), actionDbValues(criteria.actions()),
+                        directoryIds, criteria.actorId(), actionNames(criteria.actions()),
                         criteria.targetDn(), criteria.source(), criteria.correlationId(),
                         criteria.from(), criteria.to(), pageable)
                 .map(AuditEventResponse::from);
     }
 
     /**
-     * Renders the optional action filter as a comma-joined list of DB values
-     * (e.g. {@code "user.create,user.update"}) for the repository's
+     * Renders the optional action filter as a comma-joined list of audit-action
+     * names (e.g. {@code "USER_CREATE,USER_UPDATE"}) for the repository's
      * {@code string_to_array(...) = ANY} match, or {@code null} when no action
-     * filter is set. Enum DB values never contain commas, so a comma delimiter
-     * is unambiguous.
+     * filter is set.
+     *
+     * <p><strong>Names, not dbValues.</strong> {@code AuditEvent.action} is mapped
+     * {@code @Enumerated(EnumType.STRING)}, which takes precedence over the
+     * autoApply {@code AuditActionConverter} (JPA does not apply converters to
+     * {@code @Enumerated} attributes). The persisted column therefore holds the
+     * enum {@link Enum#name()} ({@code "USER_CREATE"}), not the
+     * {@code getDbValue()} dot-notation ({@code "user.create"}). Filtering on
+     * dbValues silently matched nothing — this must match on names. Enum names
+     * never contain commas, so a comma delimiter is unambiguous.
      */
-    private static String actionDbValues(List<AuditAction> actions) {
+    private static String actionNames(List<AuditAction> actions) {
         if (actions == null || actions.isEmpty()) {
             return null;
         }
         return actions.stream()
                 .filter(java.util.Objects::nonNull)
-                .map(AuditAction::getDbValue)
+                .map(AuditAction::name)
                 .collect(java.util.stream.Collectors.joining(","));
     }
 
