@@ -392,27 +392,23 @@
     <!-- Template create/edit modal -->
     <AppModal v-model="showTemplateModal" :title="editTemplate ? 'Edit Template' : 'New Template'" size="xl">
       <form @submit.prevent="saveTemplate" class="space-y-2 flex flex-col min-h-0 flex-1">
-        <!-- Top-aligned 2-col grid: scalar fields on the left stack
-             from the top, the Object Class dual-list picker on the
-             right takes whatever vertical space it needs. items-start
-             so the left column doesn't get pushed down to match the
-             picker's height. -->
-        <div class="grid grid-cols-2 gap-2 items-start shrink-0">
+        <!-- Two-col grid: scalar fields on the left; the Object Class dual-list
+             picker on the right. items-stretch so the right column matches the
+             left's height and its lists grow to fill it (no dead whitespace). -->
+        <div class="grid grid-cols-2 gap-2 items-stretch shrink-0">
           <div class="space-y-2">
             <FormField label="Template Name" v-model="templateForm.name" required />
-            <FormField label="RDN Attribute" v-model="templateForm.targetKeyAttribute" placeholder="uid"
-                       :disabled="dnFromColumn" />
-            <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-              <input type="checkbox" v-model="dnFromColumn" class="rounded text-blue-600" />
-              Read DN from a CSV column
-            </label>
-            <div v-if="dnFromColumn">
-              <FormField label="DN column" v-model="templateForm.dnSourceColumn" placeholder="dn" />
-              <p class="text-xs text-gray-500 mt-1">
-                Each row's full DN is taken from this column instead of being built
-                from the RDN attribute. The DN must fall within the import's parent container.
-              </p>
+            <div>
+              <label for="bulk-template-dn-source" class="block text-sm font-medium text-gray-700 mb-1">DN Source</label>
+              <select id="bulk-template-dn-source" v-model="dnSourceMode" class="input w-full">
+                <option value="rdn">Build DN from RDN + parent DN</option>
+                <option value="column">Read DN from CSV column</option>
+              </select>
             </div>
+            <!-- One field in this slot, driven by the DN Source picker above. -->
+            <FormField v-if="dnSourceMode === 'rdn'" label="RDN Attribute"
+                       v-model="templateForm.targetKeyAttribute" placeholder="uid" />
+            <FormField v-else label="DN column" v-model="templateForm.dnSourceColumn" placeholder="dn" />
             <div>
               <label for="bulk-template-form-conflict-handling" class="block text-sm font-medium text-gray-700 mb-1">Conflict Handling</label>
               <select id="bulk-template-form-conflict-handling" v-model="templateForm.conflictHandling" class="input w-full">
@@ -433,13 +429,13 @@
               CSV first row is header (skip on import)
             </label>
           </div>
-          <div>
+          <div class="flex flex-col">
             <label class="block text-sm font-medium text-gray-700 mb-1">Object Class <span class="text-red-500">*</span></label>
-            <div class="flex items-stretch gap-0">
+            <div class="flex items-stretch gap-0 flex-1 min-h-0">
               <!-- Selected list -->
-              <div class="flex-1 min-w-0">
+              <div class="flex-1 min-w-0 flex flex-col">
                 <div class="text-xs text-gray-500 mb-1">Selected</div>
-                <div class="border border-gray-300 rounded-l-lg h-36 overflow-y-auto">
+                <div class="border border-gray-300 rounded-l-lg flex-1 min-h-[9rem] overflow-y-auto">
                   <div v-for="oc in templateForm.objectClasses" :key="oc"
                     @click="selectedOcHighlight = oc"
                     class="px-2 py-1 text-sm cursor-pointer truncate"
@@ -457,9 +453,9 @@
                   class="w-8 h-8 flex items-center justify-center rounded border border-gray-300 text-sm hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">▶</button>
               </div>
               <!-- Available list -->
-              <div class="flex-1 min-w-0">
+              <div class="flex-1 min-w-0 flex flex-col">
                 <div class="text-xs text-gray-500 mb-1">Available</div>
-                <div class="border border-gray-300 rounded-r-lg h-36 overflow-y-auto">
+                <div class="border border-gray-300 rounded-r-lg flex-1 min-h-[9rem] overflow-y-auto">
                   <div v-for="oc in availableObjectClasses" :key="oc"
                     @click="availableOcHighlight = oc"
                     class="px-2 py-1 text-sm cursor-pointer truncate"
@@ -703,6 +699,13 @@ const templateForm = ref<TemplateForm>({
 // the RDN attribute + parent DN). Kept separate so toggling off preserves the
 // typed column name until save.
 const dnFromColumn = ref(false)
+// Picker proxy over dnFromColumn: 'rdn' builds the DN from RDN + parent DN,
+// 'column' reads it from a CSV column. Backed by the existing boolean so
+// save/load logic (and the dnSourceColumn payload) stays unchanged.
+const dnSourceMode = computed<'rdn' | 'column'>({
+  get: () => (dnFromColumn.value ? 'column' : 'rdn'),
+  set: (v) => { dnFromColumn.value = v === 'column' },
+})
 
 // ObjectClass picker state
 const objectClasses       = ref<string[]>([])
