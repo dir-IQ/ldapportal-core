@@ -2,7 +2,9 @@
 import client from './client'
 
 export const getAuditLog = (params) =>
-  client.get('/audit', { params })
+  // `indexes: null` repeats array params as `action=X&action=Y` (no `[]`
+  // suffix) so Spring binds them to `@RequestParam List<AuditAction> action`.
+  client.get('/audit', { params, paramsSerializer: { indexes: null } })
 
 // Edition-filtered audit-action catalogue (enum names) for the filter picker.
 // The set is authoritative from the backend so non-community actions never

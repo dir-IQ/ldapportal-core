@@ -24,7 +24,6 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -109,7 +108,7 @@ public class OperationalReportService {
                 case USERS_IN_BRANCH        -> runLdapReport(dc,
                         "(|(objectClass=inetOrgPerson)(objectClass=person))",
                         requireString(safeParams, "branchDn"));
-                case USERS_WITH_NO_GROUP    -> runUsersWithNoGroupReport(dc, scope);
+                case USERS_WITH_NO_GROUP    -> runUsersByGroupCountReport(dc, scope, safeParams);
                 case RECENTLY_ADDED         -> runLdapReport(dc,
                         buildRecentFilter("createTimestamp", safeParams), scope);
                 case RECENTLY_MODIFIED      -> runLdapReport(dc,
@@ -184,21 +183,33 @@ public class OperationalReportService {
 
     /**
      * Two-pass implementation that doesn't rely on the memberOf overlay:
-     * collect every member DN appearing in any group, then return users
-     * absent from that set. When {@code scopeBaseDn} is non-null, both
-     * the group scan and the user scan run under that base so an admin
-     * only sees groups + users under their authorized OU.
+     * count how many groups each user appears in, then return the users whose
+     * group count satisfies an operator/value comparison. When {@code scopeBaseDn}
+     * is non-null, both the group scan and the user scan run under that base so
+     * an admin only sees groups + users under their authorized OU.
+     *
+     * <p>The comparison is driven by two optional params:
+     * {@code groupCountOp} (one of {@code =, !=, >, >=, <, <=}) and
+     * {@code groupCountValue} (a non-negative integer). They default to
+     * {@code "=" } and {@code 0} — i.e. "users with no group", the report's
+     * original behaviour — so callers that pass no params are unaffected.
+     * Passing {@code groupCountOp=">"} with {@code groupCountValue=1} returns
+     * users belonging to more than one group.</p>
      */
-    private ReportData runUsersWithNoGroupReport(DirectoryConnection dc, String scopeBaseDn) {
+    private ReportData runUsersByGroupCountReport(DirectoryConnection dc, String scopeBaseDn,
+                                                  Map<String, Object> params) {
+        String op = groupCountOp(params);
+        int threshold = groupCountValue(params);
+
         String groupFilter = "(|(objectClass=groupOfNames)(objectClass=groupOfUniqueNames)"
                 + "(objectClass=posixGroup)(objectClass=group))";
         List<LdapGroup> allGroups = groupService.searchGroups(dc, groupFilter, scopeBaseDn, MAX_LDAP_RESULTS,
                 "member", "uniqueMember", "memberUid");
 
-        Set<String> memberedDns = new HashSet<>();
+        Map<String, Integer> groupCounts = new HashMap<>();
         for (LdapGroup g : allGroups) {
             for (String m : g.getAllMembers()) {
-                memberedDns.add(m.toLowerCase());
+                groupCounts.merge(m.toLowerCase(), 1, Integer::sum);
             }
         }
 
@@ -206,13 +217,56 @@ public class OperationalReportService {
                 "(|(objectClass=inetOrgPerson)(objectClass=person))", scopeBaseDn,
                 MAX_LDAP_RESULTS, "*");
 
-        List<LdapUser> ungrouped = allUsers.stream()
-                .filter(u -> !memberedDns.contains(u.getDn().toLowerCase()))
+        List<LdapUser> matched = allUsers.stream()
+                .filter(u -> matchesGroupCount(
+                        groupCounts.getOrDefault(u.getDn().toLowerCase(), 0), op, threshold))
                 .toList();
 
-        log.info("Users with no group: {} ungrouped out of {} total users ({} groups scanned)",
-                ungrouped.size(), allUsers.size(), allGroups.size());
-        return buildReportDataFromUsers(ungrouped);
+        log.info("Users by group count ({} {}): {} matched out of {} total users ({} groups scanned)",
+                op, threshold, matched.size(), allUsers.size(), allGroups.size());
+        return buildReportDataFromUsers(matched);
+    }
+
+    /** Read the optional group-count comparison operator; defaults to "=". */
+    private static String groupCountOp(Map<String, Object> params) {
+        Object raw = params.get("groupCountOp");
+        String op = raw == null ? "" : raw.toString().trim();
+        return switch (op) {
+            case "!=", ">", ">=", "<", "<=", "=" -> op;
+            case "" -> "=";
+            default -> throw new IllegalArgumentException(
+                    "Unsupported groupCountOp: " + op + " (expected one of =, !=, >, >=, <, <=)");
+        };
+    }
+
+    /** Read the optional group-count threshold; defaults to 0, never negative. */
+    private static int groupCountValue(Map<String, Object> params) {
+        Object raw = params.get("groupCountValue");
+        if (raw == null || raw.toString().isBlank()) {
+            return 0;
+        }
+        int value;
+        try {
+            value = (raw instanceof Number n) ? n.intValue() : Integer.parseInt(raw.toString().trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("groupCountValue must be an integer: " + raw);
+        }
+        if (value < 0) {
+            throw new IllegalArgumentException("groupCountValue must not be negative: " + value);
+        }
+        return value;
+    }
+
+    private static boolean matchesGroupCount(int actual, String op, int threshold) {
+        return switch (op) {
+            case "=", ""  -> actual == threshold;
+            case "!="     -> actual != threshold;
+            case ">"      -> actual > threshold;
+            case ">="     -> actual >= threshold;
+            case "<"      -> actual < threshold;
+            case "<="     -> actual <= threshold;
+            default       -> actual == threshold;
+        };
     }
 
     private ReportData runDisabledAccountsReport(DirectoryConnection dc, String scopeBaseDn) {

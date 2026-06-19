@@ -24,7 +24,8 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
             SELECT * FROM audit_events e
             WHERE (:directoryId IS NULL OR e.directory_id = CAST(:directoryId AS UUID))
               AND (:actorId     IS NULL OR e.actor_id     = CAST(:actorId AS UUID))
-              AND (CAST(:action AS VARCHAR) IS NULL OR e.action = CAST(:action AS VARCHAR))
+              AND (CAST(:action AS VARCHAR) IS NULL
+                   OR e.action = ANY(string_to_array(CAST(:action AS VARCHAR), ',')))
               AND (CAST(:targetDn AS VARCHAR) IS NULL OR e.target_dn = CAST(:targetDn AS VARCHAR))
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
@@ -37,7 +38,8 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
             SELECT COUNT(*) FROM audit_events e
             WHERE (:directoryId IS NULL OR e.directory_id = CAST(:directoryId AS UUID))
               AND (:actorId     IS NULL OR e.actor_id     = CAST(:actorId AS UUID))
-              AND (CAST(:action AS VARCHAR) IS NULL OR e.action = CAST(:action AS VARCHAR))
+              AND (CAST(:action AS VARCHAR) IS NULL
+                   OR e.action = ANY(string_to_array(CAST(:action AS VARCHAR), ',')))
               AND (CAST(:targetDn AS VARCHAR) IS NULL OR e.target_dn = CAST(:targetDn AS VARCHAR))
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
@@ -65,7 +67,8 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
             SELECT * FROM audit_events e
             WHERE e.directory_id IN (:directoryIds)
               AND (:actorId     IS NULL OR e.actor_id     = CAST(:actorId AS UUID))
-              AND (CAST(:action AS VARCHAR) IS NULL OR e.action = CAST(:action AS VARCHAR))
+              AND (CAST(:action AS VARCHAR) IS NULL
+                   OR e.action = ANY(string_to_array(CAST(:action AS VARCHAR), ',')))
               AND (CAST(:targetDn AS VARCHAR) IS NULL OR e.target_dn = CAST(:targetDn AS VARCHAR))
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
@@ -78,7 +81,8 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
             SELECT COUNT(*) FROM audit_events e
             WHERE e.directory_id IN (:directoryIds)
               AND (:actorId     IS NULL OR e.actor_id     = CAST(:actorId AS UUID))
-              AND (CAST(:action AS VARCHAR) IS NULL OR e.action = CAST(:action AS VARCHAR))
+              AND (CAST(:action AS VARCHAR) IS NULL
+                   OR e.action = ANY(string_to_array(CAST(:action AS VARCHAR), ',')))
               AND (CAST(:targetDn AS VARCHAR) IS NULL OR e.target_dn = CAST(:targetDn AS VARCHAR))
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))

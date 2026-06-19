@@ -169,7 +169,8 @@
                 <tr>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">#</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">DN</th>
-                  <th class="px-2 py-1 text-left font-medium text-blue-700">Attributes</th>
+                  <th v-for="attr in userPreviewAttrCols" :key="attr"
+                      class="px-2 py-1 text-left font-medium text-blue-700 whitespace-nowrap">{{ attr }}</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Issues</th>
                 </tr>
               </thead>
@@ -178,7 +179,8 @@
                     :class="row.missingRequired?.length ? 'bg-amber-50' : ''">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
                   <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
-                  <td class="px-2 py-1 text-gray-600">{{ formatAttrs(row.attributes) }}</td>
+                  <td v-for="attr in userPreviewAttrCols" :key="attr"
+                      class="px-2 py-1 font-mono text-[13px] text-gray-700 break-all">{{ row.attributes?.[attr] ?? '' }}</td>
                   <td class="px-2 py-1 text-amber-700">
                     <span v-if="row.missingRequired?.length"
                           :title="`Missing required: ${row.missingRequired.join(', ')}`">
@@ -741,6 +743,20 @@ const canImport = computed(() => {
 const previewWarningCount = computed(() =>
   (previewResult.value?.rows || []).filter(r => r.missingRequired?.length).length
 )
+
+/** Ordered union of the non-DN attribute names across all preview rows, so the
+ *  user-import preview renders each attribute in its own column (rather than a
+ *  single comma-delimited cell). First-seen order keeps columns stable. */
+const userPreviewAttrCols = computed<string[]>(() => {
+  const cols: string[] = []
+  const seen = new Set<string>()
+  for (const row of previewResult.value?.rows || []) {
+    for (const key of Object.keys(row.attributes || {})) {
+      if (!seen.has(key)) { seen.add(key); cols.push(key) }
+    }
+  }
+  return cols
+})
 
 /** Same idea, for the group import preview. */
 const groupPreviewWarningCount = computed(() =>
