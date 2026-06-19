@@ -400,6 +400,19 @@
         <div class="grid grid-cols-2 gap-2 items-start shrink-0">
           <div class="space-y-2">
             <FormField label="Template Name" v-model="templateForm.name" required />
+            <FormField label="RDN Attribute" v-model="templateForm.targetKeyAttribute" placeholder="uid"
+                       :disabled="dnFromColumn" />
+            <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+              <input type="checkbox" v-model="dnFromColumn" class="rounded text-blue-600" />
+              Read DN from a CSV column
+            </label>
+            <div v-if="dnFromColumn">
+              <FormField label="DN column" v-model="templateForm.dnSourceColumn" placeholder="dn" />
+              <p class="text-xs text-gray-500 mt-1">
+                Each row's full DN is taken from this column instead of being built
+                from the RDN attribute. The DN must fall within the import's parent container.
+              </p>
+            </div>
             <div>
               <label for="bulk-template-form-conflict-handling" class="block text-sm font-medium text-gray-700 mb-1">Conflict Handling</label>
               <select id="bulk-template-form-conflict-handling" v-model="templateForm.conflictHandling" class="input w-full">
@@ -455,24 +468,6 @@
                   </div>
                   <p v-if="availableObjectClasses.length === 0" class="text-xs text-gray-500 text-center py-4">None</p>
                 </div>
-              </div>
-            </div>
-
-            <!-- RDN / DN-source settings sit under the Object Class picker to
-                 use the space to the right of the scalar fields. -->
-            <div class="space-y-2 mt-3">
-              <FormField label="RDN Attribute" v-model="templateForm.targetKeyAttribute" placeholder="uid"
-                         :disabled="dnFromColumn" />
-              <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                <input type="checkbox" v-model="dnFromColumn" class="rounded text-blue-600" />
-                Read DN from a CSV column
-              </label>
-              <div v-if="dnFromColumn">
-                <FormField label="DN column" v-model="templateForm.dnSourceColumn" placeholder="dn" />
-                <p class="text-xs text-gray-500 mt-1">
-                  Each row's full DN is taken from this column instead of being built
-                  from the RDN attribute. The DN must fall within the import's parent container.
-                </p>
               </div>
             </div>
           </div>
