@@ -1,6 +1,7 @@
 # Scheduled Reports (CSV + Email) in Core — Implementation Plan
 
-**Status:** Not started (plan, 2026-06-19).
+**Status:** Not started (plan, 2026-06-19; revised to reuse the existing
+`scheduled_report_jobs` table, 2026-06-19).
 
 ## Goal
 
@@ -34,10 +35,14 @@ The expensive infrastructure already exists in core:
   already exists.
 - **Dashboard SPI** — core defines `ReportJobHealthProvider` +
   `NoopReportJobHealthProvider`; a real provider slots in.
+- **The table already exists in core** — `scheduled_report_jobs` is defined in
+  the core baseline (`V1__baseline.sql`). We reuse it rather than create a
+  parallel `report_jobs` table; only a small additive migration is needed for a
+  couple of gaps (below).
 
-So the work is mostly: one migration + entity + repository + DTOs + service +
-controller + one poller + a health provider + tests, reusing the email and
-report-execution paths.
+So the work is mostly: entity + repository + DTOs + service + controller + one
+poller + a health provider + a small additive migration + tests, reusing the
+existing table and the email/report-execution paths.
 
 ## Frontend contract (already shipped — the backend must match it)
 
@@ -60,8 +65,7 @@ Create/update request body:
   "cronExpression": "0 8 * * 1",          // NOTE: 5-field (see Cron decision)
   "outputFormat": "CSV",                  // CSV | PDF
   "deliveryMethod": "EMAIL",              // EMAIL | S3
-  "recipientEmail": "ops@example.com",    // or null
-  "emailSubject": "Weekly report",        // or null
+  "recipientEmail": "ops@example.com",    // → delivery_recipients; or null
   "s3KeyPrefix": null,                    // or "reports/"
   "enabled": true
 }
@@ -71,67 +75,109 @@ Response (`Job`) adds: `id`, `lastRunAt`, `lastRunStatus` (`SUCCESS`/`FAILED`).
 The list table shows Name, Type, Schedule (cron), Format, Delivery, Last Run +
 status, the enabled toggle.
 
+> **Frontend delta:** drop the **Email Subject** input from the job form (and
+> from `buildJobPayload`) — the backend now generates the subject. `recipientEmail`
+> maps to the table's `delivery_recipients`. Everything else in the already-shipped
+> form is unchanged.
+
 ## Backend design (all in `core`)
 
-### 1. Migration — `db/migration/core/V18__report_jobs.sql`
+### 1. Schema — reuse the existing `scheduled_report_jobs` table
 
-`report_jobs` table:
+The table already exists in the core baseline (`V1__baseline.sql`); **we do not
+create a new table.** Its columns:
 
-| column | type | notes |
+| column | type | maps to |
 |---|---|---|
-| `id` | uuid pk | |
+| `id` | uuid pk | response `id` |
 | `directory_id` | uuid not null, fk → directory_connections | scope |
-| `name` | varchar not null | |
-| `report_type` | varchar not null | OperationalReportType name or addon id |
-| `report_params` | jsonb not null default '{}' | |
-| `cron_expression` | varchar not null | normalized 6-field (see below) |
-| `output_format` | varchar(8) not null default 'CSV' | |
-| `delivery_method` | varchar(8) not null default 'EMAIL' | |
-| `recipient_email` | varchar | |
-| `email_subject` | varchar | |
-| `s3_key_prefix` | varchar | |
-| `enabled` | boolean not null default true | |
-| `next_run_at` | timestamptz | computed from cron |
-| `last_run_at` | timestamptz | |
-| `last_run_status` | varchar(12) | SUCCESS / FAILED |
-| `last_run_error` | text | truncated message on failure |
+| `name` | varchar(255) not null | `name` |
+| `report_type` | varchar(50) not null | `reportType` |
+| `report_params` | jsonb | `reportParams` |
+| `cron_expression` | varchar(100) not null | `cronExpression` |
+| `output_format` | varchar(10) not null default 'CSV' | `outputFormat` (CHECK CSV/PDF) |
+| `delivery_method` | varchar(10) not null default 'EMAIL' | `deliveryMethod` (CHECK EMAIL/S3) |
+| `delivery_recipients` | text | `recipientEmail` (comma-separated; one value today) |
+| `s3_key_prefix` | varchar(500) | `s3KeyPrefix` |
+| `enabled` | boolean not null default true | `enabled` |
+| `last_run_at` | timestamptz | `lastRunAt` |
+| `last_run_status` | varchar(50) | `lastRunStatus` (SUCCESS/FAILED) |
+| `last_run_message` | text | failure detail (not surfaced in the list) |
+| `created_by_admin_id` | uuid, fk → accounts | set from principal |
 | `created_at` / `updated_at` | timestamptz | |
 
-Index: `(enabled, next_run_at)` for the due-query.
+Reconciliation notes (vs. the earlier draft and the frontend contract):
+
+- **No `recipient_email` / `email_subject` columns.** Recipients live in
+  `delivery_recipients`. The email **subject is generated** from the report type
+  + params at send time (see §5) — the operator is not asked for one and it is
+  **not stored**. So the frontend's `emailSubject` field is dropped.
+- **No `next_run_at` column.** Due-ness is computed in Java from
+  `cron_expression` + `last_run_at` at poll time (see §3) — matching the
+  existing schema, so no column is added.
+- Indexes already present: `idx_report_jobs_dir (directory_id)`,
+  `idx_report_jobs_enabled (enabled)`.
+
+**Only DDL needed — a small additive migration `V18__relax_report_type_check.sql`:**
+the baseline `chk_report_type` CHECK only allows the original seven built-ins
+(it predates `MISSING_PROFILE_GROUPS`, `AUDIT_ENTRIES`, and addon report ids
+like `ORPHANED_IVIA_ACCOUNTS`). Since the schedulable report-type set is now
+dynamic (built-ins + addon providers), **drop `chk_report_type`** and validate
+`report_type` in the service instead (against `OperationalReportType` +
+`OperationalReportProvider` ids). The `output_format` and `delivery_method`
+CHECKs stay (the value sets are stable).
 
 ### 2. Entity + enums
 
-- `ReportJob` JPA entity (`@Getter/@Setter`, `report_params` as `jsonb` via
-  `@JdbcTypeCode(SqlTypes.JSON)` like `AuditEvent.detail`).
+- `ScheduledReportJob` JPA entity mapped to `scheduled_report_jobs`
+  (`@Getter/@Setter`, `report_params` as `jsonb` via `@JdbcTypeCode(SqlTypes.JSON)`
+  like `AuditEvent.detail`). Fields mirror the columns above, including
+  `deliveryRecipients`, `lastRunMessage`, and `createdByAdminId`. **No
+  `nextRunAt` / `emailSubject` fields** (not in the table).
 - Enums `ReportOutputFormat { CSV, PDF }`, `ReportDeliveryMethod { EMAIL, S3 }`,
-  `ReportJobRunStatus { SUCCESS, FAILED }` (`@Enumerated(STRING)`).
+  `ReportJobRunStatus { SUCCESS, FAILED }` (`@Enumerated(STRING)`; the
+  `output_format` / `delivery_method` DB CHECKs already match).
 
-### 3. Repository — `ReportJobRepository`
+### 3. Repository — `ScheduledReportJobRepository`
 
 - `findAllByDirectoryId(UUID, Pageable)`
 - `findByIdAndDirectoryId(...)` (scope guard)
-- Due-claim query (native, Postgres): select enabled jobs with
-  `next_run_at <= now()` `FOR UPDATE SKIP LOCKED` — mirrors
-  `OutboxEntryRepository.claimBatch`, so multiple app instances don't double-run.
+- `findByEnabledTrue()` — the poller loads enabled jobs and decides due-ness in
+  Java from `cron_expression` + `last_run_at` (no `next_run_at` column). The job
+  count is small, so this is cheap.
+- **Multi-instance safety** (no `next_run_at` to claim on): guard each run with
+  a conditional update — `UPDATE scheduled_report_jobs SET last_run_at = :now
+  WHERE id = :id AND last_run_at IS NOT DISTINCT FROM :seenLastRunAt` — and only
+  run when it updates one row; or wrap the poll in a Postgres advisory lock.
+  (If a cleaner claim is wanted later, add a `next_run_at` column and switch to
+  the `FOR UPDATE SKIP LOCKED` pattern — but that's an extra column we're
+  avoiding for now.)
 
 ### 4. DTOs
 
 - `ReportJobRequest` (record, bean-validated: `@NotBlank name`,
   `@NotBlank reportType`, `@NotBlank cronExpression`, format/delivery enums,
-  conditional `recipientEmail` when EMAIL).
-- `ReportJobResponse` (record) — exactly the `Job` shape above.
+  conditional `recipientEmail` when EMAIL). **No `emailSubject`.**
+- `ReportJobResponse` (record) — the `Job` shape above; `recipientEmail` is read
+  back from `delivery_recipients`.
 
-### 5. Service — `ReportJobService`
+### 5. Service — `ScheduledReportJobService`
 
-- CRUD scoped to directory.
+- CRUD scoped to directory; `createdByAdminId` set from the principal.
 - **Validation:** `reportType` resolves to a built-in `OperationalReportType`
-  or an addon `OperationalReportProvider` id; cron parses (see decision);
-  in core, **reject `PDF` / `S3`** with `IllegalArgumentException` (→ 400)
-  unless a governance capability is present — keeps the edition line.
-- `nextRunAt` computed from the cron on save and after each run.
+  or an addon `OperationalReportProvider` id (this replaces the dropped
+  `chk_report_type` CHECK); cron parses (see decision); in core, **reject
+  `PDF` / `S3`** with `IllegalArgumentException` (→ 400) unless a governance
+  capability is present — keeps the edition line.
+- **Generated email subject** (operator never supplies one): build it from the
+  report's friendly label + key params + the run date, e.g.
+  `"[LDAPPortal] Disabled Accounts — Corp LDAP — 2026-06-19"`. A small
+  `reportEmailSubject(job, dc)` helper centralises the format; nothing is
+  persisted.
 - `runJob(job)`: `reportService.run(dc, type, params, dirId)` →
-  `CsvUtils.write(...)` → deliver → record `lastRunAt/lastRunStatus/error`,
-  recompute `nextRunAt`. Never throws out of the scheduler loop.
+  `CsvUtils.write(...)` → deliver (subject generated here) → record
+  `lastRunAt` / `lastRunStatus` / `lastRunMessage`. Never throws out of the
+  scheduler loop.
 
 ### 6. Email delivery
 
@@ -148,18 +194,20 @@ all methods `@RequiresFeature(FeatureKey.REPORTS_SCHEDULE)`, `@DirectoryId
 @PathVariable UUID directoryId`, `@AuthenticationPrincipal`, mirroring
 `ReportController`'s authz + rate limiting. Maps request/response DTOs.
 
-### 8. Scheduler — `ReportJobScheduler`
+### 8. Scheduler — `ScheduledReportJobScheduler`
 
-`@Scheduled(fixedDelay = 60_000)` poller following `OutboundDispatcherScheduler`:
-claim due jobs (SKIP LOCKED), run each via `ReportJobService.runJob`, catch +
-log per job. One-minute granularity matches cron resolution.
+`@Scheduled(fixedDelay = 60_000)` poller (following `OutboundDispatcherScheduler`'s
+shape): load enabled jobs, compute due-ness from `cron_expression` +
+`last_run_at`, run each due job via `ScheduledReportJobService.runJob` behind the
+conditional-update claim from §3, catch + log per job. One-minute granularity
+matches cron resolution.
 
 ### 9. Dashboard health
 
-Replace the noop with a real `ReportJobHealthProvider` bean in core returning
-`new ReportJobHealth(enabledCount, failedCount)` (failed = `last_run_status =
-FAILED`). Guard against double-registration with `CoreNoopSpiAutoConfiguration`
-(`@ConditionalOnMissingBean`).
+Replace the noop with a real `ReportJobHealthProvider` bean in core, backed by
+`scheduled_report_jobs`, returning `new ReportJobHealth(enabledCount, failedCount)`
+(failed = `last_run_status = 'FAILED'`). Guard against double-registration with
+`CoreNoopSpiAutoConfiguration` (`@ConditionalOnMissingBean`).
 
 ## Cron format decision
 
@@ -187,29 +235,30 @@ return 400 on a bad expression.
 
 ## Testing
 
-- `ReportJobServiceTest` (Mockito): CRUD scope guard; cron validation
-  (good/bad); `PDF`/`S3` rejected in core; `runJob` success path
-  (report run → CSV → email sent, status SUCCESS) and failure path
-  (status FAILED, error recorded, no throw).
+- `ScheduledReportJobServiceTest` (Mockito): CRUD scope guard; cron validation
+  (good/bad); `report_type` validation against built-ins + providers (replaces
+  the dropped CHECK); `PDF`/`S3` rejected in core; generated-subject format;
+  `runJob` success path (report run → CSV → email sent, status SUCCESS) and
+  failure path (status FAILED, `last_run_message` recorded, no throw).
 - `ReportJobControllerTest` (MockMvc): authz (`REPORTS_SCHEDULE`), the
-  request/response contract, 400 on bad input.
-- `ReportJobRepositoryTest` (`@DataJpaTest`): basic CRUD + due-query. The
-  `FOR UPDATE SKIP LOCKED` claim is Postgres-only (H2 can't run it) — cover it
-  at the integration/E2E layer or `@Disabled` with a note, matching
-  `OutboxEntryRepositoryTest`.
+  request/response contract (incl. `recipientEmail` ↔ `delivery_recipients`,
+  no `emailSubject`), 400 on bad input.
+- `ScheduledReportJobRepositoryTest` (`@DataJpaTest`): CRUD + due-ness selection
+  + the conditional-update claim (works on H2/Postgres — no `SKIP LOCKED`
+  needed since we don't add `next_run_at`).
 
 ## File checklist (~10–13 files)
 
-1. `db/migration/core/V18__report_jobs.sql`
-2. `entity/ReportJob.java` (+ enums `ReportOutputFormat`, `ReportDeliveryMethod`, `ReportJobRunStatus`)
-3. `repository/ReportJobRepository.java`
+1. `db/migration/core/V18__relax_report_type_check.sql` (drop `chk_report_type`; **reuses the existing `scheduled_report_jobs` table** — no new table)
+2. `entity/ScheduledReportJob.java` (+ enums `ReportOutputFormat`, `ReportDeliveryMethod`, `ReportJobRunStatus`)
+3. `repository/ScheduledReportJobRepository.java`
 4. `dto/reports/ReportJobRequest.java`, `ReportJobResponse.java`
 5. `service/EmailService.java` (extracted) + refactor `ApprovalNotificationService`
-6. `service/ReportJobService.java`
+6. `service/ScheduledReportJobService.java` (incl. generated-subject helper)
 7. `controller/ReportJobController.java` (or `core/reports/`)
-8. `core/reports/ReportJobScheduler.java`
+8. `core/reports/ScheduledReportJobScheduler.java`
 9. `core/dashboard/CoreReportJobHealthProvider.java` (+ wire in `CoreNoopSpiAutoConfiguration`)
-10. Frontend: re-gate Scheduled Jobs button on `REPORTS_SCHEDULE`; constrain format/delivery options in core
+10. Frontend: re-gate Scheduled Jobs button on `REPORTS_SCHEDULE`; drop the Email Subject field; constrain format/delivery options in core
 11. Tests (service, controller, repository)
 
 ## Open questions / verification items
@@ -217,13 +266,21 @@ return 400 on a bad expression.
 1. **`REPORTS_SCHEDULE` availability in community** — confirm the feature key is
    grantable in core (not implicitly governance-gated). If it currently maps to
    governance, expose/grant it for the core scheduling subset.
-2. **Multi-instance deployment** — if community can run multiple replicas, the
-   `SKIP LOCKED` claim is required (planned); if always single-instance, it's
-   still harmless.
+2. **Multi-instance deployment** — the existing table has no `next_run_at`, so
+   the plan claims runs with a conditional `UPDATE` (or an advisory lock). If
+   community is always single-instance this is moot; if we want the cleaner
+   `FOR UPDATE SKIP LOCKED` claim, add a `next_run_at` column later.
 3. **Cron format** — confirm the 5→6 normalization choice with maintainers.
 4. **Edition policy sign-off** — bringing the scheduling primitive into core
    narrows the paid boundary to PDF/S3/compliance report types. This is a
    product decision, not just a technical one.
+5. **Dropping `chk_report_type`** — the plan removes the baseline CHECK and
+   validates `report_type` in the service (so addon/`AUDIT_ENTRIES` types can be
+   scheduled). Confirm that's acceptable vs. widening the CHECK to a fixed list
+   (which can't enumerate addon ids).
+6. **Existing `delivery_recipients` data** — confirm the column holds a single
+   address (or a delimiter convention) so the `recipientEmail` ↔
+   `delivery_recipients` mapping round-trips cleanly.
 
 ## Effort
 
