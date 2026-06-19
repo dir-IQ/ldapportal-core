@@ -45,29 +45,32 @@
                  :placeholder="mode === 'key' ? (keyAttribute || 'uid') : 'dn'" @input="resetResults" />
         </div>
 
-        <div :class="mode === 'key' ? 'col-span-2' : 'col-span-5'">
-          <label class="block text-sm font-medium text-gray-700 mb-1">CSV File <span class="text-red-500">*</span></label>
-          <label class="csv-file-picker input flex items-center gap-2 w-full cursor-pointer !py-0 !pr-1 hover:border-gray-400 transition-colors bg-white">
-            <span class="flex-1 truncate text-sm" :class="file ? 'text-gray-900 font-medium' : 'text-gray-500'">
-              {{ file?.name || 'No file chosen' }}
-            </span>
-            <span class="px-3 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100 whitespace-nowrap">
-              Choose File
-            </span>
-            <input type="file" accept=".csv,text/csv" @change="onFileChange" aria-label="CSV File" class="sr-only" />
-          </label>
-        </div>
       </div>
 
-      <!-- Preview action (under Match users by) + header toggle (under CSV file) -->
-      <div class="flex items-center justify-between">
+      <!-- CSV file + header toggle, left-aligned together. max-w keeps the
+           field from stretching across to the right edge. -->
+      <div class="max-w-lg">
+        <label class="block text-sm font-medium text-gray-700 mb-1">CSV File <span class="text-red-500">*</span></label>
+        <label class="csv-file-picker input flex items-center gap-2 w-full cursor-pointer !py-0 !pr-1 hover:border-gray-400 transition-colors bg-white">
+          <span class="flex-1 truncate text-sm" :class="file ? 'text-gray-900 font-medium' : 'text-gray-500'">
+            {{ file?.name || 'No file chosen' }}
+          </span>
+          <span class="px-3 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100 whitespace-nowrap">
+            Choose File
+          </span>
+          <input type="file" accept=".csv,text/csv" @change="onFileChange" aria-label="CSV File" class="sr-only" />
+        </label>
+        <label for="bd-skip-header" class="flex items-center gap-2 cursor-pointer mt-2">
+          <input id="bd-skip-header" type="checkbox" v-model="skipHeaderRow" @change="resetResults" class="rounded border-gray-300" />
+          <span class="text-sm text-gray-700">First row in file is a header</span>
+        </label>
+      </div>
+
+      <!-- Preview (dry run) -->
+      <div>
         <button @click="doPreview" :disabled="!canPreview || previewing" class="btn-primary">
           {{ previewing ? 'Previewing…' : 'Preview' }}
         </button>
-        <label for="bd-skip-header" class="flex items-center gap-2 cursor-pointer">
-          <input id="bd-skip-header" type="checkbox" v-model="skipHeaderRow" @change="resetResults" class="rounded border-gray-300" />
-          <span class="text-sm text-gray-700">First row is a header</span>
-        </label>
       </div>
 
       <!-- Preview -->
