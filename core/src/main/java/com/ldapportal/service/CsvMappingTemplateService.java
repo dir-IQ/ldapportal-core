@@ -9,6 +9,7 @@ import com.ldapportal.entity.CsvMappingTemplate;
 import com.ldapportal.entity.CsvMappingTemplateEntry;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.ConflictHandling;
+import com.ldapportal.entity.enums.ImportErrorHandling;
 import com.ldapportal.exception.ConflictException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.CsvMappingTemplateEntryRepository;
@@ -76,6 +77,8 @@ public class CsvMappingTemplateService {
                 req.conflictHandling() != null ? req.conflictHandling() : ConflictHandling.SKIP);
         template.setObjectClass(req.objectClass());
         template.setSkipHeaderRow(req.skipHeaderRow() != null ? req.skipHeaderRow() : true);
+        template.setErrorHandling(
+                req.errorHandling() != null ? req.errorHandling() : ImportErrorHandling.SKIP_ERRORS);
         template.setDnSourceColumn(blankToNull(req.dnSourceColumn()));
         template = templateRepo.save(template);
 
@@ -108,6 +111,9 @@ public class CsvMappingTemplateService {
         }
         if (req.skipHeaderRow() != null) {
             template.setSkipHeaderRow(req.skipHeaderRow());
+        }
+        if (req.errorHandling() != null) {
+            template.setErrorHandling(req.errorHandling());
         }
         // Set unconditionally (blank → null) so the override can be cleared.
         template.setDnSourceColumn(blankToNull(req.dnSourceColumn()));
@@ -186,6 +192,7 @@ public class CsvMappingTemplateService {
                 t.getObjectClass(),
                 t.getTargetKeyAttribute(),
                 t.getConflictHandling(),
+                t.getErrorHandling(),
                 t.isSkipHeaderRow(),
                 t.getDnSourceColumn(),
                 entryDtos,

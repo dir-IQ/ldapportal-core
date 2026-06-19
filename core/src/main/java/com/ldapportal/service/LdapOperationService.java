@@ -33,6 +33,7 @@ import com.ldapportal.entity.CsvMappingTemplateEntry;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ConflictHandling;
+import com.ldapportal.entity.enums.ImportErrorHandling;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.InputType;
 import com.ldapportal.exception.ResourceNotFoundException;
@@ -851,10 +852,11 @@ public class LdapOperationService {
         permissionService.requireDnWithinScope(principal, directoryId, req.parentDn());
 
         // Defaults — may be overridden by template or request fields
-        String            targetKeyAttr    = "uid";
-        ConflictHandling  conflictHandling = ConflictHandling.SKIP;
-        List<String>      objectClasses    = List.of();
-        String            dnSourceColumn   = null;
+        String              targetKeyAttr    = "uid";
+        ConflictHandling    conflictHandling = ConflictHandling.SKIP;
+        ImportErrorHandling errorHandling    = ImportErrorHandling.SKIP_ERRORS;
+        List<String>        objectClasses    = List.of();
+        String              dnSourceColumn   = null;
         List<CsvColumnMappingDto> mappings = req.columnMappings() != null
                 ? new ArrayList<>(req.columnMappings()) : new ArrayList<>();
 
@@ -865,6 +867,7 @@ public class LdapOperationService {
                     csvTemplateService.loadEntries(req.templateId());
             targetKeyAttr    = template.getTargetKeyAttribute();
             conflictHandling = template.getConflictHandling();
+            errorHandling    = template.getErrorHandling();
             dnSourceColumn   = template.getDnSourceColumn();
             if (template.getObjectClass() != null && !template.getObjectClass().isBlank()) {
                 objectClasses = List.of(template.getObjectClass().split(","));
@@ -901,9 +904,24 @@ public class LdapOperationService {
                     .orElse(null);
         }
 
+        // ABORT_ON_ERROR validates rows against the object classes' MUST set
+        // before writing anything; resolve it the same way previewBulkImport
+        // does. Only needed for the abort path, so skip the schema lookup for
+        // the default SKIP_ERRORS behaviour.
+        List<String> requiredAttrs = List.of();
+        if (errorHandling == ImportErrorHandling.ABORT_ON_ERROR && !objectClasses.isEmpty()) {
+            var schema = schemaService.getAttributesForObjectClasses(dc, objectClasses);
+            String keyAttr = targetKeyAttr;
+            requiredAttrs = schema.required().stream()
+                    .filter(a -> !a.equalsIgnoreCase("objectClass"))
+                    .filter(a -> !a.equalsIgnoreCase(keyAttr))
+                    .toList();
+        }
+
         BulkImportResult result = bulkUserService.importCsv(
                 dc, csvInput, req.parentDn(), targetKeyAttr, conflictHandling, mappings,
-                objectClasses, skipHeader, dnSourceColumn, profileContext);
+                objectClasses, skipHeader, dnSourceColumn, profileContext,
+                requiredAttrs, errorHandling);
 
         auditService.record(principal, directoryId, AuditAction.USER_CREATE, req.parentDn(),
                 Map.of("operation", "bulkImport",

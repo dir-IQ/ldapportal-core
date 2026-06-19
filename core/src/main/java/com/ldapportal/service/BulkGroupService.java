@@ -331,9 +331,17 @@ public class BulkGroupService {
                         && !ex.getMessage().contains(String.valueOf(ResultCode.ENTRY_ALREADY_EXISTS.intValue()))) {
                     throw ex;
                 }
+                // Group already exists (matched by cn + parent DN). Treat the
+                // row as a bulk member-add: merge the CSV's members into the
+                // existing group rather than skipping. Member changes are
+                // always additive (never a REPLACE), so existing members are
+                // preserved. OVERWRITE additionally replaces the group's other
+                // (non-cn/objectClass/member) attributes.
+                boolean replacedAttrs = false;
                 if (conflictHandling == ConflictHandling.OVERWRITE) {
                     List<Modification> mods = attrMap.entrySet().stream()
-                            .filter(e -> !e.getKey().equals("cn") && !e.getKey().equals("objectClass"))
+                            .filter(e -> !e.getKey().equals("cn") && !e.getKey().equals("objectClass")
+                                    && !e.getKey().equalsIgnoreCase(memberAttribute))
                             .map(e -> new Modification(
                                     ModificationType.REPLACE,
                                     e.getKey(),
@@ -341,19 +349,30 @@ public class BulkGroupService {
                             .toList();
                     if (!mods.isEmpty()) {
                         groupService.updateGroup(dc, dn, mods);
+                        replacedAttrs = true;
                     }
-                    // Re-add members on overwrite
-                    for (String member : members) {
-                        try {
-                            groupService.addMember(dc, dn, memberAttribute, member);
-                        } catch (Exception e) {
-                            // Member may already exist — ignore
-                        }
-                    }
-                    return BulkImportRowResult.updated(rowNum, dn);
-                } else {
-                    return BulkImportRowResult.skipped(rowNum, dn, "Entry already exists");
                 }
+                int addedMembers = 0;
+                for (String member : members) {
+                    try {
+                        groupService.addMember(dc, dn, memberAttribute, member);
+                        addedMembers++;
+                    } catch (Exception e) {
+                        // Member already present (or otherwise rejected) — the
+                        // merge is best-effort, so don't fail the whole row.
+                        log.debug("Row {} — member {} not added to existing {}: {}",
+                                rowNum, member, dn, e.getMessage());
+                    }
+                }
+                if (addedMembers > 0 || replacedAttrs) {
+                    return BulkImportRowResult.updated(rowNum, dn);
+                }
+                // Nothing to merge: no new members and (for non-OVERWRITE) no
+                // attribute changes. Leave the existing group untouched.
+                return BulkImportRowResult.skipped(rowNum, dn,
+                        members.isEmpty()
+                                ? "Group already exists (no members to add)"
+                                : "Group already exists; members already present");
             }
         } catch (Exception ex) {
             log.warn("Row {} failed [dn={}]: {}", rowNum, dn, ex.getMessage());
