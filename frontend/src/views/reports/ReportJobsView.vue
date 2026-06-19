@@ -4,9 +4,14 @@
     <div class="flex items-center justify-between mb-6">
       <div>
         <h1 class="text-2xl font-bold text-gray-900">Operational Reports</h1>
-        <p class="text-sm text-gray-500 mt-1">Run and schedule directory reports</p>
+        <p class="text-sm text-gray-500 mt-1">{{ auth.isComplianceEnabled ? 'Run and schedule directory reports' : 'Run directory reports' }}</p>
       </div>
-      <button @click="openSchedules" class="bg-blue-50 border border-blue-200 text-blue-600 rounded-full px-4 py-1.5 text-sm font-medium hover:bg-blue-100 transition-colors flex items-center gap-1.5">
+      <!-- Scheduled report jobs (CRUD + the /report-jobs endpoints) ship with the
+           commercial governance module; the community/core build has no such
+           controller, so hide the entry point where the GOVERNANCE entitlement
+           isn't granted — same gating as the PDF export below. Without this the
+           button 404s through to the static-resource handler. -->
+      <button v-if="auth.isComplianceEnabled" @click="openSchedules" class="bg-blue-50 border border-blue-200 text-blue-600 rounded-full px-4 py-1.5 text-sm font-medium hover:bg-blue-100 transition-colors flex items-center gap-1.5">
         <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l2.5 2.5"/></svg>
         Scheduled Jobs
       </button>
