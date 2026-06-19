@@ -10,6 +10,7 @@ import com.ldapportal.entity.CsvMappingTemplate;
 import com.ldapportal.entity.CsvMappingTemplateEntry;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.ConflictHandling;
+import com.ldapportal.entity.enums.ImportErrorHandling;
 import com.ldapportal.exception.ConflictException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.CsvMappingTemplateEntryRepository;
@@ -166,7 +167,8 @@ class CsvMappingTemplateServiceTest {
         List<CsvColumnMappingDto> mappings = List.of(
                 new CsvColumnMappingDto("email", "mail", false));
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "New Template", "inetOrgPerson", "uid", ConflictHandling.OVERWRITE, true, null, mappings);
+                "New Template", "inetOrgPerson", "uid", ConflictHandling.OVERWRITE,
+                ImportErrorHandling.ABORT_ON_ERROR, true, null, mappings);
 
         CsvMappingTemplateDto result = service.create(dirId, req, adminPrincipal);
 
@@ -176,6 +178,7 @@ class CsvMappingTemplateServiceTest {
         verify(templateRepo).save(captor.capture());
         assertThat(captor.getValue().getTargetKeyAttribute()).isEqualTo("uid");
         assertThat(captor.getValue().getConflictHandling()).isEqualTo(ConflictHandling.OVERWRITE);
+        assertThat(captor.getValue().getErrorHandling()).isEqualTo(ImportErrorHandling.ABORT_ON_ERROR);
         verify(entryRepo, times(1)).save(any());
     }
 
@@ -188,7 +191,7 @@ class CsvMappingTemplateServiceTest {
         when(templateRepo.save(any())).thenReturn(saved);
 
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "T", null, null, null, null, null, List.of());
+                "T", null, null, null, null, null, null, List.of());
 
         service.create(dirId, req, adminPrincipal);
 
@@ -197,6 +200,7 @@ class CsvMappingTemplateServiceTest {
         verify(templateRepo).save(captor.capture());
         assertThat(captor.getValue().getTargetKeyAttribute()).isEqualTo("uid");
         assertThat(captor.getValue().getConflictHandling()).isEqualTo(ConflictHandling.SKIP);
+        assertThat(captor.getValue().getErrorHandling()).isEqualTo(ImportErrorHandling.SKIP_ERRORS);
     }
 
     @Test
@@ -206,7 +210,7 @@ class CsvMappingTemplateServiceTest {
         when(templateRepo.existsByDirectoryIdAndName(dirId, "Existing")).thenReturn(true);
 
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "Existing", null, null, null, null, null, List.of());
+                "Existing", null, null, null, null, null, null, List.of());
 
         assertThatThrownBy(() -> service.create(dirId, req, adminPrincipal))
                 .isInstanceOf(ConflictException.class)
@@ -232,7 +236,7 @@ class CsvMappingTemplateServiceTest {
         when(entryRepo.save(any())).thenReturn(newEntry);
 
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "Renamed", "inetOrgPerson", "sAMAccountName", ConflictHandling.OVERWRITE, true, null,
+                "Renamed", "inetOrgPerson", "sAMAccountName", ConflictHandling.OVERWRITE, null, true, null,
                 List.of(new CsvColumnMappingDto("sn", "sn", false)));
 
         CsvMappingTemplateDto result = service.update(dirId, templateId, req, adminPrincipal);
@@ -250,7 +254,7 @@ class CsvMappingTemplateServiceTest {
         when(templateRepo.existsByDirectoryIdAndName(dirId, "Other")).thenReturn(true);
 
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "Other", null, null, null, null, null, List.of());
+                "Other", null, null, null, null, null, null, List.of());
 
         assertThatThrownBy(() -> service.update(dirId, templateId, req, adminPrincipal))
                 .isInstanceOf(ConflictException.class);

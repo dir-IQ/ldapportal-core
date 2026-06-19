@@ -2,6 +2,7 @@
 package com.ldapportal.dto.csv;
 
 import com.ldapportal.entity.enums.ConflictHandling;
+import com.ldapportal.entity.enums.ImportErrorHandling;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -17,6 +18,8 @@ public record CsvMappingTemplateDto(
         String objectClass,
         String targetKeyAttribute,
         ConflictHandling conflictHandling,
+        /** How the import reacts to rows with errors (skip them vs block the import). */
+        ImportErrorHandling errorHandling,
         boolean skipHeaderRow,
         /** When set, the DN is read from this CSV column instead of constructed from RDN + parent DN. */
         String dnSourceColumn,

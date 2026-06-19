@@ -159,7 +159,12 @@
                to scan the table to spot them. The import isn't blocked —
                those rows would still error during the LDAP add — but
                warning at preview time saves a confirm-then-fail round-trip. -->
-          <p v-if="previewWarningCount" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
+          <p v-if="previewWarningCount && importBlocked" class="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 mb-2">
+            Import blocked: {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row is' : 'rows are' }}
+            missing required attributes. This template is set to block the import until every row is valid —
+            fix the rows (or switch the template to “Skip rows with errors”) and preview again.
+          </p>
+          <p v-else-if="previewWarningCount" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
             {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row is' : 'rows are' }}
             missing required attributes — they will fail at import.
           </p>
@@ -192,7 +197,8 @@
             </table>
           </div>
           <div class="flex gap-2 mt-3">
-            <button @click="doConfirmImport" :disabled="importing" class="btn-primary">
+            <button @click="doConfirmImport" :disabled="importing || importBlocked" class="btn-primary"
+                    :title="importBlocked ? 'Resolve the errored rows before importing (template blocks on errors)' : ''">
               {{ importing ? 'Importing…' : 'Perform Import' }}
             </button>
             <button @click="previewResult = null" class="btn-neutral">Cancel</button>
@@ -415,6 +421,13 @@
                 <option value="PROMPT">Prompt (treat as skip)</option>
               </select>
             </div>
+            <div>
+              <label for="bulk-template-form-error-handling" class="block text-sm font-medium text-gray-700 mb-1">On CSV Errors</label>
+              <select id="bulk-template-form-error-handling" v-model="templateForm.errorHandling" class="input w-full">
+                <option value="SKIP_ERRORS">Skip rows with errors</option>
+                <option value="ABORT_ON_ERROR">Block import until errors are resolved</option>
+              </select>
+            </div>
             <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
               <input type="checkbox" v-model="templateForm.skipHeaderRow" class="rounded text-blue-600" />
               CSV first row is header (skip on import)
@@ -531,6 +544,8 @@ interface CsvTemplate {
   objectClass?: string
   targetKeyAttribute: string
   conflictHandling: string
+  // How the import reacts to rows with errors: SKIP_ERRORS / ABORT_ON_ERROR.
+  errorHandling?: string
   skipHeaderRow?: boolean
   // When set, the DN is read from this CSV column instead of RDN + parent DN.
   dnSourceColumn?: string | null
@@ -545,6 +560,7 @@ interface TemplateForm {
   objectClasses: string[]
   targetKeyAttribute: string
   conflictHandling: string
+  errorHandling: string
   skipHeaderRow: boolean
   // CSV column holding the full DN; '' means construct from RDN + parent DN.
   dnSourceColumn: string
@@ -681,7 +697,7 @@ const templateSaving      = ref(false)
 const deleteTemplateTarget = ref<CsvTemplate | null>(null)
 const templateForm = ref<TemplateForm>({
   name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
-  skipHeaderRow: true, dnSourceColumn: '', entries: []
+  errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', entries: []
 })
 // Whether the template reads the DN from a CSV column (vs constructing it from
 // the RDN attribute + parent DN). Kept separate so toggling off preserves the
@@ -742,6 +758,13 @@ const canImport = computed(() => {
  *  amber "N rows will fail" banner above the preview table. */
 const previewWarningCount = computed(() =>
   (previewResult.value?.rows || []).filter(r => r.missingRequired?.length).length
+)
+
+/** When the selected template blocks on errors (errorHandling = ABORT_ON_ERROR)
+ *  and the preview surfaced any errored rows, the import is blocked client-side
+ *  — the backend enforces the same rule authoritatively. */
+const importBlocked = computed(() =>
+  selectedTemplate.value?.errorHandling === 'ABORT_ON_ERROR' && previewWarningCount.value > 0
 )
 
 /** Ordered union of the non-DN attribute names across all preview rows, so the
@@ -812,7 +835,7 @@ function openCreateTemplate() {
   availableOcHighlight.value = null
   templateForm.value = {
     name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
-    skipHeaderRow: true, dnSourceColumn: '', entries: []
+    errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', entries: []
   }
   dnFromColumn.value = false
   showTemplateModal.value = true
@@ -827,6 +850,7 @@ function openEditTemplate(t: CsvTemplate) {
     objectClasses: t.objectClass ? t.objectClass.split(',') : [],
     targetKeyAttribute: t.targetKeyAttribute,
     conflictHandling: t.conflictHandling,
+    errorHandling: t.errorHandling ?? 'SKIP_ERRORS',
     skipHeaderRow: t.skipHeaderRow !== false,
     dnSourceColumn: t.dnSourceColumn ?? '',
     entries: (t.entries ?? []).map(e => ({ ...e, _required: false })),
@@ -876,6 +900,7 @@ async function saveTemplate() {
       objectClass: templateForm.value.objectClasses.join(','),
       targetKeyAttribute: templateForm.value.targetKeyAttribute,
       conflictHandling: templateForm.value.conflictHandling,
+      errorHandling: templateForm.value.errorHandling,
       skipHeaderRow: templateForm.value.skipHeaderRow,
       dnSourceColumn: dnFromColumn.value
         ? (templateForm.value.dnSourceColumn.trim() || null)

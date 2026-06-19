@@ -6,6 +6,7 @@ import com.ldapportal.dto.csv.BulkImportRowResult;
 import com.ldapportal.dto.csv.CsvColumnMappingDto;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.ConflictHandling;
+import com.ldapportal.entity.enums.ImportErrorHandling;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdapUserService;
 import com.ldapportal.ldap.model.LdapUser;
@@ -143,6 +144,51 @@ class BulkUserServiceTest {
         assertThat(result.updated()).isEqualTo(1);
         assertThat(result.rows().get(0).status()).isEqualTo(BulkImportRowResult.Status.UPDATED);
         verify(userService).updateUser(eq(dc), anyString(), any());
+    }
+
+    // ── Import — error handling (ABORT_ON_ERROR) ────────────────────────────────
+
+    @Test
+    void importCsv_abortOnError_writesNothing_whenRowMissingRequired() throws IOException {
+        // Row 2 is missing the required 'sn' attribute (empty cell).
+        String csvContent = "uid,cn,sn\nalice,Alice A,Adams\nbob,Bob B,\n";
+
+        BulkImportResult result = service.importCsv(
+                dc, csv(csvContent),
+                "ou=people,dc=example,dc=com",
+                "uid",
+                ConflictHandling.SKIP,
+                List.of(), List.of(), true,
+                null, null,
+                List.of("sn"), ImportErrorHandling.ABORT_ON_ERROR);
+
+        // The whole import is blocked — nothing is written to the directory.
+        verify(userService, never()).createUser(any(), anyString(), any());
+        verify(userService, never()).updateUser(any(), anyString(), any());
+        assertThat(result.created()).isZero();
+        assertThat(result.totalRows()).isEqualTo(2);
+        assertThat(result.errors()).isEqualTo(1);
+        // Bad row flagged ERROR; the otherwise-valid row reported SKIPPED.
+        assertThat(result.rows().get(0).status()).isEqualTo(BulkImportRowResult.Status.SKIPPED);
+        assertThat(result.rows().get(1).status()).isEqualTo(BulkImportRowResult.Status.ERROR);
+    }
+
+    @Test
+    void importCsv_abortOnError_importsWhenAllRowsValid() throws IOException {
+        String csvContent = "uid,cn,sn\nalice,Alice A,Adams\n";
+
+        BulkImportResult result = service.importCsv(
+                dc, csv(csvContent),
+                "ou=people,dc=example,dc=com",
+                "uid",
+                ConflictHandling.SKIP,
+                List.of(), List.of(), true,
+                null, null,
+                List.of("sn"), ImportErrorHandling.ABORT_ON_ERROR);
+
+        verify(userService).createUser(eq(dc), eq("uid=alice,ou=people,dc=example,dc=com"), any());
+        assertThat(result.created()).isEqualTo(1);
+        assertThat(result.errors()).isZero();
     }
 
     @Test

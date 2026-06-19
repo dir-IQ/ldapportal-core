@@ -2,6 +2,7 @@
 package com.ldapportal.entity;
 
 import com.ldapportal.entity.enums.ConflictHandling;
+import com.ldapportal.entity.enums.ImportErrorHandling;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -66,6 +67,15 @@ public class CsvMappingTemplate {
     /** Whether to treat the first row of the CSV as column headers (true) or data (false). */
     @Column(name = "skip_header_row", nullable = false)
     private boolean skipHeaderRow = true;
+
+    /**
+     * How the import behaves when rows have errors: skip the bad rows and
+     * import the rest ({@code SKIP_ERRORS}, default), or block the whole
+     * import until every row is valid ({@code ABORT_ON_ERROR}).
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "error_handling", nullable = false, length = 20)
+    private ImportErrorHandling errorHandling = ImportErrorHandling.SKIP_ERRORS;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

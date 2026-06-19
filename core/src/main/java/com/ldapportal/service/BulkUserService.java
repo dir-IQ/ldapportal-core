@@ -9,6 +9,7 @@ import com.ldapportal.dto.csv.CsvColumnMappingDto;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.ConflictHandling;
 import com.ldapportal.entity.enums.DirectoryType;
+import com.ldapportal.entity.enums.ImportErrorHandling;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdapUserService;
 import com.ldapportal.ldap.model.LdapUser;
@@ -122,12 +123,59 @@ public class BulkUserService {
                                       boolean skipHeaderRow,
                                       String dnSourceColumn,
                                       ProfileContext profileContext) throws IOException {
+        return importCsv(dc, csvInput, parentDn, targetKeyAttr, conflictHandling, columnMappings,
+                objectClasses, skipHeaderRow, dnSourceColumn, profileContext,
+                List.of(), ImportErrorHandling.SKIP_ERRORS);
+    }
+
+    /**
+     * Full import variant with row-error handling.
+     *
+     * @param requiredAttrs LDAP attribute names the object classes mark as MUST
+     *                      (objectClass and the key attribute excluded). Used
+     *                      only by the {@code ABORT_ON_ERROR} pre-validation so
+     *                      it mirrors what the preview flags as a missing-value
+     *                      error. Empty list = no required-attribute validation.
+     * @param errorHandling {@code SKIP_ERRORS} processes every row, skipping or
+     *                      erroring the bad ones (the default). {@code
+     *                      ABORT_ON_ERROR} validates all rows first and, if any
+     *                      would error, writes nothing and returns the offending
+     *                      rows so they can be fixed and the import re-run.
+     */
+    public BulkImportResult importCsv(DirectoryConnection dc,
+                                      InputStream csvInput,
+                                      String parentDn,
+                                      String targetKeyAttr,
+                                      ConflictHandling conflictHandling,
+                                      List<CsvColumnMappingDto> columnMappings,
+                                      List<String> objectClasses,
+                                      boolean skipHeaderRow,
+                                      String dnSourceColumn,
+                                      ProfileContext profileContext,
+                                      List<String> requiredAttrs,
+                                      ImportErrorHandling errorHandling) throws IOException {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
         }
 
         Map<String, String> colToAttr = resolveColumnMap(columnMappings);
         List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow);
+
+        // ABORT_ON_ERROR: validate every row up front and, if any would error,
+        // write nothing — the operator fixes the CSV and re-runs. The check
+        // mirrors the preview's missing-value detection so "the preview shows
+        // errors" and "the import is blocked" stay in lockstep.
+        if (errorHandling == ImportErrorHandling.ABORT_ON_ERROR) {
+            List<BulkImportRowResult> validation =
+                    validateRows(rows, colToAttr, targetKeyAttr, parentDn, dnSourceColumn, requiredAttrs);
+            long errs = countByStatus(validation, BulkImportRowResult.Status.ERROR);
+            if (errs > 0) {
+                log.info("Bulk import aborted: {} of {} rows have errors (errorHandling=ABORT_ON_ERROR)",
+                        errs, validation.size());
+                return new BulkImportResult(validation.size(), 0, 0,
+                        validation.size() - errs, errs, validation);
+            }
+        }
 
         List<BulkImportRowResult> rowResults = new ArrayList<>();
         int rowNum = 0;
@@ -147,6 +195,66 @@ public class BulkUserService {
                 rowNum, created, updated, skipped, errors);
 
         return new BulkImportResult(rowNum, created, updated, skipped, errors, rowResults);
+    }
+
+    /**
+     * Pre-validation pass for {@code ABORT_ON_ERROR}: classifies each parsed row
+     * as ERROR (missing key/DN, or missing a required attribute) or SKIPPED
+     * (would import, but the run is blocked by errors elsewhere). No LDAP writes.
+     * Uses the same DN-resolution and required-attribute checks as the import
+     * and preview so the three agree on what counts as an error.
+     */
+    private List<BulkImportRowResult> validateRows(List<Map<String, String>> rows,
+                                                   Map<String, String> colToAttr,
+                                                   String targetKeyAttr,
+                                                   String parentDn,
+                                                   String dnSourceColumn,
+                                                   List<String> requiredAttrs) {
+        boolean dnFromColumn = dnSourceColumn != null && !dnSourceColumn.isBlank();
+        List<String> required = requiredAttrs == null ? List.of() : requiredAttrs;
+        List<BulkImportRowResult> out = new ArrayList<>();
+        int rowNum = 0;
+        for (Map<String, String> row : rows) {
+            rowNum++;
+            Map<String, String> attrs = new LinkedHashMap<>();
+            for (Map.Entry<String, String> cell : row.entrySet()) {
+                String csvCol = cell.getKey();
+                String rawVal = cell.getValue();
+                if (rawVal == null || rawVal.isBlank()) continue;
+                if (dnFromColumn && csvCol.equalsIgnoreCase(dnSourceColumn)) continue;
+                String ldapAttr;
+                if (colToAttr.containsKey(csvCol)) {
+                    ldapAttr = colToAttr.get(csvCol);
+                    if (ldapAttr == null) continue;
+                } else {
+                    ldapAttr = csvCol;
+                }
+                attrs.put(ldapAttr, rawVal);
+            }
+
+            String dn = null;
+            String error = null;
+            try {
+                dn = resolveDn(row, dnSourceColumn, targetKeyAttr, attrs.get(targetKeyAttr), parentDn);
+                if (dnFromColumn) injectRdnAttributes(dn, attrs);
+            } catch (IllegalArgumentException ex) {
+                error = ex.getMessage();
+            }
+            if (error == null && !required.isEmpty()) {
+                Set<String> present = lowerKeys(attrs.keySet());
+                List<String> missing = required.stream()
+                        .filter(a -> !present.contains(a.toLowerCase(Locale.ROOT)))
+                        .toList();
+                if (!missing.isEmpty()) {
+                    error = "Missing required attribute(s): " + String.join(", ", missing);
+                }
+            }
+
+            out.add(error != null
+                    ? BulkImportRowResult.error(rowNum, dn, error)
+                    : BulkImportRowResult.skipped(rowNum, dn, "Not imported — other rows have errors"));
+        }
+        return out;
     }
 
     // ── Preview ───────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
 package com.ldapportal.dto.csv;
 
 import com.ldapportal.entity.enums.ConflictHandling;
+import com.ldapportal.entity.enums.ImportErrorHandling;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -19,6 +20,12 @@ public record CreateCsvMappingTemplateRequest(
         String targetKeyAttribute,
         /** Default conflict resolution when a matching entry already exists. */
         ConflictHandling conflictHandling,
+        /**
+         * How the import reacts to rows with errors: {@code SKIP_ERRORS} (default)
+         * skips the bad rows and imports the rest; {@code ABORT_ON_ERROR} blocks
+         * the whole import until every row is valid.
+         */
+        ImportErrorHandling errorHandling,
         /** Whether to treat the first CSV row as headers (true, default) or data (false). */
         Boolean skipHeaderRow,
         /**
