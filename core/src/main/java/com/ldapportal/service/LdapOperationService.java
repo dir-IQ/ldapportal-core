@@ -15,6 +15,7 @@ import com.ldapportal.dto.csv.BulkDeleteRowResult;
 import com.ldapportal.dto.csv.BulkImportPreviewResult;
 import com.ldapportal.dto.csv.BulkImportRequest;
 import com.ldapportal.dto.csv.BulkImportResult;
+import com.ldapportal.dto.csv.BulkImportRowResult;
 import com.ldapportal.dto.csv.CsvColumnMappingDto;
 import com.ldapportal.dto.ldap.AttributeModification;
 import com.ldapportal.dto.ldap.BulkAttributeUpdateRequest;
@@ -923,12 +924,20 @@ public class LdapOperationService {
                 objectClasses, skipHeader, dnSourceColumn, profileContext,
                 requiredAttrs, errorHandling);
 
+        // Fold the created DNs into the detail so the audit trail names exactly
+        // which users were added — symmetric with bulkDelete's deletedDns.
+        List<String> createdDns = result.rows().stream()
+                .filter(r -> r.status() == BulkImportRowResult.Status.CREATED)
+                .map(BulkImportRowResult::dn)
+                .toList();
+
         auditService.record(principal, directoryId, AuditAction.USER_CREATE, req.parentDn(),
                 Map.of("operation", "bulkImport",
                        "created",   result.created(),
                        "updated",   result.updated(),
                        "skipped",   result.skipped(),
-                       "errors",    result.errors()));
+                       "errors",    result.errors(),
+                       "createdDns", createdDns));
         return result;
     }
 
