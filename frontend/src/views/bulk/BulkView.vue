@@ -393,9 +393,9 @@
     <AppModal v-model="showTemplateModal" :title="editTemplate ? 'Edit Template' : 'New Template'" size="xl">
       <form @submit.prevent="saveTemplate" class="space-y-2 flex flex-col min-h-0 flex-1">
         <!-- Two-col grid: scalar fields on the left; the Object Class dual-list
-             picker on the right. items-stretch so the right column matches the
-             left's height and its lists grow to fill it (no dead whitespace). -->
-        <div class="grid grid-cols-2 gap-2 items-stretch shrink-0">
+             picker on the right. Lists use a fixed height (h-72) sized to about
+             the left column so the panel reads balanced without dead space. -->
+        <div class="grid grid-cols-2 gap-2 items-start shrink-0">
           <div class="space-y-2">
             <FormField label="Template Name" v-model="templateForm.name" required />
             <div>
@@ -429,13 +429,15 @@
               CSV first row is header (skip on import)
             </label>
           </div>
-          <div class="flex flex-col">
+          <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Object Class <span class="text-red-500">*</span></label>
-            <div class="flex items-stretch gap-0 flex-1 min-h-0">
-              <!-- Selected list -->
-              <div class="flex-1 min-w-0 flex flex-col">
+            <div class="flex items-stretch gap-0">
+              <!-- Selected list. h-72 sizes the lists to roughly the left
+                   column's height so the panel has no large dead space; they
+                   scroll internally (the Available list has many classes). -->
+              <div class="flex-1 min-w-0">
                 <div class="text-xs text-gray-500 mb-1">Selected</div>
-                <div class="border border-gray-300 rounded-l-lg flex-1 min-h-[9rem] overflow-y-auto">
+                <div class="border border-gray-300 rounded-l-lg h-72 overflow-y-auto">
                   <div v-for="oc in templateForm.objectClasses" :key="oc"
                     @click="selectedOcHighlight = oc"
                     class="px-2 py-1 text-sm cursor-pointer truncate"
@@ -453,9 +455,9 @@
                   class="w-8 h-8 flex items-center justify-center rounded border border-gray-300 text-sm hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">▶</button>
               </div>
               <!-- Available list -->
-              <div class="flex-1 min-w-0 flex flex-col">
+              <div class="flex-1 min-w-0">
                 <div class="text-xs text-gray-500 mb-1">Available</div>
-                <div class="border border-gray-300 rounded-r-lg flex-1 min-h-[9rem] overflow-y-auto">
+                <div class="border border-gray-300 rounded-r-lg h-72 overflow-y-auto">
                   <div v-for="oc in availableObjectClasses" :key="oc"
                     @click="availableOcHighlight = oc"
                     class="px-2 py-1 text-sm cursor-pointer truncate"
