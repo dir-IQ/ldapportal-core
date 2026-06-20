@@ -360,6 +360,82 @@
                 </plugins>
             </build>
         </profile>
+
+        <!--
+            Interim cross-repo publishing to GitHub Packages. Activated with
+            `-Pinternal-publish`. This is the inner-loop counterpart to `release`:
+            it shares pre-release builds of core + the open-source addons with
+            downstream repos (the commercial/ee build) BEFORE a formal Central
+            release, so ee can pin a SNAPSHOT/rc and resolve it from a registry
+            instead of building core from source. Scope the deploy the same way:
+
+              ./mvnw -Pinternal-publish -DskipTests -pl core,addons/isva deploy
+
+            Differences from `release`:
+            - target is the org's private GitHub Packages Maven registry
+              (distributionManagement below), not the Central Portal — no GPG
+              signing and no staging/verify gate, so it stays cheap to run often.
+            - it reuses the same flatten (flattenMode=ossrh) so the published POM
+              is self-contained and resolves IDENTICALLY to the eventual Central
+              artifact (consumers never need the unpublished aggregator parent).
+            - the module build already attaches the test-jar, so that ships too
+              (ee depends on ldapportal-core:test-jar).
+
+            Auth: a `github` server (username + GITHUB_TOKEN with packages:write)
+            in settings.xml — the publish-internal.yml workflow wires it. Stamp a
+            real version first (the pom stays -SNAPSHOT for dev):
+
+              ./mvnw versions:set -DnewVersion=0.1.5-SNAPSHOT -DgenerateBackupPoms=false
+        -->
+        <profile>
+            <id>internal-publish</id>
+            <distributionManagement>
+                <repository>
+                    <id>github</id>
+                    <name>GitHub Packages (dir-IQ/ldapportal-core)</name>
+                    <url>https://maven.pkg.github.com/dir-IQ/ldapportal-core</url>
+                </repository>
+                <snapshotRepository>
+                    <id>github</id>
+                    <name>GitHub Packages (dir-IQ/ldapportal-core)</name>
+                    <url>https://maven.pkg.github.com/dir-IQ/ldapportal-core</url>
+                </snapshotRepository>
+            </distributionManagement>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>flatten-maven-plugin</artifactId>
+                        <version>1.7.3</version>
+                        <configuration>
+                            <flattenMode>ossrh</flattenMode>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>flatten</id>
+                                <phase>process-resources</phase>
+                                <goals><goal>flatten</goal></goals>
+                            </execution>
+                            <execution>
+                                <id>flatten-clean</id>
+                                <phase>clean</phase>
+                                <goals><goal>clean</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals><goal>jar-no-fork</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
 
 </project>

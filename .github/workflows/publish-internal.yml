@@ -1,0 +1,51 @@
+# Publishes interim builds of ldapportal-core + ldapportal-addons-isva to the
+# org's private GitHub Packages Maven registry, for cross-repo development BEFORE
+# a formal Maven Central release (see release.yml for that). Downstream (the
+# commercial/ee repo) pins the published version and resolves it from the
+# registry instead of building core from source.
+#
+# Unlike the Central release this needs no GPG/Central secrets — GITHUB_TOKEN
+# (packages:write) is enough. It reuses the `internal-publish` profile, which
+# flattens the POM so the artifact resolves identically to the Central one.
+#
+# Pick a version that won't be confused with a Central release, e.g.
+# 0.1.5-SNAPSHOT (overwritten on each publish; ee keeps one pin) or 0.1.5-rc1
+# (immutable; ee bumps the pin per build).
+name: Publish (GitHub Packages — internal)
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Interim version to publish, e.g. 0.1.5-SNAPSHOT or 0.1.5-rc1"
+        required: true
+        default: ''
+permissions:
+  contents: read
+  packages: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+          server-id: github
+          server-username: GH_PKG_USER
+          server-password: GH_PKG_TOKEN
+      - name: Validate version
+        run: |
+          V="${{ github.event.inputs.version }}"
+          if [ -z "$V" ]; then
+            echo "::error::Supply a 'version' input (e.g. 0.1.5-SNAPSHOT or 0.1.5-rc1)."
+            exit 1
+          fi
+      - name: Stamp interim version
+        run: mvn -B -ntp versions:set -DnewVersion=${{ github.event.inputs.version }} -DgenerateBackupPoms=false
+      - name: Deploy core + addons to GitHub Packages
+        run: mvn -B -ntp -Pinternal-publish -DskipTests -pl core,addons/isva deploy
+        env:
+          GH_PKG_USER: ${{ github.actor }}
+          GH_PKG_TOKEN: ${{ secrets.GITHUB_TOKEN }}
