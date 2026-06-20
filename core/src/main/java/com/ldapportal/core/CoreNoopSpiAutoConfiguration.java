@@ -5,8 +5,9 @@ import com.ldapportal.core.alerting.AlertSummaryProvider;
 import com.ldapportal.core.alerting.AlertingDashboardProvider;
 import com.ldapportal.core.alerting.NoopAlertSummaryProvider;
 import com.ldapportal.core.alerting.NoopAlertingDashboardProvider;
-import com.ldapportal.core.dashboard.NoopReportJobHealthProvider;
+import com.ldapportal.core.dashboard.CoreReportJobHealthProvider;
 import com.ldapportal.core.dashboard.ReportJobHealthProvider;
+import com.ldapportal.repository.ScheduledReportJobRepository;
 import com.ldapportal.core.governance.GovernanceDashboardProvider;
 import com.ldapportal.core.governance.MembershipGate;
 import com.ldapportal.core.governance.NoopGovernanceDashboardProvider;
@@ -71,7 +72,7 @@ public class CoreNoopSpiAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(ReportJobHealthProvider.class)
-    ReportJobHealthProvider reportJobHealthProvider() {
-        return new NoopReportJobHealthProvider();
+    ReportJobHealthProvider reportJobHealthProvider(ScheduledReportJobRepository reportJobRepository) {
+        return new CoreReportJobHealthProvider(reportJobRepository);
     }
 }
