@@ -7,7 +7,7 @@ import com.ldapportal.core.alerting.AlertSummaryProvider;
 import com.ldapportal.core.alerting.AlertingDashboardProvider;
 import com.ldapportal.core.alerting.NoopAlertSummaryProvider;
 import com.ldapportal.core.alerting.NoopAlertingDashboardProvider;
-import com.ldapportal.core.dashboard.NoopReportJobHealthProvider;
+import com.ldapportal.core.dashboard.CoreReportJobHealthProvider;
 import com.ldapportal.core.dashboard.ReportJobHealthProvider;
 import com.ldapportal.core.governance.GovernanceDashboardProvider;
 import com.ldapportal.core.governance.MembershipGate;
@@ -121,9 +121,12 @@ class CommunityEditionContextTest {
     }
 
     @Test
-    void report_job_health_spi_resolves_to_noop_default() {
+    void report_job_health_spi_resolves_to_core_default() {
+        // Core now ships a real repository-backed provider (the scheduler lives in
+        // core); ee overrides it until ee retires its own scheduler. Community
+        // still reports zeroed counts (no jobs) — asserted in the dashboard test.
         assertThat(ctx.getBean(ReportJobHealthProvider.class))
-                .isInstanceOf(NoopReportJobHealthProvider.class);
+                .isInstanceOf(CoreReportJobHealthProvider.class);
     }
 
     // ── 3. Dashboard produces a clean, zeroed payload end-to-end ───────────
