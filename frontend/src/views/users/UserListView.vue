@@ -50,15 +50,22 @@
       <button @click="search" class="btn-primary">Search</button>
     </div>
 
-    <!-- Visual filter builder. Two-way bound to filterText so edits
-         in either the input above or the builder below stay in sync.
-         The builder owns its own collapse state. -->
-    <LdapFilterBuilder
-      v-model="filterText"
-      :directory-id="dirId"
-      :relevant-attributes="profileAttributeNames"
-      class="mb-4"
-    />
+    <!-- Visual filter builder + recent searches share one row: the builder's
+         "Build filter visually" trigger on the left, the "Recent searches"
+         disclosure to its right. Each owns its own collapsible panel. -->
+    <div class="flex flex-wrap items-start gap-x-8 gap-y-2 mb-4">
+      <LdapFilterBuilder
+        v-model="filterText"
+        :directory-id="dirId"
+        :relevant-attributes="profileAttributeNames"
+      />
+      <RecentSearches
+        ref="recentSearchesRef"
+        :directory-id="dirId"
+        storage-key="users"
+        @select="applyRecentSearch"
+      />
+    </div>
 
     <ResultsTable
       table-key="users-list"
@@ -473,6 +480,7 @@ import { listEnabled as listEnabledPlaybooks, previewPlaybook, executePlaybook, 
 import { usePermissions } from '@/composables/usePermissions'
 import ResultsTable from '@/components/ResultsTable.vue'
 import LdapFilterBuilder from '@/components/LdapFilterBuilder.vue'
+import RecentSearches from '@/components/RecentSearches.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import AppModal from '@/components/AppModal.vue'
 import FormField from '@/components/FormField.vue'
@@ -850,7 +858,20 @@ const userFormRef = ref<{
   hasPendingMembershipChanges?: boolean
 } | null>(null)
 
-function search() { limit.value = FETCH_LIMIT; load() }
+const recentSearchesRef = ref<{ record: (filter: string) => void } | null>(null)
+
+function search() {
+  limit.value = FETCH_LIMIT
+  recentSearchesRef.value?.record(filterText.value)
+  load()
+}
+
+// Apply a chip from the Recent searches panel: drop it into the filter and
+// run it (which re-records it, moving it back to the front of the list).
+function applyRecentSearch(filter: string) {
+  filterText.value = filter
+  search()
+}
 
 async function load() {
   await call(async () => {
