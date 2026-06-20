@@ -103,9 +103,12 @@
     <!-- Delete confirm -->
     <ConfirmDialog
       v-if="deleteTarget"
+      :model-value="true"
       :message="`Delete audit source '${deleteTarget.displayName}'?`"
+      danger
+      confirm-label="Delete"
       @confirm="doDelete"
-      @cancel="deleteTarget = null"
+      @update:model-value="deleteTarget = null"
     />
   </PageContainer>
 </template>

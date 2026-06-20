@@ -159,4 +159,51 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     await flushPromises()
     expect(reports.runReportJobNow).toHaveBeenCalledWith('dir-1', 'job-1')
   })
+
+  // Regression: the Delete confirm dialog was mounted with v-if but no
+  // :model-value, so ConfirmDialog's inner `v-if="modelValue"` kept it hidden
+  // and the Delete button appeared dead. Render a stub that honours modelValue
+  // to prove the dialog shows and confirming reaches the delete endpoint.
+  it('opens the confirm dialog from the row Delete button and deletes on confirm', async () => {
+    const reports = await import('@/api/reports')
+    ;(reports.listReportJobs as unknown as Mock).mockResolvedValue({
+      data: { content: [
+        { id: 'job-1', name: 'Weekly', reportType: 'RECENTLY_ADDED', cronExpression: '0 8 * * 1', enabled: true, timezone: 'UTC' },
+      ] },
+    })
+    const ConfirmDialogStub = {
+      props: ['modelValue', 'message', 'title', 'confirmLabel', 'danger'],
+      emits: ['confirm', 'update:modelValue'],
+      template: `<div v-if="modelValue" class="confirm-stub">
+        <span class="confirm-msg">{{ message }}</span>
+        <button class="confirm-ok" @click="$emit('confirm'); $emit('update:modelValue', false)">go</button>
+      </div>`,
+    }
+    const wrapper = mount(ReportJobsView, {
+      global: {
+        stubs: {
+          AppModal: AppModalSlotStub,
+          ConfirmDialog: ConfirmDialogStub,
+          DnPicker: true, ResultsTable: true, FormField: true,
+        },
+      },
+    })
+    await flushPromises()
+    await scheduledJobsButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    // No dialog until the row Delete button is clicked.
+    expect(wrapper.find('.confirm-stub').exists()).toBe(false)
+    const deleteBtn = wrapper.findAll('button').find(b => b.text().trim() === 'Delete')
+    await deleteBtn!.trigger('click')
+    await flushPromises()
+
+    const dialog = wrapper.find('.confirm-stub')
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.find('.confirm-msg').text()).toContain('Weekly')
+
+    await wrapper.find('.confirm-ok').trigger('click')
+    await flushPromises()
+    expect(reports.deleteReportJob).toHaveBeenCalledWith('dir-1', 'job-1')
+  })
 })

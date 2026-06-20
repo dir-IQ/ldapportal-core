@@ -49,9 +49,12 @@
     <!-- Delete confirm -->
     <ConfirmDialog
       v-if="deleteTarget"
+      :model-value="true"
       :message="`Remove superadmin '${deleteTarget.username}'?`"
+      danger
+      confirm-label="Remove"
       @confirm="doDelete"
-      @cancel="deleteTarget = null"
+      @update:model-value="deleteTarget = null"
     />
   </PageContainer>
 </template>
