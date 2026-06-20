@@ -139,6 +139,53 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect((tz.element as HTMLSelectElement).value).toBeTruthy()
   })
 
+  it('shows group-count criteria and persists them for a Users by Group Count job', async () => {
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('USERS_WITH_NO_GROUP')
+    expect(wrapper.find('#rj-job-group-count-op').exists()).toBe(true)
+    await wrapper.find('#rj-job-group-count-op').setValue('>=')
+    await wrapper.find('input[aria-label="Group count value"]').setValue(2)
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(reports.createReportJob).toHaveBeenCalled()
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params.groupCountOp).toBe('>=')
+    expect(params.groupCountValue).toBe(2)
+  })
+
+  it('shows audit-entries criteria and persists lookback hours + actions', async () => {
+    const audit = await import('@/api/audit')
+    ;(audit.getAuditActions as unknown as Mock).mockResolvedValue({ data: ['USER_CREATE', 'USER_DELETE'] })
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('AUDIT_ENTRIES')
+    expect(wrapper.find('#rj-job-lookback-hours').exists()).toBe(true)
+    await wrapper.find('#rj-job-lookback-hours').setValue(48)
+
+    // Open the action menu and select one action.
+    const actionTrigger = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Action')
+    await actionTrigger!.trigger('click')
+    await wrapper.find('input[type="checkbox"][value="USER_CREATE"]').setValue(true)
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params.lookbackHours).toBe(48)
+    expect(params.actions).toEqual(['USER_CREATE'])
+  })
+
   it('triggers an immediate run via the Run now button', async () => {
     const reports = await import('@/api/reports')
     // reports.js is untyped JS; cast to the loose Mock surface so the
