@@ -26,6 +26,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -180,6 +181,23 @@ public class ScheduledReportJobService {
                 .flatMap(p -> p.supportedTypes().stream())
                 .filter(t -> t.id().equals(reportType))
                 .findFirst();
+    }
+
+    /**
+     * The schedulable report-type descriptors exposed to the current edition —
+     * the union of all providers' {@code supportedTypes()} filtered through the
+     * entitlement gate, de-duplicated by id. Backs the catalogue endpoint so the
+     * schedule form shows operational types in community and all types on
+     * commercial without hard-coding.
+     */
+    @Transactional(readOnly = true)
+    public List<ScheduledReportType> exposedReportTypes() {
+        Map<String, ScheduledReportType> byId = new LinkedHashMap<>();
+        contentProviders.stream()
+                .flatMap(p -> p.supportedTypes().stream())
+                .filter(entitlementService::exposes)
+                .forEach(t -> byId.putIfAbsent(t.id(), t));
+        return List.copyOf(byId.values());
     }
 
     // ── Execution ────────────────────────────────────────────────────────────────

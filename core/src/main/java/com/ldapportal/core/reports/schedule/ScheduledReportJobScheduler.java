@@ -5,6 +5,7 @@ import com.ldapportal.entity.ScheduledReportJob;
 import com.ldapportal.repository.ScheduledReportJobRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Component;
@@ -54,6 +55,17 @@ public class ScheduledReportJobScheduler {
                         job.getId(), job.getName(), e.getMessage(), e);
             }
         }
+    }
+
+    /**
+     * Fire-and-forget run-now for the controller: runs the job off the request
+     * thread (report execution + delivery can be slow) through the same
+     * {@link #run(ScheduledReportJob)} path, so the {@code inProgress} guard still
+     * de-duplicates against a concurrent poll.
+     */
+    @Async
+    public void runNowAsync(ScheduledReportJob job) {
+        run(job);
     }
 
     /** Runs the job now if not already in flight (used by the poll loop and run-now). */
