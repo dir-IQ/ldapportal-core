@@ -183,7 +183,10 @@
             <tr v-for="job in jobs" :key="job.id" class="hover:bg-gray-50">
               <td class="px-3 py-2 font-medium text-gray-900">{{ job.name }}</td>
               <td class="px-3 py-2 text-gray-600">{{ labelFor(job.reportType) }}</td>
-              <td class="px-3 py-2 text-gray-600">{{ job.cronExpression }}</td>
+              <td class="px-3 py-2 text-gray-600">
+                {{ job.cronExpression }}
+                <span v-if="job.timezone" class="block text-xs text-gray-400">{{ job.timezone }}</span>
+              </td>
               <td class="px-3 py-2 text-gray-600">{{ job.outputFormat || 'CSV' }}</td>
               <td class="px-3 py-2 text-gray-600">{{ job.deliveryMethod }}</td>
               <td class="px-3 py-2 text-gray-500 text-xs">
@@ -198,6 +201,9 @@
               </td>
               <td class="px-3 py-2 text-right whitespace-nowrap">
                 <div class="flex items-center justify-end gap-2">
+                  <button @click="runNow(job)" :disabled="runningJobId === job.id" class="btn-secondary btn-compact">
+                    {{ runningJobId === job.id ? 'Running…' : 'Run now' }}
+                  </button>
                   <button @click="openEditJob(job)" class="btn-secondary btn-compact">Edit</button>
                   <button @click="confirmDelete(job)" class="btn-danger-soft btn-compact">Delete</button>
                 </div>
@@ -221,8 +227,19 @@
                 </select>
               </div>
             </div>
-            <div class="grid grid-cols-3 gap-3">
+            <div class="grid grid-cols-2 gap-3">
               <FormField label="Cron Expression" v-model="jobForm.cronExpression" placeholder="0 8 * * 1" required />
+              <div>
+                <label for="rj-job-timezone" class="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
+                <!-- The cron expression is evaluated in this timezone server-side;
+                     defaults to the operator's browser timezone for a new job. -->
+                <select id="rj-job-timezone" v-model="jobForm.timezone" class="input w-full">
+                  <option v-for="tz in timezones" :key="tz" :value="tz">{{ tz }}</option>
+                </select>
+                <p class="text-xs text-gray-400 mt-1">Schedule runs in this timezone.</p>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
               <div>
                 <label for="rj-job-output-format" class="block text-sm font-medium text-gray-700 mb-1">Output Format</label>
                 <!-- PDF output ships with the commercial governance module; only
@@ -288,7 +305,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useProfilePickerStore } from '@/stores/profilePicker'
 import {
   listReportJobs, createReportJob, updateReportJob,
-  deleteReportJob, setReportJobEnabled,
+  deleteReportJob, setReportJobEnabled, runReportJobNow,
   runOperationalReport, runOperationalReportData, runOperationalReportPdf,
 } from '@/api/reports'
 import { listDirectories } from '@/api/directories'
@@ -340,6 +357,7 @@ interface Job {
   recipientEmail?: string
   s3KeyPrefix?: string
   reportParams?: Record<string, unknown>
+  timezone?: string
   enabled: boolean
   lastRunAt?: string
   lastRunStatus?: string
@@ -591,6 +609,7 @@ interface JobForm {
   name: string
   reportType: string
   cronExpression: string
+  timezone: string
   outputFormat: string
   deliveryMethod: string
   recipientEmail: string
@@ -600,15 +619,43 @@ interface JobForm {
   enabled: boolean
 }
 
+// The operator's browser timezone, used as the default for a new job so the
+// cron expression they type runs at the time they expect. Falls back to UTC.
+function browserTimezone(): string {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } catch { return 'UTC' }
+}
+
+// IANA timezone list for the picker. Prefer the platform's full set
+// (Intl.supportedValuesOf) and fall back to a curated shortlist on older
+// engines; always include UTC and the browser's own zone.
+const timezones = computed<string[]>(() => {
+  const set = new Set<string>(['UTC', browserTimezone()])
+  const supportedValuesOf = (Intl as unknown as {
+    supportedValuesOf?: (key: string) => string[]
+  }).supportedValuesOf
+  if (supportedValuesOf) {
+    try { for (const tz of supportedValuesOf('timeZone')) set.add(tz) } catch { /* use fallback */ }
+  } else {
+    for (const tz of [
+      'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
+      'Europe/London', 'Europe/Paris', 'Europe/Berlin',
+      'Asia/Kolkata', 'Asia/Singapore', 'Asia/Tokyo', 'Australia/Sydney',
+    ]) set.add(tz)
+  }
+  return Array.from(set).sort()
+})
+
 function blankJobForm(): JobForm {
   return {
     name: '', reportType: 'RECENTLY_ADDED', cronExpression: '0 8 * * 1',
+    timezone: browserTimezone(),
     outputFormat: 'CSV', deliveryMethod: 'EMAIL', recipientEmail: '',
     s3KeyPrefix: '', paramValue: '', lookbackDays: 30, enabled: true,
   }
 }
 
 const jobForm = ref<JobForm>(blankJobForm())
+const runningJobId = ref<string | null>(null)
 
 const currentJobFormType   = computed(() => reportTypes.value.find(t => t.value === jobForm.value.reportType))
 const jobFormNeedsParam    = computed(() => !!currentJobFormType.value?.param)
@@ -636,6 +683,7 @@ function openEditJob(job: Job): void {
   jobForm.value = {
     name: job.name, reportType: job.reportType,
     cronExpression: job.cronExpression,
+    timezone: job.timezone || browserTimezone(),
     outputFormat: job.outputFormat || 'CSV',
     deliveryMethod: job.deliveryMethod ?? 'EMAIL',
     recipientEmail: job.recipientEmail ?? '',
@@ -661,6 +709,7 @@ function buildJobPayload(): Record<string, unknown> {
     reportType: jobForm.value.reportType,
     reportParams: params,
     cronExpression: jobForm.value.cronExpression,
+    timezone: jobForm.value.timezone || undefined,
     outputFormat: jobForm.value.outputFormat,
     deliveryMethod: jobForm.value.deliveryMethod,
     recipientEmail: jobForm.value.deliveryMethod === 'EMAIL' ? jobForm.value.recipientEmail : null,
@@ -698,6 +747,23 @@ async function toggleEnabled(job: Job): Promise<void> {
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message || 'Toggle failed')
+  }
+}
+
+// Trigger an immediate off-schedule run, then refresh so the operator sees
+// the updated Last Run column. Per-job spinner via runningJobId.
+async function runNow(job: Job): Promise<void> {
+  runningJobId.value = job.id
+  try {
+    await runReportJobNow(dirId.value, job.id)
+    notif.success(`Triggered '${job.name}'`)
+    const { data } = await listReportJobs(dirId.value, { size: 50 })
+    jobs.value = (data.content ?? data) as Job[]
+  } catch (e) {
+    const err = e as { response?: { data?: { detail?: string } }, message?: string }
+    notif.error(err.response?.data?.detail || err.message || 'Run failed')
+  } finally {
+    runningJobId.value = null
   }
 }
 

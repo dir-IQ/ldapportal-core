@@ -6,7 +6,7 @@
  * stay behind the compliance entitlement, and the Email Subject field is gone
  * (the backend generates the subject).
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
 const hoisted = vi.hoisted(() => ({
@@ -24,6 +24,7 @@ vi.mock('@/api/reports', () => ({
   updateReportJob: vi.fn().mockResolvedValue({ data: {} }),
   deleteReportJob: vi.fn().mockResolvedValue({ data: {} }),
   setReportJobEnabled: vi.fn().mockResolvedValue({ data: {} }),
+  runReportJobNow: vi.fn().mockResolvedValue({ data: {} }),
   runOperationalReport: vi.fn().mockResolvedValue({ data: new Blob() }),
   runOperationalReportData: vi.fn().mockResolvedValue({ data: {} }),
   runOperationalReportPdf: vi.fn().mockResolvedValue({ data: new Blob() }),
@@ -123,5 +124,39 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     const deliveryValues = wrapper.find('#rj-job-delivery').findAll('option').map(o => o.attributes('value'))
     expect(formatValues).toContain('PDF')
     expect(deliveryValues).toContain('S3')
+  })
+
+  it('includes a timezone picker that defaults to a valid zone', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click') // open the add-job form
+    await flushPromises()
+
+    const tz = wrapper.find('#rj-job-timezone')
+    expect(tz.exists()).toBe(true)
+    expect(tz.findAll('option').map(o => o.attributes('value'))).toContain('UTC')
+    // v-model defaults to the browser zone, which is always in the option list.
+    expect((tz.element as HTMLSelectElement).value).toBeTruthy()
+  })
+
+  it('triggers an immediate run via the Run now button', async () => {
+    const reports = await import('@/api/reports')
+    // reports.js is untyped JS; cast to the loose Mock surface so the
+    // per-test resolved value doesn't need a full AxiosResponse shape.
+    ;(reports.listReportJobs as unknown as Mock).mockResolvedValue({
+      data: { content: [
+        { id: 'job-1', name: 'Weekly', reportType: 'RECENTLY_ADDED', cronExpression: '0 8 * * 1', enabled: true, timezone: 'UTC' },
+      ] },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await scheduledJobsButton(wrapper)!.trigger('click') // openSchedules → loads jobs
+    await flushPromises()
+
+    const runBtn = wrapper.findAll('button').find(b => b.text().includes('Run now'))
+    expect(runBtn).toBeTruthy()
+    await runBtn!.trigger('click')
+    await flushPromises()
+    expect(reports.runReportJobNow).toHaveBeenCalledWith('dir-1', 'job-1')
   })
 })

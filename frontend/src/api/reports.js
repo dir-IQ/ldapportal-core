@@ -21,6 +21,11 @@ export const deleteReportJob = (dirId, jobId) =>
 export const setReportJobEnabled = (dirId, jobId, enabled) =>
   client.patch(`${base(dirId)}/${jobId}/enabled`, null, { params: { enabled } })
 
+// Trigger an off-schedule run of a scheduled job immediately. The backend
+// runs it through the same path as the scheduler and updates lastRun*.
+export const runReportJobNow = (dirId, jobId) =>
+  client.post(`${base(dirId)}/${jobId}/run-now`)
+
 // Operational reports — served by the core ReportController; available
 // in both community and commercial. CSV download only on community
 // (PDF support requires the commercial governance module).
