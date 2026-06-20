@@ -4,7 +4,7 @@
  */
 
 export interface paths {
-    "/api/v1/superadmin/superadmins/{id}": {
+    "/api/v1/superadmin/sync/sets/{id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -20,7 +20,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/superadmin/event-subscriptions/{id}": {
+    "/api/v1/superadmin/sync/links/{id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -36,7 +36,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/superadmin/directories/{id}": {
+    "/api/v1/superadmin/superadmins/{id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -47,6 +47,54 @@ export interface paths {
         put: operations["update_2"];
         post?: never;
         delete: operations["delete_2"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/superadmins/{id}/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getPermissions"];
+        put: operations["setPermissions"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/event-subscriptions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_3"];
+        put: operations["update_3"];
+        post?: never;
+        delete: operations["delete_3"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/directories/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_4"];
+        put: operations["update_4"];
+        post?: never;
+        delete: operations["delete_4"];
         options?: never;
         head?: never;
         patch?: never;
@@ -68,23 +116,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/superadmin/audit-sources/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["get_3"];
-        put: operations["update_3"];
-        post?: never;
-        delete: operations["delete_3"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/superadmin/alerts/rules/{id}": {
+    "/api/v1/superadmin/directories/by-slug/{slug}": {
         parameters: {
             query?: never;
             header?: never;
@@ -92,7 +124,39 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        put: operations["updateRule"];
+        put: operations["upsertBySlug"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/audit-sources/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_5"];
+        put: operations["update_5"];
+        post?: never;
+        delete: operations["delete_5"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/api-tokens/by-name/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["upsertByName"];
         post?: never;
         delete?: never;
         options?: never;
@@ -107,10 +171,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["get_4"];
-        put: operations["update_4"];
+        get: operations["get_6"];
+        put: operations["update_6"];
         post?: never;
-        delete: operations["delete_4"];
+        delete: operations["delete_6"];
         options?: never;
         head?: never;
         patch?: never;
@@ -148,6 +212,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/superadmin/admins/by-username/{username}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["upsertByUsername"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/settings": {
         parameters: {
             query?: never;
@@ -155,7 +235,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["get_5"];
+        get: operations["get_7"];
         put: operations["upsert"];
         post?: never;
         delete?: never;
@@ -228,39 +308,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/hybrid/resolution-configs/{id}": {
+    "/api/v1/me/preferences/{namespace}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["get_6"];
-        put: operations["update_5"];
+        get?: never;
+        put: operations["putNamespace"];
         post?: never;
-        delete: operations["delete_5"];
+        delete: operations["deleteNamespace"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
     "/api/v1/directories/{directoryId}/users/entry": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["get_7"];
-        put: operations["update_6"];
-        post?: never;
-        delete: operations["delete_6"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/sod-policies/{policyId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -324,22 +388,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/directories/{directoryId}/hr": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getConnection"];
-        put: operations["updateConnection"];
-        post: operations["createConnection"];
-        delete: operations["deleteConnection"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/directories/{directoryId}/groups/entry": {
         parameters: {
             query?: never;
@@ -356,22 +404,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/directories/{directoryId}/drift/rules/{ruleId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put: operations["updateRule_1"];
-        post?: never;
-        delete: operations["deleteRule"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/directories/{directoryId}/csv-templates/{templateId}": {
         parameters: {
             query?: never;
@@ -383,22 +415,6 @@ export interface paths {
         put: operations["update_12"];
         post?: never;
         delete: operations["delete_12"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/campaign-templates/{templateId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["get_14"];
-        put: operations["update_13"];
-        post?: never;
-        delete: operations["delete_13"];
         options?: never;
         head?: never;
         patch?: never;
@@ -427,10 +443,74 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["get_15"];
+        get: operations["get_14"];
         put: operations["save"];
         post?: never;
-        delete: operations["delete_14"];
+        delete: operations["delete_13"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/sync/sets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list"];
+        put?: never;
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/sync/sets/{id}/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reconcile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/sync/sets/{id}/recompute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["recompute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/sync/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_1"];
+        put?: never;
+        post: operations["create_1"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -443,9 +523,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list"];
+        get: operations["list_2"];
         put?: never;
-        post: operations["create"];
+        post: operations["create_2"];
         delete?: never;
         options?: never;
         head?: never;
@@ -475,9 +555,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_1"];
+        get: operations["list_3"];
         put?: never;
-        post: operations["create_1"];
+        post: operations["create_3"];
         delete?: never;
         options?: never;
         head?: never;
@@ -555,9 +635,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_2"];
+        get: operations["list_4"];
         put?: never;
-        post: operations["create_2"];
+        post: operations["create_4"];
         delete?: never;
         options?: never;
         head?: never;
@@ -574,22 +654,6 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["evictPool"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/superadmin/directories/{id}/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["status"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -692,6 +756,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/superadmin/directories/{directoryId}/browse/import/ldif/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["previewLdif"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/directories/{directoryId}/browse/import/ldif/preview/{previewId}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["applyPreview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/superadmin/directories/test": {
         parameters: {
             query?: never;
@@ -715,9 +811,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_3"];
+        get: operations["list_5"];
         put?: never;
-        post: operations["create_3"];
+        post: operations["create_5"];
         delete?: never;
         options?: never;
         head?: never;
@@ -747,9 +843,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_4"];
+        get: operations["list_6"];
         put?: never;
-        post: operations["create_4"];
+        post: operations["create_6"];
         delete?: never;
         options?: never;
         head?: never;
@@ -772,70 +868,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/superadmin/alerts/{id}/resolve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["resolve"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/superadmin/alerts/{id}/dismiss": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["dismiss"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/superadmin/alerts/{id}/acknowledge": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["acknowledge"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/superadmin/alerts/rules/initialize/{directoryId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["initializeDefaults"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/superadmin/admins": {
         parameters: {
             query?: never;
@@ -843,9 +875,41 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_5"];
+        get: operations["list_7"];
         put?: never;
-        post: operations["create_5"];
+        post: operations["create_7"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/admins/{adminId}/reset-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resetPassword_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/admins/with-permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["createWithPermissions"];
         delete?: never;
         options?: never;
         head?: never;
@@ -996,22 +1060,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/hybrid/resolution-configs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["list_6"];
-        put?: never;
-        post: operations["create_6"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/directories/{directoryId}/users": {
         parameters: {
             query?: never;
@@ -1021,7 +1069,7 @@ export interface paths {
         };
         get: operations["search"];
         put?: never;
-        post: operations["create_7"];
+        post: operations["create_8"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1037,7 +1085,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["resetPassword_1"];
+        post: operations["resetPassword_2"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1054,6 +1102,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["move"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/directories/{directoryId}/users/memberships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["applyMemberships"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1140,23 +1204,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/directories/{directoryId}/sod-policies": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["list_7"];
-        put?: never;
-        post: operations["create_8"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/sod-policies/violations/{violationId}/resolve": {
+    "/api/v1/directories/{directoryId}/users/bulk-delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -1165,14 +1213,14 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["resolve_1"];
+        post: operations["bulkDelete"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/v1/directories/{directoryId}/sod-policies/violations/{violationId}/exempt": {
+    "/api/v1/directories/{directoryId}/users/bulk-delete/preview": {
         parameters: {
             query?: never;
             header?: never;
@@ -1181,23 +1229,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["exempt"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/sod-policies/scan": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["scan"];
+        post: operations["previewBulkDelete"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1284,6 +1316,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/directories/{directoryId}/profiles/{profileId}/seed-attribute-defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["seedAttributeDefaults"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/directories/{directoryId}/profiles/{profileId}/evaluate-group-changes": {
         parameters: {
             query?: never;
@@ -1326,6 +1374,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["applyGroupChanges"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/directories/{directoryId}/profiles/probe-target-ou": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["probeTargetOu"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1412,38 +1476,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/directories/{directoryId}/hr/test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["testConnection_1"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/hr/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["triggerSync_1"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/directories/{directoryId}/groups": {
         parameters: {
             query?: never;
@@ -1524,86 +1556,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/directories/{directoryId}/evidence-package": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["generate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/drift/rules": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listRules"];
-        put?: never;
-        post: operations["createRule"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/drift/findings/{findingId}/exempt": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["exempt_1"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/drift/findings/{findingId}/acknowledge": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["acknowledge_1"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/drift/analyze": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["analyze"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/directories/{directoryId}/csv-templates": {
         parameters: {
             query?: never;
@@ -1620,80 +1572,16 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/directories/{directoryId}/campaign-templates": {
+    "/api/v1/directories/{directoryId}/container": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["list_12"];
+        get?: never;
         put?: never;
         post: operations["create_14"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/campaign-templates/{templateId}/duplicate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["duplicate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/campaign-templates/{templateId}/create-campaign": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["createCampaignFromTemplate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/campaign-templates/from-campaign/{campaignId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["saveAsTemplate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/auditor-links": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["list_13"];
-        put?: never;
-        post: operations["create_15"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1732,102 +1620,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/directories/{directoryId}/access-reviews": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["list_14"];
-        put?: never;
-        post: operations["create_16"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/{campaignId}/groups/{groupId}/decisions/{decisionId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["submitDecision"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/{campaignId}/groups/{groupId}/decisions/bulk": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["bulkDecide"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/{campaignId}/close": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["close"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/{campaignId}/cancel": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["cancel"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/{campaignId}/activate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["activate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/dashboard/activity/dismiss/{key}": {
         parameters: {
             query?: never;
@@ -1837,7 +1629,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        post: operations["dismiss_1"];
+        post: operations["dismiss"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1956,6 +1748,22 @@ export interface paths {
         patch: operations["setEnabled"];
         trace?: never;
     };
+    "/api/v1/me/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_15"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["patch"];
+        trace?: never;
+    };
     "/api/v1/directories/{directoryId}/report-jobs/{jobId}/enabled": {
         parameters: {
             query?: never;
@@ -1972,6 +1780,86 @@ export interface paths {
         patch: operations["setEnabled_1"];
         trace?: never;
     };
+    "/api/v1/version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["version"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/sync/sets/{id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["verify"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/sync/sets/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["preview_1"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/sync/sets/{id}/memberships": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["memberships"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/sync/sets/excluded-attribute-defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["excludedAttributeDefaults"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/superadmin/event-outbox": {
         parameters: {
             query?: never;
@@ -1979,7 +1867,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_15"];
+        get: operations["list_12"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2052,6 +1940,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/superadmin/directories/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/superadmin/directories/{directoryId}/browse/search": {
         parameters: {
             query?: never;
@@ -2100,6 +2004,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/superadmin/directories/{directoryId}/browse/import/ldif/preview/{previewId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["previewPage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/directories/{directoryId}/browse/import/ldif/preview/{previewId}/row/{rowNumber}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["previewRow"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/superadmin/directories/{directoryId}/browse/export/ldif": {
         parameters: {
             query?: never;
@@ -2132,54 +2068,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/superadmin/alerts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["list_16"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/superadmin/alerts/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["summary"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/superadmin/alerts/rules": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listRules_1"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/superadmin/admins/{adminId}/permissions": {
         parameters: {
             query?: never;
@@ -2187,7 +2075,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["getPermissions"];
+        get: operations["getPermissions_1"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2204,6 +2092,38 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getEffectivePermissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/admins/permissions/feature-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["featureCatalog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/settings/pending-approvals-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["pendingApprovalsCount"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2347,7 +2267,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_17"];
+        get: operations["list_13"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2379,39 +2299,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["status"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/hybrid/search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["search_2"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/hybrid/resolution-configs/by-directory/{directoryId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getByDirectory"];
+        get: operations["status_1"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2444,22 +2332,6 @@ export interface paths {
             cookie?: never;
         };
         get: operations["exportUsers"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/sod-policies/violations": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listViolations"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2548,6 +2420,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/directories/{directoryId}/report-types": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["catalogue"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/directories/{directoryId}/playbooks/{playbookId}/executions": {
         parameters: {
             query?: never;
@@ -2580,70 +2468,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/directories/{directoryId}/hr/sync-history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getSyncHistory"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/hr/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getSummary"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/hr/employees": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listEmployees"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/hr/employees/orphaned": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listOrphanedAccounts"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/directories/{directoryId}/groups/export": {
         parameters: {
             query?: never;
@@ -2660,94 +2484,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/directories/{directoryId}/drift/visualization": {
+    "/api/v1/directories/{directoryId}/container/exists": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["visualization"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/drift/snapshots": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listSnapshots"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/drift/findings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listFindings"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/drift/findings/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["summary_1"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/compliance-reports/user-access": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["userAccessReport"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/compliance-reports/access-review-summary/{campaignId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["accessReviewSummary"];
+        get: operations["exists"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2779,7 +2523,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["list_18"];
+        get: operations["list_14"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2820,150 +2564,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/directories/{directoryId}/access-reviews/{campaignId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["get_19"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/{campaignId}/reminders": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listReminders"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/{campaignId}/history": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getHistory"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/{campaignId}/groups": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listGroups_1"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/{campaignId}/groups/{groupId}/decisions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listDecisions"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/{campaignId}/export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["export"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/reviewers": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["listReviewers"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/cross-campaign-report": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getReport"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/directories/{directoryId}/access-reviews/cross-campaign-report/export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["export_1"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/dashboard/summary": {
         parameters: {
             query?: never;
@@ -2971,23 +2571,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["get_20"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/compliance-reports/privileged-accounts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["privilegedAccountInventory"];
+        get: operations["get_19"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3076,246 +2660,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/auditor/{token}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["metadata"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/verify": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["verify"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/sod": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["sod"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["export_2"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/export/workpaper": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["workpaper"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/export/sod/pdf": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["sodPdf"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/export/campaigns/{campaignId}/pdf": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["campaignPdf"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/export/campaigns/{campaignId}/csv": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["campaignCsv"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/export/audit-events/pdf": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["auditEventsPdf"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/export/audit-events/csv": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["auditEventsCsv"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/entitlements": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["entitlements"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/campaigns": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["campaigns"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/campaigns/{campaignId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["campaignDetail"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/audit-events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["auditEvents"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/auditor/{token}/approvals": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["approvals"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/audit": {
         parameters: {
             query?: never;
@@ -3323,10 +2667,58 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get: operations["get_21"];
+        get: operations["get_20"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/audit/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["actions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/attribute-syntax": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["attributeSyntax"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/superadmin/sync/sets/{id}/memberships/{identity}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["dismiss_1"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3364,26 +2756,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/directories/{directoryId}/auditor-links/{linkId}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete: operations["revoke_1"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SyncSetRequest: {
+            /** Format: uuid */
+            linkId: string;
+            name: string;
+            objectScopeBaseDn?: string;
+            /** @enum {string} */
+            objectScope?: "BASE" | "ONE" | "SUB";
+            identityKey?: string;
+            targetBaseDn?: string;
+            applicabilityFilter?: string;
+            referenceAttributes?: string;
+            sourceAnchorAttribute?: string;
+            /** @enum {string} */
+            deletePolicy?: "DELETE" | "REVIEW";
+            transformRules?: components["schemas"]["SyncTransformRule"][];
+            excludedAttributes?: string[];
+            /** Format: int64 */
+            reconcileCadenceSeconds?: number;
+            enabled?: boolean;
+        };
+        SyncTransformRule: {
+            sourceAttr?: string;
+            targetAttr?: string;
+            valueTemplate?: string;
+        };
+        SyncSetResponse: {
+            /** Format: uuid */
+            id?: string;
+            /** Format: uuid */
+            linkId?: string;
+            name?: string;
+            objectScopeBaseDn?: string;
+            /** @enum {string} */
+            objectScope?: "BASE" | "ONE" | "SUB";
+            identityKey?: string;
+            targetBaseDn?: string;
+            applicabilityFilter?: string;
+            referenceAttributes?: string;
+            sourceAnchorAttribute?: string;
+            /** @enum {string} */
+            deletePolicy?: "DELETE" | "REVIEW";
+            transformRules?: components["schemas"]["SyncTransformRule"][];
+            excludedAttributes?: string[];
+            /** Format: int64 */
+            reconcileCadenceSeconds?: number;
+            /** Format: date-time */
+            reconcileLastRunAt?: string;
+            enabled?: boolean;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+            /** Format: int64 */
+            version?: number;
+            stateCounts?: {
+                [key: string]: number;
+            };
+        };
+        SyncLinkRequest: {
+            displayName: string;
+            /** Format: uuid */
+            sourceDirId: string;
+            /** Format: uuid */
+            targetDirId: string;
+            enabled?: boolean;
+            /** @enum {string} */
+            captureMode?: "APP_INTERCEPT" | "CHANGELOG";
+            /** @enum {string} */
+            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogBaseDn?: string;
+        };
+        SyncLinkResponse: {
+            /** Format: uuid */
+            id?: string;
+            displayName?: string;
+            /** Format: uuid */
+            sourceDirId?: string;
+            /** Format: uuid */
+            targetDirId?: string;
+            enabled?: boolean;
+            /** @enum {string} */
+            captureMode?: "APP_INTERCEPT" | "CHANGELOG";
+            /** @enum {string} */
+            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogBaseDn?: string;
+            /** @enum {string} */
+            changelogHealth?: "HEALTHY" | "LAGGING" | "STALLED" | "GAP_DETECTED" | "CURSOR_RESET" | "DISABLED_CONFIG_ERROR";
+            /** Format: int64 */
+            changelogLastChangeNumber?: number;
+            /** Format: int64 */
+            changelogSourceLastChangeNumber?: number;
+            /** Format: date-time */
+            changelogLastPolledAt?: string;
+            changelogLastError?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+            /** Format: int64 */
+            version?: number;
+        };
         UpdateSuperadminRequest: {
             displayName?: string;
             /** Format: email */
@@ -3405,6 +2882,15 @@ export interface components {
             createdAt?: string;
             /** Format: date-time */
             updatedAt?: string;
+        };
+        UpdateSuperadminPermissionsRequest: {
+            permissions?: string[];
+        };
+        SuperadminPermissionsDto: {
+            all?: string[];
+            granted?: string[];
+            effective?: string[];
+            owner?: boolean;
         };
         DestinationConfigRequest: {
             url: string;
@@ -3462,7 +2948,7 @@ export interface components {
         };
         DirectoryConnectionRequest: {
             /** @enum {string} */
-            directoryType?: "GENERIC" | "ACTIVE_DIRECTORY" | "OPENLDAP" | "ENTRA_ID";
+            directoryType?: "GENERIC" | "ACTIVE_DIRECTORY" | "OPENLDAP" | "IBM_DIRECTORY_SERVER" | "ORACLE_UNIFIED_DIRECTORY" | "ENTRA_ID";
             displayName: string;
             host?: string;
             /** Format: int32 */
@@ -3501,10 +2987,13 @@ export interface components {
             globalCatalogPort?: number;
             userBaseDns?: components["schemas"]["BaseDnRequest"][];
             groupBaseDns?: components["schemas"]["BaseDnRequest"][];
+            userObjectClasses?: string[];
+            groupObjectClasses?: string[];
             tenantId?: string;
             entraClientId?: string;
             entraClientSecret?: string;
             graphEndpoint?: string;
+            slug?: string;
         };
         BaseDnItem: {
             /** Format: uuid */
@@ -3513,11 +3002,24 @@ export interface components {
             /** Format: int32 */
             displayOrder?: number;
         };
+        DirectoryCapabilities: {
+            vendorName?: string;
+            vendorVersion?: string;
+            supportedControls?: string[];
+            supportedExtensions?: string[];
+            supportedSaslMechanisms?: string[];
+            namingContexts?: string[];
+            /** Format: date-time */
+            probedAt?: string;
+        };
         DirectoryConnectionResponse: {
             /** Format: uuid */
             id?: string;
+            /** Format: int64 */
+            version?: number;
+            slug?: string;
             /** @enum {string} */
-            directoryType?: "GENERIC" | "ACTIVE_DIRECTORY" | "OPENLDAP" | "ENTRA_ID";
+            directoryType?: "GENERIC" | "ACTIVE_DIRECTORY" | "OPENLDAP" | "IBM_DIRECTORY_SERVER" | "ORACLE_UNIFIED_DIRECTORY" | "ENTRA_ID";
             displayName?: string;
             host?: string;
             /** Format: int32 */
@@ -3549,6 +3051,8 @@ export interface components {
             selfServiceLoginAttribute?: string;
             userBaseDns?: components["schemas"]["BaseDnItem"][];
             groupBaseDns?: components["schemas"]["BaseDnItem"][];
+            userObjectClasses?: string[];
+            groupObjectClasses?: string[];
             secondaryHost?: string;
             /** Format: int32 */
             secondaryPort?: number;
@@ -3557,10 +3061,13 @@ export interface components {
             tenantId?: string;
             entraClientId?: string;
             graphEndpoint?: string;
+            capabilities?: components["schemas"]["DirectoryCapabilities"];
             /** Format: date-time */
             createdAt?: string;
             /** Format: date-time */
             updatedAt?: string;
+            bindPasswordSet?: boolean;
+            entraClientSecretSet?: boolean;
         };
         AttributeModification: {
             /** @enum {string} */
@@ -3621,37 +3128,36 @@ export interface components {
             /** Format: date-time */
             updatedAt?: string;
         };
-        UpdateAlertRuleRequest: {
-            enabled?: boolean;
-            /** @enum {string} */
-            severity?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-            params?: {
-                [key: string]: unknown;
-            };
-            notifyInApp?: boolean;
-            notifyEmail?: boolean;
-            emailRecipients?: string;
-            /** Format: int32 */
-            cooldownHours?: number;
+        UpsertApiTokenRequest: {
+            description?: string;
+            /** Format: date-time */
+            expiresAt: string;
         };
-        AlertRuleResponse: {
+        ApiTokenCreateResponse: {
+            token?: components["schemas"]["ApiTokenResponse"];
+            plaintext?: string;
+        };
+        ApiTokenResponse: {
             /** Format: uuid */
             id?: string;
+            /** Format: int64 */
+            version?: number;
+            name?: string;
+            description?: string;
+            tokenPrefix?: string;
             /** Format: uuid */
-            directoryId?: string;
-            directoryName?: string;
-            ruleType?: string;
-            enabled?: boolean;
+            createdById?: string;
+            createdByUsername?: string;
+            /** Format: date-time */
+            createdAt?: string;
+            /** Format: date-time */
+            expiresAt?: string;
+            /** Format: date-time */
+            lastUsedAt?: string;
+            /** Format: date-time */
+            revokedAt?: string;
             /** @enum {string} */
-            severity?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-            params?: {
-                [key: string]: unknown;
-            };
-            notifyInApp?: boolean;
-            notifyEmail?: boolean;
-            emailRecipients?: string;
-            /** Format: int32 */
-            cooldownHours?: number;
+            status?: "ACTIVE" | "EXPIRED" | "REVOKED";
         };
         AdminAccountRequest: {
             username: string;
@@ -3669,6 +3175,8 @@ export interface components {
         AdminAccountResponse: {
             /** Format: uuid */
             id?: string;
+            /** Format: int64 */
+            version?: number;
             username?: string;
             displayName?: string;
             email?: string;
@@ -3684,6 +3192,7 @@ export interface components {
             createdAt?: string;
             /** Format: date-time */
             updatedAt?: string;
+            passwordSet?: boolean;
         };
         ProfileRoleRequest: {
             /** Format: uuid */
@@ -3704,16 +3213,24 @@ export interface components {
         };
         FeaturePermissionRequest: {
             /** @enum {string} */
-            featureKey: "USER_CREATE" | "USER_EDIT" | "USER_DELETE" | "USER_ENABLE_DISABLE" | "USER_MOVE" | "USER_RESET_PASSWORD" | "GROUP_EDIT" | "GROUP_MANAGE_MEMBERS" | "GROUP_CREATE_DELETE" | "BULK_IMPORT" | "BULK_EXPORT" | "BULK_ATTRIBUTE_UPDATE" | "REPORTS_RUN" | "REPORTS_SCHEDULE" | "ACCESS_REVIEW_MANAGE" | "ACCESS_REVIEW_REVIEW" | "PLAYBOOK_MANAGE" | "PLAYBOOK_EXECUTE" | "APPROVAL_MANAGE" | "CSV_TEMPLATE_MANAGE" | "DIRECTORY_BROWSE" | "SCHEMA_READ" | "USER_READ" | "GROUP_READ" | "SOD_MANAGE" | "SOD_VIEW" | "HR_MANAGE" | "HR_VIEW" | "AUDITOR_MANAGE";
+            featureKey: "USER_CREATE" | "USER_EDIT" | "USER_DELETE" | "USER_ENABLE_DISABLE" | "USER_MOVE" | "USER_RESET_PASSWORD" | "GROUP_EDIT" | "GROUP_MANAGE_MEMBERS" | "GROUP_CREATE_DELETE" | "BULK_IMPORT" | "BULK_EXPORT" | "BULK_ATTRIBUTE_UPDATE" | "BULK_DELETE" | "REPORTS_RUN" | "REPORTS_SCHEDULE" | "ACCESS_REVIEW_MANAGE" | "ACCESS_REVIEW_REVIEW" | "PLAYBOOK_MANAGE" | "PLAYBOOK_EXECUTE" | "APPROVAL_MANAGE" | "CSV_TEMPLATE_MANAGE" | "DIRECTORY_BROWSE" | "SCHEMA_READ" | "USER_READ" | "GROUP_READ" | "SOD_MANAGE" | "SOD_VIEW" | "HR_MANAGE" | "HR_VIEW" | "AUDITOR_MANAGE";
             enabled?: boolean;
             /** Format: uuid */
             profileId?: string;
+        };
+        CreateAdminWithPermissionsRequest: {
+            account?: components["schemas"]["AdminAccountRequest"];
+            profileRoles?: components["schemas"]["ProfileRoleRequest"][];
+            featurePermissions?: components["schemas"]["FeaturePermissionRequest"][];
         };
         UpdateApplicationSettingsRequest: {
             appName: string;
             logoUrl?: string;
             primaryColour?: string;
             secondaryColour?: string;
+            directorySearchInlineEditEnabled?: boolean;
+            approvalsEnabled?: boolean;
+            selfRegistrationApprovalEnabled?: boolean;
             /** Format: int32 */
             sessionTimeoutMinutes: number;
             smtpHost?: string;
@@ -3772,6 +3289,9 @@ export interface components {
             logoUrl?: string;
             primaryColour?: string;
             secondaryColour?: string;
+            directorySearchInlineEditEnabled?: boolean;
+            approvalsEnabled?: boolean;
+            selfRegistrationApprovalEnabled?: boolean;
             /** Format: int32 */
             sessionTimeoutMinutes?: number;
             smtpHost?: string;
@@ -3896,90 +3416,16 @@ export interface components {
             /** Format: uuid */
             escalationAccountId?: string;
         };
-        UpdateRequest: {
-            /** @enum {string} */
-            primaryKey: "EMAIL" | "EMPLOYEE_ID" | "USER_PRINCIPAL_NAME" | "LOGIN_NAME";
-            /** @enum {string} */
-            secondaryKey?: "EMAIL" | "EMPLOYEE_ID" | "USER_PRINCIPAL_NAME" | "LOGIN_NAME";
-            /** @enum {string} */
-            tertiaryKey?: "EMAIL" | "EMPLOYEE_ID" | "USER_PRINCIPAL_NAME" | "LOGIN_NAME";
-            /** @enum {string} */
-            joinStrategy: "EXACT" | "CASE_INSENSITIVE" | "NORMALIZED_EMAIL";
-            /** Format: int32 */
-            canonicalPriority?: number;
-            /** Format: int64 */
-            expectedVersion?: number;
-        };
-        ResolutionConfigResponse: {
-            /** Format: uuid */
-            id?: string;
-            /** Format: uuid */
-            directoryId?: string;
-            directoryName?: string;
-            /** @enum {string} */
-            primaryKey?: "EMAIL" | "EMPLOYEE_ID" | "USER_PRINCIPAL_NAME" | "LOGIN_NAME";
-            /** @enum {string} */
-            secondaryKey?: "EMAIL" | "EMPLOYEE_ID" | "USER_PRINCIPAL_NAME" | "LOGIN_NAME";
-            /** @enum {string} */
-            tertiaryKey?: "EMAIL" | "EMPLOYEE_ID" | "USER_PRINCIPAL_NAME" | "LOGIN_NAME";
-            /** @enum {string} */
-            joinStrategy?: "EXACT" | "CASE_INSENSITIVE" | "NORMALIZED_EMAIL";
-            /** Format: int32 */
-            canonicalPriority?: number;
-            /** Format: date-time */
-            createdAt?: string;
-            /** Format: date-time */
-            updatedAt?: string;
-            /** Format: int64 */
-            version?: number;
-        };
+        JsonNode: unknown;
         LdapEntryResponse: {
             dn?: string;
             attributes?: {
                 [key: string]: string[];
             };
         };
-        UpdateSodPolicyRequest: {
-            name?: string;
-            description?: string;
-            groupADn?: string;
-            groupBDn?: string;
-            groupAName?: string;
-            groupBName?: string;
-            /** @enum {string} */
-            severity?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-            /** @enum {string} */
-            action?: "ALERT" | "BLOCK";
-            enabled?: boolean;
-        };
-        SodPolicyResponse: {
-            /** Format: uuid */
-            id?: string;
-            name?: string;
-            description?: string;
-            /** Format: uuid */
-            directoryId?: string;
-            groupADn?: string;
-            groupBDn?: string;
-            groupAName?: string;
-            groupBName?: string;
-            /** @enum {string} */
-            severity?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-            /** @enum {string} */
-            action?: "ALERT" | "BLOCK";
-            enabled?: boolean;
-            /** Format: int64 */
-            openViolationCount?: number;
-            createdByUsername?: string;
-            /** Format: date-time */
-            createdAt?: string;
-            /** Format: date-time */
-            updatedAt?: string;
-        };
-        CreateScheduledReportJobRequest: {
+        ReportJobRequest: {
             name: string;
-            /** @enum {string} */
-            reportType: "USERS_IN_GROUP" | "USERS_IN_BRANCH" | "USERS_WITH_NO_GROUP" | "RECENTLY_ADDED" | "RECENTLY_MODIFIED" | "RECENTLY_DELETED" | "DISABLED_ACCOUNTS" | "MISSING_PROFILE_GROUPS" | "SOD_VIOLATIONS" | "USER_ACCESS_REPORT" | "ACCESS_REVIEW_RESULTS" | "PRIVILEGED_ACCOUNT_INVENTORY" | "ACCESS_DRIFT_REPORT" | "TERMINATION_VELOCITY" | "AUDIT_LOG_REPORT";
+            reportType: string;
             reportParams?: {
                 [key: string]: unknown;
             };
@@ -3988,19 +3434,18 @@ export interface components {
             outputFormat: "CSV" | "PDF";
             /** @enum {string} */
             deliveryMethod: "EMAIL" | "S3";
-            deliveryRecipients?: string;
+            recipientEmail?: string;
             s3KeyPrefix?: string;
             timezone?: string;
             enabled?: boolean;
         };
-        ScheduledReportJobDto: {
+        ReportJobResponse: {
             /** Format: uuid */
             id?: string;
             /** Format: uuid */
             directoryId?: string;
             name?: string;
-            /** @enum {string} */
-            reportType?: "USERS_IN_GROUP" | "USERS_IN_BRANCH" | "USERS_WITH_NO_GROUP" | "RECENTLY_ADDED" | "RECENTLY_MODIFIED" | "RECENTLY_DELETED" | "DISABLED_ACCOUNTS" | "MISSING_PROFILE_GROUPS" | "SOD_VIOLATIONS" | "USER_ACCESS_REPORT" | "ACCESS_REVIEW_RESULTS" | "PRIVILEGED_ACCOUNT_INVENTORY" | "ACCESS_DRIFT_REPORT" | "TERMINATION_VELOCITY" | "AUDIT_LOG_REPORT";
+            reportType?: string;
             reportParams?: {
                 [key: string]: unknown;
             };
@@ -4009,20 +3454,29 @@ export interface components {
             outputFormat?: "CSV" | "PDF";
             /** @enum {string} */
             deliveryMethod?: "EMAIL" | "S3";
-            deliveryRecipients?: string;
+            recipientEmail?: string;
             s3KeyPrefix?: string;
             timezone?: string;
             enabled?: boolean;
             /** Format: date-time */
             lastRunAt?: string;
-            lastRunStatus?: string;
+            /** @enum {string} */
+            lastRunStatus?: "SUCCESS" | "FAILED";
             lastRunMessage?: string;
+            runHistory?: components["schemas"]["ReportRunHistoryEntry"][];
             /** Format: uuid */
             createdByAdminId?: string;
             /** Format: date-time */
             createdAt?: string;
             /** Format: date-time */
             updatedAt?: string;
+        };
+        ReportRunHistoryEntry: {
+            /** Format: date-time */
+            runAt?: string;
+            /** @enum {string} */
+            status?: "SUCCESS" | "FAILED";
+            message?: string;
         };
         AttributeConfigEntry: {
             attributeName: string;
@@ -4065,6 +3519,12 @@ export interface components {
             objectClassNames: string[];
             rdnAttribute: string;
             showDnField?: boolean;
+            dnTemplate?: string;
+            /** Format: int32 */
+            dnColumnSpan?: number;
+            dnSectionName?: string;
+            /** Format: int32 */
+            dnDisplayOrder?: number;
             enabled?: boolean;
             selfRegistrationAllowed?: boolean;
             /** Format: int32 */
@@ -4075,6 +3535,7 @@ export interface components {
             passwordSpecial?: boolean;
             passwordSpecialChars?: string;
             emailPasswordToUser?: boolean;
+            passwordDisposition?: string;
             autoIncludeGroups?: boolean;
             excludeAutoIncludes?: boolean;
             additionalProfileIds?: string[];
@@ -4099,6 +3560,12 @@ export interface components {
             objectClassNames?: string[];
             rdnAttribute?: string;
             showDnField?: boolean;
+            dnTemplate?: string;
+            /** Format: int32 */
+            dnColumnSpan?: number;
+            dnSectionName?: string;
+            /** Format: int32 */
+            dnDisplayOrder?: number;
             enabled?: boolean;
             selfRegistrationAllowed?: boolean;
             /** Format: int32 */
@@ -4109,6 +3576,7 @@ export interface components {
             passwordSpecial?: boolean;
             passwordSpecialChars?: string;
             emailPasswordToUser?: boolean;
+            passwordDisposition?: string;
             autoIncludeGroups?: boolean;
             excludeAutoIncludes?: boolean;
             additionalProfiles?: components["schemas"]["AdditionalProfileEntry"][];
@@ -4154,70 +3622,16 @@ export interface components {
             /** Format: date-time */
             updatedAt?: string;
         };
-        UpdateHrConnectionRequest: {
-            displayName?: string;
-            subdomain?: string;
-            apiKey?: string;
-            matchAttribute?: string;
-            matchField?: string;
-            syncCron?: string;
-            enabled?: boolean;
-        };
-        HrConnectionDto: {
-            /** Format: uuid */
-            id?: string;
-            /** Format: uuid */
-            directoryId?: string;
-            /** @enum {string} */
-            provider?: "BAMBOOHR";
-            displayName?: string;
-            enabled?: boolean;
-            subdomain?: string;
-            hasApiKey?: boolean;
-            matchAttribute?: string;
-            matchField?: string;
-            syncCron?: string;
-            /** Format: date-time */
-            lastSyncAt?: string;
-            lastSyncStatus?: string;
-            lastSyncMessage?: string;
-            /** Format: int32 */
-            lastSyncEmployeeCount?: number;
-            /** Format: date-time */
-            createdAt?: string;
-            /** Format: date-time */
-            updatedAt?: string;
-        };
-        PeerGroupRuleRequest: {
-            name: string;
-            groupingAttribute: string;
-            /** Format: int32 */
-            normalThresholdPct?: number;
-            /** Format: int32 */
-            anomalyThresholdPct?: number;
-            enabled?: boolean;
-        };
-        PeerGroupRuleResponse: {
-            /** Format: uuid */
-            id?: string;
-            name?: string;
-            groupingAttribute?: string;
-            /** Format: int32 */
-            normalThresholdPct?: number;
-            /** Format: int32 */
-            anomalyThresholdPct?: number;
-            enabled?: boolean;
-            createdByUsername?: string;
-            /** Format: date-time */
-            createdAt?: string;
-        };
         CreateCsvMappingTemplateRequest: {
             name: string;
             objectClass?: string;
             targetKeyAttribute?: string;
             /** @enum {string} */
             conflictHandling?: "PROMPT" | "SKIP" | "OVERWRITE";
+            /** @enum {string} */
+            errorHandling?: "SKIP_ERRORS" | "ABORT_ON_ERROR";
             skipHeaderRow?: boolean;
+            dnSourceColumn?: string;
             entries: components["schemas"]["CsvColumnMappingDto"][];
         };
         CsvColumnMappingDto: {
@@ -4235,59 +3649,15 @@ export interface components {
             targetKeyAttribute?: string;
             /** @enum {string} */
             conflictHandling?: "PROMPT" | "SKIP" | "OVERWRITE";
+            /** @enum {string} */
+            errorHandling?: "SKIP_ERRORS" | "ABORT_ON_ERROR";
             skipHeaderRow?: boolean;
+            dnSourceColumn?: string;
             entries?: components["schemas"]["CsvColumnMappingDto"][];
             /** Format: date-time */
             createdAt?: string;
             /** Format: date-time */
             updatedAt?: string;
-        };
-        GroupConfig: {
-            groupDn: string;
-            memberAttribute?: string;
-            /** Format: uuid */
-            reviewerAccountId: string;
-        };
-        UpdateCampaignTemplateRequest: {
-            name: string;
-            description?: string;
-            /** Format: int32 */
-            deadlineDays: number;
-            /** Format: int32 */
-            recurrenceMonths?: number;
-            autoRevoke?: boolean;
-            autoRevokeOnExpiry?: boolean;
-            groups: components["schemas"]["GroupConfig"][];
-        };
-        CampaignTemplateConfigDto: {
-            /** Format: int32 */
-            deadlineDays?: number;
-            /** Format: int32 */
-            recurrenceMonths?: number;
-            autoRevoke?: boolean;
-            autoRevokeOnExpiry?: boolean;
-            groups?: components["schemas"]["GroupConfigDto"][];
-        };
-        CampaignTemplateResponse: {
-            /** Format: uuid */
-            id?: string;
-            name?: string;
-            description?: string;
-            /** Format: uuid */
-            directoryId?: string;
-            config?: components["schemas"]["CampaignTemplateConfigDto"];
-            createdByUsername?: string;
-            /** Format: date-time */
-            createdAt?: string;
-            /** Format: date-time */
-            updatedAt?: string;
-        };
-        GroupConfigDto: {
-            groupDn?: string;
-            memberAttribute?: string;
-            /** Format: uuid */
-            reviewerAccountId?: string;
-            reviewerUsername?: string;
         };
         PendingApprovalResponse: {
             /** Format: uuid */
@@ -4313,6 +3683,9 @@ export interface components {
             createdAt?: string;
             /** Format: date-time */
             reviewedAt?: string;
+        };
+        RecomputeKeyRequest: {
+            key: string;
         };
         CreateSuperadminRequest: {
             username: string;
@@ -4450,6 +3823,12 @@ export interface components {
             objectClassNames: string[];
             rdnAttribute: string;
             showDnField?: boolean;
+            dnTemplate?: string;
+            /** Format: int32 */
+            dnColumnSpan?: number;
+            dnSectionName?: string;
+            /** Format: int32 */
+            dnDisplayOrder?: number;
             enabled?: boolean;
             selfRegistrationAllowed?: boolean;
             /** Format: int32 */
@@ -4460,6 +3839,7 @@ export interface components {
             passwordSpecial?: boolean;
             passwordSpecialChars?: string;
             emailPasswordToUser?: boolean;
+            passwordDisposition?: string;
             autoIncludeGroups?: boolean;
             excludeAutoIncludes?: boolean;
             additionalProfileIds?: string[];
@@ -4511,6 +3891,74 @@ export interface components {
             failed?: number;
             errors?: components["schemas"]["LdifImportError"][];
         };
+        LdifMemberDelta: {
+            /** Format: int32 */
+            added?: number;
+            /** Format: int32 */
+            removed?: number;
+        };
+        LdifPreviewIssue: {
+            severity?: string;
+            code?: string;
+            message?: string;
+        };
+        LdifPreviewPage: {
+            rows?: components["schemas"]["LdifPreviewRow"][];
+            /** Format: int32 */
+            page?: number;
+            /** Format: int32 */
+            size?: number;
+            /** Format: int32 */
+            totalFiltered?: number;
+        };
+        LdifPreviewRow: {
+            /** Format: int32 */
+            rowNumber?: number;
+            dn?: string;
+            /** @enum {string} */
+            op?: "ADD" | "MODIFY" | "DELETE" | "MODDN" | "SKIP" | "ERROR";
+            objectClasses?: string[];
+            /** Format: int32 */
+            attrCount?: number;
+            memberDelta?: components["schemas"]["LdifMemberDelta"];
+            /** Format: int32 */
+            memberCount?: number;
+            issues?: components["schemas"]["LdifPreviewIssue"][];
+            userAdd?: boolean;
+        };
+        LdifPreviewSummary: {
+            previewId?: string;
+            /** Format: int32 */
+            totalRows?: number;
+            countsByOp?: components["schemas"]["OpCounts"];
+            /** Format: int32 */
+            warningCount?: number;
+            /** Format: int32 */
+            errorCount?: number;
+            truncated?: boolean;
+            page0?: components["schemas"]["LdifPreviewPage"];
+            /** Format: int32 */
+            userAddCount?: number;
+            containsVendorOverlayEntries?: boolean;
+        };
+        OpCounts: {
+            /** Format: int32 */
+            add?: number;
+            /** Format: int32 */
+            modify?: number;
+            /** Format: int32 */
+            delete?: number;
+            /** Format: int32 */
+            moddn?: number;
+            /** Format: int32 */
+            skip?: number;
+            /** Format: int32 */
+            error?: number;
+        };
+        ApplyLdifPreviewRequest: {
+            suppressVendorOverlay?: boolean;
+            excludeOverlayRows?: number[];
+        };
         TestConnectionRequest: {
             host: string;
             /** Format: int32 */
@@ -4533,30 +3981,6 @@ export interface components {
             description?: string;
             /** Format: date-time */
             expiresAt: string;
-        };
-        ApiTokenCreateResponse: {
-            token?: components["schemas"]["ApiTokenResponse"];
-            plaintext?: string;
-        };
-        ApiTokenResponse: {
-            /** Format: uuid */
-            id?: string;
-            name?: string;
-            description?: string;
-            tokenPrefix?: string;
-            /** Format: uuid */
-            createdById?: string;
-            createdByUsername?: string;
-            /** Format: date-time */
-            createdAt?: string;
-            /** Format: date-time */
-            expiresAt?: string;
-            /** Format: date-time */
-            lastUsedAt?: string;
-            /** Format: date-time */
-            revokedAt?: string;
-            /** @enum {string} */
-            status?: "ACTIVE" | "EXPIRED" | "REVOKED";
         };
         RegistrationVerifyResponse: {
             status?: string;
@@ -4582,25 +4006,43 @@ export interface components {
             currentPassword: string;
             newPassword: string;
         };
-        ResolutionConfigRequest: {
-            /** Format: uuid */
-            directoryId: string;
-            /** @enum {string} */
-            primaryKey: "EMAIL" | "EMPLOYEE_ID" | "USER_PRINCIPAL_NAME" | "LOGIN_NAME";
-            /** @enum {string} */
-            secondaryKey?: "EMAIL" | "EMPLOYEE_ID" | "USER_PRINCIPAL_NAME" | "LOGIN_NAME";
-            /** @enum {string} */
-            tertiaryKey?: "EMAIL" | "EMPLOYEE_ID" | "USER_PRINCIPAL_NAME" | "LOGIN_NAME";
-            /** @enum {string} */
-            joinStrategy: "EXACT" | "CASE_INSENSITIVE" | "NORMALIZED_EMAIL";
-            /** Format: int32 */
-            canonicalPriority?: number;
-        };
         ResetPasswordLdapRequest: {
             newPassword: string;
         };
         MoveUserRequest: {
             newParentDn: string;
+        };
+        Change: {
+            groupDn: string;
+            memberAttribute: string;
+            /** @enum {string} */
+            op: "ADD" | "REMOVE";
+        };
+        MembershipChangeRequest: {
+            changes: components["schemas"]["Change"][];
+        };
+        Item: {
+            groupDn?: string;
+            /** @enum {string} */
+            op?: "ADD" | "REMOVE";
+            /** @enum {string} */
+            status?: "APPLIED" | "QUEUED_FOR_APPROVAL" | "REFUSED" | "BLOCKED" | "ERROR";
+            /** Format: uuid */
+            approvalId?: string;
+            message?: string;
+        };
+        MembershipChangeResult: {
+            /** Format: int32 */
+            applied?: number;
+            /** Format: int32 */
+            queued?: number;
+            /** Format: int32 */
+            refused?: number;
+            /** Format: int32 */
+            blocked?: number;
+            /** Format: int32 */
+            errored?: number;
+            items?: components["schemas"]["Item"][];
         };
         BulkImportRequest: {
             /** Format: uuid */
@@ -4610,6 +4052,7 @@ export interface components {
             /** @enum {string} */
             conflictHandling?: "PROMPT" | "SKIP" | "OVERWRITE";
             skipHeaderRow?: boolean;
+            dnSourceColumn?: string;
             columnMappings?: components["schemas"]["CsvColumnMappingDto"][];
         };
         BulkImportPreviewResult: {
@@ -4624,6 +4067,7 @@ export interface components {
             attributes?: {
                 [key: string]: string;
             };
+            missingRequired?: string[];
         };
         BulkAttributeUpdateRequest: {
             dns: string[];
@@ -4640,65 +4084,49 @@ export interface components {
             dn?: string;
             message?: string;
         };
-        CreateSodPolicyRequest: {
-            name: string;
-            description?: string;
-            groupADn: string;
-            groupBDn: string;
-            groupAName?: string;
-            groupBName?: string;
-            /** @enum {string} */
-            severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-            /** @enum {string} */
-            action: "ALERT" | "BLOCK";
-            enabled?: boolean;
+        BulkDeleteRequest: {
+            keyAttribute?: string;
+            valueColumn?: string;
+            baseDn?: string;
+            skipHeaderRow?: boolean;
         };
-        SodViolationResponse: {
-            /** Format: uuid */
-            id?: string;
-            /** Format: uuid */
-            policyId?: string;
-            policyName?: string;
-            userDn?: string;
-            userDisplayName?: string;
+        BulkDeleteResult: {
+            /** Format: int32 */
+            totalRows?: number;
+            /** Format: int64 */
+            deleted?: number;
+            /** Format: int64 */
+            skipped?: number;
+            /** Format: int64 */
+            errors?: number;
+            rows?: components["schemas"]["BulkDeleteRowResult"][];
+        };
+        BulkDeleteRowResult: {
+            /** Format: int32 */
+            rowNumber?: number;
+            dn?: string;
             /** @enum {string} */
-            status?: "OPEN" | "RESOLVED" | "EXEMPTED";
-            /** Format: date-time */
-            detectedAt?: string;
-            /** Format: date-time */
-            resolvedAt?: string;
-            exemptedByUsername?: string;
-            exemptionReason?: string;
-            /** Format: date-time */
-            exemptionExpiresAt?: string;
-            groupADn?: string;
-            groupBDn?: string;
-            groupAName?: string;
-            groupBName?: string;
+            status?: "DELETED" | "SKIPPED" | "ERROR";
+            message?: string;
         };
-        ExemptViolationRequest: {
-            reason: string;
-            /** Format: date-time */
-            expiresAt?: string;
+        BulkDeletePreviewResult: {
+            /** Format: int32 */
+            totalRows?: number;
+            rows?: components["schemas"]["BulkDeletePreviewRow"][];
         };
-        SodScanResultDto: {
+        BulkDeletePreviewRow: {
             /** Format: int32 */
-            policiesScanned?: number;
-            /** Format: int32 */
-            violationsFound?: number;
-            /** Format: int32 */
-            newViolations?: number;
-            /** Format: int32 */
-            resolvedViolations?: number;
-        };
-        RunReportRequest: {
+            rowNumber?: number;
+            dn?: string;
             /** @enum {string} */
-            reportType: "USERS_IN_GROUP" | "USERS_IN_BRANCH" | "USERS_WITH_NO_GROUP" | "RECENTLY_ADDED" | "RECENTLY_MODIFIED" | "RECENTLY_DELETED" | "DISABLED_ACCOUNTS" | "MISSING_PROFILE_GROUPS" | "SOD_VIOLATIONS" | "USER_ACCESS_REPORT" | "ACCESS_REVIEW_RESULTS" | "PRIVILEGED_ACCOUNT_INVENTORY" | "ACCESS_DRIFT_REPORT" | "TERMINATION_VELOCITY" | "AUDIT_LOG_REPORT";
+            disposition?: "WILL_DELETE" | "NOT_FOUND" | "OUT_OF_SCOPE" | "AMBIGUOUS" | "INVALID";
+            note?: string;
+        };
+        RunOperationalReportRequest: {
+            reportType: string;
             reportParams?: {
                 [key: string]: unknown;
             };
-            /** @enum {string} */
-            outputFormat?: "CSV" | "PDF";
         };
         ReportData: {
             columns?: string[];
@@ -4719,6 +4147,10 @@ export interface components {
             userDn?: string;
             groupsToAdd?: components["schemas"]["GroupChange"][];
             groupsToRemove?: components["schemas"]["GroupChange"][];
+        };
+        TargetOuProbeResult: {
+            exists?: boolean;
+            dn?: string;
         };
         GroupMembershipEntry: {
             userDn?: string;
@@ -4769,47 +4201,6 @@ export interface components {
             /** Format: date-time */
             completedAt?: string;
         };
-        CreateHrConnectionRequest: {
-            displayName: string;
-            subdomain: string;
-            apiKey: string;
-            matchAttribute?: string;
-            matchField?: string;
-            syncCron?: string;
-        };
-        HrTestConnectionResponse: {
-            success?: boolean;
-            message?: string;
-            /** Format: int32 */
-            employeeCount?: number;
-        };
-        HrSyncRunDto: {
-            /** Format: uuid */
-            id?: string;
-            /** Format: date-time */
-            startedAt?: string;
-            /** Format: date-time */
-            completedAt?: string;
-            /** @enum {string} */
-            status?: "RUNNING" | "SUCCESS" | "FAILED";
-            /** Format: int32 */
-            totalEmployees?: number;
-            /** Format: int32 */
-            newEmployees?: number;
-            /** Format: int32 */
-            updatedEmployees?: number;
-            /** Format: int32 */
-            terminatedCount?: number;
-            /** Format: int32 */
-            matchedCount?: number;
-            /** Format: int32 */
-            unmatchedCount?: number;
-            /** Format: int32 */
-            orphanedCount?: number;
-            errorMessage?: string;
-            /** @enum {string} */
-            triggeredBy?: "SCHEDULED" | "MANUAL" | "WEBHOOK";
-        };
         MemberRequest: {
             memberAttribute: string;
             memberValue: string;
@@ -4818,207 +4209,8 @@ export interface components {
             memberAttribute: string;
             memberValues: string[];
         };
-        EvidencePackageRequest: {
-            campaignIds: string[];
-            includeSod?: boolean;
-            includeEntitlements?: boolean;
-            includeAuditEvents?: boolean;
-        };
-        ExemptRequest: {
-            reason: string;
-        };
-        DriftFindingResponse: {
-            /** Format: uuid */
-            id?: string;
-            userDn?: string;
-            userDisplay?: string;
-            peerGroupValue?: string;
-            /** Format: int32 */
-            peerGroupSize?: number;
-            groupDn?: string;
-            groupName?: string;
-            /** Format: double */
-            peerMembershipPct?: number;
-            /** @enum {string} */
-            severity?: "HIGH" | "MEDIUM" | "LOW";
-            /** @enum {string} */
-            status?: "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "EXEMPTED";
-            ruleName?: string;
-            acknowledgedByUsername?: string;
-            /** Format: date-time */
-            acknowledgedAt?: string;
-            exemptionReason?: string;
-            /** Format: date-time */
-            detectedAt?: string;
-        };
-        CreateCampaignTemplateRequest: {
-            name: string;
-            description?: string;
-            /** Format: int32 */
-            deadlineDays: number;
-            /** Format: int32 */
-            recurrenceMonths?: number;
-            autoRevoke?: boolean;
-            autoRevokeOnExpiry?: boolean;
-            groups: components["schemas"]["GroupConfig"][];
-        };
-        CampaignDetailDto: {
-            /** Format: uuid */
-            id?: string;
-            name?: string;
-            description?: string;
-            /** @enum {string} */
-            status?: "UPCOMING" | "ACTIVE" | "CLOSED" | "CANCELLED" | "EXPIRED";
-            /** Format: date-time */
-            startsAt?: string;
-            /** Format: date-time */
-            deadline?: string;
-            /** Format: int32 */
-            deadlineDays?: number;
-            /** Format: int32 */
-            recurrenceMonths?: number;
-            autoRevoke?: boolean;
-            autoRevokeOnExpiry?: boolean;
-            /** Format: date-time */
-            createdAt?: string;
-            /** Format: date-time */
-            completedAt?: string;
-            createdByUsername?: string;
-            progress?: components["schemas"]["CampaignProgressDto"];
-            reviewGroups?: components["schemas"]["ReviewGroupDto"][];
-            history?: components["schemas"]["CampaignHistoryDto"][];
-        };
-        CampaignHistoryDto: {
-            /** Format: uuid */
-            id?: string;
-            /** @enum {string} */
-            oldStatus?: "UPCOMING" | "ACTIVE" | "CLOSED" | "CANCELLED" | "EXPIRED";
-            /** @enum {string} */
-            newStatus?: "UPCOMING" | "ACTIVE" | "CLOSED" | "CANCELLED" | "EXPIRED";
-            changedByUsername?: string;
-            /** Format: date-time */
-            changedAt?: string;
-            note?: string;
-        };
-        CampaignProgressDto: {
-            /** Format: int64 */
-            total?: number;
-            /** Format: int64 */
-            confirmed?: number;
-            /** Format: int64 */
-            revoked?: number;
-            /** Format: int64 */
-            pending?: number;
-            /** Format: double */
-            percentComplete?: number;
-        };
-        ReviewGroupDto: {
-            /** Format: uuid */
-            id?: string;
-            groupDn?: string;
-            groupName?: string;
-            memberAttribute?: string;
-            reviewerUsername?: string;
-            /** Format: uuid */
-            reviewerId?: string;
-            /** Format: int64 */
-            total?: number;
-            /** Format: int64 */
-            confirmed?: number;
-            /** Format: int64 */
-            revoked?: number;
-            /** Format: int64 */
-            pending?: number;
-        };
-        CreateAuditorLinkRequest: {
-            label?: string;
-            campaignIds: string[];
-            includeSod?: boolean;
-            includeEntitlements?: boolean;
-            includeAuditEvents?: boolean;
-            /** Format: date-time */
-            dataFrom?: string;
-            /** Format: date-time */
-            dataTo?: string;
-            /** Format: int32 */
-            expiryDays?: number;
-        };
-        AuditorLinkDto: {
-            /** Format: uuid */
-            id?: string;
-            /** Format: uuid */
-            directoryId?: string;
-            token?: string;
-            label?: string;
-            campaignIds?: string[];
-            includeSod?: boolean;
-            includeEntitlements?: boolean;
-            includeAuditEvents?: boolean;
-            /** Format: date-time */
-            dataFrom?: string;
-            /** Format: date-time */
-            dataTo?: string;
-            /** Format: date-time */
-            expiresAt?: string;
-            createdBy?: string;
-            /** Format: date-time */
-            createdAt?: string;
-            /** Format: date-time */
-            lastAccessedAt?: string;
-            /** Format: int32 */
-            accessCount?: number;
-            revoked?: boolean;
-            /** Format: date-time */
-            revokedAt?: string;
-        };
         ApprovalRejectRequest: {
             reason: string;
-        };
-        CreateCampaignRequest: {
-            name: string;
-            description?: string;
-            /** Format: int32 */
-            deadlineDays: number;
-            /** Format: int32 */
-            recurrenceMonths?: number;
-            autoRevoke?: boolean;
-            autoRevokeOnExpiry?: boolean;
-            groups: components["schemas"]["GroupAssignment"][];
-        };
-        GroupAssignment: {
-            groupDn: string;
-            memberAttribute?: string;
-            /** Format: uuid */
-            reviewerAccountId: string;
-        };
-        SubmitDecisionRequest: {
-            /** @enum {string} */
-            decision: "CONFIRM" | "REVOKE";
-            comment?: string;
-        };
-        DecisionDto: {
-            /** Format: uuid */
-            id?: string;
-            memberDn?: string;
-            memberDisplay?: string;
-            /** @enum {string} */
-            decision?: "CONFIRM" | "REVOKE";
-            comment?: string;
-            decidedByUsername?: string;
-            /** Format: date-time */
-            decidedAt?: string;
-            /** Format: date-time */
-            revokedAt?: string;
-        };
-        BulkDecisionItem: {
-            /** Format: uuid */
-            decisionId: string;
-            /** @enum {string} */
-            decision: "CONFIRM" | "REVOKE";
-            comment?: string;
-        };
-        BulkDecisionRequest: {
-            items: components["schemas"]["BulkDecisionItem"][];
         };
         SelfServiceLoginRequest: {
             /** Format: uuid */
@@ -5032,14 +4224,71 @@ export interface components {
             id?: string;
         };
         UpdatePreferencesRequest: {
-            themePreference?: string;
-            densityPreference?: string;
             displayName?: string;
             email?: string;
         };
         LoginRequest: {
             username: string;
             password: string;
+        };
+        SyncVerifyResult: {
+            /** Format: int32 */
+            sourceMembers?: number;
+            /** Format: int32 */
+            targetEntries?: number;
+            /** Format: int32 */
+            inSync?: number;
+            /** Format: int32 */
+            missingOnTarget?: number;
+            /** Format: int32 */
+            orphanOnTarget?: number;
+            /** Format: int32 */
+            contentMismatches?: number;
+            sampleMissing?: string[];
+            sampleOrphans?: string[];
+            sampleMismatches?: string[];
+            sourceComplete?: boolean;
+            targetComplete?: boolean;
+            note?: string;
+        };
+        SyncReconcilePreview: {
+            /** Format: int32 */
+            sourceCount?: number;
+            /** Format: int64 */
+            managedCount?: number;
+            /** Format: int32 */
+            plannedAdds?: number;
+            /** Format: int32 */
+            plannedDeletes?: number;
+            sampleDeleteDns?: string[];
+            guardTripped?: boolean;
+            guardReason?: string;
+            completeScan?: boolean;
+        };
+        MembershipResponse: {
+            /** Format: uuid */
+            syncSetId?: string;
+            identity?: string;
+            sourceDn?: string;
+            targetDn?: string;
+            /** @enum {string} */
+            state?: "APPLIED" | "PENDING" | "FAILED" | "REVIEW";
+            failReason?: string;
+            /** Format: int64 */
+            lastSrcCursor?: number;
+            /** Format: int64 */
+            lastScanEpoch?: number;
+        };
+        PageResponseMembershipResponse: {
+            content?: components["schemas"]["MembershipResponse"][];
+            /** Format: int64 */
+            totalElements?: number;
+            /** Format: int32 */
+            totalPages?: number;
+            /** Format: int32 */
+            number?: number;
+            /** Format: int32 */
+            size?: number;
         };
         PageMetadata: {
             /** Format: int64 */
@@ -5082,46 +4331,17 @@ export interface components {
             required?: string[];
             optional?: string[];
         };
-        AlertInstanceResponse: {
-            /** Format: uuid */
-            id?: string;
-            ruleType?: string;
-            directoryName?: string;
-            /** Format: uuid */
-            directoryId?: string;
+        LdifPreviewRowDetail: {
+            /** Format: int32 */
+            rowNumber?: number;
+            dn?: string;
             /** @enum {string} */
-            severity?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-            title?: string;
-            detail?: string;
-            contextKey?: string;
-            /** @enum {string} */
-            status?: "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "DISMISSED";
-            /** Format: uuid */
-            acknowledgedBy?: string;
-            /** Format: date-time */
-            acknowledgedAt?: string;
-            /** Format: date-time */
-            resolvedAt?: string;
-            /** Format: date-time */
-            createdAt?: string;
-        };
-        PagedModelAlertInstanceResponse: {
-            content?: components["schemas"]["AlertInstanceResponse"][];
-            page?: components["schemas"]["PageMetadata"];
-        };
-        AlertSummaryResponse: {
-            /** Format: int64 */
-            openCount?: number;
-            /** Format: int64 */
-            acknowledgedCount?: number;
-            /** Format: int64 */
-            criticalCount?: number;
-            /** Format: int64 */
-            highCount?: number;
-            /** Format: int64 */
-            mediumCount?: number;
-            /** Format: int64 */
-            lowCount?: number;
+            op?: "ADD" | "MODIFY" | "DELETE" | "MODDN" | "SKIP" | "ERROR";
+            attributes?: {
+                [key: string]: string[];
+            };
+            memberDelta?: components["schemas"]["LdifMemberDelta"];
+            issues?: components["schemas"]["LdifPreviewIssue"][];
         };
         AdminPermissionsResponse: {
             profileRoles?: components["schemas"]["ProfileRoleResponse"][];
@@ -5129,7 +4349,7 @@ export interface components {
         };
         FeatureOverride: {
             /** @enum {string} */
-            featureKey?: "USER_CREATE" | "USER_EDIT" | "USER_DELETE" | "USER_ENABLE_DISABLE" | "USER_MOVE" | "USER_RESET_PASSWORD" | "GROUP_EDIT" | "GROUP_MANAGE_MEMBERS" | "GROUP_CREATE_DELETE" | "BULK_IMPORT" | "BULK_EXPORT" | "BULK_ATTRIBUTE_UPDATE" | "REPORTS_RUN" | "REPORTS_SCHEDULE" | "ACCESS_REVIEW_MANAGE" | "ACCESS_REVIEW_REVIEW" | "PLAYBOOK_MANAGE" | "PLAYBOOK_EXECUTE" | "APPROVAL_MANAGE" | "CSV_TEMPLATE_MANAGE" | "DIRECTORY_BROWSE" | "SCHEMA_READ" | "USER_READ" | "GROUP_READ" | "SOD_MANAGE" | "SOD_VIEW" | "HR_MANAGE" | "HR_VIEW" | "AUDITOR_MANAGE";
+            featureKey?: "USER_CREATE" | "USER_EDIT" | "USER_DELETE" | "USER_ENABLE_DISABLE" | "USER_MOVE" | "USER_RESET_PASSWORD" | "GROUP_EDIT" | "GROUP_MANAGE_MEMBERS" | "GROUP_CREATE_DELETE" | "BULK_IMPORT" | "BULK_EXPORT" | "BULK_ATTRIBUTE_UPDATE" | "BULK_DELETE" | "REPORTS_RUN" | "REPORTS_SCHEDULE" | "ACCESS_REVIEW_MANAGE" | "ACCESS_REVIEW_REVIEW" | "PLAYBOOK_MANAGE" | "PLAYBOOK_EXECUTE" | "APPROVAL_MANAGE" | "CSV_TEMPLATE_MANAGE" | "DIRECTORY_BROWSE" | "SCHEMA_READ" | "USER_READ" | "GROUP_READ" | "SOD_MANAGE" | "SOD_VIEW" | "HR_MANAGE" | "HR_VIEW" | "AUDITOR_MANAGE";
             enabled?: boolean;
             /** Format: uuid */
             profileId?: string;
@@ -5145,7 +4365,7 @@ export interface components {
         };
         FeatureEffective: {
             /** @enum {string} */
-            key?: "USER_CREATE" | "USER_EDIT" | "USER_DELETE" | "USER_ENABLE_DISABLE" | "USER_MOVE" | "USER_RESET_PASSWORD" | "GROUP_EDIT" | "GROUP_MANAGE_MEMBERS" | "GROUP_CREATE_DELETE" | "BULK_IMPORT" | "BULK_EXPORT" | "BULK_ATTRIBUTE_UPDATE" | "REPORTS_RUN" | "REPORTS_SCHEDULE" | "ACCESS_REVIEW_MANAGE" | "ACCESS_REVIEW_REVIEW" | "PLAYBOOK_MANAGE" | "PLAYBOOK_EXECUTE" | "APPROVAL_MANAGE" | "CSV_TEMPLATE_MANAGE" | "DIRECTORY_BROWSE" | "SCHEMA_READ" | "USER_READ" | "GROUP_READ" | "SOD_MANAGE" | "SOD_VIEW" | "HR_MANAGE" | "HR_VIEW" | "AUDITOR_MANAGE";
+            key?: "USER_CREATE" | "USER_EDIT" | "USER_DELETE" | "USER_ENABLE_DISABLE" | "USER_MOVE" | "USER_RESET_PASSWORD" | "GROUP_EDIT" | "GROUP_MANAGE_MEMBERS" | "GROUP_CREATE_DELETE" | "BULK_IMPORT" | "BULK_EXPORT" | "BULK_ATTRIBUTE_UPDATE" | "BULK_DELETE" | "REPORTS_RUN" | "REPORTS_SCHEDULE" | "ACCESS_REVIEW_MANAGE" | "ACCESS_REVIEW_REVIEW" | "PLAYBOOK_MANAGE" | "PLAYBOOK_EXECUTE" | "APPROVAL_MANAGE" | "CSV_TEMPLATE_MANAGE" | "DIRECTORY_BROWSE" | "SCHEMA_READ" | "USER_READ" | "GROUP_READ" | "SOD_MANAGE" | "SOD_VIEW" | "HR_MANAGE" | "HR_VIEW" | "AUDITOR_MANAGE";
             dbValue?: string;
             allowed?: boolean;
             /** @enum {string} */
@@ -5162,6 +4382,11 @@ export interface components {
             baseRole?: "ADMIN" | "READ_ONLY";
             targetUserDn?: string;
             features?: components["schemas"]["FeatureEffective"][];
+        };
+        FeatureCatalogEntry: {
+            /** @enum {string} */
+            key?: "USER_CREATE" | "USER_EDIT" | "USER_DELETE" | "USER_ENABLE_DISABLE" | "USER_MOVE" | "USER_RESET_PASSWORD" | "GROUP_EDIT" | "GROUP_MANAGE_MEMBERS" | "GROUP_CREATE_DELETE" | "BULK_IMPORT" | "BULK_EXPORT" | "BULK_ATTRIBUTE_UPDATE" | "BULK_DELETE" | "REPORTS_RUN" | "REPORTS_SCHEDULE" | "ACCESS_REVIEW_MANAGE" | "ACCESS_REVIEW_REVIEW" | "PLAYBOOK_MANAGE" | "PLAYBOOK_EXECUTE" | "APPROVAL_MANAGE" | "CSV_TEMPLATE_MANAGE" | "DIRECTORY_BROWSE" | "SCHEMA_READ" | "USER_READ" | "GROUP_READ" | "SOD_MANAGE" | "SOD_VIEW" | "HR_MANAGE" | "HR_VIEW" | "AUDITOR_MANAGE";
+            dbValue?: string;
         };
         BrandingDto: {
             appName?: string;
@@ -5267,48 +4492,6 @@ export interface components {
             graceDays?: number;
             source?: string;
         };
-        CandidateResponse: {
-            /** Format: uuid */
-            directoryId?: string;
-            directoryName?: string;
-            /** @enum {string} */
-            directoryType?: "GENERIC" | "ACTIVE_DIRECTORY" | "OPENLDAP" | "ENTRA_ID";
-            nativeId?: string;
-            displayName?: string;
-            loginName?: string;
-            email?: string;
-            employeeId?: string;
-            userPrincipalName?: string;
-            attributes?: {
-                [key: string]: string[];
-            };
-            enabled?: boolean;
-        };
-        DirectoryErrorResponse: {
-            /** Format: uuid */
-            directoryId?: string;
-            directoryName?: string;
-            error?: string;
-        };
-        ResolvedIdentityResponse: {
-            resolutionKey?: string;
-            keyType?: string;
-            confidence?: string;
-            ambiguous?: boolean;
-            candidates?: components["schemas"]["CandidateResponse"][];
-            canonical?: components["schemas"]["CandidateResponse"];
-        };
-        UnifiedSearchResponse: {
-            query?: string;
-            /** Format: date-time */
-            resolvedAt?: string;
-            fromCache?: boolean;
-            /** Format: int32 */
-            totalCandidates?: number;
-            identities?: components["schemas"]["ResolvedIdentityResponse"][];
-            unresolved?: components["schemas"]["CandidateResponse"][];
-            errors?: components["schemas"]["DirectoryErrorResponse"][];
-        };
         SchemaListItem: {
             name?: string;
             oid?: string;
@@ -5319,6 +4502,15 @@ export interface components {
             syntaxOid?: string;
             singleValued?: boolean;
         };
+        ReportCatalogueResponse: {
+            types?: components["schemas"]["TypeOption"][];
+            formats?: string[];
+            deliveries?: string[];
+        };
+        TypeOption: {
+            id?: string;
+            label?: string;
+        };
         Pageable: {
             /** Format: int32 */
             page?: number;
@@ -5326,196 +4518,9 @@ export interface components {
             size?: number;
             sort?: string[];
         };
-        PagedModelScheduledReportJobDto: {
-            content?: components["schemas"]["ScheduledReportJobDto"][];
+        PagedModelReportJobResponse: {
+            content?: components["schemas"]["ReportJobResponse"][];
             page?: components["schemas"]["PageMetadata"];
-        };
-        PagedModelHrSyncRunDto: {
-            content?: components["schemas"]["HrSyncRunDto"][];
-            page?: components["schemas"]["PageMetadata"];
-        };
-        HrSyncSummaryDto: {
-            /** Format: int64 */
-            totalEmployees?: number;
-            /** Format: int64 */
-            activeEmployees?: number;
-            /** Format: int64 */
-            terminatedEmployees?: number;
-            /** Format: int64 */
-            matchedCount?: number;
-            /** Format: int64 */
-            unmatchedCount?: number;
-            /** Format: int64 */
-            orphanedCount?: number;
-        };
-        HrEmployeeDto: {
-            /** Format: uuid */
-            id?: string;
-            employeeId?: string;
-            workEmail?: string;
-            firstName?: string;
-            lastName?: string;
-            displayName?: string;
-            department?: string;
-            jobTitle?: string;
-            /** @enum {string} */
-            status?: "ACTIVE" | "TERMINATED" | "ON_LEAVE" | "INACTIVE";
-            /** Format: date */
-            hireDate?: string;
-            /** Format: date */
-            terminationDate?: string;
-            supervisorId?: string;
-            supervisorEmail?: string;
-            matchedLdapDn?: string;
-            /** @enum {string} */
-            matchConfidence?: "EXACT" | "FUZZY" | "NONE";
-        };
-        PagedModelHrEmployeeDto: {
-            content?: components["schemas"]["HrEmployeeDto"][];
-            page?: components["schemas"]["PageMetadata"];
-        };
-        DriftVisualizationResponse: {
-            peerGroups?: components["schemas"]["PeerGroupViz"][];
-        };
-        GroupMembership: {
-            groupName?: string;
-            /** Format: double */
-            membershipPct?: number;
-        };
-        Outlier: {
-            userDn?: string;
-            displayName?: string;
-            extraGroups?: string[];
-            severity?: string;
-        };
-        PeerGroupViz: {
-            name?: string;
-            /** Format: int32 */
-            userCount?: number;
-            groups?: components["schemas"]["GroupMembership"][];
-            outliers?: components["schemas"]["Outlier"][];
-        };
-        SnapshotResponse: {
-            /** Format: uuid */
-            id?: string;
-            /** Format: date-time */
-            capturedAt?: string;
-            status?: string;
-            /** Format: int32 */
-            totalUsers?: number;
-            /** Format: int32 */
-            totalGroups?: number;
-            /** Format: date-time */
-            completedAt?: string;
-        };
-        DriftSummaryResponse: {
-            /** Format: int64 */
-            openHigh?: number;
-            /** Format: int64 */
-            openMedium?: number;
-            /** Format: int64 */
-            openLow?: number;
-            /** Format: int64 */
-            openTotal?: number;
-            /** Format: date-time */
-            lastAnalysisAt?: string;
-        };
-        CampaignSummaryDto: {
-            /** Format: uuid */
-            id?: string;
-            name?: string;
-            /** @enum {string} */
-            status?: "UPCOMING" | "ACTIVE" | "CLOSED" | "CANCELLED" | "EXPIRED";
-            /** Format: date-time */
-            startsAt?: string;
-            /** Format: date-time */
-            deadline?: string;
-            /** Format: int32 */
-            deadlineDays?: number;
-            /** Format: int32 */
-            recurrenceMonths?: number;
-            /** Format: date-time */
-            createdAt?: string;
-            createdByUsername?: string;
-            progress?: components["schemas"]["CampaignProgressDto"];
-        };
-        PagedModelCampaignSummaryDto: {
-            content?: components["schemas"]["CampaignSummaryDto"][];
-            page?: components["schemas"]["PageMetadata"];
-        };
-        CampaignReminderDto: {
-            /** Format: uuid */
-            id?: string;
-            /** @enum {string} */
-            reminderType?: "DEADLINE" | "ESCALATION";
-            reviewerUsername?: string;
-            /** Format: uuid */
-            reviewerAccountId?: string;
-            /** Format: date-time */
-            sentAt?: string;
-        };
-        CampaignMetricRow: {
-            /** Format: uuid */
-            id?: string;
-            name?: string;
-            /** @enum {string} */
-            status?: "UPCOMING" | "ACTIVE" | "CLOSED" | "CANCELLED" | "EXPIRED";
-            /** Format: date-time */
-            activatedAt?: string;
-            /** Format: date-time */
-            completedAt?: string;
-            /** Format: int64 */
-            durationDays?: number;
-            /** Format: int64 */
-            total?: number;
-            /** Format: int64 */
-            confirmed?: number;
-            /** Format: int64 */
-            revoked?: number;
-            /** Format: int64 */
-            pending?: number;
-            /** Format: double */
-            percentComplete?: number;
-        };
-        CrossCampaignReportDto: {
-            /** Format: date-time */
-            from?: string;
-            /** Format: date-time */
-            to?: string;
-            /** Format: int32 */
-            totalCampaigns?: number;
-            campaignsByStatus?: {
-                [key: string]: number;
-            };
-            /** Format: int64 */
-            totalDecisions?: number;
-            /** Format: int64 */
-            totalConfirmed?: number;
-            /** Format: int64 */
-            totalRevoked?: number;
-            /** Format: int64 */
-            totalPending?: number;
-            /** Format: double */
-            overallRevocationRate?: number;
-            /** Format: double */
-            avgCompletionDays?: number;
-            campaigns?: components["schemas"]["CampaignMetricRow"][];
-            reviewers?: components["schemas"]["ReviewerMetricRow"][];
-        };
-        ReviewerMetricRow: {
-            /** Format: uuid */
-            reviewerId?: string;
-            username?: string;
-            /** Format: int64 */
-            totalDecisions?: number;
-            /** Format: int64 */
-            confirmed?: number;
-            /** Format: int64 */
-            revoked?: number;
-            /** Format: double */
-            revocationRate?: number;
-            /** Format: double */
-            avgResponseHours?: number;
         };
         ActionItem: {
             type?: string;
@@ -5563,7 +4568,7 @@ export interface components {
             directoryId?: string;
             directoryName?: string;
             /** @enum {string} */
-            action?: "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ENABLE" | "USER_DISABLE" | "USER_MOVE" | "PASSWORD_RESET" | "GROUP_CREATE" | "GROUP_UPDATE" | "GROUP_DELETE" | "GROUP_MEMBER_ADD" | "GROUP_MEMBER_REMOVE" | "GROUP_BULK_IMPORT" | "ENTRY_CREATE" | "ENTRY_UPDATE" | "ENTRY_DELETE" | "ENTRY_MOVE" | "ENTRY_RENAME" | "LDIF_IMPORT" | "INTEGRITY_CHECK" | "BULK_ATTRIBUTE_UPDATE" | "APPROVAL_SUBMITTED" | "APPROVAL_APPROVED" | "APPROVAL_AUTO_APPROVED" | "APPROVAL_REJECTED" | "APPROVAL_REQUEST_EDITED" | "CAMPAIGN_CREATED" | "CAMPAIGN_ACTIVATED" | "CAMPAIGN_CLOSED" | "CAMPAIGN_CANCELLED" | "CAMPAIGN_EXPIRED" | "REVIEW_CONFIRMED" | "REVIEW_REVOKED" | "REVIEW_AUTO_REVOKED" | "SOD_POLICY_CREATED" | "SOD_POLICY_UPDATED" | "SOD_POLICY_DELETED" | "SOD_SCAN_EXECUTED" | "SOD_VIOLATION_DETECTED" | "SOD_VIOLATION_EXEMPTED" | "SOD_VIOLATION_BLOCKED" | "SOD_VIOLATION_RESOLVED" | "PLAYBOOK_EXECUTED" | "PLAYBOOK_ROLLED_BACK" | "HR_SYNC_STARTED" | "HR_SYNC_COMPLETED" | "HR_SYNC_FAILED" | "HR_EMPLOYEE_MATCHED" | "HR_ORPHAN_DETECTED" | "AUDITOR_LINK_CREATED" | "AUDITOR_LINK_REVOKED" | "AUDITOR_LINK_ACCESSED" | "LDAP_CHANGE" | "API_TOKEN_CREATED" | "API_TOKEN_REVOKED" | "API_TOKEN_ROTATED";
+            action?: "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ENABLE" | "USER_DISABLE" | "USER_MOVE" | "PASSWORD_RESET" | "GROUP_CREATE" | "GROUP_UPDATE" | "GROUP_DELETE" | "GROUP_MEMBER_ADD" | "GROUP_MEMBER_REMOVE" | "GROUP_BULK_IMPORT" | "ENTRY_CREATE" | "ENTRY_UPDATE" | "ENTRY_DELETE" | "ENTRY_MOVE" | "ENTRY_RENAME" | "LDIF_IMPORT" | "INTEGRITY_CHECK" | "BULK_ATTRIBUTE_UPDATE" | "APPROVAL_SUBMITTED" | "APPROVAL_APPROVED" | "APPROVAL_AUTO_APPROVED" | "APPROVAL_REJECTED" | "APPROVAL_REQUEST_EDITED" | "CAMPAIGN_CREATED" | "CAMPAIGN_ACTIVATED" | "CAMPAIGN_CLOSED" | "CAMPAIGN_CANCELLED" | "CAMPAIGN_EXPIRED" | "REVIEW_CONFIRMED" | "REVIEW_REVOKED" | "REVIEW_AUTO_REVOKED" | "SOD_POLICY_CREATED" | "SOD_POLICY_UPDATED" | "SOD_POLICY_DELETED" | "SOD_SCAN_EXECUTED" | "SOD_VIOLATION_DETECTED" | "SOD_VIOLATION_EXEMPTED" | "SOD_VIOLATION_BLOCKED" | "SOD_VIOLATION_RESOLVED" | "PLAYBOOK_EXECUTED" | "PLAYBOOK_ROLLED_BACK" | "PROFILE_CREATE" | "PROFILE_UPDATE" | "PROFILE_DELETE" | "PROFILE_CLONE" | "ACCOUNT_CREATE" | "ACCOUNT_UPDATE" | "ACCOUNT_DELETE" | "ACCOUNT_PERMISSION_CHANGED" | "HR_SYNC_STARTED" | "HR_SYNC_COMPLETED" | "HR_SYNC_FAILED" | "HR_EMPLOYEE_MATCHED" | "HR_ORPHAN_DETECTED" | "AUDITOR_LINK_CREATED" | "AUDITOR_LINK_REVOKED" | "AUDITOR_LINK_ACCESSED" | "LDAP_CHANGE" | "API_TOKEN_CREATED" | "API_TOKEN_UPDATED" | "API_TOKEN_REVOKED" | "API_TOKEN_ROTATED";
             targetDn?: string;
             detail?: {
                 [key: string]: unknown;
@@ -5573,6 +4578,8 @@ export interface components {
             occurredAt?: string;
             /** Format: date-time */
             recordedAt?: string;
+            /** Format: uuid */
+            correlationId?: string;
         };
         AwarenessItem: {
             type?: string;
@@ -5580,11 +4587,24 @@ export interface components {
             detail?: string;
             link?: string;
         };
+        CampaignProgressDto: {
+            campaignId?: string;
+            campaignName?: string;
+            directoryName?: string;
+            /** Format: int64 */
+            totalDecisions?: number;
+            /** Format: int64 */
+            decidedCount?: number;
+            /** Format: double */
+            completionPercent?: number;
+            overdue?: boolean;
+            deadline?: string;
+        };
         DirectoryStatDto: {
             id?: string;
             name?: string;
             enabled?: boolean;
-            reachable?: boolean | null;
+            reachable?: boolean;
             /** Format: int64 */
             userCount?: number;
             /** Format: int64 */
@@ -5657,6 +4677,14 @@ export interface components {
             content?: components["schemas"]["AuditEventResponse"][];
             page?: components["schemas"]["PageMetadata"];
         };
+        AttributeSyntaxHints: {
+            wellKnownAttributes?: {
+                [key: string]: string;
+            };
+            inputTypeSyntax?: {
+                [key: string]: string;
+            };
+        };
     };
     responses: never;
     parameters: never;
@@ -5683,7 +4711,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["SuperadminResponse"];
+                    "*/*": components["schemas"]["SyncSetResponse"];
                 };
             };
         };
@@ -5699,7 +4727,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateSuperadminRequest"];
+                "application/json": components["schemas"]["SyncSetRequest"];
             };
         };
         responses: {
@@ -5709,7 +4737,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["SuperadminResponse"];
+                    "*/*": components["schemas"]["SyncSetResponse"];
                 };
             };
         };
@@ -5751,12 +4779,196 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["EventSubscriptionResponse"];
+                    "*/*": components["schemas"]["SyncLinkResponse"];
                 };
             };
         };
     };
     update_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SyncLinkResponse"];
+                };
+            };
+        };
+    };
+    delete_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SuperadminResponse"];
+                };
+            };
+        };
+    };
+    update_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSuperadminRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SuperadminResponse"];
+                };
+            };
+        };
+    };
+    delete_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SuperadminPermissionsDto"];
+                };
+            };
+        };
+    };
+    setPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSuperadminPermissionsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SuperadminPermissionsDto"];
+                };
+            };
+        };
+    };
+    get_3: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["EventSubscriptionResponse"];
+                };
+            };
+        };
+    };
+    update_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -5782,7 +4994,7 @@ export interface operations {
             };
         };
     };
-    delete_1: {
+    delete_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -5802,7 +5014,7 @@ export interface operations {
             };
         };
     };
-    get_2: {
+    get_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -5824,10 +5036,12 @@ export interface operations {
             };
         };
     };
-    update_2: {
+    update_4: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "If-Match"?: string;
+            };
             path: {
                 id: string;
             };
@@ -5850,7 +5064,7 @@ export interface operations {
             };
         };
     };
-    delete_2: {
+    delete_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -5953,6 +5167,7 @@ export interface operations {
             query: {
                 dn: string;
                 recursive?: boolean;
+                childrenOnly?: boolean;
             };
             header?: never;
             path: {
@@ -5973,7 +5188,35 @@ export interface operations {
             };
         };
     };
-    get_3: {
+    upsertBySlug: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string;
+            };
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DirectoryConnectionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DirectoryConnectionResponse"];
+                };
+            };
+        };
+    };
+    get_5: {
         parameters: {
             query?: never;
             header?: never;
@@ -5995,7 +5238,7 @@ export interface operations {
             };
         };
     };
-    update_3: {
+    update_5: {
         parameters: {
             query?: never;
             header?: never;
@@ -6021,7 +5264,7 @@ export interface operations {
             };
         };
     };
-    delete_3: {
+    delete_5: {
         parameters: {
             query?: never;
             header?: never;
@@ -6041,18 +5284,20 @@ export interface operations {
             };
         };
     };
-    updateRule: {
+    upsertByName: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "If-Match"?: string;
+            };
             path: {
-                id: string;
+                name: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateAlertRuleRequest"];
+                "application/json": components["schemas"]["UpsertApiTokenRequest"];
             };
         };
         responses: {
@@ -6062,12 +5307,12 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["AlertRuleResponse"];
+                    "*/*": components["schemas"]["ApiTokenCreateResponse"];
                 };
             };
         };
     };
-    get_4: {
+    get_6: {
         parameters: {
             query?: never;
             header?: never;
@@ -6089,10 +5334,12 @@ export interface operations {
             };
         };
     };
-    update_4: {
+    update_6: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "If-Match"?: string;
+            };
             path: {
                 adminId: string;
             };
@@ -6115,7 +5362,7 @@ export interface operations {
             };
         };
     };
-    delete_4: {
+    delete_6: {
         parameters: {
             query?: never;
             header?: never;
@@ -6185,7 +5432,35 @@ export interface operations {
             };
         };
     };
-    get_5: {
+    upsertByUsername: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string;
+            };
+            path: {
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAdminWithPermissionsRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AdminAccountResponse"];
+                };
+            };
+        };
+    };
+    get_7: {
         parameters: {
             query?: never;
             header?: never;
@@ -6437,40 +5712,18 @@ export interface operations {
             };
         };
     };
-    get_6: {
+    putNamespace: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["ResolutionConfigResponse"];
-                };
-            };
-        };
-    };
-    update_5: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
+                namespace: string;
             };
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["UpdateRequest"];
+                "application/json": components["schemas"]["JsonNode"];
             };
         };
         responses: {
@@ -6480,32 +5733,38 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["ResolutionConfigResponse"];
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
                 };
             };
         };
     };
-    delete_5: {
+    deleteNamespace: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: string;
+                namespace: string;
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description No Content */
-            204: {
+            /** @description OK */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
             };
         };
     };
-    get_7: {
+    get_8: {
         parameters: {
             query: {
                 dn: string;
@@ -6530,12 +5789,14 @@ export interface operations {
             };
         };
     };
-    update_6: {
+    update_7: {
         parameters: {
             query: {
                 dn: string;
             };
-            header?: never;
+            header?: {
+                "If-Unmodified-Since-LDAP"?: string;
+            };
             path: {
                 directoryId: string;
             };
@@ -6558,7 +5819,7 @@ export interface operations {
             };
         };
     };
-    delete_6: {
+    delete_7: {
         parameters: {
             query: {
                 dn: string;
@@ -6566,77 +5827,6 @@ export interface operations {
             header?: never;
             path: {
                 directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    get_8: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                policyId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["SodPolicyResponse"];
-                };
-            };
-        };
-    };
-    update_7: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                policyId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateSodPolicyRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["SodPolicyResponse"];
-                };
-            };
-        };
-    };
-    delete_7: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                policyId: string;
             };
             cookie?: never;
         };
@@ -6669,7 +5859,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["ScheduledReportJobDto"];
+                    "*/*": components["schemas"]["ReportJobResponse"];
                 };
             };
         };
@@ -6686,7 +5876,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateScheduledReportJobRequest"];
+                "application/json": components["schemas"]["ReportJobRequest"];
             };
         };
         responses: {
@@ -6696,7 +5886,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["ScheduledReportJobDto"];
+                    "*/*": components["schemas"]["ReportJobResponse"];
                 };
             };
         };
@@ -6747,7 +5937,9 @@ export interface operations {
     };
     update_9: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 directoryId: string;
@@ -6864,100 +6056,6 @@ export interface operations {
             };
         };
     };
-    getConnection: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["HrConnectionDto"];
-                };
-            };
-        };
-    };
-    updateConnection: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateHrConnectionRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["HrConnectionDto"];
-                };
-            };
-        };
-    };
-    createConnection: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateHrConnectionRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["HrConnectionDto"];
-                };
-            };
-        };
-    };
-    deleteConnection: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     get_12: {
         parameters: {
             query: {
@@ -6988,7 +6086,9 @@ export interface operations {
             query: {
                 dn: string;
             };
-            header?: never;
+            header?: {
+                "If-Unmodified-Since-LDAP"?: string;
+            };
             path: {
                 directoryId: string;
             };
@@ -7019,54 +6119,6 @@ export interface operations {
             header?: never;
             path: {
                 directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    updateRule_1: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                ruleId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PeerGroupRuleRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["PeerGroupRuleResponse"];
-                };
-            };
-        };
-    };
-    deleteRule: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                ruleId: string;
             };
             cookie?: never;
         };
@@ -7152,77 +6204,6 @@ export interface operations {
             };
         };
     };
-    get_14: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                templateId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignTemplateResponse"];
-                };
-            };
-        };
-    };
-    update_13: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                templateId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UpdateCampaignTemplateRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignTemplateResponse"];
-                };
-            };
-        };
-    };
-    delete_13: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                templateId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     updatePayload: {
         parameters: {
             query?: never;
@@ -7250,7 +6231,7 @@ export interface operations {
             };
         };
     };
-    get_15: {
+    get_14: {
         parameters: {
             query?: never;
             header?: never;
@@ -7296,7 +6277,7 @@ export interface operations {
             };
         };
     };
-    delete_14: {
+    delete_13: {
         parameters: {
             query?: never;
             header?: never;
@@ -7316,6 +6297,144 @@ export interface operations {
     };
     list: {
         parameters: {
+            query?: {
+                linkId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SyncSetResponse"][];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncSetRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SyncSetResponse"];
+                };
+            };
+        };
+    };
+    reconcile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: number;
+                    };
+                };
+            };
+        };
+    };
+    recompute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecomputeKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SyncLinkResponse"][];
+                };
+            };
+        };
+    };
+    create_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SyncLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SyncLinkResponse"];
+                };
+            };
+        };
+    };
+    list_2: {
+        parameters: {
             query?: never;
             header?: never;
             path?: never;
@@ -7334,7 +6453,7 @@ export interface operations {
             };
         };
     };
-    create: {
+    create_2: {
         parameters: {
             query?: never;
             header?: never;
@@ -7382,7 +6501,7 @@ export interface operations {
             };
         };
     };
-    list_1: {
+    list_3: {
         parameters: {
             query?: {
                 enabled?: boolean;
@@ -7405,7 +6524,7 @@ export interface operations {
             };
         };
     };
-    create_1: {
+    create_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -7527,7 +6646,7 @@ export interface operations {
             };
         };
     };
-    list_2: {
+    list_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -7547,7 +6666,7 @@ export interface operations {
             };
         };
     };
-    create_2: {
+    create_4: {
         parameters: {
             query?: never;
             header?: never;
@@ -7588,28 +6707,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-        };
-    };
-    status: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["TestConnectionResult"];
-                };
             };
         };
     };
@@ -7751,6 +6848,7 @@ export interface operations {
             query?: {
                 conflictHandling?: "PROMPT" | "SKIP" | "OVERWRITE";
                 dryRun?: boolean;
+                suppressVendorOverlay?: boolean;
             };
             header?: never;
             path: {
@@ -7764,6 +6862,64 @@ export interface operations {
                     /** Format: binary */
                     file: string;
                 };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LdifImportResult"];
+                };
+            };
+        };
+    };
+    previewLdif: {
+        parameters: {
+            query?: {
+                conflictHandling?: "PROMPT" | "SKIP" | "OVERWRITE";
+            };
+            header?: never;
+            path: {
+                directoryId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LdifPreviewSummary"];
+                };
+            };
+        };
+    };
+    applyPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                directoryId: string;
+                previewId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ApplyLdifPreviewRequest"];
             };
         };
         responses: {
@@ -7802,7 +6958,7 @@ export interface operations {
             };
         };
     };
-    list_3: {
+    list_5: {
         parameters: {
             query?: never;
             header?: never;
@@ -7822,7 +6978,7 @@ export interface operations {
             };
         };
     };
-    create_3: {
+    create_5: {
         parameters: {
             query?: never;
             header?: never;
@@ -7870,7 +7026,7 @@ export interface operations {
             };
         };
     };
-    list_4: {
+    list_6: {
         parameters: {
             query?: {
                 includeRevoked?: boolean;
@@ -7892,7 +7048,7 @@ export interface operations {
             };
         };
     };
-    create_4: {
+    create_6: {
         parameters: {
             query?: never;
             header?: never;
@@ -7938,89 +7094,7 @@ export interface operations {
             };
         };
     };
-    resolve: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    dismiss: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    acknowledge: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    initializeDefaults: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["AlertRuleResponse"][];
-                };
-            };
-        };
-    };
-    list_5: {
+    list_7: {
         parameters: {
             query?: never;
             header?: never;
@@ -8040,7 +7114,7 @@ export interface operations {
             };
         };
     };
-    create_5: {
+    create_7: {
         parameters: {
             query?: never;
             header?: never;
@@ -8050,6 +7124,54 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AdminAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AdminAccountResponse"];
+                };
+            };
+        };
+    };
+    resetPassword_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                adminId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    createWithPermissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateAdminWithPermissionsRequest"];
             };
         };
         responses: {
@@ -8261,50 +7383,6 @@ export interface operations {
             };
         };
     };
-    list_6: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["ResolutionConfigResponse"][];
-                };
-            };
-        };
-    };
-    create_6: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ResolutionConfigRequest"];
-            };
-        };
-        responses: {
-            /** @description Created */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["ResolutionConfigResponse"];
-                };
-            };
-        };
-    };
     search: {
         parameters: {
             query?: {
@@ -8332,7 +7410,7 @@ export interface operations {
             };
         };
     };
-    create_7: {
+    create_8: {
         parameters: {
             query?: never;
             header?: never;
@@ -8358,7 +7436,7 @@ export interface operations {
             };
         };
     };
-    resetPassword_1: {
+    resetPassword_2: {
         parameters: {
             query: {
                 dn: string;
@@ -8408,6 +7486,34 @@ export interface operations {
                 };
                 content: {
                     "*/*": Record<string, never>;
+                };
+            };
+        };
+    };
+    applyMemberships: {
+        parameters: {
+            query: {
+                dn: string;
+            };
+            header?: never;
+            path: {
+                directoryId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["MembershipChangeResult"];
                 };
             };
         };
@@ -8542,7 +7648,7 @@ export interface operations {
             };
         };
     };
-    list_7: {
+    bulkDelete: {
         parameters: {
             query?: never;
             header?: never;
@@ -8551,31 +7657,13 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["SodPolicyResponse"][];
-                };
-            };
-        };
-    };
-    create_8: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
+        requestBody?: {
             content: {
-                "application/json": components["schemas"]["CreateSodPolicyRequest"];
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                    request: components["schemas"]["BulkDeleteRequest"];
+                };
             };
         };
         responses: {
@@ -8585,47 +7673,27 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["SodPolicyResponse"];
+                    "*/*": components["schemas"]["BulkDeleteResult"];
                 };
             };
         };
     };
-    resolve_1: {
+    previewBulkDelete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 directoryId: string;
-                violationId: string;
             };
             cookie?: never;
         };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["SodViolationResponse"];
-                };
-            };
-        };
-    };
-    exempt: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                violationId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
+        requestBody?: {
             content: {
-                "application/json": components["schemas"]["ExemptViolationRequest"];
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                    request: components["schemas"]["BulkDeleteRequest"];
+                };
             };
         };
         responses: {
@@ -8635,36 +7703,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["SodViolationResponse"];
-                };
-            };
-        };
-    };
-    scan: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["SodScanResultDto"];
+                    "*/*": components["schemas"]["BulkDeletePreviewResult"];
                 };
             };
         };
     };
     run: {
         parameters: {
-            query?: never;
+            query?: {
+                format?: string;
+            };
             header?: never;
             path: {
                 directoryId: string;
@@ -8673,7 +7721,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RunReportRequest"];
+                "application/json": components["schemas"]["RunOperationalReportRequest"];
             };
         };
         responses: {
@@ -8699,7 +7747,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RunReportRequest"];
+                "application/json": components["schemas"]["RunOperationalReportRequest"];
             };
         };
         responses: {
@@ -8733,7 +7781,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["PagedModelScheduledReportJobDto"];
+                    "*/*": components["schemas"]["PagedModelReportJobResponse"];
                 };
             };
         };
@@ -8749,7 +7797,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateScheduledReportJobRequest"];
+                "application/json": components["schemas"]["ReportJobRequest"];
             };
         };
         responses: {
@@ -8759,7 +7807,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["ScheduledReportJobDto"];
+                    "*/*": components["schemas"]["ReportJobResponse"];
                 };
             };
         };
@@ -8813,7 +7861,9 @@ export interface operations {
     };
     create_10: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 directoryId: string;
@@ -8825,6 +7875,31 @@ export interface operations {
                 "application/json": components["schemas"]["CreateProfileRequest"];
             };
         };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ProfileResponse"];
+                };
+            };
+        };
+    };
+    seedAttributeDefaults: {
+        parameters: {
+            query?: {
+                schema?: string;
+            };
+            header?: never;
+            path: {
+                directoryId: string;
+                profileId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description OK */
             200: {
@@ -8908,6 +7983,30 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["GroupChangePreview"];
+                };
+            };
+        };
+    };
+    probeTargetOu: {
+        parameters: {
+            query: {
+                dn: string;
+            };
+            header?: never;
+            path: {
+                directoryId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["TargetOuProbeResult"];
                 };
             };
         };
@@ -9059,54 +8158,6 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["PlaybookExecutionResponse"];
-                };
-            };
-        };
-    };
-    testConnection_1: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateHrConnectionRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["HrTestConnectionResponse"];
-                };
-            };
-        };
-    };
-    triggerSync_1: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["HrSyncRunDto"];
                 };
             };
         };
@@ -9306,7 +8357,10 @@ export interface operations {
     };
     previewImport_1: {
         parameters: {
-            query?: never;
+            query?: {
+                memberAttribute?: string;
+                objectClass?: string;
+            };
             header?: never;
             path: {
                 directoryId: string;
@@ -9330,154 +8384,6 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["BulkImportPreviewResult"];
-                };
-            };
-        };
-    };
-    generate: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EvidencePackageRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
-                };
-            };
-        };
-    };
-    listRules: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["PeerGroupRuleResponse"][];
-                };
-            };
-        };
-    };
-    createRule: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["PeerGroupRuleRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["PeerGroupRuleResponse"];
-                };
-            };
-        };
-    };
-    exempt_1: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                findingId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ExemptRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["DriftFindingResponse"];
-                };
-            };
-        };
-    };
-    acknowledge_1: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                findingId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["DriftFindingResponse"];
-                };
-            };
-        };
-    };
-    analyze: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": {
-                        [key: string]: string;
-                    };
                 };
             };
         };
@@ -9530,28 +8436,6 @@ export interface operations {
             };
         };
     };
-    list_12: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignTemplateResponse"][];
-                };
-            };
-        };
-    };
     create_14: {
         parameters: {
             query?: never;
@@ -9563,7 +8447,9 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CreateCampaignTemplateRequest"];
+                "application/json": {
+                    [key: string]: string;
+                };
             };
         };
         responses: {
@@ -9573,127 +8459,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["CampaignTemplateResponse"];
-                };
-            };
-        };
-    };
-    duplicate: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                templateId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignTemplateResponse"];
-                };
-            };
-        };
-    };
-    createCampaignFromTemplate: {
-        parameters: {
-            query?: {
-                name?: string;
-                description?: string;
-            };
-            header?: never;
-            path: {
-                directoryId: string;
-                templateId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignDetailDto"];
-                };
-            };
-        };
-    };
-    saveAsTemplate: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignTemplateResponse"];
-                };
-            };
-        };
-    };
-    list_13: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["AuditorLinkDto"][];
-                };
-            };
-        };
-    };
-    create_15: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateAuditorLinkRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["AuditorLinkDto"];
+                    "*/*": {
+                        [key: string]: string;
+                    };
                 };
             };
         };
@@ -9748,185 +8516,7 @@ export interface operations {
             };
         };
     };
-    list_14: {
-        parameters: {
-            query: {
-                pageable: components["schemas"]["Pageable"];
-            };
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["PagedModelCampaignSummaryDto"];
-                };
-            };
-        };
-    };
-    create_16: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CreateCampaignRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignDetailDto"];
-                };
-            };
-        };
-    };
-    submitDecision: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-                groupId: string;
-                decisionId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SubmitDecisionRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["DecisionDto"];
-                };
-            };
-        };
-    };
-    bulkDecide: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-                groupId: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["BulkDecisionRequest"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["DecisionDto"][];
-                };
-            };
-        };
-    };
-    close: {
-        parameters: {
-            query?: {
-                force?: boolean;
-            };
-            header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignDetailDto"];
-                };
-            };
-        };
-    };
-    cancel: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignDetailDto"];
-                };
-            };
-        };
-    };
-    activate: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignDetailDto"];
-                };
-            };
-        };
-    };
-    dismiss_1: {
+    dismiss: {
         parameters: {
             query?: never;
             header?: never;
@@ -10124,6 +8714,54 @@ export interface operations {
             };
         };
     };
+    get_15: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JsonNode"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     setEnabled_1: {
         parameters: {
             query: {
@@ -10144,12 +8782,125 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["ScheduledReportJobDto"];
+                    "*/*": components["schemas"]["ReportJobResponse"];
                 };
             };
         };
     };
-    list_15: {
+    version: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: string;
+                    };
+                };
+            };
+        };
+    };
+    verify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SyncVerifyResult"];
+                };
+            };
+        };
+    };
+    preview_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SyncReconcilePreview"];
+                };
+            };
+        };
+    };
+    memberships: {
+        parameters: {
+            query?: {
+                state?: "APPLIED" | "PENDING" | "FAILED" | "REVIEW";
+                q?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PageResponseMembershipResponse"];
+                };
+            };
+        };
+    };
+    excludedAttributeDefaults: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string[];
+                };
+            };
+        };
+    };
+    list_12: {
         parameters: {
             query?: {
                 status?: "PENDING" | "DELIVERING" | "DELIVERED" | "DEAD_LETTERED";
@@ -10265,6 +9016,28 @@ export interface operations {
             };
         };
     };
+    status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["TestConnectionResult"];
+                };
+            };
+        };
+    };
     searchEntries: {
         parameters: {
             query?: {
@@ -10273,6 +9046,8 @@ export interface operations {
                 filter?: string;
                 attributes?: string;
                 limit?: number;
+                timeLimit?: number;
+                includeOperational?: boolean;
             };
             header?: never;
             path: {
@@ -10335,6 +9110,58 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["ObjectClassAttributes"];
+                };
+            };
+        };
+    };
+    previewPage: {
+        parameters: {
+            query?: {
+                op?: string;
+                q?: string;
+                page?: number;
+                size?: number;
+            };
+            header?: never;
+            path: {
+                directoryId: string;
+                previewId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LdifPreviewPage"];
+                };
+            };
+        };
+    };
+    previewRow: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                directoryId: string;
+                previewId: string;
+                rowNumber: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LdifPreviewRowDetail"];
                 };
             };
         };
@@ -10404,75 +9231,7 @@ export interface operations {
             };
         };
     };
-    list_16: {
-        parameters: {
-            query?: {
-                directoryId?: string;
-                status?: "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "DISMISSED";
-                severity?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
-                page?: number;
-                size?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["PagedModelAlertInstanceResponse"];
-                };
-            };
-        };
-    };
-    summary: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["AlertSummaryResponse"];
-                };
-            };
-        };
-    };
-    listRules_1: {
-        parameters: {
-            query?: {
-                directoryId?: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["AlertRuleResponse"][];
-                };
-            };
-        };
-    };
-    getPermissions: {
+    getPermissions_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -10512,6 +9271,48 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["EffectivePermissionsResponse"];
+                };
+            };
+        };
+    };
+    featureCatalog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["FeatureCatalogEntry"][];
+                };
+            };
+        };
+    };
+    pendingApprovalsCount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: number;
+                    };
                 };
             };
         };
@@ -10684,7 +9485,7 @@ export interface operations {
             };
         };
     };
-    list_17: {
+    list_13: {
         parameters: {
             query?: {
                 page?: number;
@@ -10729,7 +9530,7 @@ export interface operations {
             };
         };
     };
-    status: {
+    status_1: {
         parameters: {
             query?: never;
             header?: never;
@@ -10745,52 +9546,6 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["LicenseStatusDto"];
-                };
-            };
-        };
-    };
-    search_2: {
-        parameters: {
-            query: {
-                q: string;
-                limitPerDirectory?: number;
-                bypassCache?: boolean;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["UnifiedSearchResponse"];
-                };
-            };
-        };
-    };
-    getByDirectory: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["ResolutionConfigResponse"];
                 };
             };
         };
@@ -10844,30 +9599,6 @@ export interface operations {
                 };
                 content: {
                     "text/csv": string;
-                };
-            };
-        };
-    };
-    listViolations: {
-        parameters: {
-            query?: {
-                status?: "OPEN" | "RESOLVED" | "EXEMPTED";
-            };
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["SodViolationResponse"][];
                 };
             };
         };
@@ -10986,6 +9717,28 @@ export interface operations {
             };
         };
     };
+    catalogue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                directoryId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ReportCatalogueResponse"];
+                };
+            };
+        };
+    };
     listExecutions: {
         parameters: {
             query?: never;
@@ -11031,101 +9784,6 @@ export interface operations {
             };
         };
     };
-    getSyncHistory: {
-        parameters: {
-            query?: {
-                page?: number;
-                size?: number;
-            };
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["PagedModelHrSyncRunDto"];
-                };
-            };
-        };
-    };
-    getSummary: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["HrSyncSummaryDto"];
-                };
-            };
-        };
-    };
-    listEmployees: {
-        parameters: {
-            query?: {
-                status?: "ACTIVE" | "TERMINATED" | "ON_LEAVE" | "INACTIVE";
-                page?: number;
-                size?: number;
-            };
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["PagedModelHrEmployeeDto"];
-                };
-            };
-        };
-    };
-    listOrphanedAccounts: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": Record<string, never>;
-                };
-            };
-        };
-    };
     exportGroups: {
         parameters: {
             query?: {
@@ -11153,54 +9811,10 @@ export interface operations {
             };
         };
     };
-    visualization: {
+    exists: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["DriftVisualizationResponse"];
-                };
-            };
-        };
-    };
-    listSnapshots: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["SnapshotResponse"][];
-                };
-            };
-        };
-    };
-    listFindings: {
-        parameters: {
-            query?: {
-                status?: "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "EXEMPTED";
+            query: {
+                dn: string;
             };
             header?: never;
             path: {
@@ -11216,76 +9830,9 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["DriftFindingResponse"][];
-                };
-            };
-        };
-    };
-    summary_1: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["DriftSummaryResponse"];
-                };
-            };
-        };
-    };
-    userAccessReport: {
-        parameters: {
-            query?: {
-                groupDn?: string;
-            };
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
-                };
-            };
-        };
-    };
-    accessReviewSummary: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
+                    "*/*": {
+                        [key: string]: boolean;
+                    };
                 };
             };
         };
@@ -11314,7 +9861,7 @@ export interface operations {
             };
         };
     };
-    list_18: {
+    list_14: {
         parameters: {
             query?: never;
             header?: never;
@@ -11387,222 +9934,6 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignDetailDto"];
-                };
-            };
-        };
-    };
-    listReminders: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignReminderDto"][];
-                };
-            };
-        };
-    };
-    getHistory: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CampaignHistoryDto"][];
-                };
-            };
-        };
-    };
-    listGroups_1: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["ReviewGroupDto"][];
-                };
-            };
-        };
-    };
-    listDecisions: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-                groupId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["DecisionDto"][];
-                };
-            };
-        };
-    };
-    export: {
-        parameters: {
-            query?: {
-                format?: string;
-            };
-            header?: never;
-            path: {
-                directoryId: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
-                };
-            };
-        };
-    };
-    listReviewers: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["AdminAccountResponse"][];
-                };
-            };
-        };
-    };
-    getReport: {
-        parameters: {
-            query: {
-                from: string;
-                to: string;
-                status?: "UPCOMING" | "ACTIVE" | "CLOSED" | "CANCELLED" | "EXPIRED";
-            };
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["CrossCampaignReportDto"];
-                };
-            };
-        };
-    };
-    export_1: {
-        parameters: {
-            query: {
-                from: string;
-                to: string;
-                status?: "UPCOMING" | "ACTIVE" | "CLOSED" | "CANCELLED" | "EXPIRED";
-                format?: string;
-            };
-            header?: never;
-            path: {
-                directoryId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
-                };
-            };
-        };
-    };
-    get_20: {
-        parameters: {
-            query?: never;
-            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -11615,26 +9946,6 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["UnifiedDashboardDto"];
-                };
-            };
-        };
-    };
-    privilegedAccountInventory: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
                 };
             };
         };
@@ -11747,360 +10058,15 @@ export interface operations {
             };
         };
     };
-    metadata: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    verify: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    sod: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    export_2: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
-                };
-            };
-        };
-    };
-    workpaper: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
-                };
-            };
-        };
-    };
-    sodPdf: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
-                };
-            };
-        };
-    };
-    campaignPdf: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
-                };
-            };
-        };
-    };
-    campaignCsv: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
-                };
-            };
-        };
-    };
-    auditEventsPdf: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
-                };
-            };
-        };
-    };
-    auditEventsCsv: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": string;
-                };
-            };
-        };
-    };
-    entitlements: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-        };
-    };
-    campaigns: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-        };
-    };
-    campaignDetail: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-                campaignId: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    auditEvents: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["AuditEventResponse"][];
-                };
-            };
-        };
-    };
-    approvals: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                token: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": {
-                        [key: string]: unknown;
-                    }[];
-                };
-            };
-        };
-    };
-    get_21: {
+    get_20: {
         parameters: {
             query?: {
                 directoryId?: string;
                 actorId?: string;
-                action?: "USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ENABLE" | "USER_DISABLE" | "USER_MOVE" | "PASSWORD_RESET" | "GROUP_CREATE" | "GROUP_UPDATE" | "GROUP_DELETE" | "GROUP_MEMBER_ADD" | "GROUP_MEMBER_REMOVE" | "GROUP_BULK_IMPORT" | "ENTRY_CREATE" | "ENTRY_UPDATE" | "ENTRY_DELETE" | "ENTRY_MOVE" | "ENTRY_RENAME" | "LDIF_IMPORT" | "INTEGRITY_CHECK" | "BULK_ATTRIBUTE_UPDATE" | "APPROVAL_SUBMITTED" | "APPROVAL_APPROVED" | "APPROVAL_AUTO_APPROVED" | "APPROVAL_REJECTED" | "APPROVAL_REQUEST_EDITED" | "CAMPAIGN_CREATED" | "CAMPAIGN_ACTIVATED" | "CAMPAIGN_CLOSED" | "CAMPAIGN_CANCELLED" | "CAMPAIGN_EXPIRED" | "REVIEW_CONFIRMED" | "REVIEW_REVOKED" | "REVIEW_AUTO_REVOKED" | "SOD_POLICY_CREATED" | "SOD_POLICY_UPDATED" | "SOD_POLICY_DELETED" | "SOD_SCAN_EXECUTED" | "SOD_VIOLATION_DETECTED" | "SOD_VIOLATION_EXEMPTED" | "SOD_VIOLATION_BLOCKED" | "SOD_VIOLATION_RESOLVED" | "PLAYBOOK_EXECUTED" | "PLAYBOOK_ROLLED_BACK" | "HR_SYNC_STARTED" | "HR_SYNC_COMPLETED" | "HR_SYNC_FAILED" | "HR_EMPLOYEE_MATCHED" | "HR_ORPHAN_DETECTED" | "AUDITOR_LINK_CREATED" | "AUDITOR_LINK_REVOKED" | "AUDITOR_LINK_ACCESSED" | "LDAP_CHANGE" | "API_TOKEN_CREATED" | "API_TOKEN_REVOKED" | "API_TOKEN_ROTATED";
+                action?: ("USER_CREATE" | "USER_UPDATE" | "USER_DELETE" | "USER_ENABLE" | "USER_DISABLE" | "USER_MOVE" | "PASSWORD_RESET" | "GROUP_CREATE" | "GROUP_UPDATE" | "GROUP_DELETE" | "GROUP_MEMBER_ADD" | "GROUP_MEMBER_REMOVE" | "GROUP_BULK_IMPORT" | "ENTRY_CREATE" | "ENTRY_UPDATE" | "ENTRY_DELETE" | "ENTRY_MOVE" | "ENTRY_RENAME" | "LDIF_IMPORT" | "INTEGRITY_CHECK" | "BULK_ATTRIBUTE_UPDATE" | "APPROVAL_SUBMITTED" | "APPROVAL_APPROVED" | "APPROVAL_AUTO_APPROVED" | "APPROVAL_REJECTED" | "APPROVAL_REQUEST_EDITED" | "CAMPAIGN_CREATED" | "CAMPAIGN_ACTIVATED" | "CAMPAIGN_CLOSED" | "CAMPAIGN_CANCELLED" | "CAMPAIGN_EXPIRED" | "REVIEW_CONFIRMED" | "REVIEW_REVOKED" | "REVIEW_AUTO_REVOKED" | "SOD_POLICY_CREATED" | "SOD_POLICY_UPDATED" | "SOD_POLICY_DELETED" | "SOD_SCAN_EXECUTED" | "SOD_VIOLATION_DETECTED" | "SOD_VIOLATION_EXEMPTED" | "SOD_VIOLATION_BLOCKED" | "SOD_VIOLATION_RESOLVED" | "PLAYBOOK_EXECUTED" | "PLAYBOOK_ROLLED_BACK" | "PROFILE_CREATE" | "PROFILE_UPDATE" | "PROFILE_DELETE" | "PROFILE_CLONE" | "ACCOUNT_CREATE" | "ACCOUNT_UPDATE" | "ACCOUNT_DELETE" | "ACCOUNT_PERMISSION_CHANGED" | "HR_SYNC_STARTED" | "HR_SYNC_COMPLETED" | "HR_SYNC_FAILED" | "HR_EMPLOYEE_MATCHED" | "HR_ORPHAN_DETECTED" | "AUDITOR_LINK_CREATED" | "AUDITOR_LINK_REVOKED" | "AUDITOR_LINK_ACCESSED" | "LDAP_CHANGE" | "API_TOKEN_CREATED" | "API_TOKEN_UPDATED" | "API_TOKEN_REVOKED" | "API_TOKEN_ROTATED")[];
                 targetDn?: string;
+                source?: string;
+                correlationId?: string;
                 from?: string;
                 to?: string;
                 page?: number;
@@ -12120,6 +10086,67 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["PagedModelAuditEventResponse"];
                 };
+            };
+        };
+    };
+    actions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string[];
+                };
+            };
+        };
+    };
+    attributeSyntax: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AttributeSyntaxHints"];
+                };
+            };
+        };
+    };
+    dismiss_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                identity: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -12150,28 +10177,7 @@ export interface operations {
             header?: never;
             path: {
                 adminId: string;
-                featureKey: "USER_CREATE" | "USER_EDIT" | "USER_DELETE" | "USER_ENABLE_DISABLE" | "USER_MOVE" | "USER_RESET_PASSWORD" | "GROUP_EDIT" | "GROUP_MANAGE_MEMBERS" | "GROUP_CREATE_DELETE" | "BULK_IMPORT" | "BULK_EXPORT" | "BULK_ATTRIBUTE_UPDATE" | "REPORTS_RUN" | "REPORTS_SCHEDULE" | "ACCESS_REVIEW_MANAGE" | "ACCESS_REVIEW_REVIEW" | "PLAYBOOK_MANAGE" | "PLAYBOOK_EXECUTE" | "APPROVAL_MANAGE" | "CSV_TEMPLATE_MANAGE" | "DIRECTORY_BROWSE" | "SCHEMA_READ" | "USER_READ" | "GROUP_READ" | "SOD_MANAGE" | "SOD_VIEW" | "HR_MANAGE" | "HR_VIEW" | "AUDITOR_MANAGE";
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    revoke_1: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                directoryId: string;
-                linkId: string;
+                featureKey: "USER_CREATE" | "USER_EDIT" | "USER_DELETE" | "USER_ENABLE_DISABLE" | "USER_MOVE" | "USER_RESET_PASSWORD" | "GROUP_EDIT" | "GROUP_MANAGE_MEMBERS" | "GROUP_CREATE_DELETE" | "BULK_IMPORT" | "BULK_EXPORT" | "BULK_ATTRIBUTE_UPDATE" | "BULK_DELETE" | "REPORTS_RUN" | "REPORTS_SCHEDULE" | "ACCESS_REVIEW_MANAGE" | "ACCESS_REVIEW_REVIEW" | "PLAYBOOK_MANAGE" | "PLAYBOOK_EXECUTE" | "APPROVAL_MANAGE" | "CSV_TEMPLATE_MANAGE" | "DIRECTORY_BROWSE" | "SCHEMA_READ" | "USER_READ" | "GROUP_READ" | "SOD_MANAGE" | "SOD_VIEW" | "HR_MANAGE" | "HR_VIEW" | "AUDITOR_MANAGE";
             };
             cookie?: never;
         };
