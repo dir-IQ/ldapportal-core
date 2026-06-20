@@ -8,8 +8,10 @@ import EmptyState from '@/components/EmptyState.vue'
 // schema (Format: int64 with `?`), so each cell access has to be guarded.
 // `reachable` is the LDAP connectivity probe result for an enabled
 // directory (true/false), and null when the directory is disabled (so
-// no probe ran).
-type DirectoryStat = components['schemas']['DirectoryStatDto'] & {
+// no probe ran). The generated DTO types it as a plain boolean, so we
+// Omit + re-declare it to keep the null state the dot logic relies on
+// (an intersection would collapse `boolean & (boolean|null)` to `boolean`).
+type DirectoryStat = Omit<components['schemas']['DirectoryStatDto'], 'reachable'> & {
   id: string
   name: string
   enabled: boolean
