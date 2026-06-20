@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * Gating tests for the scheduled-reports re-homing into core: the Scheduled Jobs
+ * entry point is now gated on the REPORTS_SCHEDULE feature (not the GOVERNANCE
+ * entitlement), so a community admin with the feature sees it. PDF / S3 options
+ * stay behind the compliance entitlement, and the Email Subject field is gone
+ * (the backend generates the subject).
+ */
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
+
+const hoisted = vi.hoisted(() => ({
+  hasFeature: vi.fn((_k: string) => true),
+  isComplianceEnabled: false,
+  isIsvaIntegrationEnabled: false,
+  isSuperadmin: false,
+}))
+
+vi.mock('vue-router', () => ({ useRoute: () => ({ params: { dirId: 'dir-1' } }) }))
+
+vi.mock('@/api/reports', () => ({
+  listReportJobs: vi.fn().mockResolvedValue({ data: { content: [] } }),
+  createReportJob: vi.fn().mockResolvedValue({ data: {} }),
+  updateReportJob: vi.fn().mockResolvedValue({ data: {} }),
+  deleteReportJob: vi.fn().mockResolvedValue({ data: {} }),
+  setReportJobEnabled: vi.fn().mockResolvedValue({ data: {} }),
+  runOperationalReport: vi.fn().mockResolvedValue({ data: new Blob() }),
+  runOperationalReportData: vi.fn().mockResolvedValue({ data: {} }),
+  runOperationalReportPdf: vi.fn().mockResolvedValue({ data: new Blob() }),
+}))
+vi.mock('@/api/directories', () => ({ listDirectories: vi.fn().mockResolvedValue({ data: [] }) }))
+vi.mock('@/api/browse', () => ({ checkIntegrity: vi.fn().mockResolvedValue({ data: {} }) }))
+vi.mock('@/api/audit', () => ({ getAuditActions: vi.fn().mockResolvedValue({ data: [] }) }))
+
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    hasFeature: hoisted.hasFeature,
+    isComplianceEnabled: hoisted.isComplianceEnabled,
+    isIsvaIntegrationEnabled: hoisted.isIsvaIntegrationEnabled,
+    isSuperadmin: hoisted.isSuperadmin,
+  }),
+}))
+vi.mock('@/stores/notifications', () => ({
+  useNotificationStore: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }),
+}))
+vi.mock('@/stores/profilePicker', () => ({
+  useProfilePickerStore: () => ({ selectedProfile: null }),
+}))
+
+import ReportJobsView from './ReportJobsView.vue'
+
+// Render AppModal's default slot so the schedule form (with the format/delivery
+// selects and the recipient row) is in the DOM for option-gating assertions.
+const AppModalSlotStub = {
+  props: ['modelValue', 'title', 'size'],
+  template: '<div class="modal"><slot /></div>',
+}
+
+function mountView() {
+  return mount(ReportJobsView, {
+    global: {
+      stubs: {
+        AppModal: AppModalSlotStub,
+        ConfirmDialog: true,
+        DnPicker: true,
+        ResultsTable: true,
+        FormField: true,
+      },
+    },
+  })
+}
+
+function scheduledJobsButton(wrapper: ReturnType<typeof mountView>) {
+  return wrapper.findAll('button').find(b => b.text().includes('Scheduled Jobs'))
+}
+
+describe('ReportJobsView — scheduled-jobs gating', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    hoisted.hasFeature = vi.fn((_k: string) => true)
+    hoisted.isComplianceEnabled = false
+    hoisted.isIsvaIntegrationEnabled = false
+    hoisted.isSuperadmin = false
+  })
+
+  it('shows the Scheduled Jobs button when the REPORTS_SCHEDULE feature is granted', async () => {
+    hoisted.hasFeature = vi.fn((k: string) => k === 'reports.schedule')
+    const wrapper = mountView()
+    await flushPromises()
+    expect(scheduledJobsButton(wrapper)).toBeTruthy()
+    expect(hoisted.hasFeature).toHaveBeenCalledWith('reports.schedule')
+  })
+
+  it('hides the Scheduled Jobs button without the feature, even with compliance on', async () => {
+    hoisted.hasFeature = vi.fn((_k: string) => false)
+    hoisted.isComplianceEnabled = true
+    const wrapper = mountView()
+    await flushPromises()
+    expect(scheduledJobsButton(wrapper)).toBeFalsy()
+  })
+
+  it('offers only CSV + Email in the schedule form when compliance is off', async () => {
+    hoisted.isComplianceEnabled = false
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click') // open the add-job form
+    await flushPromises()
+
+    const formatValues = wrapper.find('#rj-job-output-format').findAll('option').map(o => o.attributes('value'))
+    const deliveryValues = wrapper.find('#rj-job-delivery').findAll('option').map(o => o.attributes('value'))
+    expect(formatValues).toEqual(['CSV'])
+    expect(deliveryValues).toEqual(['EMAIL'])
+  })
+
+  it('offers PDF + S3 when compliance is on', async () => {
+    hoisted.isComplianceEnabled = true
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    const formatValues = wrapper.find('#rj-job-output-format').findAll('option').map(o => o.attributes('value'))
+    const deliveryValues = wrapper.find('#rj-job-delivery').findAll('option').map(o => o.attributes('value'))
+    expect(formatValues).toContain('PDF')
+    expect(deliveryValues).toContain('S3')
+  })
+})

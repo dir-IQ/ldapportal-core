@@ -4,14 +4,15 @@
     <div class="flex items-center justify-between mb-6">
       <div>
         <h1 class="text-2xl font-bold text-gray-900">Operational Reports</h1>
-        <p class="text-sm text-gray-500 mt-1">{{ auth.isComplianceEnabled ? 'Run and schedule directory reports' : 'Run directory reports' }}</p>
+        <p class="text-sm text-gray-500 mt-1">{{ auth.hasFeature('reports.schedule') ? 'Run and schedule directory reports' : 'Run directory reports' }}</p>
       </div>
-      <!-- Scheduled report jobs (CRUD + the /report-jobs endpoints) ship with the
-           commercial governance module; the community/core build has no such
-           controller, so hide the entry point where the GOVERNANCE entitlement
-           isn't granted — same gating as the PDF export below. Without this the
-           button 404s through to the static-resource handler. -->
-      <button v-if="auth.isComplianceEnabled" @click="openSchedules" class="bg-blue-50 border border-blue-200 text-blue-600 rounded-full px-4 py-1.5 text-sm font-medium hover:bg-blue-100 transition-colors flex items-center gap-1.5">
+      <!-- Scheduled report jobs now run on core's own scheduler (the /report-jobs
+           endpoints live in core), so the entry point is gated by the
+           REPORTS_SCHEDULE feature key rather than the GOVERNANCE entitlement.
+           Community can schedule operational reports as CSV over email; PDF, S3,
+           and compliance report types are withheld by the backend's edition gate
+           and by the option-level gating in the form below. -->
+      <button v-if="auth.hasFeature('reports.schedule')" @click="openSchedules" class="bg-blue-50 border border-blue-200 text-blue-600 rounded-full px-4 py-1.5 text-sm font-medium hover:bg-blue-100 transition-colors flex items-center gap-1.5">
         <svg class="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l2.5 2.5"/></svg>
         Scheduled Jobs
       </button>
@@ -224,22 +225,28 @@
               <FormField label="Cron Expression" v-model="jobForm.cronExpression" placeholder="0 8 * * 1" required />
               <div>
                 <label for="rj-job-output-format" class="block text-sm font-medium text-gray-700 mb-1">Output Format</label>
+                <!-- PDF output ships with the commercial governance module; only
+                     offer it where the entitlement is present (the backend also
+                     rejects PDF at create in community). -->
                 <select id="rj-job-output-format" v-model="jobForm.outputFormat" class="input w-full">
                   <option value="CSV">CSV</option>
-                  <option value="PDF">PDF</option>
+                  <option v-if="auth.isComplianceEnabled" value="PDF">PDF</option>
                 </select>
               </div>
               <div>
                 <label for="rj-job-delivery" class="block text-sm font-medium text-gray-700 mb-1">Delivery</label>
+                <!-- S3 delivery is gated to GOVERNANCE (backend rejects it in
+                     community); email is the core delivery method. -->
                 <select id="rj-job-delivery" v-model="jobForm.deliveryMethod" class="input w-full">
                   <option value="EMAIL">Email</option>
-                  <option value="S3">S3</option>
+                  <option v-if="auth.isComplianceEnabled" value="S3">S3</option>
                 </select>
               </div>
             </div>
-            <div v-if="jobForm.deliveryMethod === 'EMAIL'" class="grid grid-cols-2 gap-3">
+            <!-- The email subject is generated server-side from the report type
+                 + run date, so the operator is not asked for one. -->
+            <div v-if="jobForm.deliveryMethod === 'EMAIL'">
               <FormField label="Recipient Email" v-model="jobForm.recipientEmail" placeholder="user@example.com" />
-              <FormField label="Email Subject" v-model="jobForm.emailSubject" placeholder="Scheduled report" />
             </div>
             <div v-if="jobForm.deliveryMethod === 'S3'">
               <FormField label="S3 Key Prefix" v-model="jobForm.s3KeyPrefix" placeholder="reports/" />
@@ -331,7 +338,6 @@ interface Job {
   outputFormat?: string
   deliveryMethod?: string
   recipientEmail?: string
-  emailSubject?: string
   s3KeyPrefix?: string
   reportParams?: Record<string, unknown>
   enabled: boolean
@@ -588,7 +594,6 @@ interface JobForm {
   outputFormat: string
   deliveryMethod: string
   recipientEmail: string
-  emailSubject: string
   s3KeyPrefix: string
   paramValue: string
   lookbackDays: number
@@ -599,7 +604,7 @@ function blankJobForm(): JobForm {
   return {
     name: '', reportType: 'RECENTLY_ADDED', cronExpression: '0 8 * * 1',
     outputFormat: 'CSV', deliveryMethod: 'EMAIL', recipientEmail: '',
-    emailSubject: '', s3KeyPrefix: '', paramValue: '', lookbackDays: 30, enabled: true,
+    s3KeyPrefix: '', paramValue: '', lookbackDays: 30, enabled: true,
   }
 }
 
@@ -634,7 +639,6 @@ function openEditJob(job: Job): void {
     outputFormat: job.outputFormat || 'CSV',
     deliveryMethod: job.deliveryMethod ?? 'EMAIL',
     recipientEmail: job.recipientEmail ?? '',
-    emailSubject: job.emailSubject ?? '',
     s3KeyPrefix: job.s3KeyPrefix ?? '',
     paramValue: typeInfo?.param ? String(job.reportParams?.[typeInfo.param] ?? '') : '',
     lookbackDays: (job.reportParams?.lookbackDays as number) ?? 30,
@@ -660,7 +664,6 @@ function buildJobPayload(): Record<string, unknown> {
     outputFormat: jobForm.value.outputFormat,
     deliveryMethod: jobForm.value.deliveryMethod,
     recipientEmail: jobForm.value.deliveryMethod === 'EMAIL' ? jobForm.value.recipientEmail : null,
-    emailSubject: jobForm.value.deliveryMethod === 'EMAIL' ? jobForm.value.emailSubject : null,
     s3KeyPrefix: jobForm.value.deliveryMethod === 'S3' ? jobForm.value.s3KeyPrefix : null,
     enabled: jobForm.value.enabled,
   }
