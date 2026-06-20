@@ -139,6 +139,53 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect((tz.element as HTMLSelectElement).value).toBeTruthy()
   })
 
+  it('shows group-count criteria and persists them for a Users by Group Count job', async () => {
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('USERS_WITH_NO_GROUP')
+    expect(wrapper.find('#rj-job-group-count-op').exists()).toBe(true)
+    await wrapper.find('#rj-job-group-count-op').setValue('>=')
+    await wrapper.find('input[aria-label="Group count value"]').setValue(2)
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(reports.createReportJob).toHaveBeenCalled()
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params.groupCountOp).toBe('>=')
+    expect(params.groupCountValue).toBe(2)
+  })
+
+  it('shows audit-entries criteria and persists lookback hours + actions', async () => {
+    const audit = await import('@/api/audit')
+    ;(audit.getAuditActions as unknown as Mock).mockResolvedValue({ data: ['USER_CREATE', 'USER_DELETE'] })
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('AUDIT_ENTRIES')
+    expect(wrapper.find('#rj-job-lookback-hours').exists()).toBe(true)
+    await wrapper.find('#rj-job-lookback-hours').setValue(48)
+
+    // Open the action menu and select one action.
+    const actionTrigger = wrapper.findAll('button').find(b => b.attributes('aria-label') === 'Action')
+    await actionTrigger!.trigger('click')
+    await wrapper.find('input[type="checkbox"][value="USER_CREATE"]').setValue(true)
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params.lookbackHours).toBe(48)
+    expect(params.actions).toEqual(['USER_CREATE'])
+  })
+
   it('triggers an immediate run via the Run now button', async () => {
     const reports = await import('@/api/reports')
     // reports.js is untyped JS; cast to the loose Mock surface so the
@@ -158,5 +205,52 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     await runBtn!.trigger('click')
     await flushPromises()
     expect(reports.runReportJobNow).toHaveBeenCalledWith('dir-1', 'job-1')
+  })
+
+  // Regression: the Delete confirm dialog was mounted with v-if but no
+  // :model-value, so ConfirmDialog's inner `v-if="modelValue"` kept it hidden
+  // and the Delete button appeared dead. Render a stub that honours modelValue
+  // to prove the dialog shows and confirming reaches the delete endpoint.
+  it('opens the confirm dialog from the row Delete button and deletes on confirm', async () => {
+    const reports = await import('@/api/reports')
+    ;(reports.listReportJobs as unknown as Mock).mockResolvedValue({
+      data: { content: [
+        { id: 'job-1', name: 'Weekly', reportType: 'RECENTLY_ADDED', cronExpression: '0 8 * * 1', enabled: true, timezone: 'UTC' },
+      ] },
+    })
+    const ConfirmDialogStub = {
+      props: ['modelValue', 'message', 'title', 'confirmLabel', 'danger'],
+      emits: ['confirm', 'update:modelValue'],
+      template: `<div v-if="modelValue" class="confirm-stub">
+        <span class="confirm-msg">{{ message }}</span>
+        <button class="confirm-ok" @click="$emit('confirm'); $emit('update:modelValue', false)">go</button>
+      </div>`,
+    }
+    const wrapper = mount(ReportJobsView, {
+      global: {
+        stubs: {
+          AppModal: AppModalSlotStub,
+          ConfirmDialog: ConfirmDialogStub,
+          DnPicker: true, ResultsTable: true, FormField: true,
+        },
+      },
+    })
+    await flushPromises()
+    await scheduledJobsButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    // No dialog until the row Delete button is clicked.
+    expect(wrapper.find('.confirm-stub').exists()).toBe(false)
+    const deleteBtn = wrapper.findAll('button').find(b => b.text().trim() === 'Delete')
+    await deleteBtn!.trigger('click')
+    await flushPromises()
+
+    const dialog = wrapper.find('.confirm-stub')
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.find('.confirm-msg').text()).toContain('Weekly')
+
+    await wrapper.find('.confirm-ok').trigger('click')
+    await flushPromises()
+    expect(reports.deleteReportJob).toHaveBeenCalledWith('dir-1', 'job-1')
   })
 })

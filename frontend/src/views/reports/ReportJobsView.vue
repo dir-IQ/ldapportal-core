@@ -277,8 +277,55 @@
             <div v-if="jobFormNeedsLookback">
               <label for="rj-job-lookback-days" class="block text-sm font-medium text-gray-700 mb-1">Lookback Days</label>
               <input id="rj-job-lookback-days" v-model.number="jobForm.lookbackDays" type="number" min="1" placeholder="30"
-                class="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                class="input w-full" />
             </div>
+            <!-- Users by Group Count: comparison operator + threshold. -->
+            <div v-if="jobFormNeedsGroupCount">
+              <label for="rj-job-group-count-op" class="block text-sm font-medium text-gray-700 mb-1">Group Count</label>
+              <div class="flex gap-2">
+                <select id="rj-job-group-count-op" v-model="jobForm.groupCountOp" class="input w-24" aria-label="Group count comparison">
+                  <option value="=">=</option>
+                  <option value="!=">≠</option>
+                  <option value=">">&gt;</option>
+                  <option value=">=">≥</option>
+                  <option value="<">&lt;</option>
+                  <option value="<=">≤</option>
+                </select>
+                <input v-model.number="jobForm.groupCountValue" type="number" min="0" class="input w-full" aria-label="Group count value" placeholder="0" />
+              </div>
+            </div>
+            <!-- Audit Entries: lookback hours + optional action multi-select. -->
+            <template v-if="jobFormNeedsAudit">
+              <div>
+                <label for="rj-job-lookback-hours" class="block text-sm font-medium text-gray-700 mb-1">Lookback (hours)</label>
+                <input id="rj-job-lookback-hours" v-model.number="jobForm.lookbackHours" type="number" min="1" class="input w-full" placeholder="24" />
+              </div>
+              <div ref="jobAuditActionMenuRef">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Action</label>
+                <div class="relative">
+                  <button type="button" @click="jobAuditActionMenuOpen = !jobAuditActionMenuOpen"
+                          class="input w-full flex items-center justify-between text-left"
+                          aria-label="Action" aria-haspopup="listbox" :aria-expanded="jobAuditActionMenuOpen">
+                    <span class="truncate" :class="jobForm.auditActions.length ? 'text-gray-900' : 'text-gray-500'">{{ jobAuditActionSummary }}</span>
+                    <span class="text-xs text-gray-400 ml-2">▾</span>
+                  </button>
+                  <div v-if="jobAuditActionMenuOpen"
+                       class="absolute z-20 mt-1 w-full max-h-72 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg py-1"
+                       role="listbox" aria-multiselectable="true">
+                    <div v-if="jobForm.auditActions.length" class="px-3 py-1.5 border-b border-gray-100">
+                      <button type="button" @click="jobForm.auditActions = []" class="text-xs text-blue-600 hover:underline">Clear selection</button>
+                    </div>
+                    <label v-for="opt in auditActionOptions" :key="opt.value"
+                           class="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+                      <input type="checkbox" :value="opt.value" v-model="jobForm.auditActions" class="rounded text-blue-600" />
+                      {{ opt.label }}
+                    </label>
+                    <p v-if="auditActionOptions.length === 0" class="px-3 py-2 text-xs text-gray-500">No actions available</p>
+                  </div>
+                </div>
+                <p class="text-xs text-gray-400 mt-1">Leave empty for all actions.</p>
+              </div>
+            </template>
             <div class="flex items-center gap-2">
               <input type="checkbox" id="jobEnabled" v-model="jobForm.enabled" class="rounded" />
               <label for="jobEnabled" class="text-sm text-gray-700">Enabled</label>
@@ -293,7 +340,16 @@
     </AppModal>
 
     <!-- Delete confirm -->
-    <ConfirmDialog v-if="deleteTarget" :message="`Delete job '${deleteTarget.name}'?`" @confirm="doDelete" @cancel="deleteTarget = null" />
+    <ConfirmDialog
+      v-if="deleteTarget"
+      :model-value="true"
+      title="Delete Job"
+      :message="`Delete job '${deleteTarget.name}'?`"
+      danger
+      confirm-label="Delete"
+      @confirm="doDelete"
+      @update:model-value="deleteTarget = null"
+    />
   </div>
 </template>
 
@@ -454,15 +510,19 @@ const auditActionOptions = computed(() =>
     .map(k => ({ value: k, label: actionLabel(k) }))
     .sort((a, b) => a.label.localeCompare(b.label)),
 )
-const auditActionSummary = computed<string>(() => {
-  const sel = runForm.value.auditActions
+function summarizeActions(sel: string[]): string {
   if (!sel.length) return 'All actions'
   if (sel.length === 1) return actionLabel(sel[0])
   return `${sel.length} actions selected`
-})
+}
+const auditActionSummary = computed<string>(() => summarizeActions(runForm.value.auditActions))
 function onAuditActionClickOutside(e: MouseEvent): void {
-  if (auditActionMenuRef.value && !auditActionMenuRef.value.contains(e.target as Node)) {
+  const t = e.target as Node
+  if (auditActionMenuRef.value && !auditActionMenuRef.value.contains(t)) {
     auditActionMenuOpen.value = false
+  }
+  if (jobAuditActionMenuRef.value && !jobAuditActionMenuRef.value.contains(t)) {
+    jobAuditActionMenuOpen.value = false
   }
 }
 async function loadAuditActions(): Promise<void> {
@@ -616,6 +676,10 @@ interface JobForm {
   s3KeyPrefix: string
   paramValue: string
   lookbackDays: number
+  groupCountOp: string
+  groupCountValue: number
+  lookbackHours: number
+  auditActions: string[]
   enabled: boolean
 }
 
@@ -650,17 +714,28 @@ function blankJobForm(): JobForm {
     name: '', reportType: 'RECENTLY_ADDED', cronExpression: '0 8 * * 1',
     timezone: browserTimezone(),
     outputFormat: 'CSV', deliveryMethod: 'EMAIL', recipientEmail: '',
-    s3KeyPrefix: '', paramValue: '', lookbackDays: 30, enabled: true,
+    s3KeyPrefix: '', paramValue: '', lookbackDays: 30,
+    groupCountOp: '=', groupCountValue: 0,
+    lookbackHours: 24, auditActions: [],
+    enabled: true,
   }
 }
 
 const jobForm = ref<JobForm>(blankJobForm())
 const runningJobId = ref<string | null>(null)
 
-const currentJobFormType   = computed(() => reportTypes.value.find(t => t.value === jobForm.value.reportType))
-const jobFormNeedsParam    = computed(() => !!currentJobFormType.value?.param)
-const jobFormParamLabel    = computed(() => currentJobFormType.value?.paramLabel ?? '')
-const jobFormNeedsLookback = computed(() => !!currentJobFormType.value?.lookback)
+const currentJobFormType     = computed(() => reportTypes.value.find(t => t.value === jobForm.value.reportType))
+const jobFormNeedsParam      = computed(() => !!currentJobFormType.value?.param)
+const jobFormParamLabel      = computed(() => currentJobFormType.value?.paramLabel ?? '')
+const jobFormNeedsLookback   = computed(() => !!currentJobFormType.value?.lookback)
+const jobFormNeedsGroupCount = computed(() => !!currentJobFormType.value?.groupCount)
+const jobFormNeedsAudit      = computed(() => !!currentJobFormType.value?.auditFilters)
+
+// Action multi-select for a scheduled Audit Entries job — same picker as the
+// runner above, but with its own open/ref state so the two menus don't fight.
+const jobAuditActionMenuOpen = ref(false)
+const jobAuditActionMenuRef = ref<HTMLElement | null>(null)
+const jobAuditActionSummary = computed<string>(() => summarizeActions(jobForm.value.auditActions))
 
 async function openSchedules(): Promise<void> {
   if (!dirId.value) { notif.error('Please select a directory first.'); return }
@@ -690,6 +765,10 @@ function openEditJob(job: Job): void {
     s3KeyPrefix: job.s3KeyPrefix ?? '',
     paramValue: typeInfo?.param ? String(job.reportParams?.[typeInfo.param] ?? '') : '',
     lookbackDays: (job.reportParams?.lookbackDays as number) ?? 30,
+    groupCountOp: (job.reportParams?.groupCountOp as string) ?? '=',
+    groupCountValue: (job.reportParams?.groupCountValue as number) ?? 0,
+    lookbackHours: (job.reportParams?.lookbackHours as number) ?? 24,
+    auditActions: Array.isArray(job.reportParams?.actions) ? (job.reportParams!.actions as string[]) : [],
     enabled: job.enabled,
   }
   showJobForm.value = true
@@ -704,6 +783,14 @@ function cancelJobForm(): void {
 function buildJobPayload(): Record<string, unknown> {
   const params: Record<string, unknown> = { lookbackDays: jobForm.value.lookbackDays || 30 }
   if (currentJobFormType.value?.param) params[currentJobFormType.value.param] = jobForm.value.paramValue
+  if (currentJobFormType.value?.groupCount) {
+    params.groupCountOp = jobForm.value.groupCountOp
+    params.groupCountValue = jobForm.value.groupCountValue ?? 0
+  }
+  if (currentJobFormType.value?.auditFilters) {
+    params.lookbackHours = jobForm.value.lookbackHours || 24
+    if (jobForm.value.auditActions.length) params.actions = jobForm.value.auditActions
+  }
   return {
     name: jobForm.value.name,
     reportType: jobForm.value.reportType,

@@ -501,9 +501,12 @@
 
     <ConfirmDialog
       v-if="deleteTemplateTarget"
+      :model-value="true"
       :message="`Delete template '${deleteTemplateTarget.name}'?`"
+      danger
+      confirm-label="Delete"
       @confirm="doDeleteTemplate"
-      @cancel="deleteTemplateTarget = null"
+      @update:model-value="deleteTemplateTarget = null"
     />
   </PageContainer>
 </template>
