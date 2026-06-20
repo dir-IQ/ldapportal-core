@@ -2,7 +2,6 @@
 package com.ldapportal.service;
 
 import com.ldapportal.entity.Account;
-import com.ldapportal.entity.ApplicationSettings;
 import com.ldapportal.entity.PendingApproval;
 import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.entity.enums.ApprovalStatus;
@@ -17,22 +16,19 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.List;
 
 /**
- * Sends email notifications for approval workflow events via SMTP.
- * Uses the SMTP config from {@link ApplicationSettings} with raw socket/HTTP.
- * If SMTP is not configured, notifications are logged instead.
+ * Sends email notifications for approval workflow events. Delegates the actual
+ * SMTP send to {@link EmailService}; if SMTP is not configured the notification
+ * is logged instead (handled in {@code EmailService}).
  */
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class ApprovalNotificationService {
 
-    private final ApplicationSettingsService appSettingsService;
-    private final EncryptionService encryptionService;
+    private final EmailService emailService;
     private final ProvisioningProfileRepository profileRepo;
     private final ProfileApproverRepository approverRepo;
     private final AccountRepository accountRepo;
@@ -150,95 +146,13 @@ public class ApprovalNotificationService {
     }
 
     /**
-     * Sends an email with a file attachment using MIME multipart encoding.
-     */
-    public void sendEmailWithAttachment(String recipientEmail, String subject, String body,
-                                         String attachmentName, String attachmentContentType, byte[] attachmentData) {
-        ApplicationSettings settings = appSettingsService.getEntity();
-        if (settings.getSmtpHost() == null || settings.getSmtpHost().isBlank()
-                || settings.getSmtpSenderAddress() == null || settings.getSmtpSenderAddress().isBlank()) {
-            log.info("SMTP not configured — attachment email logged: to={}, subject={}", recipientEmail, subject);
-            return;
-        }
-
-        try {
-            sendSmtpEmailWithAttachment(settings, recipientEmail, subject, body,
-                    attachmentName, attachmentContentType, attachmentData);
-        } catch (Exception ex) {
-            log.error("Failed to send email with attachment to {}: {}", recipientEmail, ex.getMessage());
-        }
-    }
-
-    private void sendSmtpEmailWithAttachment(ApplicationSettings settings, String to, String subject,
-                                              String body, String attachmentName, String attachmentContentType,
-                                              byte[] attachmentData) throws Exception {
-        String host = settings.getSmtpHost();
-        int port = settings.getSmtpPort() != null ? settings.getSmtpPort() : 587;
-        String from = settings.getSmtpSenderAddress();
-        String boundary = "----=_LDAPPortal_" + System.currentTimeMillis();
-
-        var socket = new java.net.Socket(host, port);
-        socket.setSoTimeout(10000);
-        var in = new java.io.BufferedReader(new java.io.InputStreamReader(socket.getInputStream()));
-        var out = new java.io.PrintWriter(socket.getOutputStream(), true);
-
-        try {
-            readLine(in);
-            out.println("EHLO ldapportal");
-            readMultiLine(in);
-
-            if (settings.getSmtpUsername() != null && settings.getSmtpPasswordEncrypted() != null) {
-                String password = encryptionService.decrypt(settings.getSmtpPasswordEncrypted());
-                String auth = Base64.getEncoder().encodeToString(
-                        ("\0" + settings.getSmtpUsername() + "\0" + password).getBytes(StandardCharsets.UTF_8));
-                out.println("AUTH PLAIN " + auth);
-                readLine(in);
-            }
-
-            out.println("MAIL FROM:<" + from + ">");
-            readLine(in);
-            out.println("RCPT TO:<" + to + ">");
-            readLine(in);
-            out.println("DATA");
-            readLine(in);
-
-            out.println("From: " + from);
-            out.println("To: " + to);
-            out.println("Subject: " + subject);
-            out.println("MIME-Version: 1.0");
-            out.println("Content-Type: multipart/mixed; boundary=\"" + boundary + "\"");
-            out.println();
-            // Text body part
-            out.println("--" + boundary);
-            out.println("Content-Type: text/plain; charset=UTF-8");
-            out.println();
-            out.println(body);
-            out.println();
-            // Attachment part
-            out.println("--" + boundary);
-            out.println("Content-Type: " + attachmentContentType + "; name=\"" + attachmentName + "\"");
-            out.println("Content-Disposition: attachment; filename=\"" + attachmentName + "\"");
-            out.println("Content-Transfer-Encoding: base64");
-            out.println();
-            out.println(Base64.getMimeEncoder(76, "\r\n".getBytes()).encodeToString(attachmentData));
-            out.println();
-            out.println("--" + boundary + "--");
-            out.println(".");
-            readLine(in);
-            out.println("QUIT");
-        } finally {
-            socket.close();
-        }
-    }
-
-    /**
      * Notifies {@code target} that another operator just reset their
      * password. Fires from {@link AdminManagementService#resetAdminPassword}
      * and {@link SuperadminManagementService#resetPassword}. Skipped
      * silently for self-resets (the user already knows). Sends to the
      * target's email address — if the row has no email on file, the
      * call falls through to the SMTP-not-configured log line in
-     * {@link #sendEmail}.
+     * {@link EmailService}.
      *
      * <p>Without this, an operator-initiated password reset left the
      * target with no out-of-band signal that their credentials had
@@ -269,76 +183,6 @@ public class ApprovalNotificationService {
     }
 
     private void sendEmail(String to, String subject, String body) {
-        ApplicationSettings settings = appSettingsService.getEntity();
-        if (settings.getSmtpHost() == null || settings.getSmtpHost().isBlank()
-                || settings.getSmtpSenderAddress() == null || settings.getSmtpSenderAddress().isBlank()) {
-            log.info("SMTP not configured — notification logged: to={}, subject={}", to, subject);
-            return;
-        }
-
-        try {
-            sendSmtpEmail(settings, to, subject, body);
-        } catch (Exception ex) {
-            log.error("Failed to send email to {}: {}", to, ex.getMessage());
-        }
-    }
-
-    private void sendSmtpEmail(ApplicationSettings settings, String to, String subject, String body) throws Exception {
-        String host = settings.getSmtpHost();
-        int port = settings.getSmtpPort() != null ? settings.getSmtpPort() : 587;
-        String from = settings.getSmtpSenderAddress();
-
-        var socket = new java.net.Socket(host, port);
-        socket.setSoTimeout(10000);
-        var in = new java.io.BufferedReader(new java.io.InputStreamReader(socket.getInputStream()));
-        var out = new java.io.PrintWriter(socket.getOutputStream(), true);
-
-        try {
-            readLine(in);
-            out.println("EHLO ldapportal");
-            readMultiLine(in);
-
-            if (settings.getSmtpUsername() != null && settings.getSmtpPasswordEncrypted() != null) {
-                String password = encryptionService.decrypt(settings.getSmtpPasswordEncrypted());
-                String auth = Base64.getEncoder().encodeToString(
-                        ("\0" + settings.getSmtpUsername() + "\0" + password).getBytes(StandardCharsets.UTF_8));
-                out.println("AUTH PLAIN " + auth);
-                readLine(in);
-            }
-
-            out.println("MAIL FROM:<" + from + ">");
-            readLine(in);
-            out.println("RCPT TO:<" + to + ">");
-            readLine(in);
-            out.println("DATA");
-            readLine(in);
-            out.println("From: " + from);
-            out.println("To: " + to);
-            out.println("Subject: " + subject);
-            out.println("Content-Type: text/plain; charset=UTF-8");
-            out.println();
-            out.println(body);
-            out.println(".");
-            readLine(in);
-            out.println("QUIT");
-        } finally {
-            socket.close();
-        }
-    }
-
-    private String readLine(java.io.BufferedReader in) throws Exception {
-        String line = in.readLine();
-        if (line != null && line.length() >= 3) {
-            char c = line.charAt(3);
-            if (c == '-') readMultiLine(in);
-        }
-        return line;
-    }
-
-    private void readMultiLine(java.io.BufferedReader in) throws Exception {
-        String line;
-        do {
-            line = in.readLine();
-        } while (line != null && line.length() >= 4 && line.charAt(3) == '-');
+        emailService.send(to, subject, body);
     }
 }
