@@ -340,7 +340,16 @@
     </AppModal>
 
     <!-- Delete confirm -->
-    <ConfirmDialog v-if="deleteTarget" :message="`Delete job '${deleteTarget.name}'?`" @confirm="doDelete" @cancel="deleteTarget = null" />
+    <ConfirmDialog
+      v-if="deleteTarget"
+      :model-value="true"
+      title="Delete Job"
+      :message="`Delete job '${deleteTarget.name}'?`"
+      danger
+      confirm-label="Delete"
+      @confirm="doDelete"
+      @update:model-value="deleteTarget = null"
+    />
   </div>
 </template>
 
