@@ -45,6 +45,7 @@ import * as usersApi from '@/api/users'
 
 const stubs = {
   LdapFilterBuilder: true,
+  RecentSearches: true,
   AppModal: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' },
   FormField: true, ConfirmDialog: true, UserForm: true, CopyButton: true,
   EntryTimeline: true, PasswordPolicyStatus: true, GroupChips: true,

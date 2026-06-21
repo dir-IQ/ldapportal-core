@@ -34,7 +34,7 @@ import GroupListView from './GroupListView.vue'
 import { createGroup, updateGroup } from '@/api/groups'
 
 const stubs = {
-  LdapFilterBuilder: true, AppModal: true, FormField: true,
+  LdapFilterBuilder: true, RecentSearches: true, AppModal: true, FormField: true,
   ConfirmDialog: true, DnPicker: true, CopyButton: true,
   ResultsTable: {
     props: ['rows', 'columns', 'rowKey', 'tableKey', 'emptyText'],
