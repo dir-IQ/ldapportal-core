@@ -45,16 +45,14 @@ The project publishes three flavours on GitHub Container Registry:
 |---|---|---|
 | `ghcr.io/dir-iq/ldapportal-community:<version>` | `core/` only. Apache-2.0. | Community baseline. |
 | `ghcr.io/dir-iq/ldapportal-community-plus-isva:<version>` | `core/` + `addons/isva`. Apache-2.0. | OSS deployments that want the ISVA full-mode integration. |
-| `ghcr.io/dir-iq/ldapportal-commercial:<version>` | `core/` + `ee/` + every addon. Proprietary licence. | Paid customers. |
 
-The default in the Terraform module is the commercial tag; flip
-`image_uri` to the appropriate ghcr.io tag for the build the
-customer is licensed for.
+The default in the Terraform module is the community-plus-isva tag; flip
+`image_uri` to `ldapportal-community` if you don't need the ISVA addon.
 
 **Pin to a digest, not a tag, in production.** `ghcr.io/…:1.0.0`
 is a moving target if a security patch rebuilds the same version;
 `ghcr.io/…@sha256:…` is immutable. Look up the digest with
-`docker manifest inspect ghcr.io/dir-iq/ldapportal-commercial:1.0.0`.
+`docker manifest inspect ghcr.io/dir-iq/ldapportal-community-plus-isva:1.0.0`.
 
 ### Pulling from inside the VPC
 
@@ -71,7 +69,7 @@ aws ecr create-pull-through-cache-rule \
 ```
 
 Then point `image_uri` at
-`<account>.dkr.ecr.<region>.amazonaws.com/dir-iq/ldapportal-commercial:1.0.0`.
+`<account>.dkr.ecr.<region>.amazonaws.com/dir-iq/ldapportal-community-plus-isva:1.0.0`.
 First pull populates the cache; subsequent pulls hit ECR
 directly. No need for `image_pull_secret_arn` in this case —
 the ECS task execution role's `AmazonECSTaskExecutionRolePolicy`
@@ -119,7 +117,7 @@ module "ldapportal" {
   certificate_arn    = "arn:aws:acm:us-east-1:…:certificate/…"
 
   # Pin to a digest in production
-  image_uri = "ghcr.io/dir-iq/ldapportal-commercial:1.0.0"
+  image_uri = "ghcr.io/dir-iq/ldapportal-community-plus-isva:1.0.0"
 
   tags = {
     Environment = "prod"

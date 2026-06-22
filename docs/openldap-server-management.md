@@ -247,7 +247,7 @@ These apply to several of the above:
    separate log.
 
 6. **Edition placement.** Most of these are "operator tooling"
-   territory and would naturally fit in the **commercial** edition.
+   territory and would naturally live beyond the community baseline.
    Confirm the edition boundary when each item gets picked up.
 
 7. **Entitlement gates.** Add a new entitlement (e.g.
