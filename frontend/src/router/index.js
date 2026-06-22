@@ -132,6 +132,12 @@ const router = createRouter({
           component: () => import('@/views/superadmin/AdminUsersView.vue'),
           meta: { requiresSuperadmin: true },
         },
+        {
+          path: 'superadmin/api-tokens',
+          name: 'apiTokens',
+          component: () => import('@/views/superadmin/ApiTokensView.vue'),
+          meta: { requiresSuperadmin: true },
+        },
         // The license view moved into Application Settings as a section
         // (/settings/license). Keep a redirect for anyone with a stale
         // bookmark of the old path.

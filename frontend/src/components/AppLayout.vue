@@ -213,13 +213,17 @@
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="5" r="2.5"/><path d="M2 14c0-2.76 2.24-5 5-5s5 2.24 5 5"/><path d="M14 6h4M14 9h3M14 12h2"/></svg>
             <span v-if="!collapsed">HR Integration</span>
           </RouterLink>
-          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_application_settings')" to="/settings" class="nav-item">
-            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.5"/><path d="M10 1.5v2M10 16.5v2M18.5 10h-2M3.5 10h-2M16 4l-1.4 1.4M5.4 14.6 4 16M16 16l-1.4-1.4M5.4 5.4 4 4"/></svg>
-            <span v-if="!collapsed">Application Settings</span>
-          </RouterLink>
           <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_application_accounts')" to="/superadmin/admins" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="5.5" r="3.25"/><path d="M3.5 18c0-3.59 2.91-6.5 6.5-6.5s6.5 2.91 6.5 6.5"/><path d="M13.5 2.5l1 2 2 .5-1.5 1.5.5 2-2-1.25L11.5 8.5l.5-2L10.5 5l2-.5 1-2z"/></svg>
             <span v-if="!collapsed">Application Accounts</span>
+          </RouterLink>
+          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_api_tokens')" to="/superadmin/api-tokens" class="nav-item">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="3.25"/><path d="M11.2 8.8 3 17v0h3v-2h2v-2h2l1.2-1.2"/></svg>
+            <span v-if="!collapsed">API Tokens</span>
+          </RouterLink>
+          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_application_settings')" to="/settings" class="nav-item">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.5"/><path d="M10 1.5v2M10 16.5v2M18.5 10h-2M3.5 10h-2M16 4l-1.4 1.4M5.4 14.6 4 16M16 16l-1.4-1.4M5.4 5.4 4 4"/></svg>
+            <span v-if="!collapsed">Application Settings</span>
           </RouterLink>
           </template>
         </template>
