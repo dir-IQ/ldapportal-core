@@ -4,15 +4,13 @@ Third-Party Licenses
 LDAPPortal uses the following open source libraries. This file documents
 their licenses for compliance purposes.
 
-LDAPPortal's own source code is split across two licensing tracks. The
-edition-boundary doc (docs/edition-boundary.md) is the source of truth;
-this section is a short pointer for anyone reading the licensing files
-without reading the design docs:
+LDAPPortal's own source code is split across two licensing tracks. This
+section is a short pointer for anyone reading the licensing files:
 
   core/         Apache License 2.0
   addons/*      Apache License 2.0  (open-source optional modules;
                                      ISVA full-mode integration today,
-                                     more to come — see edition-boundary.md)
+                                     more to come)
   ee/           Proprietary, commercial license
                 (LicenseRef-LDAPPortal-Commercial)
 

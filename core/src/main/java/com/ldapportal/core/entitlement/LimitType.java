@@ -5,8 +5,6 @@ package com.ldapportal.core.entitlement;
  * Resource types that carry per-edition quotas. Enforcement is added in
  * Phase 7 via {@code UsageLimitService#requireWithinLimit}; this enum is
  * declared now so {@link License} can carry the limit map from the start.
- *
- * <p>See {@code docs/edition-boundary.md} §Limits for the per-edition caps.</p>
  */
 public enum LimitType {
     DIRECTORIES,

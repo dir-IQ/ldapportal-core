@@ -10,27 +10,17 @@ This document re-checks the prior remediation plan
 (`docs/accessibility-508-remediation.md`) against the **actual code in this
 repo** and records what is genuinely complete and what is still pending.
 
-## Important scope note: core vs. the superset the plan was written against
+## Scope note: this covers the community/core edition
 
-The original plan was authored against a **superset** of this codebase
-(157 `.vue` components, including an `ee/` enterprise tree: auditor, drift,
-SoD, identity-mapping, alert-dashboard, etc.).
-
-**This repo is the community/core edition:**
-
-- **104 `.vue` components** (not 157).
-- **No `src/ee/` source.** The enterprise seam is stubbed via
-  `src/ee-shim.js` (vite aliases `@/ee` → the inert stub in community
-  builds). So every `ee/**` file the plan enumerates — `AuditorLayout`,
-  `AccessDriftView`, `SodViolationsView`, `AlertDashboardView`,
-  `MappingDrawer`, `IdentityMappingHelpDialog`, `AuditorNotesDrawer`,
-  the auditor/HR/cross-campaign views — **is out of scope here** (absent
-  from the bundle).
-- Consequently the unit-test count (plan cites "330") and the
-  lint-warning count (plan cites "163") differ for core (see below).
+The original remediation plan (`docs/accessibility-508-remediation.md`) was
+authored against a larger **superset** of this codebase (157 `.vue`
+components). **This repo is the community/core edition** with **104 `.vue`
+components**, so the views the plan enumerated that aren't part of core are
+absent from the bundle, and the unit-test count (plan cites "330") and the
+lint-warning count (plan cites "163") differ for core (see below).
 
 Where the plan's status boxes say "Done", I verified the corresponding code
-**that exists in core**; EE-only sub-items are marked N/A.
+**that exists in core**.
 
 ## Headline
 
@@ -55,7 +45,6 @@ Build, type-check, and the a11y lint all pass in core today
 - Skip-to-content link as first focusable child, target `#main-content`, in
   `components/AppLayout.vue:4` (`main` at `:259`) and
   `layouts/SelfServiceLayout.vue:4` (`main` at `:44`). ✔
-  - *(`ee/views/auditor/AuditorLayout.vue` from the plan: N/A — not in core.)*
 - `components/NotificationToast.vue`: container `role="region"
   aria-label="Notifications"` (`:4`), per-toast `:role` = `alert` (error) /
   `status` (otherwise) (`:9`), labeled dismiss button (`:42`). ✔
@@ -86,8 +75,6 @@ Build, type-check, and the a11y lint all pass in core today
 - Audit of all 9 `fixed inset-0` overlays: the only two without the directive
   are `AppModal.vue`/`ConfirmDialog.vue`, which intentionally use the Phase-2
   composable instead. No uncovered overlay remains. ✔
-- The plan's EE overlays (AccessDrift / SodViolations / AlertDashboard /
-  Auditor* / identity Mapping*) are **N/A** — not in core.
 
 ## Phase 4 — Form label association — **Partial (the plan overstates this for core)**
 
@@ -253,7 +240,7 @@ gate** even when it does run.
 
 - [x] Phase 1 — Level-A quick wins
 - [x] Phase 2 — Shared dialog + table semantics
-- [x] Phase 3 — Bespoke modals (core subset; EE overlays N/A)
+- [x] Phase 3 — Bespoke modals (core subset)
 - [ ] Phase 4 — Form label association *(partial: residual unlabelled
       controls; validation-error association not started)*
 - [ ] Phase 5 — Names / contrast / color-only *(names done; `color-contrast`

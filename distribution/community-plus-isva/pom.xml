@@ -116,7 +116,7 @@
                                     <zipfileset src="${project.build.directory}/${project.build.finalName}.jar"
                                                 includes="BOOT-INF/lib/ldapportal-ee-*.jar"/>
                                 </resourcecount>
-                                <fail message="community-plus-isva JAR contains ee bytecode: com/ldapportal/ee/**/*.class entries=${communityPlusIsva.eeClasses} (expected 0), BOOT-INF/lib/ldapportal-ee-*.jar entries=${communityPlusIsva.eeJars} (expected 0). The community-plus-isva distribution must ship Apache-2.0 code only — see docs/edition-boundary.md. Check this module's dependencies; ldapportal-ee must not appear directly or transitively.">
+                                <fail message="community-plus-isva JAR contains ee bytecode: com/ldapportal/ee/**/*.class entries=${communityPlusIsva.eeClasses} (expected 0), BOOT-INF/lib/ldapportal-ee-*.jar entries=${communityPlusIsva.eeJars} (expected 0). The community-plus-isva distribution must ship Apache-2.0 code only. Check this module's dependencies; ldapportal-ee must not appear directly or transitively.">
                                     <condition>
                                         <or>
                                             <not><equals arg1="${communityPlusIsva.eeClasses}" arg2="0"/></not>

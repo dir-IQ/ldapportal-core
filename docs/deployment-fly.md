@@ -1,18 +1,17 @@
 # Fly.io demo deployment runbook
 
-Steps to stand up an LDAP Portal demo on Fly.io with **all three
+Steps to stand up an LDAP Portal demo on Fly.io with **both
 distributions side-by-side**. Auto-scales to zero when idle
-(~$8/month resting), wakes on demand for prospects.
+(~$6/month resting), wakes on demand for prospects.
 
 Public URLs (each distribution gets its own):
 
 | Distribution         | URL                                  | Use case                                                                |
 |----------------------|--------------------------------------|-------------------------------------------------------------------------|
 | Community            | https://ldapportal-c.fly.dev          | Apache-2.0 baseline; "what you get for free"                            |
-| Community + ISVA     | https://ldapportal-ci.fly.dev         | Apache-2.0 + ISVA full-mode integration (still no governance / HR / alerting) |
-| Enterprise           | https://ldapportal-e.fly.dev          | Full feature set; sales conversations                                    |
+| Community + ISVA     | https://ldapportal-ci.fly.dev         | Apache-2.0 + ISVA full-mode integration |
 
-Stack (8 Fly apps + 3 Postgres clusters):
+Stack (6 Fly apps + 2 Postgres clusters):
 
 | App                          | Role                                        |
 |------------------------------|---------------------------------------------|
@@ -20,13 +19,10 @@ Stack (8 Fly apps + 3 Postgres clusters):
 | `ldapportal-c-app`            | Community backend (private 6PN only)        |
 | `ldapportal-ci`               | Community+ISVA frontend (public)            |
 | `ldapportal-ci-app`           | Community+ISVA backend (private 6PN only)   |
-| `ldapportal-e`                | Enterprise frontend (public)                |
-| `ldapportal-e-app`            | Enterprise backend (private 6PN only)       |
 | `ldapportal-ldap-acmecorp`    | Seeded LDAP test directory (shared)         |
 | `ldapportal-ldap-globex`      | Seeded LDAP test directory (shared)         |
 | `ldapportal-db-c` (Fly Postgres)  | Community-edition DB                    |
 | `ldapportal-db-ci` (Fly Postgres) | Community+ISVA DB                       |
-| `ldapportal-db-e` (Fly Postgres)  | Enterprise-edition DB                   |
 
 LDAP test directories are shared because the seed fixture is the
 same for every distribution. Postgres is per-distribution so a
@@ -58,10 +54,6 @@ flyctl apps create ldapportal-c
 flyctl apps create ldapportal-ci-app
 flyctl apps create ldapportal-ci
 
-# Enterprise-edition apps
-flyctl apps create ldapportal-e-app
-flyctl apps create ldapportal-e
-
 # Shared LDAP test directories
 flyctl apps create ldapportal-ldap-acmecorp
 flyctl apps create ldapportal-ldap-globex
@@ -91,15 +83,6 @@ flyctl postgres create \
   --vm-size shared-cpu-1x \
   --volume-size 1
 flyctl postgres attach ldapportal-db-ci --app ldapportal-ci-app
-
-# Enterprise DB
-flyctl postgres create \
-  --name ldapportal-db-e \
-  --region iad \
-  --initial-cluster-size 1 \
-  --vm-size shared-cpu-1x \
-  --volume-size 1
-flyctl postgres attach ldapportal-db-e --app ldapportal-e-app
 ```
 
 `attach` sets a `DATABASE_URL` secret on each backend, but the
@@ -110,7 +93,7 @@ URL parts post-attach — pick whichever matches your state:
 **Path A — pre-deploy (no machine exists yet): detach + re-attach.**
 The `attach` command prints the URL on stdout, so re-running it
 surfaces the credentials. Run for each edition (replay for
-`ldapportal-db-e` / `ldapportal-e-app`):
+`ldapportal-db-ci` / `ldapportal-ci-app`):
 
 ```bash
 flyctl postgres detach ldapportal-db-c --app ldapportal-c-app
@@ -155,8 +138,7 @@ terminated the handshake` and Flyway can't initialise.
 The host is always `<postgres-app-name>.flycast` (Fly's internal
 cluster DNS), so only the database name, user, and password vary
 per attach. Repeat the detach + attach + secrets-set sequence for
-`ldapportal-ci-app` against `ldapportal-db-ci` and for
-`ldapportal-e-app` against `ldapportal-db-e`.
+`ldapportal-ci-app` against `ldapportal-db-ci`.
 
 ### 3. Set each backend's runtime secrets
 
@@ -174,7 +156,7 @@ visibly-broken secret still leaves siblings poisoned by the same
 copy/paste chain. Stripping at set time is the only reliable fix.
 
 ```bash
-for APP in ldapportal-c-app ldapportal-ci-app ldapportal-e-app; do
+for APP in ldapportal-c-app ldapportal-ci-app; do
   BOOTSTRAP_PW=$(openssl rand -base64 16 | tr -d '\r\n')
   echo "  $APP BOOTSTRAP_SUPERADMIN_PASSWORD = $BOOTSTRAP_PW"
   flyctl secrets set --app "$APP" \
@@ -254,7 +236,6 @@ Allocate once per private app:
 ```bash
 flyctl ips allocate-v6 --private --app ldapportal-c-app
 flyctl ips allocate-v6 --private --app ldapportal-ci-app
-flyctl ips allocate-v6 --private --app ldapportal-e-app
 flyctl ips allocate-v6 --private --app ldapportal-ldap-acmecorp
 flyctl ips allocate-v6 --private --app ldapportal-ldap-globex
 ```
@@ -326,7 +307,7 @@ returns `ERR_CONNECTION_CLOSED`).
 After deploy:
 
 - Community demo: <https://ldapportal-c.fly.dev>
-- Enterprise demo: <https://ldapportal-e.fly.dev>
+- Community+ISVA demo: <https://ldapportal-ci.fly.dev>
 - LDAP servers: private-network-only at
   `ldapportal-ldap-acmecorp.flycast:389` and
   `ldapportal-ldap-globex.flycast:389`. We deliberately use
@@ -367,21 +348,21 @@ changed:
 
 ```bash
 # Frontend-only after a UI change, both editions
-gh workflow run deploy-fly.yml -f components=frontend-c,frontend-e
+gh workflow run deploy-fly.yml -f components=frontend-c,frontend-ci
 
 # Whole community edition (backend + frontend) after a core change
 gh workflow run deploy-fly.yml -f components=community
 
-# Just the enterprise backend
-gh workflow run deploy-fly.yml -f components=app-e
+# Just the community-plus-isva backend
+gh workflow run deploy-fly.yml -f components=app-ci
 
 # Re-seed an LDAP server
 gh workflow run deploy-fly.yml -f components=ldap-acmecorp
 ```
 
 Accepted tokens: `all`, `community`, `community-plus-isva`,
-`enterprise`, `app-c`, `frontend-c`, `app-ci`, `frontend-ci`,
-`app-e`, `frontend-e`, `ldap-acmecorp`, `ldap-globex`.
+`app-c`, `frontend-c`, `app-ci`, `frontend-ci`,
+`ldap-acmecorp`, `ldap-globex`.
 Comma-separated.
 
 ## Cost expectations
@@ -390,20 +371,19 @@ Resting (everything stopped, only Postgres always-on):
 
 | Item                                    | ~Cost (rest) | Notes                              |
 |-----------------------------------------|--------------|------------------------------------|
-| 6 main machines (3 backends, 3 frontends) | $0         | Auto-stop                          |
+| 4 main machines (2 backends, 2 frontends) | $0         | Auto-stop                          |
 | 2 LDAP machines                         | $0           | Auto-stop; no volumes (re-seed)    |
-| 3 Fly Postgres (`shared-cpu-1x`, 1GB)   | ~$8.40       | Always running per distribution    |
+| 2 Fly Postgres (`shared-cpu-1x`, 1GB)   | ~$5.60       | Always running per distribution    |
 | HTTPS certs + bandwidth                 | $0           | Included                           |
-| **Total resting**                       | **~$8.40/mo** |                                   |
+| **Total resting**                       | **~$5.60/mo** |                                   |
 
 Active demo overhead: ~$0.01/hour per running app, so 10 hours/mo
-across the six distribution apps adds ~$0.60. Net under
-**$10/month** for the three-distribution prospect-facing demo.
+across the four distribution apps adds ~$0.40. Net under
+**$7/month** for the two-distribution prospect-facing demo.
 
-If cost matters more than carrying every distribution: drop the
-community-plus-isva or community side (each is ~$3/mo with
-Postgres). Keep enterprise alone and point community prospects at
-the GitHub README.
+If cost matters more than carrying both distributions: drop the
+community-plus-isva side (~$2.80/mo with Postgres) and point
+prospects at the community demo + the GitHub README.
 
 ## Tearing down
 
@@ -412,13 +392,10 @@ flyctl apps destroy ldapportal-c-app  -y
 flyctl apps destroy ldapportal-c      -y
 flyctl apps destroy ldapportal-ci-app -y
 flyctl apps destroy ldapportal-ci     -y
-flyctl apps destroy ldapportal-e-app  -y
-flyctl apps destroy ldapportal-e      -y
 flyctl apps destroy ldapportal-ldap-acmecorp -y
 flyctl apps destroy ldapportal-ldap-globex   -y
 flyctl postgres destroy ldapportal-db-c  -y
 flyctl postgres destroy ldapportal-db-ci -y
-flyctl postgres destroy ldapportal-db-e  -y
 ```
 
 ## Troubleshooting
@@ -444,8 +421,8 @@ flyctl postgres attach ldapportal-db-ci --app ldapportal-ci-app
 flyctl ips allocate-v6 --private --app ldapportal-ci-app
 ```
 
-Then run the secrets loop (`for APP in ldapportal-c-app ldapportal-ci-app
-ldapportal-e-app …` — see "Set each backend's runtime secrets" above)
+Then run the secrets loop (`for APP in ldapportal-c-app
+ldapportal-ci-app …` — see "Set each backend's runtime secrets" above)
 and the `DB_URL` / `DB_USERNAME` / `DB_PASSWORD` extraction
 (see "Provision Postgres clusters" → Path A or Path B). After
 that, re-trigger the workflow.
@@ -461,7 +438,7 @@ job.
 
 **Cold start is slow (>15s).** Switch the backend's `auto_stop_machines`
 from `"stop"` to `"suspend"` in `app-c.fly.toml` /
-`app-ci.fly.toml` / `app-e.fly.toml`. Suspended machines resume
+`app-ci.fly.toml`. Suspended machines resume
 from RAM snapshot in ~1-2s but cost slightly more than stopped
 ones. Apply per distribution — you can tune the cold demos for
 cost and the hot one for speed.
@@ -503,14 +480,14 @@ are shared.
 **Custom domain.** Map `demo.example.com` to either edition's frontend:
 
 ```bash
-flyctl certs create demo.example.com --app ldapportal-e
+flyctl certs create demo.example.com --app ldapportal-ci
 ```
 
-Add a CNAME from `demo.example.com` to `ldapportal-e.fly.dev`, then
-update `CORS_ALLOWED_ORIGIN` on the enterprise backend to match:
+Add a CNAME from `demo.example.com` to `ldapportal-ci.fly.dev`, then
+update `CORS_ALLOWED_ORIGIN` on the community-plus-isva backend to match:
 
 ```bash
-flyctl secrets set --app ldapportal-e-app \
+flyctl secrets set --app ldapportal-ci-app \
   CORS_ALLOWED_ORIGIN="https://demo.example.com"
 ```
 
@@ -522,13 +499,13 @@ existing row so the next start re-bootstraps:
 
 ```bash
 flyctl secrets set BOOTSTRAP_SUPERADMIN_PASSWORD='<new-password>' \
-  --app ldapportal-e-app
-flyctl postgres connect --app ldapportal-db-e
+  --app ldapportal-ci-app
+flyctl postgres connect --app ldapportal-db-ci
 # at the psql prompt:
-\c ldapportal_e_app
+\c ldapportal_ci_app
 DELETE FROM accounts WHERE role = 'SUPERADMIN' AND auth_type = 'LOCAL';
 \q
-flyctl machine restart --app ldapportal-e-app
+flyctl machine restart --app ldapportal-ci-app
 ```
 
 The startup log will now show `Bootstrap: created LOCAL superadmin
@@ -543,7 +520,7 @@ the offending byte (`d` = `0x0D` = `\r`). Re-set both secrets with
 `tr -d '\r\n'`:
 
 ```bash
-flyctl secrets set --app ldapportal-e-app \
+flyctl secrets set --app ldapportal-ci-app \
   JWT_SECRET="$(openssl rand -base64 64 | tr -d '\r\n')" \
   ENCRYPTION_KEY="$(openssl rand -base64 32 | tr -d '\r\n')"
 ```

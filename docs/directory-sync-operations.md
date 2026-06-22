@@ -70,24 +70,26 @@ the **Directory Sync** nav is hidden, `directorySyncEnabled` is `false` in
 
 Two ways to grant it:
 
-### Option A — signed license (production)
-Issue a license JWT that includes `DIRECTORY_SYNC` and point the app at it with
-`ldapportal.license.path` (`LDAPPORTAL_LICENSE_PATH`). The JWT must verify
-against the build's trust anchor (`license/license-public-key.pem`) or the app
-**refuses to start**.
-
-> If `ldapportal.license.path` is set, the file must exist and verify. A Docker
-> bind mount of a missing path creates a *directory* there, which then fails to
-> read — don't set a license path without a valid file.
-
-### Option B — config override (self-host, no license)
+### Option A — config grant (self-host)
 ```properties
 # env: LDAPPORTAL_ENTITLEMENTS_GRANT  (CSV)
 ldapportal.entitlements.grant=DIRECTORY_SYNC
 ```
 Handled by `ConfiguredEntitlementsProbe`. Allow-listed to open-source
 entitlements only; logs a loud startup warning; independent of any license
-file. The dev `compose.yaml` defaults this on.
+file. The dev `compose.yaml` defaults this on. This is the path the
+self-host runbooks (`deployment-aws.md`, `deployment-eks-gitlab-ecr.md`,
+`deployment-fly.md`) use.
+
+### Option B — license file
+For builds distributed with a license file, point the app at one that includes
+`DIRECTORY_SYNC` via `ldapportal.license.path` (`LDAPPORTAL_LICENSE_PATH`). It
+must verify against the build's trust anchor (`license/license-public-key.pem`)
+or the app **refuses to start**.
+
+> If `ldapportal.license.path` is set, the file must exist and verify. A Docker
+> bind mount of a missing path creates a *directory* there, which then fails to
+> read — don't set a license path without a valid file.
 
 ### Verify
 ```bash

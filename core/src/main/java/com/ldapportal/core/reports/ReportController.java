@@ -47,7 +47,7 @@ import java.util.UUID;
  * <p>Compliance reports (access reviews, SoD, drift, termination
  * velocity, audit-log exports, privileged-account inventory) and
  * scheduled-job CRUD live in {@code ee/governance} under separate
- * URL prefixes. See {@code docs/edition-boundary.md}.</p>
+ * URL prefixes.</p>
  */
 @RestController
 @RequestMapping("/api/v1/directories/{directoryId}")

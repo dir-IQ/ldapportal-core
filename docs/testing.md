@@ -118,9 +118,6 @@ class MyServiceIntegrationTest {
 }
 ```
 
-See `ee/src/test/java/com/ldapportal/testsupport/ldap/LdapUserServiceIntegrationTest.java`
-for a complete worked example.
-
 ### Image and lifecycle
 
 - **Image:** `bitnamilegacy/openldap:2.6.10-debian-12-r4`. (The original
@@ -131,9 +128,9 @@ for a complete worked example.
 - **Container stop:** JVM shutdown hook (no explicit teardown needed).
 - **Per-class subtree:** created on `beforeAll`, dropped on `afterAll` via the
   SubtreeDelete control.
-- **Baseline LDIF:** `ee/src/test/resources/ldap/baseline.ldif` —
-  `dc=test,dc=local` suffix, `ou=test/groups/people/serviceAccounts`, plus 3
-  seed users under `ou=seed,ou=test`.
+- **Baseline LDIF:** `dc=test,dc=local` suffix,
+  `ou=test/groups/people/serviceAccounts`, plus 3 seed users under
+  `ou=seed,ou=test`.
 
 ### Self-tests for the fixture itself
 
@@ -167,7 +164,7 @@ SP5 will backfill 13 more `@smoke` specs covering shipped feature areas.
 - `tests/e2e/global-setup.ts` — UI-logs-in superadmin and an `e2e-admin` ADMIN role once, saves cookies to `.auth/<role>.json`. The codebase has only SUPERADMIN and ADMIN roles (no READ_ONLY); read-only access is feature-permission-driven.
 - `tests/e2e/fixtures.ts` — role-based `Page` fixtures (`superadmin`, `admin`) for instant pre-auth.
 - `tests/e2e/helpers/` — `directory.ts:seededDirectoryId()` resolves the auto-seeded test DirectoryConnection's id by displayName; `user.ts` exports `userRow` + `waitForUserVisible`. SP5 will grow these.
-- Backend test main: `ee/src/test/java/com/ldapportal/TestLDAPPortalApplication.java` — wraps real app with `TestcontainersConfiguration` (Postgres `@ServiceConnection` + reused SP3 OpenLdapContainer singleton + ApplicationRunner that auto-seeds a `DirectoryConnection` row pointing at the OpenLDAP container's dynamic mapped port).
+- Backend test main: a `TestLDAPPortalApplication` wraps the real app with `TestcontainersConfiguration` (Postgres `@ServiceConnection` + reused SP3 OpenLdapContainer singleton + ApplicationRunner that auto-seeds a `DirectoryConnection` row pointing at the OpenLDAP container's dynamic mapped port).
 
 ### CI
 

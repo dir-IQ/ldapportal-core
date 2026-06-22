@@ -8,8 +8,8 @@ on a directory — what to set up first, what the config knobs mean, and
 what to do when something looks wrong.
 
 This is an open-source addon under [`addons/isva`](../addons/isva). It
-ships in the **community-plus-isva** and **commercial** distributions;
-the plain **community** distribution doesn't include it.
+ships in the **community-plus-isva** distribution; the plain **community**
+distribution doesn't include it.
 
 ## Decide: inline or linked topology?
 
@@ -261,14 +261,10 @@ existing memberships to the new convention.
 **Audit rows for the ISVA-enabled directory aren't carrying
 `vendorIntegration`.** The addon's jar isn't on the classpath of the
 running backend. Check the distribution: the plain `community/`
-distribution doesn't ship `addons/isva`. Use `community-plus-isva/`
-or `commercial/`.
+distribution doesn't ship `addons/isva`. Use `community-plus-isva/`.
 
 ## See also
 
-- Design spec: [`docs/superpowers/specs/2026-05-20-isva-full-mode-integration-design.md`](superpowers/specs/2026-05-20-isva-full-mode-integration-design.md)
-- Implementation plan: [`docs/superpowers/plans/2026-05-20-isva-full-mode-integration.md`](superpowers/plans/2026-05-20-isva-full-mode-integration.md)
-- Edition placement: [`docs/edition-boundary.md`](edition-boundary.md) → "Open-source addons" → `addons/isva`
 - Deployment runbook: [`docs/deployment-fly.md`](deployment-fly.md) — the
   `ldapportal-ci` Fly demo runs `community-plus-isva` for prospects who
-  want to evaluate ISVA without any commercial entitlement.
+  want to evaluate ISVA with no license key.

@@ -7,9 +7,9 @@
 #
 # Run from the repo root:  ./scripts/apply-spdx-headers.sh
 #
-# The license boundary mirrors docs/edition-boundary.md. Phase 5b extracts ee/
-# into a separate private repo; until then SPDX headers are the per-file
-# marker that keeps the Apache 2.0 / commercial line legible inside one tree.
+# Phase 5b extracts ee/ into a separate private repo; until then SPDX headers
+# are the per-file marker that keeps the Apache 2.0 / commercial line legible
+# inside one tree.
 set -euo pipefail
 
 apply_header() {

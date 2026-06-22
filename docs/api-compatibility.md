@@ -62,7 +62,7 @@ Consumers are free to migrate on their own timeline. A `v1` consumer will never 
 
 ## Outbound event payloads
 
-Outbound events emitted via the event backbone (Prereq B) carry an explicit `schemaVersion` field inside each envelope. That field follows the same additive-only rule at `schemaVersion: 1`. See [`superpowers/specs/2026-04-23-event-backbone-design.md`](superpowers/specs/2026-04-23-event-backbone-design.md).
+Outbound events emitted via the event backbone (Prereq B) carry an explicit `schemaVersion` field inside each envelope. That field follows the same additive-only rule at `schemaVersion: 1`.
 
 ## Authentication
 
@@ -70,7 +70,7 @@ Every endpoint documented in `/api/v1/openapi.yaml` enforces one of three authen
 
 - **Cookie JWT** (`jwt` httpOnly cookie) — issued by `POST /api/v1/auth/login`.
 - **`Authorization: Bearer <JWT>`** — same JWT used via the Authorization header; equivalent to the cookie for API clients.
-- **`Authorization: Bearer ldap_pat_...`** — long-lived API tokens. See [`superpowers/specs/2026-04-22-api-token-auth-design.md`](superpowers/specs/2026-04-22-api-token-auth-design.md).
+- **`Authorization: Bearer ldap_pat_...`** — long-lived API tokens.
 
 Individual endpoints declare their required role (SUPERADMIN / ADMIN / SELF_SERVICE) via Spring Security URL patterns; the OpenAPI spec reflects the security requirement at the operation level.
 

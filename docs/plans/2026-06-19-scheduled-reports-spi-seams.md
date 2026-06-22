@@ -2,16 +2,15 @@
 
 **Status:** Not started (plan, 2026-06-19).
 **Audience:** Claude Code / engineers working across `ldapportal-core` and `ldapportal-ee`.
-**Scope:** Backend. Pairs 1:1 with the ee plan
-`ldapportal-ee/docs/plans/2026-06-19-scheduled-reports-ee-provider-migration.md`
-— neither lands alone (see §8, Cross-repo sequencing).
+**Scope:** Backend. Pairs 1:1 with the companion provider-migration plan in
+the `ldapportal-ee` repo — neither lands alone (see §8, Cross-repo sequencing).
 
 ---
 
 ## 1. Context
 
-Phase 1 (`docs/plans/2026-06-19-scheduled-reports-csv-email.md`, core PR #282)
-brings the **operator subset** of scheduled reports into core on the existing
+Phase 1 (core PR #282) brings the **operator subset** of scheduled reports
+into core on the existing
 `scheduled_report_jobs` table: operational report types, **CSV** output,
 **email** delivery, gated by `FeatureKey.REPORTS_SCHEDULE`. It deliberately
 rejects PDF / S3 / compliance with a 400 and leaves an open question: *with ee's
@@ -287,8 +286,8 @@ ee's scheduler classes (duplicate `ScheduledReportJob` entity name + ambiguous
 
 ## 9. References
 
-- Phase 1: `docs/plans/2026-06-19-scheduled-reports-csv-email.md` (core PR #282).
-- Paired ee plan: `ldapportal-ee/docs/plans/2026-06-19-scheduled-reports-ee-provider-migration.md`.
+- Phase 1: core PR #282 (scheduled reports — operator subset: CSV + email).
+- Paired ee plan: the provider-migration plan in the `ldapportal-ee` repo.
 - SPI precedents: `OperationalReportProvider`, `ReportJobHealthProvider` +
   `NoopReportJobHealthProvider`, `CoreNoopSpiAutoConfiguration`.
 - Shared data shape: `core.reports.ReportData` (already cross-edition).

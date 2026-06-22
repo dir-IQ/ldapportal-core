@@ -10,7 +10,7 @@ package com.ldapportal.core.reports;
  * <p>Compliance-flavoured report types (access reviews, SoD, drift,
  * termination velocity, audit-log exports, privileged-account
  * inventory) live in {@code ee/governance} and are entitlement-
- * gated. See {@code docs/edition-boundary.md} for the split.</p>
+ * gated.</p>
  */
 public enum OperationalReportType {
     USERS_IN_GROUP,
