@@ -9,9 +9,8 @@ import java.util.Set;
  * purchasing add-ons. Additional entitlements can be purchased as add-ons
  * and live in {@link License#addOns()} instead.
  *
- * <p>See {@code docs/edition-boundary.md} for the canonical mapping. This
- * file must stay in sync with that document — the document is the product
- * decision, this enum is the executable form.</p>
+ * <p>This enum is the executable form of the edition → entitlement mapping
+ * (the product decision about which tier includes which capabilities).</p>
  */
 public enum Edition {
 

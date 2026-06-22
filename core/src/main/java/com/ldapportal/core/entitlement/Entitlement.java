@@ -3,15 +3,11 @@ package com.ldapportal.core.entitlement;
 
 /**
  * A single gated capability. Covers the ee/ modules and the
- * Enterprise-tier feature flags listed in {@code docs/edition-boundary.md}.
+ * Enterprise-tier feature flags.
  *
- * <p>Additions to this enum must also update:
- * <ul>
- *   <li>{@link Edition#baselineEntitlements()} — if the new entitlement should
- *       be included in one or more baseline editions</li>
- *   <li>{@code docs/edition-boundary.md} — the single source of truth for
- *       which editions include which entitlements</li>
- * </ul>
+ * <p>Additions to this enum must also update
+ * {@link Edition#baselineEntitlements()} if the new entitlement should be
+ * included in one or more baseline editions.
  *
  * <p>Names are serialised into signed license JWTs; renaming a value after
  * licenses have been issued is a breaking change. Additions are safe.</p>

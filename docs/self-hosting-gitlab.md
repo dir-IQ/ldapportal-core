@@ -113,8 +113,8 @@ starter keeps it simple and runs the suite on every branch/MR).
 - **`compose.yaml`** is a working **dev** stack (app, frontend, postgres,
   pgadmin, and several directory servers for testing). For production, reduce it
   to **app + frontend + postgres** and point at the real directories.
-  `terraform/aws` + `terraform/deployment-aws.md` / `deployment-fly.md` are
-  reference deployment patterns to adapt to their infra (k8s, Nomad, etc.).
+  the [`deployment-aws.md`](deployment-aws.md) / [`deployment-fly.md`](deployment-fly.md)
+  runbooks are reference deployment patterns to adapt to their infra (k8s, Nomad, etc.).
 
 ## 7. Staying current with upstream
 

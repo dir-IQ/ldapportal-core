@@ -6,8 +6,8 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Guards the edition baselines declared in {@link Edition} against drift
- * from {@code docs/edition-boundary.md}.
+ * Guards the edition baselines declared in {@link Edition} against
+ * accidental drift.
  */
 class EditionTest {
 
@@ -26,7 +26,7 @@ class EditionTest {
     void business_baselinesPlatformTeamModules() {
         // Business baseline: modules that target the platform-team buyer
         // (hybrid / events / alerting / service accounts). Governance and
-        // HR are Business add-ons, not baseline. See edition-boundary.md.
+        // HR are Business add-ons, not baseline.
         assertThat(Edition.BUSINESS.baselineEntitlements())
                 .containsExactlyInAnyOrder(
                         Entitlement.HYBRID,

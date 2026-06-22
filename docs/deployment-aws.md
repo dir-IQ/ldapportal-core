@@ -6,9 +6,8 @@ Fly demo deployment, with RDS Postgres backing the audit log and
 configuration store, an internet-facing ALB terminating TLS, and
 Secrets Manager holding the application secrets.
 
-The accompanying Terraform module lives at
-[`terraform/aws/`](../terraform/aws/) and is the recommended
-provisioning path. The runbook below explains both:
+The accompanying Terraform module lives at `terraform/aws/` and is
+the recommended provisioning path. The runbook below explains both:
 
 - **Path A — Terraform module.** One `terraform apply` from a
   ~30-line root config. The right choice when the customer's
@@ -209,7 +208,7 @@ The order is the same:
 
 1. VPC / subnets / NAT / ACM cert — customer's responsibility,
    independent of LDAP Portal.
-2. Three security groups (alb, app, db) — see [`terraform/aws/network.tf`](../terraform/aws/network.tf)
+2. Three security groups (alb, app, db) — see `terraform/aws/network.tf`
    for the exact ingress / egress rules.
 3. Four Secrets Manager entries — `ENCRYPTION_KEY`,
    `JWT_SECRET`, `BOOTSTRAP_SUPERADMIN_PASSWORD`, the DB password.
@@ -222,7 +221,7 @@ The order is the same:
    retention ≥ 7 days.
 5. CloudWatch log group `/aws/ecs/ldapportal`.
 6. ECS cluster, task definition, service — see
-   [`terraform/aws/ecs.tf`](../terraform/aws/ecs.tf) for the
+   `terraform/aws/ecs.tf` for the
    container definition's env vars, secrets, and port mapping.
 7. ALB with HTTPS listener using the ACM cert; target group with
    `/actuator/health` health check; HTTP → HTTPS redirect.
@@ -427,5 +426,4 @@ limits can bite. Set up the ECR pull-through cache (see
   follows the same secret + Postgres + container shape; many of
   the gotchas (CRLF in base64 secrets, bootstrap password
   one-shot semantics) apply identically.
-- [`terraform/aws/README.md`](../terraform/aws/README.md) —
-  the Terraform module's own README.
+- `terraform/aws/README.md` — the Terraform module's own README.

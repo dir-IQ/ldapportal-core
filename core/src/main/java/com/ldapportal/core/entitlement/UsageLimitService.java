@@ -19,8 +19,7 @@ package com.ldapportal.core.entitlement;
  * or exceeds the license limit (e.g. a customer downgraded after
  * creating N+1 directories), existing rows stay functional but new
  * creates are rejected. There's no rollback of over-limit state;
- * that's a deliberate product decision documented in
- * {@code docs/edition-boundary.md}.</p>
+ * that's a deliberate product decision.</p>
  */
 public interface UsageLimitService {
 

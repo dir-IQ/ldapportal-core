@@ -266,8 +266,6 @@ or `commercial/`.
 
 ## See also
 
-- Design spec: [`docs/superpowers/specs/2026-05-20-isva-full-mode-integration-design.md`](superpowers/specs/2026-05-20-isva-full-mode-integration-design.md)
-- Implementation plan: [`docs/superpowers/plans/2026-05-20-isva-full-mode-integration.md`](superpowers/plans/2026-05-20-isva-full-mode-integration.md)
 - Deployment runbook: [`docs/deployment-fly.md`](deployment-fly.md) — the
   `ldapportal-ci` Fly demo runs `community-plus-isva` for prospects who
   want to evaluate ISVA without any commercial entitlement.
