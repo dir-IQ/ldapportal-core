@@ -42,7 +42,7 @@
     "@vue/test-utils": "^2.4.11",
     "eslint": "^10.5.0",
     "eslint-plugin-vuejs-accessibility": "^2.5.0",
-    "happy-dom": "^20.10.3",
+    "happy-dom": "^20.10.6",
     "openapi-typescript": "^7.13.0",
     "tailwindcss": "^4.2.1",
     "typescript": "^5.9.3",
