@@ -42,7 +42,7 @@ Highest impact per line; no behavior change. **Effort: ~half a day.**
 | Finding | WCAG | Files | Fix |
 |---|---|---|---|
 | Empty page language | 3.1.1 (A) | `index.html:2` | `<html lang="en">` |
-| No skip-to-content link | 2.4.1 (A) | `components/AppLayout.vue`, `layouts/SelfServiceLayout.vue`, `ee/views/auditor/AuditorLayout.vue` | add a visually-hidden "Skip to main content" link as first focusable child, target `<main id="main">` |
+| No skip-to-content link | 2.4.1 (A) | `components/AppLayout.vue`, `layouts/SelfServiceLayout.vue` | add a visually-hidden "Skip to main content" link as first focusable child, target `<main id="main">` |
 | Toasts not announced | 4.1.3 (AA) | `components/NotificationToast.vue:3` | wrap container in `role="region" aria-label="Notifications"`; per-toast `role` = `alert` (error) / `status` (others); container `aria-live` matching |
 | Skew + license banners silent | 4.1.3 (AA) | `AppLayout.vue:258`, `LicenseExpirationBanner.vue` | `role="status"` (error banner → `role="alert"`) |
 
@@ -56,8 +56,8 @@ Highest impact per line; no behavior change. **Effort: ~half a day.**
 triggering a toast is announced by VoiceOver/NVDA; `lang` present.
 
 **Status: Done (2026-05-25).** `index.html` `lang="en"`; skip-to-content
-links + `id="main-content"` in `AppLayout`, `SelfServiceLayout`,
-`AuditorLayout`; `NotificationToast` is a labeled region with per-toast
+links + `id="main-content"` in `AppLayout`, `SelfServiceLayout`;
+`NotificationToast` is a labeled region with per-toast
 `role` (`alert` for errors, `status` otherwise); skew + license banners
 carry `role`. Build + 330 unit tests green.
 
@@ -92,19 +92,13 @@ Phase 3 retires it from the bespoke modals.
 
 ## Phase 3 — Bespoke modals (not using AppModal)
 
-13 hand-rolled `fixed inset-0` overlays need the same treatment as Phase 2,
+The hand-rolled `fixed inset-0` overlays need the same treatment as Phase 2,
 or migration to `AppModal`. Prefer migration where the markup is simple.
 **Effort: ~1.5 days.**
 
 Files: `UserPreferencesDialog.vue`, `KeyboardShortcutsHelp.vue`,
 `CommandPalette.vue`, `DnPicker.vue`, `DirectorySearchView.vue`,
-`DirectoryBrowserView.vue`, `ee/views/drift/AccessDriftView.vue`,
-`ee/views/sodPolicies/SodViolationsView.vue`,
-`ee/views/superadmin/AlertDashboardView.vue`,
-`ee/components/identity/MappingDrawer.vue`,
-`ee/components/identity/IdentityMappingHelpDialog.vue`,
-`ee/views/auditor/AuditorLayout.vue` (mobile nav + verify drawer),
-`ee/views/auditor/components/AuditorNotesDrawer.vue`.
+`DirectoryBrowserView.vue`.
 
 Each gets: `role="dialog"` + `aria-modal="true"` + `aria-labelledby`, focus
 trap/restore, Esc-to-close, labeled close button. Drawers use the same
@@ -119,11 +113,8 @@ owns focus trap + restore + initial focus. Every bespoke overlay now carries
 directive, a template `@keydown.escape` to its own close expression, and a
 labeled close button: `UserPreferencesDialog`, `KeyboardShortcutsHelp`,
 `CommandPalette`, `DnPicker`, the `AppLayout` no-profiles modal,
-`DirectorySearchView`, `DirectoryBrowserView` (delete/move/rename),
-`AccessDriftView` (exempt/rules), `SodViolationsView` (exempt/user-detail),
-`AlertDashboardView`, `AuditorNotesDrawer`, `AuditorLayout` (mobile nav +
-verify drawer); `IdentityMappingHelpDialog` and `MappingDrawer` already had
-the ARIA and gained the trap. Reusable `AppModal`/`ConfirmDialog` keep the
+`DirectorySearchView`, `DirectoryBrowserView` (delete/move/rename). Reusable
+`AppModal`/`ConfirmDialog` keep the
 Phase-2 composable. Typecheck + build + 330 unit tests green. Note: the axe
 gate scans page-load state and doesn't open modals, so `aria-dialog-name`
 stays in `ACCEPTED_RULES`; dialog focus/announcement is verified in the
@@ -148,8 +139,7 @@ Batch by directory so each PR is reviewable:
 2. `views/superadmin/` (directories, discovery, ISVA, admin users, search)
 3. `views/settings/`, `views/selfservice/`, `views/bulk/`, `views/playbooks/`,
    `views/reports/`, `views/approvals/`, `views/SetupWizardView.vue`
-4. `ee/views/**` + `ee/components/**`
-5. shared form components (`CreateEntryForm.vue`, `LdapFilterBuilder.vue`,
+4. shared form components (`CreateEntryForm.vue`, `LdapFilterBuilder.vue`,
    `LdifImportModal.vue`, `UserPreferencesDialog.vue`)
 
 **Key leverage (confirmed 2026-05-25):** the shared `components/FormField.vue`
@@ -182,7 +172,7 @@ rows, and `aria-label` on the object-class picker, RDN select, and the
 compliance-table row checkboxes. Checkboxes throughout were already
 wrapping-label associated.
 
-Remaining: Batches 2–5. The axe `label` / `select-name` /
+Remaining: Batches 2–4. The axe `label` / `select-name` /
 `aria-input-field-name` rules stay in `ACCEPTED_RULES` until *all* raw
 controls are labelled app-wide.
 
@@ -193,7 +183,7 @@ controls across `AuditSourcesView`, `DirectoriesManageView`,
 `EntraBrowserView` — `for`/`id` on singleton selects/inputs, `aria-label` on
 search boxes and repeating table/row controls (per-profile role selects,
 feature-override selects, discovery attribute rows). `IsvaConfigView` was
-already clean. Remaining: Batches 3–5.
+already clean. Remaining: Batches 3–4.
 
 **Partial — Batch 3 (2026-05-25):** labelled the remaining raw controls in
 `SetupWizardView`, `BulkView`, `PlaybooksView`, `ReportJobsView`,
@@ -203,18 +193,10 @@ already clean. Remaining: Batches 3–5.
 (`SettingsSidebar`, `AuthenticationSection`, `BrandingSection`, `SiemSection`).
 `for`/`id` on singleton + `v-for`-keyed fields; `aria-label` on search/file
 inputs, colour pickers and repeating step/column rows. Remaining: Batch 4
-(`ee/**`) and Batch 5 (validation-error association).
+(shared form components) and validation-error association.
 
-**Partial — Batch 4 / `ee/**` (2026-05-25):** labelled the raw controls across
-the auditor views (`AuditorApprovals`, `AuditorAuditEvents`, `AuditorLinksView`,
-`AuditorSod`, `AuditorNotesDrawer`, `CrossCampaignReportView`), drift/SoD/HR
-(`AccessDriftView`, `SodPoliciesView`, `SodViolationsView`, `HrConnectionView`)
-and reports/superadmin (`AuditReportsView`, `AccessReviewsView`,
-`AlertDashboardView`, `AlertRulesView`). `for`/`id` on labelled + `v-for`-keyed
-fields; `aria-label` on filter/search controls and repeating rule-param rows.
-Pre-existing `v-dialog-a11y` modal attributes left untouched.
-
-**Label association is now complete across the app (Batches 1–4).**
+**Label association is complete across the views (Batches 1–3); the shared
+form components (Batch 4) and validation-error association remain.**
 
 **Ratchet tightened (2026-05-25):** `label`, `select-name` and
 `aria-input-field-name` removed from `ACCEPTED_RULES` — the axe gate now
@@ -226,7 +208,7 @@ locally (no Docker), so this ratchet change is the live verification of their
 label coverage — the CI axe job (which boots the backend) will now fail if any
 control on a scanned superadmin route is unlabelled.
 
-Next: Batch 5 — associate validation errors with their field via
+Next: associate validation errors with their field via
 `aria-describedby` + `aria-invalid` (3.3.1).
 
 Also in this phase: associate validation errors with their field via
