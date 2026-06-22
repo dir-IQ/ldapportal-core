@@ -270,7 +270,7 @@ package-backend:
 > from `distribution/community-plus-isva/target/`. The `package` stage must run
 > before `publish` (the `needs:` above enforces it). Keep the `test`-stage
 > guardrails (`scripts/check-addons-license-headers.sh`, the community-bundle
-> ee-leak scans) — they assert the artifact stays Apache-clean.
+> boundary scans) — they assert the artifact stays Apache-clean.
 
 ### 5.4 Cut a release
 

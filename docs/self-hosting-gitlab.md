@@ -10,23 +10,21 @@
 
 > The repo is **Apache-2.0** (`LICENSE`) — `core` *and* `addons/isva`. You may
 > fork, modify, build, and run the **community** and **community-plus-isva**
-> editions internally with no license key and no call-home. The commercial
-> `ee` module is not part of this repository.
+> editions internally with no license key and no call-home.
 
 ## 1. Licensing & editions — what they can build
 
 - `distribution/community` — `core` only (Apache-2.0).
 - `distribution/community-plus-isva` — `core` + `addons/isva` (Apache-2.0).
-- `distribution/commercial` (the `ee` module) is **not in this repo**, so there
-  is nothing to license-gate. The entitlement / signed-license-JWT machinery
-  only governs `ee`; community/isva builds run without any license server.
+- Both editions build and run with **no license key, no call-home, and no
+  license server** to stand up — there is nothing to license-gate.
 - Two guardrails worth **keeping** (don't delete them when adapting CI):
   - `scripts/check-addons-license-headers.sh` — fails the build if a file under
     `addons/` loses its `// SPDX-License-Identifier: Apache-2.0` first line.
-  - the community-bundle ee-leak scans (`npm run scan:community-bundle` for the
-    frontend; the `verify-no-ee-bytecode` antrun check in
-    `distribution/community/pom.xml` for the JAR) — both assert no commercial
-    code leaks into a community artifact.
+  - the community-bundle boundary scans (`npm run scan:community-bundle` for the
+    frontend; the bytecode-boundary antrun check in
+    `distribution/community/pom.xml` for the JAR) — both assert the community
+    artifact stays within its Apache-2.0 module boundary.
 
 ## 2. Toolchain prerequisites (CI runners / build images)
 
@@ -66,7 +64,7 @@ The `.github/workflows/` files don't run on GitLab. Mapping:
 
 | GitHub workflow | What it does | GitLab equivalent |
 |---|---|---|
-| `ci.yml` | backend `mvn -T 1C test` (JDK 21) + SPDX check; frontend `typecheck` / `lint:a11y` / `test:unit` / `build` / `build:community` + ee-leak scan | Jobs in the **`test`** stage of `.gitlab-ci.yml` (provided). |
+| `ci.yml` | backend `mvn -T 1C test` (JDK 21) + SPDX check; frontend `typecheck` / `lint:a11y` / `test:unit` / `build` / `build:community` + community-bundle scan | Jobs in the **`test`** stage of `.gitlab-ci.yml` (provided). |
 | `ghcr-publish.yml` | on `v*` tags: build community + isva JARs and the frontend image; push to GHCR | **`package`** + **`publish`** stages → push to **GitLab Container Registry** (`$CI_REGISTRY_IMAGE`). |
 | `release.yml` | publish `core` to **Maven Central** (GPG-signed) | **Drop**, unless they want `core` in their **GitLab Maven Package Registry** (then repoint `distributionManagement` / the `-Prelease` profile in `core/pom.xml`). |
 | `trivy-scan.yml` | container vuln scan | Keep Trivy as a job, or use GitLab **Container Scanning**. |
