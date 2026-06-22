@@ -427,7 +427,5 @@ limits can bite. Set up the ECR pull-through cache (see
   follows the same secret + Postgres + container shape; many of
   the gotchas (CRLF in base64 secrets, bootstrap password
   one-shot semantics) apply identically.
-- [`edition-boundary.md`](edition-boundary.md) — what ships in
-  each container tag.
 - [`terraform/aws/README.md`](../terraform/aws/README.md) —
   the Terraform module's own README.

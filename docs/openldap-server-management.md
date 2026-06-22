@@ -20,8 +20,8 @@ sub-project = a handful of weeks).
 
 When something here gets picked up:
 
-1. Move it from this doc into [`docs/enterprise-roadmap.md`](enterprise-roadmap.md)
-   under the right edition + status column.
+1. Promote it from this doc into the roadmap/tracking doc under the
+   right edition + status column.
 2. Brainstorm into a design spec at
    `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`.
 3. Plan into `docs/superpowers/plans/YYYY-MM-DD-<topic>.md`.
@@ -248,8 +248,7 @@ These apply to several of the above:
 
 6. **Edition placement.** Most of these are "operator tooling"
    territory and would naturally fit in the **commercial** edition.
-   Confirm against [`docs/edition-boundary.md`](edition-boundary.md)
-   when each item gets picked up.
+   Confirm the edition boundary when each item gets picked up.
 
 7. **Entitlement gates.** Add a new entitlement (e.g.
    `OPENLDAP_OPS` or `SERVER_MANAGEMENT`) and gate at the service

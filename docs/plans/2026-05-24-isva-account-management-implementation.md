@@ -525,12 +525,8 @@ directory, and an admin can set / clear it on an IVIA account.
       the FORCE_OFF-grant-refusal rule + the cert-mapping section
       (attribute-only, WebSEAL owns the mapping) + the ProblemDetail
       `code` vocabulary (it's part of the public API surface).
-- [ ] `docs/edition-boundary.md`: note the account ops live in the
-      addon (core stays IVIA-agnostic), directory-scoped admin authz.
-- [ ] `docs/enterprise-roadmap.md`: status row + section per the
-      CLAUDE.md status-tracking convention.
 
-**Exit:** docs reflect the feature; boundary + roadmap current.
+**Exit:** docs reflect the feature.
 
 ---
 
