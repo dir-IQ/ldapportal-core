@@ -76,7 +76,8 @@ class ScheduledReportJobSchedulerTest {
 
         schedulerAt("2026-06-20T09:00:00Z").pollReportJobs();
 
-        verify(jobService).runJob(due);
-        verify(jobService, org.mockito.Mockito.never()).runJob(notDue);
+        verify(jobService).runJob(due, ReportRunTrigger.SCHEDULED);
+        verify(jobService, org.mockito.Mockito.never())
+                .runJob(org.mockito.ArgumentMatchers.eq(notDue), org.mockito.ArgumentMatchers.any());
     }
 }

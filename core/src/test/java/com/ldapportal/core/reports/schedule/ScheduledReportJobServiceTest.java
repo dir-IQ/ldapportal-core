@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -144,15 +145,62 @@ class ScheduledReportJobServiceTest {
                 .thenReturn(new ReportData(List.of("c"), List.of()));
         when(renderer.supports(ReportOutputFormat.CSV)).thenReturn(true);
         when(renderer.render(any(), any())).thenReturn(new RenderedReport(new byte[]{1, 2, 3}, "text/csv", "r.csv"));
+        when(emailService.sendWithAttachment(any(), any(), any(), any(), any(), any()))
+                .thenReturn(EmailService.SendResult.SENT);
         when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
 
-        service.runJob(j);
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
 
         verify(emailService).sendWithAttachment(eq("a@b.com"), anyString(), anyString(),
                 eq("r.csv"), eq("text/csv"), any());
         assertThat(j.getLastRunStatus()).isEqualTo(ReportJobRunStatus.SUCCESS);
-        assertThat(j.getRunHistory()).singleElement()
-                .satisfies(h -> assertThat(h.status()).isEqualTo(ReportJobRunStatus.SUCCESS));
+        assertThat(j.getRunHistory()).singleElement().satisfies(h -> {
+            assertThat(h.status()).isEqualTo(ReportJobRunStatus.SUCCESS);
+            assertThat(h.trigger()).isEqualTo(ReportRunTrigger.SCHEDULED);
+            assertThat(h.startedAt()).isNotNull();
+            assertThat(h.runAt()).isNotNull();
+        });
+    }
+
+    @Test
+    void runJob_emailSkipped_whenSmtpNotConfigured_recordsSkipped() {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        DirectoryConnection dc = mock(DirectoryConnection.class);
+        when(dc.getDisplayName()).thenReturn("Corp LDAP");
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        when(contentProvider.appliesTo(dc, "DISABLED_ACCOUNTS")).thenReturn(true);
+        when(contentProvider.run(any(), any(), any(), any())).thenReturn(new ReportData(List.of("c"), List.of()));
+        when(renderer.supports(ReportOutputFormat.CSV)).thenReturn(true);
+        when(renderer.render(any(), any())).thenReturn(new RenderedReport(new byte[]{1, 2, 3}, "text/csv", "r.csv"));
+        when(emailService.sendWithAttachment(any(), any(), any(), any(), any(), any()))
+                .thenReturn(EmailService.SendResult.SKIPPED);
+        when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
+
+        service.runJob(j, ReportRunTrigger.MANUAL);
+
+        // Report generated, but nothing delivered → SKIPPED, never SUCCESS.
+        assertThat(j.getLastRunStatus()).isEqualTo(ReportJobRunStatus.SKIPPED);
+        assertThat(j.getLastRunMessage()).contains("SMTP is not configured");
+    }
+
+    @Test
+    void runJob_emailDeliveryRejected_recordsFailed() {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        DirectoryConnection dc = mock(DirectoryConnection.class);
+        when(dc.getDisplayName()).thenReturn("Corp LDAP");
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        when(contentProvider.appliesTo(dc, "DISABLED_ACCOUNTS")).thenReturn(true);
+        when(contentProvider.run(any(), any(), any(), any())).thenReturn(new ReportData(List.of("c"), List.of()));
+        when(renderer.supports(ReportOutputFormat.CSV)).thenReturn(true);
+        when(renderer.render(any(), any())).thenReturn(new RenderedReport(new byte[]{1, 2, 3}, "text/csv", "r.csv"));
+        when(emailService.sendWithAttachment(any(), any(), any(), any(), any(), any()))
+                .thenReturn(EmailService.SendResult.FAILED);
+        when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
+
+        assertThat(j.getLastRunStatus()).isEqualTo(ReportJobRunStatus.FAILED);
+        assertThat(j.getLastRunMessage()).contains("delivery failed for").contains("a@b.com");
     }
 
     @Test
@@ -167,7 +215,7 @@ class ScheduledReportJobServiceTest {
         when(renderer.render(any(), any())).thenReturn(new RenderedReport(new byte[]{9}, "text/csv", "r.csv"));
         when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
 
-        service.runJob(j);
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
 
         verify(s3).upload(eq("reports/r.csv"), any(), eq("text/csv"));
         assertThat(j.getLastRunStatus()).isEqualTo(ReportJobRunStatus.SUCCESS);
@@ -179,7 +227,7 @@ class ScheduledReportJobServiceTest {
         when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
         when(entitlements.exposes(ReportOutputFormat.PDF)).thenReturn(false);
 
-        service.runJob(j);
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
 
         assertThat(j.getLastRunStatus()).isEqualTo(ReportJobRunStatus.FAILED);
         assertThat(j.getLastRunMessage()).contains("PDF output requires");
@@ -192,7 +240,7 @@ class ScheduledReportJobServiceTest {
         j.setReportType("GONE");
         when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
 
-        service.runJob(j);
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
 
         assertThat(j.getLastRunStatus()).isEqualTo(ReportJobRunStatus.FAILED);
         assertThat(j.getLastRunMessage()).contains("Unknown report type");
@@ -207,7 +255,7 @@ class ScheduledReportJobServiceTest {
         when(contentProvider.run(any(), any(), any(), any())).thenThrow(new RuntimeException("ldap down"));
         when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
 
-        service.runJob(j); // must not throw
+        service.runJob(j, ReportRunTrigger.SCHEDULED); // must not throw
 
         assertThat(j.getLastRunStatus()).isEqualTo(ReportJobRunStatus.FAILED);
         assertThat(j.getLastRunMessage()).contains("ldap down");
@@ -218,7 +266,8 @@ class ScheduledReportJobServiceTest {
         ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
         when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
         for (int i = 0; i < ScheduledReportJobService.MAX_RUN_HISTORY + 3; i++) {
-            service.recordResult(j.getId(), ReportJobRunStatus.SUCCESS, "run " + i);
+            service.recordResult(j.getId(), OffsetDateTime.now(clock), ReportJobRunStatus.SUCCESS, "run " + i,
+                    ReportRunTrigger.SCHEDULED);
         }
         assertThat(j.getRunHistory()).hasSize(ScheduledReportJobService.MAX_RUN_HISTORY);
         assertThat(j.getRunHistory().get(j.getRunHistory().size() - 1).message()).isEqualTo("run 12");

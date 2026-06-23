@@ -28,8 +28,8 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>An in-memory {@code inProgress} set prevents a long run from overlapping
  * with the next poll. Execution + result recording live in
- * {@link ScheduledReportJobService#runJob(ScheduledReportJob)}, which never
- * throws, so one bad job can't break the loop.</p>
+ * {@link ScheduledReportJobService#runJob(ScheduledReportJob, ReportRunTrigger)},
+ * which never throws, so one bad job can't break the loop.</p>
  */
 @Component
 @Slf4j
@@ -48,7 +48,7 @@ public class ScheduledReportJobScheduler {
         for (ScheduledReportJob job : jobRepo.findAllByEnabledTrue()) {
             try {
                 if (isDue(job)) {
-                    run(job);
+                    run(job, ReportRunTrigger.SCHEDULED);
                 }
             } catch (RuntimeException e) {
                 log.error("Report poll loop error for job {} ({}): {}",
@@ -60,22 +60,23 @@ public class ScheduledReportJobScheduler {
     /**
      * Fire-and-forget run-now for the controller: runs the job off the request
      * thread (report execution + delivery can be slow) through the same
-     * {@link #run(ScheduledReportJob)} path, so the {@code inProgress} guard still
-     * de-duplicates against a concurrent poll.
+     * {@link #run(ScheduledReportJob, ReportRunTrigger)} path, so the
+     * {@code inProgress} guard still de-duplicates against a concurrent poll.
+     * Recorded as a {@link ReportRunTrigger#MANUAL} run.
      */
     @Async
     public void runNowAsync(ScheduledReportJob job) {
-        run(job);
+        run(job, ReportRunTrigger.MANUAL);
     }
 
     /** Runs the job now if not already in flight (used by the poll loop and run-now). */
-    public void run(ScheduledReportJob job) {
+    public void run(ScheduledReportJob job, ReportRunTrigger trigger) {
         if (!inProgress.add(job.getId())) {
             log.warn("Report job '{}' ({}) is already running — skipping", job.getName(), job.getId());
             return;
         }
         try {
-            jobService.runJob(job);
+            jobService.runJob(job, trigger);
         } finally {
             inProgress.remove(job.getId());
         }

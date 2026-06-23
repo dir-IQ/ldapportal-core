@@ -48,19 +48,43 @@ public class EmailService {
         }
     }
 
-    /** Sends an email with one MIME attachment. Logged-and-skipped when SMTP is not configured. */
-    public void sendWithAttachment(String to, String subject, String body,
-                                   String attachmentName, String attachmentContentType, byte[] attachmentData) {
+    /**
+     * Outcome of an attempted attachment send, so callers that care about
+     * delivery (the scheduled-report run log) can record the truth instead of
+     * assuming success. Fire-and-forget callers can ignore the return.
+     */
+    public enum SendResult {
+        /** Accepted by the SMTP server (a 2xx reply to RCPT TO and to the message). */
+        SENT,
+        /** The send was attempted but rejected or errored. */
+        FAILED,
+        /** Not attempted because SMTP is not configured. */
+        SKIPPED
+    }
+
+    /**
+     * Sends an email with one MIME attachment and reports the outcome. When SMTP
+     * is not configured the send is skipped (and {@link SendResult#SKIPPED}
+     * returned) rather than silently succeeding; a transport error or a non-2xx
+     * SMTP reply yields {@link SendResult#FAILED}.
+     */
+    public SendResult sendWithAttachment(String to, String subject, String body,
+                                         String attachmentName, String attachmentContentType, byte[] attachmentData) {
         ApplicationSettings settings = appSettingsService.getEntity();
         if (!smtpConfigured(settings)) {
             log.info("SMTP not configured — attachment email logged: to={}, subject={}", to, subject);
-            return;
+            return SendResult.SKIPPED;
         }
         try {
-            sendSmtpEmailWithAttachment(settings, to, subject, body,
+            boolean accepted = sendSmtpEmailWithAttachment(settings, to, subject, body,
                     attachmentName, attachmentContentType, attachmentData);
+            if (!accepted) {
+                log.error("SMTP rejected attachment email to {}", to);
+            }
+            return accepted ? SendResult.SENT : SendResult.FAILED;
         } catch (Exception ex) {
             log.error("Failed to send email with attachment to {}: {}", to, ex.getMessage());
+            return SendResult.FAILED;
         }
     }
 
@@ -106,9 +130,15 @@ public class EmailService {
         }
     }
 
-    private void sendSmtpEmailWithAttachment(ApplicationSettings settings, String to, String subject,
-                                             String body, String attachmentName, String attachmentContentType,
-                                             byte[] attachmentData) throws Exception {
+    /**
+     * Runs the SMTP attachment conversation and returns whether the server
+     * accepted the message — a 2xx reply to {@code RCPT TO} (recipient accepted)
+     * and to the message body terminator (message accepted). Transport-level
+     * failures throw.
+     */
+    private boolean sendSmtpEmailWithAttachment(ApplicationSettings settings, String to, String subject,
+                                                String body, String attachmentName, String attachmentContentType,
+                                                byte[] attachmentData) throws Exception {
         String host = settings.getSmtpHost();
         int port = settings.getSmtpPort() != null ? settings.getSmtpPort() : DEFAULT_SMTP_PORT;
         String from = settings.getSmtpSenderAddress();
@@ -129,7 +159,7 @@ public class EmailService {
             out.println("MAIL FROM:<" + from + ">");
             readLine(in);
             out.println("RCPT TO:<" + to + ">");
-            readLine(in);
+            String rcptReply = readLine(in);
             out.println("DATA");
             readLine(in);
 
@@ -155,11 +185,19 @@ public class EmailService {
             out.println();
             out.println("--" + boundary + "--");
             out.println(".");
-            readLine(in);
+            String finalReply = readLine(in);
             out.println("QUIT");
+            // Accepted only when the recipient and the message body were both
+            // answered with a 2xx reply; anything else is a rejection.
+            return is2xx(rcptReply) && is2xx(finalReply);
         } finally {
             socket.close();
         }
+    }
+
+    /** True when an SMTP reply line begins with a 2xx status code (success). */
+    private static boolean is2xx(String reply) {
+        return reply != null && !reply.isBlank() && reply.charAt(0) == '2';
     }
 
     private void authenticate(ApplicationSettings settings, BufferedReader in, PrintWriter out) throws Exception {
