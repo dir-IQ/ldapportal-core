@@ -3461,7 +3461,7 @@ export interface components {
             /** Format: date-time */
             lastRunAt?: string;
             /** @enum {string} */
-            lastRunStatus?: "SUCCESS" | "FAILED";
+            lastRunStatus?: "SUCCESS" | "FAILED" | "SKIPPED";
             lastRunMessage?: string;
             runHistory?: components["schemas"]["ReportRunHistoryEntry"][];
             /** Format: uuid */
@@ -3473,10 +3473,14 @@ export interface components {
         };
         ReportRunHistoryEntry: {
             /** Format: date-time */
+            startedAt?: string;
+            /** Format: date-time */
             runAt?: string;
             /** @enum {string} */
-            status?: "SUCCESS" | "FAILED";
+            status?: "SUCCESS" | "FAILED" | "SKIPPED";
             message?: string;
+            /** @enum {string} */
+            trigger?: "SCHEDULED" | "MANUAL";
         };
         AttributeConfigEntry: {
             attributeName: string;

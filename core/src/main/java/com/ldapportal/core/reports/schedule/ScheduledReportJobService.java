@@ -299,6 +299,13 @@ public class ScheduledReportJobService {
                 + dc.getDisplayName() + "', generated " + now() + ".";
         List<String> recipients = splitRecipients(job.getDeliveryRecipients());
         int total = recipients.size();
+        // No usable recipient address (e.g. a blank/comma-only field that slipped
+        // past validation): the report was generated but there was nowhere to send
+        // it, so it is not a successful delivery.
+        if (total == 0) {
+            return new DeliveryOutcome(ReportJobRunStatus.SKIPPED,
+                    "Report generated (" + bytes + " bytes) but not delivered — no recipient address configured");
+        }
         int sent = 0;
         int skipped = 0;
         List<String> failed = new ArrayList<>();
@@ -312,7 +319,7 @@ public class ScheduledReportJobService {
             }
         }
         // SKIPPED is global (SMTP not configured), so it applies to all recipients.
-        if (skipped == total && total > 0) {
+        if (skipped == total) {
             return new DeliveryOutcome(ReportJobRunStatus.SKIPPED,
                     "Report generated (" + bytes + " bytes) but not delivered — SMTP is not configured");
         }

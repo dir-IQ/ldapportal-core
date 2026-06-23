@@ -235,6 +235,27 @@ class ScheduledReportJobServiceTest {
     }
 
     @Test
+    void runJob_emailWithNoUsableRecipient_recordsSkipped_doesNotSend() {
+        ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
+        j.setDeliveryRecipients(" , "); // blank/comma-only — splits to zero addresses
+        DirectoryConnection dc = mock(DirectoryConnection.class);
+        when(dc.getDisplayName()).thenReturn("Corp LDAP");
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        when(contentProvider.appliesTo(dc, "DISABLED_ACCOUNTS")).thenReturn(true);
+        when(contentProvider.run(any(), any(), any(), any())).thenReturn(new ReportData(List.of("c"), List.of()));
+        when(renderer.supports(ReportOutputFormat.CSV)).thenReturn(true);
+        when(renderer.render(any(), any())).thenReturn(new RenderedReport(new byte[]{1, 2, 3}, "text/csv", "r.csv"));
+        when(jobRepo.findById(j.getId())).thenReturn(Optional.of(j));
+
+        service.runJob(j, ReportRunTrigger.SCHEDULED);
+
+        // Generated but undeliverable → SKIPPED, never SUCCESS, and no send attempted.
+        assertThat(j.getLastRunStatus()).isEqualTo(ReportJobRunStatus.SKIPPED);
+        assertThat(j.getLastRunMessage()).contains("no recipient address");
+        verify(emailService, never()).sendWithAttachment(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
     void runJob_unknownType_recordsFailed() {
         ScheduledReportJob j = job(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL);
         j.setReportType("GONE");
