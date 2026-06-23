@@ -1,52 +1,67 @@
-# Starter GitLab CI/CD pipeline for an internal fork of LDAPPortal.
+# GitLab CI/CD pipeline for a self-hosted (forked) LDAPPortal.
 #
-# Mirrors the upstream GitHub Actions (.github/workflows/ci.yml +
-# ghcr-publish.yml). Adapt the commented hooks for your environment:
-#   - Maven mirror:  mount a ~/.m2/settings.xml (Nexus/Artifactory) or set
-#                    MAVEN_MIRROR; the test/package jobs use preinstalled `mvn`
-#                    (no wrapper bootstrap download).
-#   - npm registry:  commit a frontend/.npmrc with `registry=...`.
-#   - base images:   repoint the `image:`/`services:` refs below at your mirror.
-#   - runner:        the `publish` stage needs Docker-in-Docker (privileged) or
-#                    Kaniko if privileged runners aren't allowed.
+# Parity port of the upstream GitHub Actions (.github/workflows/*) for teams who
+# build on GitLab. Coverage:
+#   test     — backend `mvn test` + addons SPDX guard; 5 frontend jobs   (ci.yml)
+#   security — gitleaks secret scan; Trivy backend-image scan   (.gitleaks.toml, trivy-scan.yml)
+#   package  — runnable JAR per edition, tag-gated                       (ghcr-publish.yml)
+#   publish  — images -> GitLab Container Registry, tag-gated            (ghcr-publish.yml)
+#              core + addons -> GitLab Maven Package Registry, manual    (publish-internal.yml)
 #
-# See docs/self-hosting-gitlab.md for the full guide.
+# Intentionally NOT ported (see docs/self-hosting-gitlab.md §4 / §13):
+#   - Maven Central publishing (release.yml) — dropped, no GPG/Central secrets.
+#   - Dependabot + automerge (.github/) — replaced by renovate.json.
+#
+# Adapt for your environment (see docs/self-hosting-gitlab.md §3):
+#   - Maven mirror:  mount ~/.m2/settings.xml (Nexus/Artifactory) or set MAVEN_MIRROR.
+#   - npm registry:  commit frontend/.npmrc with `registry=...`.
+#   - base images:   repoint the image:/services: refs below at your mirror.
+#   - runner:        the security + publish image jobs need Docker-in-Docker
+#                    (privileged) or Kaniko if privileged runners aren't allowed.
 
 stages:
   - test
+  - security
   - package
   - publish
 
 variables:
-  # Keep the Maven local repo inside the project dir so it can be cached.
+  # Keep the Maven local repo inside the project dir — GitLab caches only paths
+  # under $CI_PROJECT_DIR, never $HOME. (The maven-build-cache-extension is
+  # present but disabled via .mvn/maven.config, matching upstream CI; so the
+  # dependency repo below is the only Maven cache worth persisting. To opt into
+  # the build cache, see docs/self-hosting-gitlab.md §4.4.)
   MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
   MAVEN_CLI_OPTS: "--batch-mode --no-transfer-progress"
-  # Cache npm's content-addressable store (npm ci wipes node_modules, so cache
-  # the download cache instead).
+  # npm ci wipes node_modules, so cache npm's content-addressable store instead.
   npm_config_cache: "$CI_PROJECT_DIR/.npm"
 
-# ── test stage ───────────────────────────────────────────────────────────────
+# One pipeline per change: MR pipelines for branches with an open MR, branch
+# pipelines for the default branch, and tag pipelines for releases. The trailing
+# `never` suppresses the duplicate branch pipeline that would otherwise run
+# alongside an MR pipeline.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
 
-backend-test:
-  stage: test
+# Most jobs may be auto-cancelled when a newer pipeline supersedes them on the
+# same ref (GitHub's `concurrency: cancel-in-progress`). Requires "Auto-cancel
+# redundant pipelines" enabled in project CI settings. Publish jobs opt out.
+default:
+  interruptible: true
+
+# ── reusable bits ─────────────────────────────────────────────────────────────
+
+.maven:
   image: maven:3.9-eclipse-temurin-21
   cache:
     key: maven-repo
     paths:
       - .m2/repository
-  script:
-    # Guardrail: every addons/ source file must keep its Apache-2.0 SPDX header.
-    - bash scripts/check-addons-license-headers.sh
-    # Backend tests use in-memory H2 (no Postgres needed). -T 1C parallelises
-    # across the reactor modules.
-    - mvn $MAVEN_CLI_OPTS -T 1C test
-  artifacts:
-    when: on_failure
-    paths:
-      - "**/target/surefire-reports/"
-    expire_in: 7 days
 
-# Shared setup for the frontend jobs.
 .frontend:
   image: node:20
   cache:
@@ -57,56 +72,192 @@ backend-test:
     - cd frontend
     - npm ci --prefer-offline --no-audit --no-fund
 
+.docker:
+  image: docker:27
+  services:
+    - docker:27-dind
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+
+# Change-detection rule sets (the GitLab-native replacement for ci.yml's
+# actions/github-script `pulls.listFiles` guard). The default branch ALWAYS runs
+# the full suite — it is the canonical green signal and is never narrowed. On an
+# MR, a job runs only if the MR touches its tree; docs-only / deploy-only MRs
+# skip it. `.gitlab-ci.yml` is in every set so a pipeline change re-runs all.
+.rules-backend:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        paths:
+          - "core/**/*"
+          - "ee/**/*"
+          - "addons/**/*"
+          - "distribution/**/*"
+          - "pom.xml"
+          - ".mvn/**/*"
+          - "mvnw"
+          - "mvnw.cmd"
+          - "scripts/check-addons-license-headers.sh"
+          - ".gitlab-ci.yml"
+
+.rules-frontend:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        paths:
+          - "frontend/**/*"
+          - ".gitlab-ci.yml"
+
+# Any non-docs code change — the broad guard the image scan uses, matching
+# trivy-scan.yml (Java, TS, build scripts, Dockerfiles all warrant a re-scan).
+.rules-code:
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        paths:
+          - "core/**/*"
+          - "ee/**/*"
+          - "addons/**/*"
+          - "distribution/**/*"
+          - "frontend/**/*"
+          - "pom.xml"
+          - ".mvn/**/*"
+          - "docker/**/*"
+          - "scripts/**/*"
+          - ".gitlab-ci.yml"
+
+# ── test stage ────────────────────────────────────────────────────────────────
+
+backend-test:
+  stage: test
+  extends: .maven
+  rules: !reference [.rules-backend, rules]
+  script:
+    # Guardrail: every addons/ source file must keep its Apache-2.0 SPDX header.
+    - bash scripts/check-addons-license-headers.sh
+    # In-memory H2 (no Postgres). -T 1C parallelises across the reactor modules.
+    - mvn $MAVEN_CLI_OPTS -T 1C test
+  artifacts:
+    when: on_failure
+    paths:
+      - "**/target/surefire-reports/"
+    expire_in: 7 days
+
 frontend-typecheck:
   stage: test
   extends: .frontend
+  rules: !reference [.rules-frontend, rules]
   script:
     - npm run typecheck
 
 frontend-a11y-lint:
   stage: test
   extends: .frontend
+  rules: !reference [.rules-frontend, rules]
   script:
     - npm run lint:a11y
 
 frontend-unit:
   stage: test
   extends: .frontend
+  rules: !reference [.rules-frontend, rules]
   script:
     - npm run test:unit
 
 frontend-build:
   stage: test
   extends: .frontend
+  rules: !reference [.rules-frontend, rules]
   script:
     - npm run build
 
 frontend-community-build:
   stage: test
   extends: .frontend
+  rules: !reference [.rules-frontend, rules]
   script:
     # Build the Apache-2.0 community bundle and assert no commercial chunk leaks.
     - npm run build:community
     - npm run scan:community-bundle
 
-# ── package stage (tags only) ────────────────────────────────────────────────
+# ── security stage ────────────────────────────────────────────────────────────
+# Mirrors trivy-scan.yml + the .gitleaks.toml secret scan. Both run on MRs and
+# the default branch; neither gates on tags (the artifact was scanned pre-merge).
+# Alternative: GitLab's built-in Secret-Detection / Container-Scanning templates
+# (`include: template: ...`) — see docs/self-hosting-gitlab.md §7.
+
+gitleaks:
+  stage: security
+  image:
+    name: zricethezav/gitleaks:latest
+    entrypoint: [""]
+  rules: !reference [.rules-code, rules]
+  script:
+    # Same invocation the repo documents (.gitleaks.toml header): --no-git scans
+    # the working tree; the config extends gitleaks' defaults + the repo allowlist.
+    - gitleaks detect --no-git --source . --config .gitleaks.toml --redact --exit-code 1 --report-format sarif --report-path gitleaks-report.sarif
+  artifacts:
+    when: always
+    paths:
+      - gitleaks-report.sarif
+    expire_in: 14 days
+
+# The backend Dockerfile COPYs a host-built JAR (not a multi-stage build), so the
+# scan needs the artifact first: build the community JAR, then the image, then
+# scan. HIGH/CRITICAL with or without an upstream fix fails the job (exit-code 1),
+# locking the "0 HIGH/CRITICAL" floor.
+trivy-build-jar:
+  stage: security
+  extends: .maven
+  rules: !reference [.rules-code, rules]
+  script:
+    - mvn $MAVEN_CLI_OPTS -DskipTests -pl distribution/community -am clean package
+  artifacts:
+    paths:
+      - "distribution/community/target/*.jar"
+    expire_in: 1 day
+
+trivy-scan:
+  stage: security
+  image: docker:27
+  services:
+    - docker:27-dind
+  needs:
+    - job: trivy-build-jar
+      artifacts: true
+  rules: !reference [.rules-code, rules]
+  before_script:
+    - apk add --no-cache curl
+    - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+  script:
+    - docker build -t ldapportal-app:scan -f docker/community/Dockerfile .
+    # Scan a saved tarball so Trivy needn't reach the dind daemon over TLS.
+    - docker save ldapportal-app:scan -o image.tar
+    - trivy image --input image.tar --severity HIGH,CRITICAL --ignore-unfixed=false --exit-code 1 --format table --output trivy-results.txt --timeout 15m
+    - tail -50 trivy-results.txt
+  artifacts:
+    when: always
+    paths:
+      - trivy-results.txt
+    expire_in: 14 days
+
+# ── package stage (tags only) ─────────────────────────────────────────────────
 # Build the runnable JAR per edition. The backend Dockerfiles COPY this artifact
 # out of distribution/<edition>/target/, so it must exist before the image build.
-
 package-backend:
   stage: package
-  image: maven:3.9-eclipse-temurin-21
-  cache:
-    key: maven-repo
-    paths:
-      - .m2/repository
+  extends: .maven
+  interruptible: false
   parallel:
     matrix:
       - EDITION: [community, community-plus-isva]
   script:
-    # -am builds the upstream modules: community -> core;
-    # community-plus-isva -> core + addons/isva. The distribution module's
-    # verify-no-ee-bytecode check keeps the JAR license-clean.
+    # -am builds the upstream modules: community -> core; community-plus-isva ->
+    # core + addons/isva. The distribution module's verify-no-ee-bytecode check
+    # keeps the JAR license-clean.
     - mvn $MAVEN_CLI_OPTS -DskipTests -pl distribution/$EDITION -am clean package
   artifacts:
     paths:
@@ -115,20 +266,15 @@ package-backend:
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
 
-# ── publish stage (tags only) ────────────────────────────────────────────────
+# ── publish stage (tags only) ─────────────────────────────────────────────────
 # Build + push images to the project's GitLab Container Registry. Requires a
-# Docker-in-Docker (privileged) runner; swap for Kaniko if unavailable.
-
-.docker:
-  image: docker:27
-  services:
-    - docker:27-dind
-  before_script:
-    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-
+# Docker-in-Docker (privileged) runner; swap for Kaniko if unavailable. Tag
+# scheme mirrors ghcr-publish.yml's docker/metadata-action: vX.Y.Z -> :X.Y.Z
+# (immutable), :X.Y (moving minor), and :latest.
 publish-backend:
   stage: publish
   extends: .docker
+  interruptible: false
   parallel:
     matrix:
       - EDITION: [community, community-plus-isva]
@@ -136,18 +282,20 @@ publish-backend:
     - job: package-backend
       artifacts: true
   script:
+    - IMAGE="$CI_REGISTRY_IMAGE/ldapportal-$EDITION"
+    - VERSION="${CI_COMMIT_TAG#v}"
+    - MINOR="${VERSION%.*}"
     # Build context is the repo root so the Dockerfile COPY can reach
     # distribution/<edition>/target/.
-    - IMAGE="$CI_REGISTRY_IMAGE/ldapportal-$EDITION"
-    - docker build -f "docker/$EDITION/Dockerfile" -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" .
-    - docker push "$IMAGE:$CI_COMMIT_TAG"
-    - docker push "$IMAGE:latest"
+    - docker build -f "docker/$EDITION/Dockerfile" -t "$IMAGE:$VERSION" -t "$IMAGE:$MINOR" -t "$IMAGE:latest" .
+    - docker push --all-tags "$IMAGE"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
 
 publish-frontend:
   stage: publish
   extends: .docker
+  interruptible: false
   needs: []
   script:
     # Self-contained multi-stage npm build. frontend/Dockerfile is a portable
@@ -155,8 +303,54 @@ publish-frontend:
     # BACKEND_APP (see frontend/nginx.conf.template), so one image runs on
     # compose, Kubernetes and Fly.
     - IMAGE="$CI_REGISTRY_IMAGE/ldapportal-frontend"
-    - docker build -f frontend/Dockerfile -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" frontend
-    - docker push "$IMAGE:$CI_COMMIT_TAG"
-    - docker push "$IMAGE:latest"
+    - VERSION="${CI_COMMIT_TAG#v}"
+    - MINOR="${VERSION%.*}"
+    - docker build -f frontend/Dockerfile -t "$IMAGE:$VERSION" -t "$IMAGE:$MINOR" -t "$IMAGE:latest" frontend
+    - docker push --all-tags "$IMAGE"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
+
+# Publish core + the open-source addons to this project's GitLab Maven Package
+# Registry — the GitLab analogue of publish-internal.yml (GitHub Packages). Lets
+# a downstream (commercial/ee) build resolve a pre-release pin from a registry
+# instead of building core from source. Manual: set PUBLISH_VERSION when you run
+# the job (e.g. 0.1.5-rc1 or 0.1.5-SNAPSHOT); leave blank to publish the pom's
+# current version. Auth is the job token via a CI-generated settings.xml — no
+# secret to manage. See docs/self-hosting-gitlab.md §6.
+publish-maven:
+  stage: publish
+  extends: .maven
+  interruptible: false
+  variables:
+    PUBLISH_VERSION: ""
+  script:
+    # The `gitlab-maven` server id matches the `gitlab-publish` profile's
+    # distributionManagement repository id in pom.xml. The single-quoted heredoc
+    # keeps `${env.CI_JOB_TOKEN}` literal so Maven (not the shell) expands it.
+    - |
+      cat > ci_settings.xml <<'EOF'
+      <settings>
+        <servers>
+          <server>
+            <id>gitlab-maven</id>
+            <configuration>
+              <httpHeaders>
+                <property>
+                  <name>Job-Token</name>
+                  <value>${env.CI_JOB_TOKEN}</value>
+                </property>
+              </httpHeaders>
+            </configuration>
+          </server>
+        </servers>
+      </settings>
+      EOF
+    - if [ -n "$PUBLISH_VERSION" ]; then mvn $MAVEN_CLI_OPTS versions:set -DnewVersion="$PUBLISH_VERSION" -DgenerateBackupPoms=false; fi
+    - mvn $MAVEN_CLI_OPTS -s ci_settings.xml -Pgitlab-publish -DskipTests -pl core,addons/isva deploy
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
+      when: manual
+      allow_failure: true
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+      allow_failure: true
