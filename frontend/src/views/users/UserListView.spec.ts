@@ -42,6 +42,7 @@ vi.mock('@/api/playbooks', () => ({
 
 import UserListView from './UserListView.vue'
 import * as usersApi from '@/api/users'
+import { listProfiles } from '@/api/profiles'
 
 const stubs = {
   LdapFilterBuilder: true,
@@ -86,6 +87,12 @@ describe('UserListView feature gating', () => {
   beforeEach(() => vi.clearAllMocks())
 
   it('shows all actions when the admin has every feature', async () => {
+    // Move is now also gated on having ≥1 OTHER accessible profile to move
+    // into, so seed two profiles for this directory.
+    vi.mocked(listProfiles).mockResolvedValueOnce({ data: [
+      { id: 'p1', name: 'People', targetUserDn: 'ou=people,dc=x' },
+      { id: 'p2', name: 'Staff', targetUserDn: 'ou=staff,dc=x' },
+    ] } as never)
     const wrapper = await mountWith(ALL)
     const t = texts(wrapper)
     expect(t).toContain('+ New User')
@@ -95,6 +102,16 @@ describe('UserListView feature gating', () => {
     expect(t).toContain('Move')
     expect(t).toContain('Reset password')
     expect(t).toContain('Run playbook')
+  })
+
+  it('hides Move when the directory exposes no other provisioning profile', async () => {
+    // The default profiles mock returns [] — there is nowhere in the operator's
+    // scope to move a user, so Move is hidden even with the user.move feature.
+    // Other write actions are unaffected.
+    const wrapper = await mountWith(ALL)
+    const t = texts(wrapper)
+    expect(t).not.toContain('Move')
+    expect(t).toContain('Edit')
   })
 
   it('hides write actions for a read-only feature set', async () => {

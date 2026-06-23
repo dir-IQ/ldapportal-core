@@ -239,15 +239,48 @@ class LdapOperationServiceTest {
     }
 
     @Test
-    void moveUser_malformedNewParentDn_throwsAndSkipsWrite() {
-        String dn = "cn=Bob,ou=Users,dc=example,dc=com";
+    void moveUser_reparentsUnderDestinationProfile_andReconcilesGroups() {
+        String dn = "uid=bob,ou=eng,dc=example,dc=com";
+        UUID destId = UUID.randomUUID();
+        UUID srcId  = UUID.randomUUID();
+        AuthPrincipal admin = adminPrincipal();
         DirectoryConnection dc = enabledDir(true);
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
 
-        assertThatThrownBy(() -> service.moveUser(dirId, adminPrincipal(), dn,
-                new MoveUserRequest("not a dn")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Invalid DN");
+        ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
+        when(ps.get(dirId, destId)).thenReturn(profileResponse(destId, "ou=staff,dc=example,dc=com"));
+        ProvisioningProfile src = new ProvisioningProfile();
+        src.setId(srcId);
+        when(ps.resolveProfileForDn(dirId, dn)).thenReturn(Optional.of(src));
+
+        LdapOperationService svc = serviceWithProfile(ps);
+        svc.moveUser(dirId, admin, dn, new MoveUserRequest(destId));
+
+        // Reparented under the destination profile's target OU (RDN preserved).
+        verify(userService).moveUser(dc, dn, "ou=staff,dc=example,dc=com");
+        // Old-profile groups shed on the OLD dn; destination-profile groups
+        // applied on the NEW dn — both stamped source=profile_move.
+        verify(ps).removeUserFromProfileGroups(dirId, srcId, dn, admin, "profile_move");
+        verify(ps).applyGroupAssignmentsToUser(
+                dirId, destId, "uid=bob,ou=staff,dc=example,dc=com", admin, "profile_move");
+    }
+
+    @Test
+    void moveUser_deniesWhenNoDestinationProfileAccess_andSkipsWrite() {
+        String dn = "uid=bob,ou=eng,dc=example,dc=com";
+        UUID destId = UUID.randomUUID();
+        AuthPrincipal admin = adminPrincipal();
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
+        when(ps.get(dirId, destId)).thenReturn(profileResponse(destId, "ou=staff,dc=example,dc=com"));
+        doThrow(new AccessDeniedException("No access to profile"))
+                .when(permissionService).requireProfileAccess(admin, destId);
+
+        LdapOperationService svc = serviceWithProfile(ps);
+        assertThatThrownBy(() -> svc.moveUser(dirId, admin, dn, new MoveUserRequest(destId)))
+                .isInstanceOf(AccessDeniedException.class);
 
         verify(userService, never()).moveUser(any(), anyString(), anyString());
     }
@@ -811,5 +844,17 @@ class LdapOperationServiceTest {
         dc.setBaseDn("dc=example,dc=com");
         dc.setPagingSize(500);
         return dc;
+    }
+
+    /** Minimal ProfileResponse for move-destination stubbing (id + targetUserDn matter). */
+    private com.ldapportal.dto.profile.ProfileResponse profileResponse(UUID id, String targetUserDn) {
+        return new com.ldapportal.dto.profile.ProfileResponse(
+                id, dirId, "dir", "Staff", null,
+                targetUserDn, targetUserDn,
+                List.of(), "uid",
+                true, null, null, null, null, true, false,
+                16, true, true, true, true, "!@#$%^&*", false,
+                "OPERATOR_ENTERED", false, false,
+                List.of(), List.of(), List.of(), List.of(), null, null);
     }
 }

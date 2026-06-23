@@ -315,7 +315,8 @@ const summaryRows = computed<SummaryRow[]>(() => {
     }
     case 'USER_MOVE':
       if (p.dn) rows.push({ label: 'Move user', value: str(p.dn), dn: true })
-      if (p.newParentDn) rows.push({ label: 'To container', value: str(p.newParentDn), dn: true })
+      if (p.destinationProfileName) rows.push({ label: 'To profile', value: str(p.destinationProfileName) })
+      if (p.newParentDn) rows.push({ label: 'New location', value: str(p.newParentDn), dn: true })
       break
     case 'PLAYBOOK_EXECUTE':
       if (p.playbookName) rows.push({ label: 'Playbook', value: str(p.playbookName) })

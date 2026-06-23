@@ -33,6 +33,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willDoNothing;
+import static org.mockito.BDDMockito.willThrow;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -303,7 +304,9 @@ class UserControllerTest extends BaseControllerTest {
 
     @Test
     void moveUser_admin_returns204() throws Exception {
-        MoveUserRequest req = new MoveUserRequest("ou=staff,dc=example,dc=com");
+        UUID destProfile = UUID.fromString("30000000-0000-0000-0000-000000000003");
+        given(provisioningProfileService.get(DIR_ID, destProfile)).willReturn(moveDestProfile(destProfile));
+        MoveUserRequest req = new MoveUserRequest(destProfile);
         willDoNothing().given(ldapService).moveUser(eq(DIR_ID), any(), eq(ENTRY_DN), any());
 
         mockMvc.perform(post(BASE_URL + "/move")
@@ -312,6 +315,34 @@ class UserControllerTest extends BaseControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void moveUser_withoutDestinationProfileAccess_returns403() throws Exception {
+        UUID destProfile = UUID.fromString("30000000-0000-0000-0000-000000000004");
+        given(provisioningProfileService.get(DIR_ID, destProfile)).willReturn(moveDestProfile(destProfile));
+        willThrow(new org.springframework.security.access.AccessDeniedException("No access"))
+                .given(permissionService).requireProfileAccess(any(), eq(destProfile));
+        MoveUserRequest req = new MoveUserRequest(destProfile);
+
+        mockMvc.perform(post(BASE_URL + "/move")
+                        .param("dn", ENTRY_DN)
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isForbidden());
+    }
+
+    /** Minimal ProfileResponse stub for the move destination. */
+    private com.ldapportal.dto.profile.ProfileResponse moveDestProfile(UUID id) {
+        return new com.ldapportal.dto.profile.ProfileResponse(
+                id, DIR_ID, "dir-1", "Staff", null,
+                "ou=staff,dc=example,dc=com", "ou=groups,dc=example,dc=com",
+                List.of("inetOrgPerson"), "uid",
+                true, null, null, null, null, true, false,
+                16, true, true, true, true, "!@#$%^&*", false,
+                "OPERATOR_ENTERED", false, false,
+                List.of(), List.of(), List.of(), List.of(), null, null);
     }
 
     // ── POST /memberships ─────────────────────────────────────────────────────
