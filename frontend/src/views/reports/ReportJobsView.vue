@@ -180,35 +180,61 @@
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
-            <tr v-for="job in jobs" :key="job.id" class="hover:bg-gray-50">
-              <td class="px-3 py-2 font-medium text-gray-900">{{ job.name }}</td>
-              <td class="px-3 py-2 text-gray-600">{{ labelFor(job.reportType) }}</td>
-              <td class="px-3 py-2 text-gray-600">
-                {{ job.cronExpression }}
-                <span v-if="job.timezone" class="block text-xs text-gray-400">{{ job.timezone }}</span>
-              </td>
-              <td class="px-3 py-2 text-gray-600">{{ job.outputFormat || 'CSV' }}</td>
-              <td class="px-3 py-2 text-gray-600">{{ job.deliveryMethod }}</td>
-              <td class="px-3 py-2 text-gray-500 text-xs">
-                <span v-if="job.lastRunAt">{{ fmtDate(job.lastRunAt) }}</span>
-                <span v-else class="text-gray-300">—</span>
-                <span v-if="job.lastRunStatus" :class="job.lastRunStatus === 'SUCCESS' ? 'text-green-600' : 'text-red-500'" class="ml-1 text-xs">({{ job.lastRunStatus }})</span>
-              </td>
-              <td class="px-3 py-2">
-                <button @click="toggleEnabled(job)" :class="job.enabled ? 'bg-green-500' : 'bg-gray-300'" class="relative inline-flex h-4 w-7 rounded-full transition-colors">
-                  <span :class="job.enabled ? 'translate-x-3' : 'translate-x-0'" class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform scale-75"></span>
-                </button>
-              </td>
-              <td class="px-3 py-2 text-right whitespace-nowrap">
-                <div class="flex items-center justify-end gap-2">
-                  <button @click="runNow(job)" :disabled="runningJobId === job.id" class="btn-secondary btn-compact">
-                    {{ runningJobId === job.id ? 'Running…' : 'Run now' }}
+            <template v-for="job in jobs" :key="job.id">
+              <tr class="hover:bg-gray-50">
+                <td class="px-3 py-2 font-medium text-gray-900">{{ job.name }}</td>
+                <td class="px-3 py-2 text-gray-600">{{ labelFor(job.reportType) }}</td>
+                <td class="px-3 py-2 text-gray-600">
+                  {{ job.cronExpression }}
+                  <span v-if="job.timezone" class="block text-xs text-gray-400">{{ job.timezone }}</span>
+                </td>
+                <td class="px-3 py-2 text-gray-600">{{ job.outputFormat || 'CSV' }}</td>
+                <td class="px-3 py-2 text-gray-600">{{ job.deliveryMethod }}</td>
+                <td class="px-3 py-2 text-gray-500 text-xs">
+                  <span v-if="job.lastRunAt">{{ fmtDate(job.lastRunAt) }}</span>
+                  <span v-else class="text-gray-300">—</span>
+                  <span v-if="job.lastRunStatus" :class="statusTextClass(job.lastRunStatus)"
+                        class="ml-1 text-xs" :title="job.lastRunMessage || ''">({{ job.lastRunStatus }})</span>
+                </td>
+                <td class="px-3 py-2">
+                  <button @click="toggleEnabled(job)" :class="job.enabled ? 'bg-green-500' : 'bg-gray-300'" class="relative inline-flex h-4 w-7 rounded-full transition-colors">
+                    <span :class="job.enabled ? 'translate-x-3' : 'translate-x-0'" class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform scale-75"></span>
                   </button>
-                  <button @click="openEditJob(job)" class="btn-secondary btn-compact">Edit</button>
-                  <button @click="confirmDelete(job)" class="btn-danger-soft btn-compact">Delete</button>
-                </div>
-              </td>
-            </tr>
+                </td>
+                <td class="px-3 py-2 text-right whitespace-nowrap">
+                  <div class="flex items-center justify-end gap-2">
+                    <button @click="toggleLog(job)" class="btn-secondary btn-compact"
+                            :aria-expanded="expandedJobId === job.id">
+                      {{ expandedJobId === job.id ? 'Hide log' : 'Log' }}
+                    </button>
+                    <button @click="runNow(job)" :disabled="runningJobId === job.id" class="btn-secondary btn-compact">
+                      {{ runningJobId === job.id ? 'Running…' : 'Run now' }}
+                    </button>
+                    <button @click="openEditJob(job)" class="btn-secondary btn-compact">Edit</button>
+                    <button @click="confirmDelete(job)" class="btn-danger-soft btn-compact">Delete</button>
+                  </div>
+                </td>
+              </tr>
+              <!-- Run log: the bounded run-history timeline for this job, newest first. -->
+              <tr v-if="expandedJobId === job.id" class="bg-gray-50">
+                <td colspan="8" class="px-4 py-3">
+                  <p class="text-xs font-semibold text-gray-600 mb-2">
+                    Run log — last {{ job.runHistory?.length ?? 0 }} run(s), newest first
+                  </p>
+                  <p v-if="!job.runHistory?.length" class="text-xs text-gray-400">No runs recorded yet.</p>
+                  <ul v-else class="space-y-1.5">
+                    <li v-for="(h, i) in runHistoryNewestFirst(job)" :key="i"
+                        class="flex items-start gap-3 text-xs">
+                      <span :class="statusTextClass(h.status)" class="font-semibold w-16 shrink-0">{{ h.status }}</span>
+                      <span class="text-gray-500 w-44 shrink-0">{{ h.runAt ? fmtDate(h.runAt) : '—' }}</span>
+                      <span class="text-gray-400 w-16 shrink-0" title="Run duration">{{ fmtDuration(h) }}</span>
+                      <span class="text-gray-400 w-20 shrink-0" title="What triggered the run">{{ triggerLabel(h.trigger) }}</span>
+                      <span class="text-gray-700 flex-1 break-words">{{ h.message }}</span>
+                    </li>
+                  </ul>
+                </td>
+              </tr>
+            </template>
           </tbody>
         </table>
 
@@ -403,6 +429,15 @@ interface ReportRow {
   [col: string]: unknown
 }
 
+/** One run in a job's bounded run-history timeline (newest entries kept). */
+interface RunHistoryEntry {
+  startedAt?: string
+  runAt?: string
+  status: string
+  message?: string
+  trigger?: string
+}
+
 interface Job {
   id: string
   name: string
@@ -417,6 +452,8 @@ interface Job {
   enabled: boolean
   lastRunAt?: string
   lastRunStatus?: string
+  lastRunMessage?: string
+  runHistory?: RunHistoryEntry[]
 }
 
 const route = useRoute()
@@ -473,6 +510,37 @@ const integrityChecks = [
 
 function labelFor(type: string): string { return reportTypes.value.find(t => t.value === type)?.label ?? type }
 function fmtDate(iso: string): string { return new Date(iso).toLocaleString() }
+
+// ── Run log ───────────────────────────────────────────────────────────────────
+// The scheduled-jobs table expands one job at a time to show its run-history
+// timeline: per-run delivery outcome, duration, and what triggered the run.
+const expandedJobId = ref<string | null>(null)
+function toggleLog(job: Job): void {
+  expandedJobId.value = expandedJobId.value === job.id ? null : job.id
+}
+// Server stores the bounded history oldest-first; show newest-first.
+function runHistoryNewestFirst(job: Job): RunHistoryEntry[] {
+  return job.runHistory ? [...job.runHistory].reverse() : []
+}
+function statusTextClass(status?: string): string {
+  if (status === 'SUCCESS') return 'text-green-600'
+  if (status === 'SKIPPED') return 'text-amber-600'
+  return 'text-red-500' // FAILED or unknown
+}
+function triggerLabel(trigger?: string): string {
+  if (trigger === 'SCHEDULED') return 'Scheduled'
+  if (trigger === 'MANUAL') return 'Manual'
+  return '—' // pre-enrichment entries carry no trigger
+}
+function fmtDuration(h: RunHistoryEntry): string {
+  if (!h.startedAt || !h.runAt) return '—'
+  const ms = new Date(h.runAt).getTime() - new Date(h.startedAt).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return '—'
+  if (ms < 1000) return `${ms} ms`
+  const s = ms / 1000
+  if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)} s`
+  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`
+}
 
 // ── Report runner ─────────────────────────────────────────────────────────────
 

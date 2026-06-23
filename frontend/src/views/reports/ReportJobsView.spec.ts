@@ -207,6 +207,46 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect(reports.runReportJobNow).toHaveBeenCalledWith('dir-1', 'job-1')
   })
 
+  it('expands a run log showing per-run outcome, duration, and trigger', async () => {
+    const reports = await import('@/api/reports')
+    ;(reports.listReportJobs as unknown as Mock).mockResolvedValue({
+      data: { content: [
+        {
+          id: 'job-1', name: 'Weekly', reportType: 'RECENTLY_ADDED', cronExpression: '0 8 * * 1',
+          enabled: true, timezone: 'UTC',
+          lastRunStatus: 'SKIPPED',
+          lastRunMessage: 'Report generated (12 bytes) but not delivered — SMTP is not configured',
+          runHistory: [
+            { startedAt: '2026-06-20T08:00:00Z', runAt: '2026-06-20T08:00:03Z', status: 'SUCCESS',
+              message: 'Emailed 12 bytes to 1/1 recipient(s)', trigger: 'SCHEDULED' },
+            { startedAt: '2026-06-21T08:00:00Z', runAt: '2026-06-21T08:00:01Z', status: 'SKIPPED',
+              message: 'Report generated (12 bytes) but not delivered — SMTP is not configured', trigger: 'MANUAL' },
+          ],
+        },
+      ] },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await scheduledJobsButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    // Collapsed by default — no timeline rendered.
+    expect(wrapper.text()).not.toContain('Run log —')
+    const logBtn = wrapper.findAll('button').find(b => b.text().trim() === 'Log')
+    expect(logBtn).toBeTruthy()
+    await logBtn!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Run log —')
+    expect(wrapper.text()).toContain('Scheduled')
+    expect(wrapper.text()).toContain('Manual')
+    expect(wrapper.text()).toContain('SKIPPED')
+    expect(wrapper.text()).toContain('SMTP is not configured')
+    // Durations: 3s (scheduled) and 1s (manual) runs.
+    expect(wrapper.text()).toContain('3.0 s')
+    expect(wrapper.text()).toContain('1.0 s')
+  })
+
   // Regression: the Delete confirm dialog was mounted with v-if but no
   // :model-value, so ConfirmDialog's inner `v-if="modelValue"` kept it hidden
   // and the Delete button appeared dead. Render a stub that honours modelValue

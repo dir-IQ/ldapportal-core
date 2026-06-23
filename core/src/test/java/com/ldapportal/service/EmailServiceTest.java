@@ -8,6 +8,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -34,12 +35,15 @@ class EmailServiceTest {
     }
 
     @Test
-    void sendWithAttachment_whenSmtpNotConfigured_logsAndSkips() {
+    void sendWithAttachment_whenSmtpNotConfigured_skipsWithoutThrowing() {
         when(appSettingsService.getEntity()).thenReturn(new ApplicationSettings());
 
-        assertThatCode(() -> emailService.sendWithAttachment(
-                "ops@example.com", "subject", "body", "report.csv", "text/csv", new byte[]{1, 2, 3}))
-                .doesNotThrowAnyException();
+        // Reports SKIPPED (not SENT) so a missing mailer never masquerades as a
+        // delivered report in the scheduled-report run log.
+        EmailService.SendResult result = emailService.sendWithAttachment(
+                "ops@example.com", "subject", "body", "report.csv", "text/csv", new byte[]{1, 2, 3});
+
+        assertThat(result).isEqualTo(EmailService.SendResult.SKIPPED);
         verifyNoInteractions(encryptionService);
     }
 }

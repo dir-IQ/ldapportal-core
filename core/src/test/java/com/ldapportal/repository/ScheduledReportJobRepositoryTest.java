@@ -5,6 +5,7 @@ import com.ldapportal.core.reports.schedule.ReportDeliveryMethod;
 import com.ldapportal.core.reports.schedule.ReportJobRunStatus;
 import com.ldapportal.core.reports.schedule.ReportOutputFormat;
 import com.ldapportal.core.reports.schedule.ReportRunHistoryEntry;
+import com.ldapportal.core.reports.schedule.ReportRunTrigger;
 import com.ldapportal.entity.ScheduledReportJob;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -60,7 +61,9 @@ class ScheduledReportJobRepositoryTest {
         j.setDeliveryRecipients("ops@example.com");
         j.setTimezone("America/New_York");
         j.setLastRunStatus(ReportJobRunStatus.SUCCESS);
-        j.setRunHistory(List.of(new ReportRunHistoryEntry(runAt, ReportJobRunStatus.SUCCESS, "delivered 12 rows")));
+        j.setRunHistory(List.of(new ReportRunHistoryEntry(
+                runAt.minusSeconds(2), runAt, ReportJobRunStatus.SUCCESS, "delivered 12 rows",
+                ReportRunTrigger.SCHEDULED)));
 
         UUID id = repository.saveAndFlush(j).getId();
         em.clear();
@@ -77,6 +80,8 @@ class ScheduledReportJobRepositoryTest {
             assertThat(e.status()).isEqualTo(ReportJobRunStatus.SUCCESS);
             assertThat(e.message()).isEqualTo("delivered 12 rows");
             assertThat(e.runAt().toInstant()).isEqualTo(runAt.toInstant());
+            assertThat(e.startedAt().toInstant()).isEqualTo(runAt.minusSeconds(2).toInstant());
+            assertThat(e.trigger()).isEqualTo(ReportRunTrigger.SCHEDULED);
         });
     }
 

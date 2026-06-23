@@ -39,9 +39,10 @@ import java.util.UUID;
  * depending on ee.
  *
  * <p>Edition gating happens at two points (plan §3.5): create/update rejects a
- * non-exposed type/format/delivery, and {@link #runJob(ScheduledReportJob)}
- * re-checks at run time so a lapsed license can't keep running a gated capability
- * — it records {@code FAILED} instead.</p>
+ * non-exposed type/format/delivery, and
+ * {@link #runJob(ScheduledReportJob, ReportRunTrigger)} re-checks at run time so a
+ * lapsed license can't keep running a gated capability — it records
+ * {@code FAILED} instead.</p>
  */
 @Service
 @Slf4j
@@ -208,35 +209,36 @@ public class ScheduledReportJobService {
      * lapse, missing provider/renderer, delivery error) is recorded as
      * {@code FAILED} so the scheduler poll loop is never broken by one job.
      */
-    public void runJob(ScheduledReportJob job) {
+    public void runJob(ScheduledReportJob job, ReportRunTrigger trigger) {
+        OffsetDateTime startedAt = now();
         try {
             ScheduledReportType type = resolveType(job.getReportType()).orElse(null);
             if (type == null) {
-                recordResult(job.getId(), ReportJobRunStatus.FAILED,
-                        "Unknown report type: " + job.getReportType());
+                recordResult(job.getId(), startedAt, ReportJobRunStatus.FAILED,
+                        "Unknown report type: " + job.getReportType(), trigger);
                 return;
             }
             // Runtime exposure re-check (license downgrade path).
             if (!entitlementService.exposes(type)) {
-                recordResult(job.getId(), ReportJobRunStatus.FAILED,
-                        "Report type '" + job.getReportType() + "' requires " + type.requiredEntitlement());
+                recordResult(job.getId(), startedAt, ReportJobRunStatus.FAILED,
+                        "Report type '" + job.getReportType() + "' requires " + type.requiredEntitlement(), trigger);
                 return;
             }
             if (!entitlementService.exposes(job.getOutputFormat())) {
-                recordResult(job.getId(), ReportJobRunStatus.FAILED,
-                        job.getOutputFormat() + " output requires " + job.getOutputFormat().requiredEntitlement());
+                recordResult(job.getId(), startedAt, ReportJobRunStatus.FAILED,
+                        job.getOutputFormat() + " output requires " + job.getOutputFormat().requiredEntitlement(), trigger);
                 return;
             }
             if (!entitlementService.exposes(job.getDeliveryMethod())) {
-                recordResult(job.getId(), ReportJobRunStatus.FAILED,
-                        job.getDeliveryMethod() + " delivery requires " + job.getDeliveryMethod().requiredEntitlement());
+                recordResult(job.getId(), startedAt, ReportJobRunStatus.FAILED,
+                        job.getDeliveryMethod() + " delivery requires " + job.getDeliveryMethod().requiredEntitlement(), trigger);
                 return;
             }
 
             DirectoryConnection dc = dirRepo.findById(job.getDirectoryId()).orElse(null);
             if (dc == null) {
-                recordResult(job.getId(), ReportJobRunStatus.FAILED,
-                        "Directory not found: " + job.getDirectoryId());
+                recordResult(job.getId(), startedAt, ReportJobRunStatus.FAILED,
+                        "Directory not found: " + job.getDirectoryId(), trigger);
                 return;
             }
 
@@ -244,8 +246,8 @@ public class ScheduledReportJobService {
                     .filter(p -> p.appliesTo(dc, job.getReportType()))
                     .findFirst().orElse(null);
             if (provider == null) {
-                recordResult(job.getId(), ReportJobRunStatus.FAILED,
-                        "No content provider for report type: " + job.getReportType());
+                recordResult(job.getId(), startedAt, ReportJobRunStatus.FAILED,
+                        "No content provider for report type: " + job.getReportType(), trigger);
                 return;
             }
 
@@ -257,37 +259,70 @@ public class ScheduledReportJobService {
                     .filter(r -> r.supports(job.getOutputFormat()))
                     .findFirst().orElse(null);
             if (renderer == null) {
-                recordResult(job.getId(), ReportJobRunStatus.FAILED,
-                        "No renderer for output format: " + job.getOutputFormat());
+                recordResult(job.getId(), startedAt, ReportJobRunStatus.FAILED,
+                        "No renderer for output format: " + job.getOutputFormat(), trigger);
                 return;
             }
             RenderedReport rendered = renderer.render(data, new RenderContext(type.label(), now().toInstant()));
 
-            deliver(job, dc, type.label(), rendered);
-
-            recordResult(job.getId(), ReportJobRunStatus.SUCCESS,
-                    "Delivered " + rendered.bytes().length + " bytes via " + job.getDeliveryMethod());
+            DeliveryOutcome outcome = deliver(job, dc, type.label(), rendered);
+            recordResult(job.getId(), startedAt, outcome.status(), outcome.message(), trigger);
         } catch (Exception e) {
             log.error("Scheduled report job '{}' ({}) failed: {}", job.getName(), job.getId(), e.getMessage(), e);
-            recordResult(job.getId(), ReportJobRunStatus.FAILED, truncate(e.getMessage(), 2000));
+            recordResult(job.getId(), startedAt, ReportJobRunStatus.FAILED, truncate(e.getMessage(), 2000), trigger);
         }
     }
 
-    private void deliver(ScheduledReportJob job, DirectoryConnection dc, String label, RenderedReport rendered)
-            throws Exception {
+    /** The status + human-readable message a delivery attempt resolves to. */
+    private record DeliveryOutcome(ReportJobRunStatus status, String message) {
+    }
+
+    /**
+     * Delivers the rendered report and reports the real outcome. S3 upload
+     * failures throw (caught upstream as FAILED); email delivery is attempted
+     * per recipient and the SMTP acceptance of each is aggregated, so a
+     * misconfigured or rejecting mailer is recorded honestly rather than as a
+     * delivered report.
+     */
+    private DeliveryOutcome deliver(ScheduledReportJob job, DirectoryConnection dc, String label,
+                                    RenderedReport rendered) throws Exception {
+        int bytes = rendered.bytes().length;
         if (job.getDeliveryMethod() == ReportDeliveryMethod.S3) {
             String prefix = job.getS3KeyPrefix() != null ? job.getS3KeyPrefix() : "";
-            s3UploadService.upload(prefix + rendered.filename(), rendered.bytes(), rendered.contentType());
-            return;
+            String key = prefix + rendered.filename();
+            s3UploadService.upload(key, rendered.bytes(), rendered.contentType());
+            return new DeliveryOutcome(ReportJobRunStatus.SUCCESS, "Uploaded " + bytes + " bytes to S3 (" + key + ")");
         }
         // EMAIL
         String subject = reportEmailSubject(label, dc);
         String body = "Attached is the '" + label + "' report for directory '"
                 + dc.getDisplayName() + "', generated " + now() + ".";
-        for (String recipient : splitRecipients(job.getDeliveryRecipients())) {
-            emailService.sendWithAttachment(recipient, subject, body,
+        List<String> recipients = splitRecipients(job.getDeliveryRecipients());
+        int total = recipients.size();
+        int sent = 0;
+        int skipped = 0;
+        List<String> failed = new ArrayList<>();
+        for (String recipient : recipients) {
+            EmailService.SendResult res = emailService.sendWithAttachment(recipient, subject, body,
                     rendered.filename(), rendered.contentType(), rendered.bytes());
+            switch (res) {
+                case SENT -> sent++;
+                case SKIPPED -> skipped++;
+                case FAILED -> failed.add(recipient);
+            }
         }
+        // SKIPPED is global (SMTP not configured), so it applies to all recipients.
+        if (skipped == total && total > 0) {
+            return new DeliveryOutcome(ReportJobRunStatus.SKIPPED,
+                    "Report generated (" + bytes + " bytes) but not delivered — SMTP is not configured");
+        }
+        if (failed.isEmpty()) {
+            return new DeliveryOutcome(ReportJobRunStatus.SUCCESS,
+                    "Emailed " + bytes + " bytes to " + sent + "/" + total + " recipient(s)");
+        }
+        return new DeliveryOutcome(ReportJobRunStatus.FAILED,
+                "Emailed " + sent + "/" + total + " recipient(s); delivery failed for: "
+                        + truncate(String.join(", ", failed), 500));
     }
 
     /** Generated subject; the operator never supplies one and it is not persisted. */
@@ -305,7 +340,8 @@ public class ScheduledReportJobService {
     }
 
     @Transactional
-    public void recordResult(UUID jobId, ReportJobRunStatus status, String message) {
+    public void recordResult(UUID jobId, OffsetDateTime startedAt, ReportJobRunStatus status,
+                             String message, ReportRunTrigger trigger) {
         jobRepo.findById(jobId).ifPresent(job -> {
             OffsetDateTime at = now();
             job.setLastRunAt(at);
@@ -313,7 +349,7 @@ public class ScheduledReportJobService {
             job.setLastRunMessage(message);
             List<ReportRunHistoryEntry> history = new ArrayList<>(
                     job.getRunHistory() != null ? job.getRunHistory() : List.of());
-            history.add(new ReportRunHistoryEntry(at, status, message));
+            history.add(new ReportRunHistoryEntry(startedAt, at, status, message, trigger));
             while (history.size() > MAX_RUN_HISTORY) {
                 history.remove(0);
             }
