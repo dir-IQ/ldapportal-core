@@ -1,0 +1,103 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "timezone": "America/Chicago",
+  "schedule": ["before 12pm on monday"],
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 20,
+  "prHourlyLimit": 0,
+  "platformAutomerge": true,
+  "rebaseWhen": "conflicted",
+  "lockFileMaintenance": { "enabled": false },
+  "vulnerabilityAlerts": {
+    "description": "Security fixes are raised regardless of the major-suppression rule below (Dependabot parity).",
+    "enabled": true,
+    "labels": ["dependencies", "security"]
+  },
+  "osvVulnerabilityAlerts": true,
+  "packageRules": [
+    {
+      "description": "Suppress major bumps — human-triaged (API breaks, BOM coherence, Vue 3->4, etc.). Mirrors dependabot.yml's `ignore: version-update:semver-major`. Security advisories override this via vulnerabilityAlerts.",
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Auto-merge patch / pin / digest once the pipeline is green. Mirrors dependabot-automerge.yml (patches-only).",
+      "matchUpdateTypes": ["patch", "pin", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Backend catch-all (UnboundID, Jakarta, Lombok, Flyway, PG JDBC, Jackson, ...). Renovate is last-match-wins, so this is listed BEFORE the specific groups, which override it.",
+      "matchManagers": ["maven"],
+      "groupName": "maven production-deps"
+    },
+    {
+      "description": "Backend: Spring Boot / Framework / Security / Data move together under the BOM — one PR per Spring patch wave.",
+      "matchManagers": ["maven"],
+      "matchPackageNames": [
+        "org.springframework.boot:*",
+        "org.springframework:*",
+        "org.springframework.security:*",
+        "org.springframework.data:*"
+      ],
+      "groupName": "spring"
+    },
+    {
+      "description": "Backend test tooling (mockito, archunit, junit, testcontainers, bytebuddy) — one PR per wave.",
+      "matchManagers": ["maven"],
+      "matchPackageNames": [
+        "org.mockito:*",
+        "com.tngtech.archunit:*",
+        "org.junit.jupiter:*",
+        "org.testcontainers:*",
+        "net.bytebuddy:*"
+      ],
+      "groupName": "maven test-tools"
+    },
+    {
+      "description": "Frontend catch-all (axios, tailwindcss, typescript, eslint, @types/*, ...). Listed before the specific npm groups (last-match-wins).",
+      "matchManagers": ["npm"],
+      "groupName": "npm production-deps"
+    },
+    {
+      "description": "Frontend: Vue + Pinia + Vite patch together.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": [
+        "vue",
+        "vue-router",
+        "pinia",
+        "vite",
+        "@vitejs/*",
+        "@vue/*"
+      ],
+      "groupName": "vue-stack"
+    },
+    {
+      "description": "Frontend test tooling (Playwright, Vitest, happy-dom).",
+      "matchManagers": ["npm"],
+      "matchPackageNames": [
+        "@playwright/*",
+        "playwright",
+        "vitest",
+        "@vitest/*",
+        "happy-dom",
+        "eslint-plugin-playwright"
+      ],
+      "groupName": "npm test-tools"
+    },
+    {
+      "description": "Base images (Dockerfiles + compose) bump in lockstep to keep dev/CI from drifting. Mirrors dependabot.yml's docker `docker-images` group.",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "groupName": "docker-images"
+    },
+    {
+      "description": "GitLab CI image/service tags — the GitLab analogue of dependabot.yml's github-actions ecosystem.",
+      "matchManagers": ["gitlabci"],
+      "groupName": "gitlab-ci images"
+    }
+  ]
+}

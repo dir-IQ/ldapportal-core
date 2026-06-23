@@ -436,6 +436,81 @@
                 </plugins>
             </build>
         </profile>
+
+        <!--
+            GitLab Maven Package Registry counterpart to `internal-publish`.
+            Activated with `-Pgitlab-publish` from a GitLab CI job; publishes
+            core + the open-source addons to the project's GitLab Maven registry
+            so a downstream build (commercial/ee) can resolve a pre-release pin
+            from a registry instead of building core from source — the GitLab
+            analogue of the GitHub Packages path above. Scope it the same way:
+
+              mvn -Pgitlab-publish -DskipTests -pl core,addons/isva deploy
+
+            Like `internal-publish` (and unlike `release`): no GPG signing and no
+            Central staging gate, and the SAME flattenMode=ossrh so the published
+            POM is self-contained and resolves IDENTICALLY to the eventual Central
+            artifact. Explicit `-P` activation (NOT env.GITLAB_CI auto-activation)
+            is deliberate: the flatten + source-jar steps below must not perturb
+            the ordinary GitLab test/package pipeline, only the publish job.
+
+            URLs use GitLab's predefined CI_API_V4_URL / CI_PROJECT_ID. Auth is
+            the job token via a CI-generated settings.xml whose `gitlab-maven`
+            server sets a `Job-Token` HTTP header — no secret to manage. See
+            docs/self-hosting-gitlab.md §6.
+        -->
+        <profile>
+            <id>gitlab-publish</id>
+            <distributionManagement>
+                <repository>
+                    <id>gitlab-maven</id>
+                    <name>GitLab Maven Package Registry</name>
+                    <url>${env.CI_API_V4_URL}/projects/${env.CI_PROJECT_ID}/packages/maven</url>
+                </repository>
+                <snapshotRepository>
+                    <id>gitlab-maven</id>
+                    <name>GitLab Maven Package Registry</name>
+                    <url>${env.CI_API_V4_URL}/projects/${env.CI_PROJECT_ID}/packages/maven</url>
+                </snapshotRepository>
+            </distributionManagement>
+            <build>
+                <plugins>
+                    <!-- Identical flatten + source-jar to `internal-publish`, so the
+                         artifact published to GitLab resolves the same as the one
+                         published to GitHub Packages / Central. -->
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>flatten-maven-plugin</artifactId>
+                        <version>1.7.3</version>
+                        <configuration>
+                            <flattenMode>ossrh</flattenMode>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>flatten</id>
+                                <phase>process-resources</phase>
+                                <goals><goal>flatten</goal></goals>
+                            </execution>
+                            <execution>
+                                <id>flatten-clean</id>
+                                <phase>clean</phase>
+                                <goals><goal>clean</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals><goal>jar-no-fork</goal></goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
 
 </project>
