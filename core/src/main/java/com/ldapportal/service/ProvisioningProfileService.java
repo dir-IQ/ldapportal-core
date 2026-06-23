@@ -1432,6 +1432,18 @@ public class ProvisioningProfileService {
     @Transactional
     public int removeUserFromProfileGroups(UUID directoryId, UUID profileId,
                                             String userDn, AuthPrincipal principal) {
+        return removeUserFromProfileGroups(directoryId, profileId, userDn, principal, "profile_delete");
+    }
+
+    /**
+     * Variant that stamps a caller-supplied {@code source} discriminator on the
+     * {@code GROUP_MEMBER_REMOVE} audit rows — {@code "profile_delete"} for a
+     * delete cleanup, {@code "profile_move"} when shedding the old profile's
+     * groups as a user is moved into another profile.
+     */
+    @Transactional
+    public int removeUserFromProfileGroups(UUID directoryId, UUID profileId,
+                                            String userDn, AuthPrincipal principal, String source) {
         ProvisioningProfile profile = requireProfileInDirectory(directoryId, profileId);
         DirectoryConnection dc = requireDirectory(directoryId);
 
@@ -1448,14 +1460,14 @@ public class ProvisioningProfileService {
                         AuditAction.GROUP_MEMBER_REMOVE, g.groupDn(),
                         Map.of("attribute", g.memberAttribute(),
                                 "member", userDn,
-                                "source", "profile_delete"));
+                                "source", source));
                 removed++;
             } catch (Exception e) {
                 // Debug not warn: many entries won't be members of every
                 // group in the effective set, and most LDAP servers raise
                 // NO_SUCH_ATTRIBUTE / NO_SUCH_OBJECT in that case.
-                log.debug("Skipping group {} during profile-delete cleanup for {}: {}",
-                        g.groupDn(), userDn, e.getMessage());
+                log.debug("Skipping group {} during {} cleanup for {}: {}",
+                        g.groupDn(), source, userDn, e.getMessage());
             }
         }
         return removed;
@@ -1483,6 +1495,18 @@ public class ProvisioningProfileService {
     @Transactional
     public GroupAssignmentResult applyGroupAssignmentsToUser(UUID directoryId, UUID profileId,
                                             String userDn, AuthPrincipal principal) {
+        return applyGroupAssignmentsToUser(directoryId, profileId, userDn, principal, "profile_create");
+    }
+
+    /**
+     * Variant that stamps a caller-supplied {@code source} on the
+     * {@code GROUP_MEMBER_ADD} audit rows — {@code "profile_create"} on user
+     * creation, {@code "profile_move"} when applying the destination profile's
+     * groups as a user is moved into it.
+     */
+    @Transactional
+    public GroupAssignmentResult applyGroupAssignmentsToUser(UUID directoryId, UUID profileId,
+                                            String userDn, AuthPrincipal principal, String source) {
         ProvisioningProfile profile = requireProfileInDirectory(directoryId, profileId);
         DirectoryConnection dc = requireDirectory(directoryId);
 
@@ -1500,11 +1524,11 @@ public class ProvisioningProfileService {
                         AuditAction.GROUP_MEMBER_ADD, g.groupDn(),
                         Map.of("attribute", g.memberAttribute(),
                                 "member", userDn,
-                                "source", "profile_create"));
+                                "source", source));
                 added++;
             } catch (Exception e) {
-                log.warn("Failed to add {} to profile group {} on create: {}",
-                        userDn, g.groupDn(), e.getMessage());
+                log.warn("Failed to add {} to profile group {} ({}): {}",
+                        userDn, g.groupDn(), source, e.getMessage());
                 warnings.add("Not added to " + g.groupDn() + ": " + e.getMessage());
             }
         }

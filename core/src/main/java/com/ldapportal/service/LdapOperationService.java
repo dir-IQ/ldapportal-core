@@ -500,16 +500,66 @@ public class LdapOperationService {
         auditService.record(principal, directoryId, AuditAction.USER_DISABLE, dn, null);
     }
 
+    /**
+     * Moves a user into another provisioning profile in the same directory:
+     * reparents the entry under the destination profile's {@code targetUserDn}
+     * (the RDN is preserved) and reconciles profile-driven group memberships.
+     * The source profile's effective groups are shed on the OLD dn before the
+     * move — so the directory's member references still match — and the
+     * destination profile's effective groups are applied to the NEW dn after.
+     *
+     * <p>When two profiles share a {@code targetUserDn} the LDAP reparent is a
+     * no-op and only the group reconciliation runs (a pure re-profile). The
+     * destination is authorized via profile access (which also bounds it to the
+     * operator's DN scope), so an operator with no second accessible profile
+     * has nowhere to move to and the UI hides the action entirely.</p>
+     */
     public void moveUser(UUID directoryId, AuthPrincipal principal,
                          String dn, MoveUserRequest req) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
-        permissionService.requireDnWithinScope(principal, directoryId, req.newParentDn());
-        DnValidator.requireValidDn(req.newParentDn(), dc.getDirectoryType());
 
-        userService.moveUser(dc, dn, req.newParentDn());
-        auditService.record(principal, directoryId, AuditAction.USER_MOVE, dn,
-                Map.of("newParentDn", req.newParentDn()));
+        ProvisioningProfileService ps = profileServiceProvider.getIfAvailable();
+        if (ps == null) {
+            throw new IllegalStateException(
+                    "Provisioning profiles are unavailable; cannot move a user");
+        }
+
+        // Destination profile drives the new location and the target group set.
+        // get(directoryId, id) validates the profile belongs to this directory.
+        var dest = ps.get(directoryId, req.destinationProfileId());
+        permissionService.requireProfileAccess(principal, dest.id());
+        String newParentDn = dest.targetUserDn();
+        permissionService.requireDnWithinScope(principal, directoryId, newParentDn);
+
+        // Source profile (resolved by DN containment) governs which memberships
+        // to shed. Null when the entry sits outside every profile's subtree.
+        UUID sourceProfileId = ps.resolveProfileForDn(directoryId, dn)
+                .map(p -> p.getId()).orElse(null);
+
+        String rdn = dn.contains(",") ? dn.substring(0, dn.indexOf(',')) : dn;
+        String currentParent = dn.contains(",") ? dn.substring(dn.indexOf(',') + 1) : "";
+        boolean sameContainer = currentParent.equalsIgnoreCase(newParentDn);
+        if (sameContainer && dest.id().equals(sourceProfileId)) {
+            throw new IllegalArgumentException("User is already in the destination profile");
+        }
+        String newDn = rdn + "," + newParentDn;
+
+        if (sourceProfileId != null && !sourceProfileId.equals(dest.id())) {
+            ps.removeUserFromProfileGroups(directoryId, sourceProfileId, dn, principal, "profile_move");
+        }
+        if (!sameContainer) {
+            userService.moveUser(dc, dn, newParentDn);
+        }
+        ps.applyGroupAssignmentsToUser(directoryId, dest.id(), newDn, principal, "profile_move");
+
+        Map<String, Object> detail = new java.util.LinkedHashMap<>();
+        detail.put("newDn", newDn);
+        detail.put("newParentDn", newParentDn);
+        detail.put("destinationProfileId", dest.id().toString());
+        detail.put("destinationProfileName", dest.name());
+        if (sourceProfileId != null) detail.put("sourceProfileId", sourceProfileId.toString());
+        auditService.record(principal, directoryId, AuditAction.USER_MOVE, dn, detail);
     }
 
     public void resetPassword(UUID directoryId, AuthPrincipal principal,

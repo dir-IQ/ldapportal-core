@@ -160,7 +160,7 @@
           { label: (row as unknown as UserRow).enabled !== false ? 'Disable' : 'Enable', onClick: () => toggleEnabled(row as unknown as UserRow),
             variant: (row as unknown as UserRow).enabled !== false ? 'warning' : 'success', hidden: !can.enableDisable },
           { label: 'Reset password', onClick: () => openResetPassword(row as unknown as UserRow), hidden: !can.resetPassword },
-          { label: 'Move',            onClick: () => openMove(row as unknown as UserRow), hidden: !can.move },
+          { label: 'Move',            onClick: () => openMove(row as unknown as UserRow), hidden: !can.move || !hasOtherProfiles },
           { label: 'Run playbook',    onClick: () => openPlaybookRun(row as unknown as UserRow), hidden: !can.runPlaybook },
           { label: 'View history',    onClick: () => { timelineTarget = row as unknown as UserRow; showTimeline = true }, variant: 'neutral' },
           { label: 'Delete',          onClick: () => confirmDelete(row as unknown as UserRow), danger: true, hidden: !can.delete },
@@ -223,10 +223,28 @@
 
     <!-- Move modal -->
     <AppModal v-model="showMove" title="Move User" size="sm">
-      <FormField label="New Parent DN" v-model="newParentDn" placeholder="ou=people,dc=example,dc=com" required />
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600">
+          Move <span class="font-mono break-all">{{ moveTarget?.dn }}</span>
+          <template v-if="moveSourceProfile?.name"> out of the <strong>{{ moveSourceProfile.name }}</strong> profile</template>
+          into another provisioning profile in this directory.
+        </p>
+        <div>
+          <label for="ul-move-dest" class="block text-sm font-medium text-gray-700 mb-1">
+            Destination profile <span class="text-red-500">*</span>
+          </label>
+          <select id="ul-move-dest" v-model="moveDestProfileId" class="input w-full">
+            <option value="" disabled>Select a profile…</option>
+            <option v-for="p in moveTargets" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select>
+          <p v-if="moveDestTargetDn" class="mt-1 text-xs text-gray-500 font-mono break-all">
+            New location: {{ moveDestTargetDn }}
+          </p>
+        </div>
+      </div>
       <template #footer>
         <button @click="showMove = false" class="btn-neutral">Cancel</button>
-        <button @click="doMove" :disabled="saving" class="btn-primary">Move</button>
+        <button @click="doMove" :disabled="saving || !moveDestProfileId" class="btn-primary">Move</button>
       </template>
     </AppModal>
 
@@ -688,8 +706,8 @@ const modalDirty = computed(() =>
     || !!userFormRef.value?.hasPendingMembershipChanges
   ))
 const deleteTarget   = ref<UserRow | null>(null)
-const moveTarget     = ref<UserRow | null>(null)
-const newParentDn    = ref('')
+const moveTarget        = ref<UserRow | null>(null)
+const moveDestProfileId = ref('')
 const showTimeline   = ref(false)
 const timelineTarget = ref<UserRow | null>(null)
 const saving             = ref(false)
@@ -822,6 +840,25 @@ const allProfiles       = ref<ProfileLite[]>([])
 const selectedProfileId = ref('')
 const profileData       = ref<ProfileLite | null>(null)
 const profileConfig     = ref<ProfileLite | null>(null)
+
+// "Move" targets: the operator's other accessible profiles in this directory.
+// allProfiles is already permission-scoped (the server returns only profiles
+// the admin has a role on), so when the directory exposes ≤1 such profile there
+// is nowhere to move a user and the action is hidden (see the ActionMenu gate).
+const hasOtherProfiles = computed(() => allProfiles.value.length > 1)
+// The row's current profile, resolved by DN containment (mirrors the backend's
+// resolveProfileForDn) so the modal can drop it from the destination list.
+const moveSourceProfile = computed<ProfileLite | null>(() => {
+  const dn = moveTarget.value?.dn?.toLowerCase()
+  if (!dn) return null
+  return allProfiles.value
+    .filter(p => p.targetUserDn && dn.endsWith(p.targetUserDn.toLowerCase()))
+    .sort((a, b) => (b.targetUserDn?.length ?? 0) - (a.targetUserDn?.length ?? 0))[0] ?? null
+})
+const moveTargets = computed<ProfileLite[]>(() =>
+  allProfiles.value.filter(p => p.id !== moveSourceProfile.value?.id))
+const moveDestTargetDn = computed(() =>
+  moveTargets.value.find(p => p.id === moveDestProfileId.value)?.targetUserDn ?? '')
 
 // Attribute names the active profile declares — fed to LdapFilterBuilder
 // so the attribute picker defaults to this subset (typically ~10-30 attrs)
@@ -1167,16 +1204,16 @@ async function toggleEnabled(row: UserRow) {
 }
 
 function openMove(row: UserRow) {
-  moveTarget.value  = row
-  newParentDn.value = ''
-  showMove.value    = true
+  moveTarget.value        = row
+  moveDestProfileId.value = ''
+  showMove.value          = true
 }
 
 async function doMove() {
-  if (!moveTarget.value) return
+  if (!moveTarget.value || !moveDestProfileId.value) return
   saving.value = true
   try {
-    const res = await usersApi.moveUser(dirId, moveTarget.value.dn, { newParentDn: newParentDn.value })
+    const res = await usersApi.moveUser(dirId, moveTarget.value.dn, { destinationProfileId: moveDestProfileId.value })
     if (res.status === 202) {
       notif.success('User move submitted for approval')
     } else {

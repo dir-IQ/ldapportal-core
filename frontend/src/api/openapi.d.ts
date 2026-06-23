@@ -4014,7 +4014,8 @@ export interface components {
             newPassword: string;
         };
         MoveUserRequest: {
-            newParentDn: string;
+            /** Format: uuid */
+            destinationProfileId: string;
         };
         Change: {
             groupDn: string;

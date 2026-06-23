@@ -259,9 +259,20 @@ public class UserController {
             @RequestParam String dn,
             @Valid @RequestBody MoveUserRequest req) {
 
+        // Resolve + authorize the destination profile up front so the operator
+        // gets immediate feedback (not only at approval time) and the pending
+        // approval can display a friendly destination. get(...) 404s if the
+        // profile isn't in this directory.
+        var dest = profileService.get(directoryId, req.destinationProfileId());
+        permissionService.requireProfileAccess(principal, req.destinationProfileId());
+
         Optional<PendingApproval> pendingApproval = approvalService.checkAndSubmitForApproval(
                 directoryId, dn, principal, ApprovalRequestType.USER_MOVE,
-                Map.of("dn", dn, "request", req));
+                Map.of("dn", dn,
+                        "newParentDn", dest.targetUserDn(),
+                        "destinationProfileId", dest.id().toString(),
+                        "destinationProfileName", dest.name(),
+                        "request", req));
         if (pendingApproval.isPresent()) {
             return ResponseEntity.status(HttpStatus.ACCEPTED)
                     .body(Map.of(
