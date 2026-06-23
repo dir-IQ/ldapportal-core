@@ -19,6 +19,15 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
 
     /**
      * Paginated, multi-filter query. All filter params are optional (null = no filter).
+     *
+     * <p>{@code targetDn} matches a row against {@code target_dn} OR the
+     * {@code detail.member} key OR {@code detail.newDn}. Group add/remove rows are
+     * keyed by the <em>group</em> DN with the affected user in
+     * {@code detail.member}, and a user-move row is keyed by the old DN while
+     * carrying the post-move DN in {@code detail.newDn} — so a user's history
+     * surfaces their group-membership changes and their move-in, not only rows
+     * literally keyed to their DN. Backed by the {@code idx_audit_detail_*}
+     * expression indexes (V20).</p>
      */
     @Query(value = """
             SELECT * FROM audit_events e
@@ -26,7 +35,10 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
               AND (:actorId     IS NULL OR e.actor_id     = CAST(:actorId AS UUID))
               AND (CAST(:action AS VARCHAR) IS NULL
                    OR e.action = ANY(string_to_array(CAST(:action AS VARCHAR), ',')))
-              AND (CAST(:targetDn AS VARCHAR) IS NULL OR e.target_dn = CAST(:targetDn AS VARCHAR))
+              AND (CAST(:targetDn AS VARCHAR) IS NULL
+                   OR e.target_dn = CAST(:targetDn AS VARCHAR)
+                   OR e.detail->>'member' = CAST(:targetDn AS VARCHAR)
+                   OR e.detail->>'newDn'  = CAST(:targetDn AS VARCHAR))
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
               AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
@@ -40,7 +52,10 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
               AND (:actorId     IS NULL OR e.actor_id     = CAST(:actorId AS UUID))
               AND (CAST(:action AS VARCHAR) IS NULL
                    OR e.action = ANY(string_to_array(CAST(:action AS VARCHAR), ',')))
-              AND (CAST(:targetDn AS VARCHAR) IS NULL OR e.target_dn = CAST(:targetDn AS VARCHAR))
+              AND (CAST(:targetDn AS VARCHAR) IS NULL
+                   OR e.target_dn = CAST(:targetDn AS VARCHAR)
+                   OR e.detail->>'member' = CAST(:targetDn AS VARCHAR)
+                   OR e.detail->>'newDn'  = CAST(:targetDn AS VARCHAR))
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
               AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
@@ -69,7 +84,10 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
               AND (:actorId     IS NULL OR e.actor_id     = CAST(:actorId AS UUID))
               AND (CAST(:action AS VARCHAR) IS NULL
                    OR e.action = ANY(string_to_array(CAST(:action AS VARCHAR), ',')))
-              AND (CAST(:targetDn AS VARCHAR) IS NULL OR e.target_dn = CAST(:targetDn AS VARCHAR))
+              AND (CAST(:targetDn AS VARCHAR) IS NULL
+                   OR e.target_dn = CAST(:targetDn AS VARCHAR)
+                   OR e.detail->>'member' = CAST(:targetDn AS VARCHAR)
+                   OR e.detail->>'newDn'  = CAST(:targetDn AS VARCHAR))
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
               AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
@@ -83,7 +101,10 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
               AND (:actorId     IS NULL OR e.actor_id     = CAST(:actorId AS UUID))
               AND (CAST(:action AS VARCHAR) IS NULL
                    OR e.action = ANY(string_to_array(CAST(:action AS VARCHAR), ',')))
-              AND (CAST(:targetDn AS VARCHAR) IS NULL OR e.target_dn = CAST(:targetDn AS VARCHAR))
+              AND (CAST(:targetDn AS VARCHAR) IS NULL
+                   OR e.target_dn = CAST(:targetDn AS VARCHAR)
+                   OR e.detail->>'member' = CAST(:targetDn AS VARCHAR)
+                   OR e.detail->>'newDn'  = CAST(:targetDn AS VARCHAR))
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
               AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))

@@ -12,7 +12,7 @@
           <span v-else class="w-2 h-2 rounded-full bg-white"></span>
         </span>
         <div class="flex items-baseline gap-2">
-          <span class="text-sm font-medium" :class="textClass(evt.action)">{{ actionLabel(evt.action) }}</span>
+          <span class="text-sm font-medium" :class="textClass(evt.action)">{{ actionLabel(evt) }}</span>
           <span class="text-xs text-gray-500">
             <RelativeTime :value="evt.occurredAt" />
           </span>
@@ -34,24 +34,34 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, watch } from 'vue'
 import { getEntryTimeline } from '@/api/audit'
+import { iviaOpLabel } from '@/constants/productNames'
 import RelativeTime from '@/components/RelativeTime.vue'
 
-const props = defineProps({
-  directoryId: { type: String, required: true },
-  targetDn:    { type: String, required: true },
-})
+interface TimelineEvent {
+  id: string
+  action: string
+  occurredAt: string
+  actorUsername?: string | null
+  directoryName?: string | null
+  detail?: Record<string, unknown> | null
+}
+
+const props = defineProps<{
+  directoryId: string
+  targetDn: string
+}>()
 
 const loading = ref(false)
 const loadingMore = ref(false)
-const events = ref([])
+const events = ref<TimelineEvent[]>([])
 const page = ref(0)
 const hasMore = ref(false)
 const PAGE_SIZE = 20
 
-const ACTION_LABELS = {
+const ACTION_LABELS: Record<string, string> = {
   'USER_CREATE': 'Created',
   'USER_UPDATE': 'Updated',
   'USER_DELETE': 'Deleted',
@@ -90,53 +100,57 @@ const ACTION_LABELS = {
 // renders as "Playbook executed" rather than the raw PLAYBOOK_EXECUTED token —
 // keeps the entry timeline readable when a new AuditAction enum value lands on
 // the backend before this map is updated.
-function humanize(action) {
+function humanize(action: string): string {
   if (!action || typeof action !== 'string') return action
   const lower = action.toLowerCase().replace(/_/g, ' ')
   return lower.charAt(0).toUpperCase() + lower.slice(1)
 }
 
-function actionLabel(action) {
-  return ACTION_LABELS[action] || humanize(action)
+// IVIA account ops are recorded under a generic AuditAction (USER_UPDATE for a
+// grant, USER_DELETE for a hard revoke, …) with the real verb in
+// detail.ivia_op — prefer that specific label when present.
+function actionLabel(evt: TimelineEvent): string {
+  return iviaOpLabel(evt.detail) ?? ACTION_LABELS[evt.action] ?? humanize(evt.action)
 }
 
-function isDelete(action) {
-  return action?.includes('DELETE') || action?.includes('REJECTED')
+function isDelete(action: string): boolean {
+  return action.includes('DELETE') || action.includes('REJECTED')
 }
 
-function isCreate(action) {
-  return action?.includes('CREATE') || action?.includes('APPROVED')
+function isCreate(action: string): boolean {
+  return action.includes('CREATE') || action.includes('APPROVED')
 }
 
-function dotClass(action) {
+function dotClass(action: string): string {
   if (isDelete(action)) return 'bg-red-500'
   if (isCreate(action)) return 'bg-green-500'
-  if (action?.includes('DISABLE')) return 'bg-amber-500'
-  if (action?.includes('ENABLE')) return 'bg-green-500'
+  if (action.includes('DISABLE')) return 'bg-amber-500'
+  if (action.includes('ENABLE')) return 'bg-green-500'
   if (action === 'PASSWORD_RESET') return 'bg-purple-500'
   return 'bg-blue-500'
 }
 
-function textClass(action) {
+function textClass(action: string): string {
   if (isDelete(action)) return 'text-red-600'
   if (isCreate(action)) return 'text-green-600'
-  if (action?.includes('DISABLE')) return 'text-amber-600'
-  if (action?.includes('ENABLE')) return 'text-green-600'
+  if (action.includes('DISABLE')) return 'text-amber-600'
+  if (action.includes('ENABLE')) return 'text-green-600'
   if (action === 'PASSWORD_RESET') return 'text-purple-600'
   return 'text-blue-600'
 }
 
-function detailSummary(evt) {
-  if (!evt.detail) return null
+function detailSummary(evt: TimelineEvent): string | null {
+  const d = evt.detail
+  if (!d) return null
   // Show attribute names for updates
-  const attrs = evt.detail.attributes || evt.detail.modifiedAttributes
-  if (attrs && Array.isArray(attrs)) return 'Attributes: ' + attrs.join(', ')
+  const attrs = d.attributes ?? d.modifiedAttributes
+  if (Array.isArray(attrs)) return 'Attributes: ' + attrs.join(', ')
   // Show changes from changelog
-  if (evt.detail.changes) return String(evt.detail.changes).substring(0, 200)
+  if (d.changes) return String(d.changes).substring(0, 200)
   return null
 }
 
-async function load() {
+async function load(): Promise<void> {
   loading.value = true
   page.value = 0
   try {
@@ -151,7 +165,7 @@ async function load() {
   }
 }
 
-async function loadMore() {
+async function loadMore(): Promise<void> {
   loadingMore.value = true
   page.value++
   try {
