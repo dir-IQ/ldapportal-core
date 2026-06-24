@@ -7,7 +7,7 @@ import { getEntryTimeline } from '@/api/audit'
 import EntryTimeline from './EntryTimeline.vue'
 
 const stubs = { RelativeTime: true }
-interface Evt { id: string; action: string; occurredAt: string; detail?: Record<string, unknown> }
+interface Evt { id: string; action: string; occurredAt: string; detail?: Record<string, unknown>; targetDn?: string }
 
 function mountWithData(data: Record<string, unknown>) {
   vi.mocked(getEntryTimeline).mockResolvedValue({ data } as never)
@@ -17,8 +17,8 @@ function mountWithData(data: Record<string, unknown>) {
   })
 }
 const mountWith = (events: Evt[]) => mountWithData({ content: events, last: true })
-const ev = (id: string, action: string, detail?: Record<string, unknown>): Evt =>
-  ({ id, action, occurredAt: '2026-06-01T00:00:00Z', detail })
+const ev = (id: string, action: string, detail?: Record<string, unknown>, targetDn?: string): Evt =>
+  ({ id, action, occurredAt: '2026-06-01T00:00:00Z', detail, targetDn })
 
 describe('EntryTimeline action labels', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -49,6 +49,18 @@ describe('EntryTimeline action labels', () => {
     expect(text).toContain('Updated')
     expect(text).toContain('Added to group')
     expect(text).not.toContain('IVIA')
+  })
+
+  it('appends the group short name for a membership action (the group DN is the targetDn)', async () => {
+    const w = mountWith([
+      ev('g', 'GROUP_MEMBER_ADD', { member: 'uid=jdoe,ou=people,dc=x' }, 'cn=Developers,ou=groups,dc=example,dc=com'),
+    ])
+    await flushPromises()
+    const text = w.text()
+    expect(text).toContain('Added to group')
+    expect(text).toContain('Developers')
+    // The attribute prefix is stripped — show the name, not "cn=Developers".
+    expect(text).not.toContain('cn=Developers')
   })
 })
 

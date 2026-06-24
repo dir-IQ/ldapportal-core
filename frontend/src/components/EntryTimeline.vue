@@ -12,7 +12,7 @@
           <span v-else class="w-2 h-2 rounded-full bg-white"></span>
         </span>
         <div class="flex items-baseline gap-2">
-          <span class="text-sm font-medium" :class="textClass(evt.action)">{{ actionLabel(evt) }}</span>
+          <span class="text-sm font-medium" :class="textClass(evt.action)">{{ actionLabel(evt) }}<span v-if="groupLabel(evt)" class="text-gray-900" :title="evt.targetDn || ''">&nbsp;{{ groupLabel(evt) }}</span></span>
           <span class="text-xs text-gray-500">
             <RelativeTime :value="evt.occurredAt" />
           </span>
@@ -50,6 +50,7 @@ interface TimelineEvent {
   actorUsername?: string | null
   directoryName?: string | null
   detail?: Record<string, unknown> | null
+  targetDn?: string | null
 }
 
 interface PageLike {
@@ -121,6 +122,19 @@ function humanize(action: string): string {
 // detail.ivia_op — prefer that specific label when present.
 function actionLabel(evt: TimelineEvent): string {
   return iviaOpLabel(evt.detail) ?? ACTION_LABELS[evt.action] ?? humanize(evt.action)
+}
+
+// Group add/remove rows are keyed to the *group* DN (the viewed user is the
+// member, in detail.member), so surface the group's short name — the RDN value
+// of targetDn — next to the label ("Added to group Developers"). Null for other
+// rows, which are keyed to the user being viewed and need no extra label.
+function groupLabel(evt: TimelineEvent): string | null {
+  if (evt.action !== 'GROUP_MEMBER_ADD' && evt.action !== 'GROUP_MEMBER_REMOVE') return null
+  const dn = evt.targetDn
+  if (!dn) return null
+  const rdn = dn.split(',')[0]
+  const eq = rdn.indexOf('=')
+  return eq >= 0 ? rdn.slice(eq + 1) : rdn
 }
 
 function isDelete(action: string): boolean {
