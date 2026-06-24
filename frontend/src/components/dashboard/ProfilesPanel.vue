@@ -44,6 +44,16 @@ function shortenOu(dn: string | null | undefined): string {
   const first = dn.split(',')[0]
   return first || dn
 }
+
+/**
+ * True when the profile's directory couldn't be reached: the dashboard service
+ * returns a -1 user/group count on LDAP failure (rendered as an em-dash) — the
+ * same signal the Directories panel surfaces as an "unreachable" dot. Used to
+ * explain *why* the counts are dashes instead of showing a bare "—".
+ */
+function directoryUnavailable(p: ProfileRole): boolean {
+  return p.userCount < 0 || p.groupCount < 0
+}
 </script>
 
 <template>
@@ -73,18 +83,29 @@ function shortenOu(dn: string | null | undefined): string {
                  column. Omitted when there's only one directory in play
                  (the overhead beats the information there). -->
             <div v-if="p.directoryName" class="text-xs text-gray-500">{{ p.directoryName }}</div>
+            <!-- When the directory is unreachable the user/group counts come back
+                 as em-dashes; spell out why so it doesn't read as "no data". -->
+            <div v-if="directoryUnavailable(p)"
+                 class="mt-1 inline-flex items-center gap-1 text-xs text-red-600"
+                 title="The directory is unavailable, so user and group counts can't be loaded.">
+              <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.515 2.625H3.72c-1.345 0-2.188-1.458-1.515-2.625L8.485 2.495zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+              </svg>
+              Directory unavailable
+            </div>
           </td>
           <td class="px-4 py-2.5 text-gray-600">
             <code class="text-[11px] bg-gray-50 border border-gray-100 rounded px-1 py-0.5"
                   :title="p.targetUserDn || ''">{{ shortenOu(p.targetUserDn) }}</code>
           </td>
           <!-- LDAP counts scoped to the profile's targetUserDn. -1 signals a
-               directory error; render em-dash rather than a misleading zero. -->
-          <td class="px-4 py-2.5 text-right text-gray-600">
-            {{ p.userCount >= 0 ? p.userCount.toLocaleString() : '—' }}
+               directory error; render an em-dash (flagged unavailable) rather
+               than a misleading zero. -->
+          <td class="px-4 py-2.5 text-right" :class="p.userCount < 0 ? 'text-red-400' : 'text-gray-600'">
+            <span :title="p.userCount < 0 ? 'Directory unavailable' : ''">{{ p.userCount >= 0 ? p.userCount.toLocaleString() : '—' }}</span>
           </td>
-          <td class="px-4 py-2.5 text-right text-gray-600">
-            {{ p.groupCount >= 0 ? p.groupCount.toLocaleString() : '—' }}
+          <td class="px-4 py-2.5 text-right" :class="p.groupCount < 0 ? 'text-red-400' : 'text-gray-600'">
+            <span :title="p.groupCount < 0 ? 'Directory unavailable' : ''">{{ p.groupCount >= 0 ? p.groupCount.toLocaleString() : '—' }}</span>
           </td>
           <td class="px-4 py-2.5 text-right">
             <span v-if="p.pendingApprovals > 0" class="text-amber-600 font-medium">{{ p.pendingApprovals }}</span>
