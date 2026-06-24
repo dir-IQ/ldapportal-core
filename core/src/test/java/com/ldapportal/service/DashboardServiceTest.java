@@ -8,8 +8,6 @@ import com.ldapportal.dto.dashboard.ComplianceDashboardDto;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.PendingApproval;
 import com.ldapportal.entity.enums.ApprovalStatus;
-import com.ldapportal.ldap.LdapGroupService;
-import com.ldapportal.ldap.LdapUserService;
 import com.ldapportal.repository.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,11 +29,10 @@ class DashboardServiceTest {
     @Mock private DirectoryConnectionRepository dirRepo;
     @Mock private PendingApprovalRepository approvalRepo;
     @Mock private AuditQueryService auditQueryService;
-    @Mock private LdapUserService userService;
-    @Mock private LdapGroupService groupService;
     @Mock private ProfileApprovalConfigRepository approvalConfigRepo;
     @Mock private GovernanceDashboardProvider governance;
     @Mock private ReportJobHealthProvider reportJobHealthProvider;
+    @Mock private ScopeCountService scopeCountService;
 
     private DashboardService service;
 
@@ -46,8 +43,7 @@ class DashboardServiceTest {
     void setUp() {
         service = new DashboardService(
                 dirRepo, approvalRepo, auditQueryService,
-                userService, groupService, approvalConfigRepo,
-                governance, reportJobHealthProvider);
+                approvalConfigRepo, governance, reportJobHealthProvider, scopeCountService);
         service.invalidateCache();
 
         directory = new DirectoryConnection();
@@ -56,11 +52,22 @@ class DashboardServiceTest {
         directory.setEnabled(true);
     }
 
+    /** A single {@code [id, count]} GROUP BY row as the repository returns it. */
+    private static List<Object[]> pendingRows(UUID id, long count) {
+        List<Object[]> rows = new ArrayList<>();
+        rows.add(new Object[]{id, count});
+        return rows;
+    }
+
+    private static Map<UUID, ScopeCountService.ScopeCounts> counts(UUID id, long users, long groups) {
+        return Map.of(id, new ScopeCountService.ScopeCounts(users, groups));
+    }
+
     @Test
     void getDashboard_returnsComplianceDashboardDto() {
         stubCommon();
-        when(approvalRepo.countByDirectoryIdAndStatus(directoryId, ApprovalStatus.PENDING)).thenReturn(5L);
-        when(approvalRepo.findAllByStatus(ApprovalStatus.PENDING)).thenReturn(List.of());
+        when(approvalRepo.countPendingByDirectory(eq(ApprovalStatus.PENDING), anyCollection()))
+                .thenReturn(pendingRows(directoryId, 5L));
 
         ComplianceDashboardDto result = service.getDashboard();
 
@@ -113,7 +120,6 @@ class DashboardServiceTest {
     @Test
     void getDashboard_approvalAgingBuckets_computedCorrectly() {
         stubCommon();
-        when(approvalRepo.countByDirectoryIdAndStatus(any(), any())).thenReturn(4L);
 
         OffsetDateTime now = OffsetDateTime.now();
         List<PendingApproval> approvals = List.of(
@@ -133,15 +139,11 @@ class DashboardServiceTest {
     }
 
     @Test
-    void getDashboard_usersNotReviewedIn90Days_calculatedPerDirectory() {
-        var users = new ArrayList<com.ldapportal.ldap.model.LdapUser>();
-        for (int i = 0; i < 50; i++) users.add(mock(com.ldapportal.ldap.model.LdapUser.class));
+    void getDashboard_usersNotReviewedIn90Days_reusesPerDirectoryCount() {
         when(dirRepo.findAll()).thenReturn(List.of(directory));
-        when(userService.searchUsers(eq(directory), anyString(), any(), anyInt(), anyString()))
-                .thenReturn(users);
-        when(groupService.searchGroups(eq(directory), anyString(), any(), anyInt(), anyString()))
-                .thenReturn(List.of());
-        when(approvalRepo.countByDirectoryIdAndStatus(any(), any())).thenReturn(0L);
+        // 50 users in scope; the 90-day calc must reuse this, not re-count.
+        when(scopeCountService.countDirectories(anyList())).thenReturn(counts(directoryId, 50L, 0L));
+        when(approvalRepo.countPendingByDirectory(any(), any())).thenReturn(List.of());
         when(approvalRepo.findAllByStatus(any())).thenReturn(List.of());
         when(governance.directoryCounts(any())).thenReturn(
                 new GovernanceDashboardProvider.DirectoryGovernanceCounts(0L, 0L));
@@ -156,6 +158,9 @@ class DashboardServiceTest {
         ComplianceDashboardDto result = service.getDashboard();
 
         assertThat(result.usersNotReviewedIn90Days()).isEqualTo(20);
+        // The directory is counted exactly once — the 90-day calc reuses that
+        // result instead of issuing a second whole-directory user search.
+        verify(scopeCountService, times(1)).countDirectories(anyList());
     }
 
     @Test
@@ -169,10 +174,13 @@ class DashboardServiceTest {
     }
 
     @Test
-    void getDashboard_disabledDirectory_skipLdapCalls() {
+    void getDashboard_disabledDirectory_countsZeroAndUnknownReachable() {
         directory.setEnabled(false);
         when(dirRepo.findAll()).thenReturn(List.of(directory));
-        when(approvalRepo.countByDirectoryIdAndStatus(any(), any())).thenReturn(0L);
+        // A disabled directory comes back as (0, 0) from the counter without
+        // touching LDAP (that shortcut is covered in ScopeCountServiceTest).
+        when(scopeCountService.countDirectories(anyList())).thenReturn(counts(directoryId, 0L, 0L));
+        when(approvalRepo.countPendingByDirectory(any(), any())).thenReturn(List.of());
         when(approvalRepo.findAllByStatus(any())).thenReturn(List.of());
         when(governance.directoryCounts(any())).thenReturn(
                 new GovernanceDashboardProvider.DirectoryGovernanceCounts(0L, 0L));
@@ -185,7 +193,6 @@ class DashboardServiceTest {
 
         ComplianceDashboardDto result = service.getDashboard();
 
-        verify(userService, never()).searchUsers(any(), anyString(), any(), anyInt(), anyString());
         assertThat(result.directories().get(0).userCount()).isEqualTo(0);
         // Disabled directories aren't probed, so reachability is unknown.
         assertThat(result.directories().get(0).reachable()).isNull();
@@ -202,12 +209,11 @@ class DashboardServiceTest {
 
     @Test
     void getDashboard_enabledButUnreachableDirectory_marksReachableFalse() {
-        // LDAP probe throws (e.g. UnknownHost / pool creation failure) — the
+        // The count comes back as -1 (the counter caught an LDAP failure) — the
         // directory is enabled but its host can't be reached.
         when(dirRepo.findAll()).thenReturn(List.of(directory));
-        when(userService.searchUsers(eq(directory), anyString(), any(), anyInt(), anyString()))
-                .thenThrow(new RuntimeException("LDAP server unreachable"));
-        when(approvalRepo.countByDirectoryIdAndStatus(any(), any())).thenReturn(0L);
+        when(scopeCountService.countDirectories(anyList())).thenReturn(counts(directoryId, -1L, -1L));
+        when(approvalRepo.countPendingByDirectory(any(), any())).thenReturn(List.of());
         when(approvalRepo.findAllByStatus(any())).thenReturn(List.of());
         when(governance.directoryCounts(any())).thenReturn(
                 new GovernanceDashboardProvider.DirectoryGovernanceCounts(0L, 0L));
@@ -221,7 +227,7 @@ class DashboardServiceTest {
         ComplianceDashboardDto result = service.getDashboard();
 
         assertThat(result.directories().get(0).reachable()).isFalse();
-        // The failed probe still renders as an em-dash count downstream.
+        // The failed count still renders as an em-dash downstream (-1 sentinel).
         assertThat(result.directories().get(0).userCount()).isEqualTo(-1);
     }
 
@@ -264,11 +270,8 @@ class DashboardServiceTest {
 
     private void stubCommon() {
         when(dirRepo.findAll()).thenReturn(List.of(directory));
-        when(userService.searchUsers(eq(directory), anyString(), any(), anyInt(), anyString()))
-                .thenReturn(List.of());
-        when(groupService.searchGroups(eq(directory), anyString(), any(), anyInt(), anyString()))
-                .thenReturn(List.of());
-        when(approvalRepo.countByDirectoryIdAndStatus(any(), any())).thenReturn(0L);
+        when(scopeCountService.countDirectories(anyList())).thenReturn(counts(directoryId, 0L, 0L));
+        when(approvalRepo.countPendingByDirectory(any(), any())).thenReturn(List.of());
         when(approvalRepo.findAllByStatus(any())).thenReturn(List.of());
         when(governance.directoryCounts(any())).thenReturn(
                 new GovernanceDashboardProvider.DirectoryGovernanceCounts(0L, 0L));
