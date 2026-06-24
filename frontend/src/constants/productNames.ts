@@ -36,3 +36,30 @@ export function iviaAttrLabel(key: string): string {
     ? `${IVIA_ABBR.toLowerCase()}.${key.slice(ISVA_ATTR_PREFIX.length)}`
     : key
 }
+
+// IVIA account operations are audited under a generic AuditAction (a hard
+// revoke is USER_DELETE, a grant is USER_UPDATE, etc.) with the real verb in
+// the `ivia_op` detail discriminator stamped by the isva addon
+// (IsvaAccountService). These map that discriminator to a specific, IVIA-branded
+// label so the entry timeline / audit log can show what actually happened
+// instead of "Updated" / "Deleted".
+const IVIA_OP_LABELS: Record<string, string> = {
+  grant:       `${IVIA_ABBR} account granted`,
+  revoke_soft: `${IVIA_ABBR} account revoked (soft)`,
+  revoke_hard: `${IVIA_ABBR} account revoked (hard)`,
+  suspend:     `${IVIA_ABBR} account suspended`,
+  restore:     `${IVIA_ABBR} account restored`,
+  renew:       `${IVIA_ABBR} account renewed`,
+  force_reset: `${IVIA_ABBR} credential reset forced`,
+}
+
+/**
+ * Specific IVIA-branded label for an audit event whose `detail.ivia_op`
+ * identifies an IVIA account operation, or null when the event isn't one — so
+ * callers fall back to their normal generic action label.
+ */
+export function iviaOpLabel(detail: unknown): string | null {
+  if (!detail || typeof detail !== 'object') return null
+  const op = (detail as Record<string, unknown>).ivia_op
+  return typeof op === 'string' ? (IVIA_OP_LABELS[op] ?? null) : null
+}
