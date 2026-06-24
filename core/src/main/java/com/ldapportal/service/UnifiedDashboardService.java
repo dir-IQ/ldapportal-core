@@ -165,7 +165,7 @@ public class UnifiedDashboardService {
         return src.stream().map(p -> new ProfileStatDto(
                 p.id(), p.name(),
                 p.directoryId(), p.directoryName(),
-                p.baseRole(), p.targetUserDn(),
+                p.baseRole(), p.targetUserDn(), p.targetGroupDn(),
                 p.userCount(), p.groupCount(), p.pendingApprovals())).toList();
     }
 

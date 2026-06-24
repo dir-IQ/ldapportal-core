@@ -142,11 +142,13 @@ public class AdminDashboardService {
                 .existsByRequireApprovalTrueAndProfile_Directory_IdIn(authorizedDirIds);
 
         // ── Per-profile stats ────────────────────────────────────────────────
-        // One row per AdminProfileRole the caller holds. User/group counts
-        // are LDAP counts scoped to the profile's targetUserDn — that's what
-        // "how many things does this profile actually let me see" means.
-        // Counts are memoised per (directoryId, targetUserDn) so profiles
-        // sharing a scope only cost one LDAP query each (users + groups).
+        // One row per AdminProfileRole the caller holds. User counts are LDAP
+        // counts scoped to the profile's targetUserDn; group counts to its
+        // targetGroupDn — the OU where the profile's groups live, which is a
+        // separate subtree (e.g. ou=Groups) when an admin administers groups
+        // apart from users, and equal to targetUserDn otherwise. Counts are
+        // memoised per (directoryId, baseDn) so profiles sharing a scope only
+        // cost one LDAP query each (users + groups).
         Map<String, Long> userScopeCache = new HashMap<>();
         Map<String, Long> groupScopeCache = new HashMap<>();
         List<ProfileStatDto> profileStats = profileRoleRepo.findAllByAdminAccountId(principal.id()).stream()
@@ -166,7 +168,7 @@ public class AdminDashboardService {
                     var d = p.getDirectory();
                     long pending = approvalRepo.countByProfileIdAndStatus(p.getId(), ApprovalStatus.PENDING);
                     long userCount = d != null ? countUsersInScope(d, p.getTargetUserDn(), userScopeCache) : 0L;
-                    long groupCount = d != null ? countGroupsInScope(d, p.getTargetUserDn(), groupScopeCache) : 0L;
+                    long groupCount = d != null ? countGroupsInScope(d, p.getTargetGroupDn(), groupScopeCache) : 0L;
                     return new ProfileStatDto(
                             p.getId().toString(),
                             p.getName(),
@@ -174,6 +176,7 @@ public class AdminDashboardService {
                             d != null ? d.getDisplayName() : null,
                             r.getBaseRole() != null ? r.getBaseRole().name() : null,
                             p.getTargetUserDn(),
+                            p.getTargetGroupDn(),
                             userCount,
                             groupCount,
                             pending);
