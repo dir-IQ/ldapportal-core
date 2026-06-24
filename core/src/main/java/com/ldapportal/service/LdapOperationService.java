@@ -42,6 +42,7 @@ import com.ldapportal.ldap.LdapBrowseService;
 import com.ldapportal.ldap.LdapBrowseService.BrowseResult;
 import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.ldap.LdapSchemaService;
+import com.ldapportal.ldap.LdapSchemaService.AttributeTypeDetail;
 import com.ldapportal.ldap.LdapSchemaService.AttributeTypeInfo;
 import com.ldapportal.ldap.LdapSchemaService.ObjectClassAttributes;
 import com.ldapportal.ldap.LdapSchemaService.SchemaListItem;
@@ -180,6 +181,13 @@ public class LdapOperationService {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
         return schemaService.getAttributeTypeInfo(dc, attributeName);
+    }
+
+    public AttributeTypeDetail getAttributeTypeDetail(UUID directoryId, AuthPrincipal principal,
+                                                      String attributeName) {
+        DirectoryConnection dc = loadDirectory(directoryId, principal);
+        permissionService.requireDirectoryAccess(principal, directoryId);
+        return schemaService.getAttributeTypeDetail(dc, attributeName);
     }
 
     // ── Users — read ──────────────────────────────────────────────────────────

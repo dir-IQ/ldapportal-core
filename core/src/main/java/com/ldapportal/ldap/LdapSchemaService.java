@@ -4,6 +4,7 @@ package com.ldapportal.ldap;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.exception.LdapOperationException;
+import com.unboundid.ldap.sdk.schema.AttributeSyntaxDefinition;
 import com.unboundid.ldap.sdk.schema.AttributeTypeDefinition;
 import com.unboundid.ldap.sdk.schema.ObjectClassDefinition;
 import com.unboundid.ldap.sdk.schema.Schema;
@@ -110,6 +111,148 @@ public class LdapSchemaService {
             atd.isSingleValued());
     }
 
+    /**
+     * Returns rich detail for a single attributeType: its resolved syntax
+     * (human-readable name, following the SUP chain when the attribute doesn't
+     * declare its own) and the reverse usage index — every objectClass that
+     * lists the attribute as required (MUST) or optional (MAY), each flagged as
+     * a direct declaration or inherited from a superclass. The schema is already
+     * in memory from the same fetch, so this adds no LDAP round trips.
+     *
+     * @throws LdapOperationException if the attribute does not exist in the schema
+     */
+    public AttributeTypeDetail getAttributeTypeDetail(DirectoryConnection dc, String attributeName) {
+        Schema schema = fetchSchema(dc);
+        AttributeTypeDefinition atd = schema.getAttributeType(attributeName);
+        if (atd == null) {
+            throw new LdapOperationException(
+                "AttributeType '" + attributeName + "' not found in schema for ["
+                + dc.getDisplayName() + "]");
+        }
+        return buildAttributeDetail(schema, atd);
+    }
+
+    /** Visible for testing: builds the detail from an already-resolved schema + attribute. */
+    static AttributeTypeDetail buildAttributeDetail(Schema schema, AttributeTypeDefinition atd) {
+        return new AttributeTypeDetail(
+            atd.getNameOrOID(),
+            atd.getOID(),
+            atd.getDescription(),
+            atd.isSingleValued(),
+            resolveSyntax(schema, atd),
+            collectUsage(schema, atd));
+    }
+
+    /**
+     * Reverse usage index: every objectClass whose effective attribute set
+     * includes {@code atd}, classified as MUST/MAY and direct/inherited. An
+     * objectClass that declares the attribute directly is "direct"; one that
+     * only picks it up through a superclass is "inherited". MUST wins over MAY
+     * when both apply across the inheritance chain.
+     */
+    private static List<AttributeUsage> collectUsage(Schema schema, AttributeTypeDefinition atd) {
+        // Match on the attribute's full alias set (plus OID), lower-cased, so a
+        // class referencing it by any name or by OID is found.
+        Set<String> targets = new HashSet<>();
+        for (String name : atd.getNames()) {
+            targets.add(name.toLowerCase(Locale.ROOT));
+        }
+        targets.add(atd.getOID().toLowerCase(Locale.ROOT));
+
+        List<AttributeUsage> usage = new ArrayList<>();
+        for (ObjectClassDefinition ocd : schema.getObjectClasses()) {
+            boolean directMust = containsAny(ocd.getRequiredAttributes(), targets);
+            boolean directMay = containsAny(ocd.getOptionalAttributes(), targets);
+            // Short-circuit the superclass walk when the attribute is declared
+            // directly on this class.
+            boolean effectiveMust = directMust || containsAny(collectAttributeNames(schema, ocd, true), targets);
+            boolean effectiveMay = directMay || containsAny(collectAttributeNames(schema, ocd, false), targets);
+
+            if (effectiveMust) {
+                usage.add(new AttributeUsage(ocd.getNameOrOID(), true, !directMust));
+            } else if (effectiveMay) {
+                usage.add(new AttributeUsage(ocd.getNameOrOID(), false, !directMay));
+            }
+        }
+        usage.sort(Comparator.comparing(AttributeUsage::objectClass, String.CASE_INSENSITIVE_ORDER));
+        return usage;
+    }
+
+    /**
+     * Resolves the attribute's syntax to {@link SyntaxInfo}: follows the SUP
+     * chain when the attribute doesn't declare its own syntax, strips the
+     * optional {@code {length}} suffix, and names the OID from the server's
+     * published {@code ldapSyntaxes} (preferred) or the built-in catalogue.
+     */
+    private static SyntaxInfo resolveSyntax(Schema schema, AttributeTypeDefinition atd) {
+        String raw = inheritedSyntaxOid(schema, atd);
+        if (raw == null) {
+            return null;
+        }
+        String base = raw;
+        Integer maxLength = null;
+        int brace = raw.indexOf('{');
+        if (brace >= 0 && raw.endsWith("}")) {
+            base = raw.substring(0, brace);
+            try {
+                maxLength = Integer.valueOf(raw.substring(brace + 1, raw.length() - 1));
+            } catch (NumberFormatException ignored) {
+                // Non-numeric length hint — leave maxLength null, keep the base OID.
+            }
+        }
+        String description = serverSyntaxDescription(schema, base);
+        if (description == null) {
+            description = LdapSyntaxCatalog.describe(base);
+        }
+        return new SyntaxInfo(base, description, maxLength);
+    }
+
+    /** The attribute's syntax OID, walking the SUP chain if it doesn't declare one. */
+    private static String inheritedSyntaxOid(Schema schema, AttributeTypeDefinition atd) {
+        Set<String> visited = new HashSet<>();
+        AttributeTypeDefinition current = atd;
+        while (current != null && visited.add(current.getNameOrOID())) {
+            if (current.getSyntaxOID() != null) {
+                return current.getSyntaxOID();
+            }
+            String superior = current.getSuperiorType();
+            current = (superior == null) ? null : schema.getAttributeType(superior);
+        }
+        return null;
+    }
+
+    /** Syntax description published by the server in {@code ldapSyntaxes}, or null. */
+    private static String serverSyntaxDescription(Schema schema, String baseOid) {
+        for (AttributeSyntaxDefinition def : schema.getAttributeSyntaxes()) {
+            if (baseOid.equals(def.getOID())) {
+                String desc = def.getDescription();
+                return (desc == null || desc.isBlank()) ? null : desc;
+            }
+        }
+        return null;
+    }
+
+    private static boolean containsAny(String[] names, Set<String> lowerTargets) {
+        if (names == null) {
+            return false;
+        }
+        for (String name : names) {
+            if (lowerTargets.contains(name.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsAny(Set<String> names, Set<String> lowerTargets) {
+        for (String name : names) {
+            if (lowerTargets.contains(name.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private Schema fetchSchema(DirectoryConnection dc) {
@@ -138,19 +281,19 @@ public class LdapSchemaService {
      * Collects required or optional attribute names for an objectClass,
      * walking the superclass chain to include inherited attributes.
      */
-    private Set<String> collectAttributeNames(Schema schema,
-                                               ObjectClassDefinition ocd,
-                                               boolean required) {
+    private static Set<String> collectAttributeNames(Schema schema,
+                                                     ObjectClassDefinition ocd,
+                                                     boolean required) {
         Set<String> names = new LinkedHashSet<>();
         collectRecursive(schema, ocd, required, names, new HashSet<>());
         return Collections.unmodifiableSet(names);
     }
 
-    private void collectRecursive(Schema schema,
-                                  ObjectClassDefinition ocd,
-                                  boolean required,
-                                  Set<String> accumulator,
-                                  Set<String> visited) {
+    private static void collectRecursive(Schema schema,
+                                         ObjectClassDefinition ocd,
+                                         boolean required,
+                                         Set<String> accumulator,
+                                         Set<String> visited) {
         String key = ocd.getNameOrOID();
         if (!visited.add(key)) {
             return;
@@ -223,5 +366,42 @@ public class LdapSchemaService {
         String oid,
         String syntaxOid,
         boolean singleValued
+    ) {}
+
+    /**
+     * One objectClass that references an attribute, and how it does so.
+     */
+    public record AttributeUsage(
+        String objectClass,
+        /** {@code true} = MUST (required); {@code false} = MAY (optional). */
+        boolean required,
+        /** {@code true} when inherited from a superclass rather than declared
+         *  on this objectClass directly. */
+        boolean inherited
+    ) {}
+
+    /**
+     * Resolved attribute syntax: the OID plus a human-readable name when known
+     * (from the server's {@code ldapSyntaxes} or the built-in catalogue) and an
+     * optional length hint.
+     */
+    public record SyntaxInfo(
+        String oid,
+        String description,
+        Integer maxLength
+    ) {}
+
+    /**
+     * Rich detail for a single attributeType — drives the schema browser's
+     * attribute view: resolved syntax and the reverse "used by" objectClass
+     * index.
+     */
+    public record AttributeTypeDetail(
+        String name,
+        String oid,
+        String description,
+        boolean singleValued,
+        SyntaxInfo syntax,
+        List<AttributeUsage> usedBy
     ) {}
 }
