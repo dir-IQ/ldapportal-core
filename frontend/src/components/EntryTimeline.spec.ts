@@ -47,7 +47,7 @@ describe('EntryTimeline action labels', () => {
     await flushPromises()
     const text = w.text()
     expect(text).toContain('Updated')
-    expect(text).toContain('Member added')
+    expect(text).toContain('Added to group')
     expect(text).not.toContain('IVIA')
   })
 })
