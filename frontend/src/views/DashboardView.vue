@@ -99,6 +99,11 @@ const initialLoad = ref(true)
 const loading = ref(false)
 const error = ref<string | null>(null)
 const data = ref<DashboardData | null>(null)
+// The LDAP user/group counts load in a second phase (they're the slow part),
+// so the page can paint immediately. False until the counts-included payload
+// has arrived at least once; gates the count skeletons on the stat chips and
+// in the Directories/Profiles panels.
+const countsLoaded = ref(false)
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const isSuperadmin = computed(() => auth.isSuperadmin)
@@ -373,6 +378,13 @@ function panelLabel(id: string) {
 // provisioning profiles (admin).
 const usersStatLabel = computed(() => isSuperadmin.value ? 'users' : 'users in scope')
 const groupsStatLabel = computed(() => isSuperadmin.value ? 'groups' : 'groups in scope')
+// Stat-chip total: localised number, em-dash for the unavailable sentinel (-1).
+// The chips gate on countsLoaded for the loading skeleton; this only formats a
+// loaded value.
+function formatTotal(n?: number | null): string {
+  if (n == null || n < 0) return '—'
+  return n.toLocaleString()
+}
 const scopeCount = computed(() => isSuperadmin.value ? directories.value.length : profiles.value.length)
 const scopeLabel = computed(() => {
   const n = scopeCount.value
@@ -398,20 +410,63 @@ function scrollToScopePanel() {
 }
 
 // ── Data load ──────────────────────────────────────────────────────────────
-async function load() {
+function parseError(e: unknown): string {
+  const err = e as { response?: { data?: { detail?: string } }, message?: string }
+  return err.response?.data?.detail || err.message || 'Failed to load dashboard'
+}
+
+/** Resolve count cells to an "unavailable" state (em-dash) when the counts
+ *  request fails, rather than leaving the skeletons spinning forever. */
+function markScopeCountsUnavailable(d: DashboardData) {
+  if (d.metrics) { d.metrics.totalUsers = -1; d.metrics.totalGroups = -1 }
+  d.directories = (d.directories || []).map(x => ({ ...x, userCount: -1, groupCount: -1, reachable: false }))
+  d.profiles = (d.profiles || []).map(x => ({ ...x, userCount: -1, groupCount: -1 }))
+}
+
+/**
+ * Two-phase load. On `initial`, fetch the fast count-less payload first so the
+ * dashboard paints without waiting on LDAP, then fetch the counts. Refreshes
+ * (`initial=false`) go straight to the full payload, keeping the visible counts
+ * until the new ones arrive. A counts-phase failure resolves the skeletons to
+ * "unavailable" rather than wiping the already-painted dashboard.
+ */
+async function load(initial = false) {
   loading.value = true
+  if (initial) {
+    try {
+      const fast = await getUnifiedDashboard(false)
+      data.value = fast.data
+      error.value = null
+    } catch (e) {
+      error.value = parseError(e)
+      loading.value = false
+      initialLoad.value = false
+      return
+    }
+    initialLoad.value = false
+  }
+  // Phase 2 (and every refresh): the full payload, including LDAP counts.
   try {
-    const res = await getUnifiedDashboard()
-    data.value = res.data
+    const full = await getUnifiedDashboard(true)
+    data.value = full.data
+    countsLoaded.value = true
     error.value = null
   } catch (e) {
-    const err = e as { response?: { data?: { detail?: string } }, message?: string }
-    error.value = err.response?.data?.detail || err.message || 'Failed to load dashboard'
+    if (!data.value) {
+      error.value = parseError(e)
+    } else if (!countsLoaded.value) {
+      markScopeCountsUnavailable(data.value)
+      countsLoaded.value = true
+    }
+    // A refresh that failed but already has data on screen keeps showing it.
   } finally {
     loading.value = false
     initialLoad.value = false
   }
 }
+
+/** Manual refresh — full payload only (counts already visible, no skeleton flash). */
+function refresh() { load(false) }
 
 async function dismiss(key: string) {
   try {
@@ -426,8 +481,8 @@ onMounted(() => {
   // Kick off the server layout fetch alongside the dashboard data fetch.
   // load() is idempotent — safe to call on every mount.
   layoutStore.load()
-  load()
-  refreshTimer = setInterval(load, 60000)
+  load(true)
+  refreshTimer = setInterval(() => load(false), 60000)
 })
 onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer) })
 
@@ -462,7 +517,7 @@ async function onReset() {
       </div>
       <div class="flex items-center gap-2">
         <template v-if="!layoutStore.editing">
-          <button @click="load" :disabled="loading"
+          <button @click="refresh" :disabled="loading"
                   class="group inline-flex items-center gap-0 hover:gap-1.5 focus-visible:gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-lg px-2 py-1.5 hover:border-gray-300 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                   :class="{ '!gap-1.5': loading }"
                   :title="loading ? 'Refreshing dashboard…' : 'Refresh dashboard'">
@@ -564,7 +619,12 @@ async function onReset() {
               <path d="M5.5 19a6.5 6.5 0 0 1 13 0" />
             </svg>
           </span>
-          <span class="text-lg font-semibold text-gray-900 tabular-nums leading-none">{{ (metrics.totalUsers ?? 0).toLocaleString() }}</span>
+          <span class="text-lg font-semibold text-gray-900 tabular-nums leading-none">
+            <template v-if="countsLoaded">{{ formatTotal(metrics.totalUsers) }}</template>
+            <span v-else class="inline-block h-4 w-10 bg-gray-200 rounded animate-pulse align-middle">
+              <span class="sr-only">Loading</span>
+            </span>
+          </span>
           <span class="text-sm text-gray-500">{{ usersStatLabel }}</span>
         </div>
         <!-- Groups -->
@@ -578,7 +638,12 @@ async function onReset() {
               <path d="M18 13.6a5.5 5.5 0 0 1 2.5 4.6" />
             </svg>
           </span>
-          <span class="text-lg font-semibold text-gray-900 tabular-nums leading-none">{{ (metrics.totalGroups ?? 0).toLocaleString() }}</span>
+          <span class="text-lg font-semibold text-gray-900 tabular-nums leading-none">
+            <template v-if="countsLoaded">{{ formatTotal(metrics.totalGroups) }}</template>
+            <span v-else class="inline-block h-4 w-10 bg-gray-200 rounded animate-pulse align-middle">
+              <span class="sr-only">Loading</span>
+            </span>
+          </span>
           <span class="text-sm text-gray-500">{{ groupsStatLabel }}</span>
         </div>
         <!-- Scope (directories for superadmin, profiles for admin) — jumps to its panel -->
@@ -717,11 +782,11 @@ async function onReset() {
                           :hidden="layoutStore.isPanelHidden(id)"
                           @toggle-hide="layoutStore.togglePanelHidden(id)">
               <DirectoriesPanel v-if="id === 'directories' && isSuperadmin"
-                :directories="directories"
+                :directories="directories" :counts-loaded="countsLoaded"
                 :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
                 row-clickable @row-click="onDirectoryClick" />
               <ProfilesPanel v-else-if="id === 'directories'"
-                :profiles="profiles"
+                :profiles="profiles" :counts-loaded="countsLoaded"
                 row-clickable @row-click="onProfileClick" />
               <RecentActivityPanel v-else-if="id === 'recent-activity'"
                 :events="recentActivity" :view-all-to="recentActivityViewAll" />
@@ -740,11 +805,11 @@ async function onReset() {
         <div v-else class="space-y-6">
           <template v-for="id in col1Ids" :key="id">
             <DirectoriesPanel v-if="id === 'directories' && isSuperadmin"
-              :directories="directories"
+              :directories="directories" :counts-loaded="countsLoaded"
               :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
               row-clickable @row-click="onDirectoryClick" />
             <ProfilesPanel v-else-if="id === 'directories'"
-              :profiles="profiles"
+              :profiles="profiles" :counts-loaded="countsLoaded"
               row-clickable @row-click="onProfileClick" />
             <RecentActivityPanel v-else-if="id === 'recent-activity'"
               :events="recentActivity" :view-all-to="recentActivityViewAll" />
@@ -775,11 +840,11 @@ async function onReset() {
                           :hidden="layoutStore.isPanelHidden(id)"
                           @toggle-hide="layoutStore.togglePanelHidden(id)">
               <DirectoriesPanel v-if="id === 'directories' && isSuperadmin"
-                :directories="directories"
+                :directories="directories" :counts-loaded="countsLoaded"
                 :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
                 row-clickable @row-click="onDirectoryClick" />
               <ProfilesPanel v-else-if="id === 'directories'"
-                :profiles="profiles"
+                :profiles="profiles" :counts-loaded="countsLoaded"
                 row-clickable @row-click="onProfileClick" />
               <RecentActivityPanel v-else-if="id === 'recent-activity'"
                 :events="recentActivity" :view-all-to="recentActivityViewAll" />
@@ -800,11 +865,11 @@ async function onReset() {
             <CampaignProgressPanel v-if="id === 'campaign-progress'" :campaigns="campaignProgress" />
             <AwarenessPanel v-else-if="id === 'awareness'" :awareness="awareness" />
             <DirectoriesPanel v-else-if="id === 'directories' && isSuperadmin"
-              :directories="directories"
+              :directories="directories" :counts-loaded="countsLoaded"
               :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
               row-clickable @row-click="onDirectoryClick" />
             <ProfilesPanel v-else-if="id === 'directories'"
-              :profiles="profiles"
+              :profiles="profiles" :counts-loaded="countsLoaded"
               row-clickable @row-click="onProfileClick" />
             <RecentActivityPanel v-else-if="id === 'recent-activity'"
               :events="recentActivity" :view-all-to="recentActivityViewAll" />
@@ -836,11 +901,11 @@ async function onReset() {
               <SuggestedConfigurationPanel v-else-if="id === 'suggested-config'"
                 :suggestions="suggestions" @dismiss="dismiss" />
               <DirectoriesPanel v-else-if="id === 'directories' && isSuperadmin"
-                :directories="directories"
+                :directories="directories" :counts-loaded="countsLoaded"
                 :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
                 row-clickable @row-click="onDirectoryClick" />
               <ProfilesPanel v-else-if="id === 'directories'"
-                :profiles="profiles"
+                :profiles="profiles" :counts-loaded="countsLoaded"
                 row-clickable @row-click="onProfileClick" />
               <RecentActivityPanel v-else-if="id === 'recent-activity'"
                 :events="recentActivity" :view-all-to="recentActivityViewAll" />
@@ -859,11 +924,11 @@ async function onReset() {
             <SuggestedConfigurationPanel v-else-if="id === 'suggested-config' && suggestions.length"
               :suggestions="suggestions" @dismiss="dismiss" />
             <DirectoriesPanel v-else-if="id === 'directories' && isSuperadmin"
-              :directories="directories"
+              :directories="directories" :counts-loaded="countsLoaded"
               :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
               row-clickable @row-click="onDirectoryClick" />
             <ProfilesPanel v-else-if="id === 'directories'"
-              :profiles="profiles"
+              :profiles="profiles" :counts-loaded="countsLoaded"
               row-clickable @row-click="onProfileClick" />
             <RecentActivityPanel v-else-if="id === 'recent-activity'"
               :events="recentActivity" :view-all-to="recentActivityViewAll" />

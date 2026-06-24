@@ -45,6 +45,19 @@ public class UnifiedDashboardService {
 
     @Transactional(readOnly = true)
     public UnifiedDashboardDto getDashboard(AuthPrincipal principal) {
+        return getDashboard(principal, true);
+    }
+
+    /**
+     * @param includeScopeCounts when {@code false}, the LDAP user/group counts
+     *        (per-directory, per-profile, and the {@code totalUsers}/{@code
+     *        totalGroups} cards) are skipped so the response returns without
+     *        waiting on LDAP — the dashboard's fast first-paint phase. The
+     *        client re-requests with counts to fill them in. See
+     *        UnifiedDashboardController.
+     */
+    @Transactional(readOnly = true)
+    public UnifiedDashboardDto getDashboard(AuthPrincipal principal, boolean includeScopeCounts) {
         // Sourced from the entitlement layer so this call site doesn't care
         // whether the backing store is ApplicationSettings (Phase 1) or a
         // signed license (Phase 6).
@@ -70,7 +83,7 @@ public class UnifiedDashboardService {
         String firstDirectoryId;
 
         if (principal.isSuperadmin()) {
-            ComplianceDashboardDto c = dashboardService.getDashboard();
+            ComplianceDashboardDto c = dashboardService.getDashboard(includeScopeCounts);
             long active = c.campaignProgress() == null ? 0L : c.campaignProgress().size();
             metrics = new MetricsDto(
                     c.totalUsers(), c.totalGroups(), c.totalPendingApprovals(),
@@ -83,7 +96,7 @@ public class UnifiedDashboardService {
             recentActivity = c.recentAudit();
             firstDirectoryId = null;
         } else {
-            AdminDashboardDto a = adminDashboardService.getDashboard(principal);
+            AdminDashboardDto a = adminDashboardService.getDashboard(principal, includeScopeCounts);
             metrics = new MetricsDto(
                     a.totalUsers(), a.totalGroups(), a.totalPendingApprovals(),
                     a.openSodViolations(), a.activeAccessReviewCampaigns(),

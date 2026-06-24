@@ -23,11 +23,19 @@ withDefaults(defineProps<{
   showCampaigns?: boolean
   showSod?: boolean
   rowClickable?: boolean
+  /**
+   * Whether the LDAP user/group counts have loaded. The dashboard paints first
+   * without counts (they're the slow part) and fills them in on a follow-up
+   * request; while false, the Users/Groups cells render a skeleton instead of a
+   * placeholder zero. Defaults to true so other callers are unaffected.
+   */
+  countsLoaded?: boolean
 }>(), {
   directories: () => [],
   showCampaigns: true,
   showSod: true,
   rowClickable: false,
+  countsLoaded: true,
 })
 
 defineEmits<{
@@ -126,11 +134,21 @@ function statusText(dir: DirectoryStat): string {
         <dl class="px-3 py-2 text-xs space-y-1">
           <div class="flex justify-between items-baseline">
             <dt class="text-gray-500">Users</dt>
-            <dd class="text-gray-700 font-medium tabular-nums">{{ formatCount(dir.userCount) }}</dd>
+            <dd class="text-gray-700 font-medium tabular-nums">
+              <span v-if="countsLoaded">{{ formatCount(dir.userCount) }}</span>
+              <span v-else class="inline-block h-3 w-10 bg-gray-200 rounded animate-pulse align-middle">
+                <span class="sr-only">Loading</span>
+              </span>
+            </dd>
           </div>
           <div class="flex justify-between items-baseline">
             <dt class="text-gray-500">Groups</dt>
-            <dd class="text-gray-700 font-medium tabular-nums">{{ formatCount(dir.groupCount) }}</dd>
+            <dd class="text-gray-700 font-medium tabular-nums">
+              <span v-if="countsLoaded">{{ formatCount(dir.groupCount) }}</span>
+              <span v-else class="inline-block h-3 w-10 bg-gray-200 rounded animate-pulse align-middle">
+                <span class="sr-only">Loading</span>
+              </span>
+            </dd>
           </div>
           <div class="flex justify-between items-baseline">
             <dt class="text-gray-500">Pending</dt>

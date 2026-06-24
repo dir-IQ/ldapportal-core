@@ -266,6 +266,30 @@ class DashboardServiceTest {
         verify(dirRepo, times(1)).findAll();
     }
 
+    @Test
+    void getDashboard_withoutScopeCounts_skipsLdapAndZeroesCounts() {
+        when(dirRepo.findAll()).thenReturn(List.of(directory));
+        when(approvalRepo.countPendingByDirectory(any(), any())).thenReturn(List.of());
+        when(approvalRepo.findAllByStatus(any())).thenReturn(List.of());
+        when(governance.directoryCounts(any())).thenReturn(
+                new GovernanceDashboardProvider.DirectoryGovernanceCounts(0L, 0L));
+        when(governance.totalOpenSodViolations()).thenReturn(0L);
+        when(governance.activeCampaignProgress()).thenReturn(List.of());
+        when(governance.overdueCampaignsCount()).thenReturn(0L);
+        when(auditQueryService.query(any(), anyInt(), anyInt()))
+                .thenReturn(new PageImpl<>(List.of()));
+        when(reportJobHealthProvider.health()).thenReturn(ReportJobHealth.empty());
+
+        ComplianceDashboardDto result = service.getDashboard(false);
+
+        // The fast phase issues no LDAP counts at all.
+        verify(scopeCountService, never()).countDirectories(any());
+        assertThat(result.totalUsers()).isZero();
+        assertThat(result.directories().get(0).userCount()).isZero();
+        // Not probed in the fast phase, so reachability is unknown.
+        assertThat(result.directories().get(0).reachable()).isNull();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private void stubCommon() {

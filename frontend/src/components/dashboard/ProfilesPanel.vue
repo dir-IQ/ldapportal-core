@@ -31,9 +31,17 @@ interface ProfileRole {
 withDefaults(defineProps<{
   profiles?: ProfileRole[]
   rowClickable?: boolean
+  /**
+   * Whether the LDAP user/group counts have loaded. The dashboard paints first
+   * without counts (they're the slow part) and fills them in on a follow-up
+   * request; while false, the Users/Groups cells render a skeleton instead of a
+   * placeholder zero. Defaults to true so other callers are unaffected.
+   */
+  countsLoaded?: boolean
 }>(), {
   profiles: () => [],
   rowClickable: false,
+  countsLoaded: true,
 })
 defineEmits<{
   rowClick: [ProfileRole]
@@ -120,11 +128,17 @@ function directoryUnavailable(p: ProfileRole): boolean {
           <!-- LDAP counts scoped to the profile's targetUserDn. -1 signals a
                directory error; render an em-dash (flagged unavailable) rather
                than a misleading zero. -->
-          <td class="px-4 py-2.5 text-right" :class="p.userCount < 0 ? 'text-red-400' : 'text-gray-600'">
-            <span :title="p.userCount < 0 ? 'Directory unavailable' : ''">{{ p.userCount >= 0 ? p.userCount.toLocaleString() : '—' }}</span>
+          <td class="px-4 py-2.5 text-right" :class="countsLoaded && p.userCount < 0 ? 'text-red-400' : 'text-gray-600'">
+            <span v-if="countsLoaded" :title="p.userCount < 0 ? 'Directory unavailable' : ''">{{ p.userCount >= 0 ? p.userCount.toLocaleString() : '—' }}</span>
+            <span v-else class="inline-block h-3 w-10 bg-gray-200 rounded animate-pulse align-middle">
+              <span class="sr-only">Loading</span>
+            </span>
           </td>
-          <td class="px-4 py-2.5 text-right" :class="p.groupCount < 0 ? 'text-red-400' : 'text-gray-600'">
-            <span :title="p.groupCount < 0 ? 'Directory unavailable' : ''">{{ p.groupCount >= 0 ? p.groupCount.toLocaleString() : '—' }}</span>
+          <td class="px-4 py-2.5 text-right" :class="countsLoaded && p.groupCount < 0 ? 'text-red-400' : 'text-gray-600'">
+            <span v-if="countsLoaded" :title="p.groupCount < 0 ? 'Directory unavailable' : ''">{{ p.groupCount >= 0 ? p.groupCount.toLocaleString() : '—' }}</span>
+            <span v-else class="inline-block h-3 w-10 bg-gray-200 rounded animate-pulse align-middle">
+              <span class="sr-only">Loading</span>
+            </span>
           </td>
           <td class="px-4 py-2.5 text-right">
             <span v-if="p.pendingApprovals > 0" class="text-amber-600 font-medium">{{ p.pendingApprovals }}</span>

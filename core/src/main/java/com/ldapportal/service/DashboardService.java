@@ -60,13 +60,26 @@ public class DashboardService {
             return cachedDashboard;
         }
 
-        ComplianceDashboardDto result = buildDashboard();
+        ComplianceDashboardDto result = buildDashboard(true);
         cachedDashboard = result;
         cacheTimestamp = System.currentTimeMillis();
         return result;
     }
 
-    private ComplianceDashboardDto buildDashboard() {
+    /**
+     * @param includeScopeCounts when {@code false}, the per-directory LDAP
+     *        user/group counts (the dashboard's slow work) are skipped — rows
+     *        carry {@code 0} placeholders and {@code totalUsers}/{@code
+     *        totalGroups} come back {@code 0}. Used for the fast first-paint
+     *        phase; the client then re-requests the full payload. The count-less
+     *        build is not cached (it's cheap and the cache holds the full DTO).
+     */
+    @Transactional(readOnly = true)
+    public ComplianceDashboardDto getDashboard(boolean includeScopeCounts) {
+        return includeScopeCounts ? getDashboard() : buildDashboard(false);
+    }
+
+    private ComplianceDashboardDto buildDashboard(boolean includeScopeCounts) {
         List<DirectoryConnection> dirs = dirRepo.findAll();
         OffsetDateTime now = OffsetDateTime.now();
 
@@ -81,8 +94,11 @@ public class DashboardService {
         // DN-only counts (server total estimate where available) rather than
         // serial whole-directory searches that mapped and enriched every entry.
         // The superadmin Directories panel displays these, so — unlike the admin
-        // dashboard — they're kept, just produced far more cheaply.
-        Map<UUID, ScopeCountService.ScopeCounts> dirCounts = scopeCountService.countDirectories(dirs);
+        // dashboard — they're kept, just produced far more cheaply. Skipped
+        // entirely (no LDAP) on the fast first-paint phase; rows then carry 0
+        // placeholders the client fills in on its follow-up counts request.
+        Map<UUID, ScopeCountService.ScopeCounts> dirCounts =
+                includeScopeCounts ? scopeCountService.countDirectories(dirs) : Map.of();
 
         // ── Per-directory stats ──────────────────────────────────────────────
         List<DirectoryStatDto> dirStats = new ArrayList<>(dirs.size());
@@ -102,11 +118,12 @@ public class DashboardService {
             if (groupCount >= 0) totalGroups += groupCount;
             totalPending += pending;
 
-            // A disabled directory isn't probed, so reachability is unknown
-            // (null). For an enabled one the user count doubles as the
-            // connectivity probe: -1 means the count threw (e.g. UnknownHost /
-            // pool creation failure), so the host is unreachable.
-            Boolean reachable = dc.isEnabled() ? userCount >= 0 : null;
+            // Reachability is unknown (null) when we didn't probe: the fast
+            // phase (no counts) and disabled directories. For an enabled one
+            // with counts, the user count doubles as the connectivity probe:
+            // -1 means the count threw (e.g. UnknownHost / pool creation
+            // failure), so the host is unreachable.
+            Boolean reachable = (includeScopeCounts && dc.isEnabled()) ? userCount >= 0 : null;
 
             dirStats.add(new DirectoryStatDto(
                     dc.getId().toString(), dc.getDisplayName(), dc.isEnabled(), reachable,
