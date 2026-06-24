@@ -5,23 +5,21 @@ import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PermissionService;
 import com.ldapportal.core.governance.GovernanceDashboardProvider;
 import com.ldapportal.dto.audit.AuditQueryCriteria;
-import com.ldapportal.dto.audit.AuditEventResponse;
 import com.ldapportal.dto.dashboard.AdminDashboardDto;
 import com.ldapportal.dto.dashboard.AdminDashboardDto.*;
+import com.ldapportal.entity.AdminProfileRole;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.PendingApproval;
 import com.ldapportal.entity.enums.ApprovalStatus;
-import com.ldapportal.ldap.LdapGroupService;
-import com.ldapportal.ldap.LdapUserService;
 import com.ldapportal.repository.*;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Builds the admin dashboard, scoped to the admin's authorized directories.
@@ -31,23 +29,24 @@ import java.util.*;
  * dashboard renders cleanly in community edition with the governance
  * panels showing zeros — while commercial builds get the full picture
  * through the ee.governance implementation.</p>
+ *
+ * <p>The LDAP user/group counts the admin actually sees are the per-profile
+ * scope counts, computed in parallel and cached by {@link ScopeCountService}.
+ * This service no longer issues whole-directory LDAP searches — admins render
+ * the Profiles panel, not Directories, so those counts were unused work.</p>
  */
 @Service
-@Slf4j
 @RequiredArgsConstructor
 public class AdminDashboardService {
 
     private final DirectoryConnectionRepository dirRepo;
     private final PendingApprovalRepository approvalRepo;
     private final AuditQueryService auditQueryService;
-    private final LdapUserService userService;
-    private final LdapGroupService groupService;
     private final PermissionService permissionService;
     private final ProfileApprovalConfigRepository approvalConfigRepo;
     private final AdminProfileRoleRepository profileRoleRepo;
     private final GovernanceDashboardProvider governance;
-
-    private static final int MAX_COUNT = 100_000;
+    private final ScopeCountService scopeCountService;
 
     @Transactional(readOnly = true)
     public AdminDashboardDto getDashboard(AuthPrincipal principal) {
@@ -60,52 +59,35 @@ public class AdminDashboardService {
         List<DirectoryConnection> dirs = dirRepo.findAllById(authorizedDirIds);
         OffsetDateTime now = OffsetDateTime.now();
 
+        // Pending-approval counts for every authorized directory in one GROUP BY
+        // query (was one count query per directory).
+        Map<UUID, Long> pendingByDirectory =
+                toCountMap(approvalRepo.countPendingByDirectory(ApprovalStatus.PENDING, authorizedDirIds));
+
         // ── Per-directory stats ──────────────────────────────────────────────
         // Admin dashboard renders per-profile rows (see ProfileStatDto below),
-        // not per-directory — so the user/group LDAP counts here are only
-        // carried in dirStats for API completeness. The aggregate
-        // totalUsers/totalGroups metric cards are recomputed below from the
-        // per-profile counts instead, because directory-level totals overstate
-        // what the admin can actually act on under their profiles' target OUs.
-        List<DirectoryStatDto> dirStats = new ArrayList<>();
+        // not per-directory. We no longer issue whole-directory user/group LDAP
+        // searches here — they were the dashboard's most expensive work and
+        // unused on the admin path. dirStats keeps zeroed counts and an
+        // unprobed reachable flag (null) purely for API shape; the per-profile
+        // scope counts below are what the admin actually sees, and they carry
+        // the -1 "directory unavailable" signal.
+        List<DirectoryStatDto> dirStats = new ArrayList<>(dirs.size());
         long totalPending = 0;
         long totalActiveCampaigns = 0;
         long totalSodViolations = 0;
 
         for (DirectoryConnection dc : dirs) {
-            long userCount = 0;
-            long groupCount = 0;
-
-            if (dc.isEnabled()) {
-                try {
-                    userCount = userService.searchUsers(dc, com.ldapportal.entity.DirectoryObjectClassDefaults.userSearchFilter(dc), null, MAX_COUNT, "1.1").size();
-                } catch (Exception e) {
-                    log.warn("Failed to count users for directory {}: {}", dc.getDisplayName(), e.getMessage());
-                    userCount = -1;
-                }
-                try {
-                    groupCount = groupService.searchGroups(dc, com.ldapportal.entity.DirectoryObjectClassDefaults.groupSearchFilter(dc), null, MAX_COUNT, "1.1").size();
-                } catch (Exception e) {
-                    log.warn("Failed to count groups for directory {}: {}", dc.getDisplayName(), e.getMessage());
-                    groupCount = -1;
-                }
-            }
-
-            long pending = approvalRepo.countByDirectoryIdAndStatus(dc.getId(), ApprovalStatus.PENDING);
+            long pending = pendingByDirectory.getOrDefault(dc.getId(), 0L);
             GovernanceDashboardProvider.DirectoryGovernanceCounts gov = governance.directoryCounts(dc.getId());
 
             totalPending += pending;
             totalActiveCampaigns += gov.activeCampaigns();
             totalSodViolations += gov.openSodViolations();
 
-            // null when disabled (not probed); otherwise the directory-wide
-            // user search above doubles as the connectivity probe — -1 means
-            // it threw, so the LDAP host is unreachable.
-            Boolean reachable = dc.isEnabled() ? userCount >= 0 : null;
-
             dirStats.add(new DirectoryStatDto(
-                    dc.getId().toString(), dc.getDisplayName(), dc.isEnabled(), reachable,
-                    userCount, groupCount, pending, gov.activeCampaigns(), gov.openSodViolations()));
+                    dc.getId().toString(), dc.getDisplayName(), dc.isEnabled(), null,
+                    0L, 0L, pending, gov.activeCampaigns(), gov.openSodViolations()));
         }
 
         // ── Campaign completion ──────────────────────────────────────────────
@@ -146,45 +128,8 @@ public class AdminDashboardService {
         // counts scoped to the profile's targetUserDn; group counts to its
         // targetGroupDn — the OU where the profile's groups live, which is a
         // separate subtree (e.g. ou=Groups) when an admin administers groups
-        // apart from users, and equal to targetUserDn otherwise. Counts are
-        // memoised per (directoryId, baseDn) so profiles sharing a scope only
-        // cost one LDAP query each (users + groups).
-        Map<String, Long> userScopeCache = new HashMap<>();
-        Map<String, Long> groupScopeCache = new HashMap<>();
-        List<ProfileStatDto> profileStats = profileRoleRepo.findAllByAdminAccountId(principal.id()).stream()
-                .filter(r -> r.getProfile() != null)
-                // Hide disabled profiles. Admins act through profiles; a
-                // disabled one can't be used to provision, so showing
-                // its user/group counts on the dashboard is misleading
-                // (the row implies live traffic). The Profile picker
-                // and /auth/me/profiles already filter the same way;
-                // keep the admin-facing surfaces consistent.
-                // Side-benefit: skips the per-profile LDAP scope counts
-                // for disabled rows, which is the dashboard's most
-                // expensive work.
-                .filter(r -> r.getProfile().isEnabled())
-                .map(r -> {
-                    var p = r.getProfile();
-                    var d = p.getDirectory();
-                    long pending = approvalRepo.countByProfileIdAndStatus(p.getId(), ApprovalStatus.PENDING);
-                    long userCount = d != null ? countUsersInScope(d, p.getTargetUserDn(), userScopeCache) : 0L;
-                    long groupCount = d != null ? countGroupsInScope(d, p.getTargetGroupDn(), groupScopeCache) : 0L;
-                    return new ProfileStatDto(
-                            p.getId().toString(),
-                            p.getName(),
-                            d != null ? d.getId().toString() : null,
-                            d != null ? d.getDisplayName() : null,
-                            r.getBaseRole() != null ? r.getBaseRole().name() : null,
-                            p.getTargetUserDn(),
-                            p.getTargetGroupDn(),
-                            userCount,
-                            groupCount,
-                            pending);
-                })
-                .sorted(Comparator
-                        .comparing(ProfileStatDto::directoryName, Comparator.nullsLast(String::compareToIgnoreCase))
-                        .thenComparing(ProfileStatDto::name, Comparator.nullsLast(String::compareToIgnoreCase)))
-                .toList();
+        // apart from users, and equal to targetUserDn otherwise.
+        List<ProfileStatDto> profileStats = buildProfileStats(principal, dirs);
 
         // "Users/Groups in scope" — sum of per-profile counts. Surfaced on the
         // admin dashboard as the top-row totalUsers/totalGroups cards so they
@@ -212,6 +157,75 @@ public class AdminDashboardService {
                 firstDirId);
     }
 
+    /**
+     * Builds the per-profile rows: pending counts batched into one GROUP BY,
+     * and user/group scope counts computed in parallel (and short-TTL cached)
+     * by {@link ScopeCountService}.
+     */
+    private List<ProfileStatDto> buildProfileStats(AuthPrincipal principal, List<DirectoryConnection> dirs) {
+        // Hide disabled profiles. Admins act through profiles; a disabled one
+        // can't be used to provision, so showing its user/group counts is
+        // misleading (the row implies live traffic). The Profile picker and
+        // /auth/me/profiles already filter the same way. Side-benefit: skips
+        // the per-profile LDAP scope counts for disabled rows.
+        List<AdminProfileRole> roles = profileRoleRepo.findAllByAdminAccountId(principal.id()).stream()
+                .filter(r -> r.getProfile() != null && r.getProfile().isEnabled())
+                .toList();
+        if (roles.isEmpty()) {
+            return List.of();
+        }
+
+        // Batch the pending-approval counts (one GROUP BY, not one per profile).
+        List<UUID> profileIds = roles.stream()
+                .map(r -> r.getProfile().getId())
+                .distinct()
+                .toList();
+        Map<UUID, Long> pendingByProfile =
+                toCountMap(approvalRepo.countPendingByProfile(ApprovalStatus.PENDING, profileIds));
+
+        // Resolve each profile's directory from the already-loaded set so the
+        // parallel count threads only read initialised fields (no lazy load off
+        // the request thread). authorizedDirIds is derived from these same
+        // profile roles, so every profile's directory is present in `dirs`.
+        Map<UUID, DirectoryConnection> dirById = dirs.stream()
+                .collect(Collectors.toMap(DirectoryConnection::getId, d -> d));
+
+        List<ScopeCountService.ScopeRequest> scopeRequests = new ArrayList<>(roles.size());
+        for (AdminProfileRole r : roles) {
+            var p = r.getProfile();
+            DirectoryConnection dc = dirById.get(p.getDirectory().getId());
+            if (dc != null) {
+                scopeRequests.add(new ScopeCountService.ScopeRequest(
+                        p.getId(), dc, p.getTargetUserDn(), p.getTargetGroupDn()));
+            }
+        }
+        Map<UUID, ScopeCountService.ScopeCounts> scopeCounts = scopeCountService.countAll(scopeRequests);
+
+        return roles.stream()
+                .map(r -> {
+                    var p = r.getProfile();
+                    DirectoryConnection dc = dirById.get(p.getDirectory().getId());
+                    ScopeCountService.ScopeCounts counts = scopeCounts.get(p.getId());
+                    long userCount = counts != null ? counts.users() : 0L;
+                    long groupCount = counts != null ? counts.groups() : 0L;
+                    return new ProfileStatDto(
+                            p.getId().toString(),
+                            p.getName(),
+                            dc != null ? dc.getId().toString() : null,
+                            dc != null ? dc.getDisplayName() : null,
+                            r.getBaseRole() != null ? r.getBaseRole().name() : null,
+                            p.getTargetUserDn(),
+                            p.getTargetGroupDn(),
+                            userCount,
+                            groupCount,
+                            pendingByProfile.getOrDefault(p.getId(), 0L));
+                })
+                .sorted(Comparator
+                        .comparing(ProfileStatDto::directoryName, Comparator.nullsLast(String::compareToIgnoreCase))
+                        .thenComparing(ProfileStatDto::name, Comparator.nullsLast(String::compareToIgnoreCase)))
+                .toList();
+    }
+
     private ApprovalAgingDto computeApprovalAging(Set<UUID> directoryIds, OffsetDateTime now) {
         long lt24h = 0, d1to3 = 0, d3to7 = 0, gt7d = 0;
 
@@ -231,41 +245,13 @@ public class AdminDashboardService {
         return new ApprovalAgingDto(lt24h, d1to3, d3to7, gt7d);
     }
 
-    /**
-     * Count users under {@code baseDn} (or directory root if null),
-     * memoised on the (directoryId, baseDn) pair. Returns -1 on LDAP
-     * failure — the UI renders that as an em-dash. Disabled directories
-     * return 0 without touching LDAP.
-     */
-    private long countUsersInScope(DirectoryConnection dc, String baseDn, Map<String, Long> cache) {
-        String key = dc.getId() + "|" + (baseDn == null ? "" : baseDn);
-        return cache.computeIfAbsent(key, k -> {
-            if (!dc.isEnabled()) return 0L;
-            try {
-                return (long) userService.searchUsers(
-                        dc, com.ldapportal.entity.DirectoryObjectClassDefaults.userSearchFilter(dc), baseDn, MAX_COUNT, "1.1").size();
-            } catch (Exception e) {
-                log.warn("Failed to count users for directory {} scope '{}': {}",
-                        dc.getDisplayName(), baseDn, e.getMessage());
-                return -1L;
-            }
-        });
-    }
-
-    /** @see #countUsersInScope */
-    private long countGroupsInScope(DirectoryConnection dc, String baseDn, Map<String, Long> cache) {
-        String key = dc.getId() + "|" + (baseDn == null ? "" : baseDn);
-        return cache.computeIfAbsent(key, k -> {
-            if (!dc.isEnabled()) return 0L;
-            try {
-                return (long) groupService.searchGroups(
-                        dc, com.ldapportal.entity.DirectoryObjectClassDefaults.groupSearchFilter(dc), baseDn, MAX_COUNT, "1.1").size();
-            } catch (Exception e) {
-                log.warn("Failed to count groups for directory {} scope '{}': {}",
-                        dc.getDisplayName(), baseDn, e.getMessage());
-                return -1L;
-            }
-        });
+    /** Folds {@code [id, count]} GROUP BY rows into a map. */
+    private static Map<UUID, Long> toCountMap(List<Object[]> rows) {
+        Map<UUID, Long> counts = new HashMap<>(rows.size());
+        for (Object[] row : rows) {
+            counts.put((UUID) row[0], (Long) row[1]);
+        }
+        return counts;
     }
 
     private AdminDashboardDto emptyDashboard() {

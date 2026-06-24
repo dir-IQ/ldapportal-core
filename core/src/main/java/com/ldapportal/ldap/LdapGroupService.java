@@ -6,6 +6,7 @@ import com.ldapportal.core.provisioning.PlanExecutor;
 import com.ldapportal.core.provisioning.ProvisioningContext;
 import com.ldapportal.core.provisioning.ProvisioningInterceptorChain;
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.DirectoryObjectClassDefaults;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
@@ -128,6 +129,23 @@ public class LdapGroupService {
 
             return results;
         });
+    }
+
+    /**
+     * Counts groups under {@code baseDn} (or the connection's base DN when
+     * {@code null}) using the directory's effective group filter.
+     *
+     * <p>Like {@link LdapUserService#countUsers} this is the cheap counting
+     * path — DNs only, no {@link LdapGroup} mapping — preferring the server's
+     * paged-results total estimate. Capped at {@code max}. See
+     * {@link LdapEntryCounter}.</p>
+     */
+    public long countGroups(DirectoryConnection dc, String baseDn, long max) {
+        String searchBase = baseDn != null ? baseDn : dc.getBaseDn();
+        String filter = DirectoryObjectClassDefaults.groupSearchFilter(dc);
+        int pageSize = Math.max(1, dc.getPagingSize());
+        return connectionFactory.withConnection(dc,
+                conn -> LdapEntryCounter.count(conn, searchBase, filter, pageSize, max));
     }
 
     // ── Read ──────────────────────────────────────────────────────────────────
