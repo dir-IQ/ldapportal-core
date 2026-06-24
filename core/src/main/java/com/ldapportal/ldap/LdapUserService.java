@@ -11,6 +11,7 @@ import com.ldapportal.core.provisioning.UserCreatePayload;
 import com.ldapportal.core.provisioning.UserCreatePlan;
 import com.ldapportal.core.provisioning.UserReadEnricherChain;
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.DirectoryObjectClassDefaults;
 import com.ldapportal.entity.enums.EnableDisableValueType;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.exception.ResourceNotFoundException;
@@ -149,6 +150,24 @@ public class LdapUserService {
 
             return results;
         });
+    }
+
+    /**
+     * Counts users under {@code baseDn} (or the connection's base DN when
+     * {@code null}) using the directory's effective user filter.
+     *
+     * <p>Unlike {@code searchUsers(...).size()} this never maps entries to
+     * {@link LdapUser} or runs the read-enricher chain — it asks only for DNs
+     * and prefers the server's paged-results total estimate — so it's the cheap
+     * path for a dashboard scope count. Capped at {@code max}; a return value of
+     * {@code max} means "at least {@code max}". See {@link LdapEntryCounter}.</p>
+     */
+    public long countUsers(DirectoryConnection dc, String baseDn, long max) {
+        String searchBase = baseDn != null ? baseDn : dc.getBaseDn();
+        String filter = DirectoryObjectClassDefaults.userSearchFilter(dc);
+        int pageSize = Math.max(1, dc.getPagingSize());
+        return connectionFactory.withConnection(dc,
+                conn -> LdapEntryCounter.count(conn, searchBase, filter, pageSize, max));
     }
 
     /**
