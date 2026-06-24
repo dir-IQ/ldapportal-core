@@ -36,11 +36,12 @@
           class="input w-full mb-3"
         />
         <div v-if="listLoading" class="text-sm text-gray-500 text-center py-4">Loading…</div>
-        <div v-else class="bg-white border border-gray-200 rounded-xl overflow-hidden max-h-[60vh] overflow-y-auto">
+        <div v-else ref="listEl" class="bg-white border border-gray-200 rounded-xl overflow-hidden max-h-[60vh] overflow-y-auto">
           <div v-if="filteredList.length === 0" class="p-4 text-sm text-gray-500 text-center">Nothing found.</div>
           <button
             v-for="item in filteredList"
             :key="item.name"
+            :data-selected="selected === item.name || undefined"
             @click="navigateTo(activeTab, item.name)"
             :class="selected === item.name ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'"
             class="w-full text-left px-3 py-2 text-sm border-b border-gray-50 last:border-0 font-mono"
@@ -156,7 +157,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
 import { listObjectClasses, getObjectClass, listAttributeTypes, getAttributeType } from '@/api/schema'
@@ -220,6 +221,9 @@ const listLoading = ref(false)
 const selected    = ref<string | null>(null)
 const detail      = ref<Detail | null>(null)
 const detailLoading = ref(false)
+// The scrollable list container, so the selected row can be brought back into
+// view after a cross-tab jump reloads (and resets) the list to the top.
+const listEl = ref<HTMLElement | null>(null)
 // Cross-type navigation history (object class ↔ attribute), so following a
 // chip can always be walked back, to any depth.
 const navStack = ref<NavEntry[]>([])
@@ -298,6 +302,19 @@ async function loadDetail(name: string) {
   } finally {
     detailLoading.value = false
   }
+  scrollSelectedIntoView()
+}
+
+/**
+ * Bring the selected list row into view. After following a chip across tabs
+ * (and after the back link), the list was reloaded and reset to the top, so
+ * the active item would otherwise be scrolled off-screen. {@code 'nearest'}
+ * means an already-visible row (e.g. a direct click) isn't moved.
+ */
+async function scrollSelectedIntoView() {
+  await nextTick()
+  const el = listEl.value?.querySelector<HTMLElement>('[data-selected]')
+  el?.scrollIntoView?.({ block: 'nearest' })
 }
 
 function switchTab(tab: TabKey) {
