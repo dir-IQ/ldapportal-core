@@ -31,6 +31,9 @@
         {{ loadingMore ? 'Loading...' : 'Load more' }}
       </button>
     </div>
+    <p v-if="!loading" class="mt-3 text-xs text-gray-400 italic">
+      Approval and bulk-update actions aren't shown in this timeline.
+    </p>
   </div>
 </template>
 
@@ -47,6 +50,13 @@ interface TimelineEvent {
   actorUsername?: string | null
   directoryName?: string | null
   detail?: Record<string, unknown> | null
+}
+
+interface PageLike {
+  content?: TimelineEvent[]
+  last?: boolean
+  totalPages?: number
+  page?: { totalPages?: number }
 }
 
 const props = defineProps<{
@@ -150,16 +160,30 @@ function detailSummary(evt: TimelineEvent): string | null {
   return null
 }
 
+// The /audit endpoint returns a Spring page; depending on the serialization
+// mode the "more pages" signal is `totalPages` (flat, or nested under `page`)
+// or the legacy `last` flag — and may be absent entirely. Prefer explicit
+// metadata, then fall back to "did we get a full page", so Load-more never
+// shows when there is nothing left to fetch.
+function morePages(data: PageLike, count: number): boolean {
+  const totalPages = data.totalPages ?? data.page?.totalPages
+  if (typeof totalPages === 'number') return page.value + 1 < totalPages
+  if (typeof data.last === 'boolean') return !data.last
+  return count >= PAGE_SIZE
+}
+
 async function load(): Promise<void> {
   loading.value = true
   page.value = 0
   try {
     const { data } = await getEntryTimeline(props.directoryId, props.targetDn, { size: PAGE_SIZE, page: 0 })
-    events.value = data.content || []
-    hasMore.value = !data.last
+    const items: TimelineEvent[] = data.content || []
+    events.value = items
+    hasMore.value = morePages(data, items.length)
   } catch (e) {
     console.warn('Failed to load timeline:', e)
     events.value = []
+    hasMore.value = false
   } finally {
     loading.value = false
   }
@@ -170,8 +194,9 @@ async function loadMore(): Promise<void> {
   page.value++
   try {
     const { data } = await getEntryTimeline(props.directoryId, props.targetDn, { size: PAGE_SIZE, page: page.value })
-    events.value.push(...(data.content || []))
-    hasMore.value = !data.last
+    const items: TimelineEvent[] = data.content || []
+    events.value.push(...items)
+    hasMore.value = morePages(data, items.length)
   } catch (e) {
     console.warn('Failed to load more:', e)
   } finally {
