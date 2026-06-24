@@ -326,7 +326,7 @@ class UnifiedDashboardServiceTest {
                 "dir-first", "Corp LDAP", true, true, 50, 10, 2, 2, 3));
         var profiles = List.of(new AdminDashboardDto.ProfileStatDto(
                 "prof-a", "Engineering", "dir-first", "Corp LDAP",
-                "ADMIN", "ou=eng,dc=example,dc=com",
+                "ADMIN", "ou=eng,dc=example,dc=com", "ou=groups,dc=example,dc=com",
                 42, 8, 2));
         return new AdminDashboardDto(
                 50, 10, 2,

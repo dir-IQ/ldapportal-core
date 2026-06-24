@@ -103,6 +103,7 @@ public record AdminDashboardDto(
             String directoryName,
             String baseRole,
             String targetUserDn,
+            String targetGroupDn,
             long userCount,
             long groupCount,
             long pendingApprovals

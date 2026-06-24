@@ -176,6 +176,7 @@ public class AdminDashboardService {
                             d != null ? d.getDisplayName() : null,
                             r.getBaseRole() != null ? r.getBaseRole().name() : null,
                             p.getTargetUserDn(),
+                            p.getTargetGroupDn(),
                             userCount,
                             groupCount,
                             pending);
