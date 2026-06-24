@@ -50,6 +50,19 @@ public class AdminDashboardService {
 
     @Transactional(readOnly = true)
     public AdminDashboardDto getDashboard(AuthPrincipal principal) {
+        return getDashboard(principal, true);
+    }
+
+    /**
+     * @param includeScopeCounts when {@code false}, the per-profile LDAP
+     *        user/group counts (the dashboard's slow work) are skipped — the
+     *        rows carry {@code 0} placeholders and the {@code totalUsers}/
+     *        {@code totalGroups} cards come back {@code 0}. Used for the
+     *        dashboard's fast first-paint phase; the client then re-requests
+     *        with counts. See UnifiedDashboardController.
+     */
+    @Transactional(readOnly = true)
+    public AdminDashboardDto getDashboard(AuthPrincipal principal, boolean includeScopeCounts) {
         Set<UUID> authorizedDirIds = permissionService.getAuthorizedDirectoryIds(principal);
 
         if (authorizedDirIds.isEmpty()) {
@@ -129,7 +142,7 @@ public class AdminDashboardService {
         // targetGroupDn — the OU where the profile's groups live, which is a
         // separate subtree (e.g. ou=Groups) when an admin administers groups
         // apart from users, and equal to targetUserDn otherwise.
-        List<ProfileStatDto> profileStats = buildProfileStats(principal, dirs);
+        List<ProfileStatDto> profileStats = buildProfileStats(principal, dirs, includeScopeCounts);
 
         // "Users/Groups in scope" — sum of per-profile counts. Surfaced on the
         // admin dashboard as the top-row totalUsers/totalGroups cards so they
@@ -162,7 +175,8 @@ public class AdminDashboardService {
      * and user/group scope counts computed in parallel (and short-TTL cached)
      * by {@link ScopeCountService}.
      */
-    private List<ProfileStatDto> buildProfileStats(AuthPrincipal principal, List<DirectoryConnection> dirs) {
+    private List<ProfileStatDto> buildProfileStats(AuthPrincipal principal, List<DirectoryConnection> dirs,
+                                                   boolean includeScopeCounts) {
         // Hide disabled profiles. Admins act through profiles; a disabled one
         // can't be used to provision, so showing its user/group counts is
         // misleading (the row implies live traffic). The Profile picker and
@@ -190,16 +204,12 @@ public class AdminDashboardService {
         Map<UUID, DirectoryConnection> dirById = dirs.stream()
                 .collect(Collectors.toMap(DirectoryConnection::getId, d -> d));
 
-        List<ScopeCountService.ScopeRequest> scopeRequests = new ArrayList<>(roles.size());
-        for (AdminProfileRole r : roles) {
-            var p = r.getProfile();
-            DirectoryConnection dc = dirById.get(p.getDirectory().getId());
-            if (dc != null) {
-                scopeRequests.add(new ScopeCountService.ScopeRequest(
-                        p.getId(), dc, p.getTargetUserDn(), p.getTargetGroupDn()));
-            }
-        }
-        Map<UUID, ScopeCountService.ScopeCounts> scopeCounts = scopeCountService.countAll(scopeRequests);
+        // The per-profile LDAP counts are the dashboard's slow work. Skip them
+        // for the fast first-paint phase (includeScopeCounts=false): rows carry
+        // 0 placeholders the client fills in on its follow-up counts request.
+        Map<UUID, ScopeCountService.ScopeCounts> scopeCounts = includeScopeCounts
+                ? scopeCountService.countAll(buildScopeRequests(roles, dirById))
+                : Map.of();
 
         return roles.stream()
                 .map(r -> {
@@ -224,6 +234,22 @@ public class AdminDashboardService {
                         .comparing(ProfileStatDto::directoryName, Comparator.nullsLast(String::compareToIgnoreCase))
                         .thenComparing(ProfileStatDto::name, Comparator.nullsLast(String::compareToIgnoreCase)))
                 .toList();
+    }
+
+    /** Scope-count requests for the enabled profiles, resolving each profile's
+     *  directory from the already-loaded set (no lazy load off the request thread). */
+    private List<ScopeCountService.ScopeRequest> buildScopeRequests(
+            List<AdminProfileRole> roles, Map<UUID, DirectoryConnection> dirById) {
+        List<ScopeCountService.ScopeRequest> scopeRequests = new ArrayList<>(roles.size());
+        for (AdminProfileRole r : roles) {
+            var p = r.getProfile();
+            DirectoryConnection dc = dirById.get(p.getDirectory().getId());
+            if (dc != null) {
+                scopeRequests.add(new ScopeCountService.ScopeRequest(
+                        p.getId(), dc, p.getTargetUserDn(), p.getTargetGroupDn()));
+            }
+        }
+        return scopeRequests;
     }
 
     private ApprovalAgingDto computeApprovalAging(Set<UUID> directoryIds, OffsetDateTime now) {

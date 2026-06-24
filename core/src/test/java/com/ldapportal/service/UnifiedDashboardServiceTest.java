@@ -25,6 +25,8 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -60,13 +62,13 @@ class UnifiedDashboardServiceTest {
     @Test
     void superadmin_compliance_on_uses_dashboardService_and_keeps_all_content() {
         stubSettings(true, true);
-        when(dashboardService.getDashboard()).thenReturn(sampleComplianceDto());
+        when(dashboardService.getDashboard(anyBoolean())).thenReturn(sampleComplianceDto());
         when(activityDashboardService.build(superadmin)).thenReturn(sampleActivity());
 
         UnifiedDashboardDto out = service.getDashboard(superadmin);
 
         // Dispatched to DashboardService, not AdminDashboardService
-        verify(dashboardService).getDashboard();
+        verify(dashboardService).getDashboard(anyBoolean());
         verifyNoInteractions(adminDashboardService);
 
         assertThat(out.complianceEnabled()).isTrue();
@@ -97,7 +99,7 @@ class UnifiedDashboardServiceTest {
     @Test
     void superadmin_compliance_off_zeros_metrics_and_drops_campaign_panels_and_filters_activity() {
         stubSettings(false, true);
-        when(dashboardService.getDashboard()).thenReturn(sampleComplianceDto());
+        when(dashboardService.getDashboard(anyBoolean())).thenReturn(sampleComplianceDto());
         when(activityDashboardService.build(superadmin)).thenReturn(sampleActivity());
 
         UnifiedDashboardDto out = service.getDashboard(superadmin);
@@ -133,7 +135,7 @@ class UnifiedDashboardServiceTest {
     @Test
     void hr_disabled_filters_hr_prefixed_suggestions() {
         stubSettings(true, false);
-        when(dashboardService.getDashboard()).thenReturn(sampleComplianceDto());
+        when(dashboardService.getDashboard(anyBoolean())).thenReturn(sampleComplianceDto());
         when(activityDashboardService.build(superadmin)).thenReturn(sampleActivity());
 
         UnifiedDashboardDto out = service.getDashboard(superadmin);
@@ -152,7 +154,7 @@ class UnifiedDashboardServiceTest {
         // should never surface "Initialize alert rules" cards there.
         when(entitlementService.has(com.ldapportal.core.entitlement.Entitlement.ALERTING))
                 .thenReturn(false);
-        when(dashboardService.getDashboard()).thenReturn(sampleComplianceDto());
+        when(dashboardService.getDashboard(anyBoolean())).thenReturn(sampleComplianceDto());
 
         SummaryMetrics metrics = new SummaryMetrics(100, 20, 7, 3, 1, 0);
         List<SuggestedAction> withAlertSuggestion = List.of(
@@ -179,7 +181,7 @@ class UnifiedDashboardServiceTest {
         stubSettings(true, true);
         when(entitlementService.has(com.ldapportal.core.entitlement.Entitlement.DIRECTORY_SYNC))
                 .thenReturn(false);
-        when(dashboardService.getDashboard()).thenReturn(sampleComplianceDto());
+        when(dashboardService.getDashboard(anyBoolean())).thenReturn(sampleComplianceDto());
 
         SummaryMetrics metrics = new SummaryMetrics(100, 20, 7, 3, 1, 5);
         List<ActionItem> actions = List.of(
@@ -215,7 +217,7 @@ class UnifiedDashboardServiceTest {
     @Test
     void directorySync_awareness_kept_for_superadmin_when_enabled() {
         stubSettings(true, true); // directory-sync defaults on
-        when(dashboardService.getDashboard()).thenReturn(sampleComplianceDto());
+        when(dashboardService.getDashboard(anyBoolean())).thenReturn(sampleComplianceDto());
         when(activityDashboardService.build(superadmin)).thenReturn(
                 new ActivityDashboardResponse(List.of(), List.of(),
                         directorySyncAwareness(), new SummaryMetrics(0, 0, 0, 0, 0, 0)));
@@ -232,7 +234,7 @@ class UnifiedDashboardServiceTest {
         // a non-superadmin must not see awareness whose link would only bounce
         // off the route guard — gate it on role, not just the entitlement.
         stubSettings(true, true);
-        when(adminDashboardService.getDashboard(admin)).thenReturn(sampleAdminDto());
+        when(adminDashboardService.getDashboard(eq(admin), anyBoolean())).thenReturn(sampleAdminDto());
         when(activityDashboardService.build(admin)).thenReturn(
                 new ActivityDashboardResponse(List.of(), List.of(),
                         directorySyncAwareness(), new SummaryMetrics(0, 0, 0, 0, 0, 0)));
@@ -257,12 +259,12 @@ class UnifiedDashboardServiceTest {
     @Test
     void admin_dispatches_to_admin_dashboard_service_and_populates_firstDirectoryId() {
         stubSettings(true, true);
-        when(adminDashboardService.getDashboard(admin)).thenReturn(sampleAdminDto());
+        when(adminDashboardService.getDashboard(eq(admin), anyBoolean())).thenReturn(sampleAdminDto());
         when(activityDashboardService.build(admin)).thenReturn(sampleActivity());
 
         UnifiedDashboardDto out = service.getDashboard(admin);
 
-        verify(adminDashboardService).getDashboard(admin);
+        verify(adminDashboardService).getDashboard(eq(admin), anyBoolean());
         verifyNoInteractions(dashboardService);
 
         assertThat(out.firstDirectoryId()).isEqualTo("dir-first");
@@ -271,9 +273,22 @@ class UnifiedDashboardServiceTest {
     }
 
     @Test
+    void includeScopeCounts_false_propagates_to_the_dashboard_service() {
+        // The fast first-paint phase must reach the underlying service so it
+        // skips the LDAP counts — otherwise the split buys nothing.
+        stubSettings(true, true);
+        when(adminDashboardService.getDashboard(eq(admin), anyBoolean())).thenReturn(sampleAdminDto());
+        when(activityDashboardService.build(admin)).thenReturn(sampleActivity());
+
+        service.getDashboard(admin, false);
+
+        verify(adminDashboardService).getDashboard(admin, false);
+    }
+
+    @Test
     void admin_compliance_off_applies_same_filtering_as_superadmin() {
         stubSettings(false, true);
-        when(adminDashboardService.getDashboard(admin)).thenReturn(sampleAdminDto());
+        when(adminDashboardService.getDashboard(eq(admin), anyBoolean())).thenReturn(sampleAdminDto());
         when(activityDashboardService.build(admin)).thenReturn(sampleActivity());
 
         UnifiedDashboardDto out = service.getDashboard(admin);

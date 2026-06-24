@@ -52,6 +52,26 @@ describe('ProfilesPanel directory-unavailable indication', () => {
   })
 })
 
+describe('ProfilesPanel count loading', () => {
+  it('renders the counts when countsLoaded (the default)', () => {
+    const w = mountWith([{ ...base, userCount: 113, groupCount: 47 }])
+    expect(w.text()).toContain('113')
+    expect(w.text()).toContain('47')
+    expect(w.find('.animate-pulse').exists()).toBe(false)
+  })
+
+  it('shows skeletons in place of the counts while they load', () => {
+    const w = mount(ProfilesPanel, {
+      props: { profiles: [{ ...base, userCount: 113, groupCount: 47 }], countsLoaded: false },
+    })
+    expect(w.text()).not.toContain('113')
+    expect(w.text()).not.toContain('47')
+    // One skeleton bar each for Users and Groups; the row's name still renders.
+    expect(w.findAll('.animate-pulse')).toHaveLength(2)
+    expect(w.text()).toContain('PROD')
+  })
+})
+
 describe('ProfilesPanel scope column', () => {
   it('shows the group OU when it is a distinct subtree from the user OU', () => {
     const w = mountWith([{ ...base, targetGroupDn: 'ou=Groups,dc=example,dc=com' }])

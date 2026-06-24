@@ -55,3 +55,23 @@ describe('DirectoriesPanel status dot', () => {
     expect(dotClasses(wrapper)).toContain('bg-green-500')
   })
 })
+
+describe('DirectoriesPanel count loading', () => {
+  const dir = { id: '1', name: 'Acmecorp', enabled: true, reachable: true, userCount: 113, groupCount: 47 }
+
+  it('renders the counts when countsLoaded (the default)', () => {
+    const wrapper = mount(DirectoriesPanel, { props: { directories: [dir] } })
+    expect(wrapper.text()).toContain('113')
+    expect(wrapper.text()).toContain('47')
+    expect(wrapper.find('.animate-pulse').exists()).toBe(false)
+  })
+
+  it('shows skeletons in place of the counts while they load', () => {
+    const wrapper = mount(DirectoriesPanel, { props: { directories: [dir], countsLoaded: false } })
+    expect(wrapper.text()).not.toContain('113')
+    expect(wrapper.text()).not.toContain('47')
+    // One skeleton bar each for Users and Groups; everything else still renders.
+    expect(wrapper.findAll('.animate-pulse')).toHaveLength(2)
+    expect(wrapper.text()).toContain('Acmecorp')
+  })
+})
