@@ -9,8 +9,6 @@ import com.ldapportal.dto.dashboard.ComplianceDashboardDto.*;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.PendingApproval;
 import com.ldapportal.entity.enums.ApprovalStatus;
-import com.ldapportal.ldap.LdapUserService;
-import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,14 +38,10 @@ public class DashboardService {
     private final DirectoryConnectionRepository dirRepo;
     private final PendingApprovalRepository approvalRepo;
     private final AuditQueryService auditQueryService;
-    private final LdapUserService userService;
-    private final LdapGroupService groupService;
     private final ProfileApprovalConfigRepository approvalConfigRepo;
     private final GovernanceDashboardProvider governance;
     private final com.ldapportal.core.dashboard.ReportJobHealthProvider reportJobHealthProvider;
-
-    /** Maximum entries to load for counting. */
-    private static final int MAX_COUNT = 100_000;
+    private final ScopeCountService scopeCountService;
 
     // ── Cache ────────────────────────────────────────────────────────────────
     private volatile ComplianceDashboardDto cachedDashboard;
@@ -76,40 +70,32 @@ public class DashboardService {
         List<DirectoryConnection> dirs = dirRepo.findAll();
         OffsetDateTime now = OffsetDateTime.now();
 
+        // Pending-approval counts across all directories in one GROUP BY query
+        // (was one count query per directory).
+        List<UUID> dirIds = dirs.stream().map(DirectoryConnection::getId).toList();
+        Map<UUID, Long> pendingByDirectory = dirIds.isEmpty()
+                ? Map.of()
+                : toCountMap(approvalRepo.countPendingByDirectory(ApprovalStatus.PENDING, dirIds));
+
+        // Per-directory user/group counts, computed in parallel with cheap
+        // DN-only counts (server total estimate where available) rather than
+        // serial whole-directory searches that mapped and enriched every entry.
+        // The superadmin Directories panel displays these, so — unlike the admin
+        // dashboard — they're kept, just produced far more cheaply.
+        Map<UUID, ScopeCountService.ScopeCounts> dirCounts = scopeCountService.countDirectories(dirs);
+
         // ── Per-directory stats ──────────────────────────────────────────────
-        List<DirectoryStatDto> dirStats = new ArrayList<>();
+        List<DirectoryStatDto> dirStats = new ArrayList<>(dirs.size());
         long totalUsers = 0;
         long totalGroups = 0;
         long totalPending = 0;
 
         for (DirectoryConnection dc : dirs) {
-            long userCount = 0;
-            long groupCount = 0;
+            ScopeCountService.ScopeCounts counts = dirCounts.get(dc.getId());
+            long userCount = counts != null ? counts.users() : 0L;
+            long groupCount = counts != null ? counts.groups() : 0L;
 
-            if (dc.isEnabled()) {
-                try {
-                    userCount = userService.searchUsers(dc,
-                            com.ldapportal.entity.DirectoryObjectClassDefaults.userSearchFilter(dc),
-                            null, MAX_COUNT, "1.1").size();
-                    if (userCount >= MAX_COUNT) {
-                        log.warn("User count for '{}' hit the {} limit — actual count may be higher",
-                                dc.getDisplayName(), MAX_COUNT);
-                    }
-                } catch (Exception e) {
-                    log.warn("Failed to count users for directory {}: {}", dc.getDisplayName(), e.getMessage());
-                    userCount = -1;
-                }
-                try {
-                    groupCount = groupService.searchGroups(dc,
-                            com.ldapportal.entity.DirectoryObjectClassDefaults.groupSearchFilter(dc),
-                            null, MAX_COUNT, "1.1").size();
-                } catch (Exception e) {
-                    log.warn("Failed to count groups for directory {}: {}", dc.getDisplayName(), e.getMessage());
-                    groupCount = -1;
-                }
-            }
-
-            long pending = approvalRepo.countByDirectoryIdAndStatus(dc.getId(), ApprovalStatus.PENDING);
+            long pending = pendingByDirectory.getOrDefault(dc.getId(), 0L);
             GovernanceDashboardProvider.DirectoryGovernanceCounts gov = governance.directoryCounts(dc.getId());
 
             if (userCount >= 0) totalUsers += userCount;
@@ -117,9 +103,9 @@ public class DashboardService {
             totalPending += pending;
 
             // A disabled directory isn't probed, so reachability is unknown
-            // (null). For an enabled one, the user-count search above is the
-            // connectivity probe: a -1 means it threw (e.g. UnknownHost / pool
-            // creation failure), so the host is unreachable.
+            // (null). For an enabled one the user count doubles as the
+            // connectivity probe: -1 means the count threw (e.g. UnknownHost /
+            // pool creation failure), so the host is unreachable.
             Boolean reachable = dc.isEnabled() ? userCount >= 0 : null;
 
             dirStats.add(new DirectoryStatDto(
@@ -160,7 +146,7 @@ public class DashboardService {
         boolean approvalsConfigured = approvalConfigRepo.existsByRequireApprovalTrue();
 
         // ── Users not reviewed in 90 days ────────────────────────────────────
-        long usersNotReviewedIn90Days = computeUsersNotReviewedIn90Days(dirs, now);
+        long usersNotReviewedIn90Days = computeUsersNotReviewedIn90Days(dirs, dirCounts, now);
 
         // ── Recent audit events ──────────────────────────────────────────────
         var recentAudit = auditQueryService.query(AuditQueryCriteria.EMPTY, 0, 10);
@@ -194,25 +180,25 @@ public class DashboardService {
     }
 
     /**
-     * Computes users not reviewed in 90 days using per-directory calculation
-     * to avoid cross-directory counting errors.
+     * Computes users not reviewed in 90 days, per directory to avoid
+     * cross-directory counting errors. Reuses the per-directory user counts
+     * already computed for the Directories panel ({@code dirCounts}) instead of
+     * issuing a second whole-directory user search per directory. A directory
+     * whose count failed (-1) is skipped, matching the previous behaviour where
+     * an unqueryable directory was skipped.
      */
-    private long computeUsersNotReviewedIn90Days(List<DirectoryConnection> dirs, OffsetDateTime now) {
+    private long computeUsersNotReviewedIn90Days(List<DirectoryConnection> dirs,
+                                                 Map<UUID, ScopeCountService.ScopeCounts> dirCounts,
+                                                 OffsetDateTime now) {
         OffsetDateTime ninetyDaysAgo = now.minusDays(90);
         long totalUnreviewed = 0;
 
         for (DirectoryConnection dc : dirs) {
             if (!dc.isEnabled()) continue;
 
-            // Get user count for this specific directory
-            long dirUserCount = 0;
-            try {
-                dirUserCount = userService.searchUsers(dc,
-                        com.ldapportal.entity.DirectoryObjectClassDefaults.userSearchFilter(dc),
-                        null, MAX_COUNT, "1.1").size();
-            } catch (Exception e) {
-                continue; // skip directories we can't query
-            }
+            ScopeCountService.ScopeCounts counts = dirCounts.get(dc.getId());
+            long dirUserCount = counts != null ? counts.users() : -1L;
+            if (dirUserCount < 0) continue; // couldn't query this directory
 
             try {
                 long reviewed = governance.reviewedUsersSince(dc.getId(), ninetyDaysAgo);
@@ -223,5 +209,14 @@ public class DashboardService {
             }
         }
         return totalUnreviewed;
+    }
+
+    /** Folds {@code [id, count]} GROUP BY rows into a map. */
+    private static Map<UUID, Long> toCountMap(List<Object[]> rows) {
+        Map<UUID, Long> counts = new HashMap<>(rows.size());
+        for (Object[] row : rows) {
+            counts.put((UUID) row[0], (Long) row[1]);
+        }
+        return counts;
     }
 }

@@ -122,6 +122,24 @@ public class ScopeCountService {
         return out;
     }
 
+    /**
+     * Counts users and groups for whole directories (the superadmin dashboard's
+     * Directories panel), reusing the same parallel + cached machinery as
+     * {@link #countAll}. Each directory is counted under its base DN (no OU
+     * scoping); results are keyed by directory id. Disabled directories come
+     * back as {@code (0, 0)} without touching LDAP, and a directory that can't
+     * be reached comes back as {@code (-1, -1)}.
+     */
+    public Map<UUID, ScopeCounts> countDirectories(List<DirectoryConnection> directories) {
+        if (directories == null || directories.isEmpty()) {
+            return Map.of();
+        }
+        List<ScopeRequest> requests = directories.stream()
+                .map(dc -> new ScopeRequest(dc.getId(), dc, null, null))
+                .toList();
+        return countAll(requests);
+    }
+
     private void registerScope(Map<String, CompletableFuture<Long>> byScope,
                                String key,
                                DirectoryConnection dc,
