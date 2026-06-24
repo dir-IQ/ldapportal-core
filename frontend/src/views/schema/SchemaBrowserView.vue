@@ -106,7 +106,10 @@
 
             <!-- Used-by (reverse index) -->
             <div v-if="usedBy.length">
-              <div class="flex items-center justify-between mb-2">
+              <!-- Label + Direct/inherited selector sit together, not pushed to
+                   opposite edges, so the selector reads as a control for the
+                   list right beside it. -->
+              <div class="flex items-center gap-3 mb-2">
                 <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Used by object classes</p>
                 <!-- Direct vs inherited selector -->
                 <div class="flex gap-0.5 bg-gray-100 p-0.5 rounded-md text-xs">
