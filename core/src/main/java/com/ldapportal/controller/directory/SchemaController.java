@@ -5,6 +5,7 @@ import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.DirectoryId;
 import com.ldapportal.auth.RequiresFeature;
 import com.ldapportal.entity.enums.FeatureKey;
+import com.ldapportal.ldap.LdapSchemaService.AttributeTypeDetail;
 import com.ldapportal.ldap.LdapSchemaService.AttributeTypeInfo;
 import com.ldapportal.ldap.LdapSchemaService.ObjectClassAttributes;
 import com.ldapportal.ldap.LdapSchemaService.SchemaListItem;
@@ -69,10 +70,10 @@ public class SchemaController {
 
     @GetMapping("/attribute-types/{name}")
     @RequiresFeature(FeatureKey.SCHEMA_READ)
-    public AttributeTypeInfo getAttributeType(
+    public AttributeTypeDetail getAttributeType(
             @DirectoryId @PathVariable UUID directoryId,
             @PathVariable String name,
             @AuthenticationPrincipal AuthPrincipal principal) {
-        return service.getAttributeTypeInfo(directoryId, principal, name);
+        return service.getAttributeTypeDetail(directoryId, principal, name);
     }
 }
