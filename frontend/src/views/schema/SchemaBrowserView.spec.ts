@@ -63,11 +63,20 @@ async function openAttribute(w: ReturnType<typeof mountView>) {
   await flushPromises()                    // attribute detail
 }
 
+const backLink = (w: ReturnType<typeof mountView>, name: string) =>
+  w.findAll('button').find(b => b.text().includes(`Back to ${name}`))
+
 describe('SchemaBrowserView attribute detail', () => {
+  let scrollSpy: ReturnType<typeof vi.fn>
+
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     stubResponses()
+    // jsdom has no layout, so scrollIntoView isn't implemented — stub it both
+    // to avoid noise and to assert the selected row is scrolled back into view.
+    scrollSpy = vi.fn()
+    Element.prototype.scrollIntoView = scrollSpy as unknown as () => void
   })
 
   it('shows the resolved syntax name, OID, and length hint', async () => {
@@ -105,5 +114,29 @@ describe('SchemaBrowserView attribute detail', () => {
     expect(vi.mocked(getObjectClass)).toHaveBeenCalledWith('dir-1', 'alphaClass')
     // A back link appears so the jump can be walked back.
     expect(w.text()).toContain('Back to cn')
+  })
+
+  it('scrolls the attribute row back into view when returning via the back link', async () => {
+    const w = mountView()
+    await openAttribute(w)                          // attribute 'cn'
+    await btn(w, 'alphaClass')!.trigger('click')    // → object class
+    await flushPromises()
+    scrollSpy.mockClear()
+    await backLink(w, 'cn')!.trigger('click')       // back to attribute 'cn'
+    await flushPromises()
+    expect(scrollSpy).toHaveBeenCalled()
+  })
+
+  it('scrolls the object-class row back into view when returning from an attribute', async () => {
+    const w = mountView()
+    await flushPromises()                           // object-class list
+    await btn(w, 'person')!.trigger('click')        // object class 'person'
+    await flushPromises()
+    await btn(w, 'cn')!.trigger('click')            // follow its 'cn' chip → attribute
+    await flushPromises()
+    scrollSpy.mockClear()
+    await backLink(w, 'person')!.trigger('click')   // back to object class 'person'
+    await flushPromises()
+    expect(scrollSpy).toHaveBeenCalled()
   })
 })
