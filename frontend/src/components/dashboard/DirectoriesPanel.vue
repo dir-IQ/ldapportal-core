@@ -53,22 +53,25 @@ function formatCount(n: number | null | undefined): string {
 }
 
 /**
- * Status dot colour. `enabled` is only a config flag — an enabled
- * directory whose LDAP host is unreachable must NOT read green, or the
- * dashboard claims health it doesn't have. So: disabled → grey outline,
- * enabled-but-unreachable → red, enabled-and-reachable → green. A null
- * `reachable` (older payloads / not probed) falls back to green so the
- * dot stays meaningful when the backend doesn't supply the probe result.
+ * Status dot colour. `enabled` is only a config flag — an enabled directory
+ * whose LDAP host is unreachable must NOT read green, or the dashboard claims
+ * health it doesn't have. So: disabled → grey outline; enabled-but-unreachable
+ * → red; enabled-and-reachable → green. A null `reachable` means the probe
+ * hasn't run yet — the dashboard paints before the (slow) reachability/counts
+ * load — so the dot stays a neutral grey rather than flashing green and then
+ * snapping to red once the result arrives.
  */
 function statusDotClass(dir: DirectoryStat): string {
   if (!dir.enabled) return 'border border-gray-400'
-  return dir.reachable === false ? 'bg-red-500' : 'bg-green-500'
+  if (dir.reachable == null) return 'bg-gray-300'
+  return dir.reachable ? 'bg-green-500' : 'bg-red-500'
 }
 
 /** Short status word for screen-reader / aria labels. */
 function statusText(dir: DirectoryStat): string {
   if (!dir.enabled) return 'disabled'
-  return dir.reachable === false ? 'unreachable' : 'enabled'
+  if (dir.reachable == null) return 'checking'
+  return dir.reachable ? 'enabled' : 'unreachable'
 }
 </script>
 

@@ -50,9 +50,15 @@ describe('DirectoriesPanel status dot', () => {
     expect(dotClasses(wrapper)).not.toContain('bg-red-500')
   })
 
-  it('falls back to green when reachable is absent (older payloads)', () => {
+  it('is a neutral grey dot while reachability is unknown (still loading)', () => {
+    // The dashboard paints before the slow reachability/counts load, so an
+    // enabled directory with no probe result yet must read grey — not green
+    // that then snaps to red once the result arrives.
     const wrapper = makeWrapper([{ id: '1', name: 'Acmecorp', enabled: true }])
-    expect(dotClasses(wrapper)).toContain('bg-green-500')
+    expect(dotClasses(wrapper)).toContain('bg-gray-300')
+    expect(dotClasses(wrapper)).not.toContain('bg-green-500')
+    expect(dotClasses(wrapper)).not.toContain('bg-red-500')
+    expect(wrapper.find('.sr-only').text()).toContain('checking')
   })
 })
 
