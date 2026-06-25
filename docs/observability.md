@@ -1,14 +1,18 @@
 # Observability — Prometheus metrics
 
-**Status:** In progress (Phases 0–2 shipped, 2026-06-25).
+**Status:** In progress (Phases 0–4 shipped, 2026-06-25).
 
-LDAPPortal exports operational-health metrics in Prometheus format from the
-core backend. This is self-observability — the health of *the portal*, not of
-the directories it manages. Phase 0 wires the registry, secures the scrape
-endpoint, and ships the LDAP connection-pool meters; Phase 1 adds per-directory
-LDAP operation latency and error counts; Phase 2 adds sync-engine and
-background-job health (queue depth, changelog lag, outbox backlog, report-job
-status); later phases add more subsystem metrics (see [Roadmap](#roadmap)).
+LDAPPortal exports operational-health metrics from the core backend two
+interchangeable ways — a Prometheus scrape endpoint and an optional
+OpenTelemetry (OTLP) push — off one shared set of Micrometer instruments. This
+is self-observability — the health of *the portal*, not of the directories it
+manages. Phase 0 wires the registry, secures the scrape endpoint, and ships the
+LDAP connection-pool meters; Phase 1 adds per-directory LDAP operation latency
+and error counts; Phase 2 adds sync-engine and background-job health (queue
+depth, changelog lag, outbox backlog, report-job status); Phase 3 adds
+deployment inventory, a license/entitlement overlay, and an auth-failure
+counter; Phase 4 adds the OTLP export path alongside the scrape (see
+[Roadmap](#roadmap)).
 
 ## Endpoint
 
@@ -68,6 +72,56 @@ Pick one of:
 Do not widen the `permitAll` set to include `prometheus`. Metric labels and
 values carry no PII or secrets (see [Cardinality & privacy](#cardinality--privacy)),
 but the surface still reveals deployment internals useful to an attacker.
+
+## OpenTelemetry (OTLP) export
+
+Prometheus scraping is *pull*-based. For OpenTelemetry pipelines the portal can
+**also** push the same metrics to an OTLP endpoint — an OpenTelemetry Collector,
+or any OTLP-compatible backend. OpenTelemetry is the strategic target and
+Prometheus the interim transport; both run side by side off the *same*
+instrumentation.
+
+Because every meter is registered through the Micrometer `MeterRegistry` facade,
+OTLP is a **registry addition, not an instrumentation rewrite**: the
+`micrometer-registry-otlp` registry joins the composite next to the Prometheus
+one, so the pool, operation-latency, sync, inventory, license, and auth-failure
+series all export over both paths with no code change. The dot-delimited meter
+names (`ldapportal.ldap.operations`, …) are already OpenTelemetry-idiomatic —
+Prometheus renders them as `ldapportal_ldap_operations_*` for its exposition
+while OTLP keeps the dotted form.
+
+**Off by default.** Merely adding the registry would otherwise push to
+`localhost:4318` every step and log failures where no collector exists, so OTLP
+export ships disabled and is enabled per deployment:
+
+```yaml
+# application.yml — defaults shown
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: ${OTLP_METRICS_ENABLED:false}        # set true where a collector exists
+        url: ${OTLP_METRICS_URL:http://localhost:4318/v1/metrics}
+        step: ${OTLP_METRICS_STEP:1m}                 # push interval
+  opentelemetry:
+    resource-attributes:
+      service.name: ${OTEL_SERVICE_NAME:ldap-portal}  # OTel resource attribute
+```
+
+Set `OTLP_METRICS_ENABLED=true` and point `OTLP_METRICS_URL` at the collector's
+metrics endpoint. `service.name` rides as an OpenTelemetry **resource
+attribute** — the OTel-native counterpart of the `application=ldap-portal`
+common tag, which still applies to every series. Aggregation temporality
+defaults to `cumulative` (what Prometheus-style backends expect); set
+`management.otlp.metrics.export.aggregation-temporality=delta` for backends that
+want delta. The bounded SLO histogram on the LDAP operation timer exports as an
+explicit-bucket histogram, so p95/p99 work downstream too.
+
+The two paths aren't exclusive: run the scrape endpoint for local Prometheus and
+OTLP for a collector pipeline, or disable the scrape and rely solely on OTLP.
+Tracing (spans via `micrometer-tracing-bridge-otel`) is a separate signal and is
+not included here. `OtlpMetricsExportTest` pins the gate — disabled → no
+`OtlpMeterRegistry`; enabled with a URL → the registry is wired.
 
 ## What you get
 
@@ -263,20 +317,31 @@ Prometheus' series count and can leak directory contents.
   decoupling scrape rate from DB load; the "age" gauges store the oldest
   timestamp and compute age live. Refresh failures are swallowed (the last
   snapshot is kept), never disrupting the app.
+- OTLP export (`micrometer-registry-otlp`) is **off by default**
+  (`management.otlp.metrics.export.enabled=false`); when enabled it pushes the
+  same meters to an OTLP collector via a second registry in the composite — no
+  instrumentation changes. `service.name` is set as an OpenTelemetry resource
+  attribute (`management.opentelemetry.resource-attributes`), which the OTLP
+  registry picks up without the OpenTelemetry SDK on the classpath.
 
 ## Roadmap
 
-Phases 0–2 are shipped (documented above). Planned follow-ups, each its own
+Phases 0–4 are shipped (documented above). Planned follow-ups, each its own
 branch/PR:
 
 - **P1 — LDAP operations.** ✅ Shipped. Per-directory operation latency and
   error counts, tagged by operation verb and result class.
 - **P2 — Sync engine & background jobs.** ✅ Shipped. Recompute-queue depth/lag,
   changelog lag/health, event-outbox backlog, scheduled-report job status.
-- **P3 — Auth, licensing & inventory.** Three families, split so the
+- **P3 — Auth, licensing & inventory.** ✅ Shipped. Three families, split so the
   operationally-useful half ships everywhere: **inventory** (directory / admin /
   subscriber / pending-approval counts) is edition-agnostic and always emitted; a
   **license overlay** (entitlement state, expiry, quotas) stays dormant in
   community via the `unlimited`/`never-expires` sentinels; plus an
   **auth-failure** counter. Full design:
   `docs/plans/2026-06-25-observability-phase3-plan.md`.
+- **P4 — OpenTelemetry (OTLP) export.** ✅ Shipped. A second export path
+  alongside the Prometheus scrape, off by default: the same instrumentation
+  pushes to an OTLP collector through a parallel `micrometer-registry-otlp`
+  registry, with `service.name` as an OTel resource attribute. Tracing (spans
+  via `micrometer-tracing-bridge-otel`) is deferred to a later phase.
