@@ -7,6 +7,7 @@ import com.ldapportal.core.reports.schedule.ReportJobRunStatus;
 import com.ldapportal.repository.ScheduledReportJobRepository;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -53,7 +54,7 @@ public class JobHealthMetrics {
         outboxGauge(registry, OutboxStatus.DELIVERING, outboxDelivering);
         outboxGauge(registry, OutboxStatus.DEAD_LETTERED, outboxDeadLettered);
         Gauge.builder("ldapportal.events.outbox.oldest.pending.age.seconds", outboxOldestPendingEpochSec,
-                        f -> liveAgeSeconds(f.get()))
+                        f -> MetricAges.liveSeconds(f.get()))
                 .description("Age of the oldest PENDING outbox entry (delivery backlog); 0 when none")
                 .baseUnit("seconds").register(registry);
         Gauge.builder("ldapportal.report.jobs.enabled", reportJobsEnabled, AtomicLong::doubleValue)
@@ -69,6 +70,17 @@ public class JobHealthMetrics {
                 .description("Event-outbox entries by delivery status")
                 .tag("status", status.name().toLowerCase(Locale.ROOT))
                 .baseUnit("entries").register(registry);
+    }
+
+    /**
+     * Prime the snapshot once at startup so the first scrape after a restart
+     * reports real values instead of zeros (the scheduled refresh otherwise
+     * first runs only after the initial delay). {@link #refresh()} swallows its
+     * own failures, so a startup DB hiccup just leaves the zeros in place.
+     */
+    @PostConstruct
+    void primeOnStartup() {
+        refresh();
     }
 
     @Scheduled(initialDelayString = "${ldapportal.metrics.refresh-ms:15000}",
@@ -88,13 +100,5 @@ public class JobHealthMetrics {
             // Metrics refresh must never disrupt the app; keep the last snapshot.
             log.debug("Job health metrics refresh failed: {}", e.toString());
         }
-    }
-
-    /** Live age in seconds for a stored epoch-seconds value; 0 (or non-positive) means "none". */
-    private static double liveAgeSeconds(long epochSeconds) {
-        if (epochSeconds <= 0L) {
-            return 0.0;
-        }
-        return Math.max(0.0, Instant.now().getEpochSecond() - epochSeconds);
     }
 }

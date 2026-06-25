@@ -6,15 +6,14 @@ import com.ldapportal.repository.RecomputeRequestRepository;
 import com.ldapportal.repository.SyncLinkRepository;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.EnumMap;
-
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -65,7 +64,7 @@ public class SyncEngineMetrics {
                 .description("Recompute requests currently claimed by a worker")
                 .baseUnit("requests").register(registry);
         Gauge.builder("ldapportal.sync.recompute.oldest.age.seconds", recomputeOldestEpochSec,
-                        f -> liveAgeSeconds(f.get()))
+                        f -> MetricAges.liveSeconds(f.get()))
                 .description("Age of the oldest unclaimed recompute request (queue lag); 0 when empty")
                 .baseUnit("seconds").register(registry);
         Gauge.builder("ldapportal.sync.changelog.lag.max", changelogMaxLag, AtomicLong::doubleValue)
@@ -76,6 +75,17 @@ public class SyncEngineMetrics {
                         .description("Enabled changelog-capture links by poll health")
                         .tag("health", health.name())
                         .baseUnit("links").register(registry));
+    }
+
+    /**
+     * Prime the snapshot once at startup so the first scrape after a restart
+     * reports real values instead of zeros (the scheduled refresh otherwise
+     * first runs only after the initial delay). {@link #refresh()} swallows its
+     * own failures, so a startup DB hiccup just leaves the zeros in place.
+     */
+    @PostConstruct
+    void primeOnStartup() {
+        refresh();
     }
 
     @Scheduled(initialDelayString = "${ldapportal.metrics.refresh-ms:15000}",
@@ -100,13 +110,5 @@ public class SyncEngineMetrics {
             // Metrics refresh must never disrupt the app; keep the last snapshot.
             log.debug("Sync engine metrics refresh failed: {}", e.toString());
         }
-    }
-
-    /** Live age in seconds for a stored epoch-seconds value; 0 (or non-positive) means "none". */
-    private static double liveAgeSeconds(long epochSeconds) {
-        if (epochSeconds <= 0L) {
-            return 0.0;
-        }
-        return Math.max(0.0, Instant.now().getEpochSecond() - epochSeconds);
     }
 }
