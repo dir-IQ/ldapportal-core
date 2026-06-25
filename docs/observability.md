@@ -213,6 +213,24 @@ startup, so a license installed at runtime surfaces them after a restart.
 `grace_state` (within-grace vs past-grace) is out of scope — the expiry timestamp
 and `expired` flag cover the essential alerts.
 
+### Custom — authentication failures (`AuthMetrics`)
+
+A counter for rejected authentication attempts — the brute-force /
+credential-attack signal. Incremented at the auth-rejection sites; the audit log
+keeps the per-account detail, while the metric stays bounded (no usernames, IPs,
+or tokens as labels).
+
+| Metric (Prometheus name) | Type | Meaning |
+| --- | --- | --- |
+| `ldapportal_auth_failures_total{reason="...",principal="..."}` | counter | Rejected authentication attempts |
+
+- `reason` — `bad_credentials` (failed admin login) / `invalid_token` (rejected API token).
+- `principal` — `admin` / `api_token`.
+
+Alert on a spike: `sum by (principal) (rate(ldapportal_auth_failures_total[5m]))`.
+Self-service / OIDC / WebSEAL login and JWT-session rejections aren't instrumented
+yet — the same `AuthMetrics.recordFailure(...)` extends to them.
+
 ## Cardinality & privacy
 
 Tags are restricted to **bounded, low-cardinality** dimensions: directory id /

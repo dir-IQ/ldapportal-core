@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.auth;
 
+import com.ldapportal.observability.AuthMetrics;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -46,6 +47,7 @@ public class ApiTokenAuthenticationFilter extends OncePerRequestFilter {
     private static final String API_TOKEN_PREFIX = "ldap_pat_";
 
     private final ApiTokenService apiTokenService;
+    private final AuthMetrics authMetrics;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -62,6 +64,7 @@ public class ApiTokenAuthenticationFilter extends OncePerRequestFilter {
 
         if (auth.isEmpty()) {
             SecurityContextHolder.clearContext();
+            authMetrics.recordFailure("invalid_token", "api_token");
             chain.doFilter(request, response);
             return;
         }
