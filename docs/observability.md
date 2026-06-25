@@ -78,8 +78,8 @@ are read live from the UnboundID `LDAPConnectionPoolStatistics` at scrape time.
 
 | Metric (Prometheus name) | Type | Meaning |
 | --- | --- | --- |
-| `ldapportal_ldap_pool_connections_available` | gauge | Idle connections currently available in the pool |
-| `ldapportal_ldap_pool_connections_max` | gauge | High-water mark of available connections |
+| `ldapportal_ldap_pool_connections_available` | gauge | Idle connections currently available for checkout |
+| `ldapportal_ldap_pool_connections_max` | gauge | Configured maximum pool size (capacity); pair with `_available` to derive utilization |
 | `ldapportal_ldap_pool_checkouts_total{result="success"}` | counter | Successful borrow operations |
 | `ldapportal_ldap_pool_checkouts_total{result="failed"}` | counter | **Failed checkouts — pool exhaustion** (primary alert signal) |
 | `ldapportal_ldap_pool_connections_closed_defunct_total` | counter | Connections discarded as defunct (broken sockets) |

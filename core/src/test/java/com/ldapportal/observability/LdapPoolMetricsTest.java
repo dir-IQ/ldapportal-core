@@ -63,6 +63,13 @@ class LdapPoolMetricsTest {
                 .gauge();
         assertThat(available.value()).isGreaterThanOrEqualTo(0.0);
 
+        // connections.max is the configured capacity (the pool was built with max=4),
+        // not a runtime high-water mark — so it's deterministic regardless of load.
+        var max = registry.get("ldapportal.ldap.pool.connections.max")
+                .tag("directory_id", dc.getId().toString())
+                .gauge();
+        assertThat(max.value()).isEqualTo(4.0);
+
         // The failed-checkouts counter (pool exhaustion signal) exists and starts at 0.
         var failed = registry.get("ldapportal.ldap.pool.checkouts")
                 .tag("result", "failed").functionCounter();
