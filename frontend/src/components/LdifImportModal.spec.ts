@@ -52,13 +52,15 @@ const stubs = {
   },
 }
 
-function summary(overrides = {}) {
-  return {
+function summary(overrides: Record<string, unknown> = {}) {
+  const s: Record<string, any> = {
     previewId: 'prev-1',
     totalRows: 2,
     countsByOp: { add: 1, modify: 1, delete: 0, moddn: 0, skip: 0, error: 0 },
     warningCount: 0,
     errorCount: 0,
+    outOfScopeCount: 0,
+    baseDn: 'dc=example,dc=com',
     truncated: false,
     page0: {
       rows: [
@@ -69,6 +71,13 @@ function summary(overrides = {}) {
     },
     ...overrides,
   }
+  // Default applicableCount to the actionable ops (the old client-side rule) so
+  // existing button assertions hold; a test can override it explicitly.
+  if (s.applicableCount === undefined) {
+    const c = s.countsByOp
+    s.applicableCount = c.add + c.modify + c.delete + c.moddn
+  }
+  return s
 }
 
 function byText(wrapper: ReturnType<typeof mount>, text: string) {
@@ -264,5 +273,43 @@ describe('LdifImportModal preview flow', () => {
 
     expect(api.getLdifPreviewPage).toHaveBeenCalledWith('dir-1', 'prev-1',
       expect.objectContaining({ op: 'ERRORS' }))
+  })
+
+  it('blocks import and explains the base-DN mismatch when entries are out of scope', async () => {
+    const oos = (n: number) => ({
+      rowNumber: n, dn: `uid=p${n},ou=People,dc=acme,dc=com`, op: 'ADD',
+      objectClasses: ['inetOrgPerson'], attrCount: 5, memberDelta: null, memberCount: null,
+      issues: [{ severity: 'ERROR', code: 'OUT_OF_SCOPE', message: 'DN is outside the directory base dc=example,dc=com — the server will reject it' }],
+      userAdd: false,
+    })
+    // Two out-of-scope adds: classified ADD, but blocking errors → not applicable.
+    api.previewLdif.mockResolvedValue({
+      data: summary({
+        countsByOp: { add: 2, modify: 0, delete: 0, moddn: 0, skip: 0, error: 0 },
+        errorCount: 2,
+        warningCount: 0,
+        outOfScopeCount: 2,
+        applicableCount: 0,
+        baseDn: 'dc=example,dc=com',
+        page0: { rows: [oos(1), oos(2)], page: 0, size: 50, totalFiltered: 2 },
+      }),
+    })
+    // errorCount > 0 → the modal defaults to the Errors tab and re-fetches the page.
+    api.getLdifPreviewPage.mockResolvedValue({ data: { rows: [oos(1), oos(2)], page: 0, size: 50, totalFiltered: 2 } })
+    const wrapper = mountModal()
+    await toPreview(wrapper)
+    await flushPromises()
+
+    // Banner names the base DN and the rejection; nothing is importable.
+    expect(wrapper.text()).toContain('outside this directory')
+    expect(wrapper.text()).toContain('dc=example,dc=com')
+    expect(wrapper.text()).toContain('rejected by the server')
+    expect(wrapper.text()).toContain('Nothing in this file can be imported')
+
+    // Import button reads 0 and is disabled — a one-click apply of doomed rows is blocked.
+    const importBtn = byText(wrapper, 'Import (0)')[0]
+    expect(importBtn).toBeTruthy()
+    expect(importBtn.attributes('disabled')).toBeDefined()
+    expect(api.applyLdifPreview).not.toHaveBeenCalled()
   })
 })
