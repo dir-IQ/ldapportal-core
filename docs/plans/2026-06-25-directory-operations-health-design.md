@@ -210,8 +210,15 @@ returning the `ProbeResult<...>` envelope; hard failures map through
 
 ## UI
 
-- A new **Operations** tab on the superadmin Directory detail (alongside
-  `DirectoriesManageView`), implemented as `DirectoryOperationsView.vue`.
+- A new **standalone superadmin view** `DirectoryOperationsView.vue` with an
+  **inline directory picker** at the top — the established pattern for
+  directory-scoped superadmin tools (Schema Browser `superadmin/directory-schema`,
+  Directory Browser, Directory Search, Directory Sync, Integrity Check). A new
+  left-nav entry, e.g. `superadmin/directory-operations`; no change to the
+  existing directory-management (`DirectoriesManageView`) or edit pages. (The app
+  has no tabbed directory-detail page — consolidating the growing set of
+  per-directory tools into one is a separate, larger IA effort, explicitly out of
+  scope here.)
 - One **card per capability**, each loading independently with a skeleton, a
   "last probed <time>" line, and a refresh control. Cards render their envelope
   state: data / *not supported on this server* / *service account lacks access* / error.
@@ -280,9 +287,9 @@ flagged as a TBD, reusing existing `AuditAction` values with a `detail` discrimi
 
 ## Phasing
 
-Each phase is independently shippable behind the same Operations tab + envelope.
+Each phase is independently shippable behind the same Operations view + envelope.
 
-1. **Certificate** — vendor-neutral, cheapest, highest "save" value; plus the Operations tab shell and `ProbeResult` envelope.
+1. **Certificate** — vendor-neutral, cheapest, highest "save" value; plus the Operations view shell (standalone + directory picker) and `ProbeResult` envelope.
 2. **Schema comparison** — builds straight on the schema browser.
 3. **Server health** (`cn=monitor`, OUD strategy).
 4. **Search diagnostics** + index advisor.
