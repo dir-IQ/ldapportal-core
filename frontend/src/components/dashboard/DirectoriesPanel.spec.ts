@@ -33,8 +33,8 @@ describe('DirectoriesPanel status dot', () => {
     const wrapper = makeWrapper([{ id: '1', name: 'Acmecorp', enabled: true, reachable: true }])
     expect(dotClasses(wrapper)).toContain('bg-green-500')
     expect(dotClasses(wrapper)).not.toContain('bg-red-500')
-    // A known status is steady — only the loading state pulses.
-    expect(dotClasses(wrapper)).not.toContain('animate-pulse')
+    // A known status is a steady dot — only the loading state spins.
+    expect(dotClasses(wrapper)).not.toContain('animate-spin')
   })
 
   it('is red when enabled but unreachable', () => {
@@ -52,14 +52,12 @@ describe('DirectoriesPanel status dot', () => {
     expect(dotClasses(wrapper)).not.toContain('bg-red-500')
   })
 
-  it('is a neutral grey dot while reachability is unknown (still loading)', () => {
+  it('shows a spinner while reachability is unknown (still loading)', () => {
     // The dashboard paints before the slow reachability/counts load, so an
-    // enabled directory with no probe result yet must read grey — not green
-    // that then snaps to red once the result arrives.
+    // enabled directory with no probe result yet must read as "loading" — a
+    // spinner — not green that then snaps to red once the result arrives.
     const wrapper = makeWrapper([{ id: '1', name: 'Acmecorp', enabled: true }])
-    expect(dotClasses(wrapper)).toContain('bg-gray-300')
-    // Pulses so it reads as "loading", matching the count skeletons.
-    expect(dotClasses(wrapper)).toContain('animate-pulse')
+    expect(dotClasses(wrapper)).toContain('animate-spin')
     expect(dotClasses(wrapper)).not.toContain('bg-green-500')
     expect(dotClasses(wrapper)).not.toContain('bg-red-500')
     expect(wrapper.find('.sr-only').text()).toContain('checking')

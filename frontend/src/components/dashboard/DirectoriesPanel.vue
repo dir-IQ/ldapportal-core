@@ -53,19 +53,27 @@ function formatCount(n: number | null | undefined): string {
 }
 
 /**
- * Status dot colour. `enabled` is only a config flag — an enabled directory
- * whose LDAP host is unreachable must NOT read green, or the dashboard claims
- * health it doesn't have. So: disabled → grey outline; enabled-but-unreachable
- * → red; enabled-and-reachable → green. A null `reachable` means the probe
- * hasn't run yet — the dashboard paints before the (slow) reachability/counts
- * load — so the dot pulses a neutral grey (matching the count skeletons on the
- * same card) rather than flashing green and then snapping to red once the
- * result arrives.
+ * Solid status dot for a directory whose reachability is already resolved.
+ * `enabled` is only a config flag — an enabled directory whose LDAP host is
+ * unreachable must NOT read green, or the dashboard claims health it doesn't
+ * have. So: disabled → grey outline; enabled-but-unreachable → red;
+ * enabled-and-reachable → green. The still-loading state (enabled with a null
+ * `reachable`, before the slow probe resolves) renders as a spinner in the
+ * template instead — see {@link isLoading} — so it isn't handled here.
  */
 function statusDotClass(dir: DirectoryStat): string {
   if (!dir.enabled) return 'border border-gray-400'
-  if (dir.reachable == null) return 'bg-gray-300 animate-pulse'
   return dir.reachable ? 'bg-green-500' : 'bg-red-500'
+}
+
+/**
+ * An enabled directory whose reachability hasn't resolved yet. The dashboard
+ * paints before the slow reachability/counts load, so this is the brief window
+ * where the status is genuinely unknown — shown as a spinner rather than a
+ * colour that would imply a result.
+ */
+function isLoading(dir: DirectoryStat): boolean {
+  return dir.enabled && dir.reachable == null
 }
 
 /** Short status word for screen-reader / aria labels. */
@@ -75,7 +83,7 @@ function statusText(dir: DirectoryStat): string {
   return dir.reachable ? 'enabled' : 'unreachable'
 }
 
-/** Fuller hover text for the status dot's title attribute. */
+/** Fuller hover text for the status indicator's title attribute. */
 function statusTitle(dir: DirectoryStat): string {
   if (!dir.enabled) return 'Disabled'
   if (dir.reachable == null) return 'Checking reachability…'
@@ -129,7 +137,15 @@ function statusTitle(dir: DirectoryStat): string {
         <!-- Header: status dot + name + chevron (chevron only when the
              whole card is clickable, since that's the affordance signal). -->
         <div class="px-3 py-2 border-b border-gray-200 flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full shrink-0" :class="statusDotClass(dir)" :title="statusTitle(dir)" aria-hidden="true"></span>
+          <!-- A spinner while the reachability probe is still in flight;
+               resolves to a solid green/red dot (or a hollow grey outline when
+               disabled). The spinner reads as "loading" far more clearly than a
+               faint colour, and its ring shape stays distinct from the solid
+               state dots. -->
+          <span v-if="isLoading(dir)"
+                class="w-3 h-3 rounded-full border-2 border-gray-300 border-t-gray-500 animate-spin shrink-0"
+                :title="statusTitle(dir)" aria-hidden="true"></span>
+          <span v-else class="w-2 h-2 rounded-full shrink-0" :class="statusDotClass(dir)" :title="statusTitle(dir)" aria-hidden="true"></span>
           <!-- Visually-hidden status text so screen readers announce
                enabled / disabled / unreachable — the coloured dot is
                decorative-only. -->
