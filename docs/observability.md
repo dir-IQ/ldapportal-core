@@ -255,5 +255,10 @@ branch/PR:
   error counts, tagged by operation verb and result class.
 - **P2 — Sync engine & background jobs.** ✅ Shipped. Recompute-queue depth/lag,
   changelog lag/health, event-outbox backlog, scheduled-report job status.
-- **P3 — Auth, licensing, inventory.** Authentication-failure rate, entitlement
-  / usage gauges, pending-approval counts, configured-directory inventory.
+- **P3 — Auth, licensing & inventory.** Three families, split so the
+  operationally-useful half ships everywhere: **inventory** (directory / admin /
+  subscriber / pending-approval counts) is edition-agnostic and always emitted; a
+  **license overlay** (entitlement state, expiry, quotas) stays dormant in
+  community via the `unlimited`/`never-expires` sentinels; plus an
+  **auth-failure** counter. Full design:
+  `docs/plans/2026-06-25-observability-phase3-plan.md`.
