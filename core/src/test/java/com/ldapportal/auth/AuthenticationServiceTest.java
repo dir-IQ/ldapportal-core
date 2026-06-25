@@ -8,6 +8,7 @@ import com.ldapportal.entity.ApplicationSettings;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.AccountType;
 import com.ldapportal.entity.enums.SslMode;
+import com.ldapportal.observability.AuthMetrics;
 import com.ldapportal.repository.AccountRepository;
 import com.ldapportal.repository.ApplicationSettingsRepository;
 import com.ldapportal.service.EncryptionService;
@@ -30,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -40,6 +42,7 @@ class AuthenticationServiceTest {
     @Mock private JwtTokenService               jwtTokenService;
     @Mock private PasswordEncoder               passwordEncoder;
     @Mock private EncryptionService             encryptionService;
+    @Mock private AuthMetrics                   authMetrics;
 
     private AuthenticationService authService;
 
@@ -55,7 +58,7 @@ class AuthenticationServiceTest {
     @BeforeEach
     void setUp() throws Exception {
         authService = new AuthenticationService(
-                accountRepo, settingsRepo, jwtTokenService, passwordEncoder, encryptionService);
+                accountRepo, settingsRepo, jwtTokenService, passwordEncoder, encryptionService, authMetrics);
 
         InMemoryDirectoryServerConfig cfg =
                 new InMemoryDirectoryServerConfig("dc=example,dc=com");
@@ -108,6 +111,7 @@ class AuthenticationServiceTest {
 
         assertThatThrownBy(() -> authService.login(new LoginRequest("alice", "wrong")))
                 .isInstanceOf(BadCredentialsException.class);
+        verify(authMetrics).recordFailure("bad_credentials", "admin");
     }
 
     @Test

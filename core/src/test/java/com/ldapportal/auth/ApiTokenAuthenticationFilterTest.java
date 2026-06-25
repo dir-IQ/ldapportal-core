@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.auth;
 
+import com.ldapportal.observability.AuthMetrics;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -29,6 +30,7 @@ import static org.mockito.Mockito.when;
 class ApiTokenAuthenticationFilterTest {
 
     @Mock private ApiTokenService apiTokenService;
+    @Mock private AuthMetrics authMetrics;
     private ApiTokenAuthenticationFilter filter;
     private MockHttpServletRequest req;
     private MockHttpServletResponse resp;
@@ -36,7 +38,7 @@ class ApiTokenAuthenticationFilterTest {
 
     @BeforeEach
     void setUp() {
-        filter = new ApiTokenAuthenticationFilter(apiTokenService);
+        filter = new ApiTokenAuthenticationFilter(apiTokenService, authMetrics);
         req = new MockHttpServletRequest();
         resp = new MockHttpServletResponse();
         chain = mock(FilterChain.class);
@@ -101,5 +103,6 @@ class ApiTokenAuthenticationFilterTest {
         // produce the ProblemDetail 401 on any protected endpoint.
         assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
         verify(chain).doFilter(any(HttpServletRequest.class), any(HttpServletResponse.class));
+        verify(authMetrics).recordFailure("invalid_token", "api_token");
     }
 }

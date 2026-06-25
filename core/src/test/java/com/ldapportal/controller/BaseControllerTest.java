@@ -8,6 +8,7 @@ import com.ldapportal.auth.PermissionService;
 import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.config.AppProperties;
 import com.ldapportal.config.SecurityConfig;
+import com.ldapportal.observability.AuthMetrics;
 import com.ldapportal.repository.AccountRepository;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -66,6 +67,11 @@ public abstract class BaseControllerTest {
     @MockitoBean
     @SuppressWarnings("unused")
     PermissionService permissionService;
+
+    // Satisfies ApiTokenAuthenticationFilter's auth-failure metric dependency.
+    @MockitoBean
+    @SuppressWarnings("unused")
+    AuthMetrics authMetrics;
 
     // ── Auth helpers ──────────────────────────────────────────────────────────
 

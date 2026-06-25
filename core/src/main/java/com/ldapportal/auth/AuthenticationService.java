@@ -9,6 +9,7 @@ import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.AccountType;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.exception.LdapConnectionException;
+import com.ldapportal.observability.AuthMetrics;
 import com.ldapportal.repository.AccountRepository;
 import com.ldapportal.repository.ApplicationSettingsRepository;
 import com.ldapportal.service.EncryptionService;
@@ -57,6 +58,7 @@ public class AuthenticationService {
     private final JwtTokenService               jwtTokenService;
     private final PasswordEncoder               passwordEncoder;
     private final EncryptionService             encryptionService;
+    private final AuthMetrics                   authMetrics;
 
     /**
      * Authenticates the login request and returns a signed JWT on success.
@@ -102,6 +104,7 @@ public class AuthenticationService {
 
         } catch (BadCredentialsException e) {
             log.warn("Failed login attempt for username '{}'", req.username());
+            authMetrics.recordFailure("bad_credentials", "admin");
             throw e;
         }
     }
