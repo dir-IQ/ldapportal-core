@@ -8,6 +8,7 @@ import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.ldapportal.ldap.sync.SyncCapturingLdapInterface;
 import com.ldapportal.ldap.sync.SyncWriteCaptor;
+import com.ldapportal.observability.LdapOperationMetrics;
 import com.ldapportal.observability.LdapPoolMetrics;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.sdk.*;
@@ -81,26 +82,37 @@ public class LdapConnectionFactory {
     @Nullable
     private final LdapPoolMetrics poolMetrics;
 
+    /**
+     * Per-directory LDAP operation metrics (Micrometer). Null in the same
+     * test/slice cases as {@link #poolMetrics}; when present, every pooled
+     * operation is wrapped in {@link MeteredLdapInterface} so its latency and
+     * result class are recorded.
+     */
+    @Nullable
+    private final LdapOperationMetrics operationMetrics;
+
     private final ConcurrentMap<UUID, LDAPConnectionPool> pools = new ConcurrentHashMap<>();
 
     @Autowired
     public LdapConnectionFactory(EncryptionService encryptionService,
                                  @Nullable SyncWriteCaptor syncWriteCaptor,
-                                 @Nullable LdapPoolMetrics poolMetrics) {
+                                 @Nullable LdapPoolMetrics poolMetrics,
+                                 @Nullable LdapOperationMetrics operationMetrics) {
         this.encryptionService = encryptionService;
         this.syncWriteCaptor = syncWriteCaptor;
         this.poolMetrics = poolMetrics;
+        this.operationMetrics = operationMetrics;
     }
 
     /** Convenience constructor — capture wrapper, no metrics. */
     public LdapConnectionFactory(EncryptionService encryptionService,
                                  @Nullable SyncWriteCaptor syncWriteCaptor) {
-        this(encryptionService, syncWriteCaptor, null);
+        this(encryptionService, syncWriteCaptor, null, null);
     }
 
     /** Convenience constructor for unit tests — no capture wrapper, no metrics. */
     public LdapConnectionFactory(EncryptionService encryptionService) {
-        this(encryptionService, null, null);
+        this(encryptionService, null, null, null);
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -169,9 +181,15 @@ public class LdapConnectionFactory {
         LDAPConnection conn = null;
         try {
             conn = pool.getConnection();
-            FullLDAPInterface iface = (capture && syncWriteCaptor != null)
-                    ? new SyncCapturingLdapInterface(conn, syncWriteCaptor, dc.getId())
+            // Operation metrics sit innermost (closest to the wire), so latency
+            // reflects the raw server round-trip even when the sync-capture
+            // wrapper is layered on top for portal-initiated writes.
+            FullLDAPInterface base = (operationMetrics != null)
+                    ? new MeteredLdapInterface(conn, operationMetrics, operationMetrics.directoryTags(dc))
                     : conn;
+            FullLDAPInterface iface = (capture && syncWriteCaptor != null)
+                    ? new SyncCapturingLdapInterface(base, syncWriteCaptor, dc.getId())
+                    : base;
             return operation.execute(iface);
         } catch (LDAPException e) {
             boolean connectionBroken = !e.getResultCode().isConnectionUsable();

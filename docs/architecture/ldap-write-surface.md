@@ -1,6 +1,6 @@
 # LDAP write surface
 
-**Status:** In progress (R1b chokepoint inventory, 2026-05-30).
+**Status:** In progress (R1b chokepoint inventory, 2026-06-25).
 
 This is the authoritative inventory of every class that may issue a
 *mutating* LDAP call (`add` / `modify` / `delete` / `modifyDN`) directly
@@ -32,6 +32,7 @@ it whenever a site is added or removed**, in the same change.
 | `LdapBrowseService` | `com.ldapportal.ldap` | Superadmin directory-browser `createEntry`/`updateEntry`/`deleteEntry`/`deleteSubtree`/`moveEntry`/`renameEntry`. | Yes — via `withConnection`. |
 | `LdifService` | `com.ldapportal.ldap` | LDIF import. **User** entry adds are routed through `LdapUserService.createUser` (→ `PlanExecutor`) so vendor interceptors (e.g. ISVA `secUser`) fire; non-user entries, `modify`/`delete`/`modifyDN` change records, and conflict overwrites are applied directly. | Yes — via `withConnection` (and via `PlanExecutor` for the user-add path). |
 | `LdapConnectionFactory` | `com.ldapportal.ldap` | Constructs the write surface — wraps pooled connections in `ReplicatingLdapInterface` and hands out the write-capable interface. Issues **no** mutating calls itself; annotated because it holds/produces the surface. | n/a |
+| `MeteredLdapInterface` | `com.ldapportal.ldap` | Observability decorator: forwards `add`/`modify`/`delete`/`modifyDN` (and reads) to the wrapped `FullLDAPInterface` so each operation is timed. Issues **no** writes of its own beyond the forward. | n/a — pass-through; wrapped *inside* the sync-capture wrapper, which is the capture point. |
 
 ## How the rule works
 
