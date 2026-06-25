@@ -4,7 +4,9 @@ package com.ldapportal.dto.ldap;
 /**
  * A single per-row finding surfaced by the LDIF preview.
  *
- * @param severity {@code ERROR} / {@code WARNING} / {@code INFO}
+ * @param severity {@code ERROR} / {@code WARNING} / {@code INFO}. {@code ERROR}
+ *                 is blocking: the preview's apply step never sends such a row
+ *                 to the server.
  * @param code     stable machine code: {@code PARSE_ERROR}, {@code INVALID_DN},
  *                 {@code OUT_OF_SCOPE}, {@code CONFLICT_EXISTS}
  * @param message  human-readable detail
@@ -23,8 +25,17 @@ public record LdifPreviewIssue(String severity, String code, String message) {
         return new LdifPreviewIssue(ERROR, "INVALID_DN", "Not a valid DN: " + dn);
     }
 
+    /**
+     * A DN that parses but falls outside the directory's configured base DN.
+     * Blocking ({@code ERROR}): the importer sends the DN verbatim — it is never
+     * re-based under the directory root — so a server rooted at {@code baseDn}
+     * rejects the write (typically {@code NO_SUCH_OBJECT} on the missing parent).
+     * Surfacing it as an error keeps the preview from counting adds that can't
+     * land, and the apply step skips these rows.
+     */
     public static LdifPreviewIssue outOfScope(String baseDn) {
-        return new LdifPreviewIssue(WARNING, "OUT_OF_SCOPE", "DN is not under the directory base " + baseDn);
+        return new LdifPreviewIssue(ERROR, "OUT_OF_SCOPE",
+                "DN is outside the directory base " + baseDn + " — the server will reject it");
     }
 
     public static LdifPreviewIssue conflictExists() {
