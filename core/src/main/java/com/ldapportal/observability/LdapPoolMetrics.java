@@ -64,13 +64,7 @@ public class LdapPoolMetrics {
     }
 
     private List<Meter> bind(DirectoryConnection dc, LDAPConnectionPool pool) {
-        Tags tags = Tags.of(
-                "directory_id", String.valueOf(dc.getId()),
-                // Display name is a human-readable convenience dimension; directory_id is
-                // the stable key. Renaming a directory starts a fresh series (the old one
-                // lingers until restart) — an accepted trade-off for legible dashboards.
-                "directory", dc.getDisplayName() == null ? "" : dc.getDisplayName(),
-                "type", dc.getDirectoryType() == null ? "UNKNOWN" : dc.getDirectoryType().name());
+        Tags tags = DirectoryMeterTags.of(dc);
 
         // Register everything, but roll back on a mid-way failure so we never leave
         // half the meters in the registry untracked by byDirectory (which would make
