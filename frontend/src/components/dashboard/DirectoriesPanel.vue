@@ -58,12 +58,13 @@ function formatCount(n: number | null | undefined): string {
  * health it doesn't have. So: disabled → grey outline; enabled-but-unreachable
  * → red; enabled-and-reachable → green. A null `reachable` means the probe
  * hasn't run yet — the dashboard paints before the (slow) reachability/counts
- * load — so the dot stays a neutral grey rather than flashing green and then
- * snapping to red once the result arrives.
+ * load — so the dot pulses a neutral grey (matching the count skeletons on the
+ * same card) rather than flashing green and then snapping to red once the
+ * result arrives.
  */
 function statusDotClass(dir: DirectoryStat): string {
   if (!dir.enabled) return 'border border-gray-400'
-  if (dir.reachable == null) return 'bg-gray-300'
+  if (dir.reachable == null) return 'bg-gray-300 animate-pulse'
   return dir.reachable ? 'bg-green-500' : 'bg-red-500'
 }
 
@@ -72,6 +73,13 @@ function statusText(dir: DirectoryStat): string {
   if (!dir.enabled) return 'disabled'
   if (dir.reachable == null) return 'checking'
   return dir.reachable ? 'enabled' : 'unreachable'
+}
+
+/** Fuller hover text for the status dot's title attribute. */
+function statusTitle(dir: DirectoryStat): string {
+  if (!dir.enabled) return 'Disabled'
+  if (dir.reachable == null) return 'Checking reachability…'
+  return dir.reachable ? 'Reachable' : 'Unreachable'
 }
 </script>
 
@@ -121,7 +129,7 @@ function statusText(dir: DirectoryStat): string {
         <!-- Header: status dot + name + chevron (chevron only when the
              whole card is clickable, since that's the affordance signal). -->
         <div class="px-3 py-2 border-b border-gray-200 flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full shrink-0" :class="statusDotClass(dir)" :title="statusText(dir)" aria-hidden="true"></span>
+          <span class="w-2 h-2 rounded-full shrink-0" :class="statusDotClass(dir)" :title="statusTitle(dir)" aria-hidden="true"></span>
           <!-- Visually-hidden status text so screen readers announce
                enabled / disabled / unreachable — the coloured dot is
                decorative-only. -->
