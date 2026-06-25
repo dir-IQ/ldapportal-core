@@ -8,6 +8,7 @@ import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.ldapportal.ldap.sync.SyncCapturingLdapInterface;
 import com.ldapportal.ldap.sync.SyncWriteCaptor;
+import com.ldapportal.observability.LdapPoolMetrics;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.sdk.*;
 import com.unboundid.ldap.sdk.extensions.StartTLSExtendedRequest;
@@ -72,18 +73,34 @@ public class LdapConnectionFactory {
     @Nullable
     private final SyncWriteCaptor syncWriteCaptor;
 
+    /**
+     * Per-directory connection-pool metrics (Micrometer). Null in unit tests
+     * that construct the factory directly and in slices without a meter
+     * registry; when present, pool create/evict (de)registers the meters.
+     */
+    @Nullable
+    private final LdapPoolMetrics poolMetrics;
+
     private final ConcurrentMap<UUID, LDAPConnectionPool> pools = new ConcurrentHashMap<>();
 
     @Autowired
     public LdapConnectionFactory(EncryptionService encryptionService,
-                                 @Nullable SyncWriteCaptor syncWriteCaptor) {
+                                 @Nullable SyncWriteCaptor syncWriteCaptor,
+                                 @Nullable LdapPoolMetrics poolMetrics) {
         this.encryptionService = encryptionService;
         this.syncWriteCaptor = syncWriteCaptor;
+        this.poolMetrics = poolMetrics;
     }
 
-    /** Convenience constructor for unit tests — no capture wrapper. */
+    /** Convenience constructor — capture wrapper, no metrics. */
+    public LdapConnectionFactory(EncryptionService encryptionService,
+                                 @Nullable SyncWriteCaptor syncWriteCaptor) {
+        this(encryptionService, syncWriteCaptor, null);
+    }
+
+    /** Convenience constructor for unit tests — no capture wrapper, no metrics. */
     public LdapConnectionFactory(EncryptionService encryptionService) {
-        this(encryptionService, null);
+        this(encryptionService, null, null);
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -93,8 +110,13 @@ public class LdapConnectionFactory {
      * creating it if it does not already exist.
      */
     public LDAPConnectionPool getPool(DirectoryConnection directoryConnection) {
-        return pools.computeIfAbsent(directoryConnection.getId(),
-            id -> createPool(directoryConnection));
+        return pools.computeIfAbsent(directoryConnection.getId(), id -> {
+            LDAPConnectionPool pool = createPool(directoryConnection);
+            if (poolMetrics != null) {
+                poolMetrics.register(directoryConnection, pool);
+            }
+            return pool;
+        });
     }
 
     /**
@@ -181,6 +203,9 @@ public class LdapConnectionFactory {
     public void evict(UUID connectionId) {
         LDAPConnectionPool pool = pools.remove(connectionId);
         if (pool != null) {
+            if (poolMetrics != null) {
+                poolMetrics.deregister(connectionId);
+            }
             pool.close();
             log.info("Evicted LDAP pool for connection {}", connectionId);
         }
