@@ -162,6 +162,23 @@ Good first alerts: `ldapportal_sync_changelog_links{health="STALLED"} > 0`
 
 Refresh cadence is `ldapportal.metrics.refresh-ms` (default 15000).
 
+### Custom — deployment inventory (`InventoryMetrics`)
+
+Always-on, **edition-agnostic** gauges describing how big the install is. This is
+operational inventory, *not* licensing — it ships in every edition including
+community (an operator counting their own resources). Same DB-backed snapshot +
+eager-prime pattern as the Phase 2 metrics. (The license/quota overlay that
+pairs `usage_limit{resource}` with these counts is Phase 3b; until a license sets
+caps, only the counts exist.)
+
+| Metric (Prometheus name) | Type | Meaning |
+| --- | --- | --- |
+| `ldapportal_inventory_directories` | gauge | Configured directory connections |
+| `ldapportal_inventory_admin_accounts{role="admin"\|"superadmin"}` | gauge | Active operator accounts by role |
+| `ldapportal_inventory_event_subscribers` | gauge | Enabled event subscriptions (0 where the events module is inactive) |
+| `ldapportal_inventory_pending_approvals` | gauge | Approval requests awaiting action |
+| `ldapportal_inventory_pending_approval_oldest_age_seconds` | gauge | Age of the oldest pending approval (backlog); 0 when none |
+
 ### Free — Spring Boot / Micrometer defaults
 
 The same registry also carries Boot's built-in binders, with no extra code:
@@ -171,6 +188,30 @@ The same registry also carries Boot's built-in binders, with no extra code:
 - **HikariCP** (the app's own Postgres pool) — `hikaricp_connections_*`
 - **System / process** — `process_cpu_usage`, `system_load_average_1m`, file descriptors, uptime
 - **Logback** — `logback_events_total{level}` (e.g. error-log rate)
+
+### Custom — license & entitlements (`LicenseMetrics`)
+
+The **license overlay** that complements the inventory counts. It stays dormant
+in community via the model's own sentinels — *no edition branching*: an unlimited
+limit (`Long.MAX_VALUE`) or a never-expiry (`Instant.MAX`) means the corresponding
+series is simply not registered.
+
+| Metric (Prometheus name) | Type | Meaning |
+| --- | --- | --- |
+| `ldapportal_license_entitlement{entitlement="..."}` | gauge 0/1 | Each entitlement granted (1) / withheld (0). In community-plus-isva, `VENDOR_INTEGRATIONS_ISVA=1` confirms the addon is active. |
+| `ldapportal_license_info{edition,signed}` | gauge =1 | Install descriptor — edition + whether a signed license is present. |
+| `ldapportal_license_expired` | gauge 0/1 | 1 once past the expiry instant; always 0 in community (never expires). |
+| `ldapportal_license_expiry_timestamp_seconds` | gauge | Expiry as a Unix timestamp — **only when a real expiry exists**. |
+| `ldapportal_usage_limit{resource="..."}` | gauge | Licensed quota per resource — **only finite limits**; pairs with `ldapportal_inventory_*`. |
+
+Alerts: renewal `(ldapportal_license_expiry_timestamp_seconds - time())/86400 < 30`;
+lapsed `ldapportal_license_expired == 1`; approaching a quota
+`ldapportal_inventory_directories / on() ldapportal_usage_limit{resource="directories"} > 0.9`.
+
+The conditional series (`expiry`, `usage_limit`) register from the license seen at
+startup, so a license installed at runtime surfaces them after a restart.
+`grace_state` (within-grace vs past-grace) is out of scope — the expiry timestamp
+and `expired` flag cover the essential alerts.
 
 ## Cardinality & privacy
 

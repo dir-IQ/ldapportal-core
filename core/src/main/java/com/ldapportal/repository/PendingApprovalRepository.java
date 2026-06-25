@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
@@ -56,4 +57,8 @@ public interface PendingApprovalRepository extends JpaRepository<PendingApproval
     List<PendingApproval> findAllByStatus(ApprovalStatus status);
 
     long countByStatus(ApprovalStatus status);
+
+    /** Oldest approval in a given status (e.g. PENDING backlog age); null when none. */
+    @Query("select min(a.createdAt) from PendingApproval a where a.status = :status")
+    OffsetDateTime findOldestCreatedAtByStatus(@Param("status") ApprovalStatus status);
 }
