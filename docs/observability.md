@@ -162,6 +162,23 @@ Good first alerts: `ldapportal_sync_changelog_links{health="STALLED"} > 0`
 
 Refresh cadence is `ldapportal.metrics.refresh-ms` (default 15000).
 
+### Custom — deployment inventory (`InventoryMetrics`)
+
+Always-on, **edition-agnostic** gauges describing how big the install is. This is
+operational inventory, *not* licensing — it ships in every edition including
+community (an operator counting their own resources). Same DB-backed snapshot +
+eager-prime pattern as the Phase 2 metrics. (The license/quota overlay that
+pairs `usage_limit{resource}` with these counts is Phase 3b; until a license sets
+caps, only the counts exist.)
+
+| Metric (Prometheus name) | Type | Meaning |
+| --- | --- | --- |
+| `ldapportal_inventory_directories` | gauge | Configured directory connections |
+| `ldapportal_inventory_admin_accounts{role="admin"\|"superadmin"}` | gauge | Active operator accounts by role |
+| `ldapportal_inventory_event_subscribers` | gauge | Enabled event subscriptions (0 where the events module is inactive) |
+| `ldapportal_inventory_pending_approvals` | gauge | Approval requests awaiting action |
+| `ldapportal_inventory_pending_approval_oldest_age_seconds` | gauge | Age of the oldest pending approval (backlog); 0 when none |
+
 ### Free — Spring Boot / Micrometer defaults
 
 The same registry also carries Boot's built-in binders, with no extra code:
