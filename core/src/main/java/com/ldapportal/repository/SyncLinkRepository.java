@@ -34,4 +34,21 @@ public interface SyncLinkRepository extends JpaRepository<SyncLink, UUID> {
             + "and (l.changelogPollClaimedAt is null or l.changelogPollClaimedAt < :staleBefore)")
     int claimChangelogPoll(@Param("id") UUID id, @Param("now") OffsetDateTime now,
                            @Param("staleBefore") OffsetDateTime staleBefore);
+
+    // ── Observability (read-only aggregates) ────────────────────────────────────
+
+    /** Count of enabled changelog-capture links grouped by poll health. */
+    @Query("select l.changelogHealth, count(l) from SyncLink l "
+            + "where l.enabled = true and l.captureMode = "
+            + "com.ldapportal.entity.enums.SyncCaptureMode.CHANGELOG "
+            + "group by l.changelogHealth")
+    List<Object[]> countChangelogLinksByHealth();
+
+    /** Largest source-head-minus-cursor lag across enabled changelog links; null when none. */
+    @Query("select max(l.changelogSourceLastChangeNumber - l.changelogLastChangeNumber) "
+            + "from SyncLink l where l.enabled = true and l.captureMode = "
+            + "com.ldapportal.entity.enums.SyncCaptureMode.CHANGELOG "
+            + "and l.changelogSourceLastChangeNumber is not null "
+            + "and l.changelogLastChangeNumber is not null")
+    Long maxChangelogLag();
 }
