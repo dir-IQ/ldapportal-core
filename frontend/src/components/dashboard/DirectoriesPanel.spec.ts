@@ -33,6 +33,8 @@ describe('DirectoriesPanel status dot', () => {
     const wrapper = makeWrapper([{ id: '1', name: 'Acmecorp', enabled: true, reachable: true }])
     expect(dotClasses(wrapper)).toContain('bg-green-500')
     expect(dotClasses(wrapper)).not.toContain('bg-red-500')
+    // A known status is steady — only the loading state pulses.
+    expect(dotClasses(wrapper)).not.toContain('animate-pulse')
   })
 
   it('is red when enabled but unreachable', () => {
@@ -56,6 +58,8 @@ describe('DirectoriesPanel status dot', () => {
     // that then snaps to red once the result arrives.
     const wrapper = makeWrapper([{ id: '1', name: 'Acmecorp', enabled: true }])
     expect(dotClasses(wrapper)).toContain('bg-gray-300')
+    // Pulses so it reads as "loading", matching the count skeletons.
+    expect(dotClasses(wrapper)).toContain('animate-pulse')
     expect(dotClasses(wrapper)).not.toContain('bg-green-500')
     expect(dotClasses(wrapper)).not.toContain('bg-red-500')
     expect(wrapper.find('.sr-only').text()).toContain('checking')
