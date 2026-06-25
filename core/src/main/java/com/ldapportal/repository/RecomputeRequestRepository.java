@@ -59,4 +59,16 @@ public interface RecomputeRequestRepository extends JpaRepository<RecomputeReque
     @Query("update RecomputeRequest r set r.claimedAt = null "
             + "where r.claimedAt is not null and r.claimedAt < :threshold")
     int releaseStaleClaims(@Param("threshold") OffsetDateTime threshold);
+
+    // ── Observability (read-only aggregates) ────────────────────────────────────
+
+    /** Queue depth: requests still waiting for a worker. */
+    long countByClaimedAtIsNull();
+
+    /** In-flight: requests currently claimed by a worker. */
+    long countByClaimedAtIsNotNull();
+
+    /** Oldest waiting request's enqueue time (queue lag); null when the queue is empty. */
+    @Query("select min(r.enqueuedAt) from RecomputeRequest r where r.claimedAt is null")
+    OffsetDateTime findOldestUnclaimedEnqueuedAt();
 }

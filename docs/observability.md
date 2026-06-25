@@ -1,13 +1,14 @@
 # Observability — Prometheus metrics
 
-**Status:** In progress (Phases 0–1 shipped, 2026-06-25).
+**Status:** In progress (Phases 0–2 shipped, 2026-06-25).
 
 LDAPPortal exports operational-health metrics in Prometheus format from the
 core backend. This is self-observability — the health of *the portal*, not of
 the directories it manages. Phase 0 wires the registry, secures the scrape
 endpoint, and ships the LDAP connection-pool meters; Phase 1 adds per-directory
-LDAP operation latency and error counts; later phases add subsystem metrics
-(see [Roadmap](#roadmap)).
+LDAP operation latency and error counts; Phase 2 adds sync-engine and
+background-job health (queue depth, changelog lag, outbox backlog, report-job
+status); later phases add more subsystem metrics (see [Roadmap](#roadmap)).
 
 ## Endpoint
 
@@ -129,6 +130,38 @@ Useful queries:
 A failed op's latency (e.g. a 30 s `timeout`) is tagged with its own `result`
 class, so the `result="success"` latency stays clean for SLOs.
 
+### Custom — sync engine & background jobs (`SyncEngineMetrics`, `JobHealthMetrics`)
+
+Subsystem-health gauges, **global** (not per-directory). These are DB-backed:
+rather than query on every scrape, a scheduled `refresh()` tick snapshots the
+repository aggregates into in-memory holders and the gauges read those — so
+scrape rate is decoupled from DB load, and a DB hiccup degrades to a stale
+snapshot, not a failed scrape. The two "age" gauges store the oldest timestamp
+and compute age **live**, so lag keeps climbing between refreshes.
+
+| Metric (Prometheus name) | Type | Meaning |
+| --- | --- | --- |
+| `ldapportal_sync_recompute_pending_requests` | gauge | Unclaimed recompute requests (queue depth) |
+| `ldapportal_sync_recompute_inflight_requests` | gauge | Recompute requests currently claimed by a worker |
+| `ldapportal_sync_recompute_oldest_age_seconds` | gauge | Age of the oldest unclaimed request (queue lag); 0 when empty |
+| `ldapportal_sync_changelog_links{health=...}` | gauge | Enabled changelog-capture links per poll health (`HEALTHY`/`LAGGING`/`STALLED`/`GAP_DETECTED`/`CURSOR_RESET`/`DISABLED_CONFIG_ERROR`) |
+| `ldapportal_sync_changelog_lag_max_changes` | gauge | Largest changelog lag (source head − cursor) across links; clamped ≥ 0 |
+| `ldapportal_events_outbox_entries{status=pending\|delivering\|dead_lettered}` | gauge | Event-outbox entries by delivery status |
+| `ldapportal_events_outbox_oldest_pending_age_seconds` | gauge | Age of the oldest `PENDING` outbox entry (delivery backlog); 0 when none |
+| `ldapportal_report_jobs_enabled_jobs` | gauge | Enabled scheduled report jobs |
+| `ldapportal_report_jobs_failed_jobs` | gauge | Enabled jobs whose last run failed |
+
+The sync engine is entitlement-gated (`DIRECTORY_SYNC`); where it's inactive the
+tables are empty and every sync gauge reports 0 — an accurate "no backlog"
+rather than a missing series. The outbox dispatcher and report scheduler run
+unconditionally in core, so those gauges are always meaningful.
+
+Good first alerts: `ldapportal_sync_changelog_links{health="STALLED"} > 0`
+(a poller is stuck), `ldapportal_events_outbox_entries{status="dead_lettered"} > 0`
+(deliveries are being abandoned), `ldapportal_report_jobs_failed_jobs > 0`.
+
+Refresh cadence is `ldapportal.metrics.refresh-ms` (default 15000).
+
 ### Free — Spring Boot / Micrometer defaults
 
 The same registry also carries Boot's built-in binders, with no extra code:
@@ -146,9 +179,10 @@ display name / type, the operation verb, and a fixed set of result classes. User
 identifiers, DNs, entry attributes, filters, and secrets are **never** used as
 metric names, labels, or values — note in particular that the operation timer
 tags a coarse `result` *class*, not the raw LDAP result code (which would be a
-wider, less bounded dimension). New metrics must hold this line — an unbounded
-label (a DN, a username) would blow up Prometheus' series count and can leak
-directory contents.
+wider, less bounded dimension). The Phase 2 subsystem gauges are **global** (no
+per-entity tags) and carry only bounded enum tags (`health`, `status`). New
+metrics must hold this line — an unbounded label (a DN, a username) would blow up
+Prometheus' series count and can leak directory contents.
 
 ## Implementation notes
 
@@ -164,15 +198,21 @@ directory contents.
   every operation to the wrapped interface (issuing no writes of its own) and is
   enumerated in `docs/architecture/ldap-write-surface.md`. The operation timer's
   histogram buckets are set by a `MeterFilter` in `MetricsConfig`.
+- The Phase 2 subsystem gauges (`SyncEngineMetrics`, `JobHealthMetrics`) are
+  DB-backed: a scheduled `refresh()` (`ldapportal.metrics.refresh-ms`, default
+  15 s) snapshots repository aggregates into in-memory holders the gauges read,
+  decoupling scrape rate from DB load; the "age" gauges store the oldest
+  timestamp and compute age live. Refresh failures are swallowed (the last
+  snapshot is kept), never disrupting the app.
 
 ## Roadmap
 
-Phases 0 and 1 are shipped (documented above). Planned follow-ups, each its own
+Phases 0–2 are shipped (documented above). Planned follow-ups, each its own
 branch/PR:
 
 - **P1 — LDAP operations.** ✅ Shipped. Per-directory operation latency and
   error counts, tagged by operation verb and result class.
-- **P2 — Sync engine & scheduled jobs.** Changelog lag, recompute-queue depth,
-  scheduled-report job success/failure and last-run age.
+- **P2 — Sync engine & background jobs.** ✅ Shipped. Recompute-queue depth/lag,
+  changelog lag/health, event-outbox backlog, scheduled-report job status.
 - **P3 — Auth, licensing, inventory.** Authentication-failure rate, entitlement
   / usage gauges, pending-approval counts, configured-directory inventory.
