@@ -254,6 +254,47 @@ class UnifiedDashboardServiceTest {
                         "/superadmin/directory-sync?findings=open"));
     }
 
+    @Test
+    void directorySync_actions_kept_for_superadmin_when_enabled() {
+        stubSettings(true, true); // directory-sync defaults on
+        when(dashboardService.getDashboard(anyBoolean())).thenReturn(sampleComplianceDto());
+        when(activityDashboardService.build(superadmin)).thenReturn(
+                new ActivityDashboardResponse(directorySyncActions(), List.of(), List.of(),
+                        new SummaryMetrics(0, 0, 0, 0, 0, 4)));
+
+        UnifiedDashboardDto out = service.getDashboard(superadmin);
+
+        assertThat(out.actions()).extracting(UnifiedDashboardDto.ActionItem::type)
+                .contains("APPROVAL", "REPLICATION_DEAD_LETTERED", "SYNC_REVIEW_PENDING");
+    }
+
+    @Test
+    void directorySync_actions_hidden_from_admin_even_when_enabled() {
+        // Directory sync is superadmin-managed with no admin-facing view, so a
+        // non-superadmin must not get the dead-letter / review actions whose link
+        // would only bounce off the route guard — gate on role, not just entitlement.
+        stubSettings(true, true);
+        when(adminDashboardService.getDashboard(eq(admin), anyBoolean())).thenReturn(sampleAdminDto());
+        when(activityDashboardService.build(admin)).thenReturn(
+                new ActivityDashboardResponse(directorySyncActions(), List.of(), List.of(),
+                        new SummaryMetrics(0, 0, 0, 0, 0, 4)));
+
+        UnifiedDashboardDto out = service.getDashboard(admin);
+
+        assertThat(out.actions()).extracting(UnifiedDashboardDto.ActionItem::type)
+                .containsExactly("APPROVAL")
+                .doesNotContain("REPLICATION_DEAD_LETTERED", "SYNC_REVIEW_PENDING");
+    }
+
+    private List<ActionItem> directorySyncActions() {
+        return List.of(
+                new ActionItem("APPROVAL", "HIGH", "2 approvals pending", null, "/approvals", 2),
+                new ActionItem("REPLICATION_DEAD_LETTERED", "HIGH", "4 sync entries failed to apply",
+                        "Dead-lettered", "/superadmin/directory-sync?state=FAILED", 4),
+                new ActionItem("SYNC_REVIEW_PENDING", "HIGH", "3 sync items awaiting review",
+                        "Quarantined", "/superadmin/directory-sync?state=REVIEW", 3));
+    }
+
     // ── Admin dispatch ──────────────────────────────────────────────────────
 
     @Test

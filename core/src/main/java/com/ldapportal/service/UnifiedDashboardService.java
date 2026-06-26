@@ -42,6 +42,8 @@ public class UnifiedDashboardService {
     private static final Set<String> COMPLIANCE_AWARENESS_TYPES = Set.of("UPCOMING_DEADLINE");
     private static final Set<String> DIRECTORY_SYNC_AWARENESS_TYPES =
             Set.of("REPLICATION_LAG_HIGH", "RECONCILIATION_DRIFT_OPEN");
+    private static final Set<String> DIRECTORY_SYNC_ACTION_TYPES =
+            Set.of("REPLICATION_DEAD_LETTERED", "SYNC_REVIEW_PENDING");
 
     @Transactional(readOnly = true)
     public UnifiedDashboardDto getDashboard(AuthPrincipal principal) {
@@ -117,7 +119,7 @@ public class UnifiedDashboardService {
             campaignProgress = List.of();
         }
 
-        List<ActionItem> actions = filterActions(activity.actions(), complianceEnabled, directorySyncEnabled);
+        List<ActionItem> actions = filterActions(activity.actions(), complianceEnabled, directorySyncEnabled, principal.isSuperadmin());
         List<SuggestedAction> suggestions = filterSuggestions(activity.suggestions(), complianceEnabled, hrEnabled, alertingEnabled);
         List<AwarenessItem> awareness = filterAwareness(activity.awareness(), complianceEnabled, directorySyncEnabled, principal.isSuperadmin());
 
@@ -186,11 +188,15 @@ public class UnifiedDashboardService {
 
     private static List<ActionItem> filterActions(List<ActivityDashboardResponse.ActionItem> src,
                                                    boolean complianceEnabled,
-                                                   boolean directorySyncEnabled) {
+                                                   boolean directorySyncEnabled,
+                                                   boolean isSuperadmin) {
         if (src == null) return List.of();
         return src.stream()
                 .filter(a -> complianceEnabled || !COMPLIANCE_ACTION_TYPES.contains(a.type()))
-                .filter(a -> directorySyncEnabled || !"REPLICATION_DEAD_LETTERED".equals(a.type()))
+                // Directory-sync actions deep-link into the superadmin-only Directory
+                // Sync surface, which has no admin-facing view — gate on role too, so
+                // a non-superadmin never gets an item whose link the route guard bounces.
+                .filter(a -> (directorySyncEnabled && isSuperadmin) || !DIRECTORY_SYNC_ACTION_TYPES.contains(a.type()))
                 .map(a -> new ActionItem(a.type(), a.severity(), a.title(), a.detail(), a.link(), a.count()))
                 .toList();
     }

@@ -55,6 +55,9 @@ public class ActivityDashboardService {
     private final AuditQueryService auditQueryService;
     private final ApplicationSettingsService settingsService;
     private final AccountRepository accountRepo;
+    private final SyncLinkRepository syncLinkRepo;
+    private final MembershipRepository membershipRepo;
+    private final SyncSetRepository syncSetRepo;
 
     private final GovernanceDashboardProvider governance;
     private final AlertSummaryProvider alertSummaryProvider;
@@ -66,10 +69,17 @@ public class ActivityDashboardService {
     public ActivityDashboardResponse build(AuthPrincipal principal) {
         Set<UUID> dirIds = getDirectoryIds(principal);
 
-        List<ActionItem> actions = buildActions(principal, dirIds);
+        // Directory-sync rollups deep-link into the superadmin-only Directory Sync
+        // surface, so only a superadmin gets them — skip the queries for admins.
+        // The consumer (UnifiedDashboardService) also gates them on DIRECTORY_SYNC
+        // + role before the payload leaves the server.
+        Map<MembershipState, Long> syncStates = principal.isSuperadmin()
+                ? aggregateMembershipStates() : Map.of();
+
+        List<ActionItem> actions = buildActions(principal, dirIds, syncStates);
         List<SuggestedAction> suggestions = buildSuggestions(principal, dirIds);
-        List<AwarenessItem> awareness = buildAwareness(dirIds);
-        SummaryMetrics metrics = buildMetrics(dirIds);
+        List<AwarenessItem> awareness = buildAwareness(principal, dirIds);
+        SummaryMetrics metrics = buildMetrics(dirIds, syncStates);
 
         return new ActivityDashboardResponse(actions, suggestions, awareness, metrics);
     }
@@ -88,7 +98,8 @@ public class ActivityDashboardService {
     //  Actions
     // ══════════════════════════════════════════════════════════════════════
 
-    private List<ActionItem> buildActions(AuthPrincipal principal, Set<UUID> dirIds) {
+    private List<ActionItem> buildActions(AuthPrincipal principal, Set<UUID> dirIds,
+                                          Map<MembershipState, Long> syncStates) {
         List<ActionItem> items = new ArrayList<>();
 
         // Pending approvals
@@ -145,8 +156,23 @@ public class ActivityDashboardService {
                     1));
         }
 
-        // Directory-sync dead-letter action items return with the
-        // membership-engine; the legacy replication queue is gone.
+        // Directory-sync apply failures (dead-lettered) + quarantined items awaiting
+        // an operator decision. syncStates is empty for non-superadmins, so these
+        // never surface for an admin (the consumer gates them again by role).
+        long failed = syncStates.getOrDefault(MembershipState.FAILED, 0L);
+        if (failed > 0) {
+            items.add(new ActionItem("REPLICATION_DEAD_LETTERED", "HIGH",
+                    failed + " sync " + (failed == 1 ? "entry" : "entries") + " failed to apply",
+                    "Dead-lettered — retried automatically; investigate if persistent",
+                    "/superadmin/directory-sync?state=FAILED", clampInt(failed)));
+        }
+        long review = syncStates.getOrDefault(MembershipState.REVIEW, 0L);
+        if (review > 0) {
+            items.add(new ActionItem("SYNC_REVIEW_PENDING", "HIGH",
+                    review + " sync " + (review == 1 ? "item" : "items") + " awaiting review",
+                    "Quarantined changes need an operator decision",
+                    "/superadmin/directory-sync?state=REVIEW", clampInt(review)));
+        }
 
         return items;
     }
@@ -266,7 +292,7 @@ public class ActivityDashboardService {
     //  Awareness
     // ══════════════════════════════════════════════════════════════════════
 
-    private List<AwarenessItem> buildAwareness(Set<UUID> dirIds) {
+    private List<AwarenessItem> buildAwareness(AuthPrincipal principal, Set<UUID> dirIds) {
         List<AwarenessItem> items = new ArrayList<>();
         OffsetDateTime now = OffsetDateTime.now();
 
@@ -308,9 +334,11 @@ public class ActivityDashboardService {
             });
         }
 
-        // Directory-sync lag / drift awareness items return with the
-        // membership-engine; the legacy replication-event and reconciliation
-        // surfaces are gone.
+        // Directory-sync changelog health (lag/stall) + reconciliation drift.
+        // Superadmin-only surface; the consumer gates again on DIRECTORY_SYNC + role.
+        if (principal.isSuperadmin()) {
+            addSyncHealthAwareness(items);
+        }
 
         return items;
     }
@@ -319,7 +347,7 @@ public class ActivityDashboardService {
     //  Metrics
     // ══════════════════════════════════════════════════════════════════════
 
-    private SummaryMetrics buildMetrics(Set<UUID> dirIds) {
+    private SummaryMetrics buildMetrics(Set<UUID> dirIds, Map<MembershipState, Long> syncStates) {
         // Scope the SoD count to the caller's directories. The governance SPI
         // gives us per-directory counts; sum them to produce the metric.
         long openSod = 0;
@@ -329,9 +357,9 @@ public class ActivityDashboardService {
         long openAlerts = alertSummaryProvider.summary().openCount();
         long activeCampaigns = governance.activeCampaignProgress().size();
 
-        // Directory-sync metric (dead-letter count) returns with the
-        // membership-engine; zero keeps the card hidden until then.
-        long replicationDeadLettered = 0;
+        // System-wide dead-letter count = membership rows stuck in FAILED. Empty
+        // (zero) for non-superadmins and editions without the DIRECTORY_SYNC feature.
+        long replicationDeadLettered = syncStates.getOrDefault(MembershipState.FAILED, 0L);
 
         // User/group counts would require LDAP queries — use 0 for now
         // (the current dashboard already provides these via the compliance dashboard)
@@ -353,5 +381,71 @@ public class ActivityDashboardService {
 
     private String dirName(UUID dirId) {
         return dirRepo.findById(dirId).map(DirectoryConnection::getDisplayName).orElse("");
+    }
+
+    // ── Directory-sync rollups ──────────────────────────────────────────────────
+
+    /** System-wide membership counts by state (failed / review / …) in one query. */
+    private Map<MembershipState, Long> aggregateMembershipStates() {
+        Map<MembershipState, Long> byState = new EnumMap<>(MembershipState.class);
+        for (MembershipStateCount c : membershipRepo.countGroupedByState()) {
+            byState.merge(c.getState(), c.getCnt(), Long::sum);
+        }
+        return byState;
+    }
+
+    /**
+     * Two directory-sync awareness items, each an aggregate that deep-links to the
+     * Directory Sync surface for the detail: changelog capture that is lagging or
+     * stalled ({@code REPLICATION_LAG_HIGH}), and reconciliation drift from the last
+     * cached content verify ({@code RECONCILIATION_DRIFT_OPEN}).
+     */
+    private void addSyncHealthAwareness(List<AwarenessItem> items) {
+        long degraded = 0;
+        for (Object[] row : syncLinkRepo.countChangelogLinksByHealth()) {
+            SyncChangelogHealth health = (SyncChangelogHealth) row[0];
+            if (health != SyncChangelogHealth.HEALTHY) {
+                degraded += ((Number) row[1]).longValue();
+            }
+        }
+        if (degraded > 0) {
+            Long maxLag = syncLinkRepo.maxChangelogLag();
+            String detail = (maxLag != null && maxLag > 0)
+                    ? "Up to " + maxLag + " changes behind — capture is lagging or stalled"
+                    : "Changelog capture is lagging or stalled";
+            items.add(new AwarenessItem("REPLICATION_LAG_HIGH",
+                    degraded + " sync link" + (degraded == 1 ? "" : "s") + " behind or stalled",
+                    detail, "/superadmin/directory-sync"));
+        }
+
+        long driftSets = 0;
+        long driftEntries = 0;
+        for (SyncSet set : syncSetRepo.findAllByEnabledTrue()) {
+            if (set.getLastVerifiedAt() == null) {
+                continue; // never verified — claim no drift
+            }
+            long drift = nz(set.getVerifyMissingCount())
+                    + nz(set.getVerifyOrphanCount())
+                    + nz(set.getVerifyMismatchCount());
+            if (drift > 0) {
+                driftSets++;
+                driftEntries += drift;
+            }
+        }
+        if (driftEntries > 0) {
+            items.add(new AwarenessItem("RECONCILIATION_DRIFT_OPEN",
+                    driftEntries + (driftEntries == 1 ? " entry" : " entries") + " differ from source",
+                    "Across " + driftSets + " sync set" + (driftSets == 1 ? "" : "s")
+                            + " — last content verify found drift",
+                    "/superadmin/directory-sync"));
+        }
+    }
+
+    private static long nz(Integer v) {
+        return v == null ? 0L : v;
+    }
+
+    private static int clampInt(long v) {
+        return (int) Math.min(v, Integer.MAX_VALUE);
     }
 }
