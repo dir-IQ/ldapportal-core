@@ -67,6 +67,17 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
+  it('opens pre-filtered when given an initialState (dashboard deep link)', async () => {
+    const wrapper = mount(MembershipInventoryModal, {
+      attachTo: document.body,
+      props: { show: true, set, sourceName: 'Source', targetName: 'Target', initialState: 'FAILED' as const },
+    })
+    await flushPromises()
+    // The very first load is already scoped to the deep-linked state.
+    expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', expect.objectContaining({ state: 'FAILED' }))
+    wrapper.unmount()
+  })
+
   it('clicking a state chip filters by that state', async () => {
     const wrapper = open()
     await flushPromises()

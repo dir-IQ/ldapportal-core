@@ -143,7 +143,14 @@ import {
 } from '@/api/sync'
 
 const show = defineModel<boolean>('show', { default: false })
-const props = defineProps<{ set: SyncSet | null; sourceName: string; targetName: string }>()
+// `initialState` seeds the state filter when the modal opens — used by the
+// dashboard deep links (e.g. land already filtered to FAILED / REVIEW).
+const props = defineProps<{
+  set: SyncSet | null
+  sourceName: string
+  targetName: string
+  initialState?: '' | MembershipState
+}>()
 const emit = defineEmits<{ changed: [] }>()
 
 const notif = useNotificationStore()
@@ -241,10 +248,11 @@ function setStateFilter(v: '' | MembershipState) {
   load()
 }
 
-// Reset and load whenever the modal opens or the set changes.
+// Reset and load whenever the modal opens or the set changes. The state filter
+// seeds from `initialState` (deep links open pre-filtered); '' means show all.
 watch([show, () => props.set?.id], ([open]) => {
   if (open && props.set) {
-    stateFilter.value = ''
+    stateFilter.value = props.initialState ?? ''
     search.value = ''
     page.value = 0
     verifyResult.value = null

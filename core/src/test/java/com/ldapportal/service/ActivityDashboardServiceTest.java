@@ -117,9 +117,14 @@ class ActivityDashboardServiceTest {
                 new Object[]{SyncChangelogHealth.LAGGING, 1L},
                 new Object[]{SyncChangelogHealth.STALLED, 1L}));
         when(syncLinkRepo.maxChangelogLag()).thenReturn(1500L);
+        // The most-behind link is first — the lag awareness deep-links to it.
+        UUID worstLagLinkId = UUID.randomUUID();
+        when(syncLinkRepo.findDegradedChangelogLinkIdsByLagDesc())
+                .thenReturn(List.of(worstLagLinkId, UUID.randomUUID()));
         // One drifted set (3 differences), one clean (verified, zero), one never verified.
+        UUID worstDriftSetId = UUID.randomUUID();
         when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(
-                verifiedSet(2, 0, 1), verifiedSet(0, 0, 0), neverVerifiedSet()));
+                verifiedSet(worstDriftSetId, 2, 0, 1), verifiedSet(UUID.randomUUID(), 0, 0, 0), neverVerifiedSet()));
 
         ActivityDashboardResponse out = service.build(superadmin);
 
@@ -129,9 +134,14 @@ class ActivityDashboardServiceTest {
         assertThat(actionOf(out, "REPLICATION_DEAD_LETTERED").count()).isEqualTo(3);
         assertThat(actionOf(out, "SYNC_REVIEW_PENDING").count()).isEqualTo(2);
 
-        // Lag (degraded changelog links) + drift (cached verify) awareness.
+        // Lag (degraded changelog links) + drift (cached verify) awareness, each
+        // deep-linking to the worst offender so the operator lands on the right row.
         assertThat(out.awareness()).extracting(ActivityDashboardResponse.AwarenessItem::type)
                 .contains("REPLICATION_LAG_HIGH", "RECONCILIATION_DRIFT_OPEN");
+        assertThat(awarenessOf(out, "REPLICATION_LAG_HIGH").link())
+                .isEqualTo("/superadmin/directory-sync?link=" + worstLagLinkId);
+        assertThat(awarenessOf(out, "RECONCILIATION_DRIFT_OPEN").link())
+                .isEqualTo("/superadmin/directory-sync?set=" + worstDriftSetId);
 
         // The dead-letter metric mirrors the FAILED count.
         assertThat(out.metrics().replicationEventsDeadLettered()).isEqualTo(3);
@@ -155,6 +165,10 @@ class ActivityDashboardServiceTest {
         return out.actions().stream().filter(a -> a.type().equals(type)).findFirst().orElseThrow();
     }
 
+    private static ActivityDashboardResponse.AwarenessItem awarenessOf(ActivityDashboardResponse out, String type) {
+        return out.awareness().stream().filter(a -> a.type().equals(type)).findFirst().orElseThrow();
+    }
+
     private static MembershipStateCount stateCount(MembershipState state, long cnt) {
         MembershipStateCount c = mock(MembershipStateCount.class);
         when(c.getState()).thenReturn(state);
@@ -162,8 +176,9 @@ class ActivityDashboardServiceTest {
         return c;
     }
 
-    private static SyncSet verifiedSet(int missing, int orphan, int mismatch) {
+    private static SyncSet verifiedSet(UUID id, int missing, int orphan, int mismatch) {
         SyncSet s = new SyncSet();
+        s.setId(id);
         s.setName("set");
         s.setLastVerifiedAt(OffsetDateTime.now());
         s.setVerifyMissingCount(missing);
