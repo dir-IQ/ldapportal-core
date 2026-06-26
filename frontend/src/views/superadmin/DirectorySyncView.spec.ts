@@ -4,6 +4,13 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import DirectorySyncView from './DirectorySyncView.vue'
 
+// Drives the dashboard deep-link tests; reset to {} for the non-deep-link cases.
+const routerState = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ query: routerState.query }),
+  useRouter: () => ({ push: vi.fn() }),
+}))
+
 vi.mock('@/api/directories', () => ({
   listDirectories: vi.fn(() =>
     Promise.resolve({ data: [
@@ -58,6 +65,7 @@ describe('DirectorySyncView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    routerState.query = {}
   })
 
   it('loads and renders sync links', async () => {
@@ -134,6 +142,37 @@ describe('DirectorySyncView', () => {
     expect(payload.transformRules).toEqual([
       { sourceAttr: 'uid', targetAttr: 'sAMAccountName', valueTemplate: null },
     ])
+    wrapper.unmount()
+  })
+
+  it('deep link ?set=<id> expands the link and opens that set inventory', async () => {
+    routerState.query = { set: 'set-1' }
+    const wrapper = mount(DirectorySyncView, { attachTo: document.body })
+    await flushPromises()
+    await flushPromises()
+    expect(syncApi.listSyncSets).toHaveBeenCalledWith('link-1') // parent link expanded
+    expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', expect.objectContaining({ page: 0, size: 50 }))
+    expect(document.body.textContent).toContain('Membership inventory — people')
+    wrapper.unmount()
+  })
+
+  it('deep link ?state=FAILED opens the worst set pre-filtered to that state', async () => {
+    routerState.query = { state: 'FAILED' }
+    const wrapper = mount(DirectorySyncView, { attachTo: document.body })
+    await flushPromises()
+    await flushPromises()
+    // set-1 has the FAILED memberships, so the inventory opens already filtered.
+    expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', expect.objectContaining({ state: 'FAILED' }))
+    wrapper.unmount()
+  })
+
+  it('deep link ?link=<id> expands that link without opening a set modal', async () => {
+    routerState.query = { link: 'link-1' }
+    const wrapper = mount(DirectorySyncView)
+    await flushPromises()
+    expect(syncApi.listSyncSets).toHaveBeenCalledWith('link-1')
+    expect(wrapper.text()).toContain('people') // nested sets shown
+    expect(syncApi.listMemberships).not.toHaveBeenCalled() // no inventory modal
     wrapper.unmount()
   })
 })

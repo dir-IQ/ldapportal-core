@@ -395,10 +395,14 @@ public class ActivityDashboardService {
     }
 
     /**
-     * Two directory-sync awareness items, each an aggregate that deep-links to the
+     * Two directory-sync awareness items, each an aggregate that deep-links into the
      * Directory Sync surface for the detail: changelog capture that is lagging or
      * stalled ({@code REPLICATION_LAG_HIGH}), and reconciliation drift from the last
      * cached content verify ({@code RECONCILIATION_DRIFT_OPEN}).
+     *
+     * <p>Each links to the worst offender — the most-behind link / most-drifted set —
+     * so the operator lands on the row needing attention instead of the full
+     * collapsed list ({@code ?link=}/{@code ?set=}); the table still shows the rest.</p>
      */
     private void addSyncHealthAwareness(List<AwarenessItem> items) {
         long degraded = 0;
@@ -413,13 +417,19 @@ public class ActivityDashboardService {
             String detail = (maxLag != null && maxLag > 0)
                     ? "Up to " + maxLag + " changes behind — capture is lagging or stalled"
                     : "Changelog capture is lagging or stalled";
+            List<UUID> worstLinks = syncLinkRepo.findDegradedChangelogLinkIdsByLagDesc();
+            String link = worstLinks.isEmpty()
+                    ? "/superadmin/directory-sync"
+                    : "/superadmin/directory-sync?link=" + worstLinks.get(0);
             items.add(new AwarenessItem("REPLICATION_LAG_HIGH",
                     degraded + " sync link" + (degraded == 1 ? "" : "s") + " behind or stalled",
-                    detail, "/superadmin/directory-sync"));
+                    detail, link));
         }
 
         long driftSets = 0;
         long driftEntries = 0;
+        UUID worstDriftSetId = null;
+        long worstDrift = 0;
         for (SyncSet set : syncSetRepo.findAllByEnabledTrue()) {
             if (set.getLastVerifiedAt() == null) {
                 continue; // never verified — claim no drift
@@ -430,14 +440,21 @@ public class ActivityDashboardService {
             if (drift > 0) {
                 driftSets++;
                 driftEntries += drift;
+                if (drift > worstDrift) {
+                    worstDrift = drift;
+                    worstDriftSetId = set.getId();
+                }
             }
         }
         if (driftEntries > 0) {
+            String link = worstDriftSetId == null
+                    ? "/superadmin/directory-sync"
+                    : "/superadmin/directory-sync?set=" + worstDriftSetId;
             items.add(new AwarenessItem("RECONCILIATION_DRIFT_OPEN",
                     driftEntries + (driftEntries == 1 ? " entry" : " entries") + " differ from source",
                     "Across " + driftSets + " sync set" + (driftSets == 1 ? "" : "s")
                             + " — last content verify found drift",
-                    "/superadmin/directory-sync"));
+                    link));
         }
     }
 
