@@ -135,6 +135,23 @@ public class SyncSet {
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;
 
+    // ── Last content-verification snapshot (drift, cached for the dashboard) ─────
+    // SyncContentVerifier re-reads both directories, so its result is too costly
+    // to compute on every dashboard load; the scheduled reconcile and a manual
+    // verify both refresh these. Null counts => never verified (no drift claimed).
+
+    @Column(name = "last_verified_at")
+    private OffsetDateTime lastVerifiedAt;
+
+    @Column(name = "verify_missing_count")
+    private Integer verifyMissingCount;
+
+    @Column(name = "verify_orphan_count")
+    private Integer verifyOrphanCount;
+
+    @Column(name = "verify_mismatch_count")
+    private Integer verifyMismatchCount;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

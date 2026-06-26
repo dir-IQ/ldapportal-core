@@ -332,7 +332,15 @@ public class SyncConfigService {
      */
     public com.ldapportal.dto.sync.SyncVerifyResult verifyContents(UUID syncSetId) {
         requireSet(syncSetId);
-        return verifier.verify(syncSetId);
+        com.ldapportal.dto.sync.SyncVerifyResult result = verifier.verify(syncSetId);
+        // Cache the drift snapshot so the dashboard can surface it without re-reading
+        // both directories. Only persist a complete scan — a partial enumeration
+        // would record misleadingly low counts over a previously good snapshot.
+        if (result.sourceComplete() && result.targetComplete()) {
+            setRepo.recordVerifyResult(syncSetId, java.time.OffsetDateTime.now(),
+                    result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
+        }
+        return result;
     }
 
     /** Enqueue a recompute for a key (a source DN or a normalized identity). */

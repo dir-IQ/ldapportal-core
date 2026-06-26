@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 /**
  * Periodic anti-entropy: drives {@link MembershipReconciler} across enabled sync
@@ -30,16 +31,19 @@ public class SyncReconcileScheduler {
 
     private final SyncSetRepository syncSetRepo;
     private final MembershipReconciler reconciler;
+    private final SyncContentVerifier verifier;
     private final EntitlementService entitlementService;
     private final long defaultCadenceSeconds;
 
     public SyncReconcileScheduler(SyncSetRepository syncSetRepo,
                                   MembershipReconciler reconciler,
+                                  SyncContentVerifier verifier,
                                   EntitlementService entitlementService,
                                   @Value("${ldapportal.sync.reconcile.default-cadence-seconds:3600}")
                                   long defaultCadenceSeconds) {
         this.syncSetRepo = syncSetRepo;
         this.reconciler = reconciler;
+        this.verifier = verifier;
         this.entitlementService = entitlementService;
         this.defaultCadenceSeconds = defaultCadenceSeconds;
     }
@@ -59,6 +63,7 @@ public class SyncReconcileScheduler {
                 }
                 try {
                     reconciler.reconcile(set.getId());
+                    recordDrift(set.getId());
                 } catch (Exception ex) {
                     log.error("Scheduled reconcile of sync set {} failed: {}", set.getId(), ex.toString());
                 }
@@ -66,6 +71,25 @@ public class SyncReconcileScheduler {
         } catch (Exception ex) {
             // A @Scheduled method that throws stops being scheduled — guard it.
             log.error("Sync reconcile sweep failed: {}", ex.toString());
+        }
+    }
+
+    /**
+     * Refresh the cached content-verify snapshot so the dashboard can surface
+     * reconciliation drift without re-reading both directories on every load.
+     * Self-contained (own try/catch): an independent content verify re-reads
+     * both sides and must never abort the reconcile sweep. Only a complete scan
+     * is persisted — a partial enumeration would record misleadingly low drift.
+     */
+    private void recordDrift(UUID setId) {
+        try {
+            var v = verifier.verify(setId);
+            if (v.sourceComplete() && v.targetComplete()) {
+                syncSetRepo.recordVerifyResult(setId, OffsetDateTime.now(),
+                        v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
+            }
+        } catch (Exception ex) {
+            log.warn("Scheduled content verify of sync set {} failed: {}", setId, ex.toString());
         }
     }
 
