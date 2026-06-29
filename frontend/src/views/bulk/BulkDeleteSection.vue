@@ -18,6 +18,14 @@
       <!-- Resolution controls + CSV file -->
       <div class="grid grid-cols-12 gap-2 items-end">
         <div class="col-span-3">
+          <label for="bd-profile" class="block text-sm font-medium text-gray-700 mb-1">Profile <span class="text-red-500">*</span></label>
+          <select id="bd-profile" v-model="profileId" class="input w-full" @change="resetResults">
+            <option value="">— Select a profile —</option>
+            <option v-for="p in profiles" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select>
+        </div>
+
+        <div class="col-span-3">
           <label for="bd-mode" class="block text-sm font-medium text-gray-700 mb-1">Match users by</label>
           <select id="bd-mode" v-model="mode" class="input w-full" @change="resetResults">
             <option value="dn">Full DN</option>
@@ -32,20 +40,19 @@
           <input id="bd-keyattr" v-model="keyAttribute" class="input w-full" placeholder="uid" @input="resetResults" />
         </div>
 
-        <div v-if="mode === 'key'" class="col-span-3">
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            Search base DN <span class="text-red-500">*</span>
-          </label>
-          <DnPicker v-model="baseDn" :directoryId="dirId" :superadmin="false" placeholder="ou=people,dc=example,dc=com" />
-        </div>
-
-        <div :class="mode === 'key' ? 'col-span-2' : 'col-span-4'">
+        <div :class="mode === 'key' ? 'col-span-4' : 'col-span-6'">
           <label for="bd-valuecol" class="block text-sm font-medium text-gray-700 mb-1">CSV column</label>
           <input id="bd-valuecol" v-model="valueColumn" class="input w-full"
                  :placeholder="mode === 'key' ? (keyAttribute || 'uid') : 'dn'" @input="resetResults" />
         </div>
 
       </div>
+      <p v-if="selectedProfile && mode === 'key'" class="text-xs text-gray-600">
+        Resolves
+        <code class="font-mono text-gray-800">{{ keyAttribute || 'uid' }}</code>
+        values under
+        <span class="font-mono text-gray-800">{{ selectedProfile.targetUserDn }}</span>
+      </p>
 
       <!-- CSV file + header toggle, left-aligned together. max-w keeps the
            field from stretching across to the right edge. -->
@@ -110,10 +117,14 @@
         <div v-if="countOf('WILL_DELETE') > 0" class="mt-3">
           <p class="text-sm text-gray-700 mb-1">
             This will permanently delete <strong>{{ countOf('WILL_DELETE') }}</strong> user(s).
-            Type <code class="font-mono bg-gray-100 px-1 rounded">DELETE</code> to confirm.
+            Type the profile name
+            <code class="font-mono bg-gray-100 px-1 rounded">{{ selectedProfile?.name }}</code>
+            to confirm.
           </p>
           <div class="flex gap-2">
-            <input v-model="confirmText" class="input w-40" placeholder="DELETE" aria-label="Type DELETE to confirm" />
+            <input v-model="confirmText" class="input w-56"
+                   :placeholder="selectedProfile?.name || ''"
+                   aria-label="Type the profile name to confirm" />
             <button @click="doDelete" :disabled="!armed || deleting" class="btn-danger">
               {{ deleting ? 'Deleting…' : `Delete ${countOf('WILL_DELETE')} user(s)` }}
             </button>
@@ -144,9 +155,14 @@
 import { ref, computed } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { previewBulkDelete, bulkDelete } from '@/api/csvTemplates'
-import DnPicker from '@/components/DnPicker.vue'
 
-const props = defineProps<{ dirId: string }>()
+/** Provisioning profile as consumed by the delete profile picker. */
+interface ProfileLite { id: string, name: string, targetUserDn?: string | null }
+
+const props = withDefaults(
+  defineProps<{ dirId: string, profiles?: ProfileLite[] }>(),
+  { profiles: () => [] },
+)
 const notif = useNotificationStore()
 
 type Disposition = 'WILL_DELETE' | 'NOT_FOUND' | 'OUT_OF_SCOPE' | 'AMBIGUOUS' | 'INVALID'
@@ -161,12 +177,16 @@ function errMsg(e: unknown): string {
   return err.response?.data?.detail || err.message || 'Request failed'
 }
 
+const profileId     = ref('')
 const mode          = ref<'dn' | 'key'>('dn')
 const keyAttribute  = ref('uid')
 const valueColumn   = ref('')
-const baseDn        = ref('')
 const skipHeaderRow = ref(true)
 const file          = ref<File | null>(null)
+
+const selectedProfile = computed<ProfileLite | null>(() =>
+  props.profiles.find(p => p.id === profileId.value) ?? null,
+)
 
 const previewing    = ref(false)
 const deleting      = ref(false)
@@ -175,10 +195,16 @@ const deleteResult  = ref<DeleteResult | null>(null)
 const confirmText   = ref('')
 
 const canPreview = computed(() =>
-  !!file.value && (mode.value === 'dn' || (!!keyAttribute.value.trim() && !!baseDn.value.trim())),
+  !!file.value && !!selectedProfile.value
+  && (mode.value === 'dn' || !!keyAttribute.value.trim()),
 )
 
-const armed = computed(() => confirmText.value.trim().toUpperCase() === 'DELETE')
+// Armed once the operator types the selected profile's name (case-insensitive) —
+// the profile-name analogue of the former "type DELETE" gate.
+const armed = computed(() => {
+  const name = selectedProfile.value?.name?.trim().toLowerCase()
+  return !!name && confirmText.value.trim().toLowerCase() === name
+})
 
 const problemCount = computed(() =>
   (previewResult.value?.rows ?? []).filter(
@@ -227,7 +253,8 @@ function buildRequest() {
   return {
     keyAttribute: dnMode ? null : keyAttribute.value.trim(),
     valueColumn: valueColumn.value.trim() || null,
-    baseDn: dnMode ? null : baseDn.value.trim(),
+    // Key-attribute lookups are scoped to the selected profile's target OU.
+    baseDn: dnMode ? null : (selectedProfile.value?.targetUserDn ?? null),
     skipHeaderRow: skipHeaderRow.value,
   }
 }

@@ -32,6 +32,7 @@ import com.ldapportal.entity.enums.ApprovalRequestType;
 import com.ldapportal.entity.CsvMappingTemplate;
 import com.ldapportal.entity.CsvMappingTemplateEntry;
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ConflictHandling;
 import com.ldapportal.entity.enums.ImportErrorHandling;
@@ -831,6 +832,38 @@ public class LdapOperationService {
     // ── Bulk import / export ──────────────────────────────────────────────────
 
     /**
+     * Resolve a bulk-import request's {@code profileId} to its profile entity,
+     * or {@code null} when no profile was given (legacy parentDn-driven import).
+     * Throws a 400-class error if a profileId is supplied but the provisioning
+     * profile module isn't on the classpath (community build without it).
+     */
+    private ProvisioningProfile resolveBulkImportProfile(UUID directoryId, BulkImportRequest req) {
+        if (req.profileId() == null) return null;
+        ProvisioningProfileService ps = profileServiceProvider.getIfAvailable();
+        if (ps == null) {
+            throw new IllegalArgumentException(
+                    "Profile-based bulk import is not available in this build");
+        }
+        return ps.getEntityInDirectory(directoryId, req.profileId());
+    }
+
+    /**
+     * The effective parent DN for an import: the profile's target container when a
+     * profile was chosen, otherwise the request's explicit {@code parentDn}. One of
+     * the two must be present.
+     */
+    private String effectiveImportParentDn(BulkImportRequest req, ProvisioningProfile profile,
+                                           boolean forGroups) {
+        if (profile != null) {
+            return forGroups ? profile.getTargetGroupDn() : profile.getTargetUserDn();
+        }
+        if (req.parentDn() == null || req.parentDn().isBlank()) {
+            throw new IllegalArgumentException("Either profileId or parentDn is required");
+        }
+        return req.parentDn();
+    }
+
+    /**
      * Previews a bulk CSV import without writing to LDAP.
      * Resolves template settings and returns computed DNs for each row.
      */
@@ -839,19 +872,26 @@ public class LdapOperationService {
                                                       BulkImportRequest req) throws IOException {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
+
+        // When a profile is chosen it's authoritative for the target OU, object
+        // classes, and RDN attribute; otherwise the request's parentDn drives them.
+        ProvisioningProfile importProfile = resolveBulkImportProfile(directoryId, req);
+        String parentDn = effectiveImportParentDn(req, importProfile, false);
+
         // Scope-check the parent DN the same way the actual import does
         // (bulkImportUsers below). Without this, an admin could preview
         // imports into OUs they don't own — even though the actual
         // import would 403, the preview leaks the OU's existence + the
         // import-validation behaviour for entries the admin can't
         // create.
-        permissionService.requireDnWithinScope(principal, directoryId, req.parentDn());
+        permissionService.requireDnWithinScope(principal, directoryId, parentDn);
 
-        String targetKeyAttr = "uid";
+        String targetKeyAttr = importProfile != null ? importProfile.getRdnAttribute() : "uid";
         String dnSourceColumn = null;
         List<CsvColumnMappingDto> mappings = req.columnMappings() != null
                 ? new ArrayList<>(req.columnMappings()) : new ArrayList<>();
-        List<String> objectClasses = List.of();
+        List<String> objectClasses = importProfile != null
+                ? List.copyOf(importProfile.getObjectClassNames()) : List.of();
 
         if (req.templateId() != null) {
             CsvMappingTemplate template =
@@ -894,7 +934,7 @@ public class LdapOperationService {
         }
 
         return bulkUserService.previewImport(
-                csvInput, req.parentDn(), targetKeyAttr, mappings, skipHeader, requiredAttrs, dnSourceColumn);
+                csvInput, parentDn, targetKeyAttr, mappings, skipHeader, requiredAttrs, dnSourceColumn);
     }
 
     /**
@@ -908,13 +948,20 @@ public class LdapOperationService {
                                             BulkImportRequest req) throws IOException {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
-        permissionService.requireDnWithinScope(principal, directoryId, req.parentDn());
 
-        // Defaults — may be overridden by template or request fields
-        String              targetKeyAttr    = "uid";
+        // A chosen profile is authoritative for the target OU, object classes, and
+        // RDN attribute; otherwise the request's parentDn drives them.
+        ProvisioningProfile importProfile = resolveBulkImportProfile(directoryId, req);
+        String parentDn = effectiveImportParentDn(req, importProfile, false);
+        permissionService.requireDnWithinScope(principal, directoryId, parentDn);
+
+        // Defaults — seeded from the profile when present, then may be overridden
+        // by template or request fields.
+        String              targetKeyAttr    = importProfile != null ? importProfile.getRdnAttribute() : "uid";
         ConflictHandling    conflictHandling = ConflictHandling.SKIP;
         ImportErrorHandling errorHandling    = ImportErrorHandling.SKIP_ERRORS;
-        List<String>        objectClasses    = List.of();
+        List<String>        objectClasses    = importProfile != null
+                ? List.copyOf(importProfile.getObjectClassNames()) : List.of();
         String              dnSourceColumn   = null;
         List<CsvColumnMappingDto> mappings = req.columnMappings() != null
                 ? new ArrayList<>(req.columnMappings()) : new ArrayList<>();
@@ -948,19 +995,23 @@ public class LdapOperationService {
 
         boolean skipHeader = resolveSkipHeaderRow(req.skipHeaderRow(), req.templateId(), directoryId, principal);
 
-        // Resolve the matching profile for the import's parent DN. All
-        // rows of a bulk import land under the same parent OU, so the
-        // profile is the same for every row — no per-row lookup needed.
-        // Pass it as a ProfileContext so the bulk service applies the
-        // profile's attribute defaults per row and its effective group
-        // assignments after each successful create, matching the manual
-        // UserController.create + approval-approved create paths.
-        ProvisioningProfileService ps = profileServiceProvider.getIfAvailable();
+        // The profile context drives per-row attribute defaults and the
+        // effective group assignments applied after each successful create
+        // (matching the manual UserController.create + approval-approved create
+        // paths). When the operator picked a profile it's used directly; the
+        // legacy parentDn flow falls back to resolving the profile by the
+        // import's parent OU (all rows land under the same OU, so it's the same
+        // profile for every row — no per-row lookup).
         BulkUserService.ProfileContext profileContext = null;
-        if (ps != null) {
-            profileContext = ps.resolveProfileForDn(directoryId, req.parentDn())
-                    .map(p -> new BulkUserService.ProfileContext(directoryId, p.getId(), principal))
-                    .orElse(null);
+        if (importProfile != null) {
+            profileContext = new BulkUserService.ProfileContext(directoryId, importProfile.getId(), principal);
+        } else {
+            ProvisioningProfileService ps = profileServiceProvider.getIfAvailable();
+            if (ps != null) {
+                profileContext = ps.resolveProfileForDn(directoryId, parentDn)
+                        .map(p -> new BulkUserService.ProfileContext(directoryId, p.getId(), principal))
+                        .orElse(null);
+            }
         }
 
         // ABORT_ON_ERROR validates rows against the object classes' MUST set
@@ -978,7 +1029,7 @@ public class LdapOperationService {
         }
 
         BulkImportResult result = bulkUserService.importCsv(
-                dc, csvInput, req.parentDn(), targetKeyAttr, conflictHandling, mappings,
+                dc, csvInput, parentDn, targetKeyAttr, conflictHandling, mappings,
                 objectClasses, skipHeader, dnSourceColumn, profileContext,
                 requiredAttrs, errorHandling);
 
@@ -989,7 +1040,7 @@ public class LdapOperationService {
                 .map(BulkImportRowResult::dn)
                 .toList();
 
-        auditService.record(principal, directoryId, AuditAction.USER_CREATE, req.parentDn(),
+        auditService.record(principal, directoryId, AuditAction.USER_CREATE, parentDn,
                 Map.of("operation", "bulkImport",
                        "created",   result.created(),
                        "updated",   result.updated(),
@@ -1257,9 +1308,14 @@ public class LdapOperationService {
                                                            String memberAttribute) throws IOException {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
+
+        // A chosen profile supplies the target group container (its targetGroupDn);
+        // the group object class stays caller-chosen (profiles don't define it).
+        ProvisioningProfile importProfile = resolveBulkImportProfile(directoryId, req);
+        String parentDn = effectiveImportParentDn(req, importProfile, true);
         // Same rationale as previewBulkImport above — keep the preview
         // gated by the same scope check the actual import enforces.
-        permissionService.requireDnWithinScope(principal, directoryId, req.parentDn());
+        permissionService.requireDnWithinScope(principal, directoryId, parentDn);
 
         List<CsvColumnMappingDto> mappings = req.columnMappings() != null
                 ? new ArrayList<>(req.columnMappings()) : new ArrayList<>();
@@ -1292,7 +1348,7 @@ public class LdapOperationService {
                 .toList();
 
         return bulkGroupService.previewImport(
-                csvInput, req.parentDn(), mappings, skipHeader, requiredAttrs, memberAttribute);
+                csvInput, parentDn, mappings, skipHeader, requiredAttrs, memberAttribute);
     }
 
     public BulkImportResult bulkImportGroups(UUID directoryId, AuthPrincipal principal,
@@ -1302,7 +1358,12 @@ public class LdapOperationService {
                                               String objectClass) throws IOException {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
-        permissionService.requireDnWithinScope(principal, directoryId, req.parentDn());
+
+        // A chosen profile supplies the target group container; the group object
+        // class stays caller-chosen (profiles don't carry a group class).
+        ProvisioningProfile importProfile = resolveBulkImportProfile(directoryId, req);
+        String parentDn = effectiveImportParentDn(req, importProfile, true);
+        permissionService.requireDnWithinScope(principal, directoryId, parentDn);
 
         ConflictHandling  conflictHandling = ConflictHandling.SKIP;
         List<String>      objectClasses    = (objectClass != null && !objectClass.isBlank())
@@ -1335,10 +1396,10 @@ public class LdapOperationService {
                 ? memberAttribute : "member";
 
         BulkImportResult result = bulkGroupService.importCsv(
-                dc, csvInput, req.parentDn(), conflictHandling, mappings,
+                dc, csvInput, parentDn, conflictHandling, mappings,
                 objectClasses, effectiveMemberAttr, skipHeader);
 
-        auditService.record(principal, directoryId, AuditAction.GROUP_BULK_IMPORT, req.parentDn(),
+        auditService.record(principal, directoryId, AuditAction.GROUP_BULK_IMPORT, parentDn,
                 Map.of("operation", "bulkGroupImport",
                        "created",   result.created(),
                        "updated",   result.updated(),

@@ -902,6 +902,16 @@ public class ProvisioningProfileService {
         return requireProfile(profileId);
     }
 
+    /**
+     * Fetch a profile entity, asserting it belongs to the given directory.
+     * Used by directory-scoped callers (e.g. bulk import) that resolve a
+     * caller-supplied {@code profileId} to its target OU / object classes.
+     */
+    @Transactional(readOnly = true)
+    public ProvisioningProfile getEntityInDirectory(UUID directoryId, UUID profileId) {
+        return requireProfileInDirectory(directoryId, profileId);
+    }
+
     private ProfileResponse toResponse(ProvisioningProfile profile) {
         List<ProfileAttributeConfig> configs =
                 attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profile.getId());
