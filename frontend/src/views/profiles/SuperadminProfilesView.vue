@@ -61,6 +61,7 @@ interface GroupAssignment {
 interface ProfileForm {
   name: string
   description: string
+  themeColor: string
   targetUserDn: string
   targetGroupDn: string
   objectClassNames: string[]
@@ -101,6 +102,7 @@ interface ProfileRow {
   id: string
   name: string
   description?: string | null
+  themeColor?: string | null
   directoryId: string
   directoryName?: string
   targetUserDn: string
@@ -204,7 +206,7 @@ const profileApprovers = ref<string[]>([])
 
 function emptyProfile(): ProfileForm {
   return {
-    name: '', description: '', targetUserDn: '', targetGroupDn: '',
+    name: '', description: '', themeColor: '', targetUserDn: '', targetGroupDn: '',
     objectClassNames: [], rdnAttribute: '',
     showDnField: true, dnTemplate: '',
     dnColumnSpan: undefined, dnSectionName: undefined, dnDisplayOrder: undefined,
@@ -280,7 +282,8 @@ async function openEdit(p: ProfileRow) {
   editing.value = p.id
   selectedDirId.value = p.directoryId
   profile.value = {
-    name: p.name, description: p.description || '', targetUserDn: p.targetUserDn,
+    name: p.name, description: p.description || '', themeColor: p.themeColor || '',
+    targetUserDn: p.targetUserDn,
     targetGroupDn: p.targetGroupDn || '',
     objectClassNames: [...p.objectClassNames], rdnAttribute: p.rdnAttribute,
     showDnField: p.showDnField, dnTemplate: p.dnTemplate || '',
@@ -1389,6 +1392,28 @@ function toggleApprover(accountId: string) {
           <div>
             <label for="sp-description" class="block text-sm font-medium text-gray-700 mb-1">Description</label>
             <textarea id="sp-description" v-model="profile.description" class="input w-full" rows="2"></textarea>
+          </div>
+          <div>
+            <label for="sp-theme-color" class="block text-sm font-medium text-gray-700 mb-1">Theme Color</label>
+            <div class="flex items-center gap-2">
+              <!-- A native colour input can't represent "unset" (it always holds
+                   a value), so bind :value with a display fallback and commit on
+                   @input; the hex field and Clear button own the unset state. -->
+              <input id="sp-theme-color" type="color"
+                :value="profile.themeColor || '#2563eb'"
+                @input="profile.themeColor = ($event.target as HTMLInputElement).value"
+                class="h-9 w-10 rounded border border-gray-300 cursor-pointer p-0.5 shrink-0"
+                aria-label="Profile theme colour picker" />
+              <input v-model="profile.themeColor" class="input w-40" maxlength="7"
+                placeholder="#2563eb (unset)" aria-label="Theme colour hex" />
+              <button v-if="profile.themeColor" type="button" class="btn-neutral text-xs"
+                @click="profile.themeColor = ''">Clear</button>
+            </div>
+            <p class="mt-1 text-xs text-gray-500">
+              Optional. When set, the user and group list headers (and the new/edit
+              user and group modals) show a band of this colour instead of the
+              profile name in blue. Leave blank for no theme.
+            </p>
           </div>
           <div v-if="!editing">
             <label for="sp-directory" class="block text-sm font-medium text-gray-700 mb-1">Directory</label>

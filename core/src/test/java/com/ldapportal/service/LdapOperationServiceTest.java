@@ -850,6 +850,7 @@ class LdapOperationServiceTest {
     private com.ldapportal.dto.profile.ProfileResponse profileResponse(UUID id, String targetUserDn) {
         return new com.ldapportal.dto.profile.ProfileResponse(
                 id, dirId, "dir", "Staff", null,
+                null, // themeColor
                 targetUserDn, targetUserDn,
                 List.of(), "uid",
                 true, null, null, null, null, true, false,
