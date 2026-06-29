@@ -337,6 +337,7 @@ class UserControllerTest extends BaseControllerTest {
     private com.ldapportal.dto.profile.ProfileResponse moveDestProfile(UUID id) {
         return new com.ldapportal.dto.profile.ProfileResponse(
                 id, DIR_ID, "dir-1", "Staff", null,
+                null, // themeColor
                 "ou=staff,dc=example,dc=com", "ou=groups,dc=example,dc=com",
                 List.of("inetOrgPerson"), "uid",
                 true, null, null, null, null, true, false,

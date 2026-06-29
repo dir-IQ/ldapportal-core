@@ -21,15 +21,21 @@
         <div ref="panelRef"
              :class="['relative bg-white rounded-xl shadow-xl w-full flex flex-col overflow-hidden', sizeClass]"
              :style="panelStyle">
-          <!-- Header (doubles as the drag handle when `movable`) -->
+          <!-- Header (doubles as the drag handle when `movable`). When a
+               `headerColor` (a provisioning-profile theme colour) is given, the
+               header fills with that colour as a band and the title/close switch
+               to a legible contrast colour. -->
           <div :class="['flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0',
                         movable ? 'cursor-move select-none' : '']"
+               :style="headerColor ? { backgroundColor: headerColor } : {}"
                @pointerdown="onHandlePointerDown">
-            <h2 :id="titleId" class="text-lg font-semibold text-gray-900">
+            <h2 :id="titleId" class="text-lg font-semibold"
+                :class="headerColor ? onThemeTitleClass(headerColor) : 'text-gray-900'">
               <slot name="title">{{ title }}</slot>
             </h2>
             <button @click="requestClose" aria-label="Close"
-                    class="text-gray-500 hover:text-gray-600 text-xl leading-none transition-colors">&#215;</button>
+                    class="text-xl leading-none transition-colors hover:opacity-80"
+                    :class="headerColor ? onThemeTitleClass(headerColor) : 'text-gray-500 hover:text-gray-600'">&#215;</button>
           </div>
           <!-- Body. A flex column so content can use the modal's full height:
                a scroll region opts in with `min-h-0 overflow-y-auto` (plus the
@@ -83,6 +89,7 @@ import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useDialogA11y } from '@/composables/useDialogA11y'
 import { useDraggableModal } from '@/composables/useDraggableModal'
 import { usePreferencesStore } from '@/stores/preferences'
+import { onThemeTitleClass } from '@/utils/themeColor'
 
 const props = withDefaults(
   defineProps<{
@@ -110,9 +117,13 @@ const props = withDefaults(
      *  Programmatic closes (setting the v-model directly, e.g. after a
      *  successful save) bypass the guard. */
     dirty?: boolean
+    /** Optional provisioning-profile theme colour (#RRGGBB). When set, the modal
+     *  header renders as a band of this colour with a contrasting title/close.
+     *  Empty/unset keeps the default white header. */
+    headerColor?: string | null
   }>(),
   { modelValue: false, title: '', size: 'md', movable: true, resizable: true,
-    fill: false, storageKey: '', dirty: false },
+    fill: false, storageKey: '', dirty: false, headerColor: '' },
 )
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 

@@ -1,21 +1,23 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <div class="p-6">
-    <div class="flex items-center justify-between mb-6">
+    <!-- Header. A theme colour on the selected profile fills the header row as
+         a band, with title/profile-name in a legible contrast colour. -->
+    <div class="flex items-center justify-between mb-6" :class="bandClass" :style="bandStyle">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900">
+        <h1 class="text-2xl font-bold" :class="titleClass">
           Groups
           <template v-if="profileData?.name">
-            <span class="text-gray-400 font-normal"> — </span>
-            <span class="text-blue-600 font-normal">{{ profileData.name }}</span>
-            <span class="text-gray-400 font-normal"> profile</span>
+            <span class="font-normal" :class="faintClass"> — </span>
+            <span class="font-normal" :class="profileNameClass">{{ profileData.name }}</span>
+            <span class="font-normal" :class="faintClass"> profile</span>
           </template>
         </h1>
-        <p class="text-sm text-gray-500 mt-1">Manage groups in this directory</p>
+        <p class="text-sm mt-1" :class="mutedClass">Manage groups in this directory</p>
       </div>
       <div class="flex items-center gap-2">
         <div v-if="allProfiles.length > 1" class="flex items-center gap-2">
-          <label for="gl-profile" class="text-sm text-gray-600 font-medium">Profile:</label>
+          <label for="gl-profile" class="text-sm font-medium" :class="themed ? mutedClass : 'text-gray-600'">Profile:</label>
           <select id="gl-profile" v-model="selectedProfileId" @change="onProfileChange"
             class="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="">All</option>
@@ -124,12 +126,12 @@
     </AppModal>
 
     <!-- Create group (step 2 of create) -->
-    <AppModal v-model="showCreate" size="lg">
+    <AppModal v-model="showCreate" size="lg" :header-color="createProfile?.themeColor || ''">
       <template #title>
         <span>New Group</span>
-        <span v-if="createProfile?.name" class="text-gray-500 font-normal"> — </span>
-        <span v-if="createProfile?.name" class="text-blue-600">{{ createProfile.name }}</span>
-        <span v-if="createProfile?.name" class="text-gray-500 font-normal"> profile</span>
+        <span v-if="createProfile?.name" class="font-normal" :class="createProfile?.themeColor ? 'opacity-70' : 'text-gray-500'"> — </span>
+        <span v-if="createProfile?.name" :class="createProfile?.themeColor ? '' : 'text-blue-600'">{{ createProfile.name }}</span>
+        <span v-if="createProfile?.name" class="font-normal" :class="createProfile?.themeColor ? 'opacity-70' : 'text-gray-500'"> profile</span>
       </template>
       <div class="grid grid-cols-3 gap-2">
         <FormField label="Group Name (cn) (RDN)" v-model="createForm.cn" required />
@@ -147,7 +149,7 @@
     </AppModal>
 
     <!-- Edit group -->
-    <AppModal v-model="showEdit" title="Edit Group" size="md">
+    <AppModal v-model="showEdit" title="Edit Group" size="md" :header-color="profileData?.themeColor || ''">
       <FormField label="Owner" v-model="editForm.owner" placeholder="DN of the group owner" :error="editOwnerError" />
       <FormField label="Description" v-model="editForm.description" placeholder="Group description" />
       <template #footer>
@@ -218,10 +220,13 @@ import DnPicker from '@/components/DnPicker.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import { validateDn } from '@/utils/attributeValidation'
 import { resolveGroupMembers, type MemberAttr } from '@/utils/groupMembers'
+import { useProfileThemeBand } from '@/composables/useProfileThemeBand'
 
 interface ProfileLite {
   id: string
   name: string
+  /** Optional #RRGGBB theme colour; when set the page header / modal render a band of it. */
+  themeColor?: string | null
   targetUserDn?: string | null
   targetGroupDn?: string | null
   enabled?: boolean
@@ -307,6 +312,10 @@ const exporting     = ref(false)
 const allProfiles     = ref<ProfileLite[]>([])
 const selectedProfileId = ref('')
 const profileData     = ref<ProfileLite | null>(null)
+
+// Page-header theme band, driven by the selected profile's theme colour.
+const { themed, bandStyle, bandClass, titleClass, mutedClass, faintClass, profileNameClass } =
+  useProfileThemeBand(computed(() => profileData.value?.themeColor))
 
 // Attribute names the active profile declares — fed to LdapFilterBuilder
 // so the attribute picker defaults to this subset instead of the

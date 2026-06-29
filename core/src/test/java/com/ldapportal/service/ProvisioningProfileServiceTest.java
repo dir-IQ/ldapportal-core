@@ -409,7 +409,7 @@ class ProvisioningProfileServiceTest {
     private com.ldapportal.dto.profile.CreateProfileRequest createReq(
             List<com.ldapportal.dto.profile.CreateProfileRequest.GroupAssignmentEntry> groups) {
         return new com.ldapportal.dto.profile.CreateProfileRequest(
-                "engineers", null, "ou=People,dc=example,dc=com", null,
+                "engineers", null, null, "ou=People,dc=example,dc=com", null,
                 List.of("inetOrgPerson"), "uid", true,
                 null, null, null, null,
                 true, false,
@@ -492,5 +492,50 @@ class ProvisioningProfileServiceTest {
         org.mockito.Mockito.verify(ldapGroupService, org.mockito.Mockito.never())
                 .getGroup(any(), any(), any());
         org.mockito.Mockito.verify(groupAssignmentRepo).save(any());
+    }
+
+    // ── Theme colour ──────────────────────────────────────────────────────────
+
+    /** A minimal valid create request carrying the given theme colour. */
+    private com.ldapportal.dto.profile.CreateProfileRequest themedCreateReq(String themeColor) {
+        return new com.ldapportal.dto.profile.CreateProfileRequest(
+                "engineers", null, themeColor, "ou=People,dc=example,dc=com", null,
+                List.of("inetOrgPerson"), "uid", true,
+                null, null, null, null,
+                true, false,
+                null, null, null, null, null, null, null, null,
+                false, false, null, null, List.of());
+    }
+
+    @Test
+    void createProfile_persistsThemeColor() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        var captor = org.mockito.ArgumentCaptor.forClass(
+                com.ldapportal.entity.ProvisioningProfile.class);
+
+        service.create(directoryId, themedCreateReq("#2563eb"), true, null);
+
+        // create() saves the profile, then re-saves it via saveAdditionalProfiles;
+        // both capture the same instance, so the last captured value is enough.
+        org.mockito.Mockito.verify(profileRepo, org.mockito.Mockito.atLeastOnce())
+                .save(captor.capture());
+        assertThat(captor.getValue().getThemeColor()).isEqualTo("#2563eb");
+    }
+
+    @Test
+    void createProfile_blankThemeColor_storedAsNull() {
+        // An "unset" theme must persist as NULL, not an empty string, so the
+        // admin screens fall back to their default (blue) header styling.
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        var captor = org.mockito.ArgumentCaptor.forClass(
+                com.ldapportal.entity.ProvisioningProfile.class);
+
+        service.create(directoryId, themedCreateReq("   "), true, null);
+
+        org.mockito.Mockito.verify(profileRepo, org.mockito.Mockito.atLeastOnce())
+                .save(captor.capture());
+        assertThat(captor.getValue().getThemeColor()).isNull();
     }
 }
