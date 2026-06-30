@@ -1,15 +1,13 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <div class="p-6">
+    <!-- Header. A themed profile shows a compact pill next to the title; an
+         unthemed one keeps the legacy blue "— Name profile" text. -->
     <div class="flex items-center justify-between mb-6">
       <div>
         <h1 class="text-2xl font-bold text-gray-900">
           Groups
-          <template v-if="profileData?.name">
-            <span class="text-gray-400 font-normal"> — </span>
-            <span class="text-blue-600 font-normal">{{ profileData.name }}</span>
-            <span class="text-gray-400 font-normal"> profile</span>
-          </template>
+          <ProfilePill v-if="profileData?.name" class="ml-1" :name="profileData.name" :color="profileData.themeColor" />
         </h1>
         <p class="text-sm text-gray-500 mt-1">Manage groups in this directory</p>
       </div>
@@ -127,9 +125,8 @@
     <AppModal v-model="showCreate" size="lg">
       <template #title>
         <span>New Group</span>
-        <span v-if="createProfile?.name" class="text-gray-500 font-normal"> — </span>
-        <span v-if="createProfile?.name" class="text-blue-600">{{ createProfile.name }}</span>
-        <span v-if="createProfile?.name" class="text-gray-500 font-normal"> profile</span>
+        <ProfilePill v-if="createProfile?.name" class="ml-1"
+                     :name="createProfile.name" :color="createProfile.themeColor" />
       </template>
       <div class="grid grid-cols-3 gap-2">
         <FormField label="Group Name (cn) (RDN)" v-model="createForm.cn" required />
@@ -147,7 +144,12 @@
     </AppModal>
 
     <!-- Edit group -->
-    <AppModal v-model="showEdit" title="Edit Group" size="md">
+    <AppModal v-model="showEdit" size="md">
+      <template #title>
+        <span>Edit Group</span>
+        <ProfilePill v-if="profileData?.name" class="ml-1"
+                     :name="profileData.name" :color="profileData.themeColor" />
+      </template>
       <FormField label="Owner" v-model="editForm.owner" placeholder="DN of the group owner" :error="editOwnerError" />
       <FormField label="Description" v-model="editForm.description" placeholder="Group description" />
       <template #footer>
@@ -218,10 +220,13 @@ import DnPicker from '@/components/DnPicker.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import { validateDn } from '@/utils/attributeValidation'
 import { resolveGroupMembers, type MemberAttr } from '@/utils/groupMembers'
+import ProfilePill from '@/components/ProfilePill.vue'
 
 interface ProfileLite {
   id: string
   name: string
+  /** Optional #RRGGBB theme colour; when set the page header / modal render a band of it. */
+  themeColor?: string | null
   targetUserDn?: string | null
   targetGroupDn?: string | null
   enabled?: boolean

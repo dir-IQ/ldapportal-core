@@ -162,6 +162,7 @@ public class ProvisioningProfileService {
                 req.passwordLength(), req.passwordUppercase(), req.passwordLowercase(),
                 req.passwordDigits(), req.passwordSpecial(), req.passwordSpecialChars(),
                 req.emailPasswordToUser(), req.passwordDisposition());
+        profile.setThemeColor(normalizeThemeColor(req.themeColor()));
         profile.setAutoIncludeGroups(req.autoIncludeGroups());
         // Auto-include profiles should not also exclude auto-includes (nonsensical)
         profile.setExcludeAutoIncludes(req.autoIncludeGroups() ? false : req.excludeAutoIncludes());
@@ -233,6 +234,7 @@ public class ProvisioningProfileService {
                 req.passwordLength(), req.passwordUppercase(), req.passwordLowercase(),
                 req.passwordDigits(), req.passwordSpecial(), req.passwordSpecialChars(),
                 req.emailPasswordToUser(), req.passwordDisposition());
+        profile.setThemeColor(normalizeThemeColor(req.themeColor()));
         profile.setAutoIncludeGroups(req.autoIncludeGroups());
         // Auto-include profiles should not also exclude auto-includes (nonsensical)
         profile.setExcludeAutoIncludes(req.autoIncludeGroups() ? false : req.excludeAutoIncludes());
@@ -294,6 +296,7 @@ public class ProvisioningProfileService {
         copy.setDirectory(source.getDirectory());
         copy.setName(newName);
         copy.setDescription(source.getDescription());
+        copy.setThemeColor(source.getThemeColor());
         copy.setTargetUserDn(source.getTargetUserDn());
         copy.setTargetGroupDn(source.getTargetGroupDn());
         copy.setObjectClassNames(new ArrayList<>(source.getObjectClassNames()));
@@ -899,6 +902,16 @@ public class ProvisioningProfileService {
         return requireProfile(profileId);
     }
 
+    /**
+     * Fetch a profile entity, asserting it belongs to the given directory.
+     * Used by directory-scoped callers (e.g. bulk import) that resolve a
+     * caller-supplied {@code profileId} to its target OU / object classes.
+     */
+    @Transactional(readOnly = true)
+    public ProvisioningProfile getEntityInDirectory(UUID directoryId, UUID profileId) {
+        return requireProfileInDirectory(directoryId, profileId);
+    }
+
     private ProfileResponse toResponse(ProvisioningProfile profile) {
         List<ProfileAttributeConfig> configs =
                 attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profile.getId());
@@ -931,6 +944,15 @@ public class ProvisioningProfileService {
     private DirectoryConnection requireDirectory(UUID directoryId) {
         return dirRepo.findById(directoryId)
                 .orElseThrow(() -> new ResourceNotFoundException("DirectoryConnection", directoryId));
+    }
+
+    /**
+     * Trim a theme colour, collapsing blank to null so an "unset" profile stores
+     * NULL rather than an empty string. The {@code #RRGGBB} shape is enforced by
+     * the {@code @Pattern} on the request DTO; this only normalises whitespace.
+     */
+    private static String normalizeThemeColor(String themeColor) {
+        return (themeColor != null && !themeColor.isBlank()) ? themeColor.trim() : null;
     }
 
     private void applyCommonFields(ProvisioningProfile profile, String name, String description,
