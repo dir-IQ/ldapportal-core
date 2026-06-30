@@ -25,6 +25,7 @@ import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -49,6 +50,7 @@ import java.util.regex.Pattern;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class SyncConfigService {
 
     /** LDAP attribute descriptor (a leading letter, then letters/digits/hyphens). */
@@ -316,7 +318,16 @@ public class SyncConfigService {
     /** Run a synchronous reconcile of the set; returns the number of source identities enumerated. */
     public int reconcileNow(UUID syncSetId) {
         requireSet(syncSetId);
-        return reconciler.reconcile(syncSetId);
+        int enumerated = reconciler.reconcile(syncSetId);
+        // Refresh the cached drift snapshot so the dashboard reflects the post-reconcile
+        // state, mirroring the scheduled sweep (reconcile → re-verify). Guarded: the
+        // reconcile already applied, so a verify hiccup must not fail the operation.
+        try {
+            refreshDriftSnapshot(syncSetId);
+        } catch (Exception ex) {
+            log.warn("Post-reconcile drift refresh for sync set {} failed: {}", syncSetId, ex.toString());
+        }
+        return enumerated;
     }
 
     /** Dry-run preview of what a reconcile would change (no target writes). */
@@ -328,14 +339,22 @@ public class SyncConfigService {
     /**
      * Independent content verification: compares the live source scope against the
      * live target base and flags missing / orphaned / drifted entries, without
-     * consulting the membership index. Read-only.
+     * consulting the membership index. Read-only to the directories; caches the
+     * drift snapshot for the dashboard.
      */
     public com.ldapportal.dto.sync.SyncVerifyResult verifyContents(UUID syncSetId) {
         requireSet(syncSetId);
+        return refreshDriftSnapshot(syncSetId);
+    }
+
+    /**
+     * Re-read both directories and return the live drift result, caching it on the
+     * set for the dashboard. Only a complete scan is persisted — a partial
+     * enumeration would record misleadingly low counts over a previously good
+     * snapshot. Shared by the verify endpoint and the post-reconcile refresh.
+     */
+    private com.ldapportal.dto.sync.SyncVerifyResult refreshDriftSnapshot(UUID syncSetId) {
         com.ldapportal.dto.sync.SyncVerifyResult result = verifier.verify(syncSetId);
-        // Cache the drift snapshot so the dashboard can surface it without re-reading
-        // both directories. Only persist a complete scan — a partial enumeration
-        // would record misleadingly low counts over a previously good snapshot.
         if (result.sourceComplete() && result.targetComplete()) {
             setRepo.recordVerifyResult(syncSetId, java.time.OffsetDateTime.now(),
                     result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
