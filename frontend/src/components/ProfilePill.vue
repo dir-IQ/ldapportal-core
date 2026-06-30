@@ -1,34 +1,30 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!--
-  Compact "which provisioning profile am I on" pill: a theme-coloured dot + the
-  profile name, in a soft tint of the profile's theme colour. Used in admin page
-  headers and the new/edit modals as a quiet, glanceable environment cue (the
-  calmer replacement for the former full-width colour band). Render only when a
-  themeColor is set; callers fall back to their default styling otherwise.
+  Compact "which provisioning profile am I on" tag: a soft-tinted chip showing
+  the profile name (plus a theme-coloured dot when a colour is set). Used in the
+  admin user/group list headers and the new/edit modal titles as a quiet,
+  glanceable environment cue. Renders in every case — a profile without a theme
+  colour gets the same chip in neutral grey, with no dot — so callers no longer
+  need a separate fallback.
 -->
 <template>
-  <span class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-sm font-medium align-middle"
-        :style="pillStyle">
-    <span class="w-2 h-2 rounded-full shrink-0" :style="{ backgroundColor: color }" aria-hidden="true"></span>
+  <span class="inline-flex items-center gap-1.5 rounded-md border px-3 py-1 text-sm font-medium align-middle"
+        :style="tint ?? undefined"
+        :class="tint ? '' : 'bg-gray-50 border-gray-300 text-gray-700'">
+    <span v-if="color" class="w-2 h-2 rounded-full shrink-0" :style="{ backgroundColor: color }" aria-hidden="true"></span>
     {{ name }}
   </span>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { themeTintStyle } from '@/utils/themeColor'
 
 const props = defineProps<{
   name: string
-  /** #RRGGBB profile theme colour. */
-  color: string
+  /** #RRGGBB profile theme colour, or null/empty for the neutral chip. */
+  color?: string | null
 }>()
 
-// Soft tint derived from the theme colour: ~10% background, ~32% border, and a
-// darkened theme text so the chip reads without a heavy fill. color-mix keeps
-// this working for any profile colour without per-colour maths.
-const pillStyle = computed(() => ({
-  backgroundColor: `color-mix(in srgb, ${props.color} 10%, white)`,
-  borderColor: `color-mix(in srgb, ${props.color} 32%, white)`,
-  color: `color-mix(in srgb, ${props.color} 80%, black)`,
-}))
+const tint = computed(() => themeTintStyle(props.color))
 </script>

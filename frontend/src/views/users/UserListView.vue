@@ -7,14 +7,7 @@
       <div>
         <h1 class="text-2xl font-bold text-gray-900">
           Users
-          <template v-if="profileData?.name">
-            <ProfilePill v-if="profileData.themeColor" class="ml-1" :name="profileData.name" :color="profileData.themeColor" />
-            <template v-else>
-              <span class="text-gray-400 font-normal"> — </span>
-              <span class="text-blue-600 font-normal">{{ profileData.name }}</span>
-              <span class="text-gray-400 font-normal"> profile</span>
-            </template>
-          </template>
+          <ProfilePill v-if="profileData?.name" class="ml-1" :name="profileData.name" :color="profileData.themeColor" />
         </h1>
         <p class="text-sm text-gray-500 mt-1">Manage users in this directory</p>
       </div>
@@ -212,13 +205,8 @@
     <AppModal v-model="showModal" size="xl" :dirty="modalDirty">
       <template #title>
         <span>{{ editingDn ? 'Edit User' : 'New User' }}</span>
-        <ProfilePill v-if="profileConfig?.name && profileConfig?.themeColor" class="ml-1"
+        <ProfilePill v-if="profileConfig?.name" class="ml-1"
                      :name="profileConfig.name" :color="profileConfig.themeColor" />
-        <template v-else-if="profileConfig?.name">
-          <span class="text-gray-500 font-normal"> — </span>
-          <span class="text-blue-600">{{ profileConfig.name }}</span>
-          <span class="text-gray-500 font-normal"> profile</span>
-        </template>
       </template>
       <UserForm ref="userFormRef" :data="form" :is-edit="!!editingDn" :user-template-config="profileConfig ?? undefined" :dir-id="dirId" :profile-id="selectedProfileId" @update="(v: UserFormState) => form = v" />
       <template #footer="{ close }">
