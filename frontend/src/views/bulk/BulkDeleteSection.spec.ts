@@ -15,30 +15,12 @@ import BulkDeleteSection from './BulkDeleteSection.vue'
 
 const activeProfile = { id: 'p1', name: 'Engineers', targetUserDn: 'ou=eng,dc=x', themeColor: '#b91c1c' }
 
-// Stub the themed confirm modal to a simple confirm trigger.
-const ConfirmStub = {
-  props: {
-    modelValue: Boolean, profileName: String, themeColor: String, title: String,
-    summary: String, targetDn: String, confirmLabel: String,
-    requireTyped: Boolean, danger: Boolean, busy: Boolean,
-  },
-  emits: ['update:modelValue', 'confirm'],
-  template: `<button v-if="modelValue" class="confirm-stub" :data-profile="profileName"
-    :data-typed="requireTyped ? '1' : '0'" :data-danger="danger ? '1' : '0'"
-    @click="$emit('confirm')">{{ confirmLabel }}</button>`,
-}
-
 function mountSection() {
-  return mount(BulkDeleteSection, {
-    props: { dirId: 'd1', activeProfile },
-    global: { stubs: { BulkConfirmModal: ConfirmStub } },
-  })
+  return mount(BulkDeleteSection, { props: { dirId: 'd1', activeProfile } })
 }
-
 function btnByText(w: ReturnType<typeof mount>, text: string) {
   return w.findAll('button').find(b => b.text().includes(text))!
 }
-
 async function attachFile(w: ReturnType<typeof mount>) {
   const input = w.find('input[type="file"]')
   const file = new File(['dn\n"uid=a,ou=p,dc=x"\n'], 'd.csv', { type: 'text/csv' })
@@ -49,13 +31,15 @@ async function attachFile(w: ReturnType<typeof mount>) {
 describe('BulkDeleteSection', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('previews and renders disposition badges with a will-delete count', async () => {
+  it('shows the Active-profile field and previews with disposition badges', async () => {
     vi.mocked(previewBulkDelete).mockResolvedValue({ data: { totalRows: 2, rows: [
       { rowNumber: 1, dn: 'uid=a,ou=p,dc=x', disposition: 'WILL_DELETE' },
       { rowNumber: 2, dn: 'uid=b,ou=p,dc=x', disposition: 'NOT_FOUND', note: 'No entry at this DN' },
     ] } } as never)
 
     const w = mountSection()
+    expect(w.text()).toContain('Active profile')
+    expect(w.text()).toContain('Engineers')
     await attachFile(w)
     await btnByText(w, 'Preview').trigger('click')
     await flushPromises()
@@ -66,7 +50,7 @@ describe('BulkDeleteSection', () => {
     expect(w.find('.badge-gray').exists()).toBe(true)
   })
 
-  it('deletes through a themed, type-to-confirm modal', async () => {
+  it('arms Delete only after typing the profile name', async () => {
     vi.mocked(previewBulkDelete).mockResolvedValue({ data: { totalRows: 1, rows: [
       { rowNumber: 1, dn: 'uid=a,ou=p,dc=x', disposition: 'WILL_DELETE' },
     ] } } as never)
@@ -78,15 +62,13 @@ describe('BulkDeleteSection', () => {
     await btnByText(w, 'Preview').trigger('click')
     await flushPromises()
 
-    // The Delete button opens the themed confirm modal (require-typed + danger).
-    await btnByText(w, 'Delete').trigger('click')
-    const confirm = w.find('.confirm-stub')
-    expect(confirm.exists()).toBe(true)
-    expect(confirm.attributes('data-profile')).toBe('Engineers')
-    expect(confirm.attributes('data-typed')).toBe('1')
-    expect(confirm.attributes('data-danger')).toBe('1')
+    expect(btnByText(w, 'Delete').attributes('disabled')).toBeDefined()
+    await w.find('input[aria-label="Type the profile name to confirm"]').setValue('DELETE') // wrong
+    expect(btnByText(w, 'Delete').attributes('disabled')).toBeDefined()
+    await w.find('input[aria-label="Type the profile name to confirm"]').setValue('engineers') // ci match
+    expect(btnByText(w, 'Delete').attributes('disabled')).toBeUndefined()
 
-    await confirm.trigger('click')
+    await btnByText(w, 'Delete').trigger('click')
     await flushPromises()
     expect(bulkDelete).toHaveBeenCalledOnce()
   })
