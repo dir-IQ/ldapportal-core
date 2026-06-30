@@ -79,7 +79,7 @@
           <span v-if="problemCount" class="badge-amber">{{ problemCount }} need attention</span>
         </div>
 
-        <div class="max-h-64 overflow-auto rounded border border-gray-200 bg-white">
+        <ExpandablePreview title="Delete preview" body-class="rounded border border-gray-200 bg-white">
           <table class="w-full text-xs">
             <thead class="bg-gray-100 sticky top-0">
               <tr>
@@ -101,7 +101,7 @@
               </tr>
             </tbody>
           </table>
-        </div>
+        </ExpandablePreview>
 
         <!-- Typed confirmation: the operator types the active profile's name to
              arm the irreversible delete. -->
@@ -147,6 +147,7 @@ import { ref, computed } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { previewBulkDelete, bulkDelete } from '@/api/csvTemplates'
 import ActiveProfileField from './ActiveProfileField.vue'
+import ExpandablePreview from '@/components/ExpandablePreview.vue'
 
 /** The sidebar-selected provisioning profile this delete is scoped to. */
 interface ProfileLite { id: string, name: string, targetUserDn?: string | null, themeColor?: string | null }

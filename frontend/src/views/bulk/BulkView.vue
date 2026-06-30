@@ -164,7 +164,7 @@
             {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row is' : 'rows are' }}
             missing required attributes — they will fail at import.
           </p>
-          <div class="max-h-[60vh] overflow-auto">
+          <ExpandablePreview title="Import preview">
             <table class="w-full text-xs">
               <thead class="bg-blue-100 sticky top-0">
                 <tr>
@@ -191,7 +191,7 @@
                 </tr>
               </tbody>
             </table>
-          </div>
+          </ExpandablePreview>
           <!-- Typed confirmation: the operator types the active profile's name
                to arm the import (the explicit "which environment" gate). -->
           <p class="text-sm text-gray-700 mt-3 mb-1">
@@ -313,7 +313,7 @@
             {{ groupPreviewWarningCount }} {{ groupPreviewWarningCount === 1 ? 'row is' : 'rows are' }}
             missing required attributes — they will fail at import.
           </p>
-          <div class="max-h-[60vh] overflow-auto">
+          <ExpandablePreview title="Group import preview">
             <table class="w-full text-xs">
               <thead class="bg-blue-100 sticky top-0">
                 <tr>
@@ -338,7 +338,7 @@
                 </tr>
               </tbody>
             </table>
-          </div>
+          </ExpandablePreview>
           <p class="text-sm text-gray-700 mt-3 mb-1">
             Type the profile name
             <code class="font-mono bg-gray-100 px-1 rounded">{{ activeProfile?.name }}</code>
@@ -531,6 +531,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useProfilePickerStore } from '@/stores/profilePicker'
 import { listProfiles } from '@/api/profiles'
 import PageContainer from '@/components/PageContainer.vue'
+import ExpandablePreview from '@/components/ExpandablePreview.vue'
 import ActiveProfileField from './ActiveProfileField.vue'
 import {
   importCsv, exportCsv, previewCsv,
