@@ -3,6 +3,7 @@ package com.ldapportal.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -39,9 +40,18 @@ public class VersionController {
     @Autowired(required = false)
     private BuildProperties buildProperties;
 
+    // The docker image tag, baked into the image at build time (ARG/ENV
+    // IMAGE_VERSION in the edition Dockerfiles). Blank when the image was
+    // built without a tag — callers then fall back to the git SHA.
+    @Value("${IMAGE_VERSION:}")
+    private String imageVersion;
+
     @GetMapping
     public Map<String, String> version() {
         Map<String, String> out = new LinkedHashMap<>();
+        if (imageVersion != null && !imageVersion.isBlank()) {
+            out.put("imageVersion", imageVersion);
+        }
         if (buildProperties == null) {
             out.put("sha", "dev");
             out.put("version", "dev");

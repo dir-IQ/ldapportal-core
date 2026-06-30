@@ -49,6 +49,33 @@ class VersionControllerTest {
     }
 
     @Test
+    void version_includesImageVersionWhenSet() {
+        Properties props = new Properties();
+        props.setProperty("git.sha", "abc1234");
+        props.setProperty("version", "0.0.1-SNAPSHOT");
+
+        VersionController controller = new VersionController();
+        ReflectionTestUtils.setField(controller, "buildProperties", new BuildProperties(props));
+        ReflectionTestUtils.setField(controller, "imageVersion", "v1.4.2");
+
+        Map<String, String> result = controller.version();
+
+        assertThat(result.get("imageVersion")).isEqualTo("v1.4.2");
+        assertThat(result.get("sha")).isEqualTo("abc1234");
+    }
+
+    @Test
+    void version_omitsImageVersionWhenBlankOrUnset() {
+        VersionController controller = new VersionController();
+        // imageVersion stays null (image built without an IMAGE_VERSION arg).
+        assertThat(controller.version()).doesNotContainKey("imageVersion");
+
+        // Whitespace-only is treated as unset too.
+        ReflectionTestUtils.setField(controller, "imageVersion", "   ");
+        assertThat(controller.version()).doesNotContainKey("imageVersion");
+    }
+
+    @Test
     void version_fallsBackToUnknownWhenShaPropertyMissing() {
         // Older builds may have BuildProperties without git.sha (e.g. someone
         // ran the build-info goal but not the git-commit-id plugin). Verify

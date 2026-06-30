@@ -28,6 +28,9 @@ import client from '@/api/client'
 
 const clientSha = __BUILD_SHA__
 const serverSha = ref<string | null>(null)
+// The backend image's tag (ARG/ENV IMAGE_VERSION), when the image was built
+// with one. Preferred over the raw SHA for the sidebar build stamp.
+const serverImageVersion = ref<string | null>(null)
 const skewDetected = ref(false)
 const checkAttempted = ref(false)
 
@@ -35,9 +38,10 @@ async function performCheck(): Promise<void> {
   if (checkAttempted.value) return
   checkAttempted.value = true
   try {
-    const { data } = await client.get<{ sha?: string }>('/version')
+    const { data } = await client.get<{ sha?: string; imageVersion?: string }>('/version')
     const sha = data?.sha ?? 'unknown'
     serverSha.value = sha
+    serverImageVersion.value = data?.imageVersion?.trim() || null
     // Treat the dev-build sentinel as a non-event — running vite dev
     // against a non-packaged backend is the normal local workflow,
     // banner would just be noise.
@@ -57,5 +61,5 @@ async function performCheck(): Promise<void> {
 export function useVersionCheck() {
   // Fire-and-forget on first invocation; subsequent calls reuse cached state.
   performCheck()
-  return { clientSha, serverSha, skewDetected }
+  return { clientSha, serverSha, serverImageVersion, skewDetected }
 }

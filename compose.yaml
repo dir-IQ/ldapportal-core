@@ -99,6 +99,10 @@ services:
       # distribution/<edition>/target/ JAR. Both images share a build
       # context of the repo root so the COPY can reach distribution/.
       dockerfile: docker/community-plus-isva/Dockerfile
+      # Bake the image tag so the app can report it (sidebar build stamp).
+      # Defaults empty for local builds → the app falls back to its git SHA.
+      args:
+        IMAGE_VERSION: ${IMAGE_VERSION:-}
     container_name: ldap-portal-app
     depends_on:
       db:

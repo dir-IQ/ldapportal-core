@@ -244,13 +244,14 @@
         </div>
       </div>
 
-      <!-- Build identifier (git short-SHA). Lets a quick glance answer
-           "is the bundle I'm looking at the version I think it is?".
+      <!-- Build identifier. Prefers the backend image's tag (e.g. "v1.4.2")
+           when the image carries one, otherwise the bundle's git short-SHA.
+           Lets a quick glance answer "is this the version I think it is?".
            Hidden when the sidebar is collapsed to keep the icon strip
            uncluttered. -->
       <div v-if="!collapsed" class="px-3 py-1.5 border-t border-white/10 text-[10px] text-white/70 font-mono leading-none"
-           :title="`Bundle build ${clientSha} · server ${serverSha || '…'}`">
-        {{ clientSha }}<span v-if="serverSha && serverSha !== clientSha" class="text-amber-300/80"> ≠ {{ serverSha }}</span>
+           :title="buildStampTitle">
+        {{ buildStamp }}<span v-if="!serverImageVersion && serverSha && serverSha !== clientSha" class="text-amber-300/80"> ≠ {{ serverSha }}</span>
       </div>
     </aside>
 
@@ -339,9 +340,20 @@ import { useConfirmStore } from '@/stores/confirm'
 const confirmStore = useConfirmStore()
 
 // Build identifier + skew detector. clientSha comes from
-// vite.config.js's `define` block; serverSha is fetched once on
-// first call. See composables/useVersionCheck.ts.
-const { clientSha, serverSha, skewDetected } = useVersionCheck()
+// vite.config.js's `define` block; serverSha / serverImageVersion are
+// fetched once on first call. See composables/useVersionCheck.ts.
+const { clientSha, serverSha, serverImageVersion, skewDetected } = useVersionCheck()
+
+// The sidebar build stamp prefers the backend image's tag (e.g. "v1.4.2")
+// when the image was built with one, falling back to the bundle's git SHA.
+const buildStamp = computed(() => serverImageVersion.value || clientSha)
+const buildStampTitle = computed(() => {
+  const parts: string[] = []
+  if (serverImageVersion.value) parts.push(`Image ${serverImageVersion.value}`)
+  parts.push(`Bundle ${clientSha}`)
+  parts.push(`server ${serverSha.value || '…'}`)
+  return parts.join(' · ')
+})
 
 function reloadHard() {
   // Bypass HTTP cache so the new bundle's hashed assets actually load.
