@@ -2,20 +2,7 @@
 <template>
   <PageContainer>
     <h1 class="text-2xl font-bold text-gray-900 mb-4">Bulk Operations</h1>
-    <p class="text-sm text-gray-500 mt-1">Import, export, and delete users and groups via CSV</p>
-
-    <!-- Active profile (from the sidebar picker). Its theme colour fills the
-         strip so the operator always sees which environment they're changing;
-         all bulk operations on this page target this profile. -->
-    <div v-if="activeProfile" class="mt-3 mb-1 rounded-lg px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-1"
-         :class="profileThemed ? bandClass : 'bg-gray-50 border border-gray-200'" :style="bandStyle">
-      <span class="text-xs font-medium uppercase tracking-wide" :class="profileThemed ? mutedClass : 'text-gray-500'">Active profile</span>
-      <span class="font-semibold" :class="profileThemed ? titleClass : 'text-gray-900'">{{ activeProfile.name }}</span>
-      <span class="text-xs font-mono" :class="profileThemed ? mutedClass : 'text-gray-500'">{{ activeProfile.targetUserDn }}</span>
-    </div>
-    <div v-else class="mt-3 mb-1 rounded-lg px-4 py-2 bg-amber-50 border border-amber-200 text-sm text-amber-800">
-      Select a profile in the sidebar to run bulk operations.
-    </div>
+    <p class="text-sm text-gray-500 mt-1 mb-4">Import, export, and delete users and groups via CSV</p>
 
     <!-- Entity type selector -->
     <div class="flex gap-2 mb-4">
@@ -56,13 +43,15 @@
     <section v-if="activeTab === 'import' && entityType === 'users'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
       <h2 class="text-lg font-semibold mb-3">Import Users from CSV</h2>
       <div class="space-y-2">
-        <!-- 12-column grid: Parent DN (4) + Template wrapper (4) + CSV File (4).
-             Widths are expressed in column units; tweak the col-span values
-             to redistribute. The template picker keeps its inline menu
-             button by nesting a flex inside the col-span-4 cell. -->
-        <div class="grid grid-cols-12 gap-2 items-end">
+        <!-- 12-column grid: Active profile (4) + Template wrapper (4) + CSV File (4).
+             items-start so the Active-profile field's DN sub-line can hang below
+             without dragging the other controls down. -->
+        <div class="grid grid-cols-12 gap-2 items-start">
+          <ActiveProfileField class="col-span-4"
+            :name="activeProfile?.name" :color="activeProfile?.themeColor" :dn="activeUserTargetDn" />
+
           <!-- Template picker + actions dropdown -->
-          <div class="col-span-7 flex gap-2 items-end">
+          <div class="col-span-4 flex gap-2 items-end">
             <div class="flex-1">
               <label for="bulk-import-template" class="block text-sm font-medium text-gray-700 mb-1">Import Template <span class="text-red-500">*</span></label>
               <select id="bulk-import-template" v-model="selectedTemplateId" class="input w-full" @change="onTemplateSelected">
@@ -92,7 +81,7 @@
             </div>
           </div>
 
-          <div class="col-span-5">
+          <div class="col-span-4">
             <label class="block text-sm font-medium text-gray-700 mb-1">CSV File <span class="text-red-500">*</span></label>
             <!-- Custom file picker: bordered .input wrapper with the
                  filename on the left and a borderless chip-style 'Choose
@@ -203,10 +192,18 @@
               </tbody>
             </table>
           </div>
-          <!-- Commit opens a themed confirmation modal (header band = the active
-               profile's colour) so the target environment is unmistakable. -->
-          <div class="flex gap-2 mt-3">
-            <button @click="showImportConfirm = true" :disabled="importing || importBlocked" class="btn-primary"
+          <!-- Typed confirmation: the operator types the active profile's name
+               to arm the import (the explicit "which environment" gate). -->
+          <p class="text-sm text-gray-700 mt-3 mb-1">
+            Type the profile name
+            <code class="font-mono bg-gray-100 px-1 rounded">{{ activeProfile?.name }}</code>
+            to confirm this import.
+          </p>
+          <div class="flex gap-2">
+            <input v-model="importConfirmText" class="input w-56"
+                   :placeholder="activeProfile?.name || ''"
+                   aria-label="Type the profile name to confirm" />
+            <button @click="doConfirmImport" :disabled="importing || importBlocked || !importArmed" class="btn-primary"
                     :title="importBlocked ? 'Resolve the errored rows before importing (template blocks on errors)' : ''">
               {{ importing ? 'Importing…' : 'Perform Import' }}
             </button>
@@ -267,8 +264,10 @@
              (groupOfNames → member, groupOfUniqueNames → uniqueMember,
              posixGroup → memberUid) so it's resolved silently in the
              groupMemberAttr computed and doesn't need a UI field. -->
-        <div class="grid grid-cols-12 gap-2 items-end">
-          <div class="col-span-4">
+        <div class="grid grid-cols-12 gap-2 items-start">
+          <ActiveProfileField class="col-span-3"
+            :name="activeProfile?.name" :color="activeProfile?.themeColor" :dn="activeGroupTargetDn" />
+          <div class="col-span-3">
             <label for="bulk-group-object-class" class="block text-sm font-medium text-gray-700 mb-1">Object Class</label>
             <select id="bulk-group-object-class" v-model="groupImportForm.objectClass" class="input w-full">
               <option value="groupOfNames">groupOfNames</option>
@@ -276,14 +275,14 @@
               <option value="posixGroup">posixGroup</option>
             </select>
           </div>
-          <div class="col-span-4">
+          <div class="col-span-3">
             <label for="bulk-group-conflict-handling" class="block text-sm font-medium text-gray-700 mb-1">Conflict Handling</label>
             <select id="bulk-group-conflict-handling" v-model="groupImportForm.conflictHandling" class="input w-full">
               <option value="SKIP">Skip existing</option>
               <option value="OVERWRITE">Overwrite existing</option>
             </select>
           </div>
-          <div class="col-span-4">
+          <div class="col-span-3">
             <label class="block text-sm font-medium text-gray-700 mb-1">CSV File <span class="text-red-500">*</span></label>
             <label class="csv-file-picker input flex items-center gap-2 w-full cursor-pointer !py-0 !pr-1 hover:border-gray-400 transition-colors bg-white">
               <span class="flex-1 truncate text-sm"
@@ -340,8 +339,16 @@
               </tbody>
             </table>
           </div>
-          <div class="flex gap-2 mt-3">
-            <button @click="showGroupImportConfirm = true" :disabled="groupImporting" class="btn-primary">
+          <p class="text-sm text-gray-700 mt-3 mb-1">
+            Type the profile name
+            <code class="font-mono bg-gray-100 px-1 rounded">{{ activeProfile?.name }}</code>
+            to confirm this import.
+          </p>
+          <div class="flex gap-2">
+            <input v-model="groupImportConfirmText" class="input w-56"
+                   :placeholder="activeProfile?.name || ''"
+                   aria-label="Type the profile name to confirm" />
+            <button @click="doGroupConfirmImport" :disabled="groupImporting || !groupImportArmed" class="btn-primary">
               {{ groupImporting ? 'Importing…' : 'Perform Import' }}
             </button>
             <button @click="groupPreviewResult = null" class="btn-neutral">Cancel</button>
@@ -393,32 +400,6 @@
         </button>
       </div>
     </section>
-
-    <!-- Themed commit confirmation — user import -->
-    <BulkConfirmModal
-      v-model="showImportConfirm"
-      :profile-name="activeProfile?.name || ''"
-      :theme-color="activeProfile?.themeColor || ''"
-      title="Confirm user import"
-      :summary="`Import ${previewResult?.totalRows ?? 0} user(s) into`"
-      :target-dn="activeUserTargetDn"
-      confirm-label="Import"
-      :busy="importing"
-      @confirm="doConfirmImport"
-    />
-
-    <!-- Themed commit confirmation — group import -->
-    <BulkConfirmModal
-      v-model="showGroupImportConfirm"
-      :profile-name="activeProfile?.name || ''"
-      :theme-color="activeProfile?.themeColor || ''"
-      title="Confirm group import"
-      :summary="`Import ${groupPreviewResult?.totalRows ?? 0} group(s) into`"
-      :target-dn="activeGroupTargetDn"
-      confirm-label="Import"
-      :busy="groupImporting"
-      @confirm="doGroupConfirmImport"
-    />
 
     <!-- Template create/edit modal -->
     <AppModal v-model="showTemplateModal" :title="editTemplate ? 'Edit Template' : 'New Template'" size="xl">
@@ -548,10 +529,9 @@ import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 import { useProfilePickerStore } from '@/stores/profilePicker'
-import { useProfileThemeBand } from '@/composables/useProfileThemeBand'
 import { listProfiles } from '@/api/profiles'
 import PageContainer from '@/components/PageContainer.vue'
-import BulkConfirmModal from './BulkConfirmModal.vue'
+import ActiveProfileField from './ActiveProfileField.vue'
 import {
   importCsv, exportCsv, previewCsv,
   listCsvTemplates, createCsvTemplate, updateCsvTemplate, deleteCsvTemplate,
@@ -649,7 +629,7 @@ const importFile    = ref<File | null>(null)
 const importResult  = ref<ImportResult | null>(null)
 const previewResult = ref<PreviewResult | null>(null)
 
-const showImportConfirm = ref(false)
+const importConfirmText = ref('')
 const exportForm = ref<ExportForm>({ filter: '', baseDn: '', attributes: 'cn,mail,uid' })
 
 // ── Group bulk state ─────────────────────────────────────────────────────────
@@ -663,7 +643,7 @@ const groupImportForm = ref<GroupImportForm>({
   objectClass: 'groupOfNames',
   conflictHandling: 'SKIP',
 })
-const showGroupImportConfirm = ref(false)
+const groupImportConfirmText = ref('')
 const groupExportForm = ref<GroupExportForm>({
   filter: '',
   baseDn: '',
@@ -729,9 +709,16 @@ const activeGroupTargetDn = computed(() =>
   activeProfile.value?.targetGroupDn || activeProfile.value?.targetUserDn || null,
 )
 
-// Theme band for the "Active profile" header strip.
-const { themed: profileThemed, bandStyle, bandClass, titleClass, mutedClass } =
-  useProfileThemeBand(computed(() => activeProfile.value?.themeColor))
+// An import is armed only once the operator types the active profile's name
+// (case-insensitive) — the explicit "which environment" confirmation gate.
+const importArmed = computed(() => {
+  const name = activeProfile.value?.name?.trim().toLowerCase()
+  return !!name && importConfirmText.value.trim().toLowerCase() === name
+})
+const groupImportArmed = computed(() => {
+  const name = activeProfile.value?.name?.trim().toLowerCase()
+  return !!name && groupImportConfirmText.value.trim().toLowerCase() === name
+})
 
 function menuAction(action: string) {
   showTemplateMenu.value = false
@@ -1047,6 +1034,7 @@ async function doPreview() {
   previewing.value = true
   previewResult.value = null
   importResult.value = null
+  importConfirmText.value = ''
   try {
     const { data } = await previewCsv(dirId, importFile.value, buildImportRequest())
     previewResult.value = data
@@ -1092,7 +1080,7 @@ async function ensureParentDnExists(parentDn: string) {
 }
 
 async function doConfirmImport() {
-  if (!canImport.value) return
+  if (!canImport.value || !importArmed.value) return
   const parentDn = activeUserTargetDn.value
   if (!parentDn) return
   try {
@@ -1106,7 +1094,6 @@ async function doConfirmImport() {
   try {
     const resp = await importCsv(dirId, importFile.value, buildImportRequest())
     const data = resp.data
-    showImportConfirm.value = false
     if (resp.status === 202 || data.approvalId) {
       // Import submitted for approval
       previewResult.value = null
@@ -1179,6 +1166,7 @@ async function doGroupPreview() {
   groupPreviewing.value = true
   groupPreviewResult.value = null
   groupImportResult.value = null
+  groupImportConfirmText.value = ''
   try {
     const { data } = await previewGroupCsv(
       dirId, groupImportFile.value, buildGroupImportRequest(),
@@ -1192,7 +1180,7 @@ async function doGroupPreview() {
 }
 
 async function doGroupConfirmImport() {
-  if (!canGroupImport.value) return
+  if (!canGroupImport.value || !groupImportArmed.value) return
   const parentDn = activeGroupTargetDn.value
   if (!parentDn) return
   try {
@@ -1210,7 +1198,6 @@ async function doGroupConfirmImport() {
       groupMemberAttr.value, groupImportForm.value.objectClass
     )
     groupImportResult.value = resp.data
-    showGroupImportConfirm.value = false
     groupPreviewResult.value = null
     notif.success(`Import done: ${resp.data.created} created, ${resp.data.errors} errors`)
   } catch (e) {

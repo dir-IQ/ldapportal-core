@@ -16,9 +16,12 @@
 
     <div class="space-y-3">
       <!-- Resolution controls + CSV file. The target profile comes from the
-           sidebar picker (shown in the page banner), not a control here. -->
-      <div class="grid grid-cols-12 gap-2 items-end">
-        <div class="col-span-4">
+           sidebar picker, shown read-only here. -->
+      <div class="grid grid-cols-12 gap-2 items-start">
+        <ActiveProfileField class="col-span-3"
+          :name="activeProfile?.name" :color="activeProfile?.themeColor" :dn="activeProfile?.targetUserDn" />
+
+        <div class="col-span-3">
           <label for="bd-mode" class="block text-sm font-medium text-gray-700 mb-1">Match users by</label>
           <select id="bd-mode" v-model="mode" class="input w-full" @change="resetResults">
             <option value="dn">Full DN</option>
@@ -26,26 +29,20 @@
           </select>
         </div>
 
-        <div v-if="mode === 'key'" class="col-span-3">
+        <div v-if="mode === 'key'" class="col-span-2">
           <label for="bd-keyattr" class="block text-sm font-medium text-gray-700 mb-1">
             Attribute <span class="text-red-500">*</span>
           </label>
           <input id="bd-keyattr" v-model="keyAttribute" class="input w-full" placeholder="uid" @input="resetResults" />
         </div>
 
-        <div :class="mode === 'key' ? 'col-span-5' : 'col-span-8'">
+        <div :class="mode === 'key' ? 'col-span-4' : 'col-span-6'">
           <label for="bd-valuecol" class="block text-sm font-medium text-gray-700 mb-1">CSV column</label>
           <input id="bd-valuecol" v-model="valueColumn" class="input w-full"
                  :placeholder="mode === 'key' ? (keyAttribute || 'uid') : 'dn'" @input="resetResults" />
         </div>
 
       </div>
-      <p v-if="activeProfile && mode === 'key'" class="text-xs text-gray-600">
-        Resolves
-        <code class="font-mono text-gray-800">{{ keyAttribute || 'uid' }}</code>
-        values under
-        <span class="font-mono text-gray-800">{{ activeProfile.targetUserDn }}</span>
-      </p>
 
       <!-- CSV file + header toggle, left-aligned together. max-w keeps the
            field from stretching across to the right edge. -->
@@ -106,31 +103,27 @@
           </table>
         </div>
 
-        <!-- Commit opens a themed confirmation modal (header band = the active
-             profile's colour) where the operator types the profile name to arm
-             the irreversible delete. -->
-        <div v-if="countOf('WILL_DELETE') > 0" class="mt-3 flex gap-2">
-          <button @click="showConfirm = true" :disabled="deleting" class="btn-danger">
-            {{ deleting ? 'Deleting…' : `Delete ${countOf('WILL_DELETE')} user(s)` }}
-          </button>
-          <button @click="resetResults" class="btn-neutral">Cancel</button>
+        <!-- Typed confirmation: the operator types the active profile's name to
+             arm the irreversible delete. -->
+        <div v-if="countOf('WILL_DELETE') > 0" class="mt-3">
+          <p class="text-sm text-gray-700 mb-1">
+            This will permanently delete <strong>{{ countOf('WILL_DELETE') }}</strong> user(s).
+            Type the profile name
+            <code class="font-mono bg-gray-100 px-1 rounded">{{ activeProfile?.name }}</code>
+            to confirm.
+          </p>
+          <div class="flex gap-2">
+            <input v-model="confirmText" class="input w-56"
+                   :placeholder="activeProfile?.name || ''"
+                   aria-label="Type the profile name to confirm" />
+            <button @click="doDelete" :disabled="!armed || deleting" class="btn-danger">
+              {{ deleting ? 'Deleting…' : `Delete ${countOf('WILL_DELETE')} user(s)` }}
+            </button>
+            <button @click="resetResults" class="btn-neutral">Cancel</button>
+          </div>
         </div>
         <p v-else class="mt-3 text-sm text-gray-500">No rows resolved to a deletable user.</p>
       </div>
-
-      <BulkConfirmModal
-        v-model="showConfirm"
-        :profile-name="activeProfile?.name || ''"
-        :theme-color="activeProfile?.themeColor || ''"
-        title="Confirm bulk delete"
-        :summary="`Permanently delete ${countOf('WILL_DELETE')} user(s) in`"
-        :target-dn="activeProfile?.targetUserDn"
-        confirm-label="Delete users"
-        require-typed
-        danger
-        :busy="deleting"
-        @confirm="doDelete"
-      />
 
       <!-- Result -->
       <div v-if="deleteResult" class="mt-2 p-4 rounded-lg bg-gray-50 border border-gray-200 text-sm">
@@ -153,7 +146,7 @@
 import { ref, computed } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { previewBulkDelete, bulkDelete } from '@/api/csvTemplates'
-import BulkConfirmModal from './BulkConfirmModal.vue'
+import ActiveProfileField from './ActiveProfileField.vue'
 
 /** The sidebar-selected provisioning profile this delete is scoped to. */
 interface ProfileLite { id: string, name: string, targetUserDn?: string | null, themeColor?: string | null }
@@ -184,12 +177,18 @@ const previewing    = ref(false)
 const deleting      = ref(false)
 const previewResult = ref<PreviewResult | null>(null)
 const deleteResult  = ref<DeleteResult | null>(null)
-const showConfirm   = ref(false)
+const confirmText   = ref('')
 
 const canPreview = computed(() =>
   !!file.value && !!activeProfile.value
   && (mode.value === 'dn' || !!keyAttribute.value.trim()),
 )
+
+// Armed once the operator types the active profile's name (case-insensitive).
+const armed = computed(() => {
+  const name = activeProfile.value?.name?.trim().toLowerCase()
+  return !!name && confirmText.value.trim().toLowerCase() === name
+})
 
 const problemCount = computed(() =>
   (previewResult.value?.rows ?? []).filter(
@@ -230,6 +229,7 @@ function onFileChange(e: Event) {
 function resetResults() {
   previewResult.value = null
   deleteResult.value = null
+  confirmText.value = ''
 }
 
 function buildRequest() {
@@ -247,6 +247,7 @@ async function doPreview() {
   if (!canPreview.value || !file.value) return
   previewing.value = true
   deleteResult.value = null
+  confirmText.value = ''
   try {
     const { data } = await previewBulkDelete(props.dirId, file.value, buildRequest())
     previewResult.value = data
@@ -258,13 +259,13 @@ async function doPreview() {
 }
 
 async function doDelete() {
-  if (!file.value) return
+  if (!armed.value || !file.value) return
   deleting.value = true
   try {
     const { data } = await bulkDelete(props.dirId, file.value, buildRequest())
     deleteResult.value = data
     previewResult.value = null
-    showConfirm.value = false
+    confirmText.value = ''
     notif.success(`Bulk delete done: ${data.deleted} deleted, ${data.errors} errors`)
   } catch (e) {
     notif.error(errMsg(e))

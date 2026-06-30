@@ -9,7 +9,7 @@ vi.mock('@/stores/notifications', () => ({
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({ hasFeature: () => false, isSuperadmin: false }),
 }))
-// The active profile comes from the sidebar picker store (not an in-form select).
+// The active profile comes from the sidebar picker store.
 vi.mock('@/stores/profilePicker', () => ({
   useProfilePickerStore: () => ({ selectedId: 'p1', selectedProfile: null, profiles: [] }),
 }))
@@ -44,20 +44,10 @@ vi.mock('@/api/csvTemplates', () => ({
 import { previewCsv, importCsv } from '@/api/csvTemplates'
 import BulkView from './BulkView.vue'
 
-// Stub the themed confirm modal to a simple confirm trigger so the spec doesn't
-// depend on AppModal teleport/pinia internals; props are asserted directly.
-const ConfirmStub = {
-  props: ['modelValue', 'profileName', 'themeColor', 'title', 'summary', 'targetDn',
-    'confirmLabel', 'requireTyped', 'danger', 'busy'],
-  emits: ['update:modelValue', 'confirm'],
-  template: `<button v-if="modelValue" class="confirm-stub" :data-profile="profileName"
-    :data-theme="themeColor" @click="$emit('confirm')">{{ confirmLabel }}</button>`,
-}
 const global = {
   stubs: {
     PageContainer: { template: '<div><slot/></div>' },
     DnPicker: true, AppModal: true, FormField: true, ConfirmDialog: true, BulkDeleteSection: true,
-    BulkConfirmModal: ConfirmStub,
   },
 }
 
@@ -74,11 +64,11 @@ function btnByText(w: ReturnType<typeof mount>, text: string) {
 describe('BulkView — user import scoped to the active (sidebar) profile', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('shows the active profile banner and imports via the themed confirm modal', async () => {
+  it('shows the Active-profile field and gates Perform Import on the profile name', async () => {
     const w = mount(BulkView, { global })
     await flushPromises() // onMounted loads profiles + templates
 
-    // The active profile (from the picker store) is shown, themed by its colour.
+    // The read-only Active-profile field reflects the sidebar selection.
     expect(w.text()).toContain('Active profile')
     expect(w.text()).toContain('Engineers')
 
@@ -91,15 +81,12 @@ describe('BulkView — user import scoped to the active (sidebar) profile', () =
     expect(previewCsv).toHaveBeenCalledWith('d1', expect.any(File),
       expect.objectContaining({ profileId: 'p1' }))
 
-    // Perform Import opens the themed confirm modal (the stub), carrying the
-    // profile name + theme colour; confirming runs the import.
-    await btnByText(w, 'Perform Import').trigger('click')
-    const confirm = w.find('.confirm-stub')
-    expect(confirm.exists()).toBe(true)
-    expect(confirm.attributes('data-profile')).toBe('Engineers')
-    expect(confirm.attributes('data-theme')).toBe('#2563eb')
+    // Perform Import is disabled until the profile name is typed.
+    expect(btnByText(w, 'Perform Import').attributes('disabled')).toBeDefined()
+    await w.find('input[aria-label="Type the profile name to confirm"]').setValue('Engineers')
+    expect(btnByText(w, 'Perform Import').attributes('disabled')).toBeUndefined()
 
-    await confirm.trigger('click')
+    await btnByText(w, 'Perform Import').trigger('click')
     await flushPromises()
     expect(importCsv).toHaveBeenCalledWith('d1', expect.any(File),
       expect.objectContaining({ profileId: 'p1' }))

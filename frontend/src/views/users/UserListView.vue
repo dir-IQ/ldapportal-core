@@ -1,24 +1,26 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <div class="p-6">
-    <!-- Header. When the selected profile carries a theme colour, the whole
-         header row fills with it as a band and the title/profile-name switch
-         to a legible contrast colour (profile name no longer blue). -->
-    <div class="flex items-center justify-between mb-6" :class="bandClass" :style="bandStyle">
+    <!-- Header. A themed profile shows a compact pill next to the title; an
+         unthemed one keeps the legacy blue "— Name profile" text. -->
+    <div class="flex items-center justify-between mb-6">
       <div>
-        <h1 class="text-2xl font-bold" :class="titleClass">
+        <h1 class="text-2xl font-bold text-gray-900">
           Users
           <template v-if="profileData?.name">
-            <span class="font-normal" :class="faintClass"> — </span>
-            <span class="font-normal" :class="profileNameClass">{{ profileData.name }}</span>
-            <span class="font-normal" :class="faintClass"> profile</span>
+            <ProfilePill v-if="profileData.themeColor" class="ml-1" :name="profileData.name" :color="profileData.themeColor" />
+            <template v-else>
+              <span class="text-gray-400 font-normal"> — </span>
+              <span class="text-blue-600 font-normal">{{ profileData.name }}</span>
+              <span class="text-gray-400 font-normal"> profile</span>
+            </template>
           </template>
         </h1>
-        <p class="text-sm mt-1" :class="mutedClass">Manage users in this directory</p>
+        <p class="text-sm text-gray-500 mt-1">Manage users in this directory</p>
       </div>
       <div class="flex items-center gap-3">
         <div v-if="allProfiles.length > 1" class="flex items-center gap-2">
-          <label for="ul-profile" class="text-sm font-medium" :class="themed ? mutedClass : 'text-gray-600'">Profile:</label>
+          <label for="ul-profile" class="text-sm text-gray-600 font-medium">Profile:</label>
           <select id="ul-profile" v-model="selectedProfileId" @change="onProfileChange"
             class="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
             <option value="">All</option>
@@ -207,12 +209,16 @@
     </AppModal>
 
     <!-- Create/Edit modal (step 2 of create, or edit) -->
-    <AppModal v-model="showModal" size="xl" :dirty="modalDirty" :header-color="profileConfig?.themeColor || ''">
+    <AppModal v-model="showModal" size="xl" :dirty="modalDirty">
       <template #title>
         <span>{{ editingDn ? 'Edit User' : 'New User' }}</span>
-        <span v-if="profileConfig?.name" class="font-normal" :class="profileConfig?.themeColor ? 'opacity-70' : 'text-gray-500'"> — </span>
-        <span v-if="profileConfig?.name" :class="profileConfig?.themeColor ? '' : 'text-blue-600'">{{ profileConfig.name }}</span>
-        <span v-if="profileConfig?.name" class="font-normal" :class="profileConfig?.themeColor ? 'opacity-70' : 'text-gray-500'"> profile</span>
+        <ProfilePill v-if="profileConfig?.name && profileConfig?.themeColor" class="ml-1"
+                     :name="profileConfig.name" :color="profileConfig.themeColor" />
+        <template v-else-if="profileConfig?.name">
+          <span class="text-gray-500 font-normal"> — </span>
+          <span class="text-blue-600">{{ profileConfig.name }}</span>
+          <span class="text-gray-500 font-normal"> profile</span>
+        </template>
       </template>
       <UserForm ref="userFormRef" :data="form" :is-edit="!!editingDn" :user-template-config="profileConfig ?? undefined" :dir-id="dirId" :profile-id="selectedProfileId" @update="(v: UserFormState) => form = v" />
       <template #footer="{ close }">
@@ -513,7 +519,7 @@ import GroupChips from '@/components/GroupChips.vue'
 import { rdnValue } from '@/composables/useEntryClassification'
 import { ensureNamingValues, parseLeadingRdn } from '@/utils/dn'
 import { resolveGroupMembers } from '@/utils/groupMembers'
-import { useProfileThemeBand } from '@/composables/useProfileThemeBand'
+import ProfilePill from '@/components/ProfilePill.vue'
 
 interface ProfileLite {
   id: string
@@ -845,10 +851,6 @@ const allProfiles       = ref<ProfileLite[]>([])
 const selectedProfileId = ref('')
 const profileData       = ref<ProfileLite | null>(null)
 const profileConfig     = ref<ProfileLite | null>(null)
-
-// Page-header theme band, driven by the selected profile's theme colour.
-const { themed, bandStyle, bandClass, titleClass, mutedClass, faintClass, profileNameClass } =
-  useProfileThemeBand(computed(() => profileData.value?.themeColor))
 
 // "Move" targets: the operator's other accessible profiles in this directory.
 // allProfiles is already permission-scoped (the server returns only profiles
