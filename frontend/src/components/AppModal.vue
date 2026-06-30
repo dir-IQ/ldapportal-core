@@ -25,11 +25,14 @@
                `headerColor` (a provisioning-profile theme colour) is given, the
                header fills with that colour as a band and the title/close switch
                to a legible contrast colour. -->
-          <div :class="['flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0',
+          <div :class="['flex items-center justify-between gap-3 px-6 py-4 border-b border-gray-200 shrink-0',
                         movable ? 'cursor-move select-none' : '']"
                :style="headerColor ? { backgroundColor: headerColor } : {}"
                @pointerdown="onHandlePointerDown">
-            <h2 :id="titleId" class="text-lg font-semibold"
+            <!-- flex-1 + flex lets a title-slot tag (the profile pill) stretch
+                 across the header to just before the close button. Plain string
+                 titles are unaffected — a single flex item, left-aligned. -->
+            <h2 :id="titleId" class="text-lg font-semibold flex-1 min-w-0 flex items-center gap-3"
                 :class="headerColor ? onThemeTitleClass(headerColor) : 'text-gray-900'">
               <slot name="title">{{ title }}</slot>
             </h2>
