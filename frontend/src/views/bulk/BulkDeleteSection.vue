@@ -89,7 +89,8 @@
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
-              <tr v-for="row in previewResult.rows" :key="row.rowNumber">
+              <tr v-for="(row, idx) in previewResult.rows" :key="row.rowNumber"
+                  :class="idx % 2 ? 'bg-gray-50' : 'bg-white'">
                 <td class="px-2 py-1 text-gray-500">{{ row.rowNumber }}</td>
                 <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.dn || '—' }}</td>
                 <td class="px-2 py-1">
