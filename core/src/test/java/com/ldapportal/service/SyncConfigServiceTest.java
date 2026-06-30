@@ -158,6 +158,54 @@ class SyncConfigServiceTest {
     }
 
     @Test
+    void reconcileNow_refreshesDriftSnapshot_whenScanComplete() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(reconciler.reconcile(setId)).thenReturn(42);
+        when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(
+                10, 9, 7, 2, 1, 0,
+                List.of(), List.of(), List.of(),
+                true, true, null)); // complete scan: missing=2, orphan=1, mismatch=0
+
+        int enumerated = service.reconcileNow(setId);
+
+        assertThat(enumerated).isEqualTo(42);
+        // A manual reconcile must refresh the cached drift, else the dashboard stays stale.
+        verify(setRepo).recordVerifyResult(eq(setId), any(), eq(2), eq(1), eq(0));
+    }
+
+    @Test
+    void reconcileNow_skipsPersist_whenScanIncomplete() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(reconciler.reconcile(setId)).thenReturn(1);
+        when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(
+                0, 0, 0, 0, 0, 0,
+                List.of(), List.of(), List.of(),
+                false, true, null)); // partial: source enumeration failed
+
+        service.reconcileNow(setId);
+
+        // A partial scan must not overwrite a previously good snapshot with low counts.
+        verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+    }
+
+    @Test
+    void reconcileNow_returnsCount_whenSnapshotRefreshThrows() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(reconciler.reconcile(setId)).thenReturn(5);
+        when(verifier.verify(setId)).thenThrow(new RuntimeException("ldap read blew up"));
+
+        // The reconcile already applied; a verify failure during the refresh must not
+        // surface as a failed reconcile.
+        int enumerated = service.reconcileNow(setId);
+
+        assertThat(enumerated).isEqualTo(5);
+        verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+    }
+
+    @Test
     void listMemberships_lowercasesAndWrapsSearchTerm() {
         when(setRepo.findById(any())).thenReturn(Optional.of(new SyncSet()));
         when(membershipRepo.search(any(), any(), any(), any())).thenReturn(Page.empty());
