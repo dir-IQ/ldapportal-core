@@ -7,14 +7,7 @@
       <div>
         <h1 class="text-2xl font-bold text-gray-900">
           Groups
-          <template v-if="profileData?.name">
-            <ProfilePill v-if="profileData.themeColor" class="ml-1" :name="profileData.name" :color="profileData.themeColor" />
-            <template v-else>
-              <span class="text-gray-400 font-normal"> — </span>
-              <span class="text-blue-600 font-normal">{{ profileData.name }}</span>
-              <span class="text-gray-400 font-normal"> profile</span>
-            </template>
-          </template>
+          <ProfilePill v-if="profileData?.name" class="ml-1" :name="profileData.name" :color="profileData.themeColor" />
         </h1>
         <p class="text-sm text-gray-500 mt-1">Manage groups in this directory</p>
       </div>
@@ -132,13 +125,8 @@
     <AppModal v-model="showCreate" size="lg">
       <template #title>
         <span>New Group</span>
-        <ProfilePill v-if="createProfile?.name && createProfile?.themeColor" class="ml-1"
+        <ProfilePill v-if="createProfile?.name" class="ml-1"
                      :name="createProfile.name" :color="createProfile.themeColor" />
-        <template v-else-if="createProfile?.name">
-          <span class="text-gray-500 font-normal"> — </span>
-          <span class="text-blue-600">{{ createProfile.name }}</span>
-          <span class="text-gray-500 font-normal"> profile</span>
-        </template>
       </template>
       <div class="grid grid-cols-3 gap-2">
         <FormField label="Group Name (cn) (RDN)" v-model="createForm.cn" required />
@@ -159,7 +147,7 @@
     <AppModal v-model="showEdit" size="md">
       <template #title>
         <span>Edit Group</span>
-        <ProfilePill v-if="profileData?.name && profileData?.themeColor" class="ml-1"
+        <ProfilePill v-if="profileData?.name" class="ml-1"
                      :name="profileData.name" :color="profileData.themeColor" />
       </template>
       <FormField label="Owner" v-model="editForm.owner" placeholder="DN of the group owner" :error="editOwnerError" />

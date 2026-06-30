@@ -1,11 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
+import type { CSSProperties } from 'vue'
+
 /**
  * Helpers for the provisioning-profile "theme colour" — an optional #RRGGBB hex
  * string an admin sets on a profile. The admin user/group list pages and the
- * new/edit user/group modals render it as a band behind the page header; these
- * helpers pick legible foreground classes for content sitting on that band and
- * otherwise fall back to the default styling.
+ * new/edit user/group modals render it as a profile tag (a soft-tinted chip),
+ * and the bulk pages render it as a tint-filled "Active profile" field. These
+ * helpers derive the shared tint and pick legible foreground classes,
+ * falling back to neutral styling when no colour is set.
  */
+
+/**
+ * Soft-tint inline styles (background / border / text) for a profile theme
+ * colour — the shared chrome behind the profile pill and the bulk Active-profile
+ * field. ~10% fill, ~32% border, and an 80%-darkened theme text so the tag reads
+ * without a heavy block of colour. color-mix keeps this working for any profile
+ * colour without per-colour maths. Returns null for an unset/empty colour, so
+ * callers apply their neutral styling instead.
+ */
+export function themeTintStyle(hex: string | null | undefined): CSSProperties | null {
+  if (!hex) return null
+  return {
+    backgroundColor: `color-mix(in srgb, ${hex} 10%, white)`,
+    borderColor: `color-mix(in srgb, ${hex} 32%, white)`,
+    color: `color-mix(in srgb, ${hex} 80%, black)`,
+  }
+}
 
 /** Parse a #RRGGBB (or RRGGBB) hex string to [r,g,b], or null if malformed. */
 function parseHex(hex: string | null | undefined): [number, number, number] | null {
