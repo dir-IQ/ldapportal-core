@@ -176,8 +176,8 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-blue-100">
-                <tr v-for="row in previewResult.rows" :key="row.rowNumber"
-                    :class="row.missingRequired?.length ? 'bg-amber-50' : ''">
+                <tr v-for="(row, idx) in previewResult.rows" :key="row.rowNumber"
+                    :class="row.missingRequired?.length ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
                   <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td v-for="attr in userPreviewAttrCols" :key="attr"
@@ -324,8 +324,8 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-blue-100">
-                <tr v-for="row in groupPreviewResult.rows" :key="row.rowNumber"
-                    :class="row.missingRequired?.length ? 'bg-amber-50' : ''">
+                <tr v-for="(row, idx) in groupPreviewResult.rows" :key="row.rowNumber"
+                    :class="row.missingRequired?.length ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
                   <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td class="px-2 py-1 text-gray-600">{{ formatAttrs(row.attributes) }}</td>

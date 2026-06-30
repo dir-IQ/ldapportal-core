@@ -11,7 +11,7 @@
       :class="expanded ? 'fixed inset-0 z-50 flex items-stretch justify-center bg-black/40 p-4' : ''"
       @click.self="expanded = false"
     >
-      <div :class="expanded ? 'flex min-h-0 w-full max-w-6xl flex-col rounded-lg bg-white shadow-xl dark:bg-gray-800' : ''">
+      <div :class="expanded ? 'flex min-h-0 w-full flex-col rounded-lg bg-white shadow-xl dark:bg-gray-800' : ''">
         <!-- Toolbar: just the Expand affordance inline; title + Collapse when full-screen. -->
         <div
           class="flex items-center justify-between"
