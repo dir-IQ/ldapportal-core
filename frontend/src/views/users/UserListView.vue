@@ -1,18 +1,14 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <div class="p-6">
-    <!-- Header. A themed profile shows a compact pill next to the title; an
-         unthemed one keeps the legacy blue "— Name profile" text. -->
-    <div class="flex items-center justify-between mb-6">
-      <div>
-        <h1 class="text-2xl font-bold text-gray-900">
-          Users
-          <ProfilePill v-if="profileData?.name" class="ml-1" :name="profileData.name" :color="profileData.themeColor" />
-        </h1>
-        <p class="text-sm text-gray-500 mt-1">Manage users in this directory</p>
-      </div>
+    <!-- Header. The active profile shows as a tag that spans the row between the
+         title and the action buttons (neutral grey when the profile is unthemed). -->
+    <div class="mb-6">
       <div class="flex items-center gap-3">
-        <div v-if="allProfiles.length > 1" class="flex items-center gap-2">
+        <h1 class="text-2xl font-bold text-gray-900 whitespace-nowrap">Users</h1>
+        <ProfilePill v-if="profileData?.name" class="flex-1 min-w-0" :name="profileData.name" :color="profileData.themeColor" />
+        <div class="flex items-center gap-3 ml-auto shrink-0">
+          <div v-if="allProfiles.length > 1" class="flex items-center gap-2">
           <label for="ul-profile" class="text-sm text-gray-600 font-medium">Profile:</label>
           <select id="ul-profile" v-model="selectedProfileId" @change="onProfileChange"
             class="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -31,8 +27,10 @@
         <button v-if="bulkSelectActive && can.manageMembers" @click="openBulkMembership" class="btn-secondary">
           Manage Groups ({{ selectedDns.size }})
         </button>
-        <button v-if="can.create" @click="openCreate" class="btn-primary">+ New User</button>
+          <button v-if="can.create" @click="openCreate" class="btn-primary">+ New User</button>
+        </div>
       </div>
+      <p class="text-sm text-gray-500 mt-1">Manage users in this directory</p>
     </div>
 
     <!-- Search bar -->
@@ -204,8 +202,8 @@
     <!-- Create/Edit modal (step 2 of create, or edit) -->
     <AppModal v-model="showModal" size="xl" :dirty="modalDirty">
       <template #title>
-        <span>{{ editingDn ? 'Edit User' : 'New User' }}</span>
-        <ProfilePill v-if="profileConfig?.name" class="ml-1"
+        <span class="whitespace-nowrap">{{ editingDn ? 'Edit User' : 'New User' }}</span>
+        <ProfilePill v-if="profileConfig?.name" class="flex-1 min-w-0"
                      :name="profileConfig.name" :color="profileConfig.themeColor" />
       </template>
       <UserForm ref="userFormRef" :data="form" :is-edit="!!editingDn" :user-template-config="profileConfig ?? undefined" :dir-id="dirId" :profile-id="selectedProfileId" @update="(v: UserFormState) => form = v" />

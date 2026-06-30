@@ -1,27 +1,25 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <div class="p-6">
-    <!-- Header. A themed profile shows a compact pill next to the title; an
-         unthemed one keeps the legacy blue "— Name profile" text. -->
-    <div class="flex items-center justify-between mb-6">
-      <div>
-        <h1 class="text-2xl font-bold text-gray-900">
-          Groups
-          <ProfilePill v-if="profileData?.name" class="ml-1" :name="profileData.name" :color="profileData.themeColor" />
-        </h1>
-        <p class="text-sm text-gray-500 mt-1">Manage groups in this directory</p>
-      </div>
-      <div class="flex items-center gap-2">
-        <div v-if="allProfiles.length > 1" class="flex items-center gap-2">
-          <label for="gl-profile" class="text-sm text-gray-600 font-medium">Profile:</label>
-          <select id="gl-profile" v-model="selectedProfileId" @change="onProfileChange"
-            class="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-            <option value="">All</option>
-            <option v-for="p in allProfiles" :key="p.id" :value="p.id">{{ p.name }}</option>
-          </select>
+    <!-- Header. The active profile shows as a tag that spans the row between the
+         title and the action buttons (neutral grey when the profile is unthemed). -->
+    <div class="mb-6">
+      <div class="flex items-center gap-3">
+        <h1 class="text-2xl font-bold text-gray-900 whitespace-nowrap">Groups</h1>
+        <ProfilePill v-if="profileData?.name" class="flex-1 min-w-0" :name="profileData.name" :color="profileData.themeColor" />
+        <div class="flex items-center gap-2 ml-auto shrink-0">
+          <div v-if="allProfiles.length > 1" class="flex items-center gap-2">
+            <label for="gl-profile" class="text-sm text-gray-600 font-medium">Profile:</label>
+            <select id="gl-profile" v-model="selectedProfileId" @change="onProfileChange"
+              class="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">All</option>
+              <option v-for="p in allProfiles" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+          </div>
+          <button v-if="can.createDelete" @click="openCreate" class="btn-primary">+ New Group</button>
         </div>
-        <button v-if="can.createDelete" @click="openCreate" class="btn-primary">+ New Group</button>
       </div>
+      <p class="text-sm text-gray-500 mt-1">Manage groups in this directory</p>
     </div>
 
     <!-- Search -->
@@ -124,8 +122,8 @@
     <!-- Create group (step 2 of create) -->
     <AppModal v-model="showCreate" size="lg">
       <template #title>
-        <span>New Group</span>
-        <ProfilePill v-if="createProfile?.name" class="ml-1"
+        <span class="whitespace-nowrap">New Group</span>
+        <ProfilePill v-if="createProfile?.name" class="flex-1 min-w-0"
                      :name="createProfile.name" :color="createProfile.themeColor" />
       </template>
       <div class="grid grid-cols-3 gap-2">
@@ -146,8 +144,8 @@
     <!-- Edit group -->
     <AppModal v-model="showEdit" size="md">
       <template #title>
-        <span>Edit Group</span>
-        <ProfilePill v-if="profileData?.name" class="ml-1"
+        <span class="whitespace-nowrap">Edit Group</span>
+        <ProfilePill v-if="profileData?.name" class="flex-1 min-w-0"
                      :name="profileData.name" :color="profileData.themeColor" />
       </template>
       <FormField label="Owner" v-model="editForm.owner" placeholder="DN of the group owner" :error="editOwnerError" />
