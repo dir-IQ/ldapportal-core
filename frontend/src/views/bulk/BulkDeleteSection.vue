@@ -15,8 +15,12 @@
     </p>
 
     <div class="space-y-3">
-      <!-- Resolution controls + CSV file -->
-      <div class="grid grid-cols-12 gap-2 items-end">
+      <!-- Resolution controls + CSV file. The target profile comes from the
+           sidebar picker, shown read-only here. -->
+      <div class="grid grid-cols-12 gap-2 items-start">
+        <ActiveProfileField class="col-span-3"
+          :name="activeProfile?.name" :color="activeProfile?.themeColor" :dn="activeProfile?.targetUserDn" />
+
         <div class="col-span-3">
           <label for="bd-mode" class="block text-sm font-medium text-gray-700 mb-1">Match users by</label>
           <select id="bd-mode" v-model="mode" class="input w-full" @change="resetResults">
@@ -32,14 +36,7 @@
           <input id="bd-keyattr" v-model="keyAttribute" class="input w-full" placeholder="uid" @input="resetResults" />
         </div>
 
-        <div v-if="mode === 'key'" class="col-span-3">
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            Search base DN <span class="text-red-500">*</span>
-          </label>
-          <DnPicker v-model="baseDn" :directoryId="dirId" :superadmin="false" placeholder="ou=people,dc=example,dc=com" />
-        </div>
-
-        <div :class="mode === 'key' ? 'col-span-2' : 'col-span-4'">
+        <div :class="mode === 'key' ? 'col-span-4' : 'col-span-6'">
           <label for="bd-valuecol" class="block text-sm font-medium text-gray-700 mb-1">CSV column</label>
           <input id="bd-valuecol" v-model="valueColumn" class="input w-full"
                  :placeholder="mode === 'key' ? (keyAttribute || 'uid') : 'dn'" @input="resetResults" />
@@ -82,7 +79,7 @@
           <span v-if="problemCount" class="badge-amber">{{ problemCount }} need attention</span>
         </div>
 
-        <div class="max-h-64 overflow-auto rounded border border-gray-200 bg-white">
+        <ExpandablePreview title="Delete preview" body-class="rounded border border-gray-200 bg-white">
           <table class="w-full text-xs">
             <thead class="bg-gray-100 sticky top-0">
               <tr>
@@ -92,7 +89,8 @@
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
-              <tr v-for="row in previewResult.rows" :key="row.rowNumber">
+              <tr v-for="(row, idx) in previewResult.rows" :key="row.rowNumber"
+                  :class="idx % 2 ? 'bg-gray-50' : 'bg-white'">
                 <td class="px-2 py-1 text-gray-500">{{ row.rowNumber }}</td>
                 <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.dn || '—' }}</td>
                 <td class="px-2 py-1">
@@ -104,16 +102,21 @@
               </tr>
             </tbody>
           </table>
-        </div>
+        </ExpandablePreview>
 
-        <!-- Typed confirmation -->
+        <!-- Typed confirmation: the operator types the active profile's name to
+             arm the irreversible delete. -->
         <div v-if="countOf('WILL_DELETE') > 0" class="mt-3">
           <p class="text-sm text-gray-700 mb-1">
             This will permanently delete <strong>{{ countOf('WILL_DELETE') }}</strong> user(s).
-            Type <code class="font-mono bg-gray-100 px-1 rounded">DELETE</code> to confirm.
+            Type the profile name
+            <code class="font-mono bg-gray-100 px-1 rounded">{{ activeProfile?.name }}</code>
+            to confirm.
           </p>
           <div class="flex gap-2">
-            <input v-model="confirmText" class="input w-40" placeholder="DELETE" aria-label="Type DELETE to confirm" />
+            <input v-model="confirmText" class="input w-56"
+                   :placeholder="activeProfile?.name || ''"
+                   aria-label="Type the profile name to confirm" />
             <button @click="doDelete" :disabled="!armed || deleting" class="btn-danger">
               {{ deleting ? 'Deleting…' : `Delete ${countOf('WILL_DELETE')} user(s)` }}
             </button>
@@ -144,9 +147,13 @@
 import { ref, computed } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { previewBulkDelete, bulkDelete } from '@/api/csvTemplates'
-import DnPicker from '@/components/DnPicker.vue'
+import ActiveProfileField from './ActiveProfileField.vue'
+import ExpandablePreview from '@/components/ExpandablePreview.vue'
 
-const props = defineProps<{ dirId: string }>()
+/** The sidebar-selected provisioning profile this delete is scoped to. */
+interface ProfileLite { id: string, name: string, targetUserDn?: string | null, themeColor?: string | null }
+
+const props = defineProps<{ dirId: string, activeProfile?: ProfileLite | null }>()
 const notif = useNotificationStore()
 
 type Disposition = 'WILL_DELETE' | 'NOT_FOUND' | 'OUT_OF_SCOPE' | 'AMBIGUOUS' | 'INVALID'
@@ -161,10 +168,10 @@ function errMsg(e: unknown): string {
   return err.response?.data?.detail || err.message || 'Request failed'
 }
 
+const activeProfile = computed<ProfileLite | null>(() => props.activeProfile ?? null)
 const mode          = ref<'dn' | 'key'>('dn')
 const keyAttribute  = ref('uid')
 const valueColumn   = ref('')
-const baseDn        = ref('')
 const skipHeaderRow = ref(true)
 const file          = ref<File | null>(null)
 
@@ -175,10 +182,15 @@ const deleteResult  = ref<DeleteResult | null>(null)
 const confirmText   = ref('')
 
 const canPreview = computed(() =>
-  !!file.value && (mode.value === 'dn' || (!!keyAttribute.value.trim() && !!baseDn.value.trim())),
+  !!file.value && !!activeProfile.value
+  && (mode.value === 'dn' || !!keyAttribute.value.trim()),
 )
 
-const armed = computed(() => confirmText.value.trim().toUpperCase() === 'DELETE')
+// Armed once the operator types the active profile's name (case-insensitive).
+const armed = computed(() => {
+  const name = activeProfile.value?.name?.trim().toLowerCase()
+  return !!name && confirmText.value.trim().toLowerCase() === name
+})
 
 const problemCount = computed(() =>
   (previewResult.value?.rows ?? []).filter(
@@ -227,7 +239,8 @@ function buildRequest() {
   return {
     keyAttribute: dnMode ? null : keyAttribute.value.trim(),
     valueColumn: valueColumn.value.trim() || null,
-    baseDn: dnMode ? null : baseDn.value.trim(),
+    // Key-attribute lookups are scoped to the active profile's target OU.
+    baseDn: dnMode ? null : (activeProfile.value?.targetUserDn ?? null),
     skipHeaderRow: skipHeaderRow.value,
   }
 }

@@ -88,6 +88,11 @@ public class SecurityConfig {
                 .requestMatchers("/api/v1/self-service/register/**").permitAll()
                 .requestMatchers("/api/v1/auditor/**").permitAll()
                 .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                // The metrics scrape endpoint (and anything else under /actuator)
+                // exposes operational internals, so it's superadmin-only — never
+                // public like health/info. Production scraping uses a superadmin
+                // API token or a network-isolated management port.
+                .requestMatchers("/actuator/**").hasRole("SUPERADMIN")
                 // Build identifier for the frontend's deployment-skew banner —
                 // unauthenticated so it can render on the login page too, and
                 // carries no sensitive info (just the git short-SHA + version).

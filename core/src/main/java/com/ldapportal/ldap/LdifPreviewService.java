@@ -155,7 +155,7 @@ public class LdifPreviewService {
 
         List<LdifPreviewRow> rows = new ArrayList<>(records.size());
         int add = 0, modify = 0, delete = 0, moddn = 0, skip = 0, error = 0, warnings = 0, errors = 0;
-        int userAddCount = 0;
+        int userAddCount = 0, applicable = 0, outOfScope = 0;
         for (ParsedRecord pr : records) {
             LdifPreviewRow row = classify(pr, conflict, existing, baseDnNorm, entra, groupOcs, userOcs);
             rows.add(row);
@@ -168,11 +168,11 @@ public class LdifPreviewService {
                 case SKIP -> skip++;
                 case ERROR -> error++;
             }
-            boolean hasError = row.op() == LdifPreviewOp.ERROR
-                    || row.issues().stream().anyMatch(i -> LdifPreviewIssue.ERROR.equals(i.severity()));
             boolean hasWarning = row.issues().stream().anyMatch(i -> LdifPreviewIssue.WARNING.equals(i.severity()));
-            if (hasError) errors++;
+            if (isBlocked(row)) errors++;
             if (hasWarning) warnings++;
+            if (isApplicable(row)) applicable++;
+            if (row.issues().stream().anyMatch(i -> "OUT_OF_SCOPE".equals(i.code()))) outOfScope++;
         }
 
         OpCounts counts = new OpCounts(add, modify, delete, moddn, skip, error);
@@ -181,10 +181,13 @@ public class LdifPreviewService {
                 records, rows, counts, warnings, errors));
 
         LdifPreviewPage page0 = slice(rows, null, null, 0, DEFAULT_PAGE_SIZE);
-        log.info("LDIF preview {} for dir {}: {} rows (add={} modify={} delete={} moddn={} skip={} error={}, warn={})",
-                previewId, dc.getId(), rows.size(), add, modify, delete, moddn, skip, error, warnings);
+        log.info("LDIF preview {} for dir {}: {} rows (add={} modify={} delete={} moddn={} skip={} error={}, "
+                        + "warn={}, applicable={}, outOfScope={})",
+                previewId, dc.getId(), rows.size(), add, modify, delete, moddn, skip, error,
+                warnings, applicable, outOfScope);
         return new LdifPreviewSummary(previewId.toString(), rows.size(), counts,
-                warnings, errors, false, page0, userAddCount, containsVendorOverlayEntries);
+                warnings, errors, false, page0, userAddCount, containsVendorOverlayEntries,
+                applicable, outOfScope, dc.getBaseDn());
     }
 
     // ── Page / detail / apply ────────────────────────────────────────────────
@@ -216,8 +219,19 @@ public class LdifPreviewService {
                                   boolean suppressVendorOverlay,
                                   java.util.Set<Integer> excludeOverlayRows) {
         CachedPreview cp = require(previewId, ownerId);
+        // Block-on-apply: never send a row the preview flagged as a blocking error
+        // (parse error, invalid DN, or a DN outside the directory base) to the
+        // server — it could only ever be rejected. cp.rows() is index-parallel to
+        // cp.records(); SKIP / conflict rows are not blocked and still flow through,
+        // so their outcomes are reported exactly as before.
+        List<ParsedRecord> records = cp.records();
+        List<LdifPreviewRow> rows = cp.rows();
+        List<ParsedRecord> applicable = new ArrayList<>(records.size());
+        for (int i = 0; i < records.size(); i++) {
+            if (!isBlocked(rows.get(i))) applicable.add(records.get(i));
+        }
         LdifImportResult result = ldifService.applyParsedRecords(
-                dc, cp.records(), cp.conflict(), suppressVendorOverlay, excludeOverlayRows);
+                dc, applicable, cp.conflict(), suppressVendorOverlay, excludeOverlayRows);
         cache.remove(previewId);
         return result;
     }
@@ -299,6 +313,29 @@ public class LdifPreviewService {
 
         return new LdifPreviewRow(pr.rowNumber(), dn, op, objectClasses, attrCount,
                 memberDelta, memberCount, issues, userAdd);
+    }
+
+    /**
+     * A row an apply will actually attempt: an actionable op (add / modify /
+     * delete / moddn) with no blocking error. SKIP rows (deliberate no-ops) and
+     * error rows are excluded. Mirrors the Import button's count.
+     */
+    private static boolean isApplicable(LdifPreviewRow row) {
+        return switch (row.op()) {
+            case ADD, MODIFY, DELETE, MODDN -> !isBlocked(row);
+            default -> false;
+        };
+    }
+
+    /**
+     * A row the importer must not send to the server: a parse / structural error,
+     * an invalid DN, or a DN outside the directory base — all {@code ERROR}
+     * severity. {@link #apply} filters these out so a doomed write is never
+     * attempted, and {@code createPreview} counts them as errors (not warnings).
+     */
+    private static boolean isBlocked(LdifPreviewRow row) {
+        return row.op() == LdifPreviewOp.ERROR
+                || row.issues().stream().anyMatch(i -> LdifPreviewIssue.ERROR.equals(i.severity()));
     }
 
     private static Entry entryOfRecord(ParsedRecord pr) {

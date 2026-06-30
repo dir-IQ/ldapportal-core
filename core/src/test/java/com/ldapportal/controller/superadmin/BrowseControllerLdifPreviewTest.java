@@ -69,7 +69,8 @@ class BrowseControllerLdifPreviewTest extends BaseControllerTest {
                 LdifPreviewOp.ADD, List.of("inetOrgPerson"), 5, null, null, List.of(), true);
         return new LdifPreviewSummary("11111111-1111-1111-1111-111111111111", 1,
                 new OpCounts(1, 0, 0, 0, 0, 0), 0, 0, false,
-                new LdifPreviewPage(List.of(row), 0, 50, 1), 1, false);
+                new LdifPreviewPage(List.of(row), 0, 50, 1), 1, false,
+                1, 0, "dc=example,dc=com");
     }
 
     @Test

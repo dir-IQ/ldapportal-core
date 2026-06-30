@@ -61,6 +61,25 @@
           <span class="ml-auto text-gray-400">{{ summary.totalRows.toLocaleString() }} records</span>
         </div>
 
+        <!-- Base-DN mismatch: entries whose DN is outside the directory base are
+             rejected by the server (the importer writes DNs as-is, never re-basing
+             them). Called out prominently because the op badges still classify
+             these as Adds — the count alone reads as a clean import. -->
+        <div v-if="summary.outOfScopeCount > 0"
+             class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          <div class="flex items-start gap-2">
+            <span aria-hidden="true" class="mt-0.5">✕</span>
+            <span>
+              <b>{{ summary.outOfScopeCount.toLocaleString() }}</b>
+              {{ summary.outOfScopeCount === 1 ? 'entry is' : 'entries are' }} outside this directory's base DN
+              (<span class="font-mono">{{ summary.baseDn }}</span>) and will be rejected by the server — the
+              importer writes DNs as-is and never re-bases them. Re-base the DNs under
+              <span class="font-mono">{{ summary.baseDn }}</span> to import them.
+              <span v-if="!applicableCount" class="block mt-0.5 font-medium">Nothing in this file can be imported as-is.</span>
+            </span>
+          </div>
+        </div>
+
         <!-- IVIA secUser provisioning: confirm/reject + what will happen.
              Shown only when the directory has IVIA enabled. -->
         <div v-if="iviaEnabled"
@@ -277,6 +296,14 @@ interface PreviewSummary {
   page0: PreviewPage
   userAddCount: number
   containsVendorOverlayEntries: boolean
+  // Records an Import will actually attempt (actionable ops minus blocking
+  // errors). Drives the Import button so it never offers to write rows the
+  // server will reject.
+  applicableCount: number
+  // Records whose DN is outside the directory base (a blocking OUT_OF_SCOPE
+  // error), with the base DN itself — for the mismatch banner.
+  outOfScopeCount: number
+  baseDn: string
 }
 interface PreviewRowDetail {
   rowNumber: number
@@ -394,11 +421,10 @@ const totalPages = computed(() => Math.max(1, Math.ceil(totalFiltered.value / PA
 const rangeStart = computed(() => (totalFiltered.value === 0 ? 0 : page.value * PAGE_SIZE + 1))
 const rangeEnd = computed(() => page.value * PAGE_SIZE + rows.value.length)
 
-// Records that an Import would actually act on (everything except skips/errors).
-const applicableCount = computed(() => {
-  const c = summary.value?.countsByOp
-  return c ? c.add + c.modify + c.delete + c.moddn : 0
-})
+// Records that an Import would actually act on. Authoritative from the backend:
+// actionable ops minus rows blocked by an error (e.g. out-of-scope DNs), so the
+// button never offers to import entries the server will reject. 0 → disabled.
+const applicableCount = computed(() => summary.value?.applicableCount ?? 0)
 
 watch(visible, (open) => {
   if (open) reset()

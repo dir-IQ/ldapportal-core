@@ -49,6 +49,15 @@ public class ProvisioningProfile {
     @Column
     private String description;
 
+    /**
+     * Optional UI theme colour for this profile, stored as a {@code #RRGGBB}
+     * hex string (e.g. {@code #2563eb}). Null/unset means the profile has no
+     * theme and the admin user/group screens render their default header
+     * styling. Purely presentational — it does not affect provisioning.
+     */
+    @Column(name = "theme_color", length = 7)
+    private String themeColor;
+
     /** LDAP DN of the OU where new users are created. */
     @Column(name = "target_user_dn", nullable = false, length = 500)
     private String targetUserDn;

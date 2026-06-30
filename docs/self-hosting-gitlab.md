@@ -1,8 +1,9 @@
 # Self-hosting LDAPPortal on GitLab (fork, build, publish, deploy internally)
 
-- **Date:** 2026-06-23
-- **Status:** In progress (starter pipeline ported to full parity; per-fork
-  registry/runner/mirror wiring remains, 2026-06-23).
+- **Date:** 2026-06-29
+- **Status:** In progress (starter pipeline ported to full parity; GitLab→EKS
+  deploy path documented in §12; per-fork registry/runner/mirror wiring remains,
+  2026-06-29).
 - **Audience:** A team forking this repo into their own GitLab to build it on
   GitLab CI, publish images to their **GitLab Container Registry** (and,
   optionally, `core` + addons to their **GitLab Maven Package Registry**), and
@@ -18,7 +19,7 @@
 > fork, modify, build, and run the **community** and **community-plus-isva**
 > editions internally with no license key and no call-home.
 
-> **Scope decisions baked into the committed pipeline** (see §4, §13):
+> **Scope decisions baked into the committed pipeline** (see §4, §14):
 > Maven **Central** publishing is **dropped** (no GPG/Central secrets).
 > Container images go to the **GitLab Container Registry**, not GHCR.
 > Internal Maven publishing is repointed to the **GitLab Maven Package
@@ -365,7 +366,155 @@ wiring — the container registry and Maven publish both use the job token.
   runbooks (and the [EKS+ECR GitLab variant](deployment-eks-gitlab-ecr.md)) are
   patterns to adapt to your infra (k8s, Nomad, etc.).
 
-## 12. Staying current with upstream
+## 12. Deploy from GitLab to AWS EKS
+
+> **Assumptions made here** (the interactive clarification prompt wasn't
+> reachable in this session — adjust if these don't match your intent): EKS pulls
+> the app images **from the GitLab Container Registry** this doc already publishes
+> to (§5), with **AWS ECR** noted as the alternative; this section stays **concise
+> and links** the full standalone runbook rather than duplicating it; secrets come
+> from **AWS Secrets Manager** by default, with a **GitLab CI/CD-variable** path as
+> the keep-it-in-GitLab alternative.
+
+The shipped Kustomize base under [`deploy/aws/eks/`](../deploy/aws/eks/) and the
+full runbook in [`deployment-eks-gitlab-ecr.md`](deployment-eks-gitlab-ecr.md)
+cover the cluster foundation (IAM OIDC/IRSA, AWS Load Balancer Controller, RDS,
+the Secrets Store CSI driver) end-to-end. This section is the **GitLab-specific
+overlay** on that runbook: how a fork publishing to the **GitLab Container
+Registry** (§5) gets those images onto EKS. Read the runbook for the one-time
+cluster setup; come back here for the registry/pull wiring.
+
+> **Two pull paths — pick one.** The committed `.gitlab-ci.yml` pushes images to
+> the **GitLab Container Registry** (`$CI_REGISTRY_IMAGE`, §5). EKS can pull from
+> there directly (§12.2, via an imagePullSecret), **or** you can mirror images to
+> **AWS ECR** and let the node IAM role pull with no secret — that ECR path is the
+> subject of [`deployment-eks-gitlab-ecr.md`](deployment-eks-gitlab-ecr.md) and
+> its [`gitlab-ci.ecr-eks.example.yml`](../deploy/aws/eks/gitlab-ci.ecr-eks.example.yml).
+> The rest of this section assumes the **GitLab-registry** path, which keeps the
+> single registry this doc already stands up.
+
+### 12.1 Prerequisites
+
+Same cluster foundation as the runbook's §1 — EKS 1.27+, the IAM OIDC provider,
+the AWS Load Balancer Controller, subnets tagged `kubernetes.io/role/elb=1`, and
+(for the Secrets Manager path) the Secrets Store CSI driver + AWS provider. RDS
+PostgreSQL per the runbook's §3. Nothing in the foundation differs between the ECR
+and GitLab-registry paths **except image pull** (§12.2).
+
+### 12.2 Let EKS pull from the GitLab Container Registry
+
+ECR-on-EKS pulls via the node IAM role; the **GitLab registry needs an explicit
+imagePullSecret**. Create a read-only **deploy token** for the project
+(*Settings → Repository → Deploy tokens*, scope `read_registry`), then make a
+docker-registry secret from it:
+
+```bash
+kubectl -n ldapportal create secret docker-registry gitlab-registry \
+  --docker-server="$CI_REGISTRY" \
+  --docker-username="<DEPLOY_TOKEN_USER>" \
+  --docker-password="<DEPLOY_TOKEN>"
+```
+
+Reference it from the pods. The cleanest spot is the **ServiceAccount** the base
+already ships (`deploy/aws/eks/serviceaccount.yaml`), so every pod inherits it —
+add this to the prod overlay (the runbook's §6 overlay pattern):
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ldapportal
+imagePullSecrets:
+  - name: gitlab-registry
+```
+
+> Deploy tokens are revocable and registry-read-scoped — prefer them over a
+> personal access token. A GitLab **group** deploy token works too if several
+> clusters/projects share one registry.
+
+### 12.3 Point the manifests at your GitLab images
+
+In the prod overlay's `kustomization.yaml` (the runbook's §6 overlay), repoint
+both images at `$CI_REGISTRY_IMAGE` and pin the release tag:
+
+```yaml
+images:
+  - name: ghcr.io/dir-iq/ldapportal-community-plus-isva
+    newName: <GITLAB_REGISTRY>/<group>/ldapportal-core/ldapportal-community-plus-isva
+    newTag: "v1.0.0"
+  - name: ghcr.io/dir-iq/ldapportal-frontend
+    newName: <GITLAB_REGISTRY>/<group>/ldapportal-core/ldapportal-frontend
+    newTag: "v1.0.0"
+```
+
+The exact image path is whatever `publish-backend` / `publish-frontend` pushed —
+`echo "$CI_REGISTRY_IMAGE"` in a pipeline job if unsure. Swap
+`community-plus-isva` for `community` if you ship the addon-free edition.
+
+### 12.4 Runtime secrets
+
+The four secret env values (`ENCRYPTION_KEY`, `JWT_SECRET`,
+`BOOTSTRAP_SUPERADMIN_PASSWORD`, `DB_PASSWORD`) must reach the backend, which reads
+them via `envFrom` from a Secret named **`ldapportal-secrets`** (the name the base
+Deployment already expects). Two options, in order of preference:
+
+- **AWS Secrets Manager via the CSI driver (recommended).** AWS-native, nothing
+  secret in GitLab or git; the shipped
+  [`secretproviderclass.example.yaml`](../deploy/aws/eks/secretproviderclass.example.yaml)
+  and the IRSA wiring are documented in the runbook's §4 and §6.4–6.5. Identical
+  regardless of which registry you pull from.
+- **GitLab CI/CD variables → k8s Secret (keeps everything in GitLab).** Store the
+  four as **masked + protected** CI/CD variables (§10) and have a **protected**,
+  manual `deploy` job materialize them
+  (`kubectl create secret generic ldapportal-secrets --from-literal=...`, or
+  `envsubst` a templated Secret). The trade-off: secrets transit the pipeline, so
+  the job and variables must both be protected.
+
+### 12.5 Deploy
+
+Manual deploy mirrors the runbook's §7:
+
+```bash
+kubectl apply -f deploy/aws/eks/namespace.yaml
+kubectl apply -k deploy/aws/eks-overlays/prod
+kubectl -n ldapportal rollout status deploy/ldapportal-backend
+kubectl -n ldapportal get ingress ldapportal   # ADDRESS = the ALB DNS name
+```
+
+To drive it from CI instead, add a **manual, tag-gated `deploy` job** so a release
+is one click. Add a `deploy` stage after `publish` in `stages:`; the job needs
+`kubectl` authenticated to EKS — assume an IAM role via GitLab OIDC (the same
+`id_tokens` pattern the ECR runbook's §5.2 uses), run `aws eks update-kubeconfig`,
+then `kubectl apply -k`:
+
+```yaml
+deploy-eks:
+  stage: deploy
+  image: <kubectl + aws-cli image>
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
+      when: manual
+  script:
+    - aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
+    - kubectl apply -k deploy/aws/eks-overlays/prod
+    - kubectl -n ldapportal rollout status deploy/ldapportal-backend
+```
+
+Keep it **manual** so a tag build never auto-rolls prod. The CI/CD variables it
+needs (`AWS_REGION`, `EKS_CLUSTER`, the deploy role ARN) are already in §10's
+table. Point DNS at the ALB and log in per the runbook's §8.
+
+### 12.6 Day-2
+
+Shipping a new version is exactly the runbook's §11: tag `vX.Y.Z` (CI builds +
+pushes to the GitLab registry), bump `newTag` in the overlay, `kubectl apply -k`
+(or re-run the manual `deploy-eks` job). `maxUnavailable: 0` gives a zero-downtime
+rollout. Secret rotation, autoscaling (HPA/PDB), and Flyway migration safety are
+unchanged from the runbook — the registry choice doesn't touch them.
+
+---
+
+## 13. Staying current with upstream
 
 Keep this repo as a read-only **upstream remote** and merge release tags
 periodically rather than a one-time copy. Keep the local delta small and isolated
@@ -387,7 +536,7 @@ If you mirror the repo and keep both platforms live during migration:
   GitLab runs CI-only (its publish jobs are tag-gated and `publish-maven` is
   manual, so they stay dormant unless you tag / press play).
 
-## 13. What to drop / not carry over
+## 14. What to drop / not carry over
 
 - **`release.yml` + the Maven Central path** — dropped (no GPG/Central secrets).
 - **`dependabot-automerge.yml` + `.github/dependabot.yml`** — replaced by

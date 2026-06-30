@@ -23,6 +23,15 @@ package com.ldapportal.dto.ldap;
  *                     in that case the importer writes everything as-is and does
  *                     NOT layer a fresh overlay, so provisioning is suppressed
  *                     for the whole import regardless of the operator toggle.
+ * @param applicableCount records an apply will actually attempt: actionable ops
+ *                     (add / modify / delete / moddn) carrying no blocking
+ *                     {@code ERROR} issue. Drives the Import button's count;
+ *                     {@code 0} means nothing in the file is importable as-is.
+ * @param outOfScopeCount records whose DN falls outside {@code baseDn} — a
+ *                     blocking {@code OUT_OF_SCOPE} error. Surfaced so the UI can
+ *                     explain the base-DN mismatch and the re-base fix rather than
+ *                     presenting them as clean adds.
+ * @param baseDn       the directory's configured base DN, for the out-of-scope copy.
  */
 public record LdifPreviewSummary(
         String previewId,
@@ -33,7 +42,10 @@ public record LdifPreviewSummary(
         boolean truncated,
         LdifPreviewPage page0,
         int userAddCount,
-        boolean containsVendorOverlayEntries) {
+        boolean containsVendorOverlayEntries,
+        int applicableCount,
+        int outOfScopeCount,
+        String baseDn) {
 
     /** Per-operation row totals across the whole preview. */
     public record OpCounts(int add, int modify, int delete, int moddn, int skip, int error) {}

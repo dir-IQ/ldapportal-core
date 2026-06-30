@@ -95,6 +95,7 @@
     <MembershipInventoryModal v-model:show="showMembershipModal" :set="selectedSet ?? null"
                               :source-name="dirName(selectedLink?.sourceDirId)"
                               :target-name="dirName(selectedLink?.targetDirId)"
+                              :initial-state="pendingState"
                               @changed="refreshHealth" />
 
     <!-- ── Link editor ─────────────────────────────────────────────────────── -->
@@ -285,6 +286,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import PageContainer from '@/components/PageContainer.vue'
 import AppModal from '@/components/AppModal.vue'
 import FormField from '@/components/FormField.vue'
@@ -301,12 +303,13 @@ import {
   listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet, getExcludedAttributeDefaults,
   previewReconcile,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
-  type SyncTransformRule, type SyncReconcilePreview,
+  type SyncTransformRule, type SyncReconcilePreview, type MembershipState,
 } from '@/api/sync'
 
 interface DirOption { id: string; displayName: string }
 
 const notif = useNotificationStore()
+const route = useRoute()
 
 const directories = ref<DirOption[]>([])
 const links = ref<SyncLink[]>([])
@@ -318,6 +321,9 @@ const allSets = ref<SyncSet[]>([])
 const selectedLinkId = ref<string | null>(null)
 const selectedSetId = ref<string | null>(null)
 const showMembershipModal = ref(false)
+// Seeds the inventory modal's state filter; '' for a normal open, a state for a
+// dashboard deep link (e.g. ?state=FAILED). Reset on every manual selection.
+const pendingState = ref<'' | MembershipState>('')
 const loadingLinks = ref(false)
 const loadingSets = ref(false)
 
@@ -606,9 +612,62 @@ async function removeSet(s: SyncSet) {
   }
 }
 // Selecting a set opens its membership inventory modal (paged + filtered there).
+// A manual click always opens unfiltered — deep links go through openSetById.
 function selectSet(id: string) {
+  pendingState.value = ''
   selectedSetId.value = id
   showMembershipModal.value = true
+}
+
+// ── Dashboard deep links ──
+// Open a set's inventory by id, expanding its parent link first so the row is
+// visible behind the modal; optionally seed the inventory's state filter.
+async function openSetById(setId: string, state: '' | MembershipState = '') {
+  const target = allSets.value.find((s) => s.id === setId)
+  if (!target) return
+  if (selectedLinkId.value !== target.linkId) await selectLink(target.linkId)
+  pendingState.value = state
+  selectedSetId.value = setId
+  showMembershipModal.value = true
+}
+
+// The set with the most memberships in a given state — where the FAILED / REVIEW
+// dashboard actions land, since they carry a state but not a specific set.
+function worstSetByState(state: MembershipState): SyncSet | undefined {
+  let best: SyncSet | undefined
+  let bestN = 0
+  for (const s of allSets.value) {
+    const n = s.stateCounts?.[state] ?? 0
+    if (n > bestN) { bestN = n; best = s }
+  }
+  return best
+}
+
+const VALID_STATES = ['APPLIED', 'PENDING', 'FAILED', 'REVIEW']
+function queryParam(v: unknown): string | undefined {
+  const raw = Array.isArray(v) ? v[0] : v
+  return typeof raw === 'string' ? raw : undefined
+}
+
+// Honor dashboard deep links once links + set health have loaded:
+//   ?set=<id>            → open that set's inventory
+//   ?state=FAILED|REVIEW → open the worst set in that state, pre-filtered
+//   ?link=<id>           → expand + highlight that link
+async function applyDeepLink() {
+  const setId = queryParam(route.query.set)
+  const linkId = queryParam(route.query.link)
+  const stateRaw = queryParam(route.query.state)
+  const state: '' | MembershipState =
+    stateRaw && VALID_STATES.includes(stateRaw) ? (stateRaw as MembershipState) : ''
+
+  if (setId) {
+    await openSetById(setId, state)
+  } else if (state) {
+    const target = worstSetByState(state)
+    if (target) await openSetById(target.id, state)
+  } else if (linkId && links.value.some((l) => l.id === linkId)) {
+    await selectLink(linkId)
+  }
 }
 
 onMounted(async () => {
@@ -618,6 +677,8 @@ onMounted(async () => {
     ])
     directories.value = dirs.data.map((d) => ({ id: d.id ?? '', displayName: d.displayName ?? '' }))
     excludedDefaults.value = defaults.data
+    // links + set health are loaded above, so the deep link can resolve its target.
+    await applyDeepLink()
   } catch (e) {
     notif.error(errMsg(e))
   }

@@ -169,13 +169,21 @@ class LdifPreviewServiceTest {
     }
 
     @Test
-    void outOfScopeDn_raisesWarning() {
+    void outOfScopeDn_isBlockingError_excludedFromApplicable() {
         String ldif = "dn: uid=stray,ou=people,dc=other,dc=org\n"
                 + "objectClass: inetOrgPerson\ncn: stray\nsn: S\n";
         LdifPreviewSummary s = preview(ldif, ConflictHandling.SKIP);
-        assertThat(s.warningCount()).isEqualTo(1);
+        // Out-of-scope is a blocking error, not a soft warning: it counts toward
+        // errorCount + outOfScopeCount, and never toward applicableCount — so the
+        // UI can't present it as a clean add.
+        assertThat(s.errorCount()).isEqualTo(1);
+        assertThat(s.warningCount()).isZero();
+        assertThat(s.outOfScopeCount()).isEqualTo(1);
+        assertThat(s.applicableCount()).isZero();
+        assertThat(s.baseDn()).isEqualTo(BASE);
         LdifPreviewRow row = s.page0().rows().get(0);
-        assertThat(row.issues()).anyMatch(i -> "OUT_OF_SCOPE".equals(i.code()));
+        assertThat(row.issues())
+                .anyMatch(i -> "OUT_OF_SCOPE".equals(i.code()) && "ERROR".equals(i.severity()));
     }
 
     @Test
@@ -262,6 +270,26 @@ class LdifPreviewServiceTest {
         // Cache entry is evicted after apply.
         assertThatThrownBy(() -> previewService.page(id, owner, null, null, 0, 10))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void apply_skipsOutOfScopeRows_andImportsTheRest() throws Exception {
+        // One in-scope add (zed) + one out-of-scope add (stray, under dc=other).
+        String ldif = person("zed", "Z") + "\n"
+                + "dn: uid=stray,ou=people,dc=other,dc=org\n"
+                + "objectClass: inetOrgPerson\ncn: stray\nsn: S\n";
+        LdifPreviewSummary s = preview(ldif, ConflictHandling.SKIP);
+        assertThat(s.applicableCount()).isEqualTo(1);   // only zed
+        assertThat(s.outOfScopeCount()).isEqualTo(1);   // stray
+        UUID id = UUID.fromString(s.previewId());
+
+        LdifImportResult result = previewService.apply(id, owner, dc, false, java.util.Set.of());
+
+        // zed is imported; stray is neither attempted nor counted as a failure —
+        // the out-of-scope DN is dropped before the apply ever reaches the server.
+        assertThat(result.added()).isEqualTo(1);
+        assertThat(result.failed()).isZero();
+        assertThat(server.getEntry("uid=zed,ou=people," + BASE)).isNotNull();
     }
 
     private static LdifPreviewRow rowFor(LdifPreviewSummary s, String dn) {

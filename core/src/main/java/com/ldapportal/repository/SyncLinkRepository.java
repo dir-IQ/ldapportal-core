@@ -34,4 +34,35 @@ public interface SyncLinkRepository extends JpaRepository<SyncLink, UUID> {
             + "and (l.changelogPollClaimedAt is null or l.changelogPollClaimedAt < :staleBefore)")
     int claimChangelogPoll(@Param("id") UUID id, @Param("now") OffsetDateTime now,
                            @Param("staleBefore") OffsetDateTime staleBefore);
+
+    // ── Observability (read-only aggregates) ────────────────────────────────────
+
+    /** Count of enabled changelog-capture links grouped by poll health. */
+    @Query("select l.changelogHealth, count(l) from SyncLink l "
+            + "where l.enabled = true and l.captureMode = "
+            + "com.ldapportal.entity.enums.SyncCaptureMode.CHANGELOG "
+            + "group by l.changelogHealth")
+    List<Object[]> countChangelogLinksByHealth();
+
+    /** Largest source-head-minus-cursor lag across enabled changelog links; null when none. */
+    @Query("select max(l.changelogSourceLastChangeNumber - l.changelogLastChangeNumber) "
+            + "from SyncLink l where l.enabled = true and l.captureMode = "
+            + "com.ldapportal.entity.enums.SyncCaptureMode.CHANGELOG "
+            + "and l.changelogSourceLastChangeNumber is not null "
+            + "and l.changelogLastChangeNumber is not null")
+    Long maxChangelogLag();
+
+    /**
+     * Ids of enabled changelog links that are not HEALTHY, worst (largest) lag
+     * first (unknown lag last). Lets the dashboard lag awareness deep-link to the
+     * most-behind link rather than the full list. {@code changelog_health} is
+     * non-null (defaults HEALTHY), so this is the same degraded set the health
+     * rollup ({@link #countChangelogLinksByHealth()}) counts.
+     */
+    @Query("select l.id from SyncLink l "
+            + "where l.enabled = true and l.captureMode = "
+            + "com.ldapportal.entity.enums.SyncCaptureMode.CHANGELOG "
+            + "and l.changelogHealth <> com.ldapportal.entity.enums.SyncChangelogHealth.HEALTHY "
+            + "order by (l.changelogSourceLastChangeNumber - l.changelogLastChangeNumber) desc nulls last")
+    List<UUID> findDegradedChangelogLinkIdsByLagDesc();
 }

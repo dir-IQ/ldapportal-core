@@ -16,7 +16,6 @@ import com.unboundid.ldap.sdk.ExtendedRequest;
 import com.unboundid.ldap.sdk.ExtendedResult;
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.FullLDAPInterface;
-import com.unboundid.ldap.sdk.LDAPConnection;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.LDAPResult;
 import com.unboundid.ldap.sdk.LDAPSearchException;
@@ -58,11 +57,11 @@ import java.util.UUID;
         + "delegate, then enqueues a recompute for the affected DN.")
 public final class SyncCapturingLdapInterface implements FullLDAPInterface {
 
-    private final LDAPConnection delegate;
+    private final FullLDAPInterface delegate;
     private final SyncWriteCaptor captor;
     private final UUID sourceDirectoryId;
 
-    public SyncCapturingLdapInterface(LDAPConnection delegate, SyncWriteCaptor captor,
+    public SyncCapturingLdapInterface(FullLDAPInterface delegate, SyncWriteCaptor captor,
                                       UUID sourceDirectoryId) {
         this.delegate = delegate;
         this.captor = captor;

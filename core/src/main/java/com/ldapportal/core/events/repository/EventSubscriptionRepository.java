@@ -14,6 +14,9 @@ import java.util.UUID;
 
 public interface EventSubscriptionRepository extends JpaRepository<EventSubscription, UUID> {
 
+    /** Active subscribers (observability inventory). */
+    long countByEnabledTrue();
+
     @Override
     @EntityGraph(attributePaths = "createdBy")
     Optional<EventSubscription> findById(UUID id);

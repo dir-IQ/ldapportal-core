@@ -2,6 +2,7 @@
 package com.ldapportal.service;
 
 import com.ldapportal.dto.sync.SyncSetRequest;
+import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
 import com.ldapportal.entity.enums.MembershipState;
@@ -29,8 +30,10 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -121,6 +124,37 @@ class SyncConfigServiceTest {
         ArgumentCaptor<SyncSet> cap = ArgumentCaptor.forClass(SyncSet.class);
         verify(setRepo).save(cap.capture());
         assertThat(cap.getValue().getTransformRules()).isNull();
+    }
+
+    @Test
+    void verifyContents_persistsDriftSnapshot_whenScanComplete() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(
+                10, 9, 7, 2, 1, 0,
+                List.of(), List.of(), List.of(),
+                true, true, null)); // complete scan: missing=2, orphan=1, mismatch=0
+
+        SyncVerifyResult out = service.verifyContents(setId);
+
+        assertThat(out.missingOnTarget()).isEqualTo(2);
+        // The drift counts are cached on the set so the dashboard can read them cheaply.
+        verify(setRepo).recordVerifyResult(eq(setId), any(), eq(2), eq(1), eq(0));
+    }
+
+    @Test
+    void verifyContents_skipsPersist_whenScanIncomplete() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(
+                0, 0, 0, 0, 0, 0,
+                List.of(), List.of(), List.of(),
+                false, true, null)); // partial: source enumeration failed
+
+        service.verifyContents(setId);
+
+        // A partial scan must not overwrite a previously good snapshot with low counts.
+        verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
     }
 
     @Test

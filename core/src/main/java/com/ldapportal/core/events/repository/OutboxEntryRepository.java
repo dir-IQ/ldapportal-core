@@ -80,4 +80,8 @@ public interface OutboxEntryRepository extends JpaRepository<OutboxEntry, UUID> 
     Page<OutboxEntry> findAllByCreatedAtAfter(Instant since, Pageable pageable);
 
     long countByStatus(OutboxStatus status);
+
+    /** Oldest entry in a given status (e.g. PENDING delivery-backlog age); null when none. */
+    @Query("select min(o.createdAt) from OutboxEntry o where o.status = :status")
+    Instant findOldestCreatedAtByStatus(@Param("status") OutboxStatus status);
 }
