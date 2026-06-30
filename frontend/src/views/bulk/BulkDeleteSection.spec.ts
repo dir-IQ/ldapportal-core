@@ -13,10 +13,26 @@ vi.mock('@/api/csvTemplates', () => ({
 import { previewBulkDelete, bulkDelete } from '@/api/csvTemplates'
 import BulkDeleteSection from './BulkDeleteSection.vue'
 
-const profiles = [{ id: 'p1', name: 'Engineers', targetUserDn: 'ou=eng,dc=x' }]
+const activeProfile = { id: 'p1', name: 'Engineers', targetUserDn: 'ou=eng,dc=x', themeColor: '#b91c1c' }
+
+// Stub the themed confirm modal to a simple confirm trigger.
+const ConfirmStub = {
+  props: {
+    modelValue: Boolean, profileName: String, themeColor: String, title: String,
+    summary: String, targetDn: String, confirmLabel: String,
+    requireTyped: Boolean, danger: Boolean, busy: Boolean,
+  },
+  emits: ['update:modelValue', 'confirm'],
+  template: `<button v-if="modelValue" class="confirm-stub" :data-profile="profileName"
+    :data-typed="requireTyped ? '1' : '0'" :data-danger="danger ? '1' : '0'"
+    @click="$emit('confirm')">{{ confirmLabel }}</button>`,
+}
 
 function mountSection() {
-  return mount(BulkDeleteSection, { props: { dirId: 'd1', profiles } })
+  return mount(BulkDeleteSection, {
+    props: { dirId: 'd1', activeProfile },
+    global: { stubs: { BulkConfirmModal: ConfirmStub } },
+  })
 }
 
 function btnByText(w: ReturnType<typeof mount>, text: string) {
@@ -40,7 +56,6 @@ describe('BulkDeleteSection', () => {
     ] } } as never)
 
     const w = mountSection()
-    await w.find('#bd-profile').setValue('p1')
     await attachFile(w)
     await btnByText(w, 'Preview').trigger('click')
     await flushPromises()
@@ -51,7 +66,7 @@ describe('BulkDeleteSection', () => {
     expect(w.find('.badge-gray').exists()).toBe(true)
   })
 
-  it('arms the delete button only after typing the profile name', async () => {
+  it('deletes through a themed, type-to-confirm modal', async () => {
     vi.mocked(previewBulkDelete).mockResolvedValue({ data: { totalRows: 1, rows: [
       { rowNumber: 1, dn: 'uid=a,ou=p,dc=x', disposition: 'WILL_DELETE' },
     ] } } as never)
@@ -59,40 +74,33 @@ describe('BulkDeleteSection', () => {
       rows: [{ rowNumber: 1, dn: 'uid=a,ou=p,dc=x', status: 'DELETED' }] } } as never)
 
     const w = mountSection()
-    await w.find('#bd-profile').setValue('p1')
     await attachFile(w)
     await btnByText(w, 'Preview').trigger('click')
     await flushPromises()
 
-    const deleteBtn = btnByText(w, 'Delete')
-    expect(deleteBtn.attributes('disabled')).toBeDefined()
-
-    // Typing the wrong text does not arm it.
-    await w.find('input[aria-label="Type the profile name to confirm"]').setValue('DELETE')
-    expect(btnByText(w, 'Delete').attributes('disabled')).toBeDefined()
-
-    // The exact profile name (case-insensitive) arms it.
-    await w.find('input[aria-label="Type the profile name to confirm"]').setValue('engineers')
-    expect(btnByText(w, 'Delete').attributes('disabled')).toBeUndefined()
-
+    // The Delete button opens the themed confirm modal (require-typed + danger).
     await btnByText(w, 'Delete').trigger('click')
+    const confirm = w.find('.confirm-stub')
+    expect(confirm.exists()).toBe(true)
+    expect(confirm.attributes('data-profile')).toBe('Engineers')
+    expect(confirm.attributes('data-typed')).toBe('1')
+    expect(confirm.attributes('data-danger')).toBe('1')
+
+    await confirm.trigger('click')
     await flushPromises()
     expect(bulkDelete).toHaveBeenCalledOnce()
   })
 
-  it('disables Preview until a profile is selected', async () => {
+  it('disables Preview until a CSV file is chosen', async () => {
     const w = mountSection()
-    await attachFile(w)
-    // File chosen but no profile yet → Preview stays disabled.
     expect(btnByText(w, 'Preview').attributes('disabled')).toBeDefined()
-    await w.find('#bd-profile').setValue('p1')
+    await attachFile(w)
     expect(btnByText(w, 'Preview').attributes('disabled')).toBeUndefined()
   })
 
-  it('scopes key-attribute deletes to the selected profile target OU', async () => {
+  it('scopes key-attribute deletes to the active profile target OU', async () => {
     vi.mocked(previewBulkDelete).mockResolvedValue({ data: { totalRows: 0, rows: [] } } as never)
     const w = mountSection()
-    await w.find('#bd-profile').setValue('p1')
     await w.find('#bd-mode').setValue('key')
     await attachFile(w)
     await btnByText(w, 'Preview').trigger('click')
