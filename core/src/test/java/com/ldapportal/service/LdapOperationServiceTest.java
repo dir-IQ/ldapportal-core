@@ -704,7 +704,7 @@ class LdapOperationServiceTest {
                 anyBoolean(), any(), any(), any(), any())).thenReturn(importResult);
 
         BulkImportRequest req = new BulkImportRequest(
-                null, "ou=people,dc=example,dc=com", null, null, true, null, List.of());
+                null, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of());
         var result = service.bulkImportUsers(dirId, adminPrincipal(),
                 new java.io.ByteArrayInputStream(new byte[0]), req);
 
@@ -720,6 +720,45 @@ class LdapOperationServiceTest {
         assertThat(detail.getValue()).containsEntry("operation", "bulkImport");
         assertThat(detail.getValue().get("createdDns")).asInstanceOf(
                 org.assertj.core.api.InstanceOfAssertFactories.list(String.class)).containsExactly(createdDn);
+    }
+
+    @Test
+    void bulkImportUsers_withProfileId_importsIntoProfileTargetOu() throws Exception {
+        AuthPrincipal admin = adminPrincipal();
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        UUID profileId = UUID.randomUUID();
+        ProvisioningProfile profile = new ProvisioningProfile();
+        profile.setId(profileId);
+        profile.setTargetUserDn("ou=eng,dc=example,dc=com");
+        profile.setRdnAttribute("uid");
+        profile.setObjectClassNames(List.of("inetOrgPerson"));
+        ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
+        when(ps.getEntityInDirectory(dirId, profileId)).thenReturn(profile);
+
+        when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any()))
+                .thenReturn(new BulkImportResult(1, 1, 0, 0, 0,
+                        List.of(BulkImportRowResult.created(1, "uid=a,ou=eng,dc=example,dc=com"))));
+
+        LdapOperationService svc = serviceWithProfile(ps);
+        // profileId set, parentDn null — the profile supplies the target OU.
+        BulkImportRequest req = new BulkImportRequest(
+                null, profileId, null, null, null, true, null, List.of());
+
+        var captor = ArgumentCaptor.forClass(BulkUserService.ProfileContext.class);
+        svc.bulkImportUsers(dirId, admin, new java.io.ByteArrayInputStream(new byte[0]), req);
+
+        // Scope-checked against the profile's target OU, and imported there using
+        // the profile's RDN attribute + object classes.
+        verify(permissionService).requireDnWithinScope(admin, dirId, "ou=eng,dc=example,dc=com");
+        verify(bulkUserService).importCsv(eq(dc), any(), eq("ou=eng,dc=example,dc=com"),
+                eq("uid"), any(), any(), eq(List.of("inetOrgPerson")),
+                anyBoolean(), any(), captor.capture(), any(), any());
+        // The chosen profile is used directly — never resolved from the DN.
+        verify(ps, never()).resolveProfileForDn(any(), any());
+        assertThat(captor.getValue().profileId()).isEqualTo(profileId);
     }
 
     @Test
