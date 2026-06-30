@@ -13,12 +13,14 @@ vi.mock('@/api/csvTemplates', () => ({
 import { previewBulkDelete, bulkDelete } from '@/api/csvTemplates'
 import BulkDeleteSection from './BulkDeleteSection.vue'
 
-const stubs = { DnPicker: true }
+const activeProfile = { id: 'p1', name: 'Engineers', targetUserDn: 'ou=eng,dc=x', themeColor: '#b91c1c' }
 
+function mountSection() {
+  return mount(BulkDeleteSection, { props: { dirId: 'd1', activeProfile } })
+}
 function btnByText(w: ReturnType<typeof mount>, text: string) {
   return w.findAll('button').find(b => b.text().includes(text))!
 }
-
 async function attachFile(w: ReturnType<typeof mount>) {
   const input = w.find('input[type="file"]')
   const file = new File(['dn\n"uid=a,ou=p,dc=x"\n'], 'd.csv', { type: 'text/csv' })
@@ -29,13 +31,15 @@ async function attachFile(w: ReturnType<typeof mount>) {
 describe('BulkDeleteSection', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('previews and renders disposition badges with a will-delete count', async () => {
+  it('shows the Active-profile field and previews with disposition badges', async () => {
     vi.mocked(previewBulkDelete).mockResolvedValue({ data: { totalRows: 2, rows: [
       { rowNumber: 1, dn: 'uid=a,ou=p,dc=x', disposition: 'WILL_DELETE' },
       { rowNumber: 2, dn: 'uid=b,ou=p,dc=x', disposition: 'NOT_FOUND', note: 'No entry at this DN' },
     ] } } as never)
 
-    const w = mount(BulkDeleteSection, { props: { dirId: 'd1' }, global: { stubs } })
+    const w = mountSection()
+    expect(w.text()).toContain('Active profile')
+    expect(w.text()).toContain('Engineers')
     await attachFile(w)
     await btnByText(w, 'Preview').trigger('click')
     await flushPromises()
@@ -46,22 +50,22 @@ describe('BulkDeleteSection', () => {
     expect(w.find('.badge-gray').exists()).toBe(true)
   })
 
-  it('arms the delete button only after typing DELETE', async () => {
+  it('arms Delete only after typing the profile name', async () => {
     vi.mocked(previewBulkDelete).mockResolvedValue({ data: { totalRows: 1, rows: [
       { rowNumber: 1, dn: 'uid=a,ou=p,dc=x', disposition: 'WILL_DELETE' },
     ] } } as never)
     vi.mocked(bulkDelete).mockResolvedValue({ data: { totalRows: 1, deleted: 1, skipped: 0, errors: 0,
       rows: [{ rowNumber: 1, dn: 'uid=a,ou=p,dc=x', status: 'DELETED' }] } } as never)
 
-    const w = mount(BulkDeleteSection, { props: { dirId: 'd1' }, global: { stubs } })
+    const w = mountSection()
     await attachFile(w)
     await btnByText(w, 'Preview').trigger('click')
     await flushPromises()
 
-    const deleteBtn = btnByText(w, 'Delete')
-    expect(deleteBtn.attributes('disabled')).toBeDefined()
-
-    await w.find('input[aria-label="Type DELETE to confirm"]').setValue('DELETE')
+    expect(btnByText(w, 'Delete').attributes('disabled')).toBeDefined()
+    await w.find('input[aria-label="Type the profile name to confirm"]').setValue('DELETE') // wrong
+    expect(btnByText(w, 'Delete').attributes('disabled')).toBeDefined()
+    await w.find('input[aria-label="Type the profile name to confirm"]').setValue('engineers') // ci match
     expect(btnByText(w, 'Delete').attributes('disabled')).toBeUndefined()
 
     await btnByText(w, 'Delete').trigger('click')
@@ -69,12 +73,22 @@ describe('BulkDeleteSection', () => {
     expect(bulkDelete).toHaveBeenCalledOnce()
   })
 
-  it('disables Preview in key mode until a base DN is set', async () => {
-    const w = mount(BulkDeleteSection, { props: { dirId: 'd1' }, global: { stubs } })
+  it('disables Preview until a CSV file is chosen', async () => {
+    const w = mountSection()
+    expect(btnByText(w, 'Preview').attributes('disabled')).toBeDefined()
+    await attachFile(w)
+    expect(btnByText(w, 'Preview').attributes('disabled')).toBeUndefined()
+  })
+
+  it('scopes key-attribute deletes to the active profile target OU', async () => {
+    vi.mocked(previewBulkDelete).mockResolvedValue({ data: { totalRows: 0, rows: [] } } as never)
+    const w = mountSection()
     await w.find('#bd-mode').setValue('key')
     await attachFile(w)
-    // keyAttribute defaults to uid, but baseDn (from the stubbed DnPicker) is
-    // empty, so Preview stays disabled.
-    expect(btnByText(w, 'Preview').attributes('disabled')).toBeDefined()
+    await btnByText(w, 'Preview').trigger('click')
+    await flushPromises()
+
+    expect(previewBulkDelete).toHaveBeenCalledWith('d1', expect.any(File),
+      expect.objectContaining({ keyAttribute: 'uid', baseDn: 'ou=eng,dc=x' }))
   })
 })

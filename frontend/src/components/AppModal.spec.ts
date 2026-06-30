@@ -37,6 +37,23 @@ describe('AppModal', () => {
     w.unmount()
   })
 
+  it('keeps the default white header (gray title) when no headerColor is set', () => {
+    const w = mountModal({}, { default: '<p>hi</p>' })
+    const header = document.body.querySelector('h2')?.parentElement as HTMLElement
+    expect(header.getAttribute('style') || '').not.toContain('background')
+    expect(document.body.querySelector('h2')?.className).toContain('text-gray-900')
+    w.unmount()
+  })
+
+  it('renders a colour band with contrasting title when headerColor is set', () => {
+    const w = mountModal({ headerColor: '#2563eb' }, { default: '<p>hi</p>' })
+    const header = document.body.querySelector('h2')?.parentElement as HTMLElement
+    // Dark brand colour → white title for legibility on the band.
+    expect(header.getAttribute('style')).toContain('background-color')
+    expect(document.body.querySelector('h2')?.className).toContain('text-white')
+    w.unmount()
+  })
+
   it('makes the body a flexible scroll region', () => {
     const w = mountModal({}, { default: '<p>hi</p>' })
     const body = document.body.querySelector('.overflow-y-auto')

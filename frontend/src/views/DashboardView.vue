@@ -184,6 +184,23 @@ const showAllClear = computed(() =>
   !actions.value.length && !suggestions.value.length && !awareness.value.length
 )
 
+/**
+ * Count of in-scope directories currently flagged unavailable, matching each
+ * panel's own "Unavailable" rule so the All-clear summary never contradicts the
+ * scope panel beside it:
+ *   • superadmin (Directories): enabled but the reachability probe failed
+ *   • admin (Profiles): the -1 user/group count sentinel from an LDAP error
+ * Gated on countsLoaded — before the slow probe/counts resolve the state is
+ * "checking", not "unavailable", so a healthy load doesn't briefly read amber.
+ */
+const unavailableScopeCount = computed(() => {
+  if (!countsLoaded.value) return 0
+  if (isSuperadmin.value) {
+    return directories.value.filter(d => d.enabled && d.reachable === false).length
+  }
+  return profiles.value.filter(p => (p.userCount ?? 0) < 0 || (p.groupCount ?? 0) < 0).length
+})
+
 // ── Navigation helpers ─────────────────────────────────────────────────────
 function firstDirectoryId(): string | null {
   return data.value?.firstDirectoryId || directories.value[0]?.id || null
@@ -939,7 +956,7 @@ async function onReset() {
             <CampaignProgressPanel v-else-if="id === 'campaign-progress'" :campaigns="campaignProgress" />
             <AwarenessPanel v-else-if="id === 'awareness'" :awareness="awareness" />
           </template>
-          <AllClearPanel v-if="!layoutStore.editing && showAllClear" />
+          <AllClearPanel v-if="!layoutStore.editing && showAllClear" :unavailable-count="unavailableScopeCount" />
         </div>
       </div>
 
