@@ -1,16 +1,13 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <div class="p-6">
-    <!-- Header -->
+    <!-- Header. A themed profile shows a compact pill next to the title; an
+         unthemed one keeps the legacy blue "— Name profile" text. -->
     <div class="flex items-center justify-between mb-6">
       <div>
         <h1 class="text-2xl font-bold text-gray-900">
           Users
-          <template v-if="profileData?.name">
-            <span class="text-gray-400 font-normal"> — </span>
-            <span class="text-blue-600 font-normal">{{ profileData.name }}</span>
-            <span class="text-gray-400 font-normal"> profile</span>
-          </template>
+          <ProfilePill v-if="profileData?.name" class="ml-1" :name="profileData.name" :color="profileData.themeColor" />
         </h1>
         <p class="text-sm text-gray-500 mt-1">Manage users in this directory</p>
       </div>
@@ -208,9 +205,8 @@
     <AppModal v-model="showModal" size="xl" :dirty="modalDirty">
       <template #title>
         <span>{{ editingDn ? 'Edit User' : 'New User' }}</span>
-        <span v-if="profileConfig?.name" class="text-gray-500 font-normal"> — </span>
-        <span v-if="profileConfig?.name" class="text-blue-600">{{ profileConfig.name }}</span>
-        <span v-if="profileConfig?.name" class="text-gray-500 font-normal"> profile</span>
+        <ProfilePill v-if="profileConfig?.name" class="ml-1"
+                     :name="profileConfig.name" :color="profileConfig.themeColor" />
       </template>
       <UserForm ref="userFormRef" :data="form" :is-edit="!!editingDn" :user-template-config="profileConfig ?? undefined" :dir-id="dirId" :profile-id="selectedProfileId" @update="(v: UserFormState) => form = v" />
       <template #footer="{ close }">
@@ -511,10 +507,13 @@ import GroupChips from '@/components/GroupChips.vue'
 import { rdnValue } from '@/composables/useEntryClassification'
 import { ensureNamingValues, parseLeadingRdn } from '@/utils/dn'
 import { resolveGroupMembers } from '@/utils/groupMembers'
+import ProfilePill from '@/components/ProfilePill.vue'
 
 interface ProfileLite {
   id: string
   name: string
+  /** Optional #RRGGBB theme colour; when set the page header / modal render a band of it. */
+  themeColor?: string | null
   targetUserDn?: string | null
   rdnAttribute?: string
   showDnField?: boolean

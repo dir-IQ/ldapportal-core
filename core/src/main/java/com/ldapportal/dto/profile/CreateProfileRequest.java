@@ -4,6 +4,7 @@ package com.ldapportal.dto.profile;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.util.List;
@@ -12,6 +13,9 @@ import java.util.UUID;
 public record CreateProfileRequest(
         @NotBlank @Size(max = 255) String name,
         @Size(max = 2000) String description,
+        // Optional UI theme colour as #RRGGBB hex; empty/null means "no theme".
+        @Pattern(regexp = "^(#[0-9a-fA-F]{6})?$",
+                message = "themeColor must be a hex colour like #2563eb") String themeColor,
         @NotBlank @Size(max = 500) String targetUserDn,
         @Size(max = 500) String targetGroupDn,
         @NotEmpty List<@NotBlank String> objectClassNames,

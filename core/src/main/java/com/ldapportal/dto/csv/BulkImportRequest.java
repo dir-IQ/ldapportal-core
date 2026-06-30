@@ -3,7 +3,6 @@ package com.ldapportal.dto.csv;
 
 import com.ldapportal.entity.enums.ConflictHandling;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
 
 import java.util.List;
 import java.util.UUID;
@@ -26,8 +25,21 @@ import java.util.UUID;
 public record BulkImportRequest(
         /** Optional saved template; drives column mapping, key attribute, and conflict handling. */
         UUID templateId,
-        /** DN of the container under which new entries are created (e.g. {@code ou=people,dc=example,dc=com}). */
-        @NotBlank String parentDn,
+        /**
+         * Provisioning profile to import into. When set, the profile is authoritative
+         * for the target container (its {@code targetUserDn} for users / {@code
+         * targetGroupDn} for groups), the object classes, and the RDN attribute — and
+         * the profile's attribute defaults + group assignments are applied per row.
+         * Either {@code profileId} or {@code parentDn} must be supplied; {@code profileId}
+         * wins when both are present.
+         */
+        UUID profileId,
+        /**
+         * DN of the container under which new entries are created (e.g. {@code
+         * ou=people,dc=example,dc=com}). Optional when {@code profileId} is given (the
+         * profile supplies the target); required otherwise.
+         */
+        String parentDn,
         /** LDAP attribute whose value forms the RDN of new entries. Overrides template default. */
         String targetKeyAttribute,
         /** How to handle rows whose key value already exists in the directory. Overrides template default. */
