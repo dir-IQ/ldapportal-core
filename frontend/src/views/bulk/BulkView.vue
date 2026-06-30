@@ -2,7 +2,7 @@
 <template>
   <PageContainer>
     <h1 class="text-2xl font-bold text-gray-900 mb-4">Bulk Operations</h1>
-    <p class="text-sm text-gray-500 mt-1">Import, export, and delete users and groups via CSV</p>
+    <p class="text-sm text-gray-500 mt-1 mb-4">Import, export, and delete users and groups via CSV</p>
 
     <!-- Entity type selector -->
     <div class="flex gap-2 mb-4">
@@ -43,16 +43,12 @@
     <section v-if="activeTab === 'import' && entityType === 'users'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
       <h2 class="text-lg font-semibold mb-3">Import Users from CSV</h2>
       <div class="space-y-2">
-        <!-- 12-column grid: Parent DN (4) + Template wrapper (4) + CSV File (4).
-             Widths are expressed in column units; tweak the col-span values
-             to redistribute. The template picker keeps its inline menu
-             button by nesting a flex inside the col-span-4 cell. -->
-        <div class="grid grid-cols-12 gap-2 items-end">
-          <div class="col-span-4">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Parent DN <span class="text-red-500">*</span></label>
-            <DnPicker v-model="importForm.parentDn" :directoryId="dirId" :superadmin="false"
-                      :authorized-roots="authorizedImportRoots" placeholder="" />
-          </div>
+        <!-- 12-column grid: Active profile (4) + Template wrapper (4) + CSV File (4).
+             items-start so the Active-profile field's DN sub-line can hang below
+             without dragging the other controls down. -->
+        <div class="grid grid-cols-12 gap-2 items-start">
+          <ActiveProfileField class="col-span-4"
+            :name="activeProfile?.name" :color="activeProfile?.themeColor" :dn="activeUserTargetDn" />
 
           <!-- Template picker + actions dropdown -->
           <div class="col-span-4 flex gap-2 items-end">
@@ -168,7 +164,7 @@
             {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row is' : 'rows are' }}
             missing required attributes — they will fail at import.
           </p>
-          <div class="max-h-[60vh] overflow-auto">
+          <ExpandablePreview title="Import preview">
             <table class="w-full text-xs">
               <thead class="bg-blue-100 sticky top-0">
                 <tr>
@@ -180,8 +176,8 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-blue-100">
-                <tr v-for="row in previewResult.rows" :key="row.rowNumber"
-                    :class="row.missingRequired?.length ? 'bg-amber-50' : ''">
+                <tr v-for="(row, idx) in previewResult.rows" :key="row.rowNumber"
+                    :class="row.missingRequired?.length ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
                   <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td v-for="attr in userPreviewAttrCols" :key="attr"
@@ -195,9 +191,19 @@
                 </tr>
               </tbody>
             </table>
-          </div>
-          <div class="flex gap-2 mt-3">
-            <button @click="doConfirmImport" :disabled="importing || importBlocked" class="btn-primary"
+          </ExpandablePreview>
+          <!-- Typed confirmation: the operator types the active profile's name
+               to arm the import (the explicit "which environment" gate). -->
+          <p class="text-sm text-gray-700 mt-3 mb-1">
+            Type the profile name
+            <code class="font-mono bg-gray-100 px-1 rounded">{{ activeProfile?.name }}</code>
+            to confirm this import.
+          </p>
+          <div class="flex gap-2">
+            <input v-model="importConfirmText" class="input w-56"
+                   :placeholder="activeProfile?.name || ''"
+                   aria-label="Type the profile name to confirm" />
+            <button @click="doConfirmImport" :disabled="importing || importBlocked || !importArmed" class="btn-primary"
                     :title="importBlocked ? 'Resolve the errored rows before importing (template blocks on errors)' : ''">
               {{ importing ? 'Importing…' : 'Perform Import' }}
             </button>
@@ -245,6 +251,7 @@
     <BulkDeleteSection
       v-if="activeTab === 'delete' && entityType === 'users' && canBulkDelete"
       :dir-id="dirId"
+      :active-profile="activeProfile"
     />
 
     <!-- Import tab — Groups -->
@@ -257,12 +264,9 @@
              (groupOfNames → member, groupOfUniqueNames → uniqueMember,
              posixGroup → memberUid) so it's resolved silently in the
              groupMemberAttr computed and doesn't need a UI field. -->
-        <div class="grid grid-cols-12 gap-2 items-end">
-          <div class="col-span-3">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Parent DN <span class="text-red-500">*</span></label>
-            <DnPicker v-model="groupImportForm.parentDn" :directoryId="dirId" :superadmin="false"
-                      :authorized-roots="authorizedImportRoots" placeholder="" />
-          </div>
+        <div class="grid grid-cols-12 gap-2 items-start">
+          <ActiveProfileField class="col-span-3"
+            :name="activeProfile?.name" :color="activeProfile?.themeColor" :dn="activeGroupTargetDn" />
           <div class="col-span-3">
             <label for="bulk-group-object-class" class="block text-sm font-medium text-gray-700 mb-1">Object Class</label>
             <select id="bulk-group-object-class" v-model="groupImportForm.objectClass" class="input w-full">
@@ -309,7 +313,7 @@
             {{ groupPreviewWarningCount }} {{ groupPreviewWarningCount === 1 ? 'row is' : 'rows are' }}
             missing required attributes — they will fail at import.
           </p>
-          <div class="max-h-[60vh] overflow-auto">
+          <ExpandablePreview title="Group import preview">
             <table class="w-full text-xs">
               <thead class="bg-blue-100 sticky top-0">
                 <tr>
@@ -320,8 +324,8 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-blue-100">
-                <tr v-for="row in groupPreviewResult.rows" :key="row.rowNumber"
-                    :class="row.missingRequired?.length ? 'bg-amber-50' : ''">
+                <tr v-for="(row, idx) in groupPreviewResult.rows" :key="row.rowNumber"
+                    :class="row.missingRequired?.length ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
                   <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td class="px-2 py-1 text-gray-600">{{ formatAttrs(row.attributes) }}</td>
@@ -334,9 +338,17 @@
                 </tr>
               </tbody>
             </table>
-          </div>
-          <div class="flex gap-2 mt-3">
-            <button @click="doGroupConfirmImport" :disabled="groupImporting" class="btn-primary">
+          </ExpandablePreview>
+          <p class="text-sm text-gray-700 mt-3 mb-1">
+            Type the profile name
+            <code class="font-mono bg-gray-100 px-1 rounded">{{ activeProfile?.name }}</code>
+            to confirm this import.
+          </p>
+          <div class="flex gap-2">
+            <input v-model="groupImportConfirmText" class="input w-56"
+                   :placeholder="activeProfile?.name || ''"
+                   aria-label="Type the profile name to confirm" />
+            <button @click="doGroupConfirmImport" :disabled="groupImporting || !groupImportArmed" class="btn-primary">
               {{ groupImporting ? 'Importing…' : 'Perform Import' }}
             </button>
             <button @click="groupPreviewResult = null" class="btn-neutral">Cancel</button>
@@ -516,8 +528,11 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
+import { useProfilePickerStore } from '@/stores/profilePicker'
 import { listProfiles } from '@/api/profiles'
 import PageContainer from '@/components/PageContainer.vue'
+import ExpandablePreview from '@/components/ExpandablePreview.vue'
+import ActiveProfileField from './ActiveProfileField.vue'
 import {
   importCsv, exportCsv, previewCsv,
   listCsvTemplates, createCsvTemplate, updateCsvTemplate, deleteCsvTemplate,
@@ -552,9 +567,18 @@ interface CsvTemplate {
   dnSourceColumn?: string | null
   entries?: TemplateEntry[]
 }
-interface ImportForm { parentDn: string }
 interface ExportForm { filter: string, baseDn: string, attributes: string }
-interface GroupImportForm { parentDn: string, objectClass: string, conflictHandling: string }
+interface GroupImportForm { objectClass: string, conflictHandling: string }
+/** Provisioning profile as consumed by the import target + theme banner. */
+interface ProfileLite {
+  id: string
+  name: string
+  themeColor?: string | null
+  targetUserDn?: string | null
+  targetGroupDn?: string | null
+  objectClassNames?: string[]
+  rdnAttribute?: string
+}
 interface GroupExportForm { filter: string, baseDn: string, attributes: string, memberAttribute: string }
 interface TemplateForm {
   name: string
@@ -606,7 +630,7 @@ const importFile    = ref<File | null>(null)
 const importResult  = ref<ImportResult | null>(null)
 const previewResult = ref<PreviewResult | null>(null)
 
-const importForm = ref<ImportForm>({ parentDn: '' })
+const importConfirmText = ref('')
 const exportForm = ref<ExportForm>({ filter: '', baseDn: '', attributes: 'cn,mail,uid' })
 
 // ── Group bulk state ─────────────────────────────────────────────────────────
@@ -617,10 +641,10 @@ const groupImportFile   = ref<File | null>(null)
 const groupImportResult = ref<ImportResult | null>(null)
 const groupPreviewResult = ref<PreviewResult | null>(null)
 const groupImportForm = ref<GroupImportForm>({
-  parentDn: '',
   objectClass: 'groupOfNames',
   conflictHandling: 'SKIP',
 })
+const groupImportConfirmText = ref('')
 const groupExportForm = ref<GroupExportForm>({
   filter: '',
   baseDn: '',
@@ -662,22 +686,39 @@ watch(entityType, v => {
   if (v === 'groups' && activeTab.value === 'delete') activeTab.value = 'import'
 })
 
-const authorizedImportRoots = ref<string[]>([])
+// Admin bulk operations are scoped by the sidebar profile picker — there is no
+// separate target selector on these forms. We read the picked profile from the
+// shared store and look up its full record (theme colour, target OUs) in the
+// directory's profile list. The active profile's theme colour is shown as a
+// band so the operator always sees which environment they're changing.
+const profilePicker = useProfilePickerStore()
+const profiles = ref<ProfileLite[]>([])
 onMounted(async () => {
-  if (auth.isSuperadmin) return
   try {
     const { data } = await listProfiles(dirId)
-    // listProfiles already filters disabled per the previous
-    // admin-picker fix; we additionally dedupe targetUserDn values
-    // because multiple profiles may share an OU.
-    const uniq = new Set<string>()
-    for (const p of data as Array<{ targetUserDn?: string }>) {
-      if (p.targetUserDn) uniq.add(p.targetUserDn)
-    }
-    authorizedImportRoots.value = [...uniq]
+    profiles.value = data as ProfileLite[]
   } catch (e) {
-    console.warn('Failed to load authorized profiles for picker:', e)
+    console.warn('Failed to load profiles for bulk operations:', e)
   }
+})
+
+const activeProfile = computed<ProfileLite | null>(() =>
+  profiles.value.find(p => p.id === profilePicker.selectedId) ?? null,
+)
+const activeUserTargetDn = computed(() => activeProfile.value?.targetUserDn ?? null)
+const activeGroupTargetDn = computed(() =>
+  activeProfile.value?.targetGroupDn || activeProfile.value?.targetUserDn || null,
+)
+
+// An import is armed only once the operator types the active profile's name
+// (case-insensitive) — the explicit "which environment" confirmation gate.
+const importArmed = computed(() => {
+  const name = activeProfile.value?.name?.trim().toLowerCase()
+  return !!name && importConfirmText.value.trim().toLowerCase() === name
+})
+const groupImportArmed = computed(() => {
+  const name = activeProfile.value?.name?.trim().toLowerCase()
+  return !!name && groupImportConfirmText.value.trim().toLowerCase() === name
 })
 
 function menuAction(action: string) {
@@ -759,7 +800,7 @@ const otherTemplateAttrs = computed(() => {
 })
 
 const canImport = computed(() => {
-  return selectedTemplateId.value && importFile.value && importForm.value.parentDn
+  return selectedTemplateId.value && importFile.value && !!activeProfile.value
 })
 
 /** Number of preview rows missing any required attribute — drives the
@@ -966,7 +1007,8 @@ function buildImportRequest() {
   const t = selectedTemplate.value!
   return {
     templateId: t.id,
-    parentDn: importForm.value.parentDn,
+    // The active (sidebar-selected) profile is authoritative for the target OU.
+    profileId: activeProfile.value?.id,
     targetKeyAttribute: t.targetKeyAttribute,
     conflictHandling: t.conflictHandling,
     skipHeaderRow: t.skipHeaderRow !== false,
@@ -993,6 +1035,7 @@ async function doPreview() {
   previewing.value = true
   previewResult.value = null
   importResult.value = null
+  importConfirmText.value = ''
   try {
     const { data } = await previewCsv(dirId, importFile.value, buildImportRequest())
     previewResult.value = data
@@ -1038,9 +1081,11 @@ async function ensureParentDnExists(parentDn: string) {
 }
 
 async function doConfirmImport() {
-  if (!canImport.value) return
+  if (!canImport.value || !importArmed.value) return
+  const parentDn = activeUserTargetDn.value
+  if (!parentDn) return
   try {
-    if (!(await ensureParentDnExists(importForm.value.parentDn))) return
+    if (!(await ensureParentDnExists(parentDn))) return
   } catch (e) {
     notif.error(errMsg(e))
     return
@@ -1098,7 +1143,7 @@ const groupMemberAttr = computed(() =>
 )
 
 const canGroupImport = computed(() =>
-  groupImportFile.value && groupImportForm.value.parentDn
+  groupImportFile.value && !!activeProfile.value
 )
 
 function onGroupFileChange(e: Event) {
@@ -1109,7 +1154,8 @@ function onGroupFileChange(e: Event) {
 
 function buildGroupImportRequest() {
   return {
-    parentDn: groupImportForm.value.parentDn,
+    // The active profile supplies the target group container (its targetGroupDn).
+    profileId: activeProfile.value?.id,
     conflictHandling: groupImportForm.value.conflictHandling,
     skipHeaderRow: true,
     columnMappings: [],
@@ -1121,6 +1167,7 @@ async function doGroupPreview() {
   groupPreviewing.value = true
   groupPreviewResult.value = null
   groupImportResult.value = null
+  groupImportConfirmText.value = ''
   try {
     const { data } = await previewGroupCsv(
       dirId, groupImportFile.value, buildGroupImportRequest(),
@@ -1134,9 +1181,11 @@ async function doGroupPreview() {
 }
 
 async function doGroupConfirmImport() {
-  if (!canGroupImport.value) return
+  if (!canGroupImport.value || !groupImportArmed.value) return
+  const parentDn = activeGroupTargetDn.value
+  if (!parentDn) return
   try {
-    if (!(await ensureParentDnExists(groupImportForm.value.parentDn))) return
+    if (!(await ensureParentDnExists(parentDn))) return
   } catch (e) {
     notif.error(errMsg(e))
     return
