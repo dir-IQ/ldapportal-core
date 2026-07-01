@@ -94,6 +94,13 @@ jobs:
           context: .
           file: docker/${{ matrix.edition }}/Dockerfile
           push: true
+          # Bake the release version into the image so the running app can
+          # report it (VersionController /version -> sidebar build stamp).
+          # meta.outputs.version is the primary tag (e.g. 1.4.2 on a v1.4.2
+          # push, manual-<sha> on a workflow_dispatch), so a pull of latest
+          # or vX.Y.Z reports the real release version, not "latest".
+          build-args: |
+            IMAGE_VERSION=${{ steps.meta.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
