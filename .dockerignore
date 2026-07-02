@@ -1,0 +1,30 @@
+# Build-context hygiene for the backend images (context = repo root). The JAR is
+# compiled inside the Dockerfile's Maven stage, so no host build outputs should
+# enter the context — they'd bloat the upload to the daemon/Kaniko and could
+# shadow the freshly built artifact. (The frontend image has its own context,
+# frontend/, and is unaffected by this file.)
+
+# Maven / build outputs
+**/target/
+
+# Frontend build outputs — not part of the backend reactor, just dead weight here
+**/node_modules/
+frontend/dist/
+
+# Local caches that must not leak into an image layer
+.m2/
+.npm/
+
+# Local env / secrets
+.env
+*.env
+
+# Editor / OS cruft
+.idea/
+*.iml
+.DS_Store
+
+# NOTE: .git is deliberately NOT ignored. git-commit-id-maven-plugin reads the
+# working-copy HEAD during the build to bake the short-SHA into
+# META-INF/build-info.properties (VersionController surfaces it as git.sha).
+# Excluding .git would silently drop the SHA from the /version endpoint.

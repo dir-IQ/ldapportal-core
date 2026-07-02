@@ -121,25 +121,17 @@ jobs:
     timeout-minutes: 25
 
     steps:
+      # fetch-depth 0 so the in-image git-commit-id plugin can resolve HEAD
+      # (the image compiles the JAR in a multi-stage Maven build), keeping the
+      # scanned image identical to what ships. No JDK/Maven on the runner.
       - uses: actions/checkout@v4
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
         with:
-          java-version: 21
-          distribution: temurin
-          cache: maven
+          fetch-depth: 0
 
-      # Build the fat JAR (skip tests — CI/E2E workflows already gate
-      # on tests; this job is purely about scanning the artifact).
-      # Runner-preinstalled `mvn` (not ./mvnw) to avoid the wrapper's
-      # Maven-distribution bootstrap download from repo.maven.apache.org,
-      # which intermittently 403s — see ci.yml "Run tests" for detail.
-      - name: Build backend JAR
-        run: mvn -B -ntp clean package -DskipTests
-
-      # Build the actual production image — same Dockerfile that ships.
-      # Tag it `:scan` so it can't accidentally collide with anything else.
+      # Build the actual production image — same Dockerfile that ships. It's a
+      # self-contained multi-stage build, so it compiles the JAR itself; no
+      # separate host `mvn package` step is needed. Tag it `:scan` so it can't
+      # accidentally collide with anything else.
       - name: Build Docker image
         run: docker build -t ldapportal-app:scan -f docker/community/Dockerfile .
 

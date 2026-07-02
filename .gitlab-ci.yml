@@ -4,7 +4,6 @@
 # build on GitLab. Coverage:
 #   test     — backend `mvn test` + addons SPDX guard; 5 frontend jobs   (ci.yml)
 #   security — gitleaks secret scan; Trivy backend-image scan   (.gitleaks.toml, trivy-scan.yml)
-#   package  — runnable JAR per edition, tag-gated                       (ghcr-publish.yml)
 #   publish  — images -> GitLab Container Registry, tag-gated            (ghcr-publish.yml)
 #              core + addons -> GitLab Maven Package Registry, manual    (publish-internal.yml)
 #
@@ -16,13 +15,13 @@
 #   - Maven mirror:  mount ~/.m2/settings.xml (Nexus/Artifactory) or set MAVEN_MIRROR.
 #   - npm registry:  commit frontend/.npmrc with `registry=...`.
 #   - base images:   repoint the image:/services: refs below at your mirror.
-#   - runner:        the security + publish image jobs need Docker-in-Docker
-#                    (privileged) or Kaniko if privileged runners aren't allowed.
+#   - runner:        publish-backend builds with Kaniko (no privileged runner).
+#                    The Trivy scan (trivy-scan) still uses Docker-in-Docker
+#                    (privileged) to load the built image for scanning.
 
 stages:
   - test
   - security
-  - package
   - publish
 
 variables:
@@ -205,29 +204,15 @@ gitleaks:
       - gitleaks-report.sarif
     expire_in: 14 days
 
-# The backend Dockerfile COPYs a host-built JAR (not a multi-stage build), so the
-# scan needs the artifact first: build the community JAR, then the image, then
-# scan. HIGH/CRITICAL with or without an upstream fix fails the job (exit-code 1),
-# locking the "0 HIGH/CRITICAL" floor.
-trivy-build-jar:
-  stage: security
-  extends: .maven
-  rules: !reference [.rules-code, rules]
-  script:
-    - mvn $MAVEN_CLI_OPTS -DskipTests -pl distribution/community -am clean package
-  artifacts:
-    paths:
-      - "distribution/community/target/*.jar"
-    expire_in: 1 day
-
+# The backend Dockerfile is a self-contained multi-stage build (it compiles the
+# JAR in an in-image Maven stage), so the scan builds the image directly — no
+# separate JAR-build job to depend on. HIGH/CRITICAL with or without an upstream
+# fix fails the job (exit-code 1), locking the "0 HIGH/CRITICAL" floor.
 trivy-scan:
   stage: security
   image: docker:27
   services:
     - docker:27-dind
-  needs:
-    - job: trivy-build-jar
-      artifacts: true
   rules: !reference [.rules-code, rules]
   before_script:
     - apk add --no-cache curl
@@ -244,51 +229,47 @@ trivy-scan:
       - trivy-results.txt
     expire_in: 14 days
 
-# ── package stage (tags only) ─────────────────────────────────────────────────
-# Build the runnable JAR per edition. The backend Dockerfiles COPY this artifact
-# out of distribution/<edition>/target/, so it must exist before the image build.
-package-backend:
-  stage: package
-  extends: .maven
-  interruptible: false
-  parallel:
-    matrix:
-      - EDITION: [community, community-plus-isva]
-  script:
-    # -am builds the upstream modules: community -> core; community-plus-isva ->
-    # core + addons/isva. The distribution module's verify-no-ee-bytecode check
-    # keeps the JAR license-clean.
-    - mvn $MAVEN_CLI_OPTS -DskipTests -pl distribution/$EDITION -am clean package
-  artifacts:
-    paths:
-      - "distribution/$EDITION/target/*.jar"
-    expire_in: 1 day
-  rules:
-    - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
-
 # ── publish stage (tags only) ─────────────────────────────────────────────────
-# Build + push images to the project's GitLab Container Registry. Requires a
-# Docker-in-Docker (privileged) runner; swap for Kaniko if unavailable. Tag
-# scheme mirrors ghcr-publish.yml's docker/metadata-action: vX.Y.Z -> :X.Y.Z
-# (immutable), :X.Y (moving minor), and :latest.
+# Build + push images to the project's GitLab Container Registry. The backend
+# job builds with Kaniko — it compiles the JAR inside the Dockerfile's Maven
+# stage (no separate .maven JAR job) and needs no privileged Docker-in-Docker
+# daemon. Tag scheme mirrors ghcr-publish.yml's docker/metadata-action:
+# vX.Y.Z -> :X.Y.Z (immutable), :X.Y (moving minor), and :latest.
 publish-backend:
   stage: publish
-  extends: .docker
+  # kaniko :debug ships a /busybox shell so the `script` below runs. Pinned;
+  # renovate bumps it like any other image ref.
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
   interruptible: false
   parallel:
     matrix:
       - EDITION: [community, community-plus-isva]
-  needs:
-    - job: package-backend
-      artifacts: true
+  # Self-contained like publish-frontend: no JAR artifact to wait on.
+  needs: []
   script:
     - IMAGE="$CI_REGISTRY_IMAGE/ldapportal-$EDITION"
     - VERSION="${CI_COMMIT_TAG#v}"
     - MINOR="${VERSION%.*}"
-    # Build context is the repo root so the Dockerfile COPY can reach
-    # distribution/<edition>/target/.
-    - docker build -f "docker/$EDITION/Dockerfile" -t "$IMAGE:$VERSION" -t "$IMAGE:$MINOR" -t "$IMAGE:latest" .
-    - docker push --all-tags "$IMAGE"
+    # GitLab Container Registry auth for Kaniko (no `docker login` / dind).
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    # Context is the repo root (includes .git, so git-commit-id bakes the SHA).
+    # --cache + --cache-repo persist the Maven-dependency and base layers to the
+    # registry, replacing the .m2 cache the deleted package-backend job kept
+    # warm. --build-arg IMAGE_VERSION stamps the release version into the image
+    # (VersionController /version -> sidebar build stamp), matching ghcr-publish.yml.
+    - >
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "docker/$EDITION/Dockerfile"
+      --build-arg "IMAGE_VERSION=$VERSION"
+      --cache=true
+      --cache-repo "$IMAGE/cache"
+      --destination "$IMAGE:$VERSION"
+      --destination "$IMAGE:$MINOR"
+      --destination "$IMAGE:latest"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
 
