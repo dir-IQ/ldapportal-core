@@ -6,11 +6,11 @@
 #   ghcr.io/<owner>/ldapportal-community-plus-isva
 #   ghcr.io/<owner>/ldapportal-frontend
 #
-# The backend Dockerfiles (docker/<edition>/Dockerfile) COPY a pre-built
-# JAR out of distribution/<edition>/target/, so each backend job runs
-# `mvn package` first — same recipe as trivy-scan.yml. Build context is
-# the repo root so the COPY can reach distribution/. The frontend image
-# is a self-contained multi-stage npm build with context frontend/, built
+# The backend Dockerfiles (docker/<edition>/Dockerfile) are self-contained
+# multi-stage builds — they compile the JAR in an in-image Maven stage, so the
+# backend job needs no JDK/Maven on the runner, only Docker/buildx. Build
+# context is the repo root so the reactor POMs and .git are reachable. The
+# frontend image is a self-contained multi-stage npm build with context frontend/, built
 # from frontend/Dockerfile — a portable envsubst-template image whose backend
 # host is supplied at runtime via BACKEND_APP (see frontend/nginx.conf.template),
 # so the same image runs on compose, Kubernetes/EKS and Fly.io.
@@ -54,22 +54,18 @@ jobs:
       matrix:
         edition: [community, community-plus-isva]
     steps:
+      # fetch-depth 0 so git-commit-id-maven-plugin — run inside the image's
+      # Maven build stage — can resolve the HEAD short-SHA it bakes into
+      # build-info.properties. The JAR is compiled in-image (the -am reactor
+      # builds community -> core; community-plus-isva -> core + addons/isva, and
+      # the distribution module's verify-no-ee-bytecode check keeps it
+      # license-clean), so no JDK/Maven is set up on the runner.
       - uses: actions/checkout@v4
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
         with:
-          java-version: '21'
-          distribution: temurin
-          cache: maven
+          fetch-depth: 0
 
-      # Build only the target distribution + its upstream modules (-am):
-      # community -> core; community-plus-isva -> core + addons/isva. The
-      # distribution module's verify-no-ee-bytecode check keeps the JAR
-      # license-clean. Runner-preinstalled `mvn` (not ./mvnw) avoids the
-      # wrapper's distribution bootstrap download — see trivy-scan.yml.
-      - name: Build ${{ matrix.edition }} JAR
-        run: mvn -B -ntp -DskipTests -pl distribution/${{ matrix.edition }} -am clean package
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -103,6 +99,11 @@ jobs:
             IMAGE_VERSION=${{ steps.meta.outputs.version }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Persist the Maven-dependency + base layers across runs (per edition),
+          # replacing the setup-java `cache: maven` we dropped when the JAR build
+          # moved into the image's build stage.
+          cache-from: type=gha,scope=backend-${{ matrix.edition }}
+          cache-to: type=gha,mode=max,scope=backend-${{ matrix.edition }}
 
   frontend:
     name: Frontend image
