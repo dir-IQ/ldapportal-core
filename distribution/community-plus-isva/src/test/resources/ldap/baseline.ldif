@@ -5,9 +5,14 @@
 # appear here. The Playwright specs pin these DNs:
 #   - users.spec.ts / directory-search-edit.spec.ts / password-reset.spec.ts:
 #     cn=seedAlice,ou=seed,ou=test,dc=test,dc=local (3 inetOrgPerson entries
-#     under ou=seed)
+#     under ou=seed). users.spec asserts sn=Alice and the seed mail values;
+#     directory-search-edit inline-edits the single-valued employeeNumber,
+#     whose column only renders when the attribute exists on the entry.
 #   - groups.spec.ts: creates cn=e2e-smoke-group-*,ou=groups,dc=test,dc=local
 #     with seedAlice as member, so ou=groups must exist and be writable.
+#   - isva-profile-override.spec.ts: creates a profile targeting
+#     ou=people,dc=test,dc=local — profile create validates the target OU
+#     exists, so it must be present here.
 
 dn: ou=test,dc=test,dc=local
 objectClass: organizationalUnit
@@ -20,30 +25,37 @@ ou: seed
 dn: cn=seedAlice,ou=seed,ou=test,dc=test,dc=local
 objectClass: inetOrgPerson
 cn: seedAlice
-sn: Seed
+sn: Alice
 givenName: Alice
 uid: seedAlice
 mail: seed.alice@test.local
+employeeNumber: E2E-0001
 userPassword: seedAlice-pw
 
 dn: cn=seedBob,ou=seed,ou=test,dc=test,dc=local
 objectClass: inetOrgPerson
 cn: seedBob
-sn: Seed
+sn: Bob
 givenName: Bob
 uid: seedBob
 mail: seed.bob@test.local
+employeeNumber: E2E-0002
 userPassword: seedBob-pw
 
 dn: cn=seedCarol,ou=seed,ou=test,dc=test,dc=local
 objectClass: inetOrgPerson
 cn: seedCarol
-sn: Seed
+sn: Carol
 givenName: Carol
 uid: seedCarol
 mail: seed.carol@test.local
+employeeNumber: E2E-0003
 userPassword: seedCarol-pw
 
 dn: ou=groups,dc=test,dc=local
 objectClass: organizationalUnit
 ou: groups
+
+dn: ou=people,dc=test,dc=local
+objectClass: organizationalUnit
+ou: people

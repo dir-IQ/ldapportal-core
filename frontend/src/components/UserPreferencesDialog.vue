@@ -113,6 +113,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { usePreferencesStore } from '@/stores/preferences'
 import { useTheme } from '@/composables/useTheme'
 import { useDensity, type Density } from '@/composables/useDensity'
 import { updatePreferences, changePassword } from '@/api/auth'
@@ -196,6 +197,13 @@ async function doSavePrefs(): Promise<void> {
     // preferences store, which carries the choice across browsers / devices.
     setTheme(form.value.themePreference)
     setDensity(form.value.densityPreference)
+    // setTheme/setDensity queue the server write behind the store's
+    // debounce, and that timer dies with the document — a reload/navigation
+    // within the window silently loses the save (the next boot then reverts
+    // to the stale server value via syncFromAccount). An explicit Save must
+    // be durable, so flush before reporting success; we're already inside
+    // the `saving` spinner state.
+    await usePreferencesStore().flush()
     // Update auth store
     auth.updatePrincipal({
       themePreference: form.value.themePreference,
