@@ -16,6 +16,13 @@
 # is assumed to be the repository root (the usual cwd for
 # `./mvnw -pl distribution/commercial spring-boot:run`). Override with
 # LDAPPORTAL_DEV_LICENSE if you run from elsewhere.
+spring:
+  datasource:
+    # Dev-only convenience default. The base application.yml deliberately has
+    # no DB_PASSWORD fallback so production fails fast on a missing secret;
+    # here it matches the compose.yaml Postgres defaults for local runs.
+    password: ${DB_PASSWORD:ldapportal}
+
 ldapportal:
   license:
     public-key-resource: license/dev-public-key.pem

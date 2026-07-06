@@ -35,8 +35,10 @@ import com.ldapportal.entity.enums.AccountType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.http.HttpHeaders;
@@ -373,15 +375,15 @@ public class AuthController {
      * {@link PreferencesController} ({@code PATCH /api/v1/me/preferences}).
      */
     public record UpdatePreferencesRequest(
-            String displayName,
-            String email
+            @Size(max = 255) String displayName,
+            @Email @Size(max = 320) String email
     ) {}
 
     @PostMapping("/me/preferences")
     @Transactional
     public ResponseEntity<Map<String, String>> updatePreferences(
             @AuthenticationPrincipal AuthPrincipal principal,
-            @RequestBody UpdatePreferencesRequest req) {
+            @Valid @RequestBody UpdatePreferencesRequest req) {
         if (principal == null) throw new BadCredentialsException("Not authenticated");
 
         Account acct = accountRepo.findById(principal.id())

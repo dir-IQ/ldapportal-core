@@ -6,6 +6,7 @@ import com.ldapportal.dto.discovery.CommitDiscoveryResponse;
 import com.ldapportal.dto.discovery.DiscoveryProposalResponse;
 import com.ldapportal.dto.discovery.DiscoveryRequest;
 import com.ldapportal.service.DirectoryDiscoveryService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -27,7 +28,7 @@ public class DiscoveryController {
     @PostMapping
     public DiscoveryProposalResponse discover(
             @PathVariable UUID directoryId,
-            @RequestBody(required = false) DiscoveryRequest request) {
+            @Valid @RequestBody(required = false) DiscoveryRequest request) {
         if (request == null) {
             request = new DiscoveryRequest(null, null, null);
         }
@@ -40,7 +41,7 @@ public class DiscoveryController {
     @PostMapping("/commit")
     public CommitDiscoveryResponse commit(
             @PathVariable UUID directoryId,
-            @RequestBody CommitDiscoveryRequest request) {
+            @Valid @RequestBody CommitDiscoveryRequest request) {
         return discoveryService.commit(directoryId, request);
     }
 }

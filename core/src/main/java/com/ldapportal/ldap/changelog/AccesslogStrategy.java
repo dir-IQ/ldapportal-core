@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.changelog;
 
+import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResultEntry;
@@ -57,9 +58,11 @@ public class AccesslogStrategy implements ChangelogStrategy {
     public SearchRequest buildSearchRequest(ChangelogReadContext ctx, int sizeLimit) throws LDAPException {
         String filter;
         if (ctx.branchFilterDn() != null && !ctx.branchFilterDn().isBlank()) {
-            // Filter to entries whose reqDN ends with the branch filter DN
+            // Filter to entries whose reqDN ends with the branch filter DN.
+            // The DN is operator-configured, but encode it anyway so filter
+            // metacharacters ( ) * \ in a DN value can't corrupt the filter.
             filter = "(&(objectClass=auditWriteObject)(reqResult=0)"
-                    + "(reqDN=*" + ctx.branchFilterDn() + "))";
+                    + "(reqDN=*" + Filter.encodeValue(ctx.branchFilterDn()) + "))";
         } else {
             filter = "(&(objectClass=auditWriteObject)(reqResult=0))";
         }
