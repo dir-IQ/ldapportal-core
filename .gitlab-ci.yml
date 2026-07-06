@@ -140,9 +140,11 @@ backend-test:
     # In-memory H2 (no Postgres). -T 1C parallelises across the reactor modules.
     - mvn $MAVEN_CLI_OPTS -T 1C test
   artifacts:
-    when: on_failure
+    when: always
     paths:
       - "**/target/surefire-reports/"
+      # JaCoCo per-module coverage (report goal is bound to the test phase).
+      - "**/target/site/jacoco/"
     expire_in: 7 days
 
 frontend-typecheck:
@@ -157,14 +159,21 @@ frontend-a11y-lint:
   extends: .frontend
   rules: !reference [.rules-frontend, rules]
   script:
-    - npm run lint:a11y
+    # General JS/TS/Vue lint + the a11y gate (one shared eslint.config.js).
+    - npm run lint
 
 frontend-unit:
   stage: test
   extends: .frontend
   rules: !reference [.rules-frontend, rules]
   script:
-    - npm run test:unit
+    # Coverage report is v8/lcov+html; no threshold gate yet (vitest.config.js).
+    - npm run test:coverage
+  artifacts:
+    when: on_success
+    paths:
+      - "frontend/coverage/"
+    expire_in: 7 days
 
 frontend-build:
   stage: test

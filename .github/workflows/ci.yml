@@ -175,6 +175,16 @@ jobs:
         # way. `-T 1C` parallelises Maven phases across the six modules.
         run: mvn --batch-mode --no-transfer-progress -T 1C test
 
+      - name: Upload coverage reports
+        # JaCoCo XML/HTML per module (bound to the test phase). Report-only
+        # for now — no floor — but the artifact makes coverage inspectable
+        # per PR and lets a ratchet land later without CI surgery.
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-reports
+          path: '**/target/site/jacoco/'
+          retention-days: 7
+
       - name: Upload surefire reports on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -247,11 +257,13 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
-      - name: Accessibility lint (eslint-plugin-vuejs-accessibility)
-        # Static a11y checks on .vue templates — complements the runtime
-        # axe-core gate (a11y.yml). Error-level rules fail the build; the
-        # pattern/runtime-covered rules are warn-only (see eslint.config.js).
-        run: npm run lint:a11y
+      - name: Lint (general JS/TS/Vue + a11y)
+        # eslint.config.js now layers @eslint/js, typescript-eslint, and
+        # eslint-plugin-vue (essential) on top of the original
+        # eslint-plugin-vuejs-accessibility gate, which complements the
+        # runtime axe-core check (a11y.yml). Error-level rules fail the
+        # build; advisory rules are warn-only (see eslint.config.js).
+        run: npm run lint
 
   frontend-unit:
     name: Frontend (unit tests)
@@ -271,9 +283,17 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
-      - name: Unit tests
+      - name: Unit tests (with coverage)
         # Vitest single-pass run. Tests are colocated as src/**/*.spec.{js,ts}.
-        run: npm run test:unit
+        # --coverage costs a few extra seconds and produces the v8 report;
+        # no threshold is enforced yet (see vitest.config.js).
+        run: npm run test:coverage
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+          retention-days: 7
 
   frontend-build:
     name: Frontend (build)

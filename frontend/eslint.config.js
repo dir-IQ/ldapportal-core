@@ -1,10 +1,23 @@
-// Accessibility-only ESLint config. We deliberately scope this to the
-// eslint-plugin-vuejs-accessibility rules (static a11y checks on .vue
-// templates) rather than full Vue/JS linting — the project has no general
-// ESLint setup, and the goal here is a focused a11y regression gate that
-// complements the runtime axe-core check (tests/e2e/spec/a11y.spec.ts).
+// Project-wide ESLint config: general JS/TS/Vue correctness linting plus the
+// accessibility gate that predates it.
 //
-// Run: npm run lint:a11y
+// Scope decisions:
+// - eslint-plugin-vue runs at the `essential` level (error-prevention rules:
+//   template no-undef, duplicate keys, v-for keys, …). The stylistic tiers
+//   (`strongly-recommended`/`recommended`) are deliberately excluded — there
+//   is no Prettier here and formatting churn isn't worth the diff noise.
+// - typescript-eslint `recommended` covers .ts files; `no-explicit-any` is a
+//   warning while the JS→TS migration is in flight.
+// - The vuejs-accessibility layer is unchanged from the original a11y-only
+//   config: it complements the runtime axe-core check
+//   (tests/e2e/spec/a11y.spec.ts). Warn-level a11y rules are advisory; see
+//   the comments below for why each is not an error.
+//
+// Run: npm run lint  (lint:a11y is kept as an alias for CI compatibility)
+import js from '@eslint/js'
+import globals from 'globals'
+import tseslint from 'typescript-eslint'
+import pluginVue from 'eslint-plugin-vue'
 import vueA11y from 'eslint-plugin-vuejs-accessibility'
 import tsParser from '@typescript-eslint/parser'
 
@@ -16,14 +29,69 @@ export default [
       'dist-community/**',
       'playwright-report/**',
       'test-results/**',
+      'coverage/**',
       'src/api/openapi.d.ts', // generated
     ],
   },
+
+  // ── General JS ─────────────────────────────────────────────────────────
+  {
+    ...js.configs.recommended,
+    files: ['**/*.{js,mjs}'],
+  },
+  {
+    files: ['**/*.{js,mjs}'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'module',
+      globals: { ...globals.browser, ...globals.node },
+    },
+    rules: {
+      // `_`-prefix marks deliberately unused params/catches (ee-shim stubs,
+      // empty catch bindings) — the ecosystem-standard escape hatch.
+      'no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
+    },
+  },
+
+  // ── TypeScript ─────────────────────────────────────────────────────────
+  ...tseslint.configs.recommended.map((c) => ({
+    ...c,
+    files: ['**/*.{ts,mts,tsx}'],
+  })),
+  {
+    files: ['**/*.{ts,mts,tsx}'],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node },
+    },
+    rules: {
+      // Warn (not error) while the JS→TS migration is mid-flight; the goal
+      // is to stop NEW `any` creep without blocking on the existing debt.
+      '@typescript-eslint/no-explicit-any': 'warn',
+      // Same `_`-prefix convention as the JS block (compile-time type-probe
+      // helpers in apiClient.test-types.ts are `_assert*`).
+      '@typescript-eslint/no-unused-vars': ['error', {
+        argsIgnorePattern: '^_',
+        varsIgnorePattern: '^_',
+        caughtErrorsIgnorePattern: '^_',
+      }],
+    },
+  },
+
+  // ── Vue SFCs: error-prevention rules ───────────────────────────────────
+  ...pluginVue.configs['flat/essential'],
+
+  // ── Accessibility gate (unchanged) ─────────────────────────────────────
   ...vueA11y.configs['flat/recommended'],
+
   {
     files: ['**/*.vue'],
     languageOptions: {
-      // vue-eslint-parser (set by the recommended config) handles the SFC;
+      globals: { ...globals.browser },
+      // vue-eslint-parser (set by the flat configs above) handles the SFC;
       // it needs a TS parser for `<script setup lang="ts">` blocks or it
       // chokes on `interface`/type syntax.
       parserOptions: {
@@ -33,6 +101,13 @@ export default [
       },
     },
     rules: {
+      // The settings form is decomposed into per-section child components
+      // that receive the shared `form` object and write fields on it. Deep
+      // writes through an object prop are how that pattern works;
+      // `shallowOnly` keeps the rule's real protection (reassigning or
+      // replacing the prop itself is still an error).
+      'vue/no-mutating-props': ['error', { shallowOnly: true }],
+
       // `label-has-for` is deprecated/over-strict: it flags a <label> unless
       // it also *wraps* the control, even when correctly tied via for/id.
       'vuejs-accessibility/label-has-for': 'off',
@@ -59,6 +134,24 @@ export default [
       'vuejs-accessibility/click-events-have-key-events': 'warn',
       'vuejs-accessibility/mouse-events-have-key-events': 'warn',
       'vuejs-accessibility/interactive-supports-focus': 'warn',
+    },
+  },
+
+  // ── Vitest specs: test-runner globals (`globals: true` in vitest.config) ─
+  {
+    files: ['**/*.spec.{js,ts}', '**/__tests__/**'],
+    languageOptions: {
+      globals: {
+        describe: 'readonly',
+        it: 'readonly',
+        test: 'readonly',
+        expect: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly',
+        beforeAll: 'readonly',
+        afterAll: 'readonly',
+        vi: 'readonly',
+      },
     },
   },
 ]

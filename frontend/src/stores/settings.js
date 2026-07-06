@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { getBranding } from '@/api/settings'
 
 // App default brand colours, by role:

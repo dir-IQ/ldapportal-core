@@ -13,9 +13,8 @@ vi.mock('./client', () => ({
   },
 }))
 
-// eslint-disable-next-line import/first
+// Imports after vi.mock are fine — Vitest hoists the mock above them.
 import client from './client'
-// eslint-disable-next-line import/first
 import { apiGet, apiPost, apiPut, apiDelete } from './apiClient'
 
 describe('apiClient', () => {
