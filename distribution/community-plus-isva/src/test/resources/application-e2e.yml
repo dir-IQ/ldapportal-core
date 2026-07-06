@@ -15,9 +15,11 @@ spring:
 
 app:
   encryption:
-    # base64("testkeytestkeytestkeytestkey0000") — same throwaway key shape as
-    # the unit-test profile.
-    key: dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleTA=
+    # base64("e2e-only-aes-key-0123456789abcde") — exactly 32 bytes decoded;
+    # EncryptionService rejects anything else, and unlike the unit-test
+    # profile the e2e stack actually encrypts (the directory seeder stores
+    # the OpenLDAP bind password).
+    key: ZTJlLW9ubHktYWVzLWtleS0wMTIzNDU2Nzg5YWJjZGU=
   bootstrap:
     superadmin:
       username: superadmin
