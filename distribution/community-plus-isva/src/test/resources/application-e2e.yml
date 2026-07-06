@@ -1,0 +1,31 @@
+# E2E profile — activated by E2eTestApplication (spring-boot:test-run via
+# frontend/scripts/run-e2e-server.mjs and the E2E workflows). Test-only
+# credentials; the Playwright global-setup (frontend/tests/e2e/global-setup.ts)
+# logs in with the bootstrap superadmin below. NEVER use these values outside
+# the throwaway E2E stack.
+spring:
+  datasource:
+    # Placeholders only. The real connection comes from the @ServiceConnection
+    # PostgreSQLContainer in E2eTestcontainersConfiguration (ConnectionDetails
+    # outrank these properties); they exist so the base application.yml's
+    # required ${DB_URL}/${DB_PASSWORD} placeholders resolve during binding.
+    url: jdbc:postgresql://localhost:1/e2e-unused
+    username: e2e-unused
+    password: e2e-unused
+
+app:
+  encryption:
+    # base64("testkeytestkeytestkeytestkey0000") — same throwaway key shape as
+    # the unit-test profile.
+    key: dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleTA=
+  bootstrap:
+    superadmin:
+      username: superadmin
+      password: test-superadmin-pw
+  jwt:
+    secret: dGVzdHNlY3JldHRlc3RzZWNyZXR0ZXN0c2VjcmV0dGVzdHNlY3JldHRlc3Q=
+    expiry-minutes: 60
+  cookie:
+    # The E2E stack serves plain HTTP (Vite dev server on :5173 proxying to
+    # :8080); a Secure cookie would be dropped and every login would bounce.
+    secure: false

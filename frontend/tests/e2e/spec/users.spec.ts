@@ -18,8 +18,8 @@ test.describe('LDAP users browse/search @smoke', () => {
     const directoryId = await seededDirectoryId(superadmin)
 
     // Search under ou=seed,ou=test for cn=seedAlice. The baseline LDIF
-    // (ee/src/test/resources/ldap/baseline.ldif) seeds 3 inetOrgPerson
-    // entries here at container boot.
+    // (distribution/community-plus-isva/src/test/resources/ldap/baseline.ldif)
+    // seeds 3 inetOrgPerson entries here at container boot.
     const params = new URLSearchParams({
       baseDn: 'ou=seed,ou=test,dc=test,dc=local',
       filter: '(cn=seedAlice)',

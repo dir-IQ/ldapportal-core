@@ -1,0 +1,49 @@
+# Baseline seed data for the E2E OpenLDAP container.
+#
+# Applied by the osixia/openldap bootstrap AFTER the image creates the
+# dc=test,dc=local base entry (from LDAP_DOMAIN), so the base entry must NOT
+# appear here. The Playwright specs pin these DNs:
+#   - users.spec.ts / directory-search-edit.spec.ts / password-reset.spec.ts:
+#     cn=seedAlice,ou=seed,ou=test,dc=test,dc=local (3 inetOrgPerson entries
+#     under ou=seed)
+#   - groups.spec.ts: creates cn=e2e-smoke-group-*,ou=groups,dc=test,dc=local
+#     with seedAlice as member, so ou=groups must exist and be writable.
+
+dn: ou=test,dc=test,dc=local
+objectClass: organizationalUnit
+ou: test
+
+dn: ou=seed,ou=test,dc=test,dc=local
+objectClass: organizationalUnit
+ou: seed
+
+dn: cn=seedAlice,ou=seed,ou=test,dc=test,dc=local
+objectClass: inetOrgPerson
+cn: seedAlice
+sn: Seed
+givenName: Alice
+uid: seedAlice
+mail: seed.alice@test.local
+userPassword: seedAlice-pw
+
+dn: cn=seedBob,ou=seed,ou=test,dc=test,dc=local
+objectClass: inetOrgPerson
+cn: seedBob
+sn: Seed
+givenName: Bob
+uid: seedBob
+mail: seed.bob@test.local
+userPassword: seedBob-pw
+
+dn: cn=seedCarol,ou=seed,ou=test,dc=test,dc=local
+objectClass: inetOrgPerson
+cn: seedCarol
+sn: Seed
+givenName: Carol
+uid: seedCarol
+mail: seed.carol@test.local
+userPassword: seedCarol-pw
+
+dn: ou=groups,dc=test,dc=local
+objectClass: organizationalUnit
+ou: groups

@@ -5,8 +5,9 @@
  * Why this exists: when iterating on Playwright tests locally we often want
  * the backend running long-term (so `reuseExistingServer: true` in
  * playwright.config.ts kicks in and each test run is fast). Running
- * `./mvnw spring-boot:test-run -pl ee -Dspring-boot.run.profiles=e2e` by
- * hand is two layers of platform-specific quoting; this wrapper does the
+ * `./mvnw spring-boot:test-run -pl distribution/community-plus-isva
+ * -Dspring-boot.run.profiles=e2e` by hand is two layers of
+ * platform-specific quoting; this wrapper does the
  * right thing on Windows / macOS / Linux without the operator caring.
  *
  * Usage (from frontend/):
@@ -50,20 +51,39 @@ const wrapper = hasSystemMvn()
   ? 'mvn'
   : path.join(projectRoot, isWin ? 'mvnw.cmd' : 'mvnw')
 
+// The E2E backend is the assembled community-plus-isva distribution (its
+// test tree carries E2eTestApplication + the Testcontainers harness). With
+// `-pl <module>` the reactor holds only that module, so its siblings (core,
+// addons/isva, the parent) must be resolvable from ~/.m2 — the install step
+// below guarantees that and is cheap when nothing changed.
+const E2E_MODULE = 'distribution/community-plus-isva'
+
+const installArgs = [
+  '--batch-mode', '--no-transfer-progress', '-DskipTests',
+  '-pl', E2E_MODULE, '-am', 'install',
+]
+
 const args = [
   'spring-boot:test-run',
-  '-pl', 'ee',
+  '-pl', E2E_MODULE,
   '-Dspring-boot.run.profiles=e2e',
 ]
 
 console.log(`[e2e:server] cwd=${projectRoot}`)
+console.log(`[e2e:server] preparing reactor deps: "${wrapper}" ${installArgs.join(' ')}`)
+try {
+  execFileSync(wrapper, installArgs, { cwd: projectRoot, stdio: 'inherit', shell: isWin })
+} catch (err) {
+  console.error('[e2e:server] dependency install failed — cannot start the backend.')
+  throw err
+}
 console.log(`[e2e:server] running: "${wrapper}" ${args.join(' ')}`)
 console.log()
 // Surface the e2e profile's hardcoded credentials so a developer who
 // shells in via the browser doesn't have to grep application-e2e.yml.
 // These are intentionally separate from the docker stack's .env values
 // — different environments, different fixtures.
-console.log('[e2e:server] e2e profile credentials (from ee/src/test/resources/application-e2e.yml):')
+console.log(`[e2e:server] e2e profile credentials (from ${E2E_MODULE}/src/test/resources/application-e2e.yml):`)
 console.log('[e2e:server]   username: superadmin')
 console.log('[e2e:server]   password: test-superadmin-pw')
 console.log('[e2e:server]   (NOTE: differs from .env BOOTSTRAP_SUPERADMIN_PASSWORD used by the docker stack.)')
