@@ -117,7 +117,7 @@ public class SuperadminController {
     /** Replace the account's granted permission set. Refuses to drop the last owner. */
     @PutMapping("/{id}/permissions")
     public SuperadminPermissionsDto setPermissions(@PathVariable UUID id,
-                                                   @RequestBody UpdateSuperadminPermissionsRequest req,
+                                                   @Valid @RequestBody UpdateSuperadminPermissionsRequest req,
                                                    @AuthenticationPrincipal AuthPrincipal principal) {
         List<String> keys = req.permissions() == null ? List.of() : req.permissions();
         Set<SuperadminPermission> desired = keys.stream()

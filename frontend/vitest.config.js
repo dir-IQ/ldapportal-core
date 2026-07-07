@@ -30,7 +30,7 @@ export default mergeConfig(
       // gate adoption later when the team wants it.
       coverage: {
         provider: 'v8',
-        reporter: ['text', 'html'],
+        reporter: ['text', 'html', 'lcov'],
         include: ['src/**/*.{js,ts,vue}'],
         exclude: [
           'src/**/*.spec.{js,ts}',

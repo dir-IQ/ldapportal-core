@@ -40,6 +40,9 @@ vi.mock('@/stores/preferences', () => ({
   usePreferencesStore: () => ({
     read: (_ns: string, _key: string, fallback: unknown) => fallback,
     write: vi.fn(),
+    // doSavePrefs awaits flush() so an explicit Save is durable (the
+    // debounced write dies with the document on navigation otherwise).
+    flush: vi.fn().mockResolvedValue(undefined),
   }),
 }))
 

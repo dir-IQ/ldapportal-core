@@ -225,7 +225,7 @@ export const useAuthStore = defineStore('auth', () => {
    * next visit. Always clears local principal even if the API call fails.
    */
   async function logout() {
-    let logoutUrl = null
+    let logoutUrl
     // Flush any debounced preference writes before tearing down, then clear the
     // store so the next user on this browser doesn't inherit the document.
     const prefs = usePreferencesStore()

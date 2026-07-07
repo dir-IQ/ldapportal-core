@@ -27,7 +27,9 @@ test.describe('ISVA profile override control plane @smoke', () => {
       {
         data: {
           name,
-          targetUserDn: 'ou=people,dc=example,dc=com',
+          // Must exist in the harness fixture (baseline.ldif) — profile
+          // create validates the target OU exists in the directory.
+          targetUserDn: 'ou=people,dc=test,dc=local',
           objectClassNames: ['inetOrgPerson'],
           rdnAttribute: 'uid',
         },

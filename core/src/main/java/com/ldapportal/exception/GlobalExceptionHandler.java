@@ -11,6 +11,7 @@ import org.springframework.http.ProblemDetail;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -65,6 +66,19 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MissingServletRequestParameterException.class)
     public ProblemDetail handleMissingParam(MissingServletRequestParameterException ex) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+
+    /**
+     * Unparseable request body — malformed JSON or a value Jackson can't bind
+     * (e.g. an invalid enum constant). Without this mapping the catch-all
+     * below turns a client mistake into a 500. The raw parser message is
+     * logged but kept out of the response (it leaks class/package names).
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ProblemDetail handleUnreadableBody(HttpMessageNotReadableException ex) {
+        log.debug("Unreadable request body: {}", ex.getMessage());
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
+                "Request body is malformed or contains an invalid value");
     }
 
     @ExceptionHandler(BadCredentialsException.class)

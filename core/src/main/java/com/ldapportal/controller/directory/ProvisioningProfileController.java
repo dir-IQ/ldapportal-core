@@ -174,7 +174,7 @@ public class ProvisioningProfileController {
     @PreAuthorize("hasRole('SUPERADMIN')")
     public Map<String, Integer> applySelectiveGroupChanges(
             @PathVariable UUID directoryId,
-            @RequestBody SelectiveGroupChangeRequest request,
+            @Valid @RequestBody SelectiveGroupChangeRequest request,
             @AuthenticationPrincipal AuthPrincipal principal) {
         int applied = service.applySelectiveGroupChanges(directoryId, request, principal);
         return Map.of("applied", applied);

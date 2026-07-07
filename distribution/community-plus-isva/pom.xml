@@ -61,6 +61,20 @@
             <artifactId>archunit-junit5</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- E2E harness (spring-boot:test-run): Testcontainers-backed
+             Postgres + OpenLDAP so the Playwright suite in frontend/tests/e2e
+             drives a real assembled backend. See src/test/java/.../e2e. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -76,18 +90,26 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <configuration>
-                    <mainClass>com.ldapportal.LDAPPortalApplication</mainClass>
-                </configuration>
                 <executions>
                     <execution>
                         <id>build-info</id>
                         <goals><goal>build-info</goal></goals>
                     </execution>
                     <execution>
+                        <!-- Merges with spring-boot-starter-parent's managed
+                             `repackage` execution (same id). mainClass is scoped
+                             here (Start-Class in the fat JAR) rather than at the
+                             plugin level so that spring-boot:test-run deduces its
+                             main from the test classpath — the E2eTestApplication
+                             launcher — instead of being pinned to the production
+                             entrypoint. -->
+                        <id>repackage</id>
                         <goals>
                             <goal>repackage</goal>
                         </goals>
+                        <configuration>
+                            <mainClass>com.ldapportal.LDAPPortalApplication</mainClass>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>

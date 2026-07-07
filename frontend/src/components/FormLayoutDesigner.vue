@@ -47,7 +47,7 @@
     <div v-if="showPreview" class="border border-blue-200 bg-blue-50/30 rounded-xl p-4">
       <h4 class="text-sm font-semibold text-blue-800 mb-3">Form Preview</h4>
       <div class="bg-white rounded-lg border border-gray-200 p-4 space-y-2">
-        <template v-for="(section, sIdx) in previewSections" :key="section.id">
+        <template v-for="section in previewSections" :key="section.id">
           <fieldset v-if="section.fields.length" class="space-y-2">
             <legend v-if="section.name" class="text-sm font-semibold text-gray-800 pb-1 border-b border-gray-100 w-full mb-2">{{ section.name }}</legend>
             <div class="grid grid-cols-6 gap-2">

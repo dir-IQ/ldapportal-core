@@ -308,7 +308,7 @@ public class BrowseController {
     public LdifImportResult applyPreview(@PathVariable UUID directoryId,
                                          @PathVariable UUID previewId,
                                          @AuthenticationPrincipal AuthPrincipal principal,
-                                         @RequestBody(required = false) ApplyLdifPreviewRequest body) {
+                                         @Valid @RequestBody(required = false) ApplyLdifPreviewRequest body) {
         DirectoryConnection dc = loadDirectory(directoryId);
         boolean suppressVendorOverlay = body != null && body.suppressVendorOverlay();
         java.util.Set<Integer> excludeOverlayRows =

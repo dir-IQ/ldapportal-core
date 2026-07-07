@@ -12,9 +12,8 @@ vi.mock('./client', () => ({
   },
 }))
 
-// eslint-disable-next-line import/first
+// Imports after vi.mock are fine — Vitest hoists the mock above them.
 import client from './client'
-// eslint-disable-next-line import/first
 import { updateEntry, getEntry, type AttributeModification } from './ldapEntry'
 
 const directoryId = '11111111-2222-3333-4444-555555555555'
