@@ -50,7 +50,7 @@
 | Backend | **JDK 21** (Temurin). Multi-module Maven reactor; the pipeline uses a preinstalled `mvn` from `maven:3.9-eclipse-temurin-21` (matching upstream CI, which avoids the wrapper bootstrap download). |
 | Frontend | **Node 20** (CI baseline; `package.json` engines allow `^20.19 \|\| >=22.12`; the frontend image builds on `node:22-alpine`). npm + Vite. |
 | Tests | Backend tests use in-memory **H2** (PostgreSQL-compat, Flyway disabled) — **no Postgres in CI**. Postgres is only needed at **runtime**. |
-| Image jobs | The `security` (Trivy) and `publish` (image) jobs need a **Docker-capable runner**: Docker-in-Docker (privileged) or Kaniko. Tag a privileged runner and pin the jobs to it if your instance segregates runners. |
+| Image jobs | The `security` (Trivy) job needs a **Docker-capable runner** (Docker-in-Docker, privileged). The `publish` (image) backend job builds rootless with **Buildah** — no privileged runner required. Tag a privileged runner and pin the Docker-dependent jobs to it if your instance segregates runners. |
 
 There are no GitHub-specific Maven repositories in `pom.xml`; dependencies
 resolve from **Maven Central** and the **npm registry** under normal config.
