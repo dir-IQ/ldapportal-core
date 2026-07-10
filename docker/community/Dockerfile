@@ -7,7 +7,7 @@
 # license-clean.
 #
 # Multi-stage: the JAR is compiled in the `build` stage below, so a CI runner
-# needs only Docker/Kaniko — no JDK or Maven toolchain (see
+# needs only a container builder (Docker/Buildah) — no JDK or Maven toolchain (see
 # .github/workflows/ghcr-publish.yml and .gitlab-ci.yml). Build context is the
 # repo root so the reactor POMs and .git are reachable.
 #
@@ -22,7 +22,7 @@ WORKDIR /build
 # Dependency layer first: copy every reactor POM (all four child modules must be
 # present or the aggregator fails to parse) plus .mvn, then prime the local repo.
 # This layer is keyed only on the POMs, so ordinary source edits reuse the cached
-# dependency download instead of re-fetching it — the Docker/Kaniko equivalent of
+# dependency download instead of re-fetching it — the Docker/Buildah equivalent of
 # the ~/.m2 cache the old setup-java / .maven jobs used to persist.
 COPY .mvn/ .mvn/
 COPY pom.xml ./

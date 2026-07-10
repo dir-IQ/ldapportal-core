@@ -1,6 +1,6 @@
 # Build-context hygiene for the backend images (context = repo root). The JAR is
 # compiled inside the Dockerfile's Maven stage, so no host build outputs should
-# enter the context — they'd bloat the upload to the daemon/Kaniko and could
+# enter the context — they'd bloat the upload to the daemon/builder and could
 # shadow the freshly built artifact. (The frontend image has its own context,
 # frontend/, and is unaffected by this file.)
 

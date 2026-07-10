@@ -15,9 +15,9 @@
 #   - Maven mirror:  mount ~/.m2/settings.xml (Nexus/Artifactory) or set MAVEN_MIRROR.
 #   - npm registry:  commit frontend/.npmrc with `registry=...`.
 #   - base images:   repoint the image:/services: refs below at your mirror.
-#   - runner:        publish-backend builds with Kaniko (no privileged runner).
-#                    The Trivy scan (trivy-scan) still uses Docker-in-Docker
-#                    (privileged) to load the built image for scanning.
+#   - runner:        publish-backend builds with Buildah (rootless, no privileged
+#                    runner). The Trivy scan (trivy-scan) still uses
+#                    Docker-in-Docker (privileged) to load the built image for scanning.
 
 stages:
   - test
@@ -240,45 +240,54 @@ trivy-scan:
 
 # ── publish stage (tags only) ─────────────────────────────────────────────────
 # Build + push images to the project's GitLab Container Registry. The backend
-# job builds with Kaniko — it compiles the JAR inside the Dockerfile's Maven
-# stage (no separate .maven JAR job) and needs no privileged Docker-in-Docker
-# daemon. Tag scheme mirrors ghcr-publish.yml's docker/metadata-action:
+# job builds with Buildah — it compiles the JAR inside the Dockerfile's Maven
+# stage (no separate .maven JAR job) and runs rootless, needing no privileged
+# Docker-in-Docker daemon. Tag scheme mirrors ghcr-publish.yml's
+# docker/metadata-action:
 # vX.Y.Z -> :X.Y.Z (immutable), :X.Y (moving minor), and :latest.
 publish-backend:
   stage: publish
-  # kaniko :debug ships a /busybox shell so the `script` below runs. Pinned;
+  # Buildah's official image ships everything needed to build rootless. Pinned;
   # renovate bumps it like any other image ref.
-  image:
-    name: gcr.io/kaniko-project/executor:v1.23.2-debug
-    entrypoint: [""]
+  image: quay.io/buildah/stable:v1.37.5
   interruptible: false
   parallel:
     matrix:
       - EDITION: [community, community-plus-isva]
   # Self-contained like publish-frontend: no JAR artifact to wait on.
   needs: []
+  variables:
+    # vfs works without the extra privileges/kernel support overlayfs wants, so
+    # the build runs on an unprivileged shared runner. `docker` format keeps the
+    # pushed manifests Docker v2s2 (matches Kaniko/docker build output).
+    STORAGE_DRIVER: vfs
+    BUILDAH_FORMAT: docker
   script:
     - IMAGE="$CI_REGISTRY_IMAGE/ldapportal-$EDITION"
     - VERSION="${CI_COMMIT_TAG#v}"
     - MINOR="${VERSION%.*}"
-    # GitLab Container Registry auth for Kaniko (no `docker login` / dind).
-    - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    # GitLab Container Registry auth for Buildah (no `docker login` / dind).
+    - buildah login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
     # Context is the repo root (includes .git, so git-commit-id bakes the SHA).
-    # --cache + --cache-repo persist the Maven-dependency and base layers to the
-    # registry, replacing the .m2 cache the deleted package-backend job kept
-    # warm. --build-arg IMAGE_VERSION stamps the release version into the image
-    # (VersionController /version -> sidebar build stamp), matching ghcr-publish.yml.
+    # --layers + --cache-to/--cache-from persist the Maven-dependency and base
+    # layers to the registry, replacing the .m2 cache the deleted package-backend
+    # job kept warm. --build-arg IMAGE_VERSION stamps the release version into the
+    # image (VersionController /version -> sidebar build stamp), matching
+    # ghcr-publish.yml. Tag all three refs on one build, then push each.
     - >
-      /kaniko/executor
-      --context "$CI_PROJECT_DIR"
-      --dockerfile "docker/$EDITION/Dockerfile"
+      buildah bud
+      --file "docker/$EDITION/Dockerfile"
       --build-arg "IMAGE_VERSION=$VERSION"
-      --cache=true
-      --cache-repo "$IMAGE/cache"
-      --destination "$IMAGE:$VERSION"
-      --destination "$IMAGE:$MINOR"
-      --destination "$IMAGE:latest"
+      --layers
+      --cache-to "$IMAGE/cache"
+      --cache-from "$IMAGE/cache"
+      --tag "$IMAGE:$VERSION"
+      --tag "$IMAGE:$MINOR"
+      --tag "$IMAGE:latest"
+      "$CI_PROJECT_DIR"
+    - buildah push "$IMAGE:$VERSION"
+    - buildah push "$IMAGE:$MINOR"
+    - buildah push "$IMAGE:latest"
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]/'
 
