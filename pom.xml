@@ -91,6 +91,24 @@
              All six are fixed in 10.1.55. Drop this override when the
              Spring Boot BOM bumps past 10.1.55. -->
         <tomcat.version>10.1.55</tomcat.version>
+        <!-- Override Spring Boot BOM's Jackson → 2.21.5 to clear CVE-2026-54515
+             (jackson-databind re-exposes @JsonIgnoreProperties-ignored fields
+             when @JsonFormat(ACCEPT_CASE_INSENSITIVE_PROPERTIES) is set, because
+             the case-insensitivity rebuild restores the unfiltered property map).
+             The 2.19.x line's only fix is 2.21.5. Drop this override when the
+             Spring Boot BOM bumps past 2.21.5. -->
+        <jackson-bom.version>2.21.5</jackson-bom.version>
+        <!-- Override Spring Boot BOM's commons-lang3 → 3.18.0 to clear
+             CVE-2025-48924 (uncontrolled recursion: ClassUtils.getClass can
+             throw StackOverflowError on very long inputs). Drop this override
+             when the Spring Boot BOM bumps past 3.18.0. -->
+        <commons-lang3.version>3.18.0</commons-lang3.version>
+        <!-- Override Spring Boot BOM's logback → 1.5.34 to clear CVE-2026-10532
+             (HardenedObjectInputStream object-injection via logback-core's
+             SimpleSocketServer/SimpleSSLSocketServer receivers — not reachable
+             in this app, but clears the image scan). Drop this override when the
+             Spring Boot BOM bumps past 1.5.34. -->
+        <logback.version>1.5.34</logback.version>
         <!-- Override byte-buddy + mockito for Java 25 compatibility -->
         <byte-buddy.version>1.18.7</byte-buddy.version>
         <mockito.version>5.23.0</mockito.version>
