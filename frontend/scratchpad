@@ -1,0 +1,46 @@
+$ buildah bud -f frontend/Dockerfile -t ldapportal-frontend .
+[1/2] STEP 1/6: FROM node:22-alpine AS build
+Resolving "node" using unqualified-search registries (/etc/containers/registries.conf)
+Trying to pull docker.io/library/node:22-alpine...
+Getting image source signatures
+Copying blob sha256:55afa1ecc21d2bb5e5045f32dafee56272ffd89860bac26f6c32123439af26a4
+Copying blob sha256:3f4c164634d251a8b256151a9e1c1d3e5c5b21f1974f00a213875e66e3fa0801
+Copying blob sha256:1d4d101ceaad39fb56dcac0bb6cc291e6cdec3b711786f0c82b050b5b5b85690
+Copying blob sha256:d10ff586f6bdbdd6000a70a914e56bf05bedc78de3311d08a953643982d84e23
+Copying config sha256:bd168dc5d9d77ba5687dc7a31cc0f507c35b66c1d6af5f910154d3881df7c0ee
+Writing manifest to image destination
+[1/2] STEP 2/6: WORKDIR /app
+[1/2] STEP 3/6: COPY frontend/package.json frontend/package-lock.json ./
+[1/2] STEP 4/6: RUN npm ci
+npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+added 436 packages, and audited 437 packages in 14s
+110 packages are looking for funding
+  run `npm fund` for details
+5 vulnerabilities (2 low, 2 moderate, 1 high)
+To address all issues, run:
+  npm audit fix
+Run `npm audit` for details.
+npm notice
+npm notice New major version of npm available! 10.9.8 -> 12.0.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.1
+npm notice To update run: npm install -g npm@12.0.1
+npm notice
+[1/2] STEP 5/6: COPY . .
+[1/2] STEP 6/6: RUN npm run build
+> ldap-portal-ui@0.0.0 build
+> vite build
+vite v7.3.6 building client environment for production...
+✓ 0 modules transformed.
+✗ Build failed in 21ms
+error during build:
+Could not resolve entry module "index.html".
+    at getRollupError (file:///app/node_modules/rollup/dist/es/shared/parseAst.js:402:41)
+    at error (file:///app/node_modules/rollup/dist/es/shared/parseAst.js:398:42)
+    at ModuleLoader.loadEntryModule (file:///app/node_modules/rollup/dist/es/shared/node-entry.js:21731:20)
+    at async Promise.all (index 0)
+subprocess exited with status 1
+subprocess exited with status 1
+Error: building at STEP "RUN npm run build": exit status 1
+Cleaning up project directory and file based variables
+00:01
+ERROR: Job failed: command terminated with exit code 1
