@@ -108,7 +108,7 @@
              SimpleSocketServer/SimpleSSLSocketServer receivers — not reachable
              in this app, but clears the image scan). Drop this override when the
              Spring Boot BOM bumps past 1.5.34. -->
-        <logback.version>1.5.34</logback.version>
+        <logback.version>1.5.38</logback.version>
         <!-- Override byte-buddy + mockito for Java 25 compatibility -->
         <byte-buddy.version>1.18.7</byte-buddy.version>
         <mockito.version>5.23.0</mockito.version>
