@@ -17,6 +17,7 @@ FROM nginx:alpine
 # Default BACKEND_APP suits docker-compose (the backend service is "app");
 # override it on Kubernetes/Fly. NGINX_ENVSUBST_FILTER restricts the stock
 # entrypoint's envsubst to just BACKEND_APP so nginx runtime vars survive.
+RUN apk add --no-cache --upgrade 'expat>=2.8.2-r0'
 ENV BACKEND_APP=app
 ENV NGINX_ENVSUBST_FILTER=BACKEND_APP
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
