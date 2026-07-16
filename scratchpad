@@ -1,9 +1,57 @@
-$ kubectl get csidrivers
-NAME                       ATTACHREQUIRED   PODINFOONMOUNT   STORAGECAPACITY   TOKENREQUESTS                              REQUIRESREPUBLISH   MODES        AGE
-efs.csi.aws.com            false            false            false             <unset>                                    false               Persistent   148d
-secrets-store.csi.k8s.io   false            true             false             sts.amazonaws.com,pods.eks.amazonaws.com   false               Ephemeral    85d
-$ kubectl get csinode ip-10-179-13-24.us-gov-west-1.compute.internal -o yaml | grep -A3 drivers
-  drivers:
-  - name: efs.csi.aws.com
-    nodeID: i-09c872000add69555
-    topologyKeys:
+# SPDX-License-Identifier: Apache-2.0
+#
+# OPTIONAL, DEV/TEST ONLY — a working EFS StorageClass for the in-cluster
+# Postgres in postgres-dev.yaml, for clusters that have the EFS CSI driver
+# (efs.csi.aws.com) but NOT the EBS CSI driver. Without a StorageClass that
+# names a real fileSystemId, the dev Postgres PVC stays Pending forever
+# ("Failed to resolve filesystem Id ... must be specified").
+#
+# NOT for production. EFS is NFS; Postgres on NFS carries fsync/locking
+# risk. Prefer managed RDS (see configmap.yaml) or EBS-backed gp2/gp3 with
+# the aws-ebs-csi-driver addon for anything real.
+#
+# EDIT BEFORE APPLYING:
+#   fileSystemId → your EFS filesystem id (fs-xxxxxxxx), in the cluster VPC.
+#     aws efs describe-file-systems --query 'FileSystems[].FileSystemId'
+#
+# AWS-side prerequisites (otherwise the PVC hangs or provisioning is denied):
+#   1. The EFS filesystem has mount targets in the subnets your nodes run in.
+#   2. Those mount targets' security group allows inbound NFS (TCP 2049)
+#      from the node/pod security group.
+#   3. The EFS CSI controller's IAM role can create access points
+#      (elasticfilesystem:CreateAccessPoint / DescribeAccessPoints /
+#      DeleteAccessPoint / DescribeFileSystems / DescribeMountTargets).
+#
+# Apply on its own, then point postgres-dev.yaml at it by setting, under
+# volumeClaimTemplates[].spec:
+#   storageClassName: efs-ldapportal
+# Because a StatefulSet PVC's storageClassName is immutable, delete any
+# existing PVC first:
+#   kubectl -n <ns> delete statefulset ldapportal-db --cascade=orphan
+#   kubectl -n <ns> delete pvc data-ldapportal-db-0
+#   kubectl -n <ns> apply -f deploy/aws/eks/optional/postgres-dev.yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: efs-ldapportal
+  labels:
+    app.kubernetes.io/name: ldapportal
+    app.kubernetes.io/component: database
+provisioner: efs.csi.aws.com
+parameters:
+  # Dynamically create one EFS access point per PVC.
+  provisioningMode: efs-ap
+  fileSystemId: fs-REPLACE_WITH_EFS_ID
+  directoryPerms: "700"
+  # The access-point POSIX owner. Must match what the Postgres image writes
+  # its data directory as, or the container fails with "data directory ...
+  # has wrong ownership". These align with the fsGroup: 999 set on the
+  # StatefulSet pod in postgres-dev.yaml. If the pod crash-loops on an
+  # ownership/permission error, read `kubectl logs ldapportal-db-0`, adjust
+  # uid/gid to the uid the image actually runs as, then recreate the PVC
+  # (access-point parameters are fixed at creation time).
+  uid: "999"
+  gid: "999"
+# EFS is not AZ-bound, so there is no benefit to WaitForFirstConsumer.
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
