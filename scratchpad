@@ -1,1 +1,3 @@
-Volume provisioning failed with infeasible error. Retries will be delayed. rpc error: code = InvalidArgument desc = Failed to resolve filesystem Id one of fileSystemId, fileSystemIdConfigRef, or fileSystemIdSecretRef must be specified
+$ kubectl -n amp-ra get pvc data-ldapportal-db-0
+NAME                   STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+data-ldapportal-db-0   Pending                                      gp2            <unset>                 6m57s
