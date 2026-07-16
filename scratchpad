@@ -1,1 +1,11 @@
-rpc error: code = Internal desc = Failed to create Access point in File System fs-0d5517a180b01e309 : Failed to create access point: operation error EFS: CreateAccessPoint, get identity: get credentials: failed to refresh cached credentials, failed to retrieve credentials, operation error STS: AssumeRoleWithWebIdentity, https response error StatusCode: 403, RequestID: b2756a91-3a1f-4a47-81f0-8c3d964461fd, api error AccessDenied: Not authorized to perform sts:AssumeRoleWithWebIdentity
+# 1. What role is the controller SA pointing at?
+kubectl -n kube-system get sa efs-csi-controller-sa -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}{"\n"}'
+
+# 2. Is the cluster's OIDC provider registered in IAM? (GovCloud partition!)
+aws eks describe-cluster --name <cluster> --region us-gov-west-1 \
+  --query 'cluster.identity.oidc.issuer' --output text
+aws iam list-open-id-connect-providers   # the issuer above must appear here
+
+# 3. Which SA are the controller pods actually using?
+kubectl -n kube-system get deploy efs-csi-controller \
+  -o jsonpath='{.spec.template.spec.serviceAccountName}{"\n"}'
