@@ -1,11 +1,6 @@
-# 1. What role is the controller SA pointing at?
-kubectl -n kube-system get sa efs-csi-controller-sa -o jsonpath='{.metadata.annotations.eks\.amazonaws\.com/role-arn}{"\n"}'
-
-# 2. Is the cluster's OIDC provider registered in IAM? (GovCloud partition!)
-aws eks describe-cluster --name <cluster> --region us-gov-west-1 \
-  --query 'cluster.identity.oidc.issuer' --output text
-aws iam list-open-id-connect-providers   # the issuer above must appear here
-
-# 3. Which SA are the controller pods actually using?
-kubectl -n kube-system get deploy efs-csi-controller \
-  -o jsonpath='{.spec.template.spec.serviceAccountName}{"\n"}'
+Events:
+  Type     Reason            Age                From               Message
+  ----     ------            ----               ----               -------
+  Warning  FailedScheduling  16m (x3 over 16m)  default-scheduler  0/3 nodes are available: pod has unbound immediate PersistentVolumeClaims. not found
+  Normal   Scheduled         16m                default-scheduler  Successfully assigned amp-ra/ldapportal-db-0 to ip-10-179-13-24.us-gov-west-1.compute.internal
+  Warning  FailedMount       93s (x7 over 14m)  kubelet            MountVolume.SetUp failed for volume "pvc-7fd2c87d-4cdc-454a-8486-7db36a53e872" : rpc error: code = DeadlineExceeded desc = context deadline exceeded
