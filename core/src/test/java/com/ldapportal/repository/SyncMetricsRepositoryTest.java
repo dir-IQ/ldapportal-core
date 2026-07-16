@@ -5,6 +5,7 @@ import com.ldapportal.entity.RecomputeRequest;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.entity.enums.SyncChangelogHealth;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
@@ -31,6 +32,21 @@ class SyncMetricsRepositoryTest {
 
     @Autowired private SyncLinkRepository syncLinkRepo;
     @Autowired private RecomputeRequestRepository recomputeRepo;
+
+    /**
+     * This runs {@code @DataJpaTest} with {@code replace = NONE}, i.e. against the
+     * shared JVM-wide H2 test database ({@code jdbc:h2:mem:ldapportal-test;
+     * DB_CLOSE_DELAY=-1}). Committed rows written by other {@code @SpringBootTest}
+     * suites in the same run therefore remain visible here and would break these
+     * "empty set" / exact-aggregate assertions depending on test order. Start every
+     * test from a known clean slate for the two tables it queries, mirroring the
+     * {@code @BeforeEach} cleanup already used by {@code SyncChangelogPollerTest}.
+     */
+    @BeforeEach
+    void clearSharedState() {
+        syncLinkRepo.deleteAll();
+        recomputeRepo.deleteAll();
+    }
 
     private SyncLink link(SyncCaptureMode mode, SyncChangelogHealth health,
                           Long sourceHead, Long cursor, boolean enabled) {
