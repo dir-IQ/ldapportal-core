@@ -40,3 +40,26 @@ curl -i -X POST http://localhost:8080/api/v1/auth/login \
 kubectl -n amp-ra exec ldapportal-db-0 -- psql -U ldapportal -d ldapportal -c \
   "DELETE FROM superadmin_permission_grants; DELETE FROM accounts WHERE role='SUPERADMIN' AND auth_type='LOCAL';"
 kubectl -n amp-ra rollout restart deploy/ldapportal-backend
+
+$ kubectl -n amp-ra port-forward deploy/ldapportal-backend 8080:8080 > /tmp/pf.log 2>&1 &  # collapsed multi-line command
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0   0     0   0     0     0     0  --:--:-- --:--:-- --:--:--     0HTTP/1.1 400 
+100   193   0   142 100    51  1460   524  --:--:-- --:--:-- --:--:--  1969
+Vary: Origin
+Vary: Access-Control-Request-Method
+Vary: Access-Control-Request-Headers
+X-Correlation-Id: a99f7cfc-0e70-46bd-beab-696bf6e092af
+X-Content-Type-Options: nosniff
+X-XSS-Protection: 0
+Cache-Control: no-cache, no-store, max-age=0, must-revalidate
+Pragma: no-cache
+Expires: 0
+X-Frame-Options: DENY
+Content-Security-Policy: default-src 'none'; frame-ancestors 'none'
+Content-Type: application/problem+json
+Transfer-Encoding: chunked
+Date: Fri, 17 Jul 2026 05:27:20 GMT
+Connection: close
+{"type":"about:blank","title":"Bad Request","status":400,"detail":"Last unit does not have enough valid bits","instance":"/api/v1/auth/login"}
+
