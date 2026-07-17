@@ -1,6 +1,36 @@
-Events:
-  Type     Reason            Age                From               Message
-  ----     ------            ----               ----               -------
-  Warning  FailedScheduling  16m (x3 over 16m)  default-scheduler  0/3 nodes are available: pod has unbound immediate PersistentVolumeClaims. not found
-  Normal   Scheduled         16m                default-scheduler  Successfully assigned amp-ra/ldapportal-db-0 to ip-10-179-13-24.us-gov-west-1.compute.internal
-  Warning  FailedMount       93s (x7 over 14m)  kubelet            MountVolume.SetUp failed for volume "pvc-7fd2c87d-4cdc-454a-8486-7db36a53e872" : rpc error: code = DeadlineExceeded desc = context deadline exceeded
+# node's AZ
+kubectl get node ip-10-179-13-24.us-gov-west-1.compute.internal \
+  -o jsonpath='{.metadata.labels.topology\.kubernetes\.io/zone}{"\n"}'
+
+# mount targets: AZ, IP, subnet
+aws efs describe-mount-targets --file-system-id fs-0d5517a180b01e309 \
+  --region us-gov-west-1 \
+  --query 'MountTargets[].{MT:MountTargetId,AZ:AvailabilityZoneName,IP:IpAddress,Subnet:SubnetId}'
+
+
+------
+
+
+aws efs describe-mount-target-security-groups \
+  --mount-target-id <fsmt-in-node-AZ> --region us-gov-west-1
+
+aws eks describe-cluster --name <cluster> --region us-gov-west-1 \
+  --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' --output text
+
+aws ec2 authorize-security-group-ingress \
+  --group-id <mount-target-sg> --protocol tcp --port 2049 \
+  --source-group <node-sg> --region us-gov-west-1
+
+
+-------
+
+
+kubectl -n kube-system get pod -l app=efs-csi-node -o wide | grep ip-10-179-13-24
+kubectl -n kube-system exec <that-efs-csi-node-pod> -c efs-plugin -- \
+  sh -c 'timeout 3 sh -c "cat </dev/null >/dev/tcp/<mount-target-IP>/2049" && echo OPEN || echo BLOCKED'
+
+------
+
+
+kubectl -n amp-ra delete pod ldapportal-db-0
+kubectl -n amp-ra get pod ldapportal-db-0 -w
