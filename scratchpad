@@ -31,3 +31,12 @@ kubectl -n amp-ra logs -f deploy/ldapportal-backend | grep -i bootstrap   # expe
 That clears the account (and its permission grant, which has an FK to it), so existingCount is 0 on the next boot and bootstrap re-creates superadmin with your current password and owner permissions.
 
 Run the two diagnostic commands and tell me which log line you get — that pins whether it's "inert secret" (reset path) or "value mismatch" (clean-secret path). My strong bet, given all the DB recreation: "Bootstrap skipped."
+
+kubectl -n amp-ra port-forward deploy/ldapportal-backend 8080:8080 &
+curl -i -X POST http://localhost:8080/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"superadmin","password":"YOUR_PASSWORD"}'
+
+kubectl -n amp-ra exec ldapportal-db-0 -- psql -U ldapportal -d ldapportal -c \
+  "DELETE FROM superadmin_permission_grants; DELETE FROM accounts WHERE role='SUPERADMIN' AND auth_type='LOCAL';"
+kubectl -n amp-ra rollout restart deploy/ldapportal-backend
