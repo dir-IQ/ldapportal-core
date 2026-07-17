@@ -30,6 +30,14 @@
 #   kubectl -n <ns> delete statefulset ldapportal-db --cascade=orphan
 #   kubectl -n <ns> delete pvc data-ldapportal-db-0
 #   kubectl -n <ns> apply -f deploy/aws/eks/optional/postgres-dev.yaml
+#
+# Two EFS-specific prerequisites the backing manifest/network otherwise miss:
+#   - The postgres container must run as uid/gid 999 (the access-point owner),
+#     or its root entrypoint crash-loops on "chown ... Operation not permitted".
+#     Uncomment the securityContext block in postgres-dev.yaml.
+#   - The EFS mount target's security group must allow inbound NFS (TCP 2049)
+#     from the node/pod security group, or the pod hangs on MountVolume.SetUp
+#     with "context deadline exceeded".
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
