@@ -34,3 +34,9 @@ kubectl -n kube-system exec <that-efs-csi-node-pod> -c efs-plugin -- \
 
 kubectl -n amp-ra delete pod ldapportal-db-0
 kubectl -n amp-ra get pod ldapportal-db-0 -w
+
+
+
+kubectl -n amp-ra logs ldapportal-db-0 --previous
+kubectl -n amp-ra logs ldapportal-db-0
+kubectl -n amp-ra describe pod ldapportal-db-0 | grep -A6 -iE "last state|exit code|reason"
