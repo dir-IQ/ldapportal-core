@@ -63,3 +63,7 @@ Date: Fri, 17 Jul 2026 05:27:20 GMT
 Connection: close
 {"type":"about:blank","title":"Bad Request","status":400,"detail":"Last unit does not have enough valid bits","instance":"/api/v1/auth/login"}
 
+$ kubectl -n amp-ra logs -l app.kubernetes.io/component=backend  --prefix | grep -iE "Failed login|Bootstrap" # collapsed multi-line command
+[pod/ldapportal-backend-74d54f9d9c-cpqzh/app] {"timestamp":"2026-07-17T04:48:49.861870164Z","message":"Failed login attempt for username 'superadmin'","logger_name":"com.ldapportal.auth.AuthenticationService","thread_name":"http-nio-8080-exec-9","level":"WARN","level_value":30000,"logLevel":"INFO","appName":"ldap-portal","application":"ldap-portal"}
+[pod/ldapportal-backend-74d54f9d9c-cpqzh/app] {"timestamp":"2026-07-17T04:48:52.266502228Z","message":"Failed login attempt for username 'superadmin'","logger_name":"com.ldapportal.auth.AuthenticationService","thread_name":"http-nio-8080-exec-1","level":"WARN","level_value":30000,"logLevel":"INFO","appName":"ldap-portal","application":"ldap-portal"}
+[pod/ldapportal-backend-74d54f9d9c-cpqzh/app] {"timestamp":"2026-07-17T04:52:42.295633023Z","message":"Failed login attempt for username 'superadmin'","logger_name":"com.ldapportal.auth.AuthenticationService","thread_name":"http-nio-8080-exec-9","level":"WARN","level_value":30000,"logLevel":"INFO","appName":"ldap-portal","application":"ldap-portal"}
