@@ -68,6 +68,20 @@ spec:
       containers:
         - name: postgres
           image: postgres:16-alpine
+          # ── EFS-backed storage only (leave commented for EBS gp2/gp3) ────────
+          # Uncomment when the data PVC is backed by EFS (efs.csi.aws.com — e.g.
+          # the efs-ldapportal class in efs-storageclass.example.yaml). EFS access
+          # points enforce their own POSIX owner, so the postgres image's root
+          # entrypoint cannot chown the data directory and crash-loops with:
+          #   chown: /var/lib/postgresql/data: Operation not permitted
+          # Running as the access point's uid/gid (999, matching fsGroup above)
+          # makes the entrypoint skip the chown and start postgres directly. This
+          # is NOT needed on EBS, where the root entrypoint chowns the volume fine.
+          # securityContext:
+          #   runAsUser: 999
+          #   runAsGroup: 999
+          #   runAsNonRoot: true
+          #   allowPrivilegeEscalation: false
           ports:
             - name: postgres
               containerPort: 5432
