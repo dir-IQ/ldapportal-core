@@ -1,7 +1,7 @@
 # Schema updates via LDIF (superadmin) — implementation plan
 
 - **Date:** 2026-07-27
-- **Status:** Draft (design only; no code yet).
+- **Status:** In progress (backend slice — permission, DTOs, vendor strategies, service, controller, tests — landed; frontend follows, 2026-07-27).
 - **Scope:** Let a superadmin **apply directory-schema changes** (new
   `attributeTypes` / `objectClasses`, and additive modifications to existing
   ones) by uploading an **LDIF**, with a server-side **preview** before
@@ -144,15 +144,17 @@ config-admin bind. Options, cheapest first:
 Pick (A) for v1; note (B) as the follow-up. OpenDJ needs neither (uses the
 existing pooled bind).
 
-### 5.1 Permission + migration
+### 5.1 Permission (no migration needed)
 
 - Add `MANAGE_SCHEMA ("superadmin.manage_schema")` to
-  `SuperadminPermission.java`.
-- `V23__superadmin_manage_schema.sql`: backfill owners
-  (`INSERT … SELECT` where a superadmin already holds
-  `superadmin.manage_superadmins`) so the upgrade is zero-behaviour-change,
-  matching the V13 backfill idiom.
-- Add label in `frontend/src/constants/superadminPermissions.ts`.
+  `SuperadminPermission.java`. **Done.**
+- **No Flyway migration.** The plan originally assumed a `V23` backfill, but:
+  (a) `superadmin_permission_grants.permission` is a plain `varchar(100)` with
+  no enum/check constraint (see `V18__drop_feature_key_check_constraint.sql`),
+  so a new permission value is just a new grant string; and (b) the owner model
+  already treats `MANAGE_SUPERADMINS` holders as holding *every* permission, so
+  existing owners get `MANAGE_SCHEMA` for free — no backfill row required.
+- Add label in `frontend/src/constants/superadminPermissions.ts` (frontend PR).
 
 ### 5.2 DTOs (`core/.../dto/schema/`)
 
