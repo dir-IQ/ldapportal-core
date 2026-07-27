@@ -78,12 +78,13 @@
         <lombok.version>1.18.46</lombok.version>
         <openpdf.version>2.4.0</openpdf.version>
         <archunit.version>1.4.2</archunit.version>
-        <!-- Override Spring Boot BOM's pgjdbc 42.7.10 → 42.7.11 to clear
-             CVE-2026-42198 (pgjdbc client-side DoS via malicious
-             SCRAM-SHA-256 auth response). Trivy was failing the
-             backend image scan on this. Drop this override when the
-             Spring Boot BOM bumps past 42.7.11. -->
-        <postgresql.version>42.7.11</postgresql.version>
+        <!-- Override Spring Boot BOM's pgjdbc → 42.7.12 to clear two Trivy
+             findings on the backend image:
+               CVE-2026-42198 (client-side DoS via malicious SCRAM-SHA-256 auth response)
+               CVE-2026-54291 (MITM protection bypass via SCRAM-SHA-256-PLUS downgrade)
+             Both are fixed in 42.7.12. Drop this override when the Spring
+             Boot BOM bumps past 42.7.12. -->
+        <postgresql.version>42.7.12</postgresql.version>
         <!-- Override Spring Boot BOM's Tomcat 10.1.54 → 10.1.55 to clear
              six HIGH/CRITICAL Trivy findings on the backend image:
                CVE-2026-41293, CVE-2026-43512, CVE-2026-43515 (CRITICAL)
