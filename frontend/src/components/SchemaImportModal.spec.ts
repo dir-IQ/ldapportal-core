@@ -131,7 +131,7 @@ describe('SchemaImportModal', () => {
     await applyBtn.trigger('click')
     await flushPromises()
 
-    expect(api.applySchemaPreview).toHaveBeenCalledWith('dir-1', 'sp-1', '', '')
+    expect(api.applySchemaPreview).toHaveBeenCalledWith('dir-1', 'sp-1', '', '', false)
     expect(wrapper.text()).toContain('Apply results')
     expect(wrapper.text()).toContain('Applied')
     expect(wrapper.emitted('applied')).toBeTruthy()
@@ -158,6 +158,50 @@ describe('SchemaImportModal', () => {
     await applyBtn.trigger('click')
     await flushPromises()
 
-    expect(api.applySchemaPreview).toHaveBeenCalledWith('dir-1', 'sp-1', 'cn=admin,cn=config', 'config-secret')
+    expect(api.applySchemaPreview).toHaveBeenCalledWith('dir-1', 'sp-1', 'cn=admin,cn=config', 'config-secret', false)
+  })
+
+  it('hides the exclude-existing toggle when the preview has no modifications', async () => {
+    const wrapper = mountModal()
+    api.previewSchemaLdif.mockResolvedValue({ data: summary() }) // modifyExisting: 0
+
+    await pickFileAndPreview(wrapper)
+
+    expect(wrapper.find('input[aria-label="Exclude existing elements"]').exists()).toBe(false)
+  })
+
+  it('excludes existing updates and applies only adds when the toggle is on', async () => {
+    const wrapper = mountModal('ORACLE_UNIFIED_DIRECTORY')
+    api.previewSchemaLdif.mockResolvedValue({
+      data: summary({
+        total: 2,
+        counts: { addNew: 1, modifyExisting: 1, unsupported: 0, errors: 0 },
+        elements: [
+          element({ rowNumber: 1, name: 'myCustomAttr', action: 'ADD_NEW' }),
+          element({
+            rowNumber: 2, name: 'cn', oid: '2.5.4.3', action: 'MODIFY_EXISTING',
+            issues: [{ severity: 'WARN', code: 'MODIFIES_EXISTING', message: 'updates an existing element' }],
+          }),
+        ],
+      }),
+    })
+    api.applySchemaPreview.mockResolvedValue({ data: { applied: 1, failed: 0, errors: [] } })
+
+    await pickFileAndPreview(wrapper)
+
+    const applyBtn = () => wrapper.findAll('button').find(b => b.text().startsWith('Apply'))!
+    expect(applyBtn().text()).toBe('Apply (2)')
+
+    const toggle = wrapper.find('input[aria-label="Exclude existing elements"]')
+    expect(toggle.exists()).toBe(true)
+    await toggle.setValue(true)
+
+    expect(applyBtn().text()).toBe('Apply (1)') // only the ADD_NEW element
+    expect(wrapper.text()).toContain('skipped')
+
+    await applyBtn().trigger('click')
+    await flushPromises()
+
+    expect(api.applySchemaPreview).toHaveBeenCalledWith('dir-1', 'sp-1', '', '', true)
   })
 })
