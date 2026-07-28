@@ -78,7 +78,8 @@ public class SchemaManagementController {
                 Map.of("applied", result.applied(),
                         "failed", result.failed(),
                         "directoryType", dc.getDirectoryType().name(),
-                        "source", "preview"));
+                        "source", "preview",
+                        "addNewOnly", body != null && body.addNewOnly()));
 
         return result;
     }

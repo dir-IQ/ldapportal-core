@@ -24,10 +24,12 @@ export const previewSchemaLdif = (dirId, file) => {
 
 // configBindDn/configPassword are OpenLDAP-only (cn=config admin bind); OpenDJ
 // writes schema with the directory's normal bind, so both are omitted there.
-export const applySchemaPreview = (dirId, previewId, configBindDn, configPassword) =>
+// addNewOnly applies only the ADD_NEW elements, skipping updates to existing ones.
+export const applySchemaPreview = (dirId, previewId, configBindDn, configPassword, addNewOnly = false) =>
   client.post(`${superadminBase(dirId)}/import/preview/${previewId}/apply`, {
     configBindDn: configBindDn || undefined,
     configPassword: configPassword || undefined,
+    addNewOnly: addNewOnly || undefined,
   })
 
 export const exportSchema = (dirId) =>

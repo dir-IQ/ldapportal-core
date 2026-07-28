@@ -325,10 +325,26 @@ public class SchemaLdifService {
                     "The schema preview has blocking issues; resolve them before applying.");
         }
         SchemaWriteStrategy strat = strategyResolver.resolve(cp.vendor());
-        List<ParsedRecord> records = cp.records();
+        boolean addNewOnly = request != null && request.addNewOnly();
+
+        List<LDIFRecord> records;
+        if (addNewOnly) {
+            // Re-classify against the current live schema and keep only the
+            // ADD_NEW definitions, dropping updates to existing elements. This is
+            // per-definition, so a bundled cn=schema record applies only its new
+            // values. Re-fetching (vs. reusing the preview) also skips anything
+            // that became existing since the preview was taken.
+            records = filterToAddNew(cp.records(), strat, schemaService.fetchSchema(dc));
+        } else {
+            records = applicableRecords(cp.records());
+        }
 
         SchemaUpdateResult result;
-        if (strat.requiresConfigConnection()) {
+        if (records.isEmpty()) {
+            // Nothing to write (e.g. add-only over an all-modify preview): return a
+            // no-op result without opening a connection or demanding config creds.
+            result = new SchemaUpdateResult(0, 0, List.of());
+        } else if (strat.requiresConfigConnection()) {
             String bindDn = request == null ? null : request.configBindDn();
             String password = request == null ? null : request.configPassword();
             if (isBlank(bindDn) || isBlank(password)) {
@@ -342,12 +358,12 @@ public class SchemaLdifService {
         }
 
         cache.remove(previewId);
-        log.info("Applied schema preview {} to dir {}: applied={} failed={}",
-                previewId, dc.getId(), result.applied(), result.failed());
+        log.info("Applied schema preview {} to dir {}: applied={} failed={} (addNewOnly={})",
+                previewId, dc.getId(), result.applied(), result.failed(), addNewOnly);
         return result;
     }
 
-    private SchemaUpdateResult applyViaConfigConnection(DirectoryConnection dc, List<ParsedRecord> records,
+    private SchemaUpdateResult applyViaConfigConnection(DirectoryConnection dc, List<LDIFRecord> records,
                                                         String bindDn, String password) {
         LDAPConnection conn = connectionFactory.openUnboundConnection(dc);
         try {
@@ -361,15 +377,11 @@ public class SchemaLdifService {
         }
     }
 
-    private SchemaUpdateResult applyRecords(LDAPInterface conn, List<ParsedRecord> records) {
+    private SchemaUpdateResult applyRecords(LDAPInterface conn, List<LDIFRecord> records) {
         int applied = 0;
         int failed = 0;
         List<SchemaUpdateError> errors = new ArrayList<>();
-        for (ParsedRecord pr : records) {
-            if (pr.isError()) {
-                continue;
-            }
-            LDIFRecord rec = pr.record();
+        for (LDIFRecord rec : records) {
             try {
                 if (rec instanceof LDIFChangeRecord change) {
                     change.processChange(conn);
@@ -385,6 +397,141 @@ public class SchemaLdifService {
             }
         }
         return new SchemaUpdateResult(applied, failed, errors);
+    }
+
+    /** The non-error records of a preview, in order, as raw LDIF records to replay. */
+    private static List<LDIFRecord> applicableRecords(List<ParsedRecord> records) {
+        List<LDIFRecord> out = new ArrayList<>();
+        for (ParsedRecord pr : records) {
+            if (!pr.isError()) {
+                out.add(pr.record());
+            }
+        }
+        return out;
+    }
+
+    // ── Add-only filtering ──────────────────────────────────────────────────────
+
+    /**
+     * Rebuild the preview's records keeping only the {@code ADD_NEW} definitions
+     * (new attributeTypes / objectClasses), dropping updates to existing elements.
+     * Filtering is per-definition: a modify record keeps only its ADD modifications
+     * whose values are new, and an add/entry record keeps its structural attributes
+     * plus only its new schema values. Records left with nothing to add are omitted.
+     *
+     * <p>Package-private for direct unit testing of the element-level filter.</p>
+     */
+    List<LDIFRecord> filterToAddNew(List<ParsedRecord> records, SchemaWriteStrategy strat, Schema live) {
+        List<LDIFRecord> out = new ArrayList<>();
+        for (ParsedRecord pr : records) {
+            if (pr.isError()) {
+                continue;
+            }
+            LDIFRecord kept = keepOnlyAddNew(pr.record(), strat, live);
+            if (kept != null) {
+                out.add(kept);
+            }
+        }
+        return out;
+    }
+
+    private LDIFRecord keepOnlyAddNew(LDIFRecord rec, SchemaWriteStrategy strat, Schema live) {
+        String dn = rec.getDN();
+        // Out-of-scope, delete, and modifyDN records are never "adds".
+        if (!strat.isSchemaTargetDn(dn)
+                || rec instanceof LDIFDeleteChangeRecord
+                || rec instanceof LDIFModifyDNChangeRecord) {
+            return null;
+        }
+
+        if (rec instanceof LDIFModifyChangeRecord mod) {
+            List<Modification> kept = new ArrayList<>();
+            for (Modification m : mod.getModifications()) {
+                // A delete/replace of a schema value is a modify-existing, not an add.
+                if (m.getModificationType() != ModificationType.ADD) {
+                    continue;
+                }
+                SchemaElementKind kind = kindOf(m.getAttributeName(), strat);
+                if (kind == null) {
+                    continue;
+                }
+                List<String> vals = new ArrayList<>();
+                for (String v : m.getValues()) {
+                    if (isAddNew(kind, v, strat, live)) {
+                        vals.add(v);
+                    }
+                }
+                if (!vals.isEmpty()) {
+                    kept.add(new Modification(ModificationType.ADD, m.getAttributeName(),
+                            vals.toArray(new String[0])));
+                }
+            }
+            return kept.isEmpty() ? null : new LDIFModifyChangeRecord(dn, kept.toArray(new Modification[0]));
+        }
+
+        Entry source;
+        boolean wasAddRecord;
+        if (rec instanceof LDIFAddChangeRecord add) {
+            source = add.getEntryToAdd();
+            wasAddRecord = true;
+        } else if (rec instanceof Entry entry) {
+            source = entry;
+            wasAddRecord = false;
+        } else {
+            return null;
+        }
+
+        Entry filtered = new Entry(dn);
+        boolean anySchemaKept = false;
+        for (Attribute a : source.getAttributes()) {
+            SchemaElementKind kind = kindOf(a.getName(), strat);
+            if (kind == null) {
+                filtered.addAttribute(a); // structural attrs (objectClass, cn, …) carry through
+                continue;
+            }
+            List<String> vals = new ArrayList<>();
+            for (String v : a.getValues()) {
+                if (isAddNew(kind, v, strat, live)) {
+                    vals.add(v);
+                }
+            }
+            if (!vals.isEmpty()) {
+                filtered.addAttribute(a.getName(), vals.toArray(new String[0]));
+                anySchemaKept = true;
+            }
+        }
+        if (!anySchemaKept) {
+            return null; // no new schema values → don't create/touch the container
+        }
+        return wasAddRecord ? new LDIFAddChangeRecord(filtered) : filtered;
+    }
+
+    /**
+     * Whether a raw schema-element value would be an ADD_NEW against the live
+     * schema — i.e. its name isn't already defined and its OID isn't already
+     * owned. Mirrors {@link #classifyDef}'s ADD_NEW branch for a value already
+     * known to be in scope and additive. Unparseable values are not adds.
+     */
+    private boolean isAddNew(SchemaElementKind kind, String rawValue, SchemaWriteStrategy strat, Schema live) {
+        String normalized = strat.normalizeDefinition(rawValue);
+        try {
+            if (kind == SchemaElementKind.ATTRIBUTE_TYPE) {
+                AttributeTypeDefinition def = new AttributeTypeDefinition(normalized);
+                if (attributeExistsByName(live, def)) {
+                    return false;
+                }
+                String oid = def.getOID();
+                return oid == null || live.getAttributeType(oid) == null;
+            }
+            ObjectClassDefinition def = new ObjectClassDefinition(normalized);
+            if (objectClassExistsByName(live, def)) {
+                return false;
+            }
+            String oid = def.getOID();
+            return oid == null || live.getObjectClass(oid) == null;
+        } catch (LDAPException e) {
+            return false;
+        }
     }
 
     /**

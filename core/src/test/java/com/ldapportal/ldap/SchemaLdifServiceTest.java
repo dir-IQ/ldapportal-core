@@ -1,16 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap;
 
+import com.ldapportal.dto.schema.ApplySchemaPreviewRequest;
 import com.ldapportal.dto.schema.SchemaElementAction;
 import com.ldapportal.dto.schema.SchemaPreviewSummary;
+import com.ldapportal.dto.schema.SchemaUpdateResult;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdifService.ParsedRecord;
 import com.ldapportal.ldap.schema.OpenDjSchemaWriteStrategy;
 import com.ldapportal.ldap.schema.OpenLdapSchemaWriteStrategy;
+import com.ldapportal.ldap.schema.SchemaWriteStrategy;
 import com.ldapportal.ldap.schema.SchemaWriteStrategyResolver;
+import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.schema.Schema;
+import com.unboundid.ldif.LDIFModifyChangeRecord;
 import com.unboundid.ldif.LDIFReader;
 import com.unboundid.ldif.LDIFRecord;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -83,6 +89,19 @@ class SchemaLdifServiceTest {
 
     private InputStream empty() {
         return new ByteArrayInputStream(new byte[0]);
+    }
+
+    private List<ParsedRecord> parse(String ldif) throws Exception {
+        List<ParsedRecord> records = new ArrayList<>();
+        try (LDIFReader reader = new LDIFReader(
+                new ByteArrayInputStream(ldif.getBytes(StandardCharsets.UTF_8)))) {
+            LDIFRecord rec;
+            int row = 1;
+            while ((rec = reader.readLDIFRecord()) != null) {
+                records.add(new ParsedRecord(row++, rec, null));
+            }
+        }
+        return records;
     }
 
     @Test
@@ -191,5 +210,69 @@ class SchemaLdifServiceTest {
         assertThatThrownBy(() -> service.createPreview(dir(DirectoryType.ACTIVE_DIRECTORY), empty(), owner))
                 .isInstanceOf(LdapOperationException.class)
                 .hasMessageContaining("not supported");
+    }
+
+    @Test
+    void filter_add_only_keeps_only_new_values_from_a_bundled_record() throws Exception {
+        // One cn=schema modify bundling a brand-new attribute and a re-declaration
+        // of the standard 'cn'. Add-only must keep just the new value.
+        List<ParsedRecord> records = parse("""
+                dn: cn=schema
+                changetype: modify
+                add: attributeTypes
+                attributeTypes: ( 1.3.6.1.4.1.99999.1.2.3 NAME 'ldapPortalTestAttr' \
+                SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )
+                attributeTypes: ( 2.5.4.3 NAME 'cn' SUP name )
+                """);
+        SchemaWriteStrategy strat = new OpenDjSchemaWriteStrategy();
+
+        List<LDIFRecord> filtered = service.filterToAddNew(records, strat, Schema.getDefaultStandardSchema());
+
+        assertThat(filtered).singleElement()
+                .isInstanceOfSatisfying(LDIFModifyChangeRecord.class, mod -> {
+                    Modification[] mods = mod.getModifications();
+                    assertThat(mods).hasSize(1);
+                    assertThat(mods[0].getValues()).hasSize(1);
+                    assertThat(mods[0].getValues()[0]).contains("ldapPortalTestAttr").doesNotContain("NAME 'cn'");
+                });
+    }
+
+    @Test
+    void filter_add_only_drops_a_pure_modify_existing_record() throws Exception {
+        List<ParsedRecord> records = parse("""
+                dn: cn=schema
+                changetype: modify
+                add: attributeTypes
+                attributeTypes: ( 2.5.4.3 NAME 'cn' SUP name )
+                """);
+
+        List<LDIFRecord> filtered = service.filterToAddNew(records,
+                new OpenDjSchemaWriteStrategy(), Schema.getDefaultStandardSchema());
+
+        assertThat(filtered).isEmpty();
+    }
+
+    @Test
+    void apply_add_only_over_all_modify_preview_is_a_noop_without_connecting() throws Exception {
+        // 'cn' already exists → MODIFY_EXISTING (non-blocking on OpenDJ). Applying
+        // add-only should write nothing and never open a connection.
+        stubParse("""
+                dn: cn=schema
+                changetype: modify
+                add: attributeTypes
+                attributeTypes: ( 2.5.4.3 NAME 'cn' SUP name )
+                """);
+        DirectoryConnection dc = dir(DirectoryType.ORACLE_UNIFIED_DIRECTORY);
+        SchemaPreviewSummary summary = service.createPreview(dc, empty(), owner);
+        assertThat(summary.counts().modifyExisting()).isEqualTo(1);
+        assertThat(summary.blocking()).isFalse();
+
+        UUID previewId = UUID.fromString(summary.previewId());
+        SchemaUpdateResult result = service.apply(previewId, owner, dc,
+                new ApplySchemaPreviewRequest(null, null, true));
+
+        assertThat(result.applied()).isZero();
+        assertThat(result.failed()).isZero();
+        verifyNoInteractions(connectionFactory);
     }
 }

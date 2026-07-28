@@ -60,6 +60,19 @@
           </div>
         </div>
 
+        <!-- Add-only filter: skip updates to existing elements, apply only the new ones. -->
+        <label v-if="summary.counts.modifyExisting > 0"
+               class="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+          <input v-model="addNewOnly" type="checkbox" class="mt-0.5 rounded border-gray-300"
+                 aria-label="Exclude existing elements" />
+          <span>
+            Exclude existing elements — apply only the
+            <b>{{ summary.counts.addNew }}</b> new one{{ summary.counts.addNew === 1 ? '' : 's' }}, skipping
+            <b>{{ summary.counts.modifyExisting }}</b>
+            update{{ summary.counts.modifyExisting === 1 ? '' : 's' }} to existing element{{ summary.counts.modifyExisting === 1 ? '' : 's' }}.
+          </span>
+        </label>
+
         <!-- Elements table -->
         <div class="border border-gray-200 rounded-xl overflow-hidden">
           <table class="w-full text-sm">
@@ -77,12 +90,13 @@
                 <td colspan="5" class="px-3 py-4 text-center text-gray-500">No schema elements found in this LDIF.</td>
               </tr>
               <tr v-for="el in summary.elements" :key="el.rowNumber"
-                  :class="['border-t border-gray-100 align-top', elementBlocking(el) ? 'bg-red-50/50' : '']">
+                  :class="['border-t border-gray-100 align-top', elementBlocking(el) ? 'bg-red-50/50' : '', willSkip(el) ? 'opacity-45' : '']">
                 <td class="px-3 py-2 text-gray-600 whitespace-nowrap">{{ kindLabel(el.kind) }}</td>
-                <td class="px-3 py-2 font-mono text-gray-800 break-all">{{ el.name || '—' }}</td>
+                <td class="px-3 py-2 font-mono text-gray-800 break-all" :class="willSkip(el) ? 'line-through' : ''">{{ el.name || '—' }}</td>
                 <td class="px-3 py-2 font-mono text-[13px] text-gray-500 break-all">{{ el.oid || '—' }}</td>
                 <td class="px-3 py-2 whitespace-nowrap">
                   <span class="badge" :class="actionClass(el.action)">{{ actionLabel(el.action) }}</span>
+                  <span v-if="willSkip(el)" class="ml-1 text-[11px] text-gray-400">skipped</span>
                 </td>
                 <td class="px-3 py-2">
                   <ul v-if="el.issues.length" class="space-y-0.5">
@@ -143,7 +157,7 @@
         {{ busy ? 'Analyzing…' : 'Preview' }}
       </button>
       <button v-else-if="phase === 'preview'" @click="doApply" :disabled="applyDisabled" class="btn-primary">
-        {{ busy ? 'Applying…' : `Apply (${applicableCount})` }}
+        {{ busy ? 'Applying…' : `Apply (${effectiveCount})` }}
       </button>
     </template>
   </AppModal>
@@ -203,6 +217,9 @@ const applyResult = ref<SchemaUpdateResult | null>(null)
 const configBindDn = ref('')
 const configPassword = ref('')
 
+// When on, apply only the ADD_NEW elements and skip updates to existing ones.
+const addNewOnly = ref(false)
+
 const phase = computed<'pick' | 'preview' | 'applied'>(() =>
   applyResult.value ? 'applied' : summary.value ? 'preview' : 'pick')
 
@@ -210,13 +227,23 @@ const phase = computed<'pick' | 'preview' | 'applied'>(() =>
 const applicableCount = computed(() =>
   summary.value ? summary.value.elements.filter(el => !elementBlocking(el)).length : 0)
 
+// How many elements the current apply will write: add-only narrows it to the
+// ADD_NEW count; otherwise every applicable (non-blocking) element.
+const effectiveCount = computed(() =>
+  addNewOnly.value ? (summary.value?.counts.addNew ?? 0) : applicableCount.value)
+
 const hasConfigCreds = computed(() => !!configBindDn.value && !!configPassword.value)
 const applyDisabled = computed(() =>
   busy.value
   || !summary.value
   || summary.value.blocking
-  || applicableCount.value === 0
+  || effectiveCount.value === 0
   || (isOpenLdap.value && !hasConfigCreds.value))
+
+// A row the add-only toggle will exclude from this apply.
+function willSkip(el: SchemaPreviewElement): boolean {
+  return addNewOnly.value && el.action === 'MODIFY_EXISTING'
+}
 
 // Guard against losing an in-progress upload/preview on an accidental close;
 // the applied result is not "unsaved", so it closes freely.
@@ -268,6 +295,7 @@ function reset() {
   applyResult.value = null
   configBindDn.value = ''
   configPassword.value = ''
+  addNewOnly.value = false
   error.value = ''
   busy.value = false
   dragging.value = false
@@ -327,8 +355,9 @@ async function doApply() {
   if (!summary.value || summary.value.blocking) return
   const ok = await confirm({
     title: 'Apply schema changes?',
-    message: `This will write ${applicableCount.value} schema `
-      + `${applicableCount.value === 1 ? 'element' : 'elements'} to the live directory. `
+    message: `This will write ${effectiveCount.value} schema `
+      + `${effectiveCount.value === 1 ? 'element' : 'elements'} to the live directory`
+      + `${addNewOnly.value ? ' (new elements only)' : ''}. `
       + 'Online schema additions are largely irreversible — export the current schema first if you have not.',
     confirmLabel: 'Apply',
     danger: true,
@@ -340,7 +369,8 @@ async function doApply() {
     const { data } = await applySchemaPreview(
       props.directoryId, previewId.value,
       isOpenLdap.value ? configBindDn.value : '',
-      isOpenLdap.value ? configPassword.value : '')
+      isOpenLdap.value ? configPassword.value : '',
+      addNewOnly.value)
     const result = data as SchemaUpdateResult
     applyResult.value = result
     if (result.failed > 0) {
