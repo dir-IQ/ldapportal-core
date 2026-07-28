@@ -1,34 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Tests the schema-management flow in SchemaManageView: directory picker →
- * unsupported-vendor gating → LDIF preview (element table, counts, blocking
- * banner) → apply, including the OpenLDAP config-credentials requirement. The
- * schema/directories API modules are mocked; PageContainer is stubbed.
+ * Tests the schema-update flow in SchemaImportModal: pick file → preview
+ * (element table, counts, blocking banner) → apply, including the OpenLDAP
+ * config-credentials requirement and the `applied` emit that lets the host
+ * refresh its schema lists. The schema API is mocked; AppModal is stubbed so
+ * its slots (body + footer) render.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { setActivePinia, createPinia } from 'pinia'
 
 const api = vi.hoisted(() => ({
-  listDirectories: vi.fn(),
   previewSchemaLdif: vi.fn(),
   applySchemaPreview: vi.fn(),
-  exportSchema: vi.fn(),
   confirm: vi.fn().mockResolvedValue(true),
 }))
 
-vi.mock('@/api/directories', () => ({ listDirectories: api.listDirectories }))
 vi.mock('@/api/schema', () => ({
   previewSchemaLdif: api.previewSchemaLdif,
   applySchemaPreview: api.applySchemaPreview,
-  exportSchema: api.exportSchema,
 }))
 vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => api.confirm }))
 
-import SchemaManageView from './SchemaManageView.vue'
+import SchemaImportModal from './SchemaImportModal.vue'
 
 const stubs = {
-  PageContainer: { template: '<div><slot /></div>' },
+  AppModal: {
+    props: ['modelValue', 'dirty'],
+    emits: ['update:modelValue'],
+    template: `<div v-if="modelValue"><slot /><slot name="footer" :close="() => $emit('update:modelValue', false)" /></div>`,
+  },
 }
 
 function element(overrides: Record<string, unknown> = {}) {
@@ -58,14 +59,14 @@ function summary(overrides: Record<string, unknown> = {}) {
   }
 }
 
-async function mountWith(directories: Record<string, unknown>[]) {
-  api.listDirectories.mockResolvedValue({ data: directories })
-  const wrapper = mount(SchemaManageView, { global: { stubs } })
-  await flushPromises()
-  return wrapper
+function mountModal(directoryType = 'ORACLE_UNIFIED_DIRECTORY') {
+  return mount(SchemaImportModal, {
+    props: { modelValue: true, directoryId: 'dir-1', directoryType },
+    global: { stubs },
+  })
 }
 
-async function pickFileAndPreview(wrapper: ReturnType<typeof mount>) {
+async function pickFileAndPreview(wrapper: ReturnType<typeof mountModal>) {
   const input = wrapper.find('input[type="file"]')
   Object.defineProperty(input.element, 'files', {
     value: [new File(['dn: cn=schema\n'], 'schema.ldif')],
@@ -77,26 +78,15 @@ async function pickFileAndPreview(wrapper: ReturnType<typeof mount>) {
   await flushPromises()
 }
 
-const OPENDJ = { id: 'dir-1', displayName: 'OpenDJ Dev', directoryType: 'ORACLE_UNIFIED_DIRECTORY' }
-const OPENLDAP = { id: 'dir-1', displayName: 'OpenLDAP Dev', directoryType: 'OPENLDAP' }
-const AD = { id: 'dir-1', displayName: 'Corp AD', directoryType: 'ACTIVE_DIRECTORY' }
-
-describe('SchemaManageView', () => {
+describe('SchemaImportModal', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     api.confirm.mockResolvedValue(true)
   })
 
-  it('gates unsupported vendors: shows a notice and no upload area', async () => {
-    const wrapper = await mountWith([AD])
-    expect(wrapper.text()).toContain('only supported for OpenLDAP and OpenDJ/OUD')
-    expect(wrapper.text()).toContain('Active Directory')
-    expect(wrapper.find('input[type="file"]').exists()).toBe(false)
-  })
-
-  it('previews an OpenDJ LDIF and lists the classified elements', async () => {
-    const wrapper = await mountWith([OPENDJ])
+  it('previews an LDIF and lists the classified elements', async () => {
+    const wrapper = mountModal()
     api.previewSchemaLdif.mockResolvedValue({ data: summary() })
 
     await pickFileAndPreview(wrapper)
@@ -110,7 +100,7 @@ describe('SchemaManageView', () => {
   })
 
   it('disables apply and shows a banner when the preview is blocking', async () => {
-    const wrapper = await mountWith([OPENDJ])
+    const wrapper = mountModal()
     api.previewSchemaLdif.mockResolvedValue({
       data: summary({
         blocking: true,
@@ -131,8 +121,8 @@ describe('SchemaManageView', () => {
     expect(api.applySchemaPreview).not.toHaveBeenCalled()
   })
 
-  it('applies a non-blocking OpenDJ preview without config creds and shows results', async () => {
-    const wrapper = await mountWith([OPENDJ])
+  it('applies a non-blocking OpenDJ preview without config creds and emits applied', async () => {
+    const wrapper = mountModal('ORACLE_UNIFIED_DIRECTORY')
     api.previewSchemaLdif.mockResolvedValue({ data: summary() })
     api.applySchemaPreview.mockResolvedValue({ data: { applied: 1, failed: 0, errors: [] } })
 
@@ -144,16 +134,16 @@ describe('SchemaManageView', () => {
     expect(api.applySchemaPreview).toHaveBeenCalledWith('dir-1', 'sp-1', '', '')
     expect(wrapper.text()).toContain('Apply results')
     expect(wrapper.text()).toContain('Applied')
+    expect(wrapper.emitted('applied')).toBeTruthy()
   })
 
   it('requires config credentials before applying on OpenLDAP', async () => {
-    const wrapper = await mountWith([OPENLDAP])
+    const wrapper = mountModal('OPENLDAP')
     api.previewSchemaLdif.mockResolvedValue({ data: summary({ vendor: 'OPENLDAP' }) })
     api.applySchemaPreview.mockResolvedValue({ data: { applied: 1, failed: 0, errors: [] } })
 
     await pickFileAndPreview(wrapper)
 
-    // Config fields present, apply disabled until they're filled.
     const bindInput = wrapper.find('input[aria-label="Config bind DN"]')
     const pwInput = wrapper.find('input[aria-label="Config password"]')
     expect(bindInput.exists()).toBe(true)

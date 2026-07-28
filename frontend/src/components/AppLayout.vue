@@ -130,7 +130,7 @@
           </RouterLink>
           <RouterLink to="/superadmin/directory-schema" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M18 18l-4-4"/></svg>
-            <span v-if="!collapsed">Schema Browser</span>
+            <span v-if="!collapsed">Directory Schema</span>
           </RouterLink>
           </template>
 
@@ -220,10 +220,6 @@
           <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_api_tokens')" to="/superadmin/api-tokens" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="3.25"/><path d="M11.2 8.8 3 17v0h3v-2h2v-2h2l1.2-1.2"/></svg>
             <span v-if="!collapsed">API Tokens</span>
-          </RouterLink>
-          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_schema')" to="/superadmin/schema-management" class="nav-item">
-            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2 2 6l8 4 8-4-8-4z"/><path d="M2 10l8 4 8-4"/><path d="M2 14l8 4 8-4"/></svg>
-            <span v-if="!collapsed">Schema Management</span>
           </RouterLink>
           <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_application_settings')" to="/settings" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.5"/><path d="M10 1.5v2M10 16.5v2M18.5 10h-2M3.5 10h-2M16 4l-1.4 1.4M5.4 14.6 4 16M16 16l-1.4-1.4M5.4 5.4 4 4"/></svg>
