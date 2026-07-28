@@ -47,6 +47,8 @@ public enum SuperadminPermission {
     MANAGE_APPLICATION_SETTINGS ("superadmin.manage_application_settings"),
     /** Manage the event backbone (subscriptions / outbox). */
     MANAGE_EVENT_BACKBONE       ("superadmin.manage_event_backbone"),
+    /** Apply directory-schema changes (attributeTypes / objectClasses) via LDIF. */
+    MANAGE_SCHEMA               ("superadmin.manage_schema"),
     /** View license status. */
     VIEW_LICENSE                ("superadmin.view_license");
 
