@@ -108,6 +108,16 @@ const router = createRouter({
           meta: { requiresSuperadmin: true },
         },
 
+        // Schema Management — apply schema changes via LDIF (superadmin).
+        // Route gates on the coarse superadmin role; the fine-grained
+        // MANAGE_SCHEMA permission hides the nav link and is enforced server-side.
+        {
+          path: 'superadmin/schema-management',
+          name: 'schemaManagement',
+          component: () => import('@/views/superadmin/SchemaManageView.vue'),
+          meta: { requiresSuperadmin: true },
+        },
+
         // Settings (secondary-sidebar layout; :section? defaults to 'branding')
         {
           path: 'settings/:section?',
