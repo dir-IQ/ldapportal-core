@@ -327,17 +327,20 @@ public class SchemaLdifService {
         SchemaWriteStrategy strat = strategyResolver.resolve(cp.vendor());
         boolean addNewOnly = request != null && request.addNewOnly();
 
-        List<LDIFRecord> records;
+        List<LDIFRecord> selected;
         if (addNewOnly) {
             // Re-classify against the current live schema and keep only the
             // ADD_NEW definitions, dropping updates to existing elements. This is
             // per-definition, so a bundled cn=schema record applies only its new
             // values. Re-fetching (vs. reusing the preview) also skips anything
             // that became existing since the preview was taken.
-            records = filterToAddNew(cp.records(), strat, schemaService.fetchSchema(dc));
+            selected = filterToAddNew(cp.records(), strat, schemaService.fetchSchema(dc));
         } else {
-            records = applicableRecords(cp.records());
+            selected = applicableRecords(cp.records());
         }
+        // Rewrite subschema entry-dumps into modifies of the existing container
+        // (OpenDJ/OUD) so a changetype-less upload isn't sent as add(cn=schema).
+        List<LDIFRecord> records = normalizeContainerWrites(selected, strat);
 
         SchemaUpdateResult result;
         if (records.isEmpty()) {
@@ -405,6 +408,50 @@ public class SchemaLdifService {
         for (ParsedRecord pr : records) {
             if (!pr.isError()) {
                 out.add(pr.record());
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Vendor-normalize the records to actually send to the directory. For
+     * directories whose schema is a single, always-present subentry (OpenDJ/OUD
+     * {@code cn=schema}), an uploaded schema <em>entry</em> — a subschema dump
+     * with no {@code changetype}, the shape {@code ldapsearch} and this app's own
+     * export produce — is rewritten as {@code MODIFY} / {@code add} of its
+     * {@code attributeTypes} / {@code objectClasses} values. Sending it verbatim
+     * would be an {@code add} of {@code cn=schema}, which the server rejects with
+     * "entry already exists". Each definition becomes its own modify so one
+     * already-present (or malformed) element can't abort the whole import, and
+     * the applied/failed tally stays element-granular.
+     *
+     * <p>Explicit change records, and entry-adds for vendors that create child
+     * schema entries (OpenLDAP under {@code cn=schema,cn=config}), pass through
+     * unchanged.</p>
+     */
+    private List<LDIFRecord> normalizeContainerWrites(List<LDIFRecord> records, SchemaWriteStrategy strat) {
+        List<LDIFRecord> out = new ArrayList<>();
+        for (LDIFRecord rec : records) {
+            out.addAll(toWriteRecords(rec, strat));
+        }
+        return out;
+    }
+
+    /** Package-private for direct unit testing of the entry→modify rewrite. */
+    List<LDIFRecord> toWriteRecords(LDIFRecord rec, SchemaWriteStrategy strat) {
+        boolean contentOrAdd = rec instanceof Entry || rec instanceof LDIFAddChangeRecord;
+        if (!contentOrAdd || !strat.writesToExistingContainer() || !strat.isSchemaTargetDn(rec.getDN())) {
+            return List.of(rec);
+        }
+        Entry entry = rec instanceof LDIFAddChangeRecord add ? add.getEntryToAdd() : (Entry) rec;
+        List<LDIFRecord> out = new ArrayList<>();
+        for (Attribute a : entry.getAttributes()) {
+            if (kindOf(a.getName(), strat) == null) {
+                continue; // objectClass / cn / nsSchemaCSN / aci … are not element definitions
+            }
+            for (String v : a.getValues()) {
+                out.add(new LDIFModifyChangeRecord(entry.getDN(),
+                        new Modification(ModificationType.ADD, a.getName(), v)));
             }
         }
         return out;

@@ -14,6 +14,7 @@ import com.ldapportal.ldap.schema.OpenLdapSchemaWriteStrategy;
 import com.ldapportal.ldap.schema.SchemaWriteStrategy;
 import com.ldapportal.ldap.schema.SchemaWriteStrategyResolver;
 import com.unboundid.ldap.sdk.Modification;
+import com.unboundid.ldap.sdk.ModificationType;
 import com.unboundid.ldap.sdk.schema.Schema;
 import com.unboundid.ldif.LDIFModifyChangeRecord;
 import com.unboundid.ldif.LDIFReader;
@@ -250,6 +251,68 @@ class SchemaLdifServiceTest {
                 new OpenDjSchemaWriteStrategy(), Schema.getDefaultStandardSchema());
 
         assertThat(filtered).isEmpty();
+    }
+
+    @Test
+    void opendj_subschema_dump_entry_is_rewritten_to_per_definition_modifies() throws Exception {
+        // A changetype-less subschema dump (dn: cn=schema + objectClass/cn +
+        // attributeTypes/objectClasses values) — the shape ldapsearch and our own
+        // export produce. On OpenDJ/OUD it must be applied as modify(add) of the
+        // existing cn=schema subentry, not add(cn=schema), which is "entry exists".
+        LDIFRecord dump = parse("""
+                dn: cn=schema
+                objectClass: top
+                objectClass: subschema
+                cn: schema
+                attributeTypes: ( 1.3.6.1.4.1.99999.1.2.3 NAME 'ldapPortalTestAttr' \
+                SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )
+                objectClasses: ( 1.3.6.1.4.1.99999.2.2.3 NAME 'ldapPortalTestClass' \
+                SUP top AUXILIARY MAY ldapPortalTestAttr )
+                """).get(0).record();
+
+        List<LDIFRecord> out = service.toWriteRecords(dump, new OpenDjSchemaWriteStrategy());
+
+        // One modify per element definition; structural attrs (objectClass/cn) dropped.
+        assertThat(out).hasSize(2).allSatisfy(rec ->
+                assertThat(rec).isInstanceOfSatisfying(LDIFModifyChangeRecord.class, mod -> {
+                    assertThat(mod.getDN()).isEqualTo("cn=schema");
+                    assertThat(mod.getModifications()).singleElement().satisfies(m ->
+                            assertThat(m.getModificationType()).isEqualTo(ModificationType.ADD));
+                }));
+        assertThat(out).extracting(rec -> ((LDIFModifyChangeRecord) rec).getModifications()[0].getAttributeName())
+                .containsExactly("attributeTypes", "objectClasses");
+    }
+
+    @Test
+    void opendj_explicit_modify_record_passes_through_unchanged() throws Exception {
+        LDIFRecord mod = parse("""
+                dn: cn=schema
+                changetype: modify
+                add: attributeTypes
+                attributeTypes: ( 1.3.6.1.4.1.99999.1.2.3 NAME 'ldapPortalTestAttr' \
+                SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )
+                """).get(0).record();
+
+        List<LDIFRecord> out = service.toWriteRecords(mod, new OpenDjSchemaWriteStrategy());
+
+        assertThat(out).singleElement().isSameAs(mod);
+    }
+
+    @Test
+    void openldap_schema_entry_add_is_not_rewritten() throws Exception {
+        // OpenLDAP creates a new olcSchemaConfig child entry under cn=schema,cn=config
+        // — that is a legitimate add and must NOT be turned into a container modify.
+        LDIFRecord add = parse("""
+                dn: cn=ldapportal-test,cn=schema,cn=config
+                objectClass: olcSchemaConfig
+                cn: ldapportal-test
+                olcAttributeTypes: ( 1.3.6.1.4.1.99999.1.2.5 NAME 'ldapPortalNew' \
+                SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )
+                """).get(0).record();
+
+        List<LDIFRecord> out = service.toWriteRecords(add, new OpenLdapSchemaWriteStrategy());
+
+        assertThat(out).singleElement().isSameAs(add);
     }
 
     @Test

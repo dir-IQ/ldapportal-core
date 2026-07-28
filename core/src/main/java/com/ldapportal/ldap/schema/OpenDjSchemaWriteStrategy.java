@@ -54,6 +54,13 @@ public class OpenDjSchemaWriteStrategy implements SchemaWriteStrategy {
     }
 
     @Override
+    public boolean writesToExistingContainer() {
+        // The cn=schema subentry always exists; schema is updated by modifying
+        // it, never by adding the subentry.
+        return true;
+    }
+
+    @Override
     public String schemaContainerDescription() {
         return CONTAINER;
     }
