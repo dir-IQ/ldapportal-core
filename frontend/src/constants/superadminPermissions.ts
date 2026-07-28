@@ -13,6 +13,7 @@ export const SUPERADMIN_PERMISSION_LABELS: Record<string, string> = {
   'superadmin.manage_provisioning_profiles': 'Manage provisioning profiles',
   'superadmin.manage_integrations': 'Manage integrations',
   'superadmin.manage_directory_sync': 'Manage directory sync',
+  'superadmin.manage_schema': 'Manage directory schema',
   'superadmin.manage_api_tokens': 'Manage API tokens',
   'superadmin.manage_application_settings': 'Manage application settings',
   'superadmin.manage_event_backbone': 'Manage event backbone',
