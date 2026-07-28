@@ -21,6 +21,9 @@ class SchemaWriteStrategyTest {
         assertThat(openldap.directoryType()).isEqualTo(DirectoryType.OPENLDAP);
         assertThat(openldap.requiresConfigConnection()).isTrue();
         assertThat(openldap.supportsModifyExisting()).isFalse();
+        // Schema elements are ADD-ed as new olcSchemaConfig child entries, not
+        // folded into one existing subentry.
+        assertThat(openldap.writesToExistingContainer()).isFalse();
         assertThat(openldap.attributeTypeValueAttrs()).contains("olcattributetypes");
         assertThat(openldap.objectClassValueAttrs()).contains("olcobjectclasses");
     }
@@ -53,6 +56,9 @@ class SchemaWriteStrategyTest {
         assertThat(opendj.directoryType()).isEqualTo(DirectoryType.ORACLE_UNIFIED_DIRECTORY);
         assertThat(opendj.requiresConfigConnection()).isFalse();
         assertThat(opendj.supportsModifyExisting()).isTrue();
+        // All schema lives in the single always-present cn=schema subentry, which
+        // is updated by modifying it — never by adding the subentry.
+        assertThat(opendj.writesToExistingContainer()).isTrue();
         assertThat(opendj.attributeTypeValueAttrs()).contains("attributetypes");
         assertThat(opendj.objectClassValueAttrs()).contains("objectclasses");
         assertThat(opendj.normalizeDefinition("( 1.2.3 )")).isEqualTo("( 1.2.3 )");

@@ -58,6 +58,20 @@ public interface SchemaWriteStrategy {
     /** True when existing schema elements can be modified/removed online. */
     boolean supportsModifyExisting();
 
+    /**
+     * True when all schema lives in a single, always-present subentry that is
+     * updated with MODIFY (add: attributeTypes/objectClasses) rather than by
+     * ADD-ing an entry. OpenDJ/OUD ({@code cn=schema}) return true; an uploaded
+     * subschema dump (no {@code changetype} — the shape {@code ldapsearch} and
+     * this app's own schema export produce) must therefore be applied as a
+     * modify of that subentry, since adding it would fail with "entry already
+     * exists". OpenLDAP returns false: its elements are ADD-ed as new
+     * {@code olcSchemaConfig} child entries under {@code cn=schema,cn=config}.
+     */
+    default boolean writesToExistingContainer() {
+        return false;
+    }
+
     /** Human-readable schema container, used in messages. */
     String schemaContainerDescription();
 
