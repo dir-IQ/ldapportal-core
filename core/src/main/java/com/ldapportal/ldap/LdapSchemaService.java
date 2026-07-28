@@ -253,9 +253,15 @@ public class LdapSchemaService {
         return false;
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
+    // ── Schema fetch (shared) ─────────────────────────────────────────────────
 
-    private Schema fetchSchema(DirectoryConnection dc) {
+    /**
+     * Fetches the live subschema for {@code dc}. Exposed so the schema-write
+     * path can diff uploaded elements against what already exists and export a
+     * full snapshot; unlike the browse endpoints it does not reject Entra here —
+     * callers that don't support Entra reject earlier.
+     */
+    public Schema fetchSchema(DirectoryConnection dc) {
         return connectionFactory.withConnection(dc, conn -> {
             try {
                 Schema schema = conn.getSchema();
