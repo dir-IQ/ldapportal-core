@@ -18,10 +18,20 @@ vi.mock('@/api/schema', () => ({
   getObjectClass: vi.fn(),
   listAttributeTypes: vi.fn(),
   getAttributeType: vi.fn(),
+  exportSchema: vi.fn(),
+  previewSchemaLdif: vi.fn(),
+  applySchemaPreview: vi.fn(),
+}))
+
+// The write toolbar is gated by the manage_schema permission; toggle it per
+// test via the hoisted state (default off, so the read-only tests are unaffected).
+const authState = vi.hoisted(() => ({ canManage: false }))
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ hasSuperadminPermission: () => authState.canManage }),
 }))
 
 import { listDirectories } from '@/api/directories'
-import { listObjectClasses, getObjectClass, listAttributeTypes, getAttributeType } from '@/api/schema'
+import { listObjectClasses, getObjectClass, listAttributeTypes, getAttributeType, exportSchema } from '@/api/schema'
 
 const ATTR_DETAIL = {
   oid: '2.5.4.3',
@@ -46,9 +56,21 @@ function stubResponses() {
   vi.mocked(getObjectClass).mockResolvedValue({ data: { oid: '2.5.6.6', required: ['cn'], optional: [] } } as never)
 }
 
+const ImportModalStub = {
+  name: 'SchemaImportModal',
+  props: ['modelValue', 'directoryId', 'directoryType'],
+  emits: ['update:modelValue', 'applied'],
+  template: '<div class="import-modal" />',
+}
+
 const mountView = () =>
   mount(SchemaBrowserView, {
-    global: { stubs: { PageContainer: { template: '<div><slot /></div>' } } },
+    global: {
+      stubs: {
+        PageContainer: { template: '<div><slot /></div>' },
+        SchemaImportModal: ImportModalStub,
+      },
+    },
   })
 
 const btn = (w: ReturnType<typeof mountView>, text: string) =>
@@ -72,6 +94,7 @@ describe('SchemaBrowserView attribute detail', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    authState.canManage = false
     stubResponses()
     // jsdom has no layout, so scrollIntoView isn't implemented — stub it both
     // to avoid noise and to assert the selected row is scrolled back into view.
@@ -138,5 +161,85 @@ describe('SchemaBrowserView attribute detail', () => {
     await backLink(w, 'person')!.trigger('click')   // back to object class 'person'
     await flushPromises()
     expect(scrollSpy).toHaveBeenCalled()
+  })
+})
+
+describe('SchemaBrowserView schema management toolbar', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    authState.canManage = false
+    stubResponses()
+    Element.prototype.scrollIntoView = vi.fn() as unknown as () => void
+  })
+
+  function withSupportedDirectory() {
+    vi.mocked(listDirectories).mockResolvedValue({
+      data: [{ id: 'dir-1', displayName: 'OpenDJ', directoryType: 'ORACLE_UNIFIED_DIRECTORY' }],
+    } as never)
+  }
+
+  it('hides the write toolbar without the manage_schema permission', async () => {
+    withSupportedDirectory() // supported vendor, but no permission
+    const w = mountView()
+    await flushPromises()
+    expect(btn(w, 'Update schema…')).toBeUndefined()
+    expect(btn(w, 'Export schema')).toBeUndefined()
+    expect(w.find('.import-modal').exists()).toBe(false)
+  })
+
+  it('hides the write toolbar on unsupported vendors even with permission', async () => {
+    authState.canManage = true
+    // stubResponses()'s default directory is GENERIC — unsupported for writes.
+    const w = mountView()
+    await flushPromises()
+    expect(btn(w, 'Update schema…')).toBeUndefined()
+    expect(btn(w, 'Export schema')).toBeUndefined()
+  })
+
+  it('shows the toolbar and opens the modal on a supported vendor with permission', async () => {
+    authState.canManage = true
+    withSupportedDirectory()
+    const w = mountView()
+    await flushPromises()
+
+    expect(btn(w, 'Export schema')).toBeTruthy()
+    const update = btn(w, 'Update schema…')!
+    expect(update).toBeTruthy()
+
+    const modal = w.findComponent(ImportModalStub)
+    expect(modal.props('modelValue')).toBe(false)
+    await update.trigger('click')
+    expect(modal.props('modelValue')).toBe(true)
+    expect(modal.props('directoryType')).toBe('ORACLE_UNIFIED_DIRECTORY')
+  })
+
+  it('downloads the current schema when Export is clicked', async () => {
+    authState.canManage = true
+    withSupportedDirectory()
+    vi.mocked(exportSchema).mockResolvedValue({ data: new Blob(['schema']) } as never)
+    // jsdom lacks these; stub so the download path runs without throwing.
+    globalThis.URL.createObjectURL = vi.fn(() => 'blob:x')
+    globalThis.URL.revokeObjectURL = vi.fn()
+
+    const w = mountView()
+    await flushPromises()
+    await btn(w, 'Export schema')!.trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(exportSchema)).toHaveBeenCalledWith('dir-1')
+  })
+
+  it('reloads the current tab list after a schema apply', async () => {
+    authState.canManage = true
+    withSupportedDirectory()
+    const w = mountView()
+    await flushPromises()
+
+    // Initial load fetched object classes once; an apply should refetch them.
+    expect(vi.mocked(listObjectClasses)).toHaveBeenCalledTimes(1)
+    w.findComponent(ImportModalStub).vm.$emit('applied')
+    await flushPromises()
+    expect(vi.mocked(listObjectClasses)).toHaveBeenCalledTimes(2)
   })
 })

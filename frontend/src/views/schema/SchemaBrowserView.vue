@@ -1,8 +1,19 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
   <PageContainer>
-    <h1 class="text-2xl font-bold text-gray-900 mb-6">Schema Browser</h1>
-    <p class="text-sm text-gray-500 mt-1">Browse LDAP schema object classes and attribute types</p>
+    <div class="flex items-start justify-between gap-4 mb-6">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-900">Directory Schema</h1>
+        <p class="text-sm text-gray-500 mt-1">Browse object classes and attribute types, and apply schema updates via LDIF.</p>
+      </div>
+      <div v-if="showManage" class="flex items-center gap-2 shrink-0">
+        <button @click="doExport" :disabled="exporting" class="btn-neutral whitespace-nowrap"
+                title="Download the directory's current schema as LDIF — snapshot before you apply changes">
+          {{ exporting ? 'Exporting…' : 'Export schema' }}
+        </button>
+        <button @click="showImport = true" class="btn-primary whitespace-nowrap">Update schema…</button>
+      </div>
+    </div>
 
     <!-- Directory picker -->
     <div class="mb-6">
@@ -156,15 +167,29 @@
         </button>
       </div>
     </div>
+
+    <SchemaImportModal
+      v-if="selectedDirId && showManage"
+      v-model="showImport"
+      :directory-id="selectedDirId"
+      :directory-type="selectedDir?.directoryType"
+      @applied="onSchemaApplied"
+    />
   </PageContainer>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
 import { listDirectories } from '@/api/directories'
-import { listObjectClasses, getObjectClass, listAttributeTypes, getAttributeType } from '@/api/schema'
+import { listObjectClasses, getObjectClass, listAttributeTypes, getAttributeType, exportSchema } from '@/api/schema'
 import PageContainer from '@/components/PageContainer.vue'
+import SchemaImportModal from '@/components/SchemaImportModal.vue'
+
+// Directory types whose schema-write mechanics are implemented server-side
+// (OpenLDAP cn=config, OpenDJ/OUD cn=schema). Other vendors are read-only here.
+const SUPPORTED_WRITE_TYPES = ['OPENLDAP', 'ORACLE_UNIFIED_DIRECTORY']
 
 type TabKey = 'objectClasses' | 'attributeTypes'
 
@@ -207,6 +232,7 @@ interface NavEntry {
 }
 
 const notif = useNotificationStore()
+const auth = useAuthStore()
 
 const tabs: { key: TabKey, label: string }[] = [
   { key: 'objectClasses',  label: 'Object Classes' },
@@ -216,6 +242,16 @@ const tabs: { key: TabKey, label: string }[] = [
 const directories   = ref<Directory[]>([])
 const loadingDirs   = ref(false)
 const selectedDirId = ref('')
+
+// Write actions (export / preview / apply) live behind the MANAGE_SCHEMA-gated
+// schema-management controller, so they require the permission AND a vendor
+// whose schema we can write. Browsing needs neither.
+const selectedDir    = computed(() => directories.value.find(d => d.id === selectedDirId.value) || null)
+const writeSupported = computed(() =>
+  !!selectedDir.value?.directoryType && SUPPORTED_WRITE_TYPES.includes(selectedDir.value.directoryType))
+const showManage     = computed(() => auth.hasSuperadminPermission('superadmin.manage_schema') && writeSupported.value)
+const showImport     = ref(false)
+const exporting      = ref(false)
 
 const activeTab   = ref<TabKey>('objectClasses')
 const search      = ref('')
@@ -264,12 +300,37 @@ const optionalBy = computed(() => usedBy.value.filter(u => !u.required && inScop
 // Reload object classes / attribute types when the directory changes.
 watch(selectedDirId, () => {
   navStack.value = []
+  showImport.value = false
   if (selectedDirId.value) loadList()
 })
 
 function apiError(e: unknown): string {
   const err = e as { response?: { data?: { detail?: string } }, message?: string }
   return err.response?.data?.detail || err.message || 'Request failed'
+}
+
+async function doExport() {
+  if (!selectedDirId.value) return
+  exporting.value = true
+  try {
+    const { data } = await exportSchema(selectedDirId.value)
+    const url = URL.createObjectURL(data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'schema.ldif'
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    notif.error(apiError(e))
+  } finally {
+    exporting.value = false
+  }
+}
+
+// After a schema apply, reload the current tab's list so newly-added elements
+// appear immediately — the payoff of hosting the update flow on the browser.
+function onSchemaApplied() {
+  loadList()
 }
 
 async function loadList() {

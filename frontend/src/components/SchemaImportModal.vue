@@ -1,54 +1,20 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
-  <PageContainer>
-    <div class="flex items-start justify-between gap-4 mb-1">
-      <div>
-        <h1 class="text-2xl font-bold text-gray-900">Schema Management</h1>
-        <p class="text-sm text-gray-500 mt-1">
-          Apply directory-schema changes (attributeTypes / objectClasses) from an uploaded LDIF,
-          with a mandatory preview before anything is written.
-        </p>
-      </div>
-      <button
-        v-if="selectedDirId && supported"
-        @click="doExport"
-        :disabled="exporting"
-        class="btn-neutral whitespace-nowrap"
-        title="Download the directory's current schema as LDIF — snapshot before you apply changes"
-      >{{ exporting ? 'Exporting…' : 'Export current schema' }}</button>
-    </div>
-
-    <!-- Directory picker -->
-    <div class="my-6">
-      <label for="schema-directory" class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
-      <select id="schema-directory" v-model="selectedDirId" class="input w-80">
-        <option v-if="loadingDirs" value="" disabled>Loading…</option>
-        <option v-if="!loadingDirs && directories.length === 0" value="" disabled>No directories</option>
-        <option v-for="d in directories" :key="d.id" :value="d.id">
-          {{ d.displayName }}{{ d.directoryType ? ` — ${vendorLabel(d.directoryType)}` : '' }}
-        </option>
-      </select>
-    </div>
-
-    <!-- Unsupported vendor notice -->
-    <div v-if="selectedDirId && !supported"
-         class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 mb-4">
-      Schema updates via LDIF are only supported for OpenLDAP and OpenDJ/OUD directories.
-      <span v-if="selectedDir?.directoryType">
-        This directory is <b>{{ vendorLabel(selectedDir.directoryType) }}</b>.
-      </span>
-    </div>
-
-    <template v-if="selectedDirId && supported">
+  <AppModal v-model="visible" title="Update schema" size="2xl" :dirty="dirty" movable resizable>
+    <div class="space-y-3">
       <!-- ── Step 1: pick file ─────────────────────────────────────────────── -->
       <template v-if="phase === 'pick'">
+        <p class="text-sm text-gray-500">
+          Upload an LDIF of schema definitions (attributeTypes / objectClasses). Every element is
+          classified against the live schema; nothing is written until you apply the preview.
+        </p>
         <label class="block text-sm font-medium text-gray-700 mb-1">Schema LDIF file</label>
         <div
           role="button"
           tabindex="0"
           aria-label="Choose or drop an LDIF file"
           :class="[
-            'border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors max-w-2xl',
+            'border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors',
             dragging ? 'border-blue-400 bg-blue-50' : 'border-gray-300 hover:border-gray-400',
           ]"
           @click="fileInput?.click()"
@@ -69,18 +35,12 @@
           </div>
         </div>
         <input ref="fileInput" type="file" accept=".ldif" class="hidden" aria-label="LDIF file" @change="onFileSelect" />
-
-        <div class="mt-4">
-          <button @click="doPreview" :disabled="!file || busy" class="btn-primary">
-            {{ busy ? 'Analyzing…' : 'Preview' }}
-          </button>
-        </div>
       </template>
 
       <!-- ── Step 2: preview ───────────────────────────────────────────────── -->
       <template v-else-if="phase === 'preview' && summary">
         <!-- Counts -->
-        <div class="flex flex-wrap items-center gap-2 text-xs mb-3">
+        <div class="flex flex-wrap items-center gap-2 text-xs">
           <span class="chip chip-green">Add new <b>{{ summary.counts.addNew }}</b></span>
           <span class="chip chip-amber">Modify existing <b>{{ summary.counts.modifyExisting }}</b></span>
           <span class="chip chip-red">Unsupported <b>{{ summary.counts.unsupported }}</b></span>
@@ -90,7 +50,7 @@
 
         <!-- Blocking banner -->
         <div v-if="summary.blocking"
-             class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 mb-3">
+             class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
           <div class="flex items-start gap-2">
             <span aria-hidden="true" class="mt-0.5">✕</span>
             <span>
@@ -101,7 +61,7 @@
         </div>
 
         <!-- Elements table -->
-        <div class="border border-gray-200 rounded-xl overflow-hidden max-w-4xl">
+        <div class="border border-gray-200 rounded-xl overflow-hidden">
           <table class="w-full text-sm">
             <thead class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
               <tr>
@@ -139,7 +99,7 @@
         </div>
 
         <!-- OpenLDAP config-admin credentials -->
-        <div v-if="isOpenLdap" class="mt-4 max-w-lg rounded-lg border border-gray-200 bg-gray-50 p-4">
+        <div v-if="isOpenLdap" class="rounded-lg border border-gray-200 bg-gray-50 p-4">
           <p class="text-sm font-medium text-gray-700 mb-1">Config-admin credentials</p>
           <p class="text-xs text-gray-500 mb-3">
             OpenLDAP schema lives under <span class="font-mono">cn=config</span>, written with a config-admin
@@ -152,22 +112,11 @@
           <input v-model="configPassword" type="password" autocomplete="new-password"
                  class="input w-full" aria-label="Config password" />
         </div>
-
-        <div class="mt-4 flex items-center gap-2">
-          <button @click="back" :disabled="busy" class="btn-neutral">Back</button>
-          <button @click="doApply" :disabled="applyDisabled" class="btn-primary">
-            {{ busy ? 'Applying…' : `Apply (${applicableCount})` }}
-          </button>
-          <span v-if="summary.blocking" class="text-xs text-red-600">Resolve blocking elements to apply.</span>
-          <span v-else-if="isOpenLdap && !hasConfigCreds" class="text-xs text-gray-500">
-            Enter config-admin credentials to apply.
-          </span>
-        </div>
       </template>
 
       <!-- ── Step 3: applied result ────────────────────────────────────────── -->
       <template v-else-if="phase === 'applied' && applyResult">
-        <div class="bg-gray-50 border border-gray-200 rounded-lg p-4 max-w-lg">
+        <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
           <h4 class="text-sm font-semibold text-gray-900 mb-2">Apply results</h4>
           <div class="grid grid-cols-2 gap-3 text-center">
             <div><p class="text-lg font-bold text-green-600">{{ applyResult.applied }}</p><p class="text-xs text-gray-500">Applied</p></div>
@@ -181,31 +130,32 @@
             </div>
           </div>
         </div>
-        <div class="mt-4">
-          <button @click="reset" class="btn-primary">Apply another LDIF</button>
-        </div>
       </template>
-    </template>
 
-    <!-- Error banner -->
-    <div v-if="error" class="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 max-w-2xl">{{ error }}</div>
-  </PageContainer>
+      <!-- Error banner -->
+      <div v-if="error" class="p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{{ error }}</div>
+    </div>
+
+    <template #footer="{ close }">
+      <button v-if="phase === 'preview'" @click="back" :disabled="busy" class="btn-neutral">Back</button>
+      <button @click="close" :disabled="busy" class="btn-neutral">{{ phase === 'applied' ? 'Close' : 'Cancel' }}</button>
+      <button v-if="phase === 'pick'" @click="doPreview" :disabled="!file || busy" class="btn-primary">
+        {{ busy ? 'Analyzing…' : 'Preview' }}
+      </button>
+      <button v-else-if="phase === 'preview'" @click="doApply" :disabled="applyDisabled" class="btn-primary">
+        {{ busy ? 'Applying…' : `Apply (${applicableCount})` }}
+      </button>
+    </template>
+  </AppModal>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
+import AppModal from '@/components/AppModal.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useConfirm } from '@/composables/useConfirm'
-import { listDirectories } from '@/api/directories'
-import { previewSchemaLdif, applySchemaPreview, exportSchema } from '@/api/schema'
-import PageContainer from '@/components/PageContainer.vue'
+import { previewSchemaLdif, applySchemaPreview } from '@/api/schema'
 
-// Directory types whose schema-write mechanics are implemented server-side.
-// OpenLDAP writes cn=config with a config-admin bind; OpenDJ/OUD writes
-// cn=schema with the normal bind. Everything else is rejected (422) by the API.
-const SUPPORTED_TYPES = ['OPENLDAP', 'ORACLE_UNIFIED_DIRECTORY']
-
-interface Directory { id: string; displayName: string; directoryType?: string }
 interface SchemaPreviewIssue { severity: string; code: string; message: string }
 interface SchemaPreviewElement {
   rowNumber: number
@@ -230,19 +180,20 @@ interface SchemaPreviewSummary {
 interface SchemaUpdateError { targetDn: string; message: string }
 interface SchemaUpdateResult { applied: number; failed: number; errors: SchemaUpdateError[] }
 
+const props = defineProps<{ directoryId: string; directoryType?: string }>()
+const emit = defineEmits<{ (e: 'applied'): void }>()
+const visible = defineModel<boolean>({ default: false })
+
 const notif = useNotificationStore()
 const confirm = useConfirm()
 
-const directories = ref<Directory[]>([])
-const loadingDirs = ref(false)
-const selectedDirId = ref('')
+const isOpenLdap = computed(() => props.directoryType === 'OPENLDAP')
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const file = ref<File | null>(null)
 const dragging = ref(false)
 
 const busy = ref(false)
-const exporting = ref(false)
 const error = ref('')
 
 const summary = ref<SchemaPreviewSummary | null>(null)
@@ -252,16 +203,10 @@ const applyResult = ref<SchemaUpdateResult | null>(null)
 const configBindDn = ref('')
 const configPassword = ref('')
 
-const selectedDir = computed(() => directories.value.find(d => d.id === selectedDirId.value) || null)
-const supported = computed(() =>
-  !!selectedDir.value?.directoryType && SUPPORTED_TYPES.includes(selectedDir.value.directoryType))
-const isOpenLdap = computed(() => selectedDir.value?.directoryType === 'OPENLDAP')
-
 const phase = computed<'pick' | 'preview' | 'applied'>(() =>
   applyResult.value ? 'applied' : summary.value ? 'preview' : 'pick')
 
-// Elements an apply would actually attempt: non-blocking ones. Drives the
-// Apply button label so it never offers to write elements the server rejects.
+// Elements an apply would actually attempt: the non-blocking ones.
 const applicableCount = computed(() =>
   summary.value ? summary.value.elements.filter(el => !elementBlocking(el)).length : 0)
 
@@ -273,11 +218,15 @@ const applyDisabled = computed(() =>
   || applicableCount.value === 0
   || (isOpenLdap.value && !hasConfigCreds.value))
 
-// Reset all preview/apply state when the target directory changes.
-watch(selectedDirId, () => reset())
+// Guard against losing an in-progress upload/preview on an accidental close;
+// the applied result is not "unsaved", so it closes freely.
+const dirty = computed(() => phase.value !== 'applied' && (!!file.value || !!summary.value))
 
-// Per-element blocking: mirrors the backend SchemaPreviewElement.blocking()
-// (a derived accessor that isn't serialized), so it must be recomputed here.
+// Reset every time the modal opens so a re-open starts clean.
+watch(visible, (open) => { if (open) reset() })
+
+// Per-element blocking mirrors the backend SchemaPreviewElement.blocking()
+// (a derived accessor that isn't serialized).
 function elementBlocking(el: SchemaPreviewElement): boolean {
   return el.action === 'UNSUPPORTED' || el.issues.some(i => i.severity === 'ERROR')
 }
@@ -286,10 +235,6 @@ function vendorLabel(type: string): string {
   switch (type) {
     case 'OPENLDAP': return 'OpenLDAP'
     case 'ORACLE_UNIFIED_DIRECTORY': return 'OpenDJ / OUD'
-    case 'ACTIVE_DIRECTORY': return 'Active Directory'
-    case 'IBM_DIRECTORY_SERVER': return 'IBM Directory Server'
-    case 'ENTRA_ID': return 'Entra ID'
-    case 'GENERIC': return 'Generic LDAP'
     default: return type
   }
 }
@@ -346,7 +291,7 @@ function setFile(f: File | null | undefined) {
 function onFileSelect(e: Event) {
   const input = e.target as HTMLInputElement
   setFile(input.files?.[0])
-  input.value = '' // allow re-selecting the same file
+  input.value = ''
 }
 function onDrop(e: DragEvent) {
   dragging.value = false
@@ -368,7 +313,7 @@ async function doPreview() {
   error.value = ''
   busy.value = true
   try {
-    const { data } = await previewSchemaLdif(selectedDirId.value, file.value)
+    const { data } = await previewSchemaLdif(props.directoryId, file.value)
     summary.value = data as SchemaPreviewSummary
     previewId.value = summary.value.previewId
   } catch (e) {
@@ -393,7 +338,7 @@ async function doApply() {
   busy.value = true
   try {
     const { data } = await applySchemaPreview(
-      selectedDirId.value, previewId.value,
+      props.directoryId, previewId.value,
       isOpenLdap.value ? configBindDn.value : '',
       isOpenLdap.value ? configPassword.value : '')
     const result = data as SchemaUpdateResult
@@ -403,46 +348,14 @@ async function doApply() {
     } else {
       notif.success(`Applied ${result.applied} schema element${result.applied === 1 ? '' : 's'}`)
     }
+    // Let the host refresh its schema lists so applied elements show immediately.
+    emit('applied')
   } catch (e) {
     error.value = errMsg(e)
   } finally {
     busy.value = false
   }
 }
-
-async function doExport() {
-  error.value = ''
-  exporting.value = true
-  try {
-    const { data } = await exportSchema(selectedDirId.value)
-    const url = URL.createObjectURL(data)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'schema.ldif'
-    a.click()
-    URL.revokeObjectURL(url)
-  } catch (e) {
-    notif.error(errMsg(e, 'Export failed'))
-  } finally {
-    exporting.value = false
-  }
-}
-
-onMounted(async () => {
-  loadingDirs.value = true
-  try {
-    const { data } = await listDirectories()
-    // Entra ID has no LDAP schema — exclude it, like the schema browser does.
-    directories.value = (data as Directory[]).filter(d => d.directoryType !== 'ENTRA_ID')
-    if (directories.value.length) {
-      selectedDirId.value = directories.value[0].id
-    }
-  } catch (e) {
-    notif.error(errMsg(e))
-  } finally {
-    loadingDirs.value = false
-  }
-})
 </script>
 
 <style scoped>
