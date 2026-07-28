@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <template>
-  <PageContainer>
+  <PageContainer fill>
     <div class="flex items-start justify-between gap-4 mb-6">
       <div>
         <h1 class="text-2xl font-bold text-gray-900">Directory Schema</h1>
@@ -37,17 +37,17 @@
       >{{ tab.label }}</button>
     </div>
 
-    <div class="flex gap-4">
+    <div class="flex gap-4 flex-1 min-h-0">
       <!-- Left panel: list -->
-      <div class="w-64 shrink-0">
+      <div class="w-64 shrink-0 flex flex-col min-h-0">
         <input
           v-model="search"
           type="text"
           placeholder="Filter…"
-          class="input w-full mb-3"
+          class="input w-full mb-3 shrink-0"
         />
         <div v-if="listLoading" class="text-sm text-gray-500 text-center py-4">Loading…</div>
-        <div v-else ref="listEl" class="bg-white border border-gray-200 rounded-xl overflow-hidden max-h-[60vh] overflow-y-auto">
+        <div v-else ref="listEl" class="bg-white border border-gray-200 rounded-xl overflow-hidden flex-1 min-h-0 overflow-y-auto">
           <div v-if="filteredList.length === 0" class="p-4 text-sm text-gray-500 text-center">Nothing found.</div>
           <button
             v-for="item in filteredList"
@@ -61,7 +61,7 @@
       </div>
 
       <!-- Right panel: detail -->
-      <div class="flex-1">
+      <div class="flex-1 min-h-0 overflow-y-auto">
         <div v-if="!selected" class="text-sm text-gray-500 mt-8 text-center">
           Select an item from the list to see details.
         </div>
