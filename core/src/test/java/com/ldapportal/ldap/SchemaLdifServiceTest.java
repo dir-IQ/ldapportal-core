@@ -13,6 +13,7 @@ import com.ldapportal.ldap.schema.OpenDjSchemaWriteStrategy;
 import com.ldapportal.ldap.schema.OpenLdapSchemaWriteStrategy;
 import com.ldapportal.ldap.schema.SchemaWriteStrategy;
 import com.ldapportal.ldap.schema.SchemaWriteStrategyResolver;
+import com.unboundid.ldap.sdk.FullLDAPInterface;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
 import com.unboundid.ldap.sdk.schema.Schema;
@@ -37,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -251,6 +253,41 @@ class SchemaLdifServiceTest {
                 new OpenDjSchemaWriteStrategy(), Schema.getDefaultStandardSchema());
 
         assertThat(filtered).isEmpty();
+    }
+
+    @Test
+    void apply_counts_by_element_not_by_ldap_operation() throws Exception {
+        // One bundled "changetype: modify / add: attributeTypes" carrying three new
+        // definitions is a single LDAP modify, but the result must report 3 applied
+        // (matching the preview's element count), not 1.
+        stubParse("""
+                dn: cn=schema
+                changetype: modify
+                add: attributeTypes
+                attributeTypes: ( 1.3.6.1.4.1.99999.3.1 NAME 'ldapPortalA' \
+                SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )
+                attributeTypes: ( 1.3.6.1.4.1.99999.3.2 NAME 'ldapPortalB' \
+                SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )
+                attributeTypes: ( 1.3.6.1.4.1.99999.3.3 NAME 'ldapPortalC' \
+                SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )
+                """);
+        DirectoryConnection dc = dir(DirectoryType.ORACLE_UNIFIED_DIRECTORY);
+        SchemaPreviewSummary summary = service.createPreview(dc, empty(), owner);
+        assertThat(summary.counts().addNew()).isEqualTo(3);
+
+        // The modify succeeds on the (mocked) connection; the single operation
+        // should still count as three applied elements.
+        FullLDAPInterface conn = mock(FullLDAPInterface.class);
+        when(connectionFactory.withConnectionUnreplicated(any(), any())).thenAnswer(inv -> {
+            LdapConnectionFactory.LdapOperation<SchemaUpdateResult> op = inv.getArgument(1);
+            return op.execute(conn);
+        });
+
+        UUID previewId = UUID.fromString(summary.previewId());
+        SchemaUpdateResult result = service.apply(previewId, owner, dc, null);
+
+        assertThat(result.applied()).isEqualTo(3);
+        assertThat(result.failed()).isZero();
     }
 
     @Test

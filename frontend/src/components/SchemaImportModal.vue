@@ -78,18 +78,23 @@
           <table class="w-full text-sm">
             <thead class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
               <tr>
-                <th class="text-left font-semibold px-3 py-2">Kind</th>
-                <th class="text-left font-semibold px-3 py-2">Name</th>
-                <th class="text-left font-semibold px-3 py-2">OID</th>
-                <th class="text-left font-semibold px-3 py-2">Action</th>
-                <th class="text-left font-semibold px-3 py-2">Issues</th>
+                <th v-for="col in columns" :key="col.key" scope="col"
+                    :aria-sort="ariaSort(col.key)" class="text-left font-semibold px-3 py-2">
+                  <button type="button" @click="toggleSort(col.key)"
+                          class="inline-flex items-center gap-1 uppercase tracking-wider hover:text-gray-700"
+                          :title="`Sort by ${col.label}`">
+                    {{ col.label }}
+                    <span class="text-[10px]" :class="sortKey === col.key ? 'text-gray-700' : 'text-gray-300'"
+                          aria-hidden="true">{{ sortCaret(col.key) }}</span>
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="summary.elements.length === 0">
                 <td colspan="5" class="px-3 py-4 text-center text-gray-500">No schema elements found in this LDIF.</td>
               </tr>
-              <tr v-for="el in summary.elements" :key="el.rowNumber"
+              <tr v-for="el in sortedElements" :key="el.rowNumber"
                   :class="['border-t border-gray-100 align-top', elementBlocking(el) ? 'bg-red-50/50' : '', willSkip(el) ? 'opacity-45' : '']">
                 <td class="px-3 py-2 text-gray-600 whitespace-nowrap">{{ kindLabel(el.kind) }}</td>
                 <td class="px-3 py-2 font-mono text-gray-800 break-all" :class="willSkip(el) ? 'line-through' : ''">{{ el.name || '—' }}</td>
@@ -220,6 +225,58 @@ const configPassword = ref('')
 // When on, apply only the ADD_NEW elements and skip updates to existing ones.
 const addNewOnly = ref(false)
 
+// ── Preview table sorting ────────────────────────────────────────────────────
+type SortKey = 'kind' | 'name' | 'oid' | 'action' | 'issues'
+const columns: { key: SortKey; label: string }[] = [
+  { key: 'kind', label: 'Kind' },
+  { key: 'name', label: 'Name' },
+  { key: 'oid', label: 'OID' },
+  { key: 'action', label: 'Action' },
+  { key: 'issues', label: 'Issues' },
+]
+// null = the backend's original order (by rowNumber / file order).
+const sortKey = ref<SortKey | null>(null)
+const sortDir = ref<'asc' | 'desc'>('asc')
+// Group actions logically (new → modify → unsupported) rather than alphabetically.
+const ACTION_RANK: Record<string, number> = { ADD_NEW: 0, MODIFY_EXISTING: 1, UNSUPPORTED: 2 }
+
+const sortedElements = computed<SchemaPreviewElement[]>(() => {
+  const els = summary.value?.elements ?? []
+  if (!sortKey.value) return els
+  const key = sortKey.value
+  const dir = sortDir.value === 'asc' ? 1 : -1
+  return [...els].sort((a, b) => {
+    let c = 0
+    switch (key) {
+      case 'kind': c = kindLabel(a.kind).localeCompare(kindLabel(b.kind)); break
+      case 'name': c = (a.name ?? '').localeCompare(b.name ?? '', undefined, { numeric: true, sensitivity: 'base' }); break
+      case 'oid': c = (a.oid ?? '').localeCompare(b.oid ?? '', undefined, { numeric: true }); break
+      case 'action': c = (ACTION_RANK[a.action] ?? 99) - (ACTION_RANK[b.action] ?? 99); break
+      case 'issues': c = a.issues.length - b.issues.length; break
+    }
+    // Stable, deterministic tie-break on original file order.
+    if (c === 0) c = a.rowNumber - b.rowNumber
+    return c * dir
+  })
+})
+
+function toggleSort(key: SortKey) {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortDir.value = 'asc'
+  }
+}
+function ariaSort(key: SortKey): 'ascending' | 'descending' | 'none' {
+  if (sortKey.value !== key) return 'none'
+  return sortDir.value === 'asc' ? 'ascending' : 'descending'
+}
+function sortCaret(key: SortKey): string {
+  if (sortKey.value !== key) return '↕'
+  return sortDir.value === 'asc' ? '▲' : '▼'
+}
+
 const phase = computed<'pick' | 'preview' | 'applied'>(() =>
   applyResult.value ? 'applied' : summary.value ? 'preview' : 'pick')
 
@@ -296,6 +353,8 @@ function reset() {
   configBindDn.value = ''
   configPassword.value = ''
   addNewOnly.value = false
+  sortKey.value = null
+  sortDir.value = 'asc'
   error.value = ''
   busy.value = false
   dragging.value = false

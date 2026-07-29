@@ -355,9 +355,9 @@ public class SchemaLdifService {
                         "This directory writes schema under cn=config; a config-admin bind DN "
                                 + "and password are required to apply.");
             }
-            result = applyViaConfigConnection(dc, records, bindDn, password);
+            result = applyViaConfigConnection(dc, records, strat, bindDn, password);
         } else {
-            result = connectionFactory.withConnectionUnreplicated(dc, conn -> applyRecords(conn, records));
+            result = connectionFactory.withConnectionUnreplicated(dc, conn -> applyRecords(conn, records, strat));
         }
 
         cache.remove(previewId);
@@ -367,11 +367,11 @@ public class SchemaLdifService {
     }
 
     private SchemaUpdateResult applyViaConfigConnection(DirectoryConnection dc, List<LDIFRecord> records,
-                                                        String bindDn, String password) {
+                                                        SchemaWriteStrategy strat, String bindDn, String password) {
         LDAPConnection conn = connectionFactory.openUnboundConnection(dc);
         try {
             conn.bind(new SimpleBindRequest(bindDn, password));
-            return applyRecords(conn, records);
+            return applyRecords(conn, records, strat);
         } catch (LDAPException e) {
             throw new LdapOperationException(
                     "Config-admin bind failed on [" + dc.getDisplayName() + "]: " + e.getMessage(), e);
@@ -380,11 +380,16 @@ public class SchemaLdifService {
         }
     }
 
-    private SchemaUpdateResult applyRecords(LDAPInterface conn, List<LDIFRecord> records) {
+    private SchemaUpdateResult applyRecords(LDAPInterface conn, List<LDIFRecord> records, SchemaWriteStrategy strat) {
         int applied = 0;
         int failed = 0;
         List<SchemaUpdateError> errors = new ArrayList<>();
         for (LDIFRecord rec : records) {
+            // One record can carry several element definitions — e.g. a single
+            // "changetype: modify / add: attributeTypes" bundling many values. Count
+            // by element so applied/failed match the preview's element count rather
+            // than the number of LDAP operations (a bundled modify is one op).
+            int elements = Math.max(1, extractDefs(rec, strat).size());
             try {
                 if (rec instanceof LDIFChangeRecord change) {
                     change.processChange(conn);
@@ -393,9 +398,9 @@ public class SchemaLdifService {
                 } else {
                     continue;
                 }
-                applied++;
+                applied += elements;
             } catch (LDAPException ex) {
-                failed++;
+                failed += elements;
                 errors.add(new SchemaUpdateError(rec.getDN(), ex.getMessage()));
             }
         }
