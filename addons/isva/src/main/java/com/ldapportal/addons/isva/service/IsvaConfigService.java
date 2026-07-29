@@ -128,6 +128,50 @@ public class IsvaConfigService {
     }
 
     /**
+     * A single ISVA config rendered for export: the directory's stable IaC
+     * slug plus the config as an {@link UpsertIsvaConfigRequest} — exactly the
+     * {@code { directorySlug, config }} shape the bootstrap reconciler's
+     * {@code isva} section consumes, so it round-trips cleanly. No secrets live
+     * in this config, so nothing is redacted.
+     */
+    public record IsvaConfigExport(String directorySlug, UpsertIsvaConfigRequest config) {
+    }
+
+    /**
+     * Export every stored ISVA config, keyed by its directory's slug and
+     * ordered by slug for stable, diff-friendly output. Configs whose
+     * directory is missing or has no slug are skipped — a slug-less directory
+     * can't be re-targeted by the reconciler.
+     */
+    @Transactional(readOnly = true)
+    public List<IsvaConfigExport> exportAll() {
+        List<IsvaConfigExport> out = new ArrayList<>();
+        for (VendorIntegrationIsvaConfig cfg : configRepo.findAll()) {
+            DirectoryConnection dir =
+                    directoryRepo.findById(cfg.getDirectoryConnectionId()).orElse(null);
+            if (dir == null || dir.getSlug() == null || dir.getSlug().isBlank()) {
+                continue;
+            }
+            UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
+                    cfg.isEnabled(),
+                    cfg.getTopologyMode(),
+                    cfg.getSecAuthority(),
+                    cfg.getDefaultValidUntilYears(),
+                    cfg.getDeletePolicy(),
+                    cfg.isRequireSecGroup(),
+                    cfg.getSecuserObjectClasses(),
+                    cfg.getManagementDitBaseDn(),
+                    cfg.getSecuserRdnAttribute(),
+                    cfg.getSecuserRdnValueSource(),
+                    cfg.getGroupMemberTarget(),
+                    cfg.getOnDemographicDelete());
+            out.add(new IsvaConfigExport(dir.getSlug(), req));
+        }
+        out.sort(java.util.Comparator.comparing(IsvaConfigExport::directorySlug));
+        return out;
+    }
+
+    /**
      * Resolve a directory's stable IaC slug to its surrogate id so the
      * slug-addressed endpoints can reuse the id-keyed logic above. 404s on
      * an unknown slug — automation targeting a directory that doesn't exist
