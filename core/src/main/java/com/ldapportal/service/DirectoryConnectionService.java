@@ -71,6 +71,101 @@ public class DirectoryConnectionService {
         return toResponse(require(id));
     }
 
+    // ── IaC export ─────────────────────────────────────────────────────────────
+
+    /**
+     * A single directory rendered for config export: a
+     * {@link DirectoryConnectionRequest} carrying the full, restorable
+     * declaration (slug, base DNs, object classes, trusted cert PEM, …) with
+     * <em>secrets omitted</em>, plus flags telling the exporter which secrets
+     * are actually stored. The exporter uses the flags to decide whether to
+     * emit a {@code ${ENV_VAR}} placeholder for each write-only credential.
+     *
+     * <p>{@code auditDataSourceId} is intentionally cleared: audit sources are
+     * not part of this export, and a dangling id would fail the reconciler's
+     * lookup on a fresh install.</p>
+     */
+    public record DirectoryExport(DirectoryConnectionRequest request,
+                                  boolean bindPasswordSet,
+                                  boolean entraClientSecretSet) {
+    }
+
+    /**
+     * Export every directory as a restorable {@link DirectoryExport}, ordered
+     * by slug for stable, diff-friendly output. Never exposes stored secrets —
+     * bind password and Entra client secret are left null on the request and
+     * surfaced only as presence flags.
+     */
+    @Transactional(readOnly = true)
+    public List<DirectoryExport> exportAll() {
+        return dirRepo.findAll().stream()
+                .sorted(java.util.Comparator.comparing(
+                        DirectoryConnection::getSlug,
+                        java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .map(this::toExport)
+                .toList();
+    }
+
+    private DirectoryExport toExport(DirectoryConnection dc) {
+        List<BaseDnRequest> userDns = userBaseDnRepo
+                .findAllByDirectoryIdOrderByDisplayOrderAsc(dc.getId()).stream()
+                .map(b -> new BaseDnRequest(b.getDn(), b.getDisplayOrder())).toList();
+        List<BaseDnRequest> groupDns = groupBaseDnRepo
+                .findAllByDirectoryIdOrderByDisplayOrderAsc(dc.getId()).stream()
+                .map(b -> new BaseDnRequest(b.getDn(), b.getDisplayOrder())).toList();
+
+        DirectoryConnectionRequest req = new DirectoryConnectionRequest(
+                dc.getDirectoryType(),
+                dc.getDisplayName(),
+                dc.getHost(),
+                dc.getPort(),
+                dc.getSslMode(),
+                dc.isTrustAllCerts(),
+                dc.getTrustedCertificatePem(),
+                dc.getBindDn(),
+                null,                       // bindPassword — write-only, never exported
+                dc.getBaseDn(),
+                dc.getPagingSize(),
+                dc.getPoolMinSize(),
+                dc.getPoolMaxSize(),
+                dc.getPoolConnectTimeoutSeconds(),
+                dc.getPoolResponseTimeoutSeconds(),
+                dc.getEnableDisableAttribute(),
+                dc.getEnableDisableValueType(),
+                dc.getEnableValue(),
+                dc.getDisableValue(),
+                null,                       // auditDataSourceId — audit sources aren't exported here
+                dc.isEnabled(),
+                dc.isSelfServiceEnabled(),
+                dc.getSelfServiceLoginAttribute(),
+                dc.getSecondaryHost(),
+                dc.getSecondaryPort(),
+                dc.getGlobalCatalogPort(),
+                userDns,
+                groupDns,
+                com.ldapportal.entity.DirectoryObjectClassDefaults.effectiveUserObjectClasses(dc),
+                com.ldapportal.entity.DirectoryObjectClassDefaults.effectiveGroupObjectClasses(dc),
+                dc.getTenantId(),
+                dc.getEntraClientId(),
+                null,                       // entraClientSecret — write-only, never exported
+                dc.getGraphEndpoint(),
+                dc.getSlug());
+
+        return new DirectoryExport(req,
+                isSecretSet(dc.getBindPasswordEncrypted()),
+                isSecretSet(dc.getEntraClientSecretEncrypted()));
+    }
+
+    /**
+     * Mirrors {@code DirectoryConnectionResponse#isSecretSet}: a stored
+     * credential counts as set only when it holds a real encrypted value —
+     * not null, not blank, and not the {@code "n/a"} placeholder written into
+     * the bind-password column for Entra directories.
+     */
+    private static boolean isSecretSet(String encrypted) {
+        return encrypted != null && !encrypted.isBlank() && !"n/a".equals(encrypted);
+    }
+
     @Transactional
     public DirectoryConnectionResponse createDirectory(DirectoryConnectionRequest req) {
         return doCreateDirectory(resolveSlug(req.slug(), req.displayName()), req);

@@ -293,3 +293,52 @@ for the file shape (it mirrors the REST request bodies in §6).
 
 The file format and the Ansible vars in §7 are intentionally close, so the two
 delivery mechanisms share the same mental model.
+
+---
+
+## 10. Exporting a live install (DR / seed-from-existing)
+
+Everything above *applies* declared config. The **exporter** does the inverse —
+it dumps a running portal's own configuration as the same `bootstrap-config.yml`
+shape, so you can snapshot it for disaster recovery or seed an IaC repo from an
+existing deployment instead of hand-authoring it. Design rationale:
+[`../plans/2026-07-29-config-export-design.md`](../plans/2026-07-29-config-export-design.md).
+
+```
+GET /api/v1/superadmin/config/export        # SUPERADMIN; returns application/yaml
+```
+
+The convenience script authenticates (API token or superadmin login) and writes
+a timestamped file:
+
+```bash
+# With a SUPERADMIN API token (recommended for automation):
+BASE_URL=https://portal.example.com LDAP_PAT=ldap_pat_xxx \
+  ./scripts/export-config.sh
+# …or make export-config  (same env vars)
+```
+
+**Secrets are never exported.** Each stored credential is emitted as a
+`${ENV_VAR}` placeholder resolved from the environment on the next reconcile
+(§5, §9) — so the dump is safe to commit. The file header lists every variable
+you must supply at restore time. To restore, point `BOOTSTRAP_CONFIG_FILE` at
+the exported file (with those env vars set) and start a fresh install, or drive
+the sections through the by-key upserts in §1.
+
+**Scope & sharp edges (Phase 1):**
+
+- Covers `directories` (incl. base DNs, object classes, trusted-cert PEM),
+  `admins` (account + **admin-wide** feature permissions), and `isva`.
+- Admin **profile-scoped** roles/overrides are *not* yet exported — they key on
+  a provisioning-profile UUID that a fresh DB regenerates; portable once
+  profiles gain a stable slug. Admins export with `profileRoles: []`.
+- A directory's `auditDataSourceId` is dropped (audit sources aren't exported
+  yet), and **superadmins** are excluded (the bootstrap superadmin comes from
+  `BOOTSTRAP_SUPERADMIN_*`).
+- The dump alone is not a complete DR bundle — pair it with the `ENCRYPTION_KEY`,
+  `JWT_SECRET`, the license file, and re-minted API tokens. The design doc's
+  operator checklist (§6) has the full list.
+
+For a raw, everything-including-ciphertext backstop (forensics / rollback),
+`scripts/db-pull-from-fly.sh` does a physical `pg_dump`; the YAML export is the
+reviewable, portable IaC artifact.

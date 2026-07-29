@@ -18,8 +18,9 @@
 #   make logs                # Tail the app container.
 #   make down                # Stop & remove containers (keeps volumes).
 #   make db-pull-from-fly    # Copy a Fly.io Postgres DB into the local stack.
+#   make export-config       # Export portal config to bootstrap YAML (DR / IaC).
 
-.PHONY: redeploy redeploy-fast redeploy-frontend redeploy-app redeploy-minimal package-backend logs down help db-pull-from-fly
+.PHONY: redeploy redeploy-fast redeploy-frontend redeploy-app redeploy-minimal package-backend logs down help db-pull-from-fly export-config
 
 # Windows shell handling. GNU Make on Windows runs recipes through cmd.exe and
 # ignores the environment's SHELL — so even launched from Git Bash, recipes run
@@ -126,6 +127,14 @@ package-backend:  ## Rebuild backend JAR (skips tests).
 # confirm prompt. See scripts/db-pull-from-fly.sh for all knobs.
 db-pull-from-fly:  ## Copy a Fly Postgres DB into the local stack (EDITION=c|ci|e, default ci).
 	./scripts/db-pull-from-fly.sh
+
+# Export the running portal's own configuration (directories, admins, vendor
+# config) as declarative bootstrap YAML for DR / IaC. Secrets are emitted as
+# ${ENV_VAR} placeholders, never real values. Authenticate with a SUPERADMIN
+# API token (LDAP_PAT) or username+password (LDAP_USERNAME/LDAP_PASSWORD); set
+# BASE_URL for a remote install. See scripts/export-config.sh and docs/iac/README.md.
+export-config:  ## Export portal config to bootstrap YAML (BASE_URL=, LDAP_PAT= or LDAP_USERNAME=/LDAP_PASSWORD=).
+	./scripts/export-config.sh
 
 logs:  ## Tail logs of the app container.
 	docker compose logs -f app
