@@ -204,4 +204,33 @@ describe('SchemaImportModal', () => {
 
     expect(api.applySchemaPreview).toHaveBeenCalledWith('dir-1', 'sp-1', '', '', true)
   })
+
+  it('sorts the preview table by a column header and toggles direction', async () => {
+    const wrapper = mountModal()
+    api.previewSchemaLdif.mockResolvedValue({
+      data: summary({
+        total: 3,
+        counts: { addNew: 3, modifyExisting: 0, unsupported: 0, errors: 0 },
+        elements: [
+          element({ rowNumber: 1, name: 'charlie', oid: '1.3.6.1.4.1.99999.3' }),
+          element({ rowNumber: 2, name: 'alpha', oid: '1.3.6.1.4.1.99999.1' }),
+          element({ rowNumber: 3, name: 'bravo', oid: '1.3.6.1.4.1.99999.2' }),
+        ],
+      }),
+    })
+
+    await pickFileAndPreview(wrapper)
+
+    // Name is the 2nd column (Kind, Name, OID, Action, Issues).
+    const names = () => wrapper.findAll('tbody tr').map(r => r.findAll('td')[1].text())
+    // Default: backend/file order, untouched.
+    expect(names()).toEqual(['charlie', 'alpha', 'bravo'])
+
+    const nameHeader = wrapper.findAll('thead button').find(b => b.text().startsWith('Name'))!
+    await nameHeader.trigger('click')            // ascending
+    expect(names()).toEqual(['alpha', 'bravo', 'charlie'])
+
+    await nameHeader.trigger('click')            // descending
+    expect(names()).toEqual(['charlie', 'bravo', 'alpha'])
+  })
 })
