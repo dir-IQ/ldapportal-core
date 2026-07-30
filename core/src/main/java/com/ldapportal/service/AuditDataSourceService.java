@@ -51,12 +51,38 @@ public class AuditDataSourceService {
 
     @Transactional
     public AuditSourceResponse create(AuditSourceRequest req) {
+        return doCreate(resolveSlug(req.slug(), req.displayName()), req);
+    }
+
+    private AuditSourceResponse doCreate(String slug, AuditSourceRequest req) {
+        if (req.bindPassword() == null || req.bindPassword().isBlank()) {
+            throw new IllegalArgumentException("bindPassword is required when creating an audit data source");
+        }
         String encryptedPassword = encryptionService.encrypt(req.bindPassword());
         AuditDataSource src = new AuditDataSource();
+        src.setSlug(slug);
         applyRequest(src, req, encryptedPassword);
         AuditSourceResponse resp = AuditSourceResponse.from(auditSourceRepo.save(src));
         changelogReader.clearConfigError(resp.id());
         return resp;
+    }
+
+    /**
+     * Idempotent create-or-update keyed by the stable IaC slug — the audit-source
+     * analogue of {@code DirectoryConnectionService.upsertBySlug}. When a source
+     * with the slug exists it is updated in place (bind password preserved when
+     * omitted); otherwise a new source is created with exactly that slug.
+     */
+    @Transactional
+    public UpsertOutcome upsertBySlug(String slug, AuditSourceRequest req) {
+        String normalized = normalizeSlug(slug);
+        return auditSourceRepo.findBySlug(normalized)
+                .map(existing -> new UpsertOutcome(update(existing.getId(), req), false))
+                .orElseGet(() -> new UpsertOutcome(doCreate(normalized, req), true));
+    }
+
+    /** Result of an idempotent upsert: the saved view plus whether a row was created. */
+    public record UpsertOutcome(AuditSourceResponse response, boolean created) {
     }
 
     @Transactional
@@ -159,5 +185,88 @@ public class AuditDataSourceService {
     private AuditDataSource load(UUID id) {
         return auditSourceRepo.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("AuditDataSource", id));
+    }
+
+    // ── Slug (IaC external key) helpers ────────────────────────────────────────
+
+    private static final java.util.regex.Pattern SLUG_PATTERN =
+            java.util.regex.Pattern.compile("^[a-z0-9]+(?:-[a-z0-9]+)*$");
+
+    private String normalizeSlug(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalArgumentException("slug is required");
+        }
+        String s = raw.trim().toLowerCase(java.util.Locale.ROOT);
+        if (s.length() > 100 || !SLUG_PATTERN.matcher(s).matches()) {
+            throw new IllegalArgumentException(
+                    "slug must be lowercase alphanumeric segments separated by single hyphens "
+                            + "(max 100 chars): " + raw);
+        }
+        return s;
+    }
+
+    private String resolveSlug(String requested, String displayName) {
+        String base = (requested != null && !requested.isBlank())
+                ? normalizeSlug(requested)
+                : slugify(displayName);
+        String candidate = base;
+        int n = 2;
+        while (auditSourceRepo.findBySlug(candidate).isPresent()) {
+            candidate = base + "-" + n++;
+        }
+        return candidate;
+    }
+
+    private String slugify(String displayName) {
+        String base = displayName == null ? "" : displayName
+                .trim().toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("(^-+)|(-+$)", "");
+        if (base.length() > 100) {
+            base = base.substring(0, 100).replaceAll("-+$", "");
+        }
+        return base.isEmpty() ? "audit-source" : base;
+    }
+
+    // ── IaC export ─────────────────────────────────────────────────────────────
+
+    /**
+     * A single audit data source rendered for config export: an
+     * {@link AuditSourceRequest} carrying the full restorable declaration (slug,
+     * connection, changelog config, trusted cert PEM) with the bind password
+     * omitted, plus a flag telling the exporter whether one is stored (so it can
+     * emit a {@code ${ENV_VAR}} placeholder without reading the secret back).
+     */
+    public record AuditSourceExport(AuditSourceRequest request, boolean bindPasswordSet) {
+    }
+
+    /**
+     * Export every audit data source as a restorable {@link AuditSourceExport},
+     * ordered by slug for stable, diff-friendly output. Runtime sync state
+     * ({@code dirsyncCookie}) is intentionally excluded — only configuration is
+     * emitted — and the bind password is never exposed.
+     */
+    @Transactional(readOnly = true)
+    public List<AuditSourceExport> exportAll() {
+        return auditSourceRepo.findAll().stream()
+                .sorted(java.util.Comparator.comparing(AuditDataSource::getSlug,
+                        java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())))
+                .map(s -> new AuditSourceExport(
+                        new AuditSourceRequest(
+                                s.getDisplayName(),
+                                s.getHost(),
+                                s.getPort(),
+                                s.getSslMode(),
+                                s.isTrustAllCerts(),
+                                s.getTrustedCertificatePem(),
+                                s.getBindDn(),
+                                null,                       // bindPassword — write-only, never exported
+                                s.getChangelogBaseDn(),
+                                s.getBranchFilterDn(),
+                                s.getChangelogFormat(),
+                                s.isEnabled(),
+                                s.getSlug()),
+                        s.getBindPasswordEncrypted() != null && !s.getBindPasswordEncrypted().isBlank()))
+                .toList();
     }
 }

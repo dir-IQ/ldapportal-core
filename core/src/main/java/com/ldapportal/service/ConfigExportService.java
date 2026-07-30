@@ -41,14 +41,14 @@ import java.util.TreeSet;
  * <p><b>Scope.</b> This covers exactly the sections the reconciler can already
  * apply: the {@code settings} singleton (branding, session, SMTP, S3, admin
  * auth, SIEM/webhook — with write-only secrets as placeholders),
+ * {@code auditDataSources} (keyed by slug, bind password as a placeholder),
  * {@code directories}, {@code admins} (account + admin-wide feature
  * permissions), and — via {@link ConfigExportContributor} — vendor sections such
- * as {@code isva}. Profile-scoped admin permissions, audit sources, sync config
- * and the rest are deliberately excluded until the reconciler learns to apply
- * them (see the design doc); exporting a reference the reconciler can't yet
- * resolve would produce a dump that fails to restore. The golden invariant is
- * that everything emitted here round-trips cleanly back through the
- * reconciler.</p>
+ * as {@code isva}. Profile-scoped admin permissions, sync config and the rest
+ * are deliberately excluded until the reconciler learns to apply them (see the
+ * design doc); exporting a reference the reconciler can't yet resolve would
+ * produce a dump that fails to restore. The golden invariant is that everything
+ * emitted here round-trips cleanly back through the reconciler.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -57,6 +57,7 @@ public class ConfigExportService {
     private final DirectoryConnectionService directoryService;
     private final AdminManagementService adminService;
     private final ApplicationSettingsService settingsService;
+    private final AuditDataSourceService auditSourceService;
     private final ObjectMapper objectMapper;
     private final List<ConfigExportContributor> contributors;
 
@@ -76,6 +77,13 @@ public class ConfigExportService {
         Map<String, Object> settings = exportSettings(requiredEnv);
         if (settings != null) {
             root.put("settings", settings);
+        }
+
+        // Audit sources before directories — a directory may reference one, and
+        // it keeps the file in dependency order for the reconciler.
+        List<Map<String, Object>> auditSources = exportAuditSources(requiredEnv);
+        if (!auditSources.isEmpty()) {
+            root.put("auditDataSources", auditSources);
         }
 
         List<Map<String, Object>> directories = exportDirectories(requiredEnv);
@@ -125,6 +133,24 @@ public class ConfigExportService {
             requiredEnv.add(envVar);
             target.put(field, placeholder(envVar));
         }
+    }
+
+    // ── audit data sources ────────────────────────────────────────────────────
+
+    private List<Map<String, Object>> exportAuditSources(TreeSet<String> requiredEnv) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (AuditDataSourceService.AuditSourceExport export : auditSourceService.exportAll()) {
+            Map<String, Object> entry = objectMapper.convertValue(
+                    export.request(), new TypeReference<LinkedHashMap<String, Object>>() {});
+            entry.values().removeIf(java.util.Objects::isNull);
+            if (export.bindPasswordSet()) {
+                String var = envVar("AUDIT", export.request().slug(), "BIND_PASSWORD");
+                requiredEnv.add(var);
+                entry.put("bindPassword", placeholder(var));
+            }
+            out.add(entry);
+        }
+        return out;
     }
 
     // ── directories ─────────────────────────────────────────────────────────

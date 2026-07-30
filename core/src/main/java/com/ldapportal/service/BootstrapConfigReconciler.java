@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ldapportal.config.AppProperties;
 import com.ldapportal.core.bootstrap.BootstrapConfigContributor;
 import com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest;
+import com.ldapportal.dto.audit.AuditSourceRequest;
 import com.ldapportal.dto.directory.DirectoryConnectionRequest;
 import com.ldapportal.dto.settings.UpdateApplicationSettingsRequest;
 import jakarta.validation.ConstraintViolation;
@@ -62,6 +63,7 @@ public class BootstrapConfigReconciler implements ApplicationRunner {
     private final DirectoryConnectionService directoryService;
     private final AdminManagementService adminService;
     private final ApplicationSettingsService settingsService;
+    private final AuditDataSourceService auditSourceService;
     private final List<BootstrapConfigContributor> contributors;
 
     @Override
@@ -86,6 +88,14 @@ public class BootstrapConfigReconciler implements ApplicationRunner {
         // file fails before the first write.
         UpdateApplicationSettingsRequest settings =
                 readAndValidateOne(root.path("settings"), UpdateApplicationSettingsRequest.class, "settings");
+        List<AuditSourceRequest> auditSources =
+                readAndValidate(root.path("auditDataSources"), AuditSourceRequest.class, "auditDataSources");
+        auditSources.forEach(a -> {
+            if (a.slug() == null || a.slug().isBlank()) {
+                throw new IllegalStateException(
+                        "Each bootstrap 'auditDataSources' entry must declare a non-blank 'slug'");
+            }
+        });
         List<DirectoryConnectionRequest> directories =
                 readAndValidate(root.path("directories"), DirectoryConnectionRequest.class, "directories");
         directories.forEach(d -> {
@@ -97,19 +107,23 @@ public class BootstrapConfigReconciler implements ApplicationRunner {
         List<CreateAdminWithPermissionsRequest> admins =
                 readAndValidate(root.path("admins"), CreateAdminWithPermissionsRequest.class, "admins");
 
-        // Apply the global settings singleton first, then the core list sections
-        // through the idempotent service upserts, then hand the parsed tree to
-        // addon contributors (which may reference a directory the core just
-        // created — e.g. ISVA config keyed by directory slug).
+        // Apply the global settings singleton first, then audit sources (which a
+        // directory may reference), then directories and admins through the
+        // idempotent service upserts, then hand the parsed tree to addon
+        // contributors (which may reference a directory the core just created —
+        // e.g. ISVA config keyed by directory slug).
         if (settings != null) {
             settingsService.upsert(settings);
         }
+        auditSources.forEach(a -> auditSourceService.upsertBySlug(a.slug(), a));
         directories.forEach(d -> directoryService.upsertBySlug(d.slug(), d));
         admins.forEach(a -> adminService.upsertByUsername(a.account().username(), a, null));
         contributors.forEach(c -> c.contribute(root));
 
-        log.info("Bootstrap config reconciled from {}: {}, {} director{}, {} admin{}, {} addon contributor(s)",
+        log.info("Bootstrap config reconciled from {}: {}, {} audit source{}, {} director{}, {} admin{}, "
+                        + "{} addon contributor(s)",
                 path, settings != null ? "settings" : "no settings",
+                auditSources.size(), auditSources.size() == 1 ? "" : "s",
                 directories.size(), directories.size() == 1 ? "y" : "ies",
                 admins.size(), admins.size() == 1 ? "" : "s", contributors.size());
     }

@@ -34,6 +34,7 @@ class BootstrapConfigReconcilerTest {
     private final DirectoryConnectionService directoryService = mock(DirectoryConnectionService.class);
     private final AdminManagementService adminService = mock(AdminManagementService.class);
     private final ApplicationSettingsService settingsService = mock(ApplicationSettingsService.class);
+    private final AuditDataSourceService auditSourceService = mock(AuditDataSourceService.class);
     private final BootstrapConfigContributor contributor = mock(BootstrapConfigContributor.class);
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -51,7 +52,8 @@ class BootstrapConfigReconcilerTest {
         props = new AppProperties();
         reconciler = new BootstrapConfigReconciler(
                 props, environment, objectMapper, validator,
-                directoryService, adminService, settingsService, List.of(contributor));
+                directoryService, adminService, settingsService, auditSourceService,
+                List.of(contributor));
     }
 
     private void run() {
@@ -68,7 +70,8 @@ class BootstrapConfigReconcilerTest {
     @Test
     void noConfigFile_isNoOp() {
         run();   // configFile left null
-        verifyNoInteractions(directoryService, adminService, settingsService, contributor);
+        verifyNoInteractions(directoryService, adminService, settingsService,
+                auditSourceService, contributor);
     }
 
     @Test
@@ -144,6 +147,53 @@ class BootstrapConfigReconcilerTest {
         assertThat(cap.getValue().appName()).isEqualTo("Acme Portal");
         assertThat(cap.getValue().sessionTimeoutMinutes()).isEqualTo(30);
         assertThat(cap.getValue().smtpPassword()).isEqualTo("relaysecret");   // ${ENV} interpolated
+    }
+
+    @Test
+    void auditSourcesSection_isUpsertedBySlug_withInterpolatedSecret() throws Exception {
+        writeConfig("""
+                auditDataSources:
+                  - slug: dsee-audit
+                    displayName: DSEE Audit
+                    host: audit.corp.example.com
+                    port: 636
+                    sslMode: LDAPS
+                    bindDn: "cn=reader,dc=corp,dc=example,dc=com"
+                    bindPassword: "${AUDIT_PW}"
+                    changelogBaseDn: "cn=changelog"
+                    changelogFormat: DSEE_CHANGELOG
+                    enabled: true
+                """);
+        environment.setProperty("AUDIT_PW", "auditsecret");
+
+        run();
+
+        ArgumentCaptor<com.ldapportal.dto.audit.AuditSourceRequest> cap =
+                ArgumentCaptor.forClass(com.ldapportal.dto.audit.AuditSourceRequest.class);
+        verify(auditSourceService).upsertBySlug(eq("dsee-audit"), cap.capture());
+        assertThat(cap.getValue().host()).isEqualTo("audit.corp.example.com");
+        assertThat(cap.getValue().bindPassword()).isEqualTo("auditsecret");   // ${ENV} interpolated
+    }
+
+    @Test
+    void auditSourceMissingSlug_failsFast() throws Exception {
+        writeConfig("""
+                auditDataSources:
+                  - displayName: No Slug
+                    host: x
+                    port: 636
+                    sslMode: LDAPS
+                    bindDn: x
+                    bindPassword: x
+                    changelogBaseDn: "cn=changelog"
+                    changelogFormat: DSEE_CHANGELOG
+                    enabled: true
+                """);
+
+        assertThatThrownBy(this::run)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("slug");
+        verify(auditSourceService, never()).upsertBySlug(any(), any());
     }
 
     @Test

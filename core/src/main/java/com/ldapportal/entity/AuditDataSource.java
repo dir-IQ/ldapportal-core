@@ -25,6 +25,10 @@ public class AuditDataSource {
     @Column(nullable = false, updatable = false)
     private UUID id;
 
+    /** Stable, client-owned IaC external key (immutable). Unique across sources. */
+    @Column(nullable = false, length = 100, updatable = false)
+    private String slug;
+
     @Column(name = "display_name", nullable = false)
     private String displayName;
 
