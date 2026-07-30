@@ -61,6 +61,7 @@ directories:
     bindDn: "cn=svc-ldapportal,ou=Service Accounts,dc=corp,dc=example,dc=com"
     bindPassword: "${CORP_BIND_PW}"          # supplied via env; preserved on later edits
     baseDn: "dc=corp,dc=example,dc=com"
+    auditDataSourceSlug: dsee-audit          # link to the audit source above (by slug)
     pagingSize: 500
     poolMinSize: 2
     poolMaxSize: 20

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Configuration export for disaster recovery & IaC
 
-**Status:** In progress (Phase 1 shipped 2026-07-29; Phase 2 — application settings + audit data sources shipped, 2026-07-30).
+**Status:** In progress (Phase 1 shipped 2026-07-29; Phase 2 — application settings, audit data sources + directory re-link shipped, 2026-07-30).
 
 This is the **export** half of the IaC story. The companion design
 [`2026-06-05-iac-automation-design.md`](2026-06-05-iac-automation-design.md)
@@ -93,25 +93,26 @@ nulled and presence flags for the placeholder decision.
 
 ## 5. Coverage & roadmap
 
-Each family becomes exportable **only once the reconciler can apply it**. Two
-sharp edges gate the bigger families:
+Each family becomes exportable **only once the reconciler can apply it**. The
+sharp edges that gate the bigger families (one now resolved):
 
 - **Provisioning-profile identity.** Admin `profileRoles` and per-profile
   feature overrides reference a provisioning-profile **UUID**. A fresh DB
   regenerates UUIDs, so these references can't round-trip until profiles get a
   stable IaC **slug** (a Flyway migration + by-slug upsert). This is the same
   open question flagged in the 2026-06-05 plan; the exporter makes it acute.
-- **`auditDataSourceId`** on a directory references an audit source by UUID. Audit
-  sources are now exported/reconciled with a stable slug (Phase 2b), so the
-  exporter still clears the id but the directory can be re-linked by slug next
-  (Phase 2c) — a dangling UUID would otherwise fail restore.
+- **`auditDataSourceId`** on a directory references an audit source by UUID —
+  resolved (Phase 2b + 2c): audit sources carry a stable slug, and a directory
+  now round-trips its link as `auditDataSourceSlug`, so the exporter clears the
+  UUID and the reconciler resolves the slug against the audit source it applied
+  first. No dangling UUID reaches a fresh install.
 
 | Phase | Families | Status |
 |---|---|---|
 | **1** | `directories` (+ base DNs, object classes, cert PEM), `admins` (account + admin-wide feature permissions), `isva` | **Shipped 2026-07-29** |
 | **2a** | `settings` singleton — branding, session, SMTP/S3, OIDC + LDAP admin-auth, SIEM/webhook, WebSEAL; six write-only secrets as placeholders | **Shipped 2026-07-30** |
 | **2b** | `auditDataSources` — new stable slug (Flyway) + by-slug upsert; bind password as placeholder; runtime DirSync cursor excluded | **Shipped 2026-07-30** |
-| **2c** | Re-link directories to audit sources by slug (`auditDataSourceSlug` on the directory request), closing the Phase 1 drop | Next |
+| **2c** | Re-link directories to audit sources by slug (`auditDataSourceSlug` on the directory request), closing the Phase 1 drop | **Shipped 2026-07-30** |
 | **2d** | Provisioning profiles (**+ new profile slug**), then admin `profileRoles` / per-profile overrides; superadmins | Planned |
 | **3** | Sync links/sets, event subscriptions, CSV mapping templates, lifecycle playbooks, ISVA profile overrides; API-token **metadata** (plaintext non-recoverable — see §6) | Planned |
 | **4** | Optional "sealed secrets" export mode (`--with-secrets` → encrypted `age`/`sops` sidecar) for unattended DR; feed `terraform import` from the dump | Optional |

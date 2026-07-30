@@ -53,8 +53,8 @@ class DirectoryConnectionServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(dirRepo.findById(DIR_ID)).thenReturn(Optional.of(existing()));
-        when(dirRepo.saveAndFlush(any(DirectoryConnection.class)))
+        lenient().when(dirRepo.findById(DIR_ID)).thenReturn(Optional.of(existing()));
+        lenient().when(dirRepo.saveAndFlush(any(DirectoryConnection.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
         lenient().when(userBaseDnRepo.findAllByDirectoryIdOrderByDisplayOrderAsc(DIR_ID))
                 .thenReturn(List.of());
@@ -80,7 +80,62 @@ class DirectoryConnectionServiceTest {
         verify(dirRepo).saveAndFlush(any(DirectoryConnection.class));
     }
 
+    @Test
+    void updateDirectory_withAuditSourceSlug_resolvesLinkBySlug() {
+        com.ldapportal.entity.AuditDataSource audit = new com.ldapportal.entity.AuditDataSource();
+        UUID auditId = UUID.randomUUID();
+        audit.setId(auditId);
+        audit.setSlug("dsee-audit");
+        when(auditSourceRepo.findBySlug("dsee-audit")).thenReturn(Optional.of(audit));
+
+        var resp = service.updateDirectory(DIR_ID, requestWithAuditSlug("dsee-audit"));
+
+        // Linked by slug — no UUID needed from the caller.
+        org.assertj.core.api.Assertions.assertThat(resp.auditDataSourceId()).isEqualTo(auditId);
+    }
+
+    @Test
+    void updateDirectory_unknownAuditSourceSlug_rejected() {
+        when(auditSourceRepo.findBySlug("nope")).thenReturn(Optional.empty());
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> service.updateDirectory(DIR_ID, requestWithAuditSlug("nope")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("nope");
+    }
+
+    @Test
+    void exportAll_linkedAuditSource_emitsSlug_andClearsId() {
+        com.ldapportal.entity.AuditDataSource audit = new com.ldapportal.entity.AuditDataSource();
+        audit.setId(UUID.randomUUID());
+        audit.setSlug("dsee-audit");
+        DirectoryConnection dc = existing();
+        dc.setAuditDataSource(audit);
+        when(dirRepo.findAll()).thenReturn(List.of(dc));
+
+        List<DirectoryConnectionService.DirectoryExport> exports = service.exportAll();
+
+        org.assertj.core.api.Assertions.assertThat(exports).hasSize(1);
+        DirectoryConnectionRequest req = exports.get(0).request();
+        org.assertj.core.api.Assertions.assertThat(req.auditDataSourceSlug()).isEqualTo("dsee-audit");
+        org.assertj.core.api.Assertions.assertThat(req.auditDataSourceId()).isNull();
+    }
+
     // ── fixtures ────────────────────────────────────────────────────────────
+
+    /** {@link #matchingRequest} with the audit-source link expressed by slug. */
+    private static DirectoryConnectionRequest requestWithAuditSlug(String auditSlug) {
+        return new DirectoryConnectionRequest(
+                DirectoryType.GENERIC, "Corp LDAP", "ldap.example.com", 389, SslMode.NONE,
+                false, null, "cn=admin,dc=example,dc=com", null,
+                "dc=example,dc=com", 500, 1, 10, 5, 30,
+                null, null, null, null, null, true,
+                false, null, null, null, null,
+                null, null,
+                null, null,
+                null, null, null, "https://graph.microsoft.com",
+                null, auditSlug);
+    }
 
     private static DirectoryConnection existing() {
         DirectoryConnection dc = new DirectoryConnection();
@@ -122,6 +177,6 @@ class DirectoryConnectionServiceTest {
                 null, null,
                 null, null,
                 null, null, null, "https://graph.microsoft.com",
-                null);
+                null, null);
     }
 }
