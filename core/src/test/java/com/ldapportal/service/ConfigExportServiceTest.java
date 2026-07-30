@@ -6,11 +6,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ldapportal.dto.admin.AdminAccountResponse;
 import com.ldapportal.dto.admin.AdminPermissionsResponse;
 import com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest;
+import com.ldapportal.dto.audit.AuditSourceRequest;
 import com.ldapportal.dto.directory.BaseDnRequest;
 import com.ldapportal.dto.directory.DirectoryConnectionRequest;
 import com.ldapportal.dto.settings.UpdateApplicationSettingsRequest;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.AccountType;
+import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.FeatureKey;
 import com.ldapportal.entity.enums.SslMode;
@@ -42,12 +44,13 @@ class ConfigExportServiceTest {
     private final DirectoryConnectionService directoryService = mock(DirectoryConnectionService.class);
     private final AdminManagementService adminService = mock(AdminManagementService.class);
     private final ApplicationSettingsService settingsService = mock(ApplicationSettingsService.class);
+    private final AuditDataSourceService auditSourceService = mock(AuditDataSourceService.class);
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     private final Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
 
     private final ConfigExportService service = new ConfigExportService(
-            directoryService, adminService, settingsService, objectMapper, List.of());
+            directoryService, adminService, settingsService, auditSourceService, objectMapper, List.of());
 
     private DirectoryConnectionRequest ldapRequest() {
         return new DirectoryConnectionRequest(
@@ -202,6 +205,35 @@ class ConfigExportServiceTest {
         assertThat(validator.validate(back)).isEmpty();
         assertThat(back.appName()).isEqualTo("Acme Portal");
         assertThat(back.enabledAuthTypes()).containsExactly(AccountType.LOCAL);
+    }
+
+    @Test
+    void exportsAuditSource_withSecretPlaceholder_andRoundTrips() {
+        AuditSourceRequest req = new AuditSourceRequest(
+                "DSEE Audit", "audit.corp.example.com", 636, SslMode.LDAPS, false,
+                null, "cn=reader,dc=corp,dc=example,dc=com", null,
+                "cn=changelog", null, ChangelogFormat.DSEE_CHANGELOG, true, "dsee-audit");
+        when(directoryService.exportAll()).thenReturn(List.of());
+        when(adminService.listAdmins()).thenReturn(List.of());
+        when(auditSourceService.exportAll()).thenReturn(List.of(
+                new AuditDataSourceService.AuditSourceExport(req, true)));
+
+        String yaml = service.exportYaml();
+        Map<String, Object> root = new Yaml().load(yaml);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> sources = (List<Map<String, Object>>) root.get("auditDataSources");
+        assertThat(sources).hasSize(1);
+        Map<String, Object> src = sources.get(0);
+        assertThat(src.get("slug")).isEqualTo("dsee-audit");
+        assertThat(src.get("bindPassword")).isEqualTo("${LDAPPORTAL_AUDIT_DSEE_AUDIT_BIND_PASSWORD}");
+        assertThat(yaml).contains("LDAPPORTAL_AUDIT_DSEE_AUDIT_BIND_PASSWORD");
+
+        // Round-trip into the request the reconciler applies.
+        AuditSourceRequest back = objectMapper.convertValue(src, AuditSourceRequest.class);
+        assertThat(validator.validate(back)).isEmpty();
+        assertThat(back.slug()).isEqualTo("dsee-audit");
+        assertThat(back.changelogFormat()).isEqualTo(ChangelogFormat.DSEE_CHANGELOG);
     }
 
     @Test

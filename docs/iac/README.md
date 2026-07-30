@@ -34,6 +34,7 @@ back.
 | Resource | Stable key | Upsert endpoint (all `PUT`, all SUPERADMIN) |
 |---|---|---|
 | Directory connection | `slug` | `/api/v1/superadmin/directories/by-slug/{slug}` |
+| Audit data source | `slug` | `/api/v1/superadmin/audit-sources/by-slug/{slug}` |
 | Admin account (+ permissions) | `username` | `/api/v1/superadmin/admins/by-username/{username}` |
 | ISVA vendor config | directory `slug` | `/api/v1/directories/by-slug/{slug}/isva-config` |
 | API token | `name` | `/api/v1/superadmin/api-tokens/by-name/{name}` |
@@ -179,6 +180,14 @@ full-replace), `userObjectClasses` / `groupObjectClasses` (optional lists; omit
 to use the vendor default for `directoryType`). Entra-only: `tenantId`,
 `entraClientId`, `entraClientSecret` (**write-only**), `graphEndpoint`.
 
+### Audit data source — `AuditSourceRequest`
+`displayName` (required), `slug` (optional in body; the path value wins and is
+**immutable**), `host`, `port` (1–65535), `sslMode` (`NONE` | `LDAPS` |
+`STARTTLS`), `trustAllCerts`, `trustedCertificatePem`, `bindDn`, `bindPassword`
+(**write-only**; required on create, omit to preserve), `changelogBaseDn`,
+`branchFilterDn`, `changelogFormat` (`DSEE_CHANGELOG` | `OPENLDAP_ACCESSLOG`),
+`enabled`. Runtime sync state (the DirSync cursor) is never part of the config.
+
 ### Admin — `CreateAdminWithPermissionsRequest`
 ```jsonc
 {
@@ -292,8 +301,9 @@ Unset (the default) disables it entirely. When set, on every boot the server:
 2. parses and **validates the whole file up front** — a malformed config, an
    unresolved placeholder, or an unreadable file **aborts startup** (fail-fast,
    like a missing `ENCRYPTION_KEY`);
-3. upserts the `settings` singleton (when present), then the `directories` and
-   `admins` sections, through the same idempotent service paths as the REST API;
+3. upserts the `settings` singleton (when present), then `auditDataSources`,
+   `directories` and `admins`, through the same idempotent service paths as the
+   REST API;
 4. hands the parsed config to each addon contributor (the ISVA addon applies the
    `isva` section; on a community build with no addon, that section is ignored).
 
@@ -340,9 +350,13 @@ the sections through the by-key upserts in §1.
 **Scope & sharp edges (Phase 1):**
 
 - Covers the `settings` singleton (branding, session, SMTP, S3, admin-auth
-  providers, SIEM/webhook — write-only secrets as placeholders), `directories`
-  (incl. base DNs, object classes, trusted-cert PEM), `admins` (account +
-  **admin-wide** feature permissions), and `isva`.
+  providers, SIEM/webhook — write-only secrets as placeholders),
+  `auditDataSources` (keyed by slug, bind password as a placeholder),
+  `directories` (incl. base DNs, object classes, trusted-cert PEM), `admins`
+  (account + **admin-wide** feature permissions), and `isva`.
+- A directory's `auditDataSourceId` link is still dropped on export — audit
+  sources now have stable slugs, so re-linking directories to them by slug is
+  the immediate follow-up.
 - Admin **profile-scoped** roles/overrides are *not* yet exported — they key on
   a provisioning-profile UUID that a fresh DB regenerates; portable once
   profiles gain a stable slug. Admins export with `profileRoles: []`.

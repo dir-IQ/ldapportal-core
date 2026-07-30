@@ -22,9 +22,10 @@ import java.util.UUID;
  *   GET    /api/v1/superadmin/audit-sources           — list
  *   POST   /api/v1/superadmin/audit-sources           — create
  *   POST   /api/v1/superadmin/audit-sources/test      — test connection
- *   GET    /api/v1/superadmin/audit-sources/{id}      — get
- *   PUT    /api/v1/superadmin/audit-sources/{id}      — update
- *   DELETE /api/v1/superadmin/audit-sources/{id}      — delete
+ *   GET    /api/v1/superadmin/audit-sources/{id}          — get
+ *   PUT    /api/v1/superadmin/audit-sources/{id}          — update
+ *   PUT    /api/v1/superadmin/audit-sources/by-slug/{slug} — idempotent upsert (IaC)
+ *   DELETE /api/v1/superadmin/audit-sources/{id}          — delete
  * </pre>
  */
 @RestController
@@ -59,6 +60,19 @@ public class AuditDataSourceController {
     public AuditSourceResponse update(@PathVariable UUID id,
                                       @Valid @RequestBody AuditSourceRequest req) {
         return service.update(id, req);
+    }
+
+    /**
+     * Idempotent create-or-update addressed by the stable IaC slug (§4.1 of the
+     * IaC design). 201 on first apply (created), 200 thereafter (updated).
+     */
+    @PutMapping("/by-slug/{slug}")
+    public ResponseEntity<AuditSourceResponse> upsertBySlug(@PathVariable String slug,
+                                                            @Valid @RequestBody AuditSourceRequest req) {
+        AuditDataSourceService.UpsertOutcome outcome = service.upsertBySlug(slug, req);
+        return ResponseEntity
+                .status(outcome.created() ? HttpStatus.CREATED : HttpStatus.OK)
+                .body(outcome.response());
     }
 
     @DeleteMapping("/{id}")

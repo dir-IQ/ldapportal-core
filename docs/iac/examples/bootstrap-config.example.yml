@@ -32,6 +32,23 @@ settings:
   smtpUsername: relay
   smtpPassword: "${SMTP_PW}"               # supplied via env; preserved when omitted
 
+# ── Audit data sources (keyed by slug; applied before directories) ───────────
+# External LDAP changelog-reader connections. Bind password is write-only —
+# send via ${ENV} to set, omit to preserve. Applied before directories so a
+# directory can reference one.
+auditDataSources:
+  - slug: dsee-audit
+    displayName: "DSEE Audit"
+    host: audit.corp.example.com
+    port: 636
+    sslMode: LDAPS
+    trustAllCerts: false
+    bindDn: "cn=audit-reader,dc=corp,dc=example,dc=com"
+    bindPassword: "${AUDIT_BIND_PW}"
+    changelogBaseDn: "cn=changelog"
+    changelogFormat: DSEE_CHANGELOG
+    enabled: true
+
 # ── Directories (keyed by slug) ──────────────────────────────────────────────
 directories:
   - slug: corp-ldap

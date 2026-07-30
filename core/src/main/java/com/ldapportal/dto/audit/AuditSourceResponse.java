@@ -10,6 +10,7 @@ import java.util.UUID;
 
 public record AuditSourceResponse(
         UUID id,
+        String slug,
         String displayName,
         String host,
         int port,
@@ -21,11 +22,15 @@ public record AuditSourceResponse(
         ChangelogFormat changelogFormat,
         boolean enabled,
         OffsetDateTime createdAt,
-        OffsetDateTime updatedAt
+        OffsetDateTime updatedAt,
+        // Write-only secret presence: the bind password is never returned; this
+        // lets an idempotent applier tell whether one is already stored.
+        boolean bindPasswordSet
 ) {
     public static AuditSourceResponse from(AuditDataSource src) {
         return new AuditSourceResponse(
                 src.getId(),
+                src.getSlug(),
                 src.getDisplayName(),
                 src.getHost(),
                 src.getPort(),
@@ -37,7 +42,8 @@ public record AuditSourceResponse(
                 src.getChangelogFormat(),
                 src.isEnabled(),
                 src.getCreatedAt(),
-                src.getUpdatedAt()
+                src.getUpdatedAt(),
+                src.getBindPasswordEncrypted() != null && !src.getBindPasswordEncrypted().isBlank()
         );
     }
 }
