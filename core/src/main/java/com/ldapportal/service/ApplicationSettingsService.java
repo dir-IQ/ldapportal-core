@@ -97,6 +97,71 @@ public class ApplicationSettingsService {
     }
 
     /**
+     * The global settings rendered for config export: a
+     * {@link UpdateApplicationSettingsRequest} carrying the full declaration
+     * with the six write-only secrets ({@code smtpPassword}, {@code s3SecretKey},
+     * {@code ldapAuthBindPassword}, {@code oidcClientSecret}, {@code siemAuthToken},
+     * {@code webhookAuthHeader}) left null, plus a flag per secret telling the
+     * exporter which are actually configured (so it can emit a {@code ${ENV_VAR}}
+     * placeholder without ever reading the value back).
+     */
+    public record SettingsExport(UpdateApplicationSettingsRequest request,
+                                 boolean smtpPasswordSet,
+                                 boolean s3SecretKeySet,
+                                 boolean ldapAuthBindPasswordSet,
+                                 boolean oidcClientSecretSet,
+                                 boolean siemAuthTokenSet,
+                                 boolean webhookAuthHeaderSet) {
+    }
+
+    /**
+     * Export the persisted global settings, or {@link java.util.Optional#empty()}
+     * when no settings row exists yet — a fresh install has no row either, so the
+     * exporter simply omits the section rather than pinning the system defaults.
+     * Secrets are never read back; only presence flags are surfaced.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<SettingsExport> exportSettings() {
+        return settingsRepo.findFirstBy().map(s -> {
+            UpdateApplicationSettingsRequest req = new UpdateApplicationSettingsRequest(
+                    s.getAppName(), s.getLogoUrl(), s.getPrimaryColour(), s.getSecondaryColour(),
+                    s.isDirectorySearchInlineEditEnabled(),
+                    s.isApprovalsEnabled(), s.isSelfRegistrationApprovalEnabled(),
+                    s.getSessionTimeoutMinutes(),
+                    s.getSmtpHost(), s.getSmtpPort(), s.getSmtpSenderAddress(), s.getSmtpUsername(),
+                    null,                                   // smtpPassword — write-only
+                    s.isSmtpUseTls(),
+                    s.getS3EndpointUrl(), s.getS3BucketName(), s.getS3AccessKey(),
+                    null,                                   // s3SecretKey — write-only
+                    s.getS3Region(), s.getS3PresignedUrlTtlHours(),
+                    // Sorted copy so the exported list order is deterministic.
+                    new java.util.TreeSet<>(s.getEnabledAuthTypes()),
+                    s.getLdapAuthHost(), s.getLdapAuthPort(), s.getLdapAuthSslMode(),
+                    s.isLdapAuthTrustAllCerts(), s.getLdapAuthTrustedCertPem(), s.getLdapAuthBindDn(),
+                    null,                                   // ldapAuthBindPassword — write-only
+                    s.getLdapAuthUserSearchBase(), s.getLdapAuthBindDnPattern(),
+                    s.getOidcIssuerUrl(), s.getOidcClientId(),
+                    null,                                   // oidcClientSecret — write-only
+                    s.getOidcScopes(), s.getOidcUsernameClaim(), s.getOidcRedirectUri(),
+                    s.isSiemEnabled(), s.getSiemProtocol(), s.getSiemHost(), s.getSiemPort(),
+                    s.getSiemFormat(),
+                    null,                                   // siemAuthToken — write-only
+                    s.getWebhookUrl(),
+                    null,                                   // webhookAuthHeader — write-only
+                    s.getWebsealTrustedProxies(), s.getWebsealUserHeader(),
+                    s.getWebsealGroupsHeader(), s.getWebsealLogoutUrl(),
+                    s.isSetupCompleted());
+            return new SettingsExport(req,
+                    s.getSmtpPasswordEncrypted() != null,
+                    s.getS3SecretKeyEncrypted() != null,
+                    s.getLdapAuthBindPasswordEnc() != null,
+                    s.getOidcClientSecretEnc() != null,
+                    s.getSiemAuthTokenEnc() != null,
+                    s.getWebhookAuthHeaderEnc() != null);
+        });
+    }
+
+    /**
      * Creates or replaces the global settings.
      */
     @Transactional

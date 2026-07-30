@@ -8,6 +8,7 @@ import com.ldapportal.dto.admin.AdminPermissionsResponse;
 import com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest;
 import com.ldapportal.dto.directory.BaseDnRequest;
 import com.ldapportal.dto.directory.DirectoryConnectionRequest;
+import com.ldapportal.dto.settings.UpdateApplicationSettingsRequest;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.AccountType;
 import com.ldapportal.entity.enums.DirectoryType;
@@ -40,12 +41,13 @@ class ConfigExportServiceTest {
 
     private final DirectoryConnectionService directoryService = mock(DirectoryConnectionService.class);
     private final AdminManagementService adminService = mock(AdminManagementService.class);
+    private final ApplicationSettingsService settingsService = mock(ApplicationSettingsService.class);
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     private final Validator validator = Validation.buildDefaultValidatorFactory().getValidator();
 
     private final ConfigExportService service = new ConfigExportService(
-            directoryService, adminService, objectMapper, List.of());
+            directoryService, adminService, settingsService, objectMapper, List.of());
 
     private DirectoryConnectionRequest ldapRequest() {
         return new DirectoryConnectionRequest(
@@ -145,6 +147,61 @@ class ConfigExportServiceTest {
         assertThat(back.account().role()).isEqualTo(AccountRole.ADMIN);
         assertThat(back.featurePermissionsOrEmpty()).hasSize(1);
         assertThat(back.featurePermissionsOrEmpty().get(0).featureKey()).isEqualTo(FeatureKey.USER_CREATE);
+    }
+
+    private UpdateApplicationSettingsRequest settingsRequest() {
+        return new UpdateApplicationSettingsRequest(
+                "Acme Portal", null, null, null,
+                true, true, true,
+                30,
+                "smtp.acme.example.com", 587, "noreply@acme.example.com", "relay-user",
+                null,                    // smtpPassword — exporter fills placeholder
+                true,
+                null, null, null,
+                null,                    // s3SecretKey
+                null, 24,
+                new java.util.TreeSet<>(Set.of(AccountType.LOCAL)),
+                null, null, null, false, null, null,
+                null,                    // ldapAuthBindPassword
+                null, null,
+                null, null,
+                null,                    // oidcClientSecret
+                null, null, null,
+                false, null, null, null, null,
+                null,                    // siemAuthToken
+                null,
+                null,                    // webhookAuthHeader
+                null, null, null, null,
+                true);                   // setupCompleted
+    }
+
+    @Test
+    void exportsSettings_withSecretPlaceholder_andRoundTrips() {
+        when(directoryService.exportAll()).thenReturn(List.of());
+        when(adminService.listAdmins()).thenReturn(List.of());
+        when(settingsService.exportSettings()).thenReturn(java.util.Optional.of(
+                new ApplicationSettingsService.SettingsExport(
+                        settingsRequest(), true, false, false, false, false, false)));
+
+        String yaml = service.exportYaml();
+        Map<String, Object> root = new Yaml().load(yaml);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> settings = (Map<String, Object>) root.get("settings");
+        assertThat(settings).isNotNull();
+        assertThat(settings.get("appName")).isEqualTo("Acme Portal");
+        assertThat(settings.get("sessionTimeoutMinutes")).isEqualTo(30);
+        // Configured secret → placeholder; unconfigured secret → key absent.
+        assertThat(settings.get("smtpPassword")).isEqualTo("${LDAPPORTAL_SETTINGS_SMTP_PASSWORD}");
+        assertThat(settings).doesNotContainKey("s3SecretKey");
+        assertThat(yaml).contains("LDAPPORTAL_SETTINGS_SMTP_PASSWORD");
+
+        // Round-trip into the request the reconciler applies.
+        UpdateApplicationSettingsRequest back =
+                objectMapper.convertValue(settings, UpdateApplicationSettingsRequest.class);
+        assertThat(validator.validate(back)).isEmpty();
+        assertThat(back.appName()).isEqualTo("Acme Portal");
+        assertThat(back.enabledAuthTypes()).containsExactly(AccountType.LOCAL);
     }
 
     @Test

@@ -216,6 +216,18 @@ community build without the addon returns **402/403**.
 `description`, `expiresAt` (ISO-8601 instant, must be in the future, ≤ 2 years).
 The `name` comes from the path and is the key.
 
+### Global settings — `UpdateApplicationSettingsRequest`
+The install-wide **singleton** (no key; there is exactly one row), applied via
+`PUT /api/v1/settings` and, in the bootstrap file, the `settings:` mapping.
+Load-bearing fields: `appName` (required), `sessionTimeoutMinutes` (≥1),
+`smtpUseTls`, `s3PresignedUrlTtlHours` (≥1), `enabledAuthTypes`
+(`LOCAL`/`LDAP`/`OIDC`/`WEBSEAL`); plus SMTP (`smtpHost`/`smtpPort`/…), S3, the
+LDAP and OIDC admin-auth providers, SIEM/webhook, WebSEAL headers, and branding.
+The six credential fields — `smtpPassword`, `s3SecretKey`, `ldapAuthBindPassword`,
+`oidcClientSecret`, `siemAuthToken`, `webhookAuthHeader` — are **write-only**
+(send to set, omit to preserve, empty string to clear); read responses expose
+only `*Configured` presence booleans.
+
 ---
 
 ## 7. Running the example
@@ -280,8 +292,8 @@ Unset (the default) disables it entirely. When set, on every boot the server:
 2. parses and **validates the whole file up front** — a malformed config, an
    unresolved placeholder, or an unreadable file **aborts startup** (fail-fast,
    like a missing `ENCRYPTION_KEY`);
-3. upserts the `directories` then `admins` sections through the same idempotent
-   service paths as the REST API;
+3. upserts the `settings` singleton (when present), then the `directories` and
+   `admins` sections, through the same idempotent service paths as the REST API;
 4. hands the parsed config to each addon contributor (the ISVA addon applies the
    `isva` section; on a community build with no addon, that section is ignored).
 
@@ -327,8 +339,10 @@ the sections through the by-key upserts in §1.
 
 **Scope & sharp edges (Phase 1):**
 
-- Covers `directories` (incl. base DNs, object classes, trusted-cert PEM),
-  `admins` (account + **admin-wide** feature permissions), and `isva`.
+- Covers the `settings` singleton (branding, session, SMTP, S3, admin-auth
+  providers, SIEM/webhook — write-only secrets as placeholders), `directories`
+  (incl. base DNs, object classes, trusted-cert PEM), `admins` (account +
+  **admin-wide** feature permissions), and `isva`.
 - Admin **profile-scoped** roles/overrides are *not* yet exported — they key on
   a provisioning-profile UUID that a fresh DB regenerates; portable once
   profiles gain a stable slug. Admins export with `profileRoles: []`.

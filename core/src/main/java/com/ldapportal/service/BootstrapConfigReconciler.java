@@ -7,6 +7,7 @@ import com.ldapportal.config.AppProperties;
 import com.ldapportal.core.bootstrap.BootstrapConfigContributor;
 import com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest;
 import com.ldapportal.dto.directory.DirectoryConnectionRequest;
+import com.ldapportal.dto.settings.UpdateApplicationSettingsRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
 import lombok.RequiredArgsConstructor;
@@ -60,6 +61,7 @@ public class BootstrapConfigReconciler implements ApplicationRunner {
     private final Validator validator;
     private final DirectoryConnectionService directoryService;
     private final AdminManagementService adminService;
+    private final ApplicationSettingsService settingsService;
     private final List<BootstrapConfigContributor> contributors;
 
     @Override
@@ -82,6 +84,8 @@ public class BootstrapConfigReconciler implements ApplicationRunner {
 
         // Parse + validate everything before applying anything, so a malformed
         // file fails before the first write.
+        UpdateApplicationSettingsRequest settings =
+                readAndValidateOne(root.path("settings"), UpdateApplicationSettingsRequest.class, "settings");
         List<DirectoryConnectionRequest> directories =
                 readAndValidate(root.path("directories"), DirectoryConnectionRequest.class, "directories");
         directories.forEach(d -> {
@@ -93,15 +97,20 @@ public class BootstrapConfigReconciler implements ApplicationRunner {
         List<CreateAdminWithPermissionsRequest> admins =
                 readAndValidate(root.path("admins"), CreateAdminWithPermissionsRequest.class, "admins");
 
-        // Apply core sections through the idempotent service upserts, then hand
-        // the parsed tree to addon contributors (which may reference a directory
-        // the core just created — e.g. ISVA config keyed by directory slug).
+        // Apply the global settings singleton first, then the core list sections
+        // through the idempotent service upserts, then hand the parsed tree to
+        // addon contributors (which may reference a directory the core just
+        // created — e.g. ISVA config keyed by directory slug).
+        if (settings != null) {
+            settingsService.upsert(settings);
+        }
         directories.forEach(d -> directoryService.upsertBySlug(d.slug(), d));
         admins.forEach(a -> adminService.upsertByUsername(a.account().username(), a, null));
         contributors.forEach(c -> c.contribute(root));
 
-        log.info("Bootstrap config reconciled from {}: {} director{}, {} admin{}, {} addon contributor(s)",
-                path, directories.size(), directories.size() == 1 ? "y" : "ies",
+        log.info("Bootstrap config reconciled from {}: {}, {} director{}, {} admin{}, {} addon contributor(s)",
+                path, settings != null ? "settings" : "no settings",
+                directories.size(), directories.size() == 1 ? "y" : "ies",
                 admins.size(), admins.size() == 1 ? "" : "s", contributors.size());
     }
 
@@ -136,17 +145,44 @@ public class BootstrapConfigReconciler implements ApplicationRunner {
                 throw new IllegalStateException(
                         "Invalid entry in bootstrap '" + section + "': " + e.getMessage(), e);
             }
-            Set<ConstraintViolation<T>> violations = validator.validate(req);
-            if (!violations.isEmpty()) {
-                String detail = violations.stream()
-                        .map(v -> v.getPropertyPath() + " " + v.getMessage())
-                        .sorted()
-                        .collect(Collectors.joining("; "));
-                throw new IllegalStateException(
-                        "Validation failed for a bootstrap '" + section + "' entry: " + detail);
-            }
+            validate(req, section);
             out.add(req);
         }
         return out;
+    }
+
+    /**
+     * Read + validate a single object section (as opposed to a list) — used by
+     * the {@code settings} singleton. Returns null when the section is absent so
+     * the reconciler leaves existing settings untouched.
+     */
+    private <T> T readAndValidateOne(JsonNode node, Class<T> type, String section) {
+        if (node.isMissingNode() || node.isNull()) {
+            return null;
+        }
+        if (!node.isObject()) {
+            throw new IllegalStateException("Bootstrap config '" + section + "' must be a mapping");
+        }
+        T req;
+        try {
+            req = objectMapper.convertValue(node, type);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(
+                    "Invalid bootstrap '" + section + "' section: " + e.getMessage(), e);
+        }
+        validate(req, section);
+        return req;
+    }
+
+    private <T> void validate(T req, String section) {
+        Set<ConstraintViolation<T>> violations = validator.validate(req);
+        if (!violations.isEmpty()) {
+            String detail = violations.stream()
+                    .map(v -> v.getPropertyPath() + " " + v.getMessage())
+                    .sorted()
+                    .collect(Collectors.joining("; "));
+            throw new IllegalStateException(
+                    "Validation failed for the bootstrap '" + section + "' section: " + detail);
+        }
     }
 }

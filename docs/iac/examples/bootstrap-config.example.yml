@@ -14,7 +14,25 @@
 # unreadable file, or any validation error aborts startup (fail-fast).
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── Directories (keyed by slug; applied first) ───────────────────────────────
+# ── Global settings (singleton; applied first) ───────────────────────────────
+# The one install-wide settings row: branding, session, SMTP, S3, admin-auth
+# providers, SIEM/webhook. Omit the whole section to leave existing settings
+# untouched. Secret fields (smtpPassword, s3SecretKey, ldapAuthBindPassword,
+# oidcClientSecret, siemAuthToken, webhookAuthHeader) follow the same write-only
+# rule as directories: send via ${ENV} to set, omit to preserve.
+settings:
+  appName: "Acme Portal"
+  sessionTimeoutMinutes: 60
+  smtpUseTls: true
+  s3PresignedUrlTtlHours: 24
+  enabledAuthTypes: [LOCAL]
+  smtpHost: smtp.corp.example.com
+  smtpPort: 587
+  smtpSenderAddress: no-reply@corp.example.com
+  smtpUsername: relay
+  smtpPassword: "${SMTP_PW}"               # supplied via env; preserved when omitted
+
+# ── Directories (keyed by slug) ──────────────────────────────────────────────
 directories:
   - slug: corp-ldap
     displayName: "Corp OpenLDAP"
