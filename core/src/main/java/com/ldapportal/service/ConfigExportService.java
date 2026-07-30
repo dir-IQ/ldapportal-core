@@ -38,15 +38,17 @@ import java.util.TreeSet;
  * commit; the operator supplies the actual secrets separately (secret manager /
  * encrypted vars file). The header lists every placeholder that must be set.</p>
  *
- * <p><b>Phase 1 scope.</b> This covers exactly the sections the reconciler can
- * already apply: {@code directories}, {@code admins} (account + admin-wide
- * feature permissions), and — via {@link ConfigExportContributor} — vendor
- * sections such as {@code isva}. Profile-scoped admin permissions, application
- * settings, audit sources, sync config and the rest are deliberately excluded
- * until the reconciler learns to apply them (see the design doc); exporting a
- * reference the reconciler can't yet resolve would produce a dump that fails to
- * restore. The golden invariant is that everything emitted here round-trips
- * cleanly back through the reconciler.</p>
+ * <p><b>Scope.</b> This covers exactly the sections the reconciler can already
+ * apply: the {@code settings} singleton (branding, session, SMTP, S3, admin
+ * auth, SIEM/webhook — with write-only secrets as placeholders),
+ * {@code directories}, {@code admins} (account + admin-wide feature
+ * permissions), and — via {@link ConfigExportContributor} — vendor sections such
+ * as {@code isva}. Profile-scoped admin permissions, audit sources, sync config
+ * and the rest are deliberately excluded until the reconciler learns to apply
+ * them (see the design doc); exporting a reference the reconciler can't yet
+ * resolve would produce a dump that fails to restore. The golden invariant is
+ * that everything emitted here round-trips cleanly back through the
+ * reconciler.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -54,6 +56,7 @@ public class ConfigExportService {
 
     private final DirectoryConnectionService directoryService;
     private final AdminManagementService adminService;
+    private final ApplicationSettingsService settingsService;
     private final ObjectMapper objectMapper;
     private final List<ConfigExportContributor> contributors;
 
@@ -67,6 +70,13 @@ public class ConfigExportService {
         // de-duplicated; collected as a side effect of building the sections.
         TreeSet<String> requiredEnv = new TreeSet<>();
         Map<String, Object> root = new LinkedHashMap<>();
+
+        // Global settings first — it's the install-wide singleton the rest sits
+        // under (and it has no dependency on the other sections).
+        Map<String, Object> settings = exportSettings(requiredEnv);
+        if (settings != null) {
+            root.put("settings", settings);
+        }
 
         List<Map<String, Object>> directories = exportDirectories(requiredEnv);
         if (!directories.isEmpty()) {
@@ -83,6 +93,38 @@ public class ConfigExportService {
         contributors.forEach(c -> c.export(root));
 
         return header(requiredEnv) + dump(root);
+    }
+
+    // ── settings (singleton) ──────────────────────────────────────────────────
+
+    private Map<String, Object> exportSettings(TreeSet<String> requiredEnv) {
+        return settingsService.exportSettings().map(export -> {
+            Map<String, Object> m = objectMapper.convertValue(
+                    export.request(), new TypeReference<LinkedHashMap<String, Object>>() {});
+            m.values().removeIf(java.util.Objects::isNull);
+            // Six write-only secrets → placeholders, only when configured.
+            putSecret(m, "smtpPassword", export.smtpPasswordSet(),
+                    "LDAPPORTAL_SETTINGS_SMTP_PASSWORD", requiredEnv);
+            putSecret(m, "s3SecretKey", export.s3SecretKeySet(),
+                    "LDAPPORTAL_SETTINGS_S3_SECRET_KEY", requiredEnv);
+            putSecret(m, "ldapAuthBindPassword", export.ldapAuthBindPasswordSet(),
+                    "LDAPPORTAL_SETTINGS_LDAP_AUTH_BIND_PASSWORD", requiredEnv);
+            putSecret(m, "oidcClientSecret", export.oidcClientSecretSet(),
+                    "LDAPPORTAL_SETTINGS_OIDC_CLIENT_SECRET", requiredEnv);
+            putSecret(m, "siemAuthToken", export.siemAuthTokenSet(),
+                    "LDAPPORTAL_SETTINGS_SIEM_AUTH_TOKEN", requiredEnv);
+            putSecret(m, "webhookAuthHeader", export.webhookAuthHeaderSet(),
+                    "LDAPPORTAL_SETTINGS_WEBHOOK_AUTH_HEADER", requiredEnv);
+            return m;
+        }).orElse(null);
+    }
+
+    private static void putSecret(Map<String, Object> target, String field, boolean configured,
+                                  String envVar, TreeSet<String> requiredEnv) {
+        if (configured) {
+            requiredEnv.add(envVar);
+            target.put(field, placeholder(envVar));
+        }
     }
 
     // ── directories ─────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Configuration export for disaster recovery & IaC
 
-**Status:** In progress (Phase 1 — directories/admins/ISVA export shipped, 2026-07-29).
+**Status:** In progress (Phase 1 shipped 2026-07-29; Phase 2 — application settings shipped, 2026-07-30).
 
 This is the **export** half of the IaC story. The companion design
 [`2026-06-05-iac-automation-design.md`](2026-06-05-iac-automation-design.md)
@@ -45,7 +45,10 @@ encrypted vars file). A generated header enumerates every required variable.
 
 Placeholder names are deterministic: `LDAPPORTAL_DIR_<SLUG>_BIND_PASSWORD`,
 `LDAPPORTAL_DIR_<SLUG>_ENTRA_CLIENT_SECRET`, `LDAPPORTAL_ADMIN_<USERNAME>_PASSWORD`
-(key upper-snake-cased, non-alphanumerics collapsed to `_`).
+(key upper-snake-cased, non-alphanumerics collapsed to `_`), and — for the
+settings singleton — the fixed `LDAPPORTAL_SETTINGS_<FIELD>` set
+(`…_SMTP_PASSWORD`, `…_S3_SECRET_KEY`, `…_LDAP_AUTH_BIND_PASSWORD`,
+`…_OIDC_CLIENT_SECRET`, `…_SIEM_AUTH_TOKEN`, `…_WEBHOOK_AUTH_HEADER`).
 
 > **The dump alone is not a complete DR bundle.** A full recovery also needs the
 > `ENCRYPTION_KEY`, `JWT_SECRET`, the license file, and (re-minted) API-token
@@ -104,7 +107,8 @@ sharp edges gate the bigger families:
 | Phase | Families | Status |
 |---|---|---|
 | **1** | `directories` (+ base DNs, object classes, cert PEM), `admins` (account + admin-wide feature permissions), `isva` | **Shipped 2026-07-29** |
-| **2** | Provisioning profiles (**+ new profile slug**), then admin `profileRoles` / per-profile overrides; audit data sources; `applicationSettings` (SMTP/S3/OIDC/LDAP-auth/SIEM/webhook/branding — all with secret placeholders); superadmins | Planned |
+| **2a** | `settings` singleton — branding, session, SMTP/S3, OIDC + LDAP admin-auth, SIEM/webhook, WebSEAL; six write-only secrets as placeholders | **Shipped 2026-07-30** |
+| **2b** | Provisioning profiles (**+ new profile slug**), then admin `profileRoles` / per-profile overrides; audit data sources; superadmins | Planned |
 | **3** | Sync links/sets, event subscriptions, CSV mapping templates, lifecycle playbooks, ISVA profile overrides; API-token **metadata** (plaintext non-recoverable — see §6) | Planned |
 | **4** | Optional "sealed secrets" export mode (`--with-secrets` → encrypted `age`/`sops` sidecar) for unattended DR; feed `terraform import` from the dump | Optional |
 

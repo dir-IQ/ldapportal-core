@@ -33,6 +33,7 @@ class BootstrapConfigReconcilerTest {
 
     private final DirectoryConnectionService directoryService = mock(DirectoryConnectionService.class);
     private final AdminManagementService adminService = mock(AdminManagementService.class);
+    private final ApplicationSettingsService settingsService = mock(ApplicationSettingsService.class);
     private final BootstrapConfigContributor contributor = mock(BootstrapConfigContributor.class);
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
@@ -50,7 +51,7 @@ class BootstrapConfigReconcilerTest {
         props = new AppProperties();
         reconciler = new BootstrapConfigReconciler(
                 props, environment, objectMapper, validator,
-                directoryService, adminService, List.of(contributor));
+                directoryService, adminService, settingsService, List.of(contributor));
     }
 
     private void run() {
@@ -67,7 +68,7 @@ class BootstrapConfigReconcilerTest {
     @Test
     void noConfigFile_isNoOp() {
         run();   // configFile left null
-        verifyNoInteractions(directoryService, adminService, contributor);
+        verifyNoInteractions(directoryService, adminService, settingsService, contributor);
     }
 
     @Test
@@ -119,6 +120,47 @@ class BootstrapConfigReconcilerTest {
 
         verify(adminService).upsertByUsername(eq("jdoe"), any(), isNull());
         verify(contributor).contribute(any());
+    }
+
+    @Test
+    void settingsSection_isUpsertedWithInterpolatedSecret() throws Exception {
+        writeConfig("""
+                settings:
+                  appName: "Acme Portal"
+                  sessionTimeoutMinutes: 30
+                  smtpUseTls: true
+                  s3PresignedUrlTtlHours: 24
+                  smtpHost: smtp.acme.example.com
+                  smtpPassword: "${SMTP_PW}"
+                  enabledAuthTypes: [LOCAL, OIDC]
+                """);
+        environment.setProperty("SMTP_PW", "relaysecret");
+
+        run();
+
+        ArgumentCaptor<com.ldapportal.dto.settings.UpdateApplicationSettingsRequest> cap =
+                ArgumentCaptor.forClass(com.ldapportal.dto.settings.UpdateApplicationSettingsRequest.class);
+        verify(settingsService).upsert(cap.capture());
+        assertThat(cap.getValue().appName()).isEqualTo("Acme Portal");
+        assertThat(cap.getValue().sessionTimeoutMinutes()).isEqualTo(30);
+        assertThat(cap.getValue().smtpPassword()).isEqualTo("relaysecret");   // ${ENV} interpolated
+    }
+
+    @Test
+    void invalidSettings_failsFast_withoutWriting() throws Exception {
+        // appName is @NotBlank and sessionTimeoutMinutes is @NotNull @Min(1);
+        // omitting them must abort before any upsert.
+        writeConfig("""
+                settings:
+                  smtpHost: smtp.acme.example.com
+                  smtpUseTls: false
+                  s3PresignedUrlTtlHours: 24
+                """);
+
+        assertThatThrownBy(this::run)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Validation failed");
+        verify(settingsService, never()).upsert(any());
     }
 
     @Test
