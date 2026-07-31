@@ -108,7 +108,7 @@
                        it disappears when an overridden DN no longer names this
                        attribute, and other fields gain it when a multi-valued
                        RDN (o=…+cn=…) names them too. -->
-                  <div v-if="attr.rdn" :style="{ gridColumn: showDnField ? 'span 2' : `span ${attr.columnSpan || 6}` }">
+                  <div v-if="attr.rdn" :style="{ gridColumn: `span ${attr.columnSpan || 6}` }">
                     <FormField
                       :label="fieldLabel(attr)"
                       v-model="local.rdnValue"

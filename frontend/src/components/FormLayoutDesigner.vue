@@ -53,7 +53,7 @@
             <div class="grid grid-cols-6 gap-2">
               <template v-for="field in section.fields" :key="field.attributeName">
                 <!-- RDN field -->
-                <div v-if="field.rdn" :style="{ gridColumn: localShowDnField ? 'span 2' : `span ${field.columnSpan || 6}` }">
+                <div v-if="field.rdn" :style="{ gridColumn: `span ${field.columnSpan || 6}` }">
                   <label class="block text-sm font-medium text-gray-700 mb-1">
                     {{ field.customLabel || field.attributeName }}
                     <span class="text-red-500">*</span>
@@ -171,7 +171,7 @@
               <!-- RDN field card -->
               <div
                 v-if="field.rdn"
-                :style="{ gridColumn: localShowDnField ? 'span 2' : `span ${field.columnSpan || 6}` }"
+                :style="{ gridColumn: `span ${field.columnSpan || 6}` }"
                 :class="[
                   fieldDrag.field?.attributeName === field.attributeName ? 'opacity-30' : '',
                 ]"
@@ -192,10 +192,10 @@
                     <span class="text-[10px] bg-amber-100 text-amber-700 rounded px-1 font-medium">RDN</span>
                     <span class="text-red-400 text-xs">*</span>
                   </div>
-                  <div class="text-[10px] text-gray-500">{{ field.inputType }} · {{ localShowDnField ? '1/3' : spanLabel(field.columnSpan) }}</div>
+                  <div class="text-[10px] text-gray-500">{{ field.inputType }} · {{ spanLabel(field.columnSpan) }}</div>
                 </div>
-                <!-- Column span selector (only when DN is not shown, otherwise forced to 1/3) -->
-                <div v-if="!localShowDnField" class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <!-- Column span selector -->
+                <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     v-for="opt in spanOptions"
                     :key="opt.span"
@@ -406,13 +406,8 @@ watch(() => props.showDnField, (v) => { localShowDnField.value = v })
 watch(localShowDnField, (v) => {
   emit('update:showDnField', v)
   if (v) {
-    // When DN display is toggled on, force the RDN to 1/3 width and add the
-    // draggable DN field.
-    for (const section of sections.value) {
-      for (const field of section.fields) {
-        if (field.rdn) field.columnSpan = 2
-      }
-    }
+    // When DN display is toggled on, add the draggable DN pseudo-field. The RDN
+    // keeps its own configured width — the DN is independently sized.
     insertDnField(sections.value)
   } else {
     removeDnField(sections.value)
@@ -443,36 +438,19 @@ function buildSections(attrs) {
       map.set(key, { id: nextSectionId(), name: key, fields: [] })
     }
     const field = { ...attr }
-    // RDN field defaults to 1/3 width when DN display is enabled
-    if (field.rdn && localShowDnField.value && !field.columnSpan) {
-      field.columnSpan = 2
-    }
     map.get(key).fields.push(field)
   }
   const result = Array.from(map.values())
   if (result.length === 0) {
     result.push({ id: nextSectionId(), name: '', fields: [] })
   }
-  // Ensure RDN field is always first in the first section
-  moveRdnToFirst(result)
+  // The RDN keeps whatever position the saved layout gives it — the order in
+  // attributeConfigs is authoritative, so a repositioned RDN survives a reload.
   // Build initial hidden position map
   recordHiddenPositions(attrs)
   // Add the draggable/resizable DN pseudo-field at its configured position.
   insertDnField(result)
   return result
-}
-
-function moveRdnToFirst(sectionList) {
-  for (let s = 0; s < sectionList.length; s++) {
-    const rdnIdx = sectionList[s].fields.findIndex(f => f.rdn)
-    if (rdnIdx > 0) {
-      const [rdnF] = sectionList[s].fields.splice(rdnIdx, 1)
-      sectionList[0].fields.unshift(rdnF)
-      return
-    } else if (rdnIdx === 0 && s === 0) {
-      return // already in the right place
-    }
-  }
 }
 
 function recordHiddenPositions(attrs) {
@@ -552,7 +530,6 @@ watch(() => props.attributeConfigs, (newConfigs) => {
   for (const attr of visibleConfigs) {
     if (!currentNames.has(attr.attributeName)) {
       const field = { ...attr }
-      if (field.rdn && localShowDnField.value) field.columnSpan = 2
 
       // Try to restore un-hidden fields to their previous position
       const savedPos = hiddenPositions.value.get(attr.attributeName)
@@ -603,7 +580,6 @@ watch(() => props.attributeConfigs, (newConfigs) => {
       if (rdnIdx >= 0) {
         if (s === 0 && rdnIdx === 0) break // already in place
         const [rdnF] = sections.value[s].fields.splice(rdnIdx, 1)
-        if (localShowDnField.value) rdnF.columnSpan = 2
         sections.value[0].fields.unshift(rdnF)
         break
       }
