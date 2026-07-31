@@ -150,7 +150,10 @@ public class DirectoryConnectionService {
                 dc.getEntraClientId(),
                 null,                       // entraClientSecret — write-only, never exported
                 dc.getGraphEndpoint(),
-                dc.getSlug());
+                dc.getSlug(),
+                // Re-link by the audit source's stable slug (survives a fresh
+                // install); the id is intentionally left null.
+                dc.getAuditDataSource() != null ? dc.getAuditDataSource().getSlug() : null);
 
         return new DirectoryExport(req,
                 isSecretSet(dc.getBindPasswordEncrypted()),
@@ -417,14 +420,7 @@ public class DirectoryConnectionService {
                 req.selfServiceLoginAttribute() != null && !req.selfServiceLoginAttribute().isBlank()
                         ? req.selfServiceLoginAttribute() : "uid");
 
-        if (req.auditDataSourceId() != null) {
-            AuditDataSource auditSrc = auditSourceRepo.findById(req.auditDataSourceId())
-                    .orElseThrow(() -> new ResourceNotFoundException(
-                            "AuditDataSource", req.auditDataSourceId()));
-            dc.setAuditDataSource(auditSrc);
-        } else {
-            dc.setAuditDataSource(null);
-        }
+        dc.setAuditDataSource(resolveAuditSource(req));
 
         // Entry-classification object classes (V20). Stored as sent; the
         // converter trims and collapses an empty list to null, and a null
@@ -438,6 +434,28 @@ public class DirectoryConnectionService {
         dc.setTenantId(req.tenantId());
         dc.setEntraClientId(req.entraClientId());
         dc.setGraphEndpoint(req.graphEndpoint());
+    }
+
+    /**
+     * Resolve the audit data source to link, preferring the stable
+     * {@code auditDataSourceSlug} (IaC-friendly) over the server-assigned
+     * {@code auditDataSourceId}. A referenced slug that doesn't exist is a
+     * 400-class {@link IllegalArgumentException} (the caller declared a link to
+     * something absent); an unknown id stays a 404. Neither set ⇒ no link.
+     */
+    private AuditDataSource resolveAuditSource(DirectoryConnectionRequest req) {
+        if (req.auditDataSourceSlug() != null && !req.auditDataSourceSlug().isBlank()) {
+            String slug = req.auditDataSourceSlug().trim().toLowerCase(Locale.ROOT);
+            return auditSourceRepo.findBySlug(slug)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "No audit data source exists with slug [" + slug + "]"));
+        }
+        if (req.auditDataSourceId() != null) {
+            return auditSourceRepo.findById(req.auditDataSourceId())
+                    .orElseThrow(() -> new ResourceNotFoundException(
+                            "AuditDataSource", req.auditDataSourceId()));
+        }
+        return null;
     }
 
     private void saveBaseDns(DirectoryConnection dc, DirectoryConnectionRequest req) {

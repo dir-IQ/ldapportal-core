@@ -177,7 +177,10 @@ create, omit to preserve), `baseDn`, `pagingSize`, `poolMinSize`,
 `poolMaxSize`, `poolConnectTimeoutSeconds`, `poolResponseTimeoutSeconds`,
 `enabled`, `userBaseDns` / `groupBaseDns` (`[{ "dn", "displayOrder" }]`,
 full-replace), `userObjectClasses` / `groupObjectClasses` (optional lists; omit
-to use the vendor default for `directoryType`). Entra-only: `tenantId`,
+to use the vendor default for `directoryType`),
+`auditDataSourceSlug` (optional; links the directory to an audit data source by
+its stable slug — takes precedence over the UUID-based `auditDataSourceId`, and
+the referenced source must already exist). Entra-only: `tenantId`,
 `entraClientId`, `entraClientSecret` (**write-only**), `graphEndpoint`.
 
 ### Audit data source — `AuditSourceRequest`
@@ -354,9 +357,9 @@ the sections through the by-key upserts in §1.
   `auditDataSources` (keyed by slug, bind password as a placeholder),
   `directories` (incl. base DNs, object classes, trusted-cert PEM), `admins`
   (account + **admin-wide** feature permissions), and `isva`.
-- A directory's `auditDataSourceId` link is still dropped on export — audit
-  sources now have stable slugs, so re-linking directories to them by slug is
-  the immediate follow-up.
+- A directory's audit-source link round-trips as `auditDataSourceSlug` (the
+  UUID-based `auditDataSourceId` is dropped); the referenced source is emitted in
+  the `auditDataSources` section above it, so the link resolves on restore.
 - Admin **profile-scoped** roles/overrides are *not* yet exported — they key on
   a provisioning-profile UUID that a fresh DB regenerates; portable once
   profiles gain a stable slug. Admins export with `profileRoles: []`.

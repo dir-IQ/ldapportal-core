@@ -66,7 +66,7 @@ class ConfigExportServiceTest {
                 List.of(new BaseDnRequest("ou=Groups,dc=corp,dc=example,dc=com", 0)),
                 List.of("inetOrgPerson"), List.of("groupOfNames"),
                 null, null, null, null,
-                "corp-ldap");
+                "corp-ldap", "dsee-audit");   // linked to an audit source by slug
     }
 
     private AdminAccountResponse adminResponse(String username, AccountRole role,
@@ -93,6 +93,8 @@ class ConfigExportServiceTest {
         // Secret is a placeholder, never a real value; auditDataSourceId dropped.
         assertThat(dir.get("bindPassword")).isEqualTo("${LDAPPORTAL_DIR_CORP_LDAP_BIND_PASSWORD}");
         assertThat(dir).doesNotContainKey("auditDataSourceId");
+        // Audit source re-linked by stable slug (not the server UUID).
+        assertThat(dir.get("auditDataSourceSlug")).isEqualTo("dsee-audit");
         assertThat(dir.get("slug")).isEqualTo("corp-ldap");
         // The trusted cert PEM survives the round-trip (needed to reconnect).
         assertThat((String) dir.get("trustedCertificatePem")).contains("BEGIN CERTIFICATE");
@@ -105,6 +107,7 @@ class ConfigExportServiceTest {
         Set<ConstraintViolation<DirectoryConnectionRequest>> violations = validator.validate(back);
         assertThat(violations).isEmpty();
         assertThat(back.slug()).isEqualTo("corp-ldap");
+        assertThat(back.auditDataSourceSlug()).isEqualTo("dsee-audit");
         assertThat(back.port()).isEqualTo(636);
         assertThat(back.userBaseDns()).hasSize(1);
     }
