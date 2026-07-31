@@ -1066,14 +1066,18 @@ public class ProvisioningProfileService {
         }
 
         for (AttributeConfigEntry e : safeEntries) {
-            // A required password field may be hidden when the profile
-            // auto-generates it (GENERATED_*) — the server fills it at create
-            // time, so the operator never needs to see or enter it.
+            // A required attribute may be hidden when the server supplies its
+            // value at create time, so the operator never needs to see or enter
+            // it: a password the profile auto-generates (GENERATED_*), or a
+            // HIDDEN_FIXED attribute whose value the server applies from the
+            // config (e.g. the always-hidden objectClass).
             boolean filledByGeneration = isPasswordAttribute(e)
                     && profile.getPasswordDisposition().isGenerated();
+            boolean filledServerSide = filledByGeneration
+                    || InputType.HIDDEN_FIXED.name().equals(e.inputType());
             if (e.requiredOnCreate() && e.hidden()
                     && (e.computedExpression() == null || e.computedExpression().isBlank())
-                    && !filledByGeneration) {
+                    && !filledServerSide) {
                 throw new IllegalArgumentException(
                         "Required attribute '" + e.attributeName() + "' cannot be hidden unless it has a computed expression");
             }

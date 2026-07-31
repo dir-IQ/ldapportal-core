@@ -426,6 +426,62 @@ class ProvisioningProfileServiceTest {
         return dir;
     }
 
+    // ── Hidden required-attribute validation ─────────────────────────────────
+
+    private static com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry attrEntry(
+            String name, String inputType, boolean required, boolean hidden, String computed) {
+        return new com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry(
+                name, null, inputType, required, true, true, false, false,
+                null, computed, null, null, null, null, null, null, 6, hidden,
+                null, null, null, null);
+    }
+
+    private com.ldapportal.dto.profile.CreateProfileRequest createReqWithConfigs(
+            List<com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry> configs) {
+        return new com.ldapportal.dto.profile.CreateProfileRequest(
+                "engineers", null, null, "ou=People,dc=example,dc=com", null,
+                List.of("inetOrgPerson"), "uid", true,
+                null, null, null, null,
+                true, false,
+                null, null, null, null, null, null, null, null,
+                false, false, null, configs, List.of());
+    }
+
+    @Test
+    void createProfile_hiddenFixedRequiredAttribute_savesWithoutComputedExpression() {
+        // objectClass is required, hidden, and HIDDEN_FIXED — its value is
+        // applied server-side, so it must not trip the "required hidden needs a
+        // computed expression" rule. Regression: this rejected every profile
+        // carrying an objectClass config.
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+
+        var req = createReqWithConfigs(List.of(
+                attrEntry("objectClass", "HIDDEN_FIXED", true, true, null)));
+
+        assertThatCode(() -> service.create(directoryId, req, true, null))
+                .doesNotThrowAnyException();
+
+        org.mockito.Mockito.verify(attrConfigRepo).save(org.mockito.ArgumentMatchers.argThat(
+                c -> "objectClass".equals(c.getAttributeName()) && c.isHidden()));
+    }
+
+    @Test
+    void createProfile_hiddenRequiredNonFixedAttribute_rejectedWithoutComputedExpression() {
+        // A plain required attribute that is hidden with no computed expression
+        // and no server-side fill still has no way to get a value, so it stays
+        // rejected — the HIDDEN_FIXED exemption must not weaken the general rule.
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+
+        var req = createReqWithConfigs(List.of(
+                attrEntry("employeeType", "TEXT", true, true, null)));
+
+        assertThatThrownBy(() -> service.create(directoryId, req, true, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("cannot be hidden");
+    }
+
     @Test
     void createProfile_memberAttributeNotPermittedByGroupSchema_rejectedWithSuggestion() {
         // The regression this guards: a groupOfUniqueNames group configured
