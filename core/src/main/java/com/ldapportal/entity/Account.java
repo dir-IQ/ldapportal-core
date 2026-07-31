@@ -54,8 +54,10 @@ public class Account {
     private AccountRole role;
 
     /**
-     * Authentication mechanism: LOCAL (bcrypt password) or LDAP (bind against
-     * the LDAP auth server configured in application_settings).
+     * Authentication mechanism: LOCAL (bcrypt password), LDAP (bind against the
+     * LDAP auth server configured in application_settings), OIDC (external
+     * identity provider), or WEBSEAL (IBM WebSEAL / ISVA header trust). All four
+     * values are set and branched on at authentication time.
      */
     @Enumerated(EnumType.STRING)
     @Column(name = "auth_type", nullable = false, length = 10)
