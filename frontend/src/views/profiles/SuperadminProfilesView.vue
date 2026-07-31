@@ -1264,9 +1264,14 @@ const layoutAttributeConfigs = computed<LayoutRow[]>({
   },
   set(val: LayoutRow[]) {
     const laidOut = val.map(({ rdn, naming, ...rest }) => rest)
-    // Re-append the fields the designer never saw (auto-generated password +
-    // HIDDEN_FIXED), so they survive the wholesale replace below.
-    const preserved = profile.value.attributeConfigs.filter(a => !isAdminLayoutManaged(a))
+    // Re-append every field the designer doesn't emit, so it survives the
+    // wholesale replace below: the auto-generated password and HIDDEN_FIXED
+    // fields (filtered out of the designer), plus hidden fields (the designer
+    // receives them to track un-hide positions but renders — and emits — only
+    // visible ones, so without this they'd be dropped from the saved profile).
+    // The designer never toggles `hidden`, so a hidden field can't also appear
+    // in `laidOut`; there's no duplication.
+    const preserved = profile.value.attributeConfigs.filter(a => !isAdminLayoutManaged(a) || a.hidden)
     profile.value.attributeConfigs = [...laidOut, ...preserved]
   }
 })
