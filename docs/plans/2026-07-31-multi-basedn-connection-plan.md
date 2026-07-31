@@ -18,10 +18,12 @@ subtree.
 | Surface | Code today | Fans out already? |
 |---|---|---|
 | User search | `LdapOperationService.searchUsers` (`:196`) | Yes — already fans out + dedups (`:213-225`) |
-| User count | `LdapUserService.countUsers` (`:166`) | No — single `dc.getBaseDn()` |
-| Group search/count | `LdapGroupService` (`:89`, `:144`, `:360`) | No — single |
+| Group search | `LdapOperationService.searchGroups` (`:591`) | Yes — already fans out + dedups (`:607-625`), same pattern as user search |
+| Bulk CSV export (users/groups) | `LdapOperationService.bulkExportUsers` (`:1070`), `bulkExportGroups` (`:1419`) | Yes — already resolves a `bases` list via the resolver |
+| User + group count | `ScopeCountService` (`:104`, `:166-179`) → `LdapUserService.countUsers` (`:165`), `LdapGroupService.countGroups` (`:143`) | No — single per-base count, cached/keyed per `baseDn` |
+| Reverse membership (`isMemberOf` / AD matching rule) | `LdapGroupService.pagedDnSearch` (`:358`, reached from `:348`) | No — hardcodes `dc.getBaseDn()` |
 | Tree browser | `LdapBrowseService.browse` (`:44`) | No — structurally can't subtree (see item 6) |
-| Self-service group lookup | `SelfServiceService` (`:233`) | No — single |
+| Self-service group lookup | `SelfServiceService` (`:233`) | No — single, calls `LdapGroupService` directly (bypasses the resolver) |
 | Auth / login probe | `AuthController` (`:494`) | No — single |
 | Schema LDIF preview, integrity check, discovery | `LdifPreviewService`, `IntegrityCheckService`, `DirectoryDiscoveryService` | No — single |
 
@@ -33,8 +35,11 @@ dedup by DN (`:213-225`). The clean design is to make `resolveSearchBaseDns`
 return the connection's base-DN list for a superadmin when no explicit base is
 requested, instead of today's single `[requestedBaseDn]` / `[null]`
 (`PermissionService.java:365-367`). Every caller routed through that method
-inherits multi-base behaviour for free; the admin profile-OU fan-out path stays
-untouched.
+inherits multi-base behaviour for free — user search, group search **and both
+bulk CSV exports** (`bulkExportUsers:1070`, `bulkExportGroups:1419`) already loop
+over the resolved `bases` list, so a superadmin export will start spanning all
+contexts the moment the resolver returns more than one base; the admin profile-OU
+fan-out path stays untouched.
 
 ## Data model: one flat base-DN list, not user/group split
 
@@ -97,9 +102,23 @@ Rejected alternatives for the list's source of truth:
    null, return the connection's flat base-DN list (fallback `[dc.getBaseDn()]`
    when empty). Core change. `PermissionService.java:365`. Load the list where
    the resolver runs (inject the repo).
-5. **Count parity + group search** — route `LdapOperationService.countUsers`,
-   `LdapGroupService` search/count (`:89`, `:144`, `:360`) through the same
-   fan-out-and-merge, or counts won't match the result set.
+5. **Count parity** — group *search* already fans out through the resolver
+   (`LdapOperationService.searchGroups:607-625`), so no work there. The gap is
+   **counts**: they live in `ScopeCountService`, not `LdapOperationService`
+   (there is no `LdapOperationService.countUsers`). `ScopeCountService`
+   (`:104`, `registerScope:143-181`) counts each scope under a single `baseDn`
+   via `LdapUserService.countUsers:165` / `LdapGroupService.countGroups:143`,
+   caching the result **per `baseDn` cache key** (`userKey`/`groupKey:183-186`)
+   with a `-1` failure sentinel. Fanning out here means registering one scope
+   per base and summing — more involved than the search merge because each base
+   is its own cache entry and its own success/failure, so this is the item most
+   likely to exceed the effort estimate. Otherwise dashboard counts won't match
+   the multi-base result set.
+5a. **Reverse membership** — `LdapGroupService.pagedDnSearch:358` (the
+   `isMemberOf` / AD matching-rule lookup reached from `:348`) hardcodes
+   `dc.getBaseDn()` and never touches the resolver. Two contexts means a user's
+   group memberships in the second context are invisible. Decide whether to fan
+   this out now or defer; it is a distinct surface from group search/count.
 6. **Tree browser — special case.** `browse(dc, null)` reads *one* entry plus
    its one-level children (`:44-54`); two top-level DNs have no single parent
    entry. Needs a **synthetic root node**: when no DN is requested, return a
@@ -147,8 +166,10 @@ Rejected alternatives for the list's source of truth:
 
 ## Effort
 
-Medium. The search fan-out (items 4–5) is small because the user-search path
-already fans out. The data-model flattening (items 1–3) plus the form editor
+Medium. The search fan-out (item 4) is small because the user- and group-search
+paths already fan out; the count fan-out (item 5) is the sleeper — it lands in
+`ScopeCountService`'s per-base cache/keying, not a one-line sum. The data-model
+flattening (items 1–3) plus the form editor
 (item 8) is the bulk — mechanical but touches DTOs, a migration, discovery, and
 IaC. Item 6 (browser synthetic root) is the one with real design shape. Could
 land as one PR, or split: **PR A** = flatten the list + form editor + null-safe
