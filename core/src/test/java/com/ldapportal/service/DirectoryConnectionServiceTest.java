@@ -116,7 +116,7 @@ class DirectoryConnectionServiceTest {
         return new DirectoryConnectionRequest(
                 DirectoryType.GENERIC, "Corp LDAP", host, 389, SslMode.NONE,
                 false, null, "cn=admin,dc=example,dc=com", null,
-                "dc=example,dc=com", 500, 1, 10, 5, 30,
+                "dc=example,dc=com", 500, 1, 10, 5, 30, 300,
                 null, null, null, null, null, true,
                 false, null, null, null, null,
                 null, null,

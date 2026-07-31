@@ -70,6 +70,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 10,                                 // poolMaxSize
                 5,                                  // poolConnectTimeoutSeconds
                 30,                                 // poolResponseTimeoutSeconds
+                300,                                // poolMaxConnectionAgeSeconds
                 null,                               // enableDisableAttribute
                 null,                               // enableDisableValueType
                 null,                               // enableValue
@@ -100,7 +101,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 com.ldapportal.entity.enums.DirectoryType.GENERIC,
                 "Corp LDAP", "ldap.example.com", 389, SslMode.NONE,
                 false, null, "cn=admin,dc=example,dc=com", "secret",
-                "dc=example,dc=com", 500, 1, 10, 5, 30,
+                "dc=example,dc=com", 500, 1, 10, 5, 30, 300,
                 null, null, null, null, null, true,
                 false, null, null, null, null,
                 List.of(), List.of(),
@@ -166,7 +167,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 com.ldapportal.entity.enums.DirectoryType.GENERIC,
                 "", "ldap.example.com", 389, SslMode.NONE,
                 false, null, "cn=admin,dc=example,dc=com", "secret",
-                "dc=example,dc=com", 500, 1, 10, 5, 30,
+                "dc=example,dc=com", 500, 1, 10, 5, 30, 300,
                 null, null, null, null, null, true,
                 false, null, null, null, null,
                 List.of(), List.of(),
@@ -187,7 +188,7 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 com.ldapportal.entity.enums.DirectoryType.GENERIC,
                 "Corp LDAP", "ldap.example.com", 99999, SslMode.NONE,
                 false, null, "cn=admin,dc=example,dc=com", "secret",
-                "dc=example,dc=com", 500, 1, 10, 5, 30,
+                "dc=example,dc=com", 500, 1, 10, 5, 30, 300,
                 null, null, null, null, null, true,
                 false, null, null, null, null,
                 List.of(), List.of(),

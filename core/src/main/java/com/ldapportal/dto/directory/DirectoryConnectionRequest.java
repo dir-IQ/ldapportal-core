@@ -43,6 +43,7 @@ public record DirectoryConnectionRequest(
         @Min(0) int poolMaxSize,
         @Min(0) int poolConnectTimeoutSeconds,
         @Min(0) int poolResponseTimeoutSeconds,
+        @Min(0) int poolMaxConnectionAgeSeconds,
         String enableDisableAttribute,
         EnableDisableValueType enableDisableValueType,
         String enableValue,

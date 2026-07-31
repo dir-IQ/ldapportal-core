@@ -100,6 +100,17 @@ public class DirectoryConnection {
     @Column(name = "pool_response_timeout_seconds", nullable = false)
     private int poolResponseTimeoutSeconds = 30;
 
+    /**
+     * Maximum age of a pooled connection before it is recycled, in seconds.
+     * Set below the shortest idle timeout on the network path (firewall / load
+     * balancer / server idle-time limit) so connections are replaced before an
+     * intermediary silently closes them and a later borrow fails with
+     * "connection reset". 0 disables the cap. Default 300s sits under the common
+     * 350s AWS NLB idle timeout.
+     */
+    @Column(name = "pool_max_connection_age_seconds", nullable = false)
+    private int poolMaxConnectionAgeSeconds = 300;
+
     // ── Account enable/disable attribute configuration (§4.1 / OI-001) ────────
 
     /** LDAP attribute name representing account enabled/disabled state. */

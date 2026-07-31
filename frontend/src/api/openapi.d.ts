@@ -2970,6 +2970,8 @@ export interface components {
             poolConnectTimeoutSeconds?: number;
             /** Format: int32 */
             poolResponseTimeoutSeconds?: number;
+            /** Format: int32 */
+            poolMaxConnectionAgeSeconds?: number;
             enableDisableAttribute?: string;
             /** @enum {string} */
             enableDisableValueType?: "BOOLEAN" | "STRING";
@@ -3039,6 +3041,8 @@ export interface components {
             poolConnectTimeoutSeconds?: number;
             /** Format: int32 */
             poolResponseTimeoutSeconds?: number;
+            /** Format: int32 */
+            poolMaxConnectionAgeSeconds?: number;
             enableDisableAttribute?: string;
             /** @enum {string} */
             enableDisableValueType?: "BOOLEAN" | "STRING";

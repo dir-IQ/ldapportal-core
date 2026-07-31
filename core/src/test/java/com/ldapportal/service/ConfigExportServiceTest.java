@@ -57,7 +57,7 @@ class ConfigExportServiceTest {
                 DirectoryType.OPENLDAP, "Corp LDAP", "ldap.corp.example.com", 636,
                 SslMode.LDAPS, false, "-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----",
                 "cn=svc,dc=corp,dc=example,dc=com", null, "dc=corp,dc=example,dc=com",
-                500, 2, 20, 10, 30,
+                500, 2, 20, 10, 30, 300,
                 null, null, null, null,
                 null,                    // auditDataSourceId — exporter always clears this
                 true, false, "uid",

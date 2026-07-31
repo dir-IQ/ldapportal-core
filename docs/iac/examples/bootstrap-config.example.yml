@@ -66,6 +66,10 @@ directories:
     poolMaxSize: 20
     poolConnectTimeoutSeconds: 10
     poolResponseTimeoutSeconds: 30
+    # Recycle pooled connections at this age (seconds) so they are replaced
+    # before a firewall / load-balancer idle timeout (e.g. AWS NLB's 350s) or
+    # the server's idle-time limit silently closes them. 0 disables the cap.
+    poolMaxConnectionAgeSeconds: 300
     enabled: true
     userBaseDns:
       - { dn: "ou=People,dc=corp,dc=example,dc=com", displayOrder: 0 }
