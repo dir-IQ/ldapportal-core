@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Configuration export for disaster recovery & IaC
 
-**Status:** In progress (Phase 1 shipped 2026-07-29; Phase 2 — application settings, audit data sources + directory re-link shipped, 2026-07-30).
+**Status:** In progress (Phase 1 shipped 2026-07-29; Phase 2 — settings, audit data sources, directory re-link, and the provisioning-profile slug foundation shipped, 2026-07-30).
 
 This is the **export** half of the IaC story. The companion design
 [`2026-06-05-iac-automation-design.md`](2026-06-05-iac-automation-design.md)
@@ -99,8 +99,11 @@ sharp edges that gate the bigger families (one now resolved):
 - **Provisioning-profile identity.** Admin `profileRoles` and per-profile
   feature overrides reference a provisioning-profile **UUID**. A fresh DB
   regenerates UUIDs, so these references can't round-trip until profiles get a
-  stable IaC **slug** (a Flyway migration + by-slug upsert). This is the same
-  open question flagged in the 2026-06-05 plan; the exporter makes it acute.
+  stable IaC **slug** — now **partly resolved (Phase 2d-1)**: profiles carry a
+  globally-unique, immutable `slug` (Flyway V25, auto-derived from name, exposed
+  on `ProfileResponse`). The remaining steps build on it: a by-slug profile
+  upsert + full profile export/reconcile (2d-2), then admin `profileRoles` /
+  per-profile overrides keyed by profile slug (2d-3).
 - **`auditDataSourceId`** on a directory references an audit source by UUID —
   resolved (Phase 2b + 2c): audit sources carry a stable slug, and a directory
   now round-trips its link as `auditDataSourceSlug`, so the exporter clears the
@@ -113,7 +116,9 @@ sharp edges that gate the bigger families (one now resolved):
 | **2a** | `settings` singleton — branding, session, SMTP/S3, OIDC + LDAP admin-auth, SIEM/webhook, WebSEAL; six write-only secrets as placeholders | **Shipped 2026-07-30** |
 | **2b** | `auditDataSources` — new stable slug (Flyway) + by-slug upsert; bind password as placeholder; runtime DirSync cursor excluded | **Shipped 2026-07-30** |
 | **2c** | Re-link directories to audit sources by slug (`auditDataSourceSlug` on the directory request), closing the Phase 1 drop | **Shipped 2026-07-30** |
-| **2d** | Provisioning profiles (**+ new profile slug**), then admin `profileRoles` / per-profile overrides; superadmins | Planned |
+| **2d-1** | Provisioning-profile **stable slug** — Flyway V25 (globally-unique, immutable, auto-derived from name); exposed on `ProfileResponse`. Foundation for the rest of 2d | **Shipped 2026-07-30** |
+| **2d-2** | Profile by-slug upsert + full profile export/reconcile (attribute configs, group assignments, approval, lifecycle) | Planned |
+| **2d-3** | Admin `profileRoles` / per-profile feature overrides keyed by profile slug (closes the Phase 1 admin-permission drop); superadmins | Planned |
 | **3** | Sync links/sets, event subscriptions, CSV mapping templates, lifecycle playbooks, ISVA profile overrides; API-token **metadata** (plaintext non-recoverable — see §6) | Planned |
 | **4** | Optional "sealed secrets" export mode (`--with-secrets` → encrypted `age`/`sops` sidecar) for unattended DR; feed `terraform import` from the dump | Optional |
 

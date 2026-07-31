@@ -46,7 +46,7 @@ class ProvisioningProfileControllerTest extends BaseControllerTest {
 
     private ProfileResponse stubResponse() {
         return new ProfileResponse(
-                PROFILE_ID, DIR_ID, "dir-1", "p1", null,
+                PROFILE_ID, DIR_ID, "dir-1", "p1", "p1", null,
                 null, // themeColor
                 "ou=people,dc=example,dc=com",
                 "ou=groups,dc=example,dc=com",

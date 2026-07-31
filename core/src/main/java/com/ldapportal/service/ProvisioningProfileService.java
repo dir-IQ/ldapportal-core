@@ -155,6 +155,7 @@ public class ProvisioningProfileService {
 
         ProvisioningProfile profile = new ProvisioningProfile();
         profile.setDirectory(dir);
+        profile.setSlug(resolveSlug(req.name()));
         applyCommonFields(profile, req.name(), req.description(), req.targetUserDn(),
                 req.targetGroupDn(), req.objectClassNames(), req.rdnAttribute(), req.showDnField(),
                 req.dnTemplate(), req.dnColumnSpan(), req.dnSectionName(), req.dnDisplayOrder(),
@@ -186,6 +187,35 @@ public class ProvisioningProfileService {
     @Transactional
     public ProfileResponse create(UUID directoryId, CreateProfileRequest req) {
         return create(directoryId, req, null);
+    }
+
+    // ── Slug (IaC external key) helpers ────────────────────────────────────────
+
+    /**
+     * Derive a clean, globally-unique slug from the profile name, appending a
+     * numeric suffix on collision ({@code name}, {@code name-2}, …). The slug is
+     * global (not per-directory) so it's a single stable key that admin
+     * profile-role / ISVA-override references can address.
+     */
+    private String resolveSlug(String name) {
+        String base = slugify(name);
+        String candidate = base;
+        int n = 2;
+        while (profileRepo.existsBySlug(candidate)) {
+            candidate = base + "-" + n++;
+        }
+        return candidate;
+    }
+
+    private String slugify(String name) {
+        String base = name == null ? "" : name
+                .trim().toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("(^-+)|(-+$)", "");
+        if (base.length() > 100) {
+            base = base.substring(0, 100).replaceAll("-+$", "");
+        }
+        return base.isEmpty() ? "profile" : base;
     }
 
     @Transactional
