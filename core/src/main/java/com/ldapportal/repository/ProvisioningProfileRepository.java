@@ -22,6 +22,11 @@ public interface ProvisioningProfileRepository extends JpaRepository<Provisionin
 
     boolean existsByDirectoryIdAndName(UUID directoryId, String name);
 
+    /** Stable IaC key lookup — the slug is globally unique. */
+    Optional<ProvisioningProfile> findBySlug(String slug);
+
+    boolean existsBySlug(String slug);
+
     List<ProvisioningProfile> findAllByDirectoryIdAndAutoIncludeGroupsTrue(UUID directoryId);
 
     /**

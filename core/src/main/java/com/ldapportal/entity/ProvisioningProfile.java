@@ -43,6 +43,16 @@ public class ProvisioningProfile {
     @JoinColumn(name = "directory_id", nullable = false)
     private DirectoryConnection directory;
 
+    /**
+     * Stable, globally-unique IaC external key (immutable). This is the key
+     * config-as-code and admin profile-role references address a profile by,
+     * so it survives a fresh install where the UUID would not. The service sets
+     * a clean, collision-checked slug on create; {@link #ensureSlug()} is a
+     * safety net for any persist path that didn't (clone, tests).
+     */
+    @Column(nullable = false, updatable = false, length = 100)
+    private String slug;
+
     @Column(nullable = false)
     private String name;
 
@@ -190,4 +200,24 @@ public class ProvisioningProfile {
     @Version
     @Column(name = "version", nullable = false)
     private Long version;
+
+    /**
+     * Safety net guaranteeing the NOT NULL slug invariant for any persist path
+     * that didn't set one explicitly (the service sets a clean, collision-checked
+     * slug up front; this covers clones and tests). Derives from {@code name} and
+     * appends a short random suffix so an auto-generated slug can't collide with
+     * the unique index.
+     */
+    @PrePersist
+    void ensureSlug() {
+        if (slug == null || slug.isBlank()) {
+            String base = name == null ? "" : name
+                    .trim().toLowerCase(java.util.Locale.ROOT)
+                    .replaceAll("[^a-z0-9]+", "-")
+                    .replaceAll("(^-+)|(-+$)", "");
+            if (base.isEmpty()) base = "profile";
+            if (base.length() > 80) base = base.substring(0, 80).replaceAll("-+$", "");
+            slug = base + "-" + UUID.randomUUID().toString().substring(0, 8);
+        }
+    }
 }

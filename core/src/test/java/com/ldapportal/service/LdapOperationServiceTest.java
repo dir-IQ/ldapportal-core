@@ -888,7 +888,7 @@ class LdapOperationServiceTest {
     /** Minimal ProfileResponse for move-destination stubbing (id + targetUserDn matter). */
     private com.ldapportal.dto.profile.ProfileResponse profileResponse(UUID id, String targetUserDn) {
         return new com.ldapportal.dto.profile.ProfileResponse(
-                id, dirId, "dir", "Staff", null,
+                id, dirId, "dir", "Staff", "staff", null,
                 null, // themeColor
                 targetUserDn, targetUserDn,
                 List.of(), "uid",

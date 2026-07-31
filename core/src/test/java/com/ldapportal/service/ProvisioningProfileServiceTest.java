@@ -524,6 +524,21 @@ class ProvisioningProfileServiceTest {
     }
 
     @Test
+    void createProfile_derivesSlugFromName() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        var captor = org.mockito.ArgumentCaptor.forClass(
+                com.ldapportal.entity.ProvisioningProfile.class);
+
+        // themedCreateReq names the profile "engineers".
+        service.create(directoryId, themedCreateReq("#2563eb"), true, null);
+
+        org.mockito.Mockito.verify(profileRepo, org.mockito.Mockito.atLeastOnce())
+                .save(captor.capture());
+        assertThat(captor.getValue().getSlug()).isEqualTo("engineers");
+    }
+
+    @Test
     void createProfile_blankThemeColor_storedAsNull() {
         // An "unset" theme must persist as NULL, not an empty string, so the
         // admin screens fall back to their default (blue) header styling.
