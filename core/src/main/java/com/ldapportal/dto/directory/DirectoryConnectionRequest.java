@@ -70,5 +70,15 @@ public record DirectoryConnectionRequest(
         @Size(max = 100)
         @Pattern(regexp = "^[a-z0-9]+(?:-[a-z0-9]+)*$",
                 message = "slug must be lowercase alphanumeric segments separated by single hyphens")
-        String slug) {
+        String slug,
+        // ── Audit data source link by stable slug (IaC-friendly) ─────────────
+        // Optional. When set, the referenced audit source (which must already
+        // exist) is linked, taking precedence over auditDataSourceId — so IaC
+        // can reference an audit source by a key that survives a fresh install
+        // rather than a server-assigned UUID. Blank/absent leaves the id-based
+        // behaviour untouched.
+        @Size(max = 100)
+        @Pattern(regexp = "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+                message = "auditDataSourceSlug must be lowercase alphanumeric segments separated by single hyphens")
+        String auditDataSourceSlug) {
 }
