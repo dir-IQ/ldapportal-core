@@ -69,6 +69,37 @@ class LdapConnectionFactoryTest {
     }
 
     @Test
+    void getPool_configuresSelfHealing_againstIdleConnectionDrops() {
+        DirectoryConnection dc = buildDirectoryConnection(SslMode.NONE);
+        dc.setPoolMaxConnectionAgeSeconds(300);
+        when(encryptionService.decrypt(anyString())).thenReturn("adminpass");
+
+        LDAPConnectionPool pool = factory.getPool(dc);
+
+        // Background health check prunes/recycles connections between uses.
+        assertThat(pool.getHealthCheckIntervalMillis()).isEqualTo(30_000L);
+        // Connections are recycled at the configured age so they never reach a
+        // firewall / load-balancer idle timeout that would silently close them.
+        assertThat(pool.getMaxConnectionAgeMillis()).isEqualTo(300_000L);
+        // Pool-level operations retry once on a fresh connection when broken.
+        assertThat(pool.getOperationTypesToRetryDueToInvalidConnections()).isNotEmpty();
+    }
+
+    @Test
+    void getPool_maxConnectionAgeZero_disablesAgeCap() {
+        DirectoryConnection dc = buildDirectoryConnection(SslMode.NONE);
+        dc.setPoolMaxConnectionAgeSeconds(0);
+        when(encryptionService.decrypt(anyString())).thenReturn("adminpass");
+
+        LDAPConnectionPool pool = factory.getPool(dc);
+
+        // 0 means "no cap" — the SDK represents that as a 0 max age.
+        assertThat(pool.getMaxConnectionAgeMillis()).isZero();
+        // Health check and retry still apply regardless of the age cap.
+        assertThat(pool.getHealthCheckIntervalMillis()).isEqualTo(30_000L);
+    }
+
+    @Test
     void getPool_returnsSamePool_onSecondCall() {
         DirectoryConnection dc = buildDirectoryConnection(SslMode.NONE);
         when(encryptionService.decrypt(anyString())).thenReturn("adminpass");

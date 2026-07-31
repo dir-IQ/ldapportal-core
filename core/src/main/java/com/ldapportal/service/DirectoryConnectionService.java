@@ -130,6 +130,7 @@ public class DirectoryConnectionService {
                 dc.getPoolMaxSize(),
                 dc.getPoolConnectTimeoutSeconds(),
                 dc.getPoolResponseTimeoutSeconds(),
+                dc.getPoolMaxConnectionAgeSeconds(),
                 dc.getEnableDisableAttribute(),
                 dc.getEnableDisableValueType(),
                 dc.getEnableValue(),
@@ -405,6 +406,7 @@ public class DirectoryConnectionService {
         dc.setPoolMaxSize(req.poolMaxSize());
         dc.setPoolConnectTimeoutSeconds(req.poolConnectTimeoutSeconds());
         dc.setPoolResponseTimeoutSeconds(req.poolResponseTimeoutSeconds());
+        dc.setPoolMaxConnectionAgeSeconds(req.poolMaxConnectionAgeSeconds());
         dc.setEnableDisableAttribute(req.enableDisableAttribute());
         dc.setEnableDisableValueType(req.enableDisableValueType());
         dc.setEnableValue(req.enableValue());
@@ -532,6 +534,7 @@ public class DirectoryConnectionService {
                 String.valueOf(dc.getPoolMaxSize()),
                 String.valueOf(dc.getPoolConnectTimeoutSeconds()),
                 String.valueOf(dc.getPoolResponseTimeoutSeconds()),
+                String.valueOf(dc.getPoolMaxConnectionAgeSeconds()),
                 String.valueOf(dc.getPagingSize()),
                 String.valueOf(dc.getTenantId()),
                 String.valueOf(dc.getEntraClientId()),

@@ -141,6 +141,7 @@
             <FormField label="Pool Max Size" v-model.number="form.poolMaxSize" type="number" />
             <FormField label="Connect Timeout (s)" v-model.number="form.poolConnectTimeoutSeconds" type="number" />
             <FormField label="Response Timeout (s)" v-model.number="form.poolResponseTimeoutSeconds" type="number" />
+            <FormField label="Max Connection Age (s)" v-model.number="form.poolMaxConnectionAgeSeconds" type="number" placeholder="300 (0 = no limit)" />
             <FormField label="Secondary Host" v-model="form.secondaryHost" placeholder="Failover DC (optional)" />
             <FormField label="Secondary Port" v-model.number="form.secondaryPort" type="number" placeholder="Same as primary" />
             <FormField label="Global Catalog Port" v-model.number="form.globalCatalogPort" type="number" placeholder="3268 (AD only)" />
@@ -248,6 +249,7 @@ interface DirectoryForm {
   poolMaxSize: number | undefined
   poolConnectTimeoutSeconds: number | undefined
   poolResponseTimeoutSeconds: number | undefined
+  poolMaxConnectionAgeSeconds: number | undefined
   enableDisableAttribute: string
   enableDisableValueType: string
   enableValue: string
@@ -411,6 +413,7 @@ function emptyForm(): DirectoryForm {
     trustAllCerts: false, bindDn: '', bindPassword: '', baseDn: '',
     pagingSize: 500, poolMinSize: 2, poolMaxSize: 10,
     poolConnectTimeoutSeconds: 10, poolResponseTimeoutSeconds: 30,
+    poolMaxConnectionAgeSeconds: 300,
     enableDisableAttribute: '', enableDisableValueType: 'BOOLEAN',
     enableValue: '', disableValue: '', enabled: true,
     selfServiceEnabled: false, selfServiceLoginAttribute: 'uid',
@@ -535,6 +538,7 @@ function openEdit(d: DirectoryRow) {
     pagingSize: d.pagingSize, poolMinSize: d.poolMinSize, poolMaxSize: d.poolMaxSize,
     poolConnectTimeoutSeconds: d.poolConnectTimeoutSeconds,
     poolResponseTimeoutSeconds: d.poolResponseTimeoutSeconds,
+    poolMaxConnectionAgeSeconds: d.poolMaxConnectionAgeSeconds,
     enableDisableAttribute: d.enableDisableAttribute || '',
     enableDisableValueType: d.enableDisableValueType || 'BOOLEAN',
     enableValue: d.enableValue || '', disableValue: d.disableValue || '',

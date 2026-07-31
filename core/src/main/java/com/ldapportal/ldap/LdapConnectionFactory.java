@@ -91,6 +91,14 @@ public class LdapConnectionFactory {
     @Nullable
     private final LdapOperationMetrics operationMetrics;
 
+    /**
+     * Interval for each pool's background health-check thread, which recycles
+     * connections that have exceeded their max age and prunes ones the server
+     * has closed. 30s clears a stale connection well before a typical operator
+     * retry, with negligible overhead on pools of this size.
+     */
+    private static final long POOL_HEALTH_CHECK_INTERVAL_MILLIS = 30_000L;
+
     private final ConcurrentMap<UUID, LDAPConnectionPool> pools = new ConcurrentHashMap<>();
 
     @Autowired
@@ -317,9 +325,12 @@ public class LdapConnectionFactory {
                     dc.getPoolMinSize(), dc.getPoolMaxSize());
             }
 
-            log.info("Created LDAP pool for [{}] host={}:{} ssl={} min={} max={}",
+            configureSelfHealing(pool, dc);
+
+            log.info("Created LDAP pool for [{}] host={}:{} ssl={} min={} max={} maxAgeSec={}",
                 dc.getDisplayName(), dc.getHost(), dc.getPort(),
-                dc.getSslMode(), dc.getPoolMinSize(), dc.getPoolMaxSize());
+                dc.getSslMode(), dc.getPoolMinSize(), dc.getPoolMaxSize(),
+                dc.getPoolMaxConnectionAgeSeconds());
             return pool;
 
         } catch (LdapConnectionException e) {
@@ -327,6 +338,38 @@ public class LdapConnectionFactory {
         } catch (Exception e) {
             throw new LdapConnectionException(
                 "Failed to create LDAP pool for [" + dc.getDisplayName() + "]: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Makes a freshly-created pool resilient to connections that die while idle.
+     *
+     * <p>A firewall or load balancer in front of the directory (e.g. an AWS NLB,
+     * whose default idle timeout is 350s), or the server's own idle-time limit,
+     * can silently close a pooled connection without the client noticing. The
+     * next operation to borrow that connection then fails with "connection
+     * reset" — even though the server is perfectly healthy. Because this factory
+     * borrows a connection and runs the operation on it directly (rather than
+     * through the pool's own operation methods), the SDK's built-in retry can't
+     * transparently reissue borrowed-connection operations, so the primary
+     * defence is to stop connections from ever reaching the idle killer:</p>
+     * <ul>
+     *   <li><b>Max connection age</b> ({@code poolMaxConnectionAgeSeconds}, when
+     *       &gt; 0) — connections are recycled once they reach this age, which
+     *       must be set below the shortest idle timeout on the network path.
+     *       This is the structural fix; the background thread enforces it.</li>
+     *   <li><b>Background health check</b> — a periodic thread recycles aged
+     *       connections and prunes any it can tell are dead.</li>
+     *   <li><b>Retry on invalid connection</b> — covers any code path that does
+     *       issue operations through the pool directly.</li>
+     * </ul>
+     */
+    private void configureSelfHealing(LDAPConnectionPool pool, DirectoryConnection dc) {
+        pool.setRetryFailedOperationsDueToInvalidConnections(true);
+        pool.setHealthCheckIntervalMillis(POOL_HEALTH_CHECK_INTERVAL_MILLIS);
+        int maxAgeSeconds = dc.getPoolMaxConnectionAgeSeconds();
+        if (maxAgeSeconds > 0) {
+            pool.setMaxConnectionAgeMillis(maxAgeSeconds * 1_000L);
         }
     }
 
