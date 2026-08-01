@@ -208,7 +208,8 @@ function emptyProfile(): ProfileForm {
   return {
     name: '', description: '', themeColor: '', targetUserDn: '', targetGroupDn: '',
     objectClassNames: [], rdnAttribute: '',
-    showDnField: true, dnTemplate: '',
+    // Default to Automatic DN mode (app composes <rdn>=<value>,<targetOU>).
+    showDnField: false, dnTemplate: '',
     dnColumnSpan: undefined, dnSectionName: undefined, dnDisplayOrder: undefined,
     enabled: true, selfRegistrationAllowed: false,
     passwordLength: 16, passwordUppercase: true, passwordLowercase: true,
@@ -286,7 +287,11 @@ async function openEdit(p: ProfileRow) {
     targetUserDn: p.targetUserDn,
     targetGroupDn: p.targetGroupDn || '',
     objectClassNames: [...p.objectClassNames], rdnAttribute: p.rdnAttribute,
-    showDnField: p.showDnField, dnTemplate: p.dnTemplate || '',
+    // Reconcile legacy profiles that predate the DN-mode interlock: operator-
+    // entered DN and self-registration are now mutually exclusive, and a self-
+    // registration profile is inherently automatic (DN = <rdn>=<value>), so keep
+    // self-registration and drop into Automatic mode.
+    showDnField: p.showDnField && !p.selfRegistrationAllowed, dnTemplate: p.dnTemplate || '',
     dnColumnSpan: p.dnColumnSpan ?? undefined, dnSectionName: p.dnSectionName ?? undefined, dnDisplayOrder: p.dnDisplayOrder ?? undefined,
     enabled: p.enabled,
     selfRegistrationAllowed: p.selfRegistrationAllowed,
@@ -1036,6 +1041,10 @@ function isRdnAttribute(attr: AttributeConfig) {
   return attr.attributeName === profile.value.rdnAttribute
 }
 
+// True in operator-entered DN mode: the operator sets the DN on the create form.
+// False = automatic mode (app composes <rdn>=<value>,<targetOU>).
+const dnTemplateActive = computed(() => !!(profile.value.dnTemplate || '').trim())
+
 // Naming attributes derived from the DN template's leading RDN. A template
 // like "o=${o}+cn=${cn},ou=People,…" makes *those* attribute types name new
 // entries (a multi-valued RDN), regardless of the designated RDN attribute.
@@ -1045,11 +1054,16 @@ const templateNamingAttrs = computed<Set<string>>(() => {
   return new Set(parseLeadingRdn(tpl).map(a => a.name.toLowerCase()))
 })
 
-// An attribute whose value names new entries: the designated (default) RDN
-// attribute, plus any attribute the DN template's leading RDN references.
-// These are forced required and can't be removed — their values feed the DN.
+// An attribute whose value names new entries. A DN template is authoritative
+// when present (operator-entered mode) — the template's leading RDN names the
+// entry, so those attributes are the naming ones and the RDN picker is a locked
+// seed. Otherwise the designated RDN attribute names entries. Naming attributes
+// are forced required and can't be removed — their values feed the DN.
 function isNamingAttribute(attr: AttributeConfig): boolean {
-  return isRdnAttribute(attr) || templateNamingAttrs.value.has(attr.attributeName.toLowerCase())
+  if (dnTemplateActive.value) {
+    return templateNamingAttrs.value.has(attr.attributeName.toLowerCase())
+  }
+  return isRdnAttribute(attr)
 }
 
 // Helper: check if an attribute is schema-required
@@ -1137,15 +1151,45 @@ function isNamingAttributeName(name: string): boolean {
     || templateNamingAttrs.value.has(lower)
 }
 
+// DN creation mode. Automatic composes <rdn>=<value>,<targetOU> (not editable);
+// operator-entered shows an editable DN on the create form, optionally seeded by
+// a template. Backed by showDnField. Switching modes reconciles the dependent
+// state (self-registration is unavailable in operator-entered; a template only
+// exists in operator-entered).
+type DnMode = 'auto' | 'operator'
+const dnMode = computed<DnMode>({
+  get: () => (profile.value.showDnField ? 'operator' : 'auto'),
+  set: (mode) => setDnMode(mode),
+})
+
+function setDnMode(mode: DnMode) {
+  if (mode === 'operator') {
+    profile.value.showDnField = true
+    if (profile.value.selfRegistrationAllowed) {
+      profile.value.selfRegistrationAllowed = false
+      notif.info('Self-registration turned off — it requires an automatically-composed DN.')
+    }
+  } else {
+    profile.value.showDnField = false
+    if ((profile.value.dnTemplate || '').trim()) {
+      profile.value.dnTemplate = ''
+      notif.info('DN template cleared — automatic mode composes the DN from the RDN attribute.')
+    }
+    // Now authoritative naming: ensure the RDN attribute is a supplyable field.
+    ensureRdnAttributePresent()
+  }
+}
+
 // The RDN attribute must exist as a form field so its value can be supplied at
-// create time. Without a DN template (which drives naming itself), designating
-// an RDN adds it — required — if it isn't configured yet, and forces an existing
-// one required unless it's computed (a computed RDN derives its own value).
-// Empty-config profiles use the fallback create form and are left alone.
+// create time. In automatic mode the designated RDN names the entry, so it's
+// added — required — if it isn't configured yet, and an existing one is forced
+// required unless it's computed (a computed RDN derives its own value). In
+// operator-entered mode the operator supplies the DN, so the RDN is only a seed
+// and this doesn't run. Empty-config profiles use the fallback create form.
 function ensureRdnAttributePresent() {
   const name = profile.value.rdnAttribute
   if (!name) return
-  if ((profile.value.dnTemplate || '').trim()) return
+  if (profile.value.showDnField) return
   if (profile.value.attributeConfigs.length === 0) return
   const existing = profile.value.attributeConfigs.find(
     a => a.attributeName.toLowerCase() === name.toLowerCase())
@@ -1268,6 +1312,20 @@ function showFieldFor(inputType: string, fieldName: string) {
 watch(() => [profile.value.rdnAttribute, profile.value.dnTemplate], () => {
   for (const attr of profile.value.attributeConfigs) {
     if (isNamingAttribute(attr)) attr.requiredOnCreate = true
+  }
+})
+
+// When a DN template is set (operator-entered mode), it — not the picker — names
+// the entry, so keep the designated RDN attribute reconciled to the template's
+// leading RDN. Only rewrites it when it genuinely diverges.
+watch(() => profile.value.dnTemplate, (tpl) => {
+  const t = (tpl || '').trim()
+  if (!t) return
+  const leadingNames = parseLeadingRdn(t).map(a => a.name)
+  if (!leadingNames.length) return
+  const currentLower = (profile.value.rdnAttribute || '').toLowerCase()
+  if (!leadingNames.some(n => n.toLowerCase() === currentLower)) {
+    profile.value.rdnAttribute = leadingNames[0]
   }
 })
 
@@ -1592,30 +1650,59 @@ function toggleApprover(accountId: string) {
                 <button class="btn-primary text-xs" @click="addObjectClass" :disabled="!ocToAdd">Add</button>
               </div>
             </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">
-                RDN Attribute <span class="text-red-500">*</span>
-              </label>
-              <select v-model="profile.rdnAttribute" aria-label="RDN attribute" class="input w-full"
-                :disabled="profile.objectClassNames.length === 0" @change="onRdnAttributeChange">
-                <option value="">{{ profile.objectClassNames.length === 0 ? 'Add an object class first' : 'Select RDN attribute…' }}</option>
-                <option v-for="attr in rdnCandidates" :key="attr" :value="attr">{{ attr }}</option>
-              </select>
-              <p class="text-[11px] text-gray-500 mt-1">
-                Default naming attribute: seeds the DN as
-                <code>&lt;attribute&gt;=&lt;value&gt;,&lt;target OU&gt;</code> and names self-service
-                registrations. A DN template (Layout tab) overrides which attributes name
-                admin-created entries — including multi-valued RDNs such as
-                <code>o=${'{'}o{'}'}+cn=${'{'}cn{'}'}</code>.
-              </p>
+            <div class="col-span-3 border-t border-gray-100 pt-3">
+              <label class="block text-sm font-medium text-gray-700 mb-1">DN &amp; naming</label>
+              <div class="space-y-1 mb-2">
+                <label class="flex items-start gap-2 text-sm">
+                  <input type="radio" value="auto" v-model="dnMode" :disabled="profile.objectClassNames.length === 0" class="mt-0.5" />
+                  <span><span class="font-medium">Automatic</span> — the app composes
+                    <code>&lt;attribute&gt;=&lt;value&gt;,&lt;target OU&gt;</code> from a naming attribute; the operator can't edit it.</span>
+                </label>
+                <label class="flex items-start gap-2 text-sm">
+                  <input type="radio" value="operator" v-model="dnMode" :disabled="profile.objectClassNames.length === 0" class="mt-0.5" />
+                  <span><span class="font-medium">Operator-entered</span> — the operator sets the DN on the create form,
+                    optionally seeded by a template. Self-registration is unavailable in this mode.</span>
+                </label>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-xs text-gray-500">
+                    {{ dnMode === 'auto' ? 'Naming (RDN) attribute' : 'Seed the DN from attribute' }}
+                    <span v-if="dnMode === 'auto'" class="text-red-500">*</span>
+                  </label>
+                  <select v-model="profile.rdnAttribute" aria-label="RDN attribute" class="input w-full text-sm"
+                    :disabled="profile.objectClassNames.length === 0 || (dnMode === 'operator' && dnTemplateActive)"
+                    @change="onRdnAttributeChange">
+                    <option value="">{{ profile.objectClassNames.length === 0 ? 'Add an object class first' : 'Select attribute…' }}</option>
+                    <option v-for="attr in rdnCandidates" :key="attr" :value="attr">{{ attr }}</option>
+                  </select>
+                  <p v-if="dnMode === 'operator' && dnTemplateActive" class="text-[11px] text-blue-600 mt-1">
+                    Derived from the DN template's leading RDN.
+                  </p>
+                  <p v-else-if="dnMode === 'auto'" class="text-[11px] text-gray-500 mt-1">
+                    Names the entry. A computed attribute yields a locked computed name.
+                  </p>
+                </div>
+                <div v-if="dnMode === 'operator'">
+                  <label class="block text-xs text-gray-500">DN template (optional)</label>
+                  <input v-model="profile.dnTemplate" type="text" aria-label="DN template" class="input w-full font-mono text-xs"
+                    placeholder="cn=${givenName} ${sn},ou=People,dc=example,dc=com" />
+                  <p class="text-[11px] text-gray-500 mt-1">
+                    Pre-fills the editable DN. <code>${'{'}attr{'}'}</code> tokens resolve to the new user's values; a
+                    <code>+</code> makes a multi-valued RDN. Leave blank to seed from the attribute at left.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
           <div class="flex gap-6">
             <label class="flex items-center gap-2 text-sm">
               <input type="checkbox" v-model="profile.enabled" /> Profile is enabled
             </label>
-            <label class="flex items-center gap-2 text-sm">
-              <input type="checkbox" v-model="profile.selfRegistrationAllowed" /> Self-registration is enabled for this profile
+            <label class="flex items-center gap-2 text-sm"
+              :class="dnMode === 'operator' ? 'text-gray-400 cursor-not-allowed' : ''"
+              :title="dnMode === 'operator' ? 'Self-registration requires an automatically-composed DN (Automatic mode)' : undefined">
+              <input type="checkbox" v-model="profile.selfRegistrationAllowed" :disabled="dnMode === 'operator'" /> Self-registration is enabled for this profile
             </label>
           </div>
 
@@ -1759,7 +1846,10 @@ function toggleApprover(accountId: string) {
             </button>
           </div>
 
-          <!-- Admin layout -->
+          <!-- Admin layout. hideDnToggle hides the designer's own "Show DN field"
+               toggle and DN-template input — both now live on the General tab
+               (DN & naming). The designer still reads showDnField/dnTemplate to
+               place and preview the editable DN field in operator-entered mode. -->
           <FormLayoutDesigner
             v-if="layoutMode === 'admin'"
             v-model:attributeConfigs="layoutAttributeConfigs"
@@ -1768,6 +1858,7 @@ function toggleApprover(accountId: string) {
             v-model:dnColumnSpan="profile.dnColumnSpan"
             v-model:dnSectionName="profile.dnSectionName"
             v-model:dnDisplayOrder="profile.dnDisplayOrder"
+            :hideDnToggle="true"
           />
 
           <!-- Self-service layout -->

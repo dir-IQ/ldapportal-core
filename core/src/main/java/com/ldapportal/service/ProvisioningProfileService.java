@@ -995,6 +995,15 @@ public class ProvisioningProfileService {
                                     Boolean passwordLowercase, Boolean passwordDigits,
                                     Boolean passwordSpecial, String passwordSpecialChars,
                                     Boolean emailPasswordToUser, String passwordDisposition) {
+        // Operator-entered DN (showDnField) and self-registration are mutually
+        // exclusive: self-registration composes the DN automatically from the RDN
+        // attribute and can't have an operator typing one. Enforce it here so the
+        // two can't drift regardless of entry point (UI, API, migration).
+        if (showDnField && selfRegistrationAllowed) {
+            throw new IllegalArgumentException(
+                    "Self-registration requires an automatically-composed DN; turn off "
+                    + "operator-entered DN or self-registration");
+        }
         profile.setName(name);
         profile.setDescription(description);
         profile.setTargetUserDn(targetUserDn);
@@ -1065,16 +1074,18 @@ public class ProvisioningProfileService {
             }
         }
 
-        // Without a DN template, the entry's DN is "<rdnAttribute>=<value>,
-        // <targetUserDn>", and that value comes from the RDN attribute's own form
-        // field — so the RDN attribute must be a configured field whose value is
-        // guaranteed at create time: required, or derived (computed / HIDDEN_FIXED).
-        // Otherwise the create form has no way to supply the RDN and the directory
-        // rejects the add. (With a template, naming comes from the template's
-        // leading RDN instead; an empty config list uses the fallback create form,
-        // which carries its own RDN value field — both are exempt.)
+        // In Automatic DN mode (showDnField == false) the entry's DN is
+        // "<rdnAttribute>=<value>,<targetUserDn>", composed by the app, and that
+        // value comes from the RDN attribute's own form field — so the RDN
+        // attribute must be a configured field whose value is guaranteed at create
+        // time: required, or derived (computed / HIDDEN_FIXED). Otherwise the
+        // create form has no way to supply the RDN and the directory rejects the
+        // add. In operator-entered mode (showDnField == true) the operator supplies
+        // the DN directly (optionally via a template), so this doesn't apply; an
+        // empty config list uses the fallback create form, which carries its own
+        // RDN value field — both are exempt.
         if (!safeEntries.isEmpty()
-                && (profile.getDnTemplate() == null || profile.getDnTemplate().isBlank())
+                && !profile.isShowDnField()
                 && profile.getRdnAttribute() != null && !profile.getRdnAttribute().isBlank()) {
             String rdn = profile.getRdnAttribute();
             AttributeConfigEntry rdnCfg = safeEntries.stream()

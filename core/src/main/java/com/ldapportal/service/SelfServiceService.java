@@ -297,6 +297,15 @@ public class SelfServiceService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Self-registration is not allowed for this profile");
         }
+        // Defensive: self-registration composes the DN as <rdn>=<value>,<base>.
+        // A profile that enters/templates the DN manually can't self-register.
+        // The save-time interlock keeps these mutually exclusive, so this only
+        // trips on legacy/inconsistent rows.
+        if (profile.isShowDnField()
+                || (profile.getDnTemplate() != null && !profile.getDnTemplate().isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "This profile composes DNs manually and cannot be used for self-registration");
+        }
 
         DirectoryConnection dc = dirRepo.findById(profile.getDirectory().getId())
                 .orElseThrow(() -> new ResourceNotFoundException(
