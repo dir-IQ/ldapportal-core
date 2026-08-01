@@ -1082,6 +1082,22 @@ function canRemoveAttribute(attr: AttributeConfig) {
   return !isNamingAttribute(attr) && !isSchemaRequired(attr) && !attr.requiredOnCreate
 }
 
+// Alphabetical view of the attributes for the Attributes tab, so a long list is
+// quick to scan. This sorts a shallow copy of the *same* config objects, never
+// profile.attributeConfigs itself — that array's order is load-bearing (it
+// drives the saved displayOrder and the form layout), and v-model edits on the
+// copied references still mutate the real configs.
+const sortedAttributeConfigs = computed(() =>
+  [...profile.value.attributeConfigs].sort((a, b) =>
+    a.attributeName.localeCompare(b.attributeName, undefined, { sensitivity: 'base' })))
+
+// Remove by object reference — the Attributes tab renders the sorted view, so a
+// row's position there is not its index in profile.attributeConfigs.
+function removeAttributeConfig(attr: AttributeConfig) {
+  const idx = profile.value.attributeConfigs.indexOf(attr)
+  if (idx >= 0) profile.value.attributeConfigs.splice(idx, 1)
+}
+
 // Available attributes from selected object classes that haven't been added yet
 const showAttrPicker = ref(false)
 const attrPickerSelection = ref<string[]>([])
@@ -1606,11 +1622,11 @@ function toggleApprover(accountId: string) {
           <div v-if="profile.attributeConfigs.length === 0" class="text-gray-500 text-sm">
             Add object classes in the General tab to populate attributes.
           </div>
-          <div v-for="(attr, i) in profile.attributeConfigs" :key="i"
+          <div v-for="(attr, i) in sortedAttributeConfigs" :key="attr.attributeName"
             class="border border-gray-300 rounded-lg p-3 space-y-2">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <span class="font-medium text-sm">{{ attr.attributeName }}</span>
+                <span class="font-mono text-sm font-medium bg-gray-100 text-gray-800 border border-gray-200 rounded px-1.5 py-0.5">{{ attr.attributeName }}</span>
                 <span v-if="isNamingAttribute(attr)"
                   class="text-[10px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-medium"
                   :title="templateNamingAttrs.has(attr.attributeName.toLowerCase())
@@ -1624,7 +1640,7 @@ function toggleApprover(accountId: string) {
               </div>
               <button v-if="canRemoveAttribute(attr)"
                 class="text-red-500 text-xs hover:underline"
-                @click="profile.attributeConfigs.splice(i, 1)">Remove</button>
+                @click="removeAttributeConfig(attr)">Remove</button>
               <span v-else class="text-xs text-gray-500 italic">cannot remove</span>
             </div>
             <div class="grid grid-cols-3 gap-3 text-sm">
