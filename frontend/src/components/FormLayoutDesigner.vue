@@ -492,6 +492,15 @@ watch(() => props.attributeConfigs, (newConfigs) => {
   const currentRdn = currentFields.find(f => f.rdn)?.attributeName || null
   const rdnChanged = incomingRdn !== currentRdn
 
+  // The rdn/naming badge flags can change without the attribute set changing —
+  // e.g. switching DN mode or editing the template moves which attributes name
+  // the entry. Detect that so the "nothing changed" skip below doesn't drop it.
+  const incomingByName = new Map(visibleConfigs.map(a => [a.attributeName, a]))
+  const namingChanged = currentFields.some(f =>
+    !f.isDn && incomingByName.has(f.attributeName)
+      && (!!incomingByName.get(f.attributeName).rdn !== !!f.rdn
+        || !!incomingByName.get(f.attributeName).naming !== !!f.naming))
+
   // Detect hidden→visible transitions
   const newlyVisible = visibleConfigs.filter(a => !currentNames.has(a.attributeName) && hiddenPositions.value.has(a.attributeName))
   const newlyHidden = newConfigs.filter(a => a.hidden && currentNames.has(a.attributeName))
@@ -514,6 +523,7 @@ watch(() => props.attributeConfigs, (newConfigs) => {
   // Nothing changed — skip
   if (
     !rdnChanged &&
+    !namingChanged &&
     newlyVisible.length === 0 &&
     newlyHidden.length === 0 &&
     currentNames.size === incomingNames.size &&
@@ -567,14 +577,23 @@ watch(() => props.attributeConfigs, (newConfigs) => {
     }
   }
 
-  // Sync RDN flag changes and move new RDN to first position
-  if (rdnChanged) {
-    for (const section of sections.value) {
-      for (const field of section.fields) {
-        field.rdn = field.attributeName === incomingRdn
+  // Refresh the rdn/naming badge flags on every field from the incoming configs,
+  // so the layout tracks the current naming source (RDN attribute or DN template)
+  // even when the attribute set is unchanged. These flags are display-only (the
+  // parent recomputes them), so this needs no syncToParent.
+  for (const section of sections.value) {
+    for (const field of section.fields) {
+      if (field.isDn) continue
+      const inc = incomingByName.get(field.attributeName)
+      if (inc) {
+        field.rdn = !!inc.rdn
+        field.naming = !!inc.naming
       }
     }
-    // Move the new RDN field to index 0 of the first section
+  }
+
+  // Move the new RDN field to index 0 of the first section when it changed.
+  if (rdnChanged) {
     for (let s = 0; s < sections.value.length; s++) {
       const rdnIdx = sections.value[s].fields.findIndex(f => f.rdn)
       if (rdnIdx >= 0) {
