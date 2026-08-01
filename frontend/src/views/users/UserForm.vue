@@ -109,7 +109,21 @@
                        attribute, and other fields gain it when a multi-valued
                        RDN (o=…+cn=…) names them too. -->
                   <div v-if="attr.rdn" :style="{ gridColumn: `span ${attr.columnSpan || 6}` }">
+                    <!-- A computed RDN (e.g. cn = ${givenName} ${sn}) has no
+                         operator input: show its live computed value read-only,
+                         reading computedAttrValues directly like the DN field.
+                         Binding to local.rdnValue instead would leave it frozen,
+                         since that value only reaches the field via a round-trip. -->
                     <FormField
+                      v-if="attr.computedExpression"
+                      :label="fieldLabel(attr)"
+                      :model-value="computedAttrValues[attr.attributeName] || ''"
+                      :type="mapInputType(attr.inputType)"
+                      disabled
+                      :field-key="attr.attributeName"
+                    />
+                    <FormField
+                      v-else
                       :label="fieldLabel(attr)"
                       v-model="local.rdnValue"
                       :type="mapInputType(attr.inputType)"
