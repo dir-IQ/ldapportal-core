@@ -436,16 +436,24 @@ class ProvisioningProfileServiceTest {
                 null, null, null, null);
     }
 
-    private com.ldapportal.dto.profile.CreateProfileRequest reqWith(
-            String rdnAttribute, String dnTemplate,
+    private com.ldapportal.dto.profile.CreateProfileRequest reqFull(
+            String rdnAttribute, String dnTemplate, boolean showDnField, boolean selfRegistration,
             List<com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry> configs) {
         return new com.ldapportal.dto.profile.CreateProfileRequest(
                 "engineers", null, null, "ou=People,dc=example,dc=com", null,
-                List.of("inetOrgPerson"), rdnAttribute, true,
+                List.of("inetOrgPerson"), rdnAttribute, showDnField,
                 dnTemplate, null, null, null,
-                true, false,
+                true, selfRegistration,
                 null, null, null, null, null, null, null, null,
                 false, false, null, configs, List.of());
+    }
+
+    // Automatic DN mode (showDnField=false), self-registration off — the setup
+    // the RDN-must-be-configured guard governs.
+    private com.ldapportal.dto.profile.CreateProfileRequest reqWith(
+            String rdnAttribute, String dnTemplate,
+            List<com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry> configs) {
+        return reqFull(rdnAttribute, dnTemplate, false, false, configs);
     }
 
     // rdnAttribute is 'uid'; prepend a valid (required) uid config so the profile
@@ -542,16 +550,33 @@ class ProvisioningProfileServiceTest {
     }
 
     @Test
-    void createProfile_rdnAttributeNotConfigured_okWithDnTemplate() {
+    void createProfile_operatorEnteredMode_skipsRdnGuard() {
         UUID directoryId = UUID.randomUUID();
         stubDirectory(directoryId);
-        // With a DN template, naming comes from the template's leading RDN, so the
-        // designated attribute need not be a configured field.
-        var req = reqWith("uid", "cn=${cn},ou=People,dc=example,dc=com",
+        // In operator-entered mode (showDnField=true) the operator supplies the DN,
+        // so the RDN attribute need not be a configured/required field.
+        var req = reqFull("uid", null, true, false,
                 List.of(attrEntry("cn", "TEXT", true, false, null)));
 
         assertThatCode(() -> service.create(directoryId, req, true, null))
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    void createProfile_selfRegistrationWithOperatorEnteredDn_rejected() {
+        UUID directoryId = UUID.randomUUID();
+        // Interlock throws in applyCommonFields, before the profile is saved, so
+        // stub only the directory lookup (a profileRepo.save stub would be unused).
+        var dir = new com.ldapportal.entity.DirectoryConnection();
+        dir.setId(directoryId);
+        given(dirRepo.findById(directoryId)).willReturn(Optional.of(dir));
+        // Operator-entered DN + self-registration is contradictory.
+        var req = reqFull("uid", null, true, true,
+                List.of(attrEntry("uid", "TEXT", true, false, null)));
+
+        assertThatThrownBy(() -> service.create(directoryId, req, true, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Self-registration requires an automatically-composed DN");
     }
 
     @Test
