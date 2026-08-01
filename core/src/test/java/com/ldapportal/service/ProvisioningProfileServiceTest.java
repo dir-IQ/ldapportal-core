@@ -436,15 +436,26 @@ class ProvisioningProfileServiceTest {
                 null, null, null, null);
     }
 
-    private com.ldapportal.dto.profile.CreateProfileRequest createReqWithConfigs(
+    private com.ldapportal.dto.profile.CreateProfileRequest reqWith(
+            String rdnAttribute, String dnTemplate,
             List<com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry> configs) {
         return new com.ldapportal.dto.profile.CreateProfileRequest(
                 "engineers", null, null, "ou=People,dc=example,dc=com", null,
-                List.of("inetOrgPerson"), "uid", true,
-                null, null, null, null,
+                List.of("inetOrgPerson"), rdnAttribute, true,
+                dnTemplate, null, null, null,
                 true, false,
                 null, null, null, null, null, null, null, null,
                 false, false, null, configs, List.of());
+    }
+
+    // rdnAttribute is 'uid'; prepend a valid (required) uid config so the profile
+    // satisfies the RDN-must-be-configured guard and the test exercises whatever
+    // it actually targets.
+    private com.ldapportal.dto.profile.CreateProfileRequest createReqWithConfigs(
+            List<com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry> configs) {
+        var withRdn = new java.util.ArrayList<>(List.of(attrEntry("uid", "TEXT", true, false, null)));
+        withRdn.addAll(configs);
+        return reqWith("uid", null, withRdn);
     }
 
     @Test
@@ -480,6 +491,67 @@ class ProvisioningProfileServiceTest {
         assertThatThrownBy(() -> service.create(directoryId, req, true, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("cannot be hidden");
+    }
+
+    // ── RDN attribute must be a configured form field ────────────────────────
+
+    @Test
+    void createProfile_rdnAttributeNotConfigured_rejected() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        // rdnAttribute 'uid' with no matching config and no DN template.
+        var req = reqWith("uid", null, List.of(attrEntry("cn", "TEXT", true, false, null)));
+
+        assertThatThrownBy(() -> service.create(directoryId, req, true, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must be a configured form attribute");
+    }
+
+    @Test
+    void createProfile_rdnAttributeConfiguredButNotRequired_rejected() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        // uid is present but neither required nor derived — its value can't be
+        // guaranteed at create time.
+        var req = reqWith("uid", null, List.of(attrEntry("uid", "TEXT", false, false, null)));
+
+        assertThatThrownBy(() -> service.create(directoryId, req, true, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must be required or have a computed value");
+    }
+
+    @Test
+    void createProfile_rdnAttributeRequired_ok() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        var req = reqWith("uid", null, List.of(attrEntry("uid", "TEXT", true, false, null)));
+
+        assertThatCode(() -> service.create(directoryId, req, true, null))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void createProfile_rdnAttributeComputed_ok() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        // A computed RDN derives its own value, so it need not be required.
+        var req = reqWith("cn", null, List.of(attrEntry("cn", "TEXT", false, false, "${sn}")));
+
+        assertThatCode(() -> service.create(directoryId, req, true, null))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void createProfile_rdnAttributeNotConfigured_okWithDnTemplate() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        // With a DN template, naming comes from the template's leading RDN, so the
+        // designated attribute need not be a configured field.
+        var req = reqWith("uid", "cn=${cn},ou=People,dc=example,dc=com",
+                List.of(attrEntry("cn", "TEXT", true, false, null)));
+
+        assertThatCode(() -> service.create(directoryId, req, true, null))
+                .doesNotThrowAnyException();
     }
 
     @Test
