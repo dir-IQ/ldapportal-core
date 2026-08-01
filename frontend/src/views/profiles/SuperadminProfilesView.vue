@@ -1129,11 +1129,51 @@ function toggleAttrPicker() {
   showAttrPicker.value = !showAttrPicker.value
 }
 
+// True when this attribute name is (or would be) a naming attribute: the
+// designated RDN, or one referenced by the DN template's leading RDN.
+function isNamingAttributeName(name: string): boolean {
+  const lower = name.toLowerCase()
+  return lower === (profile.value.rdnAttribute || '').toLowerCase()
+    || templateNamingAttrs.value.has(lower)
+}
+
+// The RDN attribute must exist as a form field so its value can be supplied at
+// create time. Without a DN template (which drives naming itself), designating
+// an RDN adds it — required — if it isn't configured yet, and forces an existing
+// one required unless it's computed (a computed RDN derives its own value).
+// Empty-config profiles use the fallback create form and are left alone.
+function ensureRdnAttributePresent() {
+  const name = profile.value.rdnAttribute
+  if (!name) return
+  if ((profile.value.dnTemplate || '').trim()) return
+  if (profile.value.attributeConfigs.length === 0) return
+  const existing = profile.value.attributeConfigs.find(
+    a => a.attributeName.toLowerCase() === name.toLowerCase())
+  if (existing) {
+    if (!existing.computedExpression) existing.requiredOnCreate = true
+    return
+  }
+  profile.value.attributeConfigs.push({
+    attributeName: name, customLabel: guessLabel(name), inputType: 'TEXT',
+    requiredOnCreate: true, editableOnCreate: true,
+    editableOnUpdate: true, selfServiceEdit: false, selfRegistrationEdit: false,
+    defaultValue: '', computedExpression: '', validationRegex: '',
+    validationMessage: '', allowedValues: '', minLength: null,
+    maxLength: null, sectionName: '', columnSpan: 6, hidden: false,
+    registrationSectionName: null, registrationColumnSpan: null, registrationDisplayOrder: null,
+    selfServiceSectionName: null, selfServiceColumnSpan: null, selfServiceDisplayOrder: null,
+  })
+}
+
+function onRdnAttributeChange() {
+  ensureRdnAttributePresent()
+}
+
 function addSelectedAttributes() {
   for (const name of attrPickerSelection.value) {
     profile.value.attributeConfigs.push({
       attributeName: name, customLabel: guessLabel(name), inputType: 'TEXT',
-      requiredOnCreate: schemaRequiredAttrs.value.has(name.toLowerCase()), editableOnCreate: true,
+      requiredOnCreate: isNamingAttributeName(name) || schemaRequiredAttrs.value.has(name.toLowerCase()), editableOnCreate: true,
       editableOnUpdate: true, selfServiceEdit: false,
       selfRegistrationEdit: false,
       defaultValue: '', computedExpression: '', validationRegex: '',
@@ -1557,7 +1597,7 @@ function toggleApprover(accountId: string) {
                 RDN Attribute <span class="text-red-500">*</span>
               </label>
               <select v-model="profile.rdnAttribute" aria-label="RDN attribute" class="input w-full"
-                :disabled="profile.objectClassNames.length === 0">
+                :disabled="profile.objectClassNames.length === 0" @change="onRdnAttributeChange">
                 <option value="">{{ profile.objectClassNames.length === 0 ? 'Add an object class first' : 'Select RDN attribute…' }}</option>
                 <option v-for="attr in rdnCandidates" :key="attr" :value="attr">{{ attr }}</option>
               </select>

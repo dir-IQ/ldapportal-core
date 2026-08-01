@@ -1065,6 +1065,33 @@ public class ProvisioningProfileService {
             }
         }
 
+        // Without a DN template, the entry's DN is "<rdnAttribute>=<value>,
+        // <targetUserDn>", and that value comes from the RDN attribute's own form
+        // field — so the RDN attribute must be a configured field whose value is
+        // guaranteed at create time: required, or derived (computed / HIDDEN_FIXED).
+        // Otherwise the create form has no way to supply the RDN and the directory
+        // rejects the add. (With a template, naming comes from the template's
+        // leading RDN instead; an empty config list uses the fallback create form,
+        // which carries its own RDN value field — both are exempt.)
+        if (!safeEntries.isEmpty()
+                && (profile.getDnTemplate() == null || profile.getDnTemplate().isBlank())
+                && profile.getRdnAttribute() != null && !profile.getRdnAttribute().isBlank()) {
+            String rdn = profile.getRdnAttribute();
+            AttributeConfigEntry rdnCfg = safeEntries.stream()
+                    .filter(e -> e.attributeName().equalsIgnoreCase(rdn))
+                    .findFirst().orElse(null);
+            if (rdnCfg == null) {
+                throw new IllegalArgumentException(
+                        "The RDN attribute '" + rdn + "' must be a configured form attribute");
+            }
+            boolean derived = (rdnCfg.computedExpression() != null && !rdnCfg.computedExpression().isBlank())
+                    || InputType.HIDDEN_FIXED.name().equals(rdnCfg.inputType());
+            if (!rdnCfg.requiredOnCreate() && !derived) {
+                throw new IllegalArgumentException(
+                        "The RDN attribute '" + rdn + "' must be required or have a computed value");
+            }
+        }
+
         for (AttributeConfigEntry e : safeEntries) {
             // A required attribute may be hidden when the server supplies its
             // value at create time, so the operator never needs to see or enter
