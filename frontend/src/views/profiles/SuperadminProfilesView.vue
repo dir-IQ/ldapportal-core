@@ -1036,6 +1036,9 @@ function isRdnAttribute(attr: AttributeConfig) {
   return attr.attributeName === profile.value.rdnAttribute
 }
 
+// True when a DN template is set: it then drives naming and locks the RDN picker.
+const dnTemplateActive = computed(() => !!(profile.value.dnTemplate || '').trim())
+
 // Naming attributes derived from the DN template's leading RDN. A template
 // like "o=${o}+cn=${cn},ou=People,…" makes *those* attribute types name new
 // entries (a multi-valued RDN), regardless of the designated RDN attribute.
@@ -1045,11 +1048,16 @@ const templateNamingAttrs = computed<Set<string>>(() => {
   return new Set(parseLeadingRdn(tpl).map(a => a.name.toLowerCase()))
 })
 
-// An attribute whose value names new entries: the designated (default) RDN
-// attribute, plus any attribute the DN template's leading RDN references.
-// These are forced required and can't be removed — their values feed the DN.
+// An attribute whose value names new entries. A DN template is authoritative
+// when present — the entry is named by the template's leading RDN, so *those*
+// attributes are the naming ones and the designated RDN picker is overridden
+// (and locked). Without a template, the designated RDN attribute names entries.
+// Naming attributes are forced required and can't be removed — they feed the DN.
 function isNamingAttribute(attr: AttributeConfig): boolean {
-  return isRdnAttribute(attr) || templateNamingAttrs.value.has(attr.attributeName.toLowerCase())
+  if ((profile.value.dnTemplate || '').trim()) {
+    return templateNamingAttrs.value.has(attr.attributeName.toLowerCase())
+  }
+  return isRdnAttribute(attr)
 }
 
 // Helper: check if an attribute is schema-required
@@ -1268,6 +1276,22 @@ function showFieldFor(inputType: string, fieldName: string) {
 watch(() => [profile.value.rdnAttribute, profile.value.dnTemplate], () => {
   for (const attr of profile.value.attributeConfigs) {
     if (isNamingAttribute(attr)) attr.requiredOnCreate = true
+  }
+})
+
+// A DN template is authoritative for naming, so keep the designated RDN
+// attribute reconciled to the template's leading RDN — otherwise the picker and
+// the template disagree (two "RDN" badges), and the picker's value never names
+// the entry. Only rewrites it when it genuinely diverges, so a profile whose
+// picker already matches the template is left untouched.
+watch(() => profile.value.dnTemplate, (tpl) => {
+  const t = (tpl || '').trim()
+  if (!t) return
+  const leadingNames = parseLeadingRdn(t).map(a => a.name)
+  if (!leadingNames.length) return
+  const currentLower = (profile.value.rdnAttribute || '').toLowerCase()
+  if (!leadingNames.some(n => n.toLowerCase() === currentLower)) {
+    profile.value.rdnAttribute = leadingNames[0]
   }
 })
 
@@ -1597,11 +1621,15 @@ function toggleApprover(accountId: string) {
                 RDN Attribute <span class="text-red-500">*</span>
               </label>
               <select v-model="profile.rdnAttribute" aria-label="RDN attribute" class="input w-full"
-                :disabled="profile.objectClassNames.length === 0" @change="onRdnAttributeChange">
+                :disabled="profile.objectClassNames.length === 0 || dnTemplateActive" @change="onRdnAttributeChange">
                 <option value="">{{ profile.objectClassNames.length === 0 ? 'Add an object class first' : 'Select RDN attribute…' }}</option>
                 <option v-for="attr in rdnCandidates" :key="attr" :value="attr">{{ attr }}</option>
               </select>
-              <p class="text-[11px] text-gray-500 mt-1">
+              <p v-if="dnTemplateActive" class="text-[11px] text-blue-600 mt-1">
+                Defined by the DN template (Layout tab): its leading RDN names entries, so this
+                is locked to match.
+              </p>
+              <p v-else class="text-[11px] text-gray-500 mt-1">
                 Default naming attribute: seeds the DN as
                 <code>&lt;attribute&gt;=&lt;value&gt;,&lt;target OU&gt;</code> and names self-service
                 registrations. A DN template (Layout tab) overrides which attributes name
