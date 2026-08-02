@@ -1644,7 +1644,7 @@ function toggleApprover(accountId: string) {
                  class="mt-2 text-xs text-gray-500">Checking…</div>
           </div>
           <div class="grid grid-cols-3 gap-4 items-start">
-            <div class="col-span-2">
+            <div class="col-span-3">
               <label class="block text-sm font-medium text-gray-700 mb-1">Object Classes</label>
               <div v-if="profile.objectClassNames.length" class="flex gap-2 mb-2 flex-wrap">
                 <span v-for="oc in profile.objectClassNames" :key="oc"
@@ -1675,35 +1675,47 @@ function toggleApprover(accountId: string) {
                     optionally seeded by a template. Self-registration is unavailable in this mode.</span>
                 </label>
               </div>
-              <div class="grid grid-cols-2 gap-4">
+              <!-- Automatic: the naming attribute deterministically names the entry. -->
+              <div v-if="dnMode === 'auto'" class="max-w-md">
+                <label class="block text-xs text-gray-500">
+                  Naming (RDN) attribute <span class="text-red-500">*</span>
+                </label>
+                <select v-model="profile.rdnAttribute" aria-label="RDN attribute" class="input w-full text-sm"
+                  :disabled="profile.objectClassNames.length === 0" @change="onRdnAttributeChange">
+                  <option value="">{{ profile.objectClassNames.length === 0 ? 'Add an object class first' : 'Select attribute…' }}</option>
+                  <option v-for="attr in rdnCandidates" :key="attr" :value="attr">{{ attr }}</option>
+                </select>
+                <p class="text-[11px] text-gray-500 mt-1">
+                  Names the entry. A computed attribute yields a locked computed name.
+                </p>
+              </div>
+
+              <!-- Operator-entered: the DN template seeds the editable DN. The
+                   attribute seed is only the fallback when there's no template,
+                   so it's hidden while a template is defined (the template's
+                   leading RDN is the naming source). -->
+              <template v-else>
                 <div>
-                  <label class="block text-xs text-gray-500">
-                    {{ dnMode === 'auto' ? 'Naming (RDN) attribute' : 'Seed the DN from attribute' }}
-                    <span v-if="dnMode === 'auto'" class="text-red-500">*</span>
-                  </label>
-                  <select v-model="profile.rdnAttribute" aria-label="RDN attribute" class="input w-full text-sm"
-                    :disabled="profile.objectClassNames.length === 0 || (dnMode === 'operator' && dnTemplateActive)"
-                    @change="onRdnAttributeChange">
-                    <option value="">{{ profile.objectClassNames.length === 0 ? 'Add an object class first' : 'Select attribute…' }}</option>
-                    <option v-for="attr in rdnCandidates" :key="attr" :value="attr">{{ attr }}</option>
-                  </select>
-                  <p v-if="dnMode === 'operator' && dnTemplateActive" class="text-[11px] text-blue-600 mt-1">
-                    Derived from the DN template's leading RDN.
-                  </p>
-                  <p v-else-if="dnMode === 'auto'" class="text-[11px] text-gray-500 mt-1">
-                    Names the entry. A computed attribute yields a locked computed name.
-                  </p>
-                </div>
-                <div v-if="dnMode === 'operator'">
                   <label class="block text-xs text-gray-500">DN template (optional)</label>
                   <input v-model="profile.dnTemplate" type="text" aria-label="DN template" class="input w-full font-mono text-xs"
                     placeholder="cn=${givenName} ${sn},ou=People,dc=example,dc=com" />
                   <p class="text-[11px] text-gray-500 mt-1">
                     Pre-fills the editable DN. <code>${'{'}attr{'}'}</code> tokens resolve to the new user's values; a
-                    <code>+</code> makes a multi-valued RDN. Leave blank to seed from the attribute at left.
+                    <code>+</code> makes a multi-valued RDN.
                   </p>
                 </div>
-              </div>
+                <div v-if="!dnTemplateActive" class="mt-3 max-w-md">
+                  <label class="block text-xs text-gray-500">Seed the DN from attribute <span class="text-red-500">*</span></label>
+                  <select v-model="profile.rdnAttribute" aria-label="Seed attribute" class="input w-full text-sm"
+                    :disabled="profile.objectClassNames.length === 0" @change="onRdnAttributeChange">
+                    <option value="">{{ profile.objectClassNames.length === 0 ? 'Add an object class first' : 'Select attribute…' }}</option>
+                    <option v-for="attr in rdnCandidates" :key="attr" :value="attr">{{ attr }}</option>
+                  </select>
+                  <p class="text-[11px] text-gray-500 mt-1">
+                    With no template, the editable DN pre-fills as <code>&lt;attribute&gt;=&lt;value&gt;,&lt;target OU&gt;</code>.
+                  </p>
+                </div>
+              </template>
             </div>
           </div>
           <div class="flex gap-6">
