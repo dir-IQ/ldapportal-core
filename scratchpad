@@ -1,1 +1,36 @@
-LDAP server unreachable: LDAP connection failed on [Dev OUD - c=us]: The connection to server oud.dev01.fibk.ts.aws.frb.pvt:1636 was closed while waiting for a response to search request SearchRequest(baseDN='c=us', scope=BASE, deref=NEVER, sizeLimit=1, timeLimit=0, filter='(objectClass=*)', attrs={*, +}): An I/O error occurred while trying to read the response from the server: SocketException(Connection reset), ldapSDKVersion=7.0.5, revision=cab6672f8ac284805956006bb14
+secUser
+1.3.6.1.4.1.4228.1.6
+
+Required Attributes
+
+secAuthority
+secLoginType
+objectClass
+
+Optional Attributes
+
+secAcctValid
+secPwdValid
+secCertDN
+secCertSerialNumber
+secUUID
+secPwdFailures
+secPwdLastChanged
+secPwdLastUsed
+secHasPolicy
+secDN
+secHomeGroup
+secDomainId
+secPwdLastFailed
+secPwdFailCountTime
+secPwdUnlockTime
+secSelfAlias
+secPartnerAlias
+secOtherAlias
+principalName
+userCertificate
+configPtr
+accessHint
+accountHint
+description
+caption
