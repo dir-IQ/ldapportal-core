@@ -36,8 +36,11 @@ Before flipping the toggle, the target directory must:
    `secschema.def` in older releases). Apply it to your directory's
    schema *before* enabling — without `secUser`, `secAcctValid`,
    `secValidUntil`, `secPwdLastChanged`, `secPwdValid`, `secLogin`,
-   `secDN`, the very first user provisioned will fail with
-   `LDAPException: object class violation`. Most directories take
+   `secLoginType`, `secAuthority`, `secDN`, the very first user
+   provisioned will fail with `LDAPException: object class violation`
+   (e.g. `missing attribute secLoginType which is required by object
+   class secUser` — `secLoginType` and `secAuthority` are MUST attributes
+   of IBM's stock `secUser`). Most directories take
    the LDIF via the usual schema-load tool:
    - OpenLDAP: `ldapadd -Y EXTERNAL -H ldapi:/// -f secschema.ldif`
    - 389DS: `dsconf … schema attributetypes add …` (run the script
@@ -76,6 +79,7 @@ in the directory list (`/superadmin/directories`). Field by field:
 | **Enabled** | Master switch. With this off the interceptor is dormant and provisioning behaves identically to a no-ISVA directory. Use this to stage a config before enabling. |
 | **Topology mode** | `INLINE` vs `LINKED` (see above). Toggling from one to the other clears the linked-only fields below so a stale value can't haunt you. |
 | **secAuthority** | Domain name written to `secAuthority` on every entry. Defaults to `Default`, which matches a vanilla ISVA install. Override if your ISVA deployment is sliced into multiple authorities. |
+| **secLoginType** | Value written to `secLoginType` on every entry — a required (MUST) attribute of IBM's stock `secUser` object class, so provisioning fails with an object-class violation without it. Defaults to `Default`, matching a vanilla ISVA install; override to match your registry's login type. |
 | **Default valid-until (years)** | Provisioning sets `secValidUntil` to `now + N years` on new users. The default of 100 effectively means "never expires"; lower it to enforce a periodic re-credentialling cadence. |
 | **Delete policy** | `DISABLE` (soft) flips `secAcctValid=FALSE` + `secValidUntil=now`; `HARD_DELETE` issues a real LDAP DEL. Default is `DISABLE` — the safer choice for environments that need an audit trail for departed users. |
 | **Require secGroup** | When on, every group-membership write first checks the target group for `objectClass: secGroup` (ISVA's group representation) and refuses with a 422 when it's missing — the LDAP write would succeed but ISVA would silently ignore the membership. Remediate by adding the secGroup overlay to the group (`pdadmin group import`) or turning the flag off. A group the bind can't read is let through; the write then fails (or succeeds) on the server's own verdict. Off (the default) matches deployments that manage groups outside of ISVA. |

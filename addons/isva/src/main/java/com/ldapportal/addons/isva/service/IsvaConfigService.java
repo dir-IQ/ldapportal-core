@@ -81,6 +81,7 @@ public class IsvaConfigService {
         entity.setEnabled(req.enabled());
         entity.setTopologyMode(req.topologyMode());
         entity.setSecAuthority(blankToNull(req.secAuthority()));
+        entity.setSecLoginType(blankToNull(req.secLoginType()));
         entity.setDefaultValidUntilYears(req.defaultValidUntilYears());
         entity.setDeletePolicy(req.deletePolicy());
         entity.setRequireSecGroup(req.requireSecGroup());
@@ -156,6 +157,7 @@ public class IsvaConfigService {
                     cfg.isEnabled(),
                     cfg.getTopologyMode(),
                     cfg.getSecAuthority(),
+                    cfg.getSecLoginType(),
                     cfg.getDefaultValidUntilYears(),
                     cfg.getDeletePolicy(),
                     cfg.isRequireSecGroup(),

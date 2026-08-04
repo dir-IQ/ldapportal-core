@@ -71,6 +71,7 @@ function inlineConfigDto() {
     enabled: true,
     topologyMode: 'INLINE',
     secAuthority: 'Default',
+    secLoginType: 'Default',
     defaultValidUntilYears: 100,
     deletePolicy: 'DISABLE',
     requireSecGroup: true,

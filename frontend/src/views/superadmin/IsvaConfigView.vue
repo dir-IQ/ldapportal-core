@@ -41,6 +41,7 @@ interface Form {
   enabled: boolean
   topologyMode: IsvaTopologyMode
   secAuthority: string
+  secLoginType: string
   defaultValidUntilYears: number
   deletePolicy: IsvaDeletePolicy
   requireSecGroup: boolean
@@ -57,6 +58,7 @@ function emptyForm(): Form {
     enabled: false,
     topologyMode: 'INLINE',
     secAuthority: 'Default',
+    secLoginType: 'Default',
     defaultValidUntilYears: 100,
     deletePolicy: 'DISABLE',
     // Opt-in since enforcement shipped (V504) — defaulting the gate on
@@ -164,6 +166,7 @@ function populateFromDto(dto: IsvaConfigDto) {
   form.value.enabled = dto.enabled
   form.value.topologyMode = dto.topologyMode
   form.value.secAuthority = dto.secAuthority ?? 'Default'
+  form.value.secLoginType = dto.secLoginType ?? 'Default'
   form.value.defaultValidUntilYears = dto.defaultValidUntilYears
   form.value.deletePolicy = dto.deletePolicy
   form.value.requireSecGroup = dto.requireSecGroup
@@ -222,6 +225,7 @@ async function save() {
       enabled: form.value.enabled,
       topologyMode: form.value.topologyMode,
       secAuthority: form.value.secAuthority,
+      secLoginType: form.value.secLoginType,
       defaultValidUntilYears: form.value.defaultValidUntilYears,
       deletePolicy: form.value.deletePolicy,
       requireSecGroup: form.value.requireSecGroup,
@@ -399,6 +403,18 @@ function extractErrorMessage(e: unknown, fallback: string): string {
             Authority name written to every user's <code>secAuthority</code>
             attribute. Default is <code>Default</code>; only override for
             multi-authority deployments.
+          </p>
+        </div>
+
+        <div>
+          <label class="label" for="secLoginType">secLoginType</label>
+          <input id="secLoginType" type="text" v-model="form.secLoginType"
+                 class="input w-full" placeholder="Default" />
+          <p class="text-xs text-gray-500 mt-1">
+            Value written to every user's <code>secLoginType</code> attribute —
+            a required (MUST) attribute of IBM's stock <code>secUser</code>
+            object class, so provisioning fails without it. Default is
+            <code>Default</code>; override to match your registry's login type.
           </p>
         </div>
 

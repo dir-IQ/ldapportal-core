@@ -47,6 +47,7 @@ class IsvaSecUserPlansTest {
         assertThat(objectClassValues(attrs))
                 .containsExactlyInAnyOrder("inetOrgPerson", "person", "secUser");
         assertThat(attrValue(attrs, "secLogin")).isEqualTo("alice");
+        assertThat(attrValue(attrs, "secLoginType")).isEqualTo("Default");
         assertThat(attrValue(attrs, "secAuthority")).isEqualTo("Default");
         assertThat(attrValue(attrs, "secAcctValid")).isEqualTo("TRUE");
         assertThat(attrValue(attrs, "secPwdValid")).isEqualTo("TRUE");
@@ -67,6 +68,20 @@ class IsvaSecUserPlansTest {
 
         assertThat(objectClassValues(attrs))
                 .containsExactlyInAnyOrder("inetOrgPerson", "person", "secUser", "eUser");
+    }
+
+    @Test
+    void grantInline_honoursConfiguredSecLoginType() {
+        VendorIntegrationIsvaConfig cfg = inlineConfig();
+        cfg.setSecLoginType("Full");
+
+        List<Attribute> attrs = plans.grantInline(
+                BaselinePlans.attributesFromMap(Map.of(
+                        "objectClass", List.of("inetOrgPerson"),
+                        "uid", List.of("alice"))),
+                cfg, payload("uid=alice,dc=x", "alice"));
+
+        assertThat(attrValue(attrs, "secLoginType")).isEqualTo("Full");
     }
 
     @Test
@@ -95,6 +110,7 @@ class IsvaSecUserPlansTest {
         assertThat(step.mods()).allMatch(m -> m.getModificationType() == ModificationType.ADD);
         assertThat(modValue(step.mods(), "objectClass")).isEqualTo("secUser");
         assertThat(modValue(step.mods(), "secLogin")).isEqualTo("alice");
+        assertThat(modValue(step.mods(), "secLoginType")).isEqualTo("Default");
         assertThat(modValue(step.mods(), "secAuthority")).isEqualTo("Default");
         assertThat(modValue(step.mods(), "secAcctValid")).isEqualTo("TRUE");
         assertThat(modValue(step.mods(), "secPwdValid")).isEqualTo("TRUE");

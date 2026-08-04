@@ -28,7 +28,7 @@ class IsvaConfigExportContributorTest {
     @Test
     void export_addsIsvaSection_inReconcilerShape() {
         UpsertIsvaConfigRequest cfg = new UpsertIsvaConfigRequest(
-                true, IsvaTopologyMode.INLINE, "Default", 100,
+                true, IsvaTopologyMode.INLINE, "Default", "Default", 100,
                 IsvaDeletePolicy.DISABLE, true, List.of("secUser"),
                 null, null, null, null, null);   // linked-mode-only fields unset
         when(isvaConfigService.exportAll()).thenReturn(List.of(
@@ -47,6 +47,7 @@ class IsvaConfigExportContributorTest {
         assertThat(config.get("topologyMode")).isEqualTo("INLINE");
         assertThat(config.get("deletePolicy")).isEqualTo("DISABLE");
         assertThat(config.get("secAuthority")).isEqualTo("Default");
+        assertThat(config.get("secLoginType")).isEqualTo("Default");
         assertThat(config).doesNotContainKey("managementDitBaseDn");   // null dropped
 
         // Round-trip back into the request the reconciler applies.

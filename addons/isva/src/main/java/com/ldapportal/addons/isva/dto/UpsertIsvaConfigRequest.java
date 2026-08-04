@@ -27,6 +27,7 @@ public record UpsertIsvaConfigRequest(
 
         @NotNull IsvaTopologyMode topologyMode,
         String secAuthority,
+        String secLoginType,
 
         @Min(1) int defaultValidUntilYears,
 
