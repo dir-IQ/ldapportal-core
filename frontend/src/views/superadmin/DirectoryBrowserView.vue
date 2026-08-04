@@ -107,12 +107,29 @@
                   <CopyButton :text="entryDetail.dn" />
                 </div>
               </div>
-              <div class="ml-3 shrink-0 relative" ref="menuRef">
-                <button @click="showActionsMenu = !showActionsMenu"
-                        class="btn-primary inline-flex items-center gap-1">
-                  Actions
-                  <span data-v-26fa19c8="" class="text-xs">▼</span>
+              <div class="ml-3 shrink-0 flex items-center gap-2">
+                <!-- Manual refresh: reloads only the currently-selected
+                     branch of the tree (its immediate children) plus this
+                     entry's attributes. Sits to the left of Actions. -->
+                <button type="button"
+                        @click="refreshSelectedBranch"
+                        :disabled="refreshing || !selectedDn"
+                        class="btn-secondary inline-flex items-center gap-1"
+                        title="Reload the selected branch of the tree">
+                  <svg class="w-4 h-4" :class="{ 'animate-spin': refreshing }"
+                       viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M23 4v6h-6M1 20v-6h6"/>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                  </svg>
+                  {{ refreshing ? 'Refreshing…' : 'Refresh' }}
                 </button>
+                <div class="relative" ref="menuRef">
+                  <button @click="showActionsMenu = !showActionsMenu"
+                          class="btn-primary inline-flex items-center gap-1">
+                    Actions
+                    <span class="text-xs">▼</span>
+                  </button>
                 <div v-if="showActionsMenu"
                      class="absolute right-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1">
                   <button @click="creatingEntry = true; showActionsMenu = false"
@@ -157,6 +174,7 @@
                           class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">
                     Delete Entry
                   </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -333,6 +351,27 @@ const renaming          = ref(false)
 const renameError       = ref('')
 
 const showImportModal   = ref(false)
+const refreshing        = ref(false)
+
+// Manual refresh of the currently-selected branch: re-fetch the selected
+// node's immediate children from the server and swap them into the tree,
+// and refresh this entry's attribute detail. Scoped to the selected branch
+// (not the whole tree) per the toolbar button next to Actions.
+async function refreshSelectedBranch() {
+  if (!selectedDirId.value || !selectedDn.value || refreshing.value) return
+  refreshing.value = true
+  try {
+    const { data } = await browse(selectedDirId.value, selectedDn.value)
+    if (treeRef.value) {
+      treeRef.value.refreshNode(selectedDn.value, data.children)
+    }
+    entryDetail.value = { dn: data.dn, attributes: data.attributes }
+  } catch (e) {
+    notif.error(e.response?.data?.detail || e.message)
+  } finally {
+    refreshing.value = false
+  }
+}
 
 function onClickOutside(e) {
   if (menuRef.value && !menuRef.value.contains(e.target)) {
