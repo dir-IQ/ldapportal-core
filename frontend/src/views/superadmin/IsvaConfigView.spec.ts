@@ -76,6 +76,7 @@ function inlineConfigDto() {
     deletePolicy: 'DISABLE',
     requireSecGroup: true,
     secuserObjectClasses: ['secUser'],
+    secuserOverlayAttributes: ['secLogin', 'secAcctValid', 'secPwdValid', 'secValidUntil', 'secPwdLastChanged'],
     managementDitBaseDn: null,
     secuserRdnAttribute: null,
     secuserRdnValueSource: null,
@@ -364,7 +365,10 @@ describe('IsvaConfigView probe gating', () => {
     hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['INLINE', 'LINKED'] } })
     hoisted.getIsvaConfig.mockResolvedValue({ data: inlineConfigDto() })
     hoisted.probeIsvaConfig.mockResolvedValue({
-      data: { reachable: true, sampleSecUserFound: false, schemaValid: null, warnings: [] },
+      data: {
+        reachable: true, sampleSecUserFound: false, schemaValid: null,
+        disallowedWriteAttributes: [], missingRequiredAttributes: [], warnings: [],
+      },
     })
 
     const wrapper = await mountView()
@@ -375,5 +379,28 @@ describe('IsvaConfigView probe gating', () => {
     expect(hoisted.probeIsvaConfig).toHaveBeenCalledWith('dir-1')
     // Critically: probe did NOT implicitly save.
     expect(hoisted.upsertIsvaConfig).not.toHaveBeenCalled()
+  })
+
+  it('Probe surfaces secUser attribute mismatches', async () => {
+    hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['INLINE', 'LINKED'] } })
+    hoisted.getIsvaConfig.mockResolvedValue({ data: inlineConfigDto() })
+    hoisted.probeIsvaConfig.mockResolvedValue({
+      data: {
+        reachable: true, sampleSecUserFound: true, schemaValid: false,
+        disallowedWriteAttributes: ['secLogin', 'secValidUntil'],
+        missingRequiredAttributes: [],
+        warnings: [],
+      },
+    })
+
+    const wrapper = await mountView()
+    const probeBtn = wrapper.findAll('button').find((b) => b.text() === 'Probe')
+    await probeBtn!.trigger('click')
+    await flushPromises()
+
+    const mismatch = wrapper.find('[data-testid="probe-attr-mismatch"]')
+    expect(mismatch.exists()).toBe(true)
+    expect(mismatch.text()).toContain('secLogin')
+    expect(mismatch.text()).toContain('secValidUntil')
   })
 })

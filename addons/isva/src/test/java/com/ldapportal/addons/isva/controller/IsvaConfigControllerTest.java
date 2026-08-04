@@ -114,7 +114,7 @@ class IsvaConfigControllerTest {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
 
         IsvaConfigDto body = controller.upsert(directoryId, null, principal, req).getBody();
 
@@ -137,6 +137,8 @@ class IsvaConfigControllerTest {
                 true, IsvaTopologyMode.LINKED, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 List.of("secUser", "eUser"),
+                List.of("secLogin", "secAcctValid", "secPwdValid",
+                        "secValidUntil", "secPwdLastChanged"),
                 "secAuthority=Default,o=acme,c=us",
                 "principalName",
                 IsvaRdnValueSource.UID,
@@ -149,6 +151,9 @@ class IsvaConfigControllerTest {
         assertThat(body.topologyMode()).isEqualTo(IsvaTopologyMode.LINKED);
         assertThat(body.managementDitBaseDn()).isEqualTo("secAuthority=Default,o=acme,c=us");
         assertThat(body.secuserObjectClasses()).containsExactly("secUser", "eUser");
+        assertThat(body.secuserOverlayAttributes()).containsExactly(
+                "secLogin", "secAcctValid", "secPwdValid",
+                "secValidUntil", "secPwdLastChanged");
         assertThat(body.secuserRdnAttribute()).isEqualTo("principalName");
         assertThat(body.secuserRdnValueSource()).isEqualTo(IsvaRdnValueSource.UID);
         assertThat(body.groupMemberTarget()).isEqualTo(IsvaGroupMemberTarget.DEMOGRAPHIC_DN);
@@ -160,6 +165,7 @@ class IsvaConfigControllerTest {
                 true, IsvaTopologyMode.LINKED, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 null,   // objectClasses → normalized to [secUser]
+                null,   // overlay attrs → normalized to default set
                 "   ",   // blank → invalid
                 "secUUID", null, null, null);
 
@@ -184,7 +190,7 @@ class IsvaConfigControllerTest {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
 
         IsvaConfigDto body = controller.upsert(directoryId, null, principal, req).getBody();
         assertThat(body).isNotNull();
@@ -203,7 +209,7 @@ class IsvaConfigControllerTest {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> controller.upsert(directoryId, null, principal, req))
                 .isInstanceOf(ResourceNotFoundException.class);
@@ -220,7 +226,7 @@ class IsvaConfigControllerTest {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "  ", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
 
         ArgumentCaptor<VendorIntegrationIsvaConfig> captor =
                 ArgumentCaptor.forClass(VendorIntegrationIsvaConfig.class);
@@ -240,7 +246,8 @@ class IsvaConfigControllerTest {
         cfg.setManagementDitBaseDn("secAuthority=Default,o=x,c=y");
         when(configRepo.findById(directoryId)).thenReturn(Optional.of(cfg));
         when(probeService.probe(any(DirectoryConnection.class), any(VendorIntegrationIsvaConfig.class)))
-                .thenReturn(new ProbeResult(true, true, true, List.of("OK")));
+                .thenReturn(new ProbeResult(true, true, true,
+                        List.of(), List.of(), List.of("OK")));
 
         ProbeResult body = controller.probe(directoryId).getBody();
 
@@ -301,7 +308,7 @@ class IsvaConfigControllerTest {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
 
         IsvaConfigDto body = bySlugController.upsert("corp-ldap", null, principal, req).getBody();
 
@@ -349,7 +356,7 @@ class IsvaConfigControllerTest {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
 
         // If-Match "1" parses to expectedVersion 1, but the row is at 5.
         assertThatThrownBy(() -> controller.upsert(directoryId, "\"1\"", principal, req))

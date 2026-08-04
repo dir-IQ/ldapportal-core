@@ -84,6 +84,7 @@ in the directory list (`/superadmin/directories`). Field by field:
 | **Delete policy** | `DISABLE` (soft) flips `secAcctValid=FALSE` + `secValidUntil=now`; `HARD_DELETE` issues a real LDAP DEL. Default is `DISABLE` — the safer choice for environments that need an audit trail for departed users. |
 | **Require secGroup** | When on, every group-membership write first checks the target group for `objectClass: secGroup` (ISVA's group representation) and refuses with a 422 when it's missing — the LDAP write would succeed but ISVA would silently ignore the membership. Remediate by adding the secGroup overlay to the group (`pdadmin group import`) or turning the flag off. A group the bind can't read is let through; the write then fails (or succeeds) on the server's own verdict. Off (the default) matches deployments that manage groups outside of ISVA. |
 | **secUser object classes** | The objectClass set written to the secUser identity — overlaid onto the demographic entry (inline) or stamped on the paired entry (linked). `secUser` is always present (re-added if you remove it); add others your schema needs, e.g. `eUser` to bring in `principalName`. Applies to both modes. |
+| **secUser overlay attributes** | Which optional `sec*` attributes are written on every grant: `secLogin`, `secAcctValid`, `secPwdValid`, `secValidUntil`, `secPwdLastChanged`. (`secLoginType` and `secAuthority` are always written — they're MUST on IBM's `secUser` — and are configured by their own fields above.) IBM's `secUser` schema varies between deployments; if yours doesn't permit one of these (a common case is no `secValidUntil` or no `secLogin`), untick it — otherwise every grant fails with `attribute <x> is not allowed by objectClass secUser`. Unticking `secValidUntil` also disables the **renew** account verb (there's no expiry to extend). Use **Probe** to detect mismatches automatically. Applies to both modes. |
 | **Management DIT base DN** *(linked only)* | The subtree under which secUser entries live (e.g. `secAuthority=Default,o=acme,c=us`). The bind DN needs write access here. Required when topology mode is LINKED — the server will reject a save without it. |
 | **secUser RDN attribute** *(linked only)* | The attribute that names secUser entries — free-form. `secUUID` (default) and `secLogin` are the stock choices; any attribute your configured object classes permit works (e.g. `principalName` from `eUser`). |
 | **RDN value source** *(linked only)* | Where the RDN value comes from, independent of the attribute name. `GENERATED_UUID` (default) mints an opaque UUID per user; `UID` mirrors the user's `uid` (a rename then forces a directory rename). `secUUID`+`GENERATED_UUID` and `secLogin`/`principalName`+`UID` are the natural pairings. |
@@ -188,11 +189,18 @@ After saving the config:
    objectclasses") — and, in linked mode, that the configured RDN
    attribute is permitted by one of those classes (so a
    `principalName` RDN without the `eUser` class is caught here, not at
-   provisioning time) and that the management DIT is reachable. A green
-   probe doesn't *guarantee* every operation will succeed, but a red
-   probe always points at one of the prereqs above. (The schema verdict
-   shows as **yes / no / unknown** — *unknown* means the server didn't
-   return its schema to the bind DN.)
+   provisioning time) and that the management DIT is reachable. It also
+   compares the attributes the app would write against the target
+   `secUser` schema and reports the mismatches directly — a **secUser
+   attribute mismatches** panel lists any attribute the app writes that
+   the schema *forbids* (untick it under **secUser overlay attributes**)
+   and any MUST attribute the schema *requires* that the app doesn't
+   write. This is the fast path to fixing `attribute not allowed` /
+   `missing required attribute` errors: probe, read the two lists, adjust
+   the overlay, re-probe. A green probe doesn't *guarantee* every
+   operation will succeed, but a red probe always points at one of the
+   prereqs above. (The schema verdict shows as **yes / no / unknown** —
+   *unknown* means the server didn't return its schema to the bind DN.)
 2. **Provision a test user.** Create one through LDAP Portal's normal
    user-create flow. Inspect the resulting entry in your directory
    browser — you should see the `sec*` attributes alongside the

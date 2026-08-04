@@ -30,6 +30,8 @@ class IsvaConfigExportContributorTest {
         UpsertIsvaConfigRequest cfg = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default", "Default", 100,
                 IsvaDeletePolicy.DISABLE, true, List.of("secUser"),
+                List.of("secLogin", "secAcctValid", "secPwdValid",
+                        "secValidUntil", "secPwdLastChanged"),
                 null, null, null, null, null);   // linked-mode-only fields unset
         when(isvaConfigService.exportAll()).thenReturn(List.of(
                 new IsvaConfigService.IsvaConfigExport("corp-ldap", cfg)));
@@ -48,6 +50,9 @@ class IsvaConfigExportContributorTest {
         assertThat(config.get("deletePolicy")).isEqualTo("DISABLE");
         assertThat(config.get("secAuthority")).isEqualTo("Default");
         assertThat(config.get("secLoginType")).isEqualTo("Default");
+        assertThat(config.get("secuserOverlayAttributes")).isEqualTo(List.of(
+                "secLogin", "secAcctValid", "secPwdValid",
+                "secValidUntil", "secPwdLastChanged"));
         assertThat(config).doesNotContainKey("managementDitBaseDn");   // null dropped
 
         // Round-trip back into the request the reconciler applies.

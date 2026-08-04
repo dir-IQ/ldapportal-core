@@ -187,7 +187,7 @@ public class IsvaAccountService {
         AuditAction action;
         if (mode == IsvaRevokeMode.SOFT) {
             String target = lifecycleTarget(status, dn);
-            step = secUserPlans.disable(target);
+            step = secUserPlans.disable(target, ctx.cfg());
             action = AuditAction.USER_DISABLE;
             detail.put("ivia_op", "revoke_soft");
         } else {
@@ -203,11 +203,14 @@ public class IsvaAccountService {
         runStep(ctx.dir(), step);
         auditService.record(principal, directoryId, action, dn, detail);
         if (mode == IsvaRevokeMode.SOFT) {
-            // disable() writes secAcctValid=FALSE + secValidUntil=now.
-            // Mirror both in the derived snapshot.
-            return status
-                    .withAcctValid(false)
-                    .withValidUntil(OffsetDateTime.now(ZoneOffset.UTC));
+            // disable() always writes secAcctValid=FALSE, and (only when
+            // the overlay includes secValidUntil) expires it to now.
+            // Mirror exactly what was written in the derived snapshot.
+            IsvaAccountStatus derived = status.withAcctValid(false);
+            if (IsvaSecUserPlans.overlayEnabled(ctx.cfg(), "secValidUntil")) {
+                derived = derived.withValidUntil(OffsetDateTime.now(ZoneOffset.UTC));
+            }
+            return derived;
         }
         return IsvaAccountStatus.orphaned(ctx.cfg().getTopologyMode());
     }
@@ -252,6 +255,15 @@ public class IsvaAccountService {
                                    OffsetDateTime newValidUntil,
                                    AuthPrincipal principal) {
         Ctx ctx = loadContext(directoryId);
+        // Renew is meaningless when this directory's secUser schema has no
+        // secValidUntil (the operator trimmed it from the overlay). Refuse
+        // clearly rather than let the LDAP MODIFY fail with "attribute not
+        // allowed".
+        if (!IsvaSecUserPlans.overlayEnabled(ctx.cfg(), "secValidUntil")) {
+            throw refuse(HttpStatus.CONFLICT, "ivia_valid_until_unsupported",
+                    "This directory's secUser overlay does not include secValidUntil — "
+                            + "renew is not available");
+        }
         IsvaAccountStatus status = probe.probe(ctx.dir(), ctx.cfg(), dn);
         if (status.orphaned()) {
             throw refuseOrphan();
@@ -421,8 +433,12 @@ public class IsvaAccountService {
                                               String createdSecUserDn) {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         long secondsPerYear = Math.round(365.25d * 24d * 3600d);
-        OffsetDateTime validUntil = now.plusSeconds(
-                secondsPerYear * cfg.getDefaultValidUntilYears());
+        // Only reflect a validUntil when the overlay actually wrote one —
+        // otherwise the snapshot would advertise an expiry the entry
+        // doesn't carry.
+        OffsetDateTime validUntil = IsvaSecUserPlans.overlayEnabled(cfg, "secValidUntil")
+                ? now.plusSeconds(secondsPerYear * cfg.getDefaultValidUntilYears())
+                : null;
         String authority = (cfg.getSecAuthority() == null
                 || cfg.getSecAuthority().isBlank())
                 ? "Default"

@@ -29,6 +29,7 @@ public record IsvaConfigDto(
 
         // Applies to both modes
         List<String> secuserObjectClasses,
+        List<String> secuserOverlayAttributes,
 
         // Linked-mode-only — null in inline-mode responses
         String managementDitBaseDn,
@@ -53,6 +54,7 @@ public record IsvaConfigDto(
                 entity.getDeletePolicy(),
                 entity.isRequireSecGroup(),
                 entity.getSecuserObjectClasses(),
+                entity.getSecuserOverlayAttributes(),
                 entity.getManagementDitBaseDn(),
                 entity.getSecuserRdnAttribute(),
                 entity.getSecuserRdnValueSource(),

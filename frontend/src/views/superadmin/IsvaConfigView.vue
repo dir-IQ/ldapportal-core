@@ -21,6 +21,18 @@ import { IVIA_NAME, IVIA_ABBR } from '@/constants/productNames'
 import { useNotificationStore } from '@/stores/notifications'
 import { useConfirm } from '@/composables/useConfirm'
 
+// The optional sec* overlay attributes an operator can toggle. Mirrors
+// IsvaSecUserPlans.OPTIONAL_OVERLAY_ATTRS on the backend (secLoginType /
+// secAuthority are always written and configured separately, so they are
+// not here). Order matches the backend's canonical order.
+const OPTIONAL_OVERLAY_ATTRS = [
+  'secLogin',
+  'secAcctValid',
+  'secPwdValid',
+  'secValidUntil',
+  'secPwdLastChanged',
+] as const
+
 const route = useRoute()
 const router = useRouter()
 const directoryId = computed(() => route.params.id as string)
@@ -46,6 +58,7 @@ interface Form {
   deletePolicy: IsvaDeletePolicy
   requireSecGroup: boolean
   secuserObjectClasses: string[]
+  secuserOverlayAttributes: string[]
   managementDitBaseDn: string
   secuserRdnAttribute: string
   secuserRdnValueSource: IsvaRdnValueSource
@@ -65,6 +78,7 @@ function emptyForm(): Form {
     // would refuse memberships in plain (non-secGroup) groups.
     requireSecGroup: false,
     secuserObjectClasses: ['secUser'],
+    secuserOverlayAttributes: [...OPTIONAL_OVERLAY_ATTRS],
     managementDitBaseDn: '',
     secuserRdnAttribute: 'secUUID',
     secuserRdnValueSource: 'GENERATED_UUID',
@@ -173,6 +187,11 @@ function populateFromDto(dto: IsvaConfigDto) {
   form.value.secuserObjectClasses = dto.secuserObjectClasses?.length
     ? [...dto.secuserObjectClasses]
     : ['secUser']
+  // An empty list is a deliberate "write no optional attrs" choice, so
+  // only fall back to the default set when the field is absent entirely.
+  form.value.secuserOverlayAttributes = dto.secuserOverlayAttributes != null
+    ? [...dto.secuserOverlayAttributes]
+    : [...OPTIONAL_OVERLAY_ATTRS]
   form.value.managementDitBaseDn = dto.managementDitBaseDn ?? ''
   form.value.secuserRdnAttribute = dto.secuserRdnAttribute ?? 'secUUID'
   form.value.secuserRdnValueSource = dto.secuserRdnValueSource ?? 'GENERATED_UUID'
@@ -217,6 +236,16 @@ function removeObjectClass(name: string) {
     .filter((oc) => oc !== name)
 }
 
+// Optional-overlay-attribute toggles. Assign a fresh array (never mutate
+// in place) — pristine holds a shallow snapshot that shares the array
+// reference, so an in-place edit would defeat the isDirty comparison.
+function toggleOverlayAttr(attr: string, enabled: boolean) {
+  const set = new Set(form.value.secuserOverlayAttributes)
+  if (enabled) set.add(attr)
+  else set.delete(attr)
+  form.value.secuserOverlayAttributes = OPTIONAL_OVERLAY_ATTRS.filter((a) => set.has(a))
+}
+
 async function save() {
   if (!canSave.value || saving.value) return
   saving.value = true
@@ -231,6 +260,8 @@ async function save() {
       requireSecGroup: form.value.requireSecGroup,
       // Applies to both modes; server normalizes (ensures secUser present).
       secuserObjectClasses: form.value.secuserObjectClasses,
+      // Applies to both modes; server normalizes to the known optional attrs.
+      secuserOverlayAttributes: form.value.secuserOverlayAttributes,
       // Linked-only — server clears these when topologyMode = INLINE,
       // so it's safe to send the form values regardless.
       managementDitBaseDn: form.value.managementDitBaseDn.trim() || null,
@@ -511,6 +542,35 @@ function extractErrorMessage(e: unknown, fallback: string): string {
             <button type="button" class="btn-secondary" @click="addObjectClass">Add</button>
           </div>
         </div>
+
+        <div>
+          <label class="label">secUser overlay attributes</label>
+          <p class="text-xs text-gray-500 mb-2" data-testid="secuser-overlay-help">
+            Optional <code>sec*</code> attributes written on every grant.
+            <code>secLoginType</code> and <code>secAuthority</code> are always
+            written (required by IBM's <code>secUser</code>) and configured
+            above. Untick any your directory's <code>secUser</code> schema
+            doesn't permit — leaving one ticked that the schema forbids makes
+            provisioning fail with <em>"attribute not allowed by objectClass
+            secUser"</em>. Use <strong>Probe</strong> below to detect
+            mismatches.
+          </p>
+          <div class="flex flex-col gap-1.5">
+            <label
+              v-for="attr in OPTIONAL_OVERLAY_ATTRS"
+              :key="attr"
+              class="inline-flex items-center gap-2 text-sm"
+            >
+              <input
+                type="checkbox"
+                class="rounded"
+                :checked="form.secuserOverlayAttributes.includes(attr)"
+                @change="toggleOverlayAttr(attr, ($event.target as HTMLInputElement).checked)"
+              />
+              <code>{{ attr }}</code>
+            </label>
+          </div>
+        </div>
       </section>
 
       <!-- Linked-mode-only block -->
@@ -666,6 +726,48 @@ function extractErrorMessage(e: unknown, fallback: string): string {
                  : probeResult.schemaValid === false ? 'no' : 'unknown' }}
             </span>
           </p>
+          <!-- Code-vs-schema attribute mismatch: the attributes the app
+               would write that the target secUser schema forbids (or the
+               MUST attrs it requires that the app wouldn't write). This is
+               the direct cause of "attribute not allowed" / "missing
+               required attribute" provisioning failures. -->
+          <div
+            v-if="probeResult.disallowedWriteAttributes.length
+                  || probeResult.missingRequiredAttributes.length"
+            data-testid="probe-attr-mismatch"
+            class="rounded-md border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/40 p-3 space-y-2"
+          >
+            <p class="font-medium text-red-700 dark:text-red-300">
+              secUser attribute mismatches
+            </p>
+            <div v-if="probeResult.disallowedWriteAttributes.length">
+              <p class="text-red-700 dark:text-red-300">
+                Written by the app but <strong>not permitted</strong> by the
+                target <code>secUser</code> schema — untick these under
+                “secUser overlay attributes”:
+              </p>
+              <div class="flex flex-wrap gap-1.5 mt-1">
+                <code
+                  v-for="a in probeResult.disallowedWriteAttributes"
+                  :key="a"
+                  class="rounded bg-red-100 dark:bg-red-900/60 px-1.5 py-0.5 text-xs text-red-800 dark:text-red-200"
+                >{{ a }}</code>
+              </div>
+            </div>
+            <div v-if="probeResult.missingRequiredAttributes.length">
+              <p class="text-red-700 dark:text-red-300">
+                <strong>Required</strong> by the target <code>secUser</code>
+                schema but not written by the app:
+              </p>
+              <div class="flex flex-wrap gap-1.5 mt-1">
+                <code
+                  v-for="a in probeResult.missingRequiredAttributes"
+                  :key="a"
+                  class="rounded bg-red-100 dark:bg-red-900/60 px-1.5 py-0.5 text-xs text-red-800 dark:text-red-200"
+                >{{ a }}</code>
+              </div>
+            </div>
+          </div>
           <ul v-if="probeResult.warnings.length" class="list-disc list-inside text-gray-600">
             <li v-for="w in probeResult.warnings" :key="w">{{ w }}</li>
           </ul>
