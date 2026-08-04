@@ -23,6 +23,7 @@ export interface IsvaConfigDto {
   enabled: boolean;
   topologyMode: IsvaTopologyMode;
   secAuthority: string | null;
+  secLoginType: string | null;
   defaultValidUntilYears: number;
   deletePolicy: IsvaDeletePolicy;
   requireSecGroup: boolean;
@@ -46,6 +47,7 @@ export interface UpsertIsvaConfigRequest {
   enabled: boolean;
   topologyMode: IsvaTopologyMode;
   secAuthority: string | null;
+  secLoginType: string | null;
   defaultValidUntilYears: number;
   deletePolicy: IsvaDeletePolicy;
   requireSecGroup: boolean;

@@ -101,6 +101,7 @@ public class IsvaSecUserPlans {
      */
     static final List<String> SEC_OVERLAY_ATTRS = List.of(
             "secLogin",
+            "secLoginType",
             "secAuthority",
             "secAcctValid",
             "secPwdValid",
@@ -298,6 +299,12 @@ public class IsvaSecUserPlans {
     private Map<String, String> secDefaults(VendorIntegrationIsvaConfig cfg, String uid) {
         Map<String, String> defaults = new LinkedHashMap<>();
         defaults.put("secLogin", uid);
+        // secLoginType is a MUST attribute of IBM's stock secUser
+        // objectClass (alongside secAuthority); without it the very first
+        // grant fails with an object-class-violation. Deployment-varying,
+        // so it's configurable like secAuthority, falling back to the
+        // vanilla-install "Default".
+        defaults.put("secLoginType", nonNull(cfg.getSecLoginType(), "Default"));
         defaults.put("secAuthority", nonNull(cfg.getSecAuthority(), "Default"));
         defaults.put("secAcctValid", "TRUE");
         defaults.put("secPwdValid", "TRUE");

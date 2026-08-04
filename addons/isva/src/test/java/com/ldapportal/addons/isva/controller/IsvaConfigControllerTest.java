@@ -112,7 +112,7 @@ class IsvaConfigControllerTest {
                 .thenAnswer(IsvaConfigControllerTest::saveAnswer);
 
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
-                true, IsvaTopologyMode.INLINE, "Default",
+                true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 null, null, null, null, null, null);
 
@@ -121,6 +121,7 @@ class IsvaConfigControllerTest {
         assertThat(body).isNotNull();
         assertThat(body.enabled()).isTrue();
         assertThat(body.topologyMode()).isEqualTo(IsvaTopologyMode.INLINE);
+        assertThat(body.secLoginType()).isEqualTo("Default");
         // INLINE mode → linked-mode fields cleared.
         assertThat(body.managementDitBaseDn()).isNull();
         assertThat(body.updatedBy()).isEqualTo("alice");
@@ -133,7 +134,7 @@ class IsvaConfigControllerTest {
                 .thenAnswer(IsvaConfigControllerTest::saveAnswer);
 
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
-                true, IsvaTopologyMode.LINKED, "Default",
+                true, IsvaTopologyMode.LINKED, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 List.of("secUser", "eUser"),
                 "secAuthority=Default,o=acme,c=us",
@@ -156,7 +157,7 @@ class IsvaConfigControllerTest {
     @Test
     void upsert_linkedMode_blankManagementDit_400() {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
-                true, IsvaTopologyMode.LINKED, "Default",
+                true, IsvaTopologyMode.LINKED, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 null,   // objectClasses → normalized to [secUser]
                 "   ",   // blank → invalid
@@ -181,7 +182,7 @@ class IsvaConfigControllerTest {
                 .thenAnswer(IsvaConfigControllerTest::saveAnswer);
 
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
-                true, IsvaTopologyMode.INLINE, "Default",
+                true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 null, null, null, null, null, null);
 
@@ -200,7 +201,7 @@ class IsvaConfigControllerTest {
         when(directoryRepo.existsById(directoryId)).thenReturn(false);
 
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
-                true, IsvaTopologyMode.INLINE, "Default",
+                true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 null, null, null, null, null, null);
 
@@ -217,7 +218,7 @@ class IsvaConfigControllerTest {
                 .thenAnswer(IsvaConfigControllerTest::saveAnswer);
 
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
-                true, IsvaTopologyMode.INLINE, "  ",
+                true, IsvaTopologyMode.INLINE, "  ", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 null, null, null, null, null, null);
 
@@ -298,7 +299,7 @@ class IsvaConfigControllerTest {
                 .thenAnswer(IsvaConfigControllerTest::saveAnswer);
 
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
-                true, IsvaTopologyMode.INLINE, "Default",
+                true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 null, null, null, null, null, null);
 
@@ -346,7 +347,7 @@ class IsvaConfigControllerTest {
         when(configRepo.findById(directoryId)).thenReturn(Optional.of(existing));
 
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
-                true, IsvaTopologyMode.INLINE, "Default",
+                true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, IsvaDeletePolicy.DISABLE, true,
                 null, null, null, null, null, null);
 

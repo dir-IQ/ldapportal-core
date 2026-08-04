@@ -75,6 +75,14 @@ public class VendorIntegrationIsvaConfig {
     @Column(name = "sec_authority", length = 255)
     private String secAuthority = "Default";
 
+    /** Value written to {@code secLoginType} on every secUser entry.
+     * IBM's stock {@code secUser} objectClass lists this as a MUST
+     * attribute (alongside {@code secAuthority}), so provisioning fails
+     * with an object-class violation when it's absent. Deployment-varying;
+     * defaults to {@code Default}, matching a vanilla ISVA install. */
+    @Column(name = "sec_login_type", length = 255)
+    private String secLoginType = "Default";
+
     /** secValidUntil default = now + N years. Sufficiently far-future
      * so the account doesn't "expire" by accident; admins can override
      * per-user via the profile editor. */
