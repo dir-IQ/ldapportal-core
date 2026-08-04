@@ -2,6 +2,7 @@
 package com.ldapportal.addons.isva;
 
 import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
+import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.core.provisioning.AddStep;
 import com.ldapportal.core.provisioning.DeleteStep;
@@ -19,7 +20,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -93,34 +96,145 @@ public class IsvaSecUserPlans {
     }
 
     /**
-     * The {@code sec*} overlay attributes written by every grant path —
-     * single source of truth, also used by {@link #revokeInlineOnExisting}
-     * to know which attributes to strip on an inline-mode hard revoke.
-     * Order matches {@link #secDefaults} so the two stay in lockstep when
-     * the schema grows.
+     * The <em>optional</em> {@code sec*} overlay attributes a grant may
+     * write, in stable order. These are configurable per directory via
+     * {@code cfg.secuserOverlayAttributes}: a deployment whose
+     * {@code secUser} schema omits some of them (e.g. a registry with no
+     * {@code secValidUntil} expiry model, or one that doesn't carry
+     * {@code secLogin}) trims the set so provisioning doesn't fail with
+     * "attribute X not allowed by objectClass secUser".
+     *
+     * <p>{@code secLoginType} and {@code secAuthority} are deliberately
+     * <em>not</em> here — IBM's stock {@code secUser} lists them as MUST,
+     * so they're always written (their <em>values</em> are configured
+     * separately). This list governs only the optional overlay.</p>
      */
-    static final List<String> SEC_OVERLAY_ATTRS = List.of(
+    public static final List<String> OPTIONAL_OVERLAY_ATTRS = List.of(
             "secLogin",
-            "secLoginType",
-            "secAuthority",
             "secAcctValid",
             "secPwdValid",
             "secValidUntil",
             "secPwdLastChanged");
 
+    /**
+     * The optional overlay attributes actually enabled for this config —
+     * the intersection of {@link #OPTIONAL_OVERLAY_ATTRS} with
+     * {@code cfg.secuserOverlayAttributes} (case-insensitive, canonical
+     * spelling + order preserved). A {@code null} configured list means
+     * "unset" and resolves to the full set (preserves legacy behaviour);
+     * an explicitly empty list writes none of the optional attributes.
+     */
+    public static List<String> enabledOverlayAttrs(VendorIntegrationIsvaConfig cfg) {
+        List<String> configured = cfg.getSecuserOverlayAttributes();
+        if (configured == null) {
+            return OPTIONAL_OVERLAY_ATTRS;
+        }
+        Set<String> want = new LinkedHashSet<>();
+        for (String a : configured) {
+            if (a != null && !a.isBlank()) {
+                want.add(a.trim().toLowerCase(Locale.ROOT));
+            }
+        }
+        List<String> out = new ArrayList<>();
+        for (String canonical : OPTIONAL_OVERLAY_ATTRS) {
+            if (want.contains(canonical.toLowerCase(Locale.ROOT))) {
+                out.add(canonical);
+            }
+        }
+        return out;
+    }
+
+    /** Whether a given optional overlay attribute is enabled for this config. */
+    public static boolean overlayEnabled(VendorIntegrationIsvaConfig cfg, String attr) {
+        for (String a : enabledOverlayAttrs(cfg)) {
+            if (a.equalsIgnoreCase(attr)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The full ordered list of {@code sec*} attribute NAMES a grant
+     * writes for this config: the two always-on MUST attrs
+     * ({@code secLoginType}, {@code secAuthority}) plus each enabled
+     * optional attr. Single source of truth shared by {@link #secDefaults}
+     * (what to write) and {@link #revokeInlineOnExisting} (what to strip),
+     * so the two can never drift.
+     */
+    public static List<String> writtenOverlayAttrNames(VendorIntegrationIsvaConfig cfg) {
+        Set<String> on = new LinkedHashSet<>();
+        for (String a : enabledOverlayAttrs(cfg)) {
+            on.add(a.toLowerCase(Locale.ROOT));
+        }
+        List<String> names = new ArrayList<>();
+        if (on.contains("seclogin")) {
+            names.add("secLogin");
+        }
+        names.add("secLoginType");
+        names.add("secAuthority");
+        if (on.contains("secacctvalid")) {
+            names.add("secAcctValid");
+        }
+        if (on.contains("secpwdvalid")) {
+            names.add("secPwdValid");
+        }
+        if (on.contains("secvaliduntil")) {
+            names.add("secValidUntil");
+        }
+        if (on.contains("secpwdlastchanged")) {
+            names.add("secPwdLastChanged");
+        }
+        return names;
+    }
+
+    /**
+     * Every attribute NAME a grant writes onto the {@code secUser}
+     * identity for this config — the overlay attrs from
+     * {@link #writtenOverlayAttrNames} plus, in linked mode, the
+     * {@code secDN} back-reference and the configured RDN attribute.
+     * {@code objectClass} is implicit and always permitted, so it's
+     * excluded. Used by the probe to compare what the app would write
+     * against the target server's {@code secUser} schema.
+     */
+    public static List<String> writtenAttributeNames(VendorIntegrationIsvaConfig cfg) {
+        List<String> names = new ArrayList<>(writtenOverlayAttrNames(cfg));
+        if (cfg.getTopologyMode() == IsvaTopologyMode.LINKED) {
+            names.add("secDN");
+            String rdn = cfg.getSecuserRdnAttribute();
+            if (rdn == null || rdn.isBlank()) {
+                rdn = "secUUID";
+            }
+            final String rdnAttr = rdn;
+            if (names.stream().noneMatch(n -> n.equalsIgnoreCase(rdnAttr))) {
+                names.add(rdnAttr);
+            }
+        }
+        return names;
+    }
+
     // ── revoke ───────────────────────────────────────────────────────
 
     /**
      * Revoke (soft-disable) the ISVA account: the MODIFY marking the
-     * secUser invalid ({@code secAcctValid=FALSE} + {@code secValidUntil=now}).
+     * secUser invalid ({@code secAcctValid=FALSE}, and — when the
+     * directory's overlay includes it — {@code secValidUntil=now}).
      * Targets the demographic DN in inline mode, the paired secUser DN
      * in linked mode.
+     *
+     * <p>{@code secValidUntil} is written only when it's part of the
+     * configured overlay: a deployment whose {@code secUser} schema has
+     * no {@code secValidUntil} would otherwise have every soft-delete
+     * rejected with "attribute not allowed". There, disable degrades to
+     * flipping {@code secAcctValid} alone.</p>
      */
-    public ModifyStep disable(String secUserDn) {
-        List<Modification> mods = List.of(
-                new Modification(ModificationType.REPLACE, "secAcctValid", "FALSE"),
-                new Modification(ModificationType.REPLACE, "secValidUntil",
-                        generalizedTime(Instant.now())));
+    public ModifyStep disable(String secUserDn, VendorIntegrationIsvaConfig cfg) {
+        List<Modification> mods = new ArrayList<>();
+        mods.add(new Modification(ModificationType.REPLACE, "secAcctValid", "FALSE"));
+        if (overlayEnabled(cfg, "secValidUntil")) {
+            mods.add(new Modification(ModificationType.REPLACE, "secValidUntil",
+                    generalizedTime(Instant.now())));
+        }
         return ModifyStep.of(secUserDn, mods);
     }
 
@@ -141,10 +255,11 @@ public class IsvaSecUserPlans {
      * "hard revoke" verb uses this in inline mode; linked mode uses
      * {@link #hardDelete} against the paired secUser DN instead.
      *
-     * <p>Only attributes in {@link #SEC_OVERLAY_ATTRS} are stripped.
-     * If a deployment has set other {@code sec*} attributes
-     * out-of-band, those stay; the orphaned overlay attributes are
-     * inert without the {@code secUser} objectClass.</p>
+     * <p>Only the attributes {@link #writtenOverlayAttrNames} reports for
+     * this config are stripped — exactly what a grant wrote. If a
+     * deployment has set other {@code sec*} attributes out-of-band, those
+     * stay; the orphaned overlay attributes are inert without the
+     * {@code secUser} objectClass.</p>
      *
      * <p>The configured overlay objectClasses (same set
      * {@link #grantInlineOnExisting} added) are removed too, so the
@@ -157,7 +272,7 @@ public class IsvaSecUserPlans {
         List<Modification> mods = new ArrayList<>();
         mods.add(new Modification(ModificationType.DELETE, "objectClass",
                 secUserObjectClasses(cfg).toArray(new String[0])));
-        for (String attr : SEC_OVERLAY_ATTRS) {
+        for (String attr : writtenOverlayAttrNames(cfg)) {
             mods.add(new Modification(ModificationType.DELETE, attr));
         }
         return ModifyStep.of(demographicDn, mods);
@@ -297,21 +412,36 @@ public class IsvaSecUserPlans {
      * are computed per call from {@code Instant.now()}.</p>
      */
     private Map<String, String> secDefaults(VendorIntegrationIsvaConfig cfg, String uid) {
+        // writtenOverlayAttrNames is the single source of truth for which
+        // attributes a grant emits (the two always-on MUST attrs plus the
+        // enabled optional overlay); here we attach each name's value.
+        // secLoginType / secAuthority are MUST on IBM's stock secUser, so
+        // they always appear; the optional attrs (secLogin, secValidUntil,
+        // …) appear only when the directory's configured overlay includes
+        // them — a deployment whose secUser schema omits one trims it out
+        // rather than failing every grant with "attribute not allowed".
         Map<String, String> defaults = new LinkedHashMap<>();
-        defaults.put("secLogin", uid);
-        // secLoginType is a MUST attribute of IBM's stock secUser
-        // objectClass (alongside secAuthority); without it the very first
-        // grant fails with an object-class-violation. Deployment-varying,
-        // so it's configurable like secAuthority, falling back to the
-        // vanilla-install "Default".
-        defaults.put("secLoginType", nonNull(cfg.getSecLoginType(), "Default"));
-        defaults.put("secAuthority", nonNull(cfg.getSecAuthority(), "Default"));
-        defaults.put("secAcctValid", "TRUE");
-        defaults.put("secPwdValid", "TRUE");
-        defaults.put("secValidUntil", generalizedTime(Instant.now().plusSeconds(
-                yearsInSeconds(cfg.getDefaultValidUntilYears()))));
-        defaults.put("secPwdLastChanged", generalizedTime(Instant.now()));
+        Instant now = Instant.now();
+        for (String name : writtenOverlayAttrNames(cfg)) {
+            defaults.put(name, overlayValue(name, cfg, uid, now));
+        }
         return defaults;
+    }
+
+    /** The value written for a given overlay attribute name. */
+    private String overlayValue(String name, VendorIntegrationIsvaConfig cfg,
+                                String uid, Instant now) {
+        return switch (name) {
+            case "secLogin" -> uid;
+            case "secLoginType" -> nonNull(cfg.getSecLoginType(), "Default");
+            case "secAuthority" -> nonNull(cfg.getSecAuthority(), "Default");
+            case "secAcctValid" -> "TRUE";
+            case "secPwdValid" -> "TRUE";
+            case "secValidUntil" -> generalizedTime(now.plusSeconds(
+                    yearsInSeconds(cfg.getDefaultValidUntilYears())));
+            case "secPwdLastChanged" -> generalizedTime(now);
+            default -> throw new IllegalStateException("Unknown overlay attribute: " + name);
+        };
     }
 
     private static void addIfAbsent(List<Attribute> attrs, String name, String value) {

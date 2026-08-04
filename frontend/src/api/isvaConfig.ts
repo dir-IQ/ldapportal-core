@@ -30,6 +30,7 @@ export interface IsvaConfigDto {
 
   // Applies to both modes
   secuserObjectClasses: string[];
+  secuserOverlayAttributes: string[];
 
   // Linked-mode-only — null in INLINE responses
   managementDitBaseDn: string | null;
@@ -54,6 +55,9 @@ export interface UpsertIsvaConfigRequest {
 
   // Applies to both modes — secUser is normalized in server-side if omitted
   secuserObjectClasses: string[];
+  // Applies to both modes — the optional sec* overlay attributes to write.
+  // Normalized to the known optional attributes server-side.
+  secuserOverlayAttributes: string[];
 
   // Required when topologyMode = LINKED
   managementDitBaseDn: string | null;
@@ -70,6 +74,11 @@ export interface ProbeResult {
   // attribute is permitted by one; false = a check failed; null =
   // server schema couldn't be read to decide.
   schemaValid: boolean | null;
+  // Attributes the app would write that the target secUser schema forbids
+  // (each → "attribute not allowed"); and MUST attributes it requires that
+  // the app wouldn't write (each → "missing required attribute").
+  disallowedWriteAttributes: string[];
+  missingRequiredAttributes: string[];
   warnings: string[];
 }
 

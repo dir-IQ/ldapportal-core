@@ -159,7 +159,7 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
         }
         // Inline mode: the secUser IS the demographic entry, so the
         // revoke MODIFY targets the same DN.
-        return DeletePlan.singleStep(secUserPlans.disable(dn));
+        return DeletePlan.singleStep(secUserPlans.disable(dn, cfg));
     }
 
     private DeletePlan planLinkedUserDelete(DirectoryConnection dir,
@@ -194,7 +194,7 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
         }
 
         List<LdapOperationStep> steps = new ArrayList<>();
-        steps.add(secUserPlans.disable(secUserDn.get()));
+        steps.add(secUserPlans.disable(secUserDn.get(), cfg));
 
         // DISABLE_AND_MARK: also annotate the demographic entry, reusing the
         // directory's own configured enable/disable attribute as the marker

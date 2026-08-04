@@ -37,6 +37,11 @@ public record UpsertIsvaConfigRequest(
         // Applies to both modes — secUser is normalized in if omitted
         List<String> secuserObjectClasses,
 
+        // Applies to both modes — the optional sec* overlay attributes to
+        // write. null → server default (full set); normalized to the known
+        // optional attributes server-side.
+        List<String> secuserOverlayAttributes,
+
         // Linked-mode-only
         String managementDitBaseDn,
         String secuserRdnAttribute,

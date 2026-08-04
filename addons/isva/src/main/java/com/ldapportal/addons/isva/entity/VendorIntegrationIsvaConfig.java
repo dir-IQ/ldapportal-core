@@ -111,6 +111,22 @@ public class VendorIntegrationIsvaConfig {
     @Column(name = "secuser_object_classes", columnDefinition = "TEXT")
     private List<String> secuserObjectClasses = new ArrayList<>(List.of("secUser"));
 
+    /** The optional {@code sec*} overlay attributes written onto the
+     * secUser identity on every grant — a subset of
+     * {@link com.ldapportal.addons.isva.IsvaSecUserPlans#OPTIONAL_OVERLAY_ATTRS}.
+     * {@code secLoginType} / {@code secAuthority} are always written (MUST
+     * on IBM's stock secUser) and are not part of this list. Deployments
+     * whose {@code secUser} schema omits some optional attributes (e.g. no
+     * {@code secValidUntil} or {@code secLogin}) trim the set so
+     * provisioning doesn't fail with "attribute not allowed by objectClass
+     * secUser". Applies to both topology modes. Defaults to the full set,
+     * preserving prior behaviour. */
+    @Convert(converter = SecObjectClassListConverter.class)
+    @Column(name = "secuser_overlay_attributes", columnDefinition = "TEXT")
+    private List<String> secuserOverlayAttributes = new ArrayList<>(List.of(
+            "secLogin", "secAcctValid", "secPwdValid",
+            "secValidUntil", "secPwdLastChanged"));
+
     // ── LINKED-mode-only ─────────────────────────────────────────────
 
     /** Base DN of the ISVA management DIT (e.g.

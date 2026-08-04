@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva.service;
 
+import com.ldapportal.addons.isva.IsvaSecUserPlans;
 import com.ldapportal.addons.isva.dto.ProbeResult;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
@@ -70,21 +71,28 @@ import java.util.Set;
 public class IsvaConfigProbeService {
 
     private final LdapConnectionFactory connectionFactory;
+    private final IsvaSecUserPlans secUserPlans;
 
     public ProbeResult probe(DirectoryConnection dir, VendorIntegrationIsvaConfig cfg) {
         List<String> warnings = new ArrayList<>();
+        // Code-vs-schema mismatch: attributes the app would write that the
+        // server's secUser doesn't permit, and MUST attributes it requires
+        // that the app wouldn't write. Populated by validateSchema.
+        List<String> disallowed = new ArrayList<>();
+        List<String> missingRequired = new ArrayList<>();
 
         // Schema validation runs in both modes — the configured secUser
         // objectClasses apply to inline overlays and linked entries
         // alike, and only needs a connection (not a management DIT).
-        Boolean schemaValid = validateSchema(dir, cfg, warnings);
+        Boolean schemaValid = validateSchema(dir, cfg, warnings, disallowed, missingRequired);
 
         if (cfg.getTopologyMode() == IsvaTopologyMode.INLINE) {
             // Inline mode: no separate DIT to check. The user
             // entries themselves carry sec* attrs; nothing
             // dedicated to probe beyond the schema check above.
             warnings.add("Inline mode — no management DIT to probe.");
-            return new ProbeResult(true, true, schemaValid, warnings);
+            return new ProbeResult(true, true, schemaValid,
+                    disallowed, missingRequired, warnings);
         }
 
         String managementDit = cfg.getManagementDitBaseDn();
@@ -92,7 +100,8 @@ public class IsvaConfigProbeService {
             // Defensive — DB CHECK constraint should catch this,
             // but a clear probe failure beats a 500.
             warnings.add("Linked mode is configured but management_dit_base_dn is empty.");
-            return new ProbeResult(false, false, schemaValid, warnings);
+            return new ProbeResult(false, false, schemaValid,
+                    disallowed, missingRequired, warnings);
         }
 
         boolean reachable = false;
@@ -119,7 +128,8 @@ public class IsvaConfigProbeService {
                     dir.getDisplayName(), e.getMessage(), e);
         }
 
-        return new ProbeResult(reachable, sampleFound, schemaValid, warnings);
+        return new ProbeResult(reachable, sampleFound, schemaValid,
+                disallowed, missingRequired, warnings);
     }
 
     /**
@@ -146,7 +156,9 @@ public class IsvaConfigProbeService {
      */
     private Boolean validateSchema(DirectoryConnection dir,
                                    VendorIntegrationIsvaConfig cfg,
-                                   List<String> warnings) {
+                                   List<String> warnings,
+                                   List<String> disallowed,
+                                   List<String> missingRequired) {
         List<String> objectClasses = cfg.getSecuserObjectClasses();
         if (objectClasses == null || objectClasses.isEmpty()) {
             // Should never happen post-normalization, but treat an empty
@@ -176,6 +188,7 @@ public class IsvaConfigProbeService {
                 //    Accumulate the union of permitted attributes (MUST +
                 //    MAY, superior classes resolved) for the RDN check.
                 Set<String> permittedAttrs = new LinkedHashSet<>();
+                Set<String> requiredAttrs = new LinkedHashSet<>();
                 List<ObjectClassDefinition> resolved = new ArrayList<>();
                 for (String ocName : classesToCheck) {
                     ObjectClassDefinition oc = schema.getObjectClass(ocName);
@@ -188,6 +201,10 @@ public class IsvaConfigProbeService {
                     resolved.add(oc);
                     for (AttributeTypeDefinition at : oc.getRequiredAttributes(schema, true)) {
                         addAttributeNames(permittedAttrs, at);
+                        // Canonical (declared-case) name for display in the
+                        // missing-required list; membership is tested
+                        // case-insensitively below.
+                        requiredAttrs.add(at.getNameOrOID());
                     }
                     for (AttributeTypeDefinition at : oc.getOptionalAttributes(schema, true)) {
                         addAttributeNames(permittedAttrs, at);
@@ -221,6 +238,51 @@ public class IsvaConfigProbeService {
                                 + "configured objectClass (" + String.join(", ", classesToCheck)
                                 + "). Add the objectClass that defines it (e.g. `eUser` for "
                                 + "`principalName`), or change the RDN attribute.");
+                        valid = false;
+                    }
+                }
+
+                // 4. Code-vs-schema mismatch: compare what a grant would
+                //    write against what the resolved secUser class(es)
+                //    permit / require. Only meaningful once at least one
+                //    configured class resolved — otherwise permittedAttrs
+                //    is empty and every write would look "disallowed",
+                //    which the objectClass-not-defined warning already
+                //    covers.
+                if (!resolved.isEmpty()) {
+                    List<String> written = secUserPlans.writtenAttributeNames(cfg);
+                    Set<String> writtenLower = new LinkedHashSet<>();
+                    for (String w : written) {
+                        writtenLower.add(w.toLowerCase());
+                    }
+                    for (String w : written) {
+                        if (!permittedAttrs.contains(w.toLowerCase())) {
+                            disallowed.add(w);
+                        }
+                    }
+                    for (String r : requiredAttrs) {
+                        // objectClass is implicit on every entry; never a
+                        // "missing" write.
+                        if (!r.equalsIgnoreCase("objectClass")
+                                && !writtenLower.contains(r.toLowerCase())) {
+                            missingRequired.add(r);
+                        }
+                    }
+                    if (!disallowed.isEmpty()) {
+                        warnings.add("The app would write attribute(s) the configured "
+                                + "secUser object class(es) do not permit: "
+                                + String.join(", ", disallowed)
+                                + ". Remove them from the secUser overlay attributes, or add "
+                                + "an object class that defines them. (These cause "
+                                + "\"attribute not allowed\" errors at provisioning time.)");
+                        valid = false;
+                    }
+                    if (!missingRequired.isEmpty()) {
+                        warnings.add("The configured secUser object class(es) require "
+                                + "attribute(s) the app would not write: "
+                                + String.join(", ", missingRequired)
+                                + ". Provisioning would fail with \"missing required "
+                                + "attribute\".");
                         valid = false;
                     }
                 }

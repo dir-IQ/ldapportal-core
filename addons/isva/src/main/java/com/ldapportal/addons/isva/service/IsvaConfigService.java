@@ -18,8 +18,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -88,6 +90,10 @@ public class IsvaConfigService {
         // Applies to both modes — normalize so secUser is always present
         // and the list is trimmed / de-duplicated.
         entity.setSecuserObjectClasses(normalizeObjectClasses(req.secuserObjectClasses()));
+        // Applies to both modes — restrict to the known optional overlay
+        // attributes, canonical spelling + order. null → full default set.
+        entity.setSecuserOverlayAttributes(
+                normalizeOverlayAttributes(req.secuserOverlayAttributes()));
 
         // Linked-mode fields — set when LINKED, null when INLINE so
         // a topology-mode flip doesn't leave stale linked config
@@ -162,6 +168,7 @@ public class IsvaConfigService {
                     cfg.getDeletePolicy(),
                     cfg.isRequireSecGroup(),
                     cfg.getSecuserObjectClasses(),
+                    cfg.getSecuserOverlayAttributes(),
                     cfg.getManagementDitBaseDn(),
                     cfg.getSecuserRdnAttribute(),
                     cfg.getSecuserRdnValueSource(),
@@ -238,6 +245,37 @@ public class IsvaConfigService {
         }
         seen.putIfAbsent("secuser", "secUser");
         return new ArrayList<>(seen.values());
+    }
+
+    /**
+     * Normalize the configured optional-overlay attribute list: keep only
+     * the attributes the code knows how to write
+     * ({@link com.ldapportal.addons.isva.IsvaSecUserPlans#OPTIONAL_OVERLAY_ATTRS}),
+     * in canonical spelling and stable order, matched case-insensitively.
+     * Unknown names are dropped (the code has no value to write for them,
+     * and {@code secLoginType} / {@code secAuthority} are always-on MUST
+     * attrs, not toggleable here). A {@code null} request resolves to the
+     * full default set; an explicitly empty list writes no optional attrs.
+     */
+    private static List<String> normalizeOverlayAttributes(List<String> requested) {
+        if (requested == null) {
+            return new ArrayList<>(
+                    com.ldapportal.addons.isva.IsvaSecUserPlans.OPTIONAL_OVERLAY_ATTRS);
+        }
+        Set<String> want = new LinkedHashSet<>();
+        for (String a : requested) {
+            if (a != null && !a.isBlank()) {
+                want.add(a.trim().toLowerCase());
+            }
+        }
+        List<String> out = new ArrayList<>();
+        for (String canonical
+                : com.ldapportal.addons.isva.IsvaSecUserPlans.OPTIONAL_OVERLAY_ATTRS) {
+            if (want.contains(canonical.toLowerCase())) {
+                out.add(canonical);
+            }
+        }
+        return out;
     }
 
     private static String blankToNull(String value) {

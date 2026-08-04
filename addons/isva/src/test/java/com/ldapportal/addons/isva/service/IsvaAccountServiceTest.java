@@ -377,6 +377,22 @@ class IsvaAccountServiceTest {
     }
 
     @Test
+    void renew_overlayWithoutSecValidUntil_409_iviaValidUntilUnsupported() {
+        // A directory whose secUser schema has no secValidUntil trims it
+        // from the overlay; renew must refuse cleanly rather than let the
+        // LDAP MODIFY fail with "attribute not allowed".
+        VendorIntegrationIsvaConfig cfg = inlineConfig(true);
+        cfg.setSecuserOverlayAttributes(java.util.List.of("secAcctValid", "secPwdValid"));
+        givenDirectoryAndConfig(cfg);
+
+        assertRefusal(() -> service.renew(DIR_ID, DEMOGRAPHIC_DN,
+                        OffsetDateTime.now(ZoneOffset.UTC).plusYears(1), principal),
+                HttpStatus.CONFLICT, "ivia_valid_until_unsupported");
+        verifyNoInteractions(planExecutor);
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
     void renew_earlierThanCurrent_400_iviaRenewNotForward() {
         VendorIntegrationIsvaConfig cfg = inlineConfig(true);
         givenDirectoryAndConfig(cfg);

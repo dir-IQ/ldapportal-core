@@ -25,6 +25,20 @@ import java.util.List;
  *                            {@code null} if the server schema couldn't
  *                            be read to make the determination. Detail
  *                            is in {@code warnings}.
+ * @param disallowedWriteAttributes attributes the app would write onto
+ *                            the {@code secUser} entry that the target
+ *                            server's {@code secUser} objectClass(es) do
+ *                            NOT permit — each would cause an "attribute
+ *                            not allowed" ADD/MODIFY rejection. Empty
+ *                            when the app's writes fit the schema (or the
+ *                            schema couldn't be read). This is the
+ *                            code-vs-schema mismatch the operator fixes by
+ *                            trimming the overlay set.
+ * @param missingRequiredAttributes MUST attributes of the target
+ *                            {@code secUser} that the app would NOT write —
+ *                            each would cause a "missing required
+ *                            attribute" rejection. Empty when every MUST is
+ *                            covered (or the schema couldn't be read).
  * @param warnings            human-readable diagnostics. Empty list
  *                            on a perfectly-healthy probe.
  */
@@ -32,9 +46,15 @@ public record ProbeResult(
         boolean reachable,
         boolean sampleSecUserFound,
         Boolean schemaValid,
+        List<String> disallowedWriteAttributes,
+        List<String> missingRequiredAttributes,
         List<String> warnings) {
 
     public ProbeResult {
+        disallowedWriteAttributes = disallowedWriteAttributes == null
+                ? List.of() : List.copyOf(disallowedWriteAttributes);
+        missingRequiredAttributes = missingRequiredAttributes == null
+                ? List.of() : List.copyOf(missingRequiredAttributes);
         warnings = warnings == null ? List.of() : List.copyOf(warnings);
     }
 }
