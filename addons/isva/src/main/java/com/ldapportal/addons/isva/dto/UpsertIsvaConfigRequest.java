@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva.dto;
 
-import com.ldapportal.addons.isva.entity.IsvaDemographicDeleteMode;
-import com.ldapportal.addons.isva.entity.IsvaDeletePolicy;
 import com.ldapportal.addons.isva.entity.IsvaGroupMemberTarget;
 import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
@@ -31,7 +29,6 @@ public record UpsertIsvaConfigRequest(
 
         @Min(1) int defaultValidUntilYears,
 
-        @NotNull IsvaDeletePolicy deletePolicy,
         boolean requireSecGroup,
 
         // Applies to both modes — secUser is normalized in if omitted
@@ -46,6 +43,5 @@ public record UpsertIsvaConfigRequest(
         String managementDitBaseDn,
         String secuserRdnAttribute,
         IsvaRdnValueSource secuserRdnValueSource,
-        IsvaGroupMemberTarget groupMemberTarget,
-        IsvaDemographicDeleteMode onDemographicDelete) {
+        IsvaGroupMemberTarget groupMemberTarget) {
 }

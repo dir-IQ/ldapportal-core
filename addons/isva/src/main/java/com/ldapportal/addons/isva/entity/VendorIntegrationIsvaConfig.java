@@ -32,12 +32,17 @@ import java.util.UUID;
  *
  * <p>Linked-mode-only fields ({@link #managementDitBaseDn},
  * {@link #secuserRdnAttribute}, {@link #secuserRdnValueSource},
- * {@link #groupMemberTarget}, {@link #onDemographicDelete}) are
- * nullable. ({@link #secuserObjectClasses} applies to both modes.)
+ * {@link #groupMemberTarget}) are nullable.
+ * ({@link #secuserObjectClasses} applies to both modes.)
  * The DB-level
  * {@code CHECK} constraint in the Flyway migration enforces that
  * {@code management_dit_base_dn} is non-null when
  * {@code topology_mode = LINKED}.</p>
+ *
+ * <p>There's no delete-policy or on-demographic-delete field: the
+ * secUser side mirrors the demographic entry's lifecycle
+ * automatically — deleting a user deletes its secUser, disabling a
+ * user disables its secUser. See {@code IsvaProvisioningInterceptor}.</p>
  */
 @Entity
 @Table(name = "vendor_integration_isva_config")
@@ -88,10 +93,6 @@ public class VendorIntegrationIsvaConfig {
      * per-user via the profile editor. */
     @Column(name = "default_valid_until_years", nullable = false)
     private int defaultValidUntilYears = 100;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "delete_policy", nullable = false, length = 16)
-    private IsvaDeletePolicy deletePolicy = IsvaDeletePolicy.DISABLE;
 
     /** Gate group-membership writes on the target group carrying
      * {@code objectClass: secGroup} (refuse otherwise — ISVA ignores
@@ -152,10 +153,6 @@ public class VendorIntegrationIsvaConfig {
     @Enumerated(EnumType.STRING)
     @Column(name = "group_member_target", length = 16)
     private IsvaGroupMemberTarget groupMemberTarget = IsvaGroupMemberTarget.DEMOGRAPHIC_DN;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "on_demographic_delete", length = 24)
-    private IsvaDemographicDeleteMode onDemographicDelete = IsvaDemographicDeleteMode.LEAVE;
 
     // ── Audit columns ────────────────────────────────────────────────
 

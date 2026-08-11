@@ -2,6 +2,7 @@
 package com.ldapportal.ldap;
 
 import com.ldapportal.core.provisioning.DeletePlan;
+import com.ldapportal.core.provisioning.EnableDisablePlan;
 import com.ldapportal.core.provisioning.PasswordPlan;
 import com.ldapportal.core.provisioning.PasswordSetPayload;
 import com.ldapportal.core.provisioning.PlanExecutor;
@@ -12,7 +13,6 @@ import com.ldapportal.core.provisioning.UserCreatePlan;
 import com.ldapportal.core.provisioning.UserReadEnricherChain;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.DirectoryObjectClassDefaults;
-import com.ldapportal.entity.enums.EnableDisableValueType;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
@@ -368,21 +368,15 @@ public class LdapUserService {
     }
 
     private void applyEnableDisable(DirectoryConnection dc, String dn, boolean enable) {
-        String attr = dc.getEnableDisableAttribute();
-        if (attr == null || attr.isBlank()) {
-            throw new LdapOperationException(
-                "No enable/disable attribute configured for directory [" + dc.getDisplayName() + "]");
-        }
-
-        String value;
-        if (dc.getEnableDisableValueType() == EnableDisableValueType.BOOLEAN) {
-            value = enable ? "TRUE" : "FALSE";
-        } else {
-            value = enable ? dc.getEnableValue() : dc.getDisableValue();
-        }
-
-        Modification mod = new Modification(ModificationType.REPLACE, attr, value);
-        updateUser(dc, dn, List.of(mod));
+        // Route through the provisioning-plan SPI so a vendor-aware
+        // interceptor can mirror the lifecycle change onto its own side
+        // of the identity (ISVA flips secAcctValid on the paired secUser
+        // entry). With no interceptor registered the plan collapses to
+        // the baseline single MODIFY of the enable/disable attribute —
+        // byte-identical to the pre-SPI direct write.
+        EnableDisablePlan plan = interceptors.planUserSetEnabled(
+                dc, dn, enable, ProvisioningContext.empty());
+        planExecutor.execute(dc, plan);
         log.info("{} LDAP user {}", enable ? "Enabled" : "Disabled", dn);
     }
 

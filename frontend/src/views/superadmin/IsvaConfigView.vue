@@ -11,9 +11,7 @@ import {
   type UpsertIsvaConfigRequest,
   type ProbeResult,
   type IsvaTopologyMode,
-  type IsvaDeletePolicy,
   type IsvaGroupMemberTarget,
-  type IsvaDemographicDeleteMode,
   type IsvaRdnValueSource,
 } from '@/api/isvaConfig'
 import { getDirectory } from '@/api/directories'
@@ -22,15 +20,27 @@ import { useNotificationStore } from '@/stores/notifications'
 import { useConfirm } from '@/composables/useConfirm'
 
 // The optional sec* overlay attributes an operator can toggle. Mirrors
-// IsvaSecUserPlans.OPTIONAL_OVERLAY_ATTRS on the backend (secLoginType /
+// IsvaSecUserPlans.{OPTIONAL,KNOWN}_OVERLAY_ATTRS on the backend (secLoginType /
 // secAuthority are always written and configured separately, so they are
 // not here). Order matches the backend's canonical order.
-const OPTIONAL_OVERLAY_ATTRS = [
+//
+// DEFAULT = the set enabled for a new/unset config. KNOWN = every attribute
+// the operator may enable — the default set plus the opt-in IVIA identity
+// attributes (secUUID / principalName / secDomainId) that natively-created
+// secUser entries carry. They're off by default because not every secUser
+// schema permits them; the Probe validates them before enabling.
+const DEFAULT_OVERLAY_ATTRS = [
   'secLogin',
   'secAcctValid',
   'secPwdValid',
   'secValidUntil',
   'secPwdLastChanged',
+] as const
+const KNOWN_OVERLAY_ATTRS = [
+  ...DEFAULT_OVERLAY_ATTRS,
+  'secUUID',
+  'principalName',
+  'secDomainId',
 ] as const
 
 const route = useRoute()
@@ -55,7 +65,6 @@ interface Form {
   secAuthority: string
   secLoginType: string
   defaultValidUntilYears: number
-  deletePolicy: IsvaDeletePolicy
   requireSecGroup: boolean
   secuserObjectClasses: string[]
   secuserOverlayAttributes: string[]
@@ -63,7 +72,6 @@ interface Form {
   secuserRdnAttribute: string
   secuserRdnValueSource: IsvaRdnValueSource
   groupMemberTarget: IsvaGroupMemberTarget
-  onDemographicDelete: IsvaDemographicDeleteMode
 }
 
 function emptyForm(): Form {
@@ -73,17 +81,15 @@ function emptyForm(): Form {
     secAuthority: 'Default',
     secLoginType: 'Default',
     defaultValidUntilYears: 100,
-    deletePolicy: 'DISABLE',
     // Opt-in since enforcement shipped (V504) — defaulting the gate on
     // would refuse memberships in plain (non-secGroup) groups.
     requireSecGroup: false,
     secuserObjectClasses: ['secUser'],
-    secuserOverlayAttributes: [...OPTIONAL_OVERLAY_ATTRS],
+    secuserOverlayAttributes: [...DEFAULT_OVERLAY_ATTRS],
     managementDitBaseDn: '',
     secuserRdnAttribute: 'secUUID',
     secuserRdnValueSource: 'GENERATED_UUID',
     groupMemberTarget: 'DEMOGRAPHIC_DN',
-    onDemographicDelete: 'LEAVE',
   }
 }
 
@@ -182,7 +188,6 @@ function populateFromDto(dto: IsvaConfigDto) {
   form.value.secAuthority = dto.secAuthority ?? 'Default'
   form.value.secLoginType = dto.secLoginType ?? 'Default'
   form.value.defaultValidUntilYears = dto.defaultValidUntilYears
-  form.value.deletePolicy = dto.deletePolicy
   form.value.requireSecGroup = dto.requireSecGroup
   form.value.secuserObjectClasses = dto.secuserObjectClasses?.length
     ? [...dto.secuserObjectClasses]
@@ -191,12 +196,11 @@ function populateFromDto(dto: IsvaConfigDto) {
   // only fall back to the default set when the field is absent entirely.
   form.value.secuserOverlayAttributes = dto.secuserOverlayAttributes != null
     ? [...dto.secuserOverlayAttributes]
-    : [...OPTIONAL_OVERLAY_ATTRS]
+    : [...DEFAULT_OVERLAY_ATTRS]
   form.value.managementDitBaseDn = dto.managementDitBaseDn ?? ''
   form.value.secuserRdnAttribute = dto.secuserRdnAttribute ?? 'secUUID'
   form.value.secuserRdnValueSource = dto.secuserRdnValueSource ?? 'GENERATED_UUID'
   form.value.groupMemberTarget = dto.groupMemberTarget ?? 'DEMOGRAPHIC_DN'
-  form.value.onDemographicDelete = dto.onDemographicDelete ?? 'LEAVE'
 }
 
 // secUser object-class chip editor. secUser is load-bearing (the
@@ -243,7 +247,7 @@ function toggleOverlayAttr(attr: string, enabled: boolean) {
   const set = new Set(form.value.secuserOverlayAttributes)
   if (enabled) set.add(attr)
   else set.delete(attr)
-  form.value.secuserOverlayAttributes = OPTIONAL_OVERLAY_ATTRS.filter((a) => set.has(a))
+  form.value.secuserOverlayAttributes = KNOWN_OVERLAY_ATTRS.filter((a) => set.has(a))
 }
 
 async function save() {
@@ -256,7 +260,6 @@ async function save() {
       secAuthority: form.value.secAuthority,
       secLoginType: form.value.secLoginType,
       defaultValidUntilYears: form.value.defaultValidUntilYears,
-      deletePolicy: form.value.deletePolicy,
       requireSecGroup: form.value.requireSecGroup,
       // Applies to both modes; server normalizes (ensures secUser present).
       secuserObjectClasses: form.value.secuserObjectClasses,
@@ -268,7 +271,6 @@ async function save() {
       secuserRdnAttribute: form.value.secuserRdnAttribute.trim() || null,
       secuserRdnValueSource: form.value.secuserRdnValueSource,
       groupMemberTarget: form.value.groupMemberTarget,
-      onDemographicDelete: form.value.onDemographicDelete,
     }
     const { data } = await upsertIsvaConfig(directoryId.value, payload)
     populateFromDto(data)
@@ -462,28 +464,27 @@ function extractErrorMessage(e: unknown, fallback: string): string {
           </p>
         </div>
 
-        <fieldset>
-          <legend class="text-sm font-medium text-gray-900 mb-2">Delete behaviour</legend>
-          <div class="space-y-2">
-            <label class="flex items-start gap-2 text-sm">
-              <input type="radio" name="delete" value="DISABLE"
-                     v-model="form.deletePolicy" class="mt-1" />
-              <span>
-                <span class="font-medium">Disable</span> (recommended) — flips
-                <code>secAcctValid=FALSE</code>; preserves audit + policy.
-              </span>
-            </label>
-            <label class="flex items-start gap-2 text-sm">
-              <input type="radio" name="delete" value="HARD_DELETE"
-                     v-model="form.deletePolicy" class="mt-1" />
-              <span>
-                <span class="font-medium">Hard delete</span> — actually
-                <code>DEL</code>s the entry. Destroys {{ IVIA_ABBR }} policy
-                associations.
-              </span>
-            </label>
-          </div>
-        </fieldset>
+        <div class="rounded-md border border-gray-200 dark:border-gray-700
+                    bg-gray-50 dark:bg-gray-800/50 p-3" data-testid="account-lifecycle-note">
+          <p class="text-sm font-medium text-gray-900 dark:text-gray-100 mb-1">
+            Account lifecycle
+          </p>
+          <p class="text-xs text-gray-600 dark:text-gray-300">
+            The <code>secUser</code> account mirrors the user's demographic
+            entry automatically — no separate delete policy to choose:
+          </p>
+          <ul class="mt-1 list-disc pl-5 text-xs text-gray-600 dark:text-gray-300 space-y-0.5">
+            <li>
+              <span class="font-medium">Disable</span> a user →
+              <code>secAcctValid=FALSE</code> on its <code>secUser</code>
+              (re-enabling flips it back).
+            </li>
+            <li>
+              <span class="font-medium">Delete</span> a user →
+              its <code>secUser</code> entry is deleted too.
+            </li>
+          </ul>
+        </div>
 
         <div class="flex items-start gap-2">
           <input id="requireSecGroup" type="checkbox"
@@ -555,9 +556,18 @@ function extractErrorMessage(e: unknown, fallback: string): string {
             secUser"</em>. Use <strong>Probe</strong> below to detect
             mismatches.
           </p>
+          <p class="text-xs text-gray-500 mb-2">
+            The last three — <code>secUUID</code>, <code>principalName</code>,
+            <code>secDomainId</code> — are the identity attributes natively-created
+            {{ IVIA_ABBR }} accounts carry. They're off by default (not every
+            <code>secUser</code> schema permits them); enable them to match native
+            accounts. <code>secUUID</code> is a generated id,
+            <code>principalName</code> is the user's uid, and
+            <code>secDomainId</code> is <code>&lt;secAuthority&gt;%&lt;principalName&gt;</code>.
+          </p>
           <div class="flex flex-col gap-1.5">
             <label
-              v-for="attr in OPTIONAL_OVERLAY_ATTRS"
+              v-for="attr in KNOWN_OVERLAY_ATTRS"
               :key="attr"
               class="inline-flex items-center gap-2 text-sm"
             >
@@ -652,32 +662,6 @@ function extractErrorMessage(e: unknown, fallback: string): string {
             Wrong inference here corrupts ACLs; if in doubt, check an
             existing group in the directory browser first.
           </p>
-        </fieldset>
-
-        <fieldset>
-          <legend class="text-sm font-medium text-gray-900 mb-2">
-            On demographic-entry delete
-          </legend>
-          <div class="space-y-2">
-            <label class="flex items-start gap-2 text-sm">
-              <input type="radio" name="ondemodelete" value="LEAVE"
-                     v-model="form.onDemographicDelete" class="mt-1" />
-              <span>
-                <span class="font-medium">Leave</span> (default) — touch only
-                the secUser entry on soft-delete; demographic stays as-is.
-              </span>
-            </label>
-            <label class="flex items-start gap-2 text-sm">
-              <input type="radio" name="ondemodelete" value="DISABLE_AND_MARK"
-                     v-model="form.onDemographicDelete" class="mt-1" />
-              <span>
-                <span class="font-medium">Disable and mark</span> — also
-                annotate the demographic entry on soft-delete by writing this
-                directory's configured enable/disable attribute (its disable
-                value). Requires that attribute to be set on the directory.
-              </span>
-            </label>
-          </div>
         </fieldset>
       </section>
 

@@ -275,6 +275,44 @@ describe('LdifImportModal preview flow', () => {
       expect.objectContaining({ op: 'ERRORS' }))
   })
 
+  it('previews from pasted LDIF text (no file upload)', async () => {
+    const wrapper = mountModal()
+    await byText(wrapper, 'Paste LDIF')[0].trigger('click')
+    const ldif = 'dn: cn=x,dc=example,dc=com\nchangetype: modify\nadd: objectClass\nobjectClass: eUser\n'
+    await wrapper.find('textarea').setValue(ldif)
+    await byText(wrapper, 'Preview')[0].trigger('click')
+    await flushPromises()
+
+    // The paste path synthesizes a File and drives the same preview pipeline.
+    expect(api.previewLdif).toHaveBeenCalledWith('dir-1', expect.any(File), 'SKIP')
+    const passed = api.previewLdif.mock.calls[0][1] as File
+    expect(await passed.text()).toBe(ldif)
+    expect(wrapper.findAll('.dt-row')).toHaveLength(2)
+  })
+
+  it('disables Preview until text is entered in paste mode', async () => {
+    const wrapper = mountModal()
+    await byText(wrapper, 'Paste LDIF')[0].trigger('click')
+    expect(byText(wrapper, 'Preview')[0].attributes('disabled')).toBeDefined()
+    await wrapper.find('textarea').setValue('dn: x\n')
+    expect(byText(wrapper, 'Preview')[0].attributes('disabled')).toBeUndefined()
+  })
+
+  it('loads a file into the editor in paste mode', async () => {
+    const wrapper = mountModal()
+    await byText(wrapper, 'Paste LDIF')[0].trigger('click')
+    // In paste mode only the loader file input is rendered.
+    const input = wrapper.find('input[type="file"]')
+    Object.defineProperty(input.element, 'files', {
+      value: [new File(['dn: loaded,dc=example,dc=com\n'], 'in.ldif')], configurable: true,
+    })
+    await input.trigger('change')
+    await flushPromises()
+
+    expect((wrapper.find('textarea').element as HTMLTextAreaElement).value)
+      .toContain('dn: loaded,dc=example,dc=com')
+  })
+
   it('blocks import and explains the base-DN mismatch when entries are out of scope', async () => {
     const oos = (n: number) => ({
       rowNumber: n, dn: `uid=p${n},ou=People,dc=acme,dc=com`, op: 'ADD',
