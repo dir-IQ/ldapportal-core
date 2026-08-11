@@ -142,7 +142,8 @@ public class IsvaAccountService {
         String createdSecUserDn = null; // linked mode only
         if (ctx.cfg().getTopologyMode() == IsvaTopologyMode.INLINE) {
             String uid = probe.resolveUid(ctx.dir(), dn);
-            step = secUserPlans.grantInlineOnExisting(dn, ctx.cfg(), uid);
+            step = secUserPlans.grantInlineOnExisting(dn, ctx.cfg(),
+                    Map.of("uid", List.of(uid)));
             detail.put("mode", "inline");
         } else {
             String uid = probe.resolveUid(ctx.dir(), dn);

@@ -124,7 +124,7 @@ class IsvaSecUserPlansTest {
     @Test
     void grantInlineOnExisting_producesAddMods_forObjectClassAndSecStar() {
         ModifyStep step = plans.grantInlineOnExisting(
-                "uid=alice,dc=x", inlineConfig(), "alice");
+                "uid=alice,dc=x", inlineConfig(), Map.of("uid", List.of("alice")));
 
         assertThat(step.targetDn()).isEqualTo("uid=alice,dc=x");
         // Every modification is an ADD (we're layering onto an existing entry).
@@ -319,7 +319,8 @@ class IsvaSecUserPlansTest {
     void writtenOverlayAttrNames_matchesEveryKey_aGrantWrites() {
         for (VendorIntegrationIsvaConfig cfg
                 : List.of(inlineConfig(), trimmedOverlayConfig())) {
-            ModifyStep grant = plans.grantInlineOnExisting("uid=alice,dc=x", cfg, "alice");
+            ModifyStep grant = plans.grantInlineOnExisting(
+                    "uid=alice,dc=x", cfg, Map.of("uid", List.of("alice")));
             java.util.Set<String> grantSecAttrs = new java.util.HashSet<>();
             for (Modification m : grant.mods()) {
                 String name = m.getAttributeName();
