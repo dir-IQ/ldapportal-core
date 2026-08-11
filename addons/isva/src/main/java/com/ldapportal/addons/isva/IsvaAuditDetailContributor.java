@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva;
 
-import com.ldapportal.addons.isva.entity.IsvaDeletePolicy;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.addons.isva.repository.VendorIntegrationIsvaConfigRepository;
 import com.ldapportal.core.audit.AuditDetailContributor;
@@ -22,14 +21,12 @@ import java.util.UUID;
  *   <li>{@code vendorIntegration: "ISVA"} on every audit row whose
  *       directory has an active (i.e. {@code enabled=true}) ISVA
  *       config row.</li>
- *   <li>{@code softDisable: true} additionally on {@link AuditAction#USER_DELETE}
- *       rows when the directory's configured {@link IsvaDeletePolicy}
- *       is {@code DISABLE} — these are the rows where the user
- *       "deletion" actually became a soft-disable
- *       ({@code secAcctValid=FALSE} + {@code secValidUntil=now}) on
- *       the secUser entry rather than a real LDAP DEL. Auditors
- *       need to distinguish the two cases when reading the log.</li>
  * </ul>
+ *
+ * <p>User deletes are no longer soft-disables — delete removes both the
+ * demographic and secUser entries, and the soft path is the separate
+ * disable verb (which mirror-disables the secUser). So there's no
+ * delete-vs-disable ambiguity for the audit row to disambiguate.</p>
  *
  * <p>Returns an empty map when ISVA is not configured for the
  * directory — keeping the audit-row shape byte-identical to
@@ -57,20 +54,12 @@ public class IsvaAuditDetailContributor implements AuditDetailContributor {
         Optional<VendorIntegrationIsvaConfig> maybe = configRepo.findById(directoryId);
         if (maybe.isEmpty() || !maybe.get().isEnabled()) return Map.of();
 
-        VendorIntegrationIsvaConfig cfg = maybe.get();
-
         // Forward the originating profileId when the caller put it in
         // baseDetail (LdapOperationService.createUser does this when
         // the create was profile-driven). The map.put dance lets us
         // include the field conditionally without growing the SPI.
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("vendorIntegration", "ISVA");
-        // USER_DELETE + DISABLE policy = soft-disable. HARD_DELETE
-        // means a real LDAP DEL went out and the row is a regular
-        // user-delete from the auditor's perspective; don't mark it.
-        if (action == AuditAction.USER_DELETE && cfg.getDeletePolicy() == IsvaDeletePolicy.DISABLE) {
-            out.put("softDisable", true);
-        }
         if (baseDetail != null && baseDetail.get("profileId") != null) {
             out.put("profileId", baseDetail.get("profileId"));
         }

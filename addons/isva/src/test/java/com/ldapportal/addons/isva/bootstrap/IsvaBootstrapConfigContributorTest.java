@@ -51,7 +51,7 @@ class IsvaBootstrapConfigContributorTest {
                   "directorySlug": "corp-ldap",
                   "config": {
                     "enabled": true, "topologyMode": "INLINE", "secAuthority": "Default",
-                    "defaultValidUntilYears": 100, "deletePolicy": "DISABLE", "requireSecGroup": true
+                    "defaultValidUntilYears": 100, "requireSecGroup": true
                   } } ] }
                 """));
 
@@ -70,7 +70,7 @@ class IsvaBootstrapConfigContributorTest {
 
     @Test
     void invalidConfig_failsFast() throws Exception {
-        // Empty config -> topologyMode/deletePolicy null, defaultValidUntilYears 0 -> violations.
+        // Empty config -> topologyMode null, defaultValidUntilYears 0 -> violations.
         assertThatThrownBy(() -> contributor.contribute(tree("""
                 { "isva": [ { "directorySlug": "corp-ldap", "config": {} } ] }
                 """)))

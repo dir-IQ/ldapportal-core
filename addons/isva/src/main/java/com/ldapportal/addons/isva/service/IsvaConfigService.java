@@ -85,7 +85,6 @@ public class IsvaConfigService {
         entity.setSecAuthority(blankToNull(req.secAuthority()));
         entity.setSecLoginType(blankToNull(req.secLoginType()));
         entity.setDefaultValidUntilYears(req.defaultValidUntilYears());
-        entity.setDeletePolicy(req.deletePolicy());
         entity.setRequireSecGroup(req.requireSecGroup());
         // Applies to both modes — normalize so secUser is always present
         // and the list is trimmed / de-duplicated.
@@ -105,16 +104,14 @@ public class IsvaConfigService {
                     ? req.secuserRdnValueSource() : IsvaRdnValueSource.GENERATED_UUID);
             entity.setGroupMemberTarget(req.groupMemberTarget() != null
                     ? req.groupMemberTarget() : entity.getGroupMemberTarget());
-            entity.setOnDemographicDelete(req.onDemographicDelete() != null
-                    ? req.onDemographicDelete() : entity.getOnDemographicDelete());
         } else {
             entity.setManagementDitBaseDn(null);
             // Leave secuserRdnAttribute / secuserRdnValueSource /
-            // groupMemberTarget / onDemographicDelete at their stored
-            // defaults — they're ignored in INLINE mode anyway and
-            // clearing them would be unnecessary churn against the
-            // audit columns. (secuserObjectClasses is set above; it
-            // applies to inline mode too.)
+            // groupMemberTarget at their stored defaults — they're
+            // ignored in INLINE mode anyway and clearing them would be
+            // unnecessary churn against the audit columns.
+            // (secuserObjectClasses is set above; it applies to inline
+            // mode too.)
         }
 
         entity.setUpdatedBy(principal != null ? principal.username() : "system");
@@ -165,15 +162,13 @@ public class IsvaConfigService {
                     cfg.getSecAuthority(),
                     cfg.getSecLoginType(),
                     cfg.getDefaultValidUntilYears(),
-                    cfg.getDeletePolicy(),
                     cfg.isRequireSecGroup(),
                     cfg.getSecuserObjectClasses(),
                     cfg.getSecuserOverlayAttributes(),
                     cfg.getManagementDitBaseDn(),
                     cfg.getSecuserRdnAttribute(),
                     cfg.getSecuserRdnValueSource(),
-                    cfg.getGroupMemberTarget(),
-                    cfg.getOnDemographicDelete());
+                    cfg.getGroupMemberTarget());
             out.add(new IsvaConfigExport(dir.getSlug(), req));
         }
         out.sort(java.util.Comparator.comparing(IsvaConfigExport::directorySlug));
@@ -250,12 +245,14 @@ public class IsvaConfigService {
     /**
      * Normalize the configured optional-overlay attribute list: keep only
      * the attributes the code knows how to write
-     * ({@link com.ldapportal.addons.isva.IsvaSecUserPlans#OPTIONAL_OVERLAY_ATTRS}),
+     * ({@link com.ldapportal.addons.isva.IsvaSecUserPlans#KNOWN_OVERLAY_ATTRS}),
      * in canonical spelling and stable order, matched case-insensitively.
      * Unknown names are dropped (the code has no value to write for them,
      * and {@code secLoginType} / {@code secAuthority} are always-on MUST
      * attrs, not toggleable here). A {@code null} request resolves to the
-     * full default set; an explicitly empty list writes no optional attrs.
+     * default set ({@code OPTIONAL_OVERLAY_ATTRS} — the IVIA identity attrs
+     * stay off unless explicitly enabled); an explicitly empty list writes
+     * no optional attrs.
      */
     private static List<String> normalizeOverlayAttributes(List<String> requested) {
         if (requested == null) {
@@ -270,7 +267,7 @@ public class IsvaConfigService {
         }
         List<String> out = new ArrayList<>();
         for (String canonical
-                : com.ldapportal.addons.isva.IsvaSecUserPlans.OPTIONAL_OVERLAY_ATTRS) {
+                : com.ldapportal.addons.isva.IsvaSecUserPlans.KNOWN_OVERLAY_ATTRS) {
             if (want.contains(canonical.toLowerCase())) {
                 out.add(canonical);
             }

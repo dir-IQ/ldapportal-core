@@ -3,6 +3,8 @@ package com.ldapportal.core.provisioning;
 
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.DirectoryType;
+import com.ldapportal.entity.enums.EnableDisableValueType;
+import com.ldapportal.exception.LdapOperationException;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
 import org.junit.jupiter.api.Test;
@@ -12,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Pins the byte-shape of the baseline plans — the "no interceptor"
@@ -88,6 +91,48 @@ class BaselinePlansTest {
 
         byte[] expected = "\"hunter2\"".getBytes(Charset.forName("UTF-16LE"));
         assertThat(mod.getValueByteArrays()[0]).isEqualTo(expected);
+    }
+
+    @Test
+    void userSetEnabled_string_writesConfiguredEnableDisableValue() {
+        DirectoryConnection dc = openldapDc();
+        dc.setEnableDisableAttribute("nsAccountLock");
+        dc.setEnableDisableValueType(EnableDisableValueType.STRING);
+        dc.setEnableValue("FALSE");
+        dc.setDisableValue("TRUE");
+
+        EnableDisablePlan disable = BaselinePlans.userSetEnabled(dc,
+                "uid=alice,ou=users,dc=example,dc=com", false);
+        ModifyStep step = (ModifyStep) disable.steps().get(0);
+        Modification mod = step.mods().get(0);
+        assertThat(mod.getModificationType()).isEqualTo(ModificationType.REPLACE);
+        assertThat(mod.getAttributeName()).isEqualTo("nsAccountLock");
+        assertThat(mod.getValues()[0]).isEqualTo("TRUE");
+
+        EnableDisablePlan enable = BaselinePlans.userSetEnabled(dc,
+                "uid=alice,ou=users,dc=example,dc=com", true);
+        assertThat(((ModifyStep) enable.steps().get(0)).mods().get(0).getValues()[0])
+                .isEqualTo("FALSE");
+    }
+
+    @Test
+    void userSetEnabled_boolean_writesFixedTrueFalse() {
+        DirectoryConnection dc = openldapDc();
+        dc.setEnableDisableAttribute("accountValid");
+        dc.setEnableDisableValueType(EnableDisableValueType.BOOLEAN);
+
+        assertThat(((ModifyStep) BaselinePlans.userSetEnabled(dc, "uid=a,dc=x", true)
+                .steps().get(0)).mods().get(0).getValues()[0]).isEqualTo("TRUE");
+        assertThat(((ModifyStep) BaselinePlans.userSetEnabled(dc, "uid=a,dc=x", false)
+                .steps().get(0)).mods().get(0).getValues()[0]).isEqualTo("FALSE");
+    }
+
+    @Test
+    void userSetEnabled_noAttributeConfigured_throws() {
+        DirectoryConnection dc = openldapDc(); // no enable/disable attribute
+        assertThatThrownBy(() -> BaselinePlans.userSetEnabled(dc, "uid=a,dc=x", false))
+                .isInstanceOf(LdapOperationException.class)
+                .hasMessageContaining("No enable/disable attribute");
     }
 
     @Test

@@ -117,12 +117,42 @@ public class IsvaSecUserPlans {
             "secPwdLastChanged");
 
     /**
+     * The full set of optional overlay attributes an operator may enable —
+     * the {@link #OPTIONAL_OVERLAY_ATTRS default set} plus the IVIA identity
+     * attributes that natively-created secUser entries carry but which the
+     * app didn't previously write:
+     * <ul>
+     *   <li>{@code secUUID} — the opaque, immutable per-user identifier. When
+     *       it is the RDN attribute it's already written as the RDN value;
+     *       enabling it here also writes it (a generated UUID) when the entry
+     *       is named on something else (e.g. {@code principalName}).</li>
+     *   <li>{@code principalName} — the login/principal (the user's uid).</li>
+     *   <li>{@code secDomainId} — {@code <secAuthority>%<principalName>}
+     *       (e.g. {@code Default%jdoe}).</li>
+     * </ul>
+     * These three are <em>opt-in</em> (not in the default set) because a
+     * stock {@code secUser} schema need not permit them — enabling them on a
+     * schema that doesn't is caught by the Probe. Order is stable so a grant
+     * and its inline hard-revoke stay in lockstep.
+     */
+    public static final List<String> KNOWN_OVERLAY_ATTRS = List.of(
+            "secLogin",
+            "secAcctValid",
+            "secPwdValid",
+            "secValidUntil",
+            "secPwdLastChanged",
+            "secUUID",
+            "principalName",
+            "secDomainId");
+
+    /**
      * The optional overlay attributes actually enabled for this config —
-     * the intersection of {@link #OPTIONAL_OVERLAY_ATTRS} with
+     * the intersection of {@link #KNOWN_OVERLAY_ATTRS} with
      * {@code cfg.secuserOverlayAttributes} (case-insensitive, canonical
      * spelling + order preserved). A {@code null} configured list means
-     * "unset" and resolves to the full set (preserves legacy behaviour);
-     * an explicitly empty list writes none of the optional attributes.
+     * "unset" and resolves to the {@link #OPTIONAL_OVERLAY_ATTRS default
+     * set} (preserves legacy behaviour — the identity attrs stay off unless
+     * explicitly enabled); an explicitly empty list writes none.
      */
     public static List<String> enabledOverlayAttrs(VendorIntegrationIsvaConfig cfg) {
         List<String> configured = cfg.getSecuserOverlayAttributes();
@@ -136,7 +166,7 @@ public class IsvaSecUserPlans {
             }
         }
         List<String> out = new ArrayList<>();
-        for (String canonical : OPTIONAL_OVERLAY_ATTRS) {
+        for (String canonical : KNOWN_OVERLAY_ATTRS) {
             if (want.contains(canonical.toLowerCase(Locale.ROOT))) {
                 out.add(canonical);
             }
@@ -185,6 +215,16 @@ public class IsvaSecUserPlans {
         if (on.contains("secpwdlastchanged")) {
             names.add("secPwdLastChanged");
         }
+        // IVIA identity attributes (opt-in) — see KNOWN_OVERLAY_ATTRS.
+        if (on.contains("secuuid")) {
+            names.add("secUUID");
+        }
+        if (on.contains("principalname")) {
+            names.add("principalName");
+        }
+        if (on.contains("secdomainid")) {
+            names.add("secDomainId");
+        }
         return names;
     }
 
@@ -229,13 +269,52 @@ public class IsvaSecUserPlans {
      * flipping {@code secAcctValid} alone.</p>
      */
     public ModifyStep disable(String secUserDn, VendorIntegrationIsvaConfig cfg) {
+        return ModifyStep.of(secUserDn, disableMods(cfg));
+    }
+
+    /**
+     * Re-enable the ISVA account: the inverse of {@link #disable} —
+     * {@code secAcctValid=TRUE}, and — when the directory's overlay
+     * includes it — {@code secValidUntil} pushed back out to
+     * {@code now + defaultValidUntilYears} (undoing the {@code =now}
+     * expiry a mirror-disable stamped). Used by the lifecycle-mirror
+     * path so re-enabling a demographic user restores its secUser to a
+     * valid, unexpired state.
+     */
+    public ModifyStep enable(String secUserDn, VendorIntegrationIsvaConfig cfg) {
+        return ModifyStep.of(secUserDn, enableMods(cfg));
+    }
+
+    /**
+     * The {@code sec*} modifications that mirror an account enable /
+     * disable onto the secUser side, without wrapping them in a step —
+     * so the inline lifecycle path can fold them into the same MODIFY
+     * that writes the demographic entry's enable/disable attribute (in
+     * inline mode the secUser <em>is</em> the demographic entry).
+     */
+    public List<Modification> setEnabledMods(VendorIntegrationIsvaConfig cfg, boolean enabled) {
+        return enabled ? enableMods(cfg) : disableMods(cfg);
+    }
+
+    private List<Modification> disableMods(VendorIntegrationIsvaConfig cfg) {
         List<Modification> mods = new ArrayList<>();
         mods.add(new Modification(ModificationType.REPLACE, "secAcctValid", "FALSE"));
         if (overlayEnabled(cfg, "secValidUntil")) {
             mods.add(new Modification(ModificationType.REPLACE, "secValidUntil",
                     generalizedTime(Instant.now())));
         }
-        return ModifyStep.of(secUserDn, mods);
+        return mods;
+    }
+
+    private List<Modification> enableMods(VendorIntegrationIsvaConfig cfg) {
+        List<Modification> mods = new ArrayList<>();
+        mods.add(new Modification(ModificationType.REPLACE, "secAcctValid", "TRUE"));
+        if (overlayEnabled(cfg, "secValidUntil")) {
+            mods.add(new Modification(ModificationType.REPLACE, "secValidUntil",
+                    generalizedTime(Instant.now().plusSeconds(
+                            yearsInSeconds(cfg.getDefaultValidUntilYears())))));
+        }
+        return mods;
     }
 
     /**
@@ -440,6 +519,14 @@ public class IsvaSecUserPlans {
             case "secValidUntil" -> generalizedTime(now.plusSeconds(
                     yearsInSeconds(cfg.getDefaultValidUntilYears())));
             case "secPwdLastChanged" -> generalizedTime(now);
+            // IVIA identity attributes (opt-in). secUUID is a fresh opaque
+            // id; when secUUID is also the RDN the RDN value is written first
+            // and addIfAbsent skips this one, so the RDN value wins.
+            case "secUUID" -> UUID.randomUUID().toString();
+            case "principalName" -> uid;
+            // <secAuthority>%<principalName> — the principal value is the uid,
+            // matching how principalName is written above (e.g. Default%jdoe).
+            case "secDomainId" -> nonNull(cfg.getSecAuthority(), "Default") + "%" + uid;
             default -> throw new IllegalStateException("Unknown overlay attribute: " + name);
         };
     }

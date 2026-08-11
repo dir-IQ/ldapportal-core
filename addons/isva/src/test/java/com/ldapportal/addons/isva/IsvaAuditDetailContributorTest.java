@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva;
 
-import com.ldapportal.addons.isva.entity.IsvaDeletePolicy;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.addons.isva.repository.VendorIntegrationIsvaConfigRepository;
@@ -48,7 +47,7 @@ class IsvaAuditDetailContributorTest {
 
     @Test
     void contribute_returnsEmpty_whenConfigDisabled() {
-        VendorIntegrationIsvaConfig cfg = config(IsvaTopologyMode.INLINE, IsvaDeletePolicy.DISABLE);
+        VendorIntegrationIsvaConfig cfg = config(IsvaTopologyMode.INLINE);
         cfg.setEnabled(false);
         when(configRepo.findById(directoryId)).thenReturn(Optional.of(cfg));
 
@@ -59,32 +58,20 @@ class IsvaAuditDetailContributorTest {
     @Test
     void contribute_tagsVendorIntegration_onEnabledDirectory() {
         when(configRepo.findById(directoryId)).thenReturn(
-                Optional.of(config(IsvaTopologyMode.INLINE, IsvaDeletePolicy.HARD_DELETE)));
+                Optional.of(config(IsvaTopologyMode.INLINE)));
 
         Map<String, Object> extra = contributor.contribute(directoryId,
                 AuditAction.USER_CREATE, "uid=alice", null);
 
         assertThat(extra).containsEntry("vendorIntegration", "ISVA");
-        assertThat(extra).doesNotContainKey("softDisable");
     }
 
     @Test
-    void contribute_marksSoftDisable_onDeleteWithDisablePolicy() {
+    void contribute_doesNotMarkSoftDisable_onDelete() {
+        // Deletes are always hard now (both entries removed) — there's no
+        // delete-vs-soft-disable distinction for the audit row to carry.
         when(configRepo.findById(directoryId)).thenReturn(
-                Optional.of(config(IsvaTopologyMode.LINKED, IsvaDeletePolicy.DISABLE)));
-
-        Map<String, Object> extra = contributor.contribute(directoryId,
-                AuditAction.USER_DELETE, "uid=alice", null);
-
-        assertThat(extra)
-                .containsEntry("vendorIntegration", "ISVA")
-                .containsEntry("softDisable", true);
-    }
-
-    @Test
-    void contribute_omitsSoftDisable_onDeleteWithHardDeletePolicy() {
-        when(configRepo.findById(directoryId)).thenReturn(
-                Optional.of(config(IsvaTopologyMode.INLINE, IsvaDeletePolicy.HARD_DELETE)));
+                Optional.of(config(IsvaTopologyMode.LINKED)));
 
         Map<String, Object> extra = contributor.contribute(directoryId,
                 AuditAction.USER_DELETE, "uid=alice", null);
@@ -95,25 +82,24 @@ class IsvaAuditDetailContributorTest {
     }
 
     @Test
-    void contribute_omitsSoftDisable_onNonDeleteActions() {
+    void contribute_forwardsProfileId_whenPresentInBaseDetail() {
         when(configRepo.findById(directoryId)).thenReturn(
-                Optional.of(config(IsvaTopologyMode.INLINE, IsvaDeletePolicy.DISABLE)));
+                Optional.of(config(IsvaTopologyMode.INLINE)));
+        UUID profileId = UUID.randomUUID();
 
-        // Even with DISABLE policy, USER_UPDATE is not a delete — no softDisable
         Map<String, Object> extra = contributor.contribute(directoryId,
-                AuditAction.USER_UPDATE, "uid=alice", null);
+                AuditAction.USER_CREATE, "uid=alice", Map.of("profileId", profileId));
 
         assertThat(extra)
                 .containsEntry("vendorIntegration", "ISVA")
-                .doesNotContainKey("softDisable");
+                .containsEntry("profileId", profileId);
     }
 
-    private VendorIntegrationIsvaConfig config(IsvaTopologyMode mode, IsvaDeletePolicy policy) {
+    private VendorIntegrationIsvaConfig config(IsvaTopologyMode mode) {
         VendorIntegrationIsvaConfig cfg = new VendorIntegrationIsvaConfig();
         cfg.setDirectoryConnectionId(directoryId);
         cfg.setEnabled(true);
         cfg.setTopologyMode(mode);
-        cfg.setDeletePolicy(policy);
         return cfg;
     }
 }

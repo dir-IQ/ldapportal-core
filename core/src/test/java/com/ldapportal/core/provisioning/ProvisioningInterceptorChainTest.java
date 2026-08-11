@@ -140,6 +140,14 @@ class ProvisioningInterceptorChainTest {
             return DeletePlan.singleStep(DeleteStep.of(demographicDn));
         }
         @Override
+        public EnableDisablePlan planUserSetEnabled(DirectoryConnection dir, String demographicDn, boolean enabled, ProvisioningContext ctx) {
+            // Deliberately-non-baseline (two-step) so a delegation pass is
+            // distinguishable from an accidental baseline fallthrough.
+            return new EnableDisablePlan(List.of(
+                    ModifyStep.of(demographicDn, List.of()),
+                    ModifyStep.of("dn2=sentinel", List.of())));
+        }
+        @Override
         public PasswordPlan planPasswordSet(DirectoryConnection dir, String demographicDn, PasswordSetPayload payload, ProvisioningContext ctx) {
             return BaselinePlans.passwordSet(dir, demographicDn, payload);
         }

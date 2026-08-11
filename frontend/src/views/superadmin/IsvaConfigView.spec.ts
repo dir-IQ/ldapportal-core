@@ -73,7 +73,6 @@ function inlineConfigDto() {
     secAuthority: 'Default',
     secLoginType: 'Default',
     defaultValidUntilYears: 100,
-    deletePolicy: 'DISABLE',
     requireSecGroup: true,
     secuserObjectClasses: ['secUser'],
     secuserOverlayAttributes: ['secLogin', 'secAcctValid', 'secPwdValid', 'secValidUntil', 'secPwdLastChanged'],
@@ -81,7 +80,6 @@ function inlineConfigDto() {
     secuserRdnAttribute: null,
     secuserRdnValueSource: null,
     groupMemberTarget: null,
-    onDemographicDelete: null,
     createdAt: '', updatedAt: '', updatedBy: 'alice',
   }
 }
@@ -95,7 +93,6 @@ function linkedConfigDto() {
     secuserRdnAttribute: 'principalName',
     secuserRdnValueSource: 'UID',
     groupMemberTarget: 'DEMOGRAPHIC_DN',
-    onDemographicDelete: 'LEAVE',
   }
 }
 

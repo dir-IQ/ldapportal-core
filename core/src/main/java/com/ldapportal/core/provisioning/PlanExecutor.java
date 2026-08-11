@@ -91,6 +91,10 @@ public class PlanExecutor {
         executeWithCompensation(dir, plan.steps(), null);
     }
 
+    public void execute(DirectoryConnection dir, EnableDisablePlan plan) {
+        executeWithCompensation(dir, plan.steps(), null);
+    }
+
     /**
      * Group-membership executor. Returns the {@link GroupMemberPlan}
      * itself rather than void so the caller can detect a refusal

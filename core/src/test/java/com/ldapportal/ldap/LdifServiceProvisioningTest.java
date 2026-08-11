@@ -85,6 +85,12 @@ class LdifServiceProvisioningTest {
         }
 
         @Override
+        public com.ldapportal.core.provisioning.EnableDisablePlan planUserSetEnabled(
+                DirectoryConnection dir, String dn, boolean enabled, ProvisioningContext ctx) {
+            return BaselinePlans.userSetEnabled(dir, dn, enabled);
+        }
+
+        @Override
         public PasswordPlan planPasswordSet(DirectoryConnection dir, String dn,
                                             PasswordSetPayload payload, ProvisioningContext ctx) {
             return BaselinePlans.passwordSet(dir, dn, payload);
