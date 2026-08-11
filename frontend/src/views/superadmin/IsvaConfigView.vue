@@ -11,9 +11,7 @@ import {
   type UpsertIsvaConfigRequest,
   type ProbeResult,
   type IsvaTopologyMode,
-  type IsvaDeletePolicy,
   type IsvaGroupMemberTarget,
-  type IsvaDemographicDeleteMode,
   type IsvaRdnValueSource,
 } from '@/api/isvaConfig'
 import { getDirectory } from '@/api/directories'
@@ -67,7 +65,6 @@ interface Form {
   secAuthority: string
   secLoginType: string
   defaultValidUntilYears: number
-  deletePolicy: IsvaDeletePolicy
   requireSecGroup: boolean
   secuserObjectClasses: string[]
   secuserOverlayAttributes: string[]
@@ -75,7 +72,6 @@ interface Form {
   secuserRdnAttribute: string
   secuserRdnValueSource: IsvaRdnValueSource
   groupMemberTarget: IsvaGroupMemberTarget
-  onDemographicDelete: IsvaDemographicDeleteMode
 }
 
 function emptyForm(): Form {
@@ -85,7 +81,6 @@ function emptyForm(): Form {
     secAuthority: 'Default',
     secLoginType: 'Default',
     defaultValidUntilYears: 100,
-    deletePolicy: 'DISABLE',
     // Opt-in since enforcement shipped (V504) — defaulting the gate on
     // would refuse memberships in plain (non-secGroup) groups.
     requireSecGroup: false,
@@ -95,7 +90,6 @@ function emptyForm(): Form {
     secuserRdnAttribute: 'secUUID',
     secuserRdnValueSource: 'GENERATED_UUID',
     groupMemberTarget: 'DEMOGRAPHIC_DN',
-    onDemographicDelete: 'LEAVE',
   }
 }
 
@@ -194,7 +188,6 @@ function populateFromDto(dto: IsvaConfigDto) {
   form.value.secAuthority = dto.secAuthority ?? 'Default'
   form.value.secLoginType = dto.secLoginType ?? 'Default'
   form.value.defaultValidUntilYears = dto.defaultValidUntilYears
-  form.value.deletePolicy = dto.deletePolicy
   form.value.requireSecGroup = dto.requireSecGroup
   form.value.secuserObjectClasses = dto.secuserObjectClasses?.length
     ? [...dto.secuserObjectClasses]
@@ -208,7 +201,6 @@ function populateFromDto(dto: IsvaConfigDto) {
   form.value.secuserRdnAttribute = dto.secuserRdnAttribute ?? 'secUUID'
   form.value.secuserRdnValueSource = dto.secuserRdnValueSource ?? 'GENERATED_UUID'
   form.value.groupMemberTarget = dto.groupMemberTarget ?? 'DEMOGRAPHIC_DN'
-  form.value.onDemographicDelete = dto.onDemographicDelete ?? 'LEAVE'
 }
 
 // secUser object-class chip editor. secUser is load-bearing (the
@@ -268,7 +260,6 @@ async function save() {
       secAuthority: form.value.secAuthority,
       secLoginType: form.value.secLoginType,
       defaultValidUntilYears: form.value.defaultValidUntilYears,
-      deletePolicy: form.value.deletePolicy,
       requireSecGroup: form.value.requireSecGroup,
       // Applies to both modes; server normalizes (ensures secUser present).
       secuserObjectClasses: form.value.secuserObjectClasses,
@@ -280,7 +271,6 @@ async function save() {
       secuserRdnAttribute: form.value.secuserRdnAttribute.trim() || null,
       secuserRdnValueSource: form.value.secuserRdnValueSource,
       groupMemberTarget: form.value.groupMemberTarget,
-      onDemographicDelete: form.value.onDemographicDelete,
     }
     const { data } = await upsertIsvaConfig(directoryId.value, payload)
     populateFromDto(data)
@@ -474,28 +464,27 @@ function extractErrorMessage(e: unknown, fallback: string): string {
           </p>
         </div>
 
-        <fieldset>
-          <legend class="text-sm font-medium text-gray-900 mb-2">Delete behaviour</legend>
-          <div class="space-y-2">
-            <label class="flex items-start gap-2 text-sm">
-              <input type="radio" name="delete" value="DISABLE"
-                     v-model="form.deletePolicy" class="mt-1" />
-              <span>
-                <span class="font-medium">Disable</span> (recommended) — flips
-                <code>secAcctValid=FALSE</code>; preserves audit + policy.
-              </span>
-            </label>
-            <label class="flex items-start gap-2 text-sm">
-              <input type="radio" name="delete" value="HARD_DELETE"
-                     v-model="form.deletePolicy" class="mt-1" />
-              <span>
-                <span class="font-medium">Hard delete</span> — actually
-                <code>DEL</code>s the entry. Destroys {{ IVIA_ABBR }} policy
-                associations.
-              </span>
-            </label>
-          </div>
-        </fieldset>
+        <div class="rounded-md border border-gray-200 dark:border-gray-700
+                    bg-gray-50 dark:bg-gray-800/50 p-3" data-testid="account-lifecycle-note">
+          <p class="text-sm font-medium text-gray-900 dark:text-gray-100 mb-1">
+            Account lifecycle
+          </p>
+          <p class="text-xs text-gray-600 dark:text-gray-300">
+            The <code>secUser</code> account mirrors the user's demographic
+            entry automatically — no separate delete policy to choose:
+          </p>
+          <ul class="mt-1 list-disc pl-5 text-xs text-gray-600 dark:text-gray-300 space-y-0.5">
+            <li>
+              <span class="font-medium">Disable</span> a user →
+              <code>secAcctValid=FALSE</code> on its <code>secUser</code>
+              (re-enabling flips it back).
+            </li>
+            <li>
+              <span class="font-medium">Delete</span> a user →
+              its <code>secUser</code> entry is deleted too.
+            </li>
+          </ul>
+        </div>
 
         <div class="flex items-start gap-2">
           <input id="requireSecGroup" type="checkbox"
@@ -673,32 +662,6 @@ function extractErrorMessage(e: unknown, fallback: string): string {
             Wrong inference here corrupts ACLs; if in doubt, check an
             existing group in the directory browser first.
           </p>
-        </fieldset>
-
-        <fieldset>
-          <legend class="text-sm font-medium text-gray-900 mb-2">
-            On demographic-entry delete
-          </legend>
-          <div class="space-y-2">
-            <label class="flex items-start gap-2 text-sm">
-              <input type="radio" name="ondemodelete" value="LEAVE"
-                     v-model="form.onDemographicDelete" class="mt-1" />
-              <span>
-                <span class="font-medium">Leave</span> (default) — touch only
-                the secUser entry on soft-delete; demographic stays as-is.
-              </span>
-            </label>
-            <label class="flex items-start gap-2 text-sm">
-              <input type="radio" name="ondemodelete" value="DISABLE_AND_MARK"
-                     v-model="form.onDemographicDelete" class="mt-1" />
-              <span>
-                <span class="font-medium">Disable and mark</span> — also
-                annotate the demographic entry on soft-delete by writing this
-                directory's configured enable/disable attribute (its disable
-                value). Requires that attribute to be set on the directory.
-              </span>
-            </label>
-          </div>
         </fieldset>
       </section>
 

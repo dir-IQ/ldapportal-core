@@ -14,9 +14,7 @@ import client from './client';
 import type { AxiosResponse } from 'axios';
 
 export type IsvaTopologyMode = 'INLINE' | 'LINKED';
-export type IsvaDeletePolicy = 'DISABLE' | 'HARD_DELETE';
 export type IsvaGroupMemberTarget = 'DEMOGRAPHIC_DN' | 'SECUSER_DN';
-export type IsvaDemographicDeleteMode = 'LEAVE' | 'DISABLE_AND_MARK';
 export type IsvaRdnValueSource = 'GENERATED_UUID' | 'UID';
 
 export interface IsvaConfigDto {
@@ -25,7 +23,6 @@ export interface IsvaConfigDto {
   secAuthority: string | null;
   secLoginType: string | null;
   defaultValidUntilYears: number;
-  deletePolicy: IsvaDeletePolicy;
   requireSecGroup: boolean;
 
   // Applies to both modes
@@ -37,7 +34,6 @@ export interface IsvaConfigDto {
   secuserRdnAttribute: string | null;
   secuserRdnValueSource: IsvaRdnValueSource | null;
   groupMemberTarget: IsvaGroupMemberTarget | null;
-  onDemographicDelete: IsvaDemographicDeleteMode | null;
 
   createdAt: string;
   updatedAt: string;
@@ -50,7 +46,6 @@ export interface UpsertIsvaConfigRequest {
   secAuthority: string | null;
   secLoginType: string | null;
   defaultValidUntilYears: number;
-  deletePolicy: IsvaDeletePolicy;
   requireSecGroup: boolean;
 
   // Applies to both modes — secUser is normalized in server-side if omitted
@@ -64,7 +59,6 @@ export interface UpsertIsvaConfigRequest {
   secuserRdnAttribute: string | null;
   secuserRdnValueSource: IsvaRdnValueSource | null;
   groupMemberTarget: IsvaGroupMemberTarget | null;
-  onDemographicDelete: IsvaDemographicDeleteMode | null;
 }
 
 export interface ProbeResult {

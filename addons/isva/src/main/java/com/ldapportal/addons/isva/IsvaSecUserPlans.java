@@ -269,13 +269,52 @@ public class IsvaSecUserPlans {
      * flipping {@code secAcctValid} alone.</p>
      */
     public ModifyStep disable(String secUserDn, VendorIntegrationIsvaConfig cfg) {
+        return ModifyStep.of(secUserDn, disableMods(cfg));
+    }
+
+    /**
+     * Re-enable the ISVA account: the inverse of {@link #disable} —
+     * {@code secAcctValid=TRUE}, and — when the directory's overlay
+     * includes it — {@code secValidUntil} pushed back out to
+     * {@code now + defaultValidUntilYears} (undoing the {@code =now}
+     * expiry a mirror-disable stamped). Used by the lifecycle-mirror
+     * path so re-enabling a demographic user restores its secUser to a
+     * valid, unexpired state.
+     */
+    public ModifyStep enable(String secUserDn, VendorIntegrationIsvaConfig cfg) {
+        return ModifyStep.of(secUserDn, enableMods(cfg));
+    }
+
+    /**
+     * The {@code sec*} modifications that mirror an account enable /
+     * disable onto the secUser side, without wrapping them in a step —
+     * so the inline lifecycle path can fold them into the same MODIFY
+     * that writes the demographic entry's enable/disable attribute (in
+     * inline mode the secUser <em>is</em> the demographic entry).
+     */
+    public List<Modification> setEnabledMods(VendorIntegrationIsvaConfig cfg, boolean enabled) {
+        return enabled ? enableMods(cfg) : disableMods(cfg);
+    }
+
+    private List<Modification> disableMods(VendorIntegrationIsvaConfig cfg) {
         List<Modification> mods = new ArrayList<>();
         mods.add(new Modification(ModificationType.REPLACE, "secAcctValid", "FALSE"));
         if (overlayEnabled(cfg, "secValidUntil")) {
             mods.add(new Modification(ModificationType.REPLACE, "secValidUntil",
                     generalizedTime(Instant.now())));
         }
-        return ModifyStep.of(secUserDn, mods);
+        return mods;
+    }
+
+    private List<Modification> enableMods(VendorIntegrationIsvaConfig cfg) {
+        List<Modification> mods = new ArrayList<>();
+        mods.add(new Modification(ModificationType.REPLACE, "secAcctValid", "TRUE"));
+        if (overlayEnabled(cfg, "secValidUntil")) {
+            mods.add(new Modification(ModificationType.REPLACE, "secValidUntil",
+                    generalizedTime(Instant.now().plusSeconds(
+                            yearsInSeconds(cfg.getDefaultValidUntilYears())))));
+        }
+        return mods;
     }
 
     /**

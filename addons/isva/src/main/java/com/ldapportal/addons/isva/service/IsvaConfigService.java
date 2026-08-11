@@ -85,7 +85,6 @@ public class IsvaConfigService {
         entity.setSecAuthority(blankToNull(req.secAuthority()));
         entity.setSecLoginType(blankToNull(req.secLoginType()));
         entity.setDefaultValidUntilYears(req.defaultValidUntilYears());
-        entity.setDeletePolicy(req.deletePolicy());
         entity.setRequireSecGroup(req.requireSecGroup());
         // Applies to both modes — normalize so secUser is always present
         // and the list is trimmed / de-duplicated.
@@ -105,16 +104,14 @@ public class IsvaConfigService {
                     ? req.secuserRdnValueSource() : IsvaRdnValueSource.GENERATED_UUID);
             entity.setGroupMemberTarget(req.groupMemberTarget() != null
                     ? req.groupMemberTarget() : entity.getGroupMemberTarget());
-            entity.setOnDemographicDelete(req.onDemographicDelete() != null
-                    ? req.onDemographicDelete() : entity.getOnDemographicDelete());
         } else {
             entity.setManagementDitBaseDn(null);
             // Leave secuserRdnAttribute / secuserRdnValueSource /
-            // groupMemberTarget / onDemographicDelete at their stored
-            // defaults — they're ignored in INLINE mode anyway and
-            // clearing them would be unnecessary churn against the
-            // audit columns. (secuserObjectClasses is set above; it
-            // applies to inline mode too.)
+            // groupMemberTarget at their stored defaults — they're
+            // ignored in INLINE mode anyway and clearing them would be
+            // unnecessary churn against the audit columns.
+            // (secuserObjectClasses is set above; it applies to inline
+            // mode too.)
         }
 
         entity.setUpdatedBy(principal != null ? principal.username() : "system");
@@ -165,15 +162,13 @@ public class IsvaConfigService {
                     cfg.getSecAuthority(),
                     cfg.getSecLoginType(),
                     cfg.getDefaultValidUntilYears(),
-                    cfg.getDeletePolicy(),
                     cfg.isRequireSecGroup(),
                     cfg.getSecuserObjectClasses(),
                     cfg.getSecuserOverlayAttributes(),
                     cfg.getManagementDitBaseDn(),
                     cfg.getSecuserRdnAttribute(),
                     cfg.getSecuserRdnValueSource(),
-                    cfg.getGroupMemberTarget(),
-                    cfg.getOnDemographicDelete());
+                    cfg.getGroupMemberTarget());
             out.add(new IsvaConfigExport(dir.getSlug(), req));
         }
         out.sort(java.util.Comparator.comparing(IsvaConfigExport::directorySlug));

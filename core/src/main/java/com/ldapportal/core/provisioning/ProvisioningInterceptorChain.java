@@ -77,6 +77,15 @@ public class ProvisioningInterceptorChain {
                 : interceptors.get(0).planUserDelete(dir, demographicDn, ctx);
     }
 
+    public EnableDisablePlan planUserSetEnabled(DirectoryConnection dir,
+                                                String demographicDn,
+                                                boolean enabled,
+                                                ProvisioningContext ctx) {
+        return interceptors.isEmpty()
+                ? BaselinePlans.userSetEnabled(dir, demographicDn, enabled)
+                : interceptors.get(0).planUserSetEnabled(dir, demographicDn, enabled, ctx);
+    }
+
     public PasswordPlan planPasswordSet(DirectoryConnection dir,
                                          String demographicDn,
                                          PasswordSetPayload payload,

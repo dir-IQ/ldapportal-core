@@ -3,6 +3,7 @@ package com.ldapportal.core.provisioning;
 
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.DirectoryType;
+import com.ldapportal.entity.enums.EnableDisableValueType;
 import com.ldapportal.exception.LdapOperationException;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
@@ -87,6 +88,36 @@ public final class BaselinePlans {
                     payload.newPassword());
         }
         return PasswordPlan.singleStep(ModifyStep.of(dn, List.of(mod)));
+    }
+
+    /**
+     * Single-step MODIFY replacing the directory's configured
+     * enable/disable attribute — exactly what the pre-SPI
+     * {@code LdapUserService.applyEnableDisable} wrote. BOOLEAN
+     * directories get a fixed {@code TRUE}/{@code FALSE}; STRING
+     * directories get the configured enable / disable value.
+     *
+     * <p>Throws when the directory has no enable/disable attribute
+     * configured — same loud failure the pre-SPI path produced, since
+     * there's nothing to write.</p>
+     */
+    public static EnableDisablePlan userSetEnabled(DirectoryConnection dir,
+                                                    String dn,
+                                                    boolean enabled) {
+        String attr = dir.getEnableDisableAttribute();
+        if (attr == null || attr.isBlank()) {
+            throw new LdapOperationException(
+                    "No enable/disable attribute configured for directory ["
+                            + dir.getDisplayName() + "]");
+        }
+        String value;
+        if (dir.getEnableDisableValueType() == EnableDisableValueType.BOOLEAN) {
+            value = enabled ? "TRUE" : "FALSE";
+        } else {
+            value = enabled ? dir.getEnableValue() : dir.getDisableValue();
+        }
+        Modification mod = new Modification(ModificationType.REPLACE, attr, value);
+        return EnableDisablePlan.singleStep(ModifyStep.of(dn, List.of(mod)));
     }
 
     /**

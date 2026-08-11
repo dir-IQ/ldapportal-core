@@ -215,12 +215,15 @@ feature override requires a matching `profileRole` on the same profile.
 
 ### ISVA config — `UpsertIsvaConfigRequest`
 `enabled`, `topologyMode` (`INLINE` | `LINKED`), `secAuthority`,
-`defaultValidUntilYears` (≥1), `deletePolicy` (`DISABLE` | `HARD_DELETE`),
+`defaultValidUntilYears` (≥1),
 `requireSecGroup`, `secuserObjectClasses` (string array; applies to both modes,
 `secUser` is normalized in if omitted). Linked-mode
 only: `managementDitBaseDn` (**required when `LINKED`**), `secuserRdnAttribute`
 (free-form, default `secUUID`), `secuserRdnValueSource` (`GENERATED_UUID` |
-`UID`, default `GENERATED_UUID`), `groupMemberTarget`, `onDemographicDelete`.
+`UID`, default `GENERATED_UUID`), `groupMemberTarget`.
+(There's no delete-policy field: the `secUser` account mirrors the
+demographic entry's lifecycle — disabling a user disables its `secUser`,
+deleting a user deletes it.)
 The endpoint is gated by the `VENDOR_INTEGRATIONS_ISVA` entitlement — a
 community build without the addon returns **402/403**.
 
