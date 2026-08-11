@@ -1809,7 +1809,16 @@ function toggleApprover(accountId: string) {
               </div>
               <div v-if="showFieldFor(attr.inputType, 'defaultValue')">
                 <label :for="`sp-attr-${i}-defaultValue`" class="block text-xs text-gray-500">Default Value</label>
-                <input :id="`sp-attr-${i}-defaultValue`" v-model="attr.defaultValue" class="input w-full text-sm" />
+                <!-- objectClass is system-managed: its value comes from the
+                     profile's object-class list, not this field. Lock it so a
+                     stray value can't be entered (the server ignores it). -->
+                <input :id="`sp-attr-${i}-defaultValue`" v-model="attr.defaultValue"
+                       :disabled="isSystemFixedAttribute(attr)"
+                       :placeholder="isSystemFixedAttribute(attr) ? 'Managed by the Object Classes list' : ''"
+                       class="input w-full text-sm disabled:bg-gray-100 disabled:text-gray-400 dark:disabled:bg-gray-800" />
+                <p v-if="isSystemFixedAttribute(attr)" class="mt-1 text-xs text-gray-400">
+                  Set by the profile's <strong>Object Classes</strong> list — not editable here.
+                </p>
               </div>
               <div v-if="showFieldFor(attr.inputType, 'computedExpression')">
                 <label :for="`sp-attr-${i}-computedExpression`" class="block text-xs text-gray-500">Computed Expression</label>

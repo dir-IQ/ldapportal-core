@@ -9,6 +9,7 @@ import com.ldapportal.entity.ProfileAttributeConfig;
 import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.ApproverMode;
+import com.ldapportal.entity.enums.InputType;
 import com.ldapportal.repository.AccountRepository;
 import com.ldapportal.repository.AdminProfileRoleRepository;
 import com.ldapportal.repository.DirectoryConnectionRepository;
@@ -189,6 +190,44 @@ class ProvisioningProfileServiceTest {
         assertThatThrownBy(() -> service.validateAttributes(profileId, attrs))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("validation pattern is invalid");
+    }
+
+    @Test
+    void applyDefaults_ignoresObjectClassConfig_leavesRequestObjectClassesIntact() {
+        // A stray/typo'd HIDDEN_FIXED default on the system-managed objectClass
+        // config (the "L" bug) must never be applied — object classes come from
+        // the profile's object-class list, not this default.
+        ProfileAttributeConfig oc = new ProfileAttributeConfig();
+        oc.setAttributeName("objectClass");
+        oc.setInputType(InputType.HIDDEN_FIXED);
+        oc.setDefaultValue("L");
+        given(attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(oc));
+
+        Map<String, List<String>> attrs = new HashMap<>();
+        attrs.put("objectClass", new ArrayList<>(List.of("top", "inetOrgPerson")));
+
+        service.applyDefaults(profileId, attrs);
+
+        assertThat(attrs.get("objectClass")).containsExactly("top", "inetOrgPerson");
+    }
+
+    @Test
+    void validateAttributes_objectClassConfig_neverRaisesRequired() {
+        // objectClass is system-managed; a required config for it (stored here
+        // lower-cased, as the auto-add does) must not raise a phantom "required"
+        // when the payload carries the camel-cased "objectClass" the UI sends.
+        ProfileAttributeConfig oc = new ProfileAttributeConfig();
+        oc.setAttributeName("objectclass");
+        oc.setRequiredOnCreate(true);
+        given(attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(oc));
+
+        Map<String, List<String>> attrs = new HashMap<>();
+        attrs.put("objectClass", List.of("top", "inetOrgPerson"));
+
+        assertThatCode(() -> service.validateAttributes(profileId, attrs))
+                .doesNotThrowAnyException();
     }
 
     // ── validateModification (update path: edit-gating + value constraints) ──
