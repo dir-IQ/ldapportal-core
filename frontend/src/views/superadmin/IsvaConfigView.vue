@@ -22,15 +22,27 @@ import { useNotificationStore } from '@/stores/notifications'
 import { useConfirm } from '@/composables/useConfirm'
 
 // The optional sec* overlay attributes an operator can toggle. Mirrors
-// IsvaSecUserPlans.OPTIONAL_OVERLAY_ATTRS on the backend (secLoginType /
+// IsvaSecUserPlans.{OPTIONAL,KNOWN}_OVERLAY_ATTRS on the backend (secLoginType /
 // secAuthority are always written and configured separately, so they are
 // not here). Order matches the backend's canonical order.
-const OPTIONAL_OVERLAY_ATTRS = [
+//
+// DEFAULT = the set enabled for a new/unset config. KNOWN = every attribute
+// the operator may enable — the default set plus the opt-in IVIA identity
+// attributes (secUUID / principalName / secDomainId) that natively-created
+// secUser entries carry. They're off by default because not every secUser
+// schema permits them; the Probe validates them before enabling.
+const DEFAULT_OVERLAY_ATTRS = [
   'secLogin',
   'secAcctValid',
   'secPwdValid',
   'secValidUntil',
   'secPwdLastChanged',
+] as const
+const KNOWN_OVERLAY_ATTRS = [
+  ...DEFAULT_OVERLAY_ATTRS,
+  'secUUID',
+  'principalName',
+  'secDomainId',
 ] as const
 
 const route = useRoute()
@@ -78,7 +90,7 @@ function emptyForm(): Form {
     // would refuse memberships in plain (non-secGroup) groups.
     requireSecGroup: false,
     secuserObjectClasses: ['secUser'],
-    secuserOverlayAttributes: [...OPTIONAL_OVERLAY_ATTRS],
+    secuserOverlayAttributes: [...DEFAULT_OVERLAY_ATTRS],
     managementDitBaseDn: '',
     secuserRdnAttribute: 'secUUID',
     secuserRdnValueSource: 'GENERATED_UUID',
@@ -191,7 +203,7 @@ function populateFromDto(dto: IsvaConfigDto) {
   // only fall back to the default set when the field is absent entirely.
   form.value.secuserOverlayAttributes = dto.secuserOverlayAttributes != null
     ? [...dto.secuserOverlayAttributes]
-    : [...OPTIONAL_OVERLAY_ATTRS]
+    : [...DEFAULT_OVERLAY_ATTRS]
   form.value.managementDitBaseDn = dto.managementDitBaseDn ?? ''
   form.value.secuserRdnAttribute = dto.secuserRdnAttribute ?? 'secUUID'
   form.value.secuserRdnValueSource = dto.secuserRdnValueSource ?? 'GENERATED_UUID'
@@ -243,7 +255,7 @@ function toggleOverlayAttr(attr: string, enabled: boolean) {
   const set = new Set(form.value.secuserOverlayAttributes)
   if (enabled) set.add(attr)
   else set.delete(attr)
-  form.value.secuserOverlayAttributes = OPTIONAL_OVERLAY_ATTRS.filter((a) => set.has(a))
+  form.value.secuserOverlayAttributes = KNOWN_OVERLAY_ATTRS.filter((a) => set.has(a))
 }
 
 async function save() {
@@ -555,9 +567,18 @@ function extractErrorMessage(e: unknown, fallback: string): string {
             secUser"</em>. Use <strong>Probe</strong> below to detect
             mismatches.
           </p>
+          <p class="text-xs text-gray-500 mb-2">
+            The last three — <code>secUUID</code>, <code>principalName</code>,
+            <code>secDomainId</code> — are the identity attributes natively-created
+            {{ IVIA_ABBR }} accounts carry. They're off by default (not every
+            <code>secUser</code> schema permits them); enable them to match native
+            accounts. <code>secUUID</code> is a generated id,
+            <code>principalName</code> is the user's uid, and
+            <code>secDomainId</code> is <code>&lt;secAuthority&gt;%&lt;principalName&gt;</code>.
+          </p>
           <div class="flex flex-col gap-1.5">
             <label
-              v-for="attr in OPTIONAL_OVERLAY_ATTRS"
+              v-for="attr in KNOWN_OVERLAY_ATTRS"
               :key="attr"
               class="inline-flex items-center gap-2 text-sm"
             >
