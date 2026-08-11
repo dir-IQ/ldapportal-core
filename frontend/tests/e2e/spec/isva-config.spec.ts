@@ -45,12 +45,10 @@ test.describe('ISVA config control plane @smoke', () => {
           topologyMode: 'INLINE',
           secAuthority: 'Default',
           defaultValidUntilYears: 100,
-          deletePolicy: 'DISABLE',
           requireSecGroup: true,
           managementDitBaseDn: null,
           secuserRdnAttribute: null,
           groupMemberTarget: null,
-          onDemographicDelete: null,
         },
       },
     )
@@ -82,12 +80,10 @@ test.describe('ISVA config control plane @smoke', () => {
           topologyMode: 'LINKED',
           secAuthority: 'Default',
           defaultValidUntilYears: 100,
-          deletePolicy: 'DISABLE',
           requireSecGroup: true,
           managementDitBaseDn: '',  // <- the invalid bit
           secuserRdnAttribute: 'secUUID',
           groupMemberTarget: 'DEMOGRAPHIC_DN',
-          onDemographicDelete: 'LEAVE',
         },
       },
     )
@@ -107,12 +103,10 @@ test.describe('ISVA config control plane @smoke', () => {
           topologyMode: 'INLINE',
           secAuthority: 'Default',
           defaultValidUntilYears: 100,
-          deletePolicy: 'DISABLE',
           requireSecGroup: true,
           managementDitBaseDn: null,
           secuserRdnAttribute: null,
           groupMemberTarget: null,
-          onDemographicDelete: null,
         },
       },
     )

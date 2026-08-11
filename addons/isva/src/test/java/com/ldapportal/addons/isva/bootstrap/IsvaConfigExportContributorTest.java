@@ -4,7 +4,6 @@ package com.ldapportal.addons.isva.bootstrap;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ldapportal.addons.isva.dto.UpsertIsvaConfigRequest;
-import com.ldapportal.addons.isva.entity.IsvaDeletePolicy;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import com.ldapportal.addons.isva.service.IsvaConfigService;
 import org.junit.jupiter.api.Test;
@@ -29,10 +28,10 @@ class IsvaConfigExportContributorTest {
     void export_addsIsvaSection_inReconcilerShape() {
         UpsertIsvaConfigRequest cfg = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default", "Default", 100,
-                IsvaDeletePolicy.DISABLE, true, List.of("secUser"),
+                true, List.of("secUser"),
                 List.of("secLogin", "secAcctValid", "secPwdValid",
                         "secValidUntil", "secPwdLastChanged"),
-                null, null, null, null, null);   // linked-mode-only fields unset
+                null, null, null, null);   // linked-mode-only fields unset
         when(isvaConfigService.exportAll()).thenReturn(List.of(
                 new IsvaConfigService.IsvaConfigExport("corp-ldap", cfg)));
 
@@ -47,7 +46,7 @@ class IsvaConfigExportContributorTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> config = (Map<String, Object>) isva.get(0).get("config");
         assertThat(config.get("topologyMode")).isEqualTo("INLINE");
-        assertThat(config.get("deletePolicy")).isEqualTo("DISABLE");
+        assertThat(config).doesNotContainKey("deletePolicy");   // retired
         assertThat(config.get("secAuthority")).isEqualTo("Default");
         assertThat(config.get("secLoginType")).isEqualTo("Default");
         assertThat(config.get("secuserOverlayAttributes")).isEqualTo(List.of(

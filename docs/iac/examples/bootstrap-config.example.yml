@@ -101,5 +101,4 @@ isva:
       topologyMode: INLINE
       secAuthority: Default
       defaultValidUntilYears: 100
-      deletePolicy: DISABLE
       requireSecGroup: true

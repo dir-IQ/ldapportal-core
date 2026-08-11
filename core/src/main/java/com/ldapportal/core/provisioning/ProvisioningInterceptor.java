@@ -52,6 +52,19 @@ public interface ProvisioningInterceptor {
                               String demographicDn,
                               ProvisioningContext ctx);
 
+    /**
+     * Plan an account enable / disable. Vendor-aware interceptors use
+     * this to mirror the demographic entry's lifecycle onto their own
+     * side of the identity — e.g. ISVA flipping {@code secAcctValid} on
+     * the paired secUser entry when the demographic user is disabled, so
+     * the two never drift. The baseline is the single MODIFY of the
+     * directory's configured enable/disable attribute.
+     */
+    EnableDisablePlan planUserSetEnabled(DirectoryConnection dir,
+                                         String demographicDn,
+                                         boolean enabled,
+                                         ProvisioningContext ctx);
+
     PasswordPlan planPasswordSet(DirectoryConnection dir,
                                  String demographicDn,
                                  PasswordSetPayload payload,

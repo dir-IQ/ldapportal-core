@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva;
 
-import com.ldapportal.addons.isva.entity.IsvaDeletePolicy;
-import com.ldapportal.addons.isva.entity.IsvaDemographicDeleteMode;
 import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
@@ -11,6 +9,7 @@ import com.ldapportal.addons.isva.service.IsvaProfileOverrideService;
 import com.ldapportal.core.provisioning.AddStep;
 import com.ldapportal.core.provisioning.DeletePlan;
 import com.ldapportal.core.provisioning.DeleteStep;
+import com.ldapportal.core.provisioning.EnableDisablePlan;
 import com.ldapportal.core.provisioning.GroupMemberPlan;
 import com.ldapportal.core.provisioning.ModifyStep;
 import com.ldapportal.core.provisioning.PasswordPlan;
@@ -190,29 +189,14 @@ class IsvaProvisioningInterceptorTest {
         assertThat(attrValue(step.attributes(), "secLogin")).isEmpty();
     }
 
-    // ── inline-mode delete ────────────────────────────────────────
+    // ── inline-mode delete (always hard — delete mirrors the entry) ─
 
     @Test
-    void delete_inline_default_disableSoftRather_thanHard() {
-        VendorIntegrationIsvaConfig cfg = inlineConfig();
-        // delete_policy = DISABLE is the default; assert it explicitly.
-        assertThat(cfg.getDeletePolicy()).isEqualTo(IsvaDeletePolicy.DISABLE);
-        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
-
-        DeletePlan plan = interceptor.planUserDelete(dir, "uid=alice,dc=x", ProvisioningContext.empty());
-
-        assertThat(plan.steps()).hasSize(1);
-        ModifyStep step = (ModifyStep) plan.steps().get(0);
-        assertThat(step.targetDn()).isEqualTo("uid=alice,dc=x");
-        assertThat(modValue(step.mods(), "secAcctValid")).isEqualTo("FALSE");
-        assertThat(modValue(step.mods(), "secValidUntil")).matches("\\d{14}Z");
-    }
-
-    @Test
-    void delete_inline_hardDelete_returnsDelStep() {
-        VendorIntegrationIsvaConfig cfg = inlineConfig();
-        cfg.setDeletePolicy(IsvaDeletePolicy.HARD_DELETE);
-        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
+    void delete_inline_hardDeletesEntry() {
+        // Inline: the secUser IS the demographic entry, so a delete is a
+        // single DEL that removes both. There's no delete-policy knob any
+        // more — the soft path is the separate disable verb.
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(inlineConfig()));
 
         DeletePlan plan = interceptor.planUserDelete(dir, "uid=alice,dc=x", ProvisioningContext.empty());
 
@@ -438,48 +422,13 @@ class IsvaProvisioningInterceptorTest {
         assertThat(attrValue(secUserStep.attributes(), "secLogin")).isEqualTo("alice");
     }
 
-    // ── LINKED-mode: delete ────────────────────────────────────────
+    // ── LINKED-mode: delete (always hard — two-step, secUser first) ─
 
     @Test
-    void delete_linked_disable_modifiesSecUserOnly() {
-        // DISABLE policy (the default) — single MODIFY against the
-        // secUser DN; demographic untouched.
+    void delete_linked_twoStepSecUserFirst() {
+        // DEL secUser then DEL demographic, in that order, so a step-2
+        // failure leaves a recoverable state.
         when(configRepo.findById(dir.getId())).thenReturn(Optional.of(linkedConfig()));
-        when(linkedUserLookup.findSecUserDn(
-                eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=alice,dc=x")))
-                .thenReturn(Optional.of("secUUID=abc,secAuthority=Default,o=acme,c=us"));
-
-        DeletePlan plan = interceptor.planUserDelete(dir, "uid=alice,dc=x", ProvisioningContext.empty());
-
-        assertThat(plan.steps()).hasSize(1);
-        ModifyStep step = (ModifyStep) plan.steps().get(0);
-        assertThat(step.targetDn()).isEqualTo("secUUID=abc,secAuthority=Default,o=acme,c=us");
-        assertThat(modValue(step.mods(), "secAcctValid")).isEqualTo("FALSE");
-    }
-
-    @Test
-    void delete_linked_disable_orphanedDemographic_refuses() {
-        // No paired secUser → refuse. Operator can hard-delete to
-        // remove just the demographic; can't disable what isn't
-        // there.
-        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(linkedConfig()));
-        when(linkedUserLookup.findSecUserDn(
-                eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=orphan,dc=x")))
-                .thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> interceptor.planUserDelete(dir, "uid=orphan,dc=x", ProvisioningContext.empty()))
-                .isInstanceOf(com.ldapportal.core.provisioning.ProvisioningRefusedException.class)
-                .hasMessageContaining("orphaned demographic")
-                .hasMessageContaining("hard-delete");
-    }
-
-    @Test
-    void delete_linked_hardDelete_twoStepSecUserFirst() {
-        // HARD_DELETE: DEL secUser then DEL demographic, in that
-        // order, so a step-2 failure leaves a recoverable state.
-        VendorIntegrationIsvaConfig cfg = linkedConfig();
-        cfg.setDeletePolicy(IsvaDeletePolicy.HARD_DELETE);
-        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
         when(linkedUserLookup.findSecUserDn(
                 eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=alice,dc=x")))
                 .thenReturn(Optional.of("secUUID=abc,secAuthority=Default,o=acme,c=us"));
@@ -495,12 +444,10 @@ class IsvaProvisioningInterceptorTest {
     }
 
     @Test
-    void delete_linked_hardDelete_orphanedDemographic_deletesDemographicOnly() {
-        // Orphaned demographic + HARD_DELETE: still delete the
-        // demographic. This is the operator's recovery path.
-        VendorIntegrationIsvaConfig cfg = linkedConfig();
-        cfg.setDeletePolicy(IsvaDeletePolicy.HARD_DELETE);
-        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
+    void delete_linked_orphanedDemographic_deletesDemographicOnly() {
+        // Orphaned demographic (no paired secUser): still delete the
+        // demographic. Delete is exactly the case that cleans up orphans.
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(linkedConfig()));
         when(linkedUserLookup.findSecUserDn(
                 eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=orphan,dc=x")))
                 .thenReturn(Optional.empty());
@@ -508,93 +455,110 @@ class IsvaProvisioningInterceptorTest {
         DeletePlan plan = interceptor.planUserDelete(dir, "uid=orphan,dc=x", ProvisioningContext.empty());
 
         assertThat(plan.steps()).hasSize(1);
+        assertThat(plan.steps().get(0)).isInstanceOf(DeleteStep.class);
         assertThat(plan.steps().get(0).targetDn()).isEqualTo("uid=orphan,dc=x");
     }
 
+    // ── enable / disable (lifecycle mirror) ────────────────────────
+
     @Test
-    void delete_linked_disableAndMark_marksDemographicWithConfiguredDisableValue() {
-        // DISABLE + DISABLE_AND_MARK: secUser disabled (step 0), then the
-        // demographic entry marked (step 1) using the directory's configured
-        // enable/disable attribute + disable value (STRING type).
-        VendorIntegrationIsvaConfig cfg = linkedConfig();
-        cfg.setOnDemographicDelete(IsvaDemographicDeleteMode.DISABLE_AND_MARK);
+    void setEnabled_noConfig_fallsBackToBaselineModify() {
+        // No config → baseline single MODIFY of the enable/disable attribute.
         dir.setEnableDisableAttribute("nsAccountLock");
         dir.setEnableDisableValueType(EnableDisableValueType.STRING);
         dir.setDisableValue("TRUE");
-        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
-        when(linkedUserLookup.findSecUserDn(
-                eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=alice,dc=x")))
-                .thenReturn(Optional.of("secUUID=abc,secAuthority=Default,o=acme,c=us"));
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.empty());
 
-        DeletePlan plan = interceptor.planUserDelete(dir, "uid=alice,dc=x", ProvisioningContext.empty());
+        EnableDisablePlan plan = interceptor.planUserSetEnabled(
+                dir, "uid=alice,dc=x", false, ProvisioningContext.empty());
 
-        assertThat(plan.steps()).hasSize(2);
-        // Step 0: secUser disable (runs first for recoverability).
-        ModifyStep secStep = (ModifyStep) plan.steps().get(0);
-        assertThat(secStep.targetDn()).isEqualTo("secUUID=abc,secAuthority=Default,o=acme,c=us");
-        assertThat(modValue(secStep.mods(), "secAcctValid")).isEqualTo("FALSE");
-        // Step 1: demographic marker from the directory's disable config.
-        ModifyStep demoStep = (ModifyStep) plan.steps().get(1);
-        assertThat(demoStep.targetDn()).isEqualTo("uid=alice,dc=x");
-        assertThat(modValue(demoStep.mods(), "nsAccountLock")).isEqualTo("TRUE");
+        assertThat(plan.steps()).hasSize(1);
+        ModifyStep step = (ModifyStep) plan.steps().get(0);
+        assertThat(step.targetDn()).isEqualTo("uid=alice,dc=x");
+        assertThat(modValue(step.mods(), "nsAccountLock")).isEqualTo("TRUE");
     }
 
     @Test
-    void delete_linked_disableAndMark_booleanWritesFalse() {
-        // BOOLEAN enable/disable type writes a fixed FALSE on disable,
-        // ignoring any configured disable value (matches LdapUserService).
-        VendorIntegrationIsvaConfig cfg = linkedConfig();
-        cfg.setOnDemographicDelete(IsvaDemographicDeleteMode.DISABLE_AND_MARK);
-        dir.setEnableDisableAttribute("accountValid");
-        dir.setEnableDisableValueType(EnableDisableValueType.BOOLEAN);
-        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
-        when(linkedUserLookup.findSecUserDn(
-                eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=alice,dc=x")))
-                .thenReturn(Optional.of("secUUID=abc,secAuthority=Default,o=acme,c=us"));
-
-        DeletePlan plan = interceptor.planUserDelete(dir, "uid=alice,dc=x", ProvisioningContext.empty());
-
-        ModifyStep demoStep = (ModifyStep) plan.steps().get(1);
-        assertThat(demoStep.targetDn()).isEqualTo("uid=alice,dc=x");
-        assertThat(modValue(demoStep.mods(), "accountValid")).isEqualTo("FALSE");
-    }
-
-    @Test
-    void delete_linked_disableAndMark_refusesWhenNoEnableDisableAttribute() {
-        // The operator asked to mark the demographic entry but the directory
-        // has no enable/disable attribute to write — refuse rather than
-        // silently degrade to LEAVE.
-        VendorIntegrationIsvaConfig cfg = linkedConfig();
-        cfg.setOnDemographicDelete(IsvaDemographicDeleteMode.DISABLE_AND_MARK);
-        // dir.enableDisableAttribute left unset.
-        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
-        when(linkedUserLookup.findSecUserDn(
-                eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=alice,dc=x")))
-                .thenReturn(Optional.of("secUUID=abc,secAuthority=Default,o=acme,c=us"));
-
-        assertThatThrownBy(() -> interceptor.planUserDelete(dir, "uid=alice,dc=x", ProvisioningContext.empty()))
-                .isInstanceOf(com.ldapportal.core.provisioning.ProvisioningRefusedException.class)
-                .hasMessageContaining("DISABLE_AND_MARK")
-                .hasMessageContaining("enable/disable attribute");
-    }
-
-    @Test
-    void delete_linked_disableAndMark_refusesWhenStringHasNoDisableValue() {
-        // STRING type but no disable value configured — nothing to write,
-        // so refuse with an actionable message.
-        VendorIntegrationIsvaConfig cfg = linkedConfig();
-        cfg.setOnDemographicDelete(IsvaDemographicDeleteMode.DISABLE_AND_MARK);
+    void setEnabled_inline_disable_foldsSecAcctValidIntoOneModify() {
+        // Inline: one MODIFY on the demographic entry carrying both the
+        // enable/disable attribute write and the secUser secAcctValid flip.
         dir.setEnableDisableAttribute("nsAccountLock");
         dir.setEnableDisableValueType(EnableDisableValueType.STRING);
-        // dir.disableValue left unset.
-        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
+        dir.setDisableValue("TRUE");
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(inlineConfig()));
+
+        EnableDisablePlan plan = interceptor.planUserSetEnabled(
+                dir, "uid=alice,dc=x", false, ProvisioningContext.empty());
+
+        assertThat(plan.steps()).hasSize(1);
+        ModifyStep step = (ModifyStep) plan.steps().get(0);
+        assertThat(step.targetDn()).isEqualTo("uid=alice,dc=x");
+        assertThat(modValue(step.mods(), "nsAccountLock")).isEqualTo("TRUE");
+        assertThat(modValue(step.mods(), "secAcctValid")).isEqualTo("FALSE");
+        // secValidUntil is on the default overlay → stamped to now on disable.
+        assertThat(modValue(step.mods(), "secValidUntil")).matches("\\d{14}Z");
+    }
+
+    @Test
+    void setEnabled_inline_enable_foldsSecAcctValidTrue() {
+        dir.setEnableDisableAttribute("nsAccountLock");
+        dir.setEnableDisableValueType(EnableDisableValueType.STRING);
+        dir.setEnableValue("FALSE");
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(inlineConfig()));
+
+        EnableDisablePlan plan = interceptor.planUserSetEnabled(
+                dir, "uid=alice,dc=x", true, ProvisioningContext.empty());
+
+        ModifyStep step = (ModifyStep) plan.steps().get(0);
+        assertThat(modValue(step.mods(), "nsAccountLock")).isEqualTo("FALSE");
+        assertThat(modValue(step.mods(), "secAcctValid")).isEqualTo("TRUE");
+        // Re-enable pushes secValidUntil back out to a future timestamp.
+        assertThat(modValue(step.mods(), "secValidUntil")).matches("\\d{14}Z");
+    }
+
+    @Test
+    void setEnabled_linked_disable_mirrorsOntoPairedSecUser() {
+        // Two steps: demographic enable/disable write, then secAcctValid=FALSE
+        // on the paired secUser entry.
+        dir.setEnableDisableAttribute("nsAccountLock");
+        dir.setEnableDisableValueType(EnableDisableValueType.STRING);
+        dir.setDisableValue("TRUE");
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(linkedConfig()));
         when(linkedUserLookup.findSecUserDn(
                 eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=alice,dc=x")))
                 .thenReturn(Optional.of("secUUID=abc,secAuthority=Default,o=acme,c=us"));
 
-        assertThatThrownBy(() -> interceptor.planUserDelete(dir, "uid=alice,dc=x", ProvisioningContext.empty()))
-                .isInstanceOf(com.ldapportal.core.provisioning.ProvisioningRefusedException.class)
-                .hasMessageContaining("disable value");
+        EnableDisablePlan plan = interceptor.planUserSetEnabled(
+                dir, "uid=alice,dc=x", false, ProvisioningContext.empty());
+
+        assertThat(plan.steps()).hasSize(2);
+        ModifyStep demoStep = (ModifyStep) plan.steps().get(0);
+        assertThat(demoStep.targetDn()).isEqualTo("uid=alice,dc=x");
+        assertThat(modValue(demoStep.mods(), "nsAccountLock")).isEqualTo("TRUE");
+        ModifyStep secStep = (ModifyStep) plan.steps().get(1);
+        assertThat(secStep.targetDn()).isEqualTo("secUUID=abc,secAuthority=Default,o=acme,c=us");
+        assertThat(modValue(secStep.mods(), "secAcctValid")).isEqualTo("FALSE");
+    }
+
+    @Test
+    void setEnabled_linked_orphanedDemographic_writesDemographicOnly() {
+        // No paired secUser → don't block the reversible demographic
+        // enable/disable; just skip the (absent) secUser mirror.
+        dir.setEnableDisableAttribute("nsAccountLock");
+        dir.setEnableDisableValueType(EnableDisableValueType.STRING);
+        dir.setDisableValue("TRUE");
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(linkedConfig()));
+        when(linkedUserLookup.findSecUserDn(
+                eq(dir), eq("secAuthority=Default,o=acme,c=us"), eq("uid=orphan,dc=x")))
+                .thenReturn(Optional.empty());
+
+        EnableDisablePlan plan = interceptor.planUserSetEnabled(
+                dir, "uid=orphan,dc=x", false, ProvisioningContext.empty());
+
+        assertThat(plan.steps()).hasSize(1);
+        ModifyStep step = (ModifyStep) plan.steps().get(0);
+        assertThat(step.targetDn()).isEqualTo("uid=orphan,dc=x");
+        assertThat(modValue(step.mods(), "nsAccountLock")).isEqualTo("TRUE");
     }
 
     // ── LINKED-mode: password set ──────────────────────────────────
