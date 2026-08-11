@@ -688,6 +688,15 @@ public class ProvisioningProfileService {
                 attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId);
 
         for (ProfileAttributeConfig config : configs) {
+            // objectClass is system-managed (see applyDefaults) — its value
+            // comes from the object-class list, not this config. Skip it so a
+            // required objectClass config (and the exact-case key lookup
+            // below, which misses a camel-cased "objectClass" payload) can't
+            // raise a phantom "objectClass is required".
+            if ("objectClass".equalsIgnoreCase(config.getAttributeName())) {
+                continue;
+            }
+
             List<String> values = attributes.get(config.getAttributeName());
             String value = (values != null && !values.isEmpty()) ? values.get(0) : null;
 
@@ -859,6 +868,17 @@ public class ProvisioningProfileService {
                 attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId);
 
         for (ProfileAttributeConfig config : configs) {
+            // objectClass is system-managed: its value comes from the
+            // profile's object-class list, never from an attribute-config
+            // default. Skip it — applying a (possibly stale/typo'd)
+            // HIDDEN_FIXED default here would overwrite the real
+            // objectClasses with a single bogus value (e.g. "L") and break
+            // every create with a directory schema violation. Mirrors the
+            // exemption the profile editor already documents client-side.
+            if ("objectClass".equalsIgnoreCase(config.getAttributeName())) {
+                continue;
+            }
+
             List<String> values = attributes.get(config.getAttributeName());
             boolean hasValue = values != null && !values.isEmpty()
                     && values.get(0) != null && !values.get(0).isBlank();
