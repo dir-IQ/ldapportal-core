@@ -250,12 +250,14 @@ public class IsvaConfigService {
     /**
      * Normalize the configured optional-overlay attribute list: keep only
      * the attributes the code knows how to write
-     * ({@link com.ldapportal.addons.isva.IsvaSecUserPlans#OPTIONAL_OVERLAY_ATTRS}),
+     * ({@link com.ldapportal.addons.isva.IsvaSecUserPlans#KNOWN_OVERLAY_ATTRS}),
      * in canonical spelling and stable order, matched case-insensitively.
      * Unknown names are dropped (the code has no value to write for them,
      * and {@code secLoginType} / {@code secAuthority} are always-on MUST
      * attrs, not toggleable here). A {@code null} request resolves to the
-     * full default set; an explicitly empty list writes no optional attrs.
+     * default set ({@code OPTIONAL_OVERLAY_ATTRS} — the IVIA identity attrs
+     * stay off unless explicitly enabled); an explicitly empty list writes
+     * no optional attrs.
      */
     private static List<String> normalizeOverlayAttributes(List<String> requested) {
         if (requested == null) {
@@ -270,7 +272,7 @@ public class IsvaConfigService {
         }
         List<String> out = new ArrayList<>();
         for (String canonical
-                : com.ldapportal.addons.isva.IsvaSecUserPlans.OPTIONAL_OVERLAY_ATTRS) {
+                : com.ldapportal.addons.isva.IsvaSecUserPlans.KNOWN_OVERLAY_ATTRS) {
             if (want.contains(canonical.toLowerCase())) {
                 out.add(canonical);
             }

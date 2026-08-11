@@ -217,6 +217,64 @@ class IsvaSecUserPlansTest {
         assertThat(objectClassValues(step.attributes())).contains("secUser", "eUser");
     }
 
+    // ── IVIA identity overlay attrs (secUUID / principalName / secDomainId) ──
+
+    @Test
+    void grantLinked_identityOverlay_writesSecUuidPrincipalNameAndDomainId() {
+        // The customer shape: principalName RDN, with the opt-in identity
+        // attributes native IVIA accounts carry enabled.
+        VendorIntegrationIsvaConfig cfg = linkedConfig();
+        cfg.setSecuserObjectClasses(List.of("secUser", "eUser"));
+        cfg.setSecuserRdnAttribute("principalName");
+        cfg.setSecuserRdnValueSource(IsvaRdnValueSource.UID);
+        cfg.setSecuserOverlayAttributes(List.of(
+                "secAcctValid", "secPwdValid", "secPwdLastChanged",
+                "secUUID", "principalName", "secDomainId"));
+
+        AddStep step = plans.grantLinked(cfg, payload("uid=alice,ou=people,dc=x", "alice"));
+
+        assertThat(attrValue(step.attributes(), "principalName")).isEqualTo("alice");
+        assertThat(attrValue(step.attributes(), "secUUID"))
+                .matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+        // secDomainId = <secAuthority>%<principalName>, '%' literal.
+        assertThat(attrValue(step.attributes(), "secDomainId")).isEqualTo("Default%alice");
+    }
+
+    @Test
+    void grantLinked_defaultOverlay_omitsOptInIdentityAttrs() {
+        // With a non-secUUID RDN and the default overlay, the opt-in identity
+        // attrs stay off — principalName appears only because it's the RDN.
+        VendorIntegrationIsvaConfig cfg = linkedConfig();
+        cfg.setSecuserObjectClasses(List.of("secUser", "eUser"));
+        cfg.setSecuserRdnAttribute("principalName");
+        cfg.setSecuserRdnValueSource(IsvaRdnValueSource.UID);
+
+        AddStep step = plans.grantLinked(cfg, payload("uid=alice,dc=x", "alice"));
+
+        assertThat(attrValue(step.attributes(), "secUUID")).isNull();
+        assertThat(attrValue(step.attributes(), "secDomainId")).isNull();
+        assertThat(attrValue(step.attributes(), "principalName")).isEqualTo("alice");
+    }
+
+    @Test
+    void grantLinked_secUuidRdnAndOverlay_writesSingleRdnValue() {
+        // secUUID is both the RDN and enabled in the overlay — the RDN value
+        // wins (addIfAbsent), so exactly one secUUID is written, not a second
+        // freshly-generated one.
+        VendorIntegrationIsvaConfig cfg = linkedConfig();  // RDN=secUUID, GENERATED_UUID
+        cfg.setSecuserOverlayAttributes(List.of("secUUID"));
+
+        AddStep step = plans.grantLinked(cfg, payload("uid=alice,dc=x", "alice"));
+
+        long secUuidCount = step.attributes().stream()
+                .filter(a -> a.getName().equalsIgnoreCase("secUUID"))
+                .count();
+        assertThat(secUuidCount).isEqualTo(1);
+        String rdnValue = step.targetDn().substring(
+                step.targetDn().indexOf('=') + 1, step.targetDn().indexOf(','));
+        assertThat(attrValue(step.attributes(), "secUUID")).isEqualTo(rdnValue);
+    }
+
     // ── revoke ──────────────────────────────────────────────────────
 
     @Test
