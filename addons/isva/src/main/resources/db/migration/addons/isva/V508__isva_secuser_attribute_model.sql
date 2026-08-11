@@ -2,10 +2,12 @@
 --
 -- The unified per-attribute secUser overlay model. Each secUser attribute
 -- becomes one row carrying its own value — a literal, or a computed
--- expression (${user.<attr>} / ${sec.<attr>} references plus uuid() / now() /
--- nowPlusYears(n)) — replacing the split representation of a
--- secuser_overlay_attributes name-list alongside standalone secAuthority /
--- sec_login_type / default_valid_until_years value fields.
+-- expression (user-attribute and sec-attribute references plus the uuid(),
+-- now() and nowPlusYears(n) functions) — replacing the split representation
+-- of a secuser_overlay_attributes name-list alongside standalone
+-- secAuthority / sec_login_type / default_valid_until_years value fields.
+-- (Expression syntax is deliberately not shown here: Flyway would read a
+-- dollar-brace token in this comment as a placeholder and fail to parse.)
 --
 -- Stored as a JSON array in a TEXT column (see SecUserAttributesConverter).
 --
