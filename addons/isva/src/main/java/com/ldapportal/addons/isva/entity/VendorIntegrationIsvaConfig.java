@@ -128,6 +128,24 @@ public class VendorIntegrationIsvaConfig {
             "secLogin", "secAcctValid", "secPwdValid",
             "secValidUntil", "secPwdLastChanged"));
 
+    /**
+     * The unified per-attribute overlay model — one row per {@code secUser}
+     * attribute (name, enabled, literal-vs-computed, value/expression). When
+     * set, this is the single source of truth for what a grant writes and how
+     * each value is computed, superseding the legacy split representation
+     * ({@link #secuserOverlayAttributes} + {@link #secAuthority} /
+     * {@link #secLoginType} / {@link #defaultValidUntilYears}).
+     *
+     * <p>{@code null} means "not migrated" — the plan builders derive an
+     * equivalent model from the legacy fields on the fly
+     * ({@code IsvaSecUserPlans.effectiveAttributes}), so a config saved before
+     * this model existed provisions byte-identically. The next save persists
+     * the derived model, making it explicit. Applies to both topology modes.</p>
+     */
+    @Convert(converter = SecUserAttributesConverter.class)
+    @Column(name = "secuser_attributes", columnDefinition = "TEXT")
+    private List<SecUserAttribute> secuserAttributes;
+
     // ── LINKED-mode-only ─────────────────────────────────────────────
 
     /** Base DN of the ISVA management DIT (e.g.

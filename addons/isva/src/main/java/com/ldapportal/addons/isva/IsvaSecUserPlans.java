@@ -3,6 +3,8 @@ package com.ldapportal.addons.isva;
 
 import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
+import com.ldapportal.addons.isva.entity.SecUserAttribute;
+import com.ldapportal.addons.isva.entity.SecUserAttributeValueKind;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.core.provisioning.AddStep;
 import com.ldapportal.core.provisioning.DeleteStep;
@@ -58,8 +60,7 @@ public class IsvaSecUserPlans {
                                        VendorIntegrationIsvaConfig cfg,
                                        UserCreatePayload payload) {
         List<Attribute> attrs = augmentObjectClass(demographicAttrs, secUserObjectClasses(cfg));
-        String uid = firstValueOrEmpty(payload.attributes().get("uid"));
-        for (Map.Entry<String, String> e : secDefaults(cfg, uid).entrySet()) {
+        for (Map.Entry<String, String> e : secDefaults(cfg, payload.attributes()).entrySet()) {
             addIfAbsent(attrs, e.getKey(), e.getValue());
         }
         return attrs;
@@ -74,11 +75,11 @@ public class IsvaSecUserPlans {
      */
     public ModifyStep grantInlineOnExisting(String demographicDn,
                                             VendorIntegrationIsvaConfig cfg,
-                                            String uid) {
+                                            Map<String, List<String>> userAttrs) {
         List<Modification> mods = new ArrayList<>();
         mods.add(new Modification(ModificationType.ADD, "objectClass",
                 secUserObjectClasses(cfg).toArray(new String[0])));
-        for (Map.Entry<String, String> e : secDefaults(cfg, uid).entrySet()) {
+        for (Map.Entry<String, String> e : secDefaults(cfg, userAttrs).entrySet()) {
             mods.add(new Modification(ModificationType.ADD, e.getKey(), e.getValue()));
         }
         return ModifyStep.of(demographicDn, mods);
@@ -155,6 +156,25 @@ public class IsvaSecUserPlans {
      * explicitly enabled); an explicitly empty list writes none.
      */
     public static List<String> enabledOverlayAttrs(VendorIntegrationIsvaConfig cfg) {
+        // Optional (non-required) attributes enabled in the effective model,
+        // in that model's order. secLoginType / secAuthority are the always-on
+        // MUST attrs and are excluded here (they're not part of the optional
+        // overlay this method reports).
+        List<String> out = new ArrayList<>();
+        for (SecUserAttribute a : effectiveAttributes(cfg)) {
+            if (a.enabled() && !isRequiredAttr(a.name())) {
+                out.add(a.name());
+            }
+        }
+        return out;
+    }
+
+    /** The legacy optional-overlay set from {@code secuserOverlayAttributes} —
+     * the intersection with {@link #KNOWN_OVERLAY_ATTRS} in canonical order,
+     * {@code null} → {@link #OPTIONAL_OVERLAY_ATTRS}. Used only by the legacy
+     * deriver ({@link #deriveFromLegacy}); reads should go through
+     * {@link #enabledOverlayAttrs}. */
+    private static List<String> legacyEnabledOptional(VendorIntegrationIsvaConfig cfg) {
         List<String> configured = cfg.getSecuserOverlayAttributes();
         if (configured == null) {
             return OPTIONAL_OVERLAY_ATTRS;
@@ -174,10 +194,10 @@ public class IsvaSecUserPlans {
         return out;
     }
 
-    /** Whether a given optional overlay attribute is enabled for this config. */
+    /** Whether a given overlay attribute is enabled (written) for this config. */
     public static boolean overlayEnabled(VendorIntegrationIsvaConfig cfg, String attr) {
-        for (String a : enabledOverlayAttrs(cfg)) {
-            if (a.equalsIgnoreCase(attr)) {
+        for (SecUserAttribute a : effectiveAttributes(cfg)) {
+            if (a.enabled() && a.name().equalsIgnoreCase(attr)) {
                 return true;
             }
         }
@@ -193,37 +213,11 @@ public class IsvaSecUserPlans {
      * so the two can never drift.
      */
     public static List<String> writtenOverlayAttrNames(VendorIntegrationIsvaConfig cfg) {
-        Set<String> on = new LinkedHashSet<>();
-        for (String a : enabledOverlayAttrs(cfg)) {
-            on.add(a.toLowerCase(Locale.ROOT));
-        }
         List<String> names = new ArrayList<>();
-        if (on.contains("seclogin")) {
-            names.add("secLogin");
-        }
-        names.add("secLoginType");
-        names.add("secAuthority");
-        if (on.contains("secacctvalid")) {
-            names.add("secAcctValid");
-        }
-        if (on.contains("secpwdvalid")) {
-            names.add("secPwdValid");
-        }
-        if (on.contains("secvaliduntil")) {
-            names.add("secValidUntil");
-        }
-        if (on.contains("secpwdlastchanged")) {
-            names.add("secPwdLastChanged");
-        }
-        // IVIA identity attributes (opt-in) — see KNOWN_OVERLAY_ATTRS.
-        if (on.contains("secuuid")) {
-            names.add("secUUID");
-        }
-        if (on.contains("principalname")) {
-            names.add("principalName");
-        }
-        if (on.contains("secdomainid")) {
-            names.add("secDomainId");
+        for (SecUserAttribute a : effectiveAttributes(cfg)) {
+            if (a.enabled()) {
+                names.add(a.name());
+            }
         }
         return names;
     }
@@ -251,6 +245,162 @@ public class IsvaSecUserPlans {
             }
         }
         return names;
+    }
+
+    // ── unified per-attribute model ──────────────────────────────────
+
+    /** Canonical attribute order — the order a legacy-derived model emits, and
+     * the historical order {@code writtenOverlayAttrNames} produced, so a
+     * migrated config's ADD lists byte-for-byte match the pre-model output. */
+    private static final List<String> CANONICAL_ORDER = List.of(
+            "secLogin", "secLoginType", "secAuthority", "secAcctValid",
+            "secPwdValid", "secValidUntil", "secPwdLastChanged",
+            "secUUID", "principalName", "secDomainId");
+
+    /** The two IBM-{@code secUser}-MUST attributes — always enabled, never
+     * excludable. Their <em>values</em> are configurable like any other. */
+    private static final Set<String> REQUIRED_ATTRS =
+            new LinkedHashSet<>(List.of("secLoginType", "secAuthority"));
+
+    private static boolean isRequiredAttr(String name) {
+        for (String r : REQUIRED_ATTRS) {
+            if (r.equalsIgnoreCase(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The effective per-attribute model for this config: the stored
+     * {@code secuserAttributes} when set, otherwise an equivalent model
+     * {@linkplain #deriveFromLegacy derived} from the legacy value fields.
+     * Single source of truth for what a grant writes and how.
+     */
+    public static List<SecUserAttribute> effectiveAttributes(VendorIntegrationIsvaConfig cfg) {
+        List<SecUserAttribute> stored = cfg.getSecuserAttributes();
+        if (stored != null && !stored.isEmpty()) {
+            return stored;
+        }
+        return deriveFromLegacy(cfg);
+    }
+
+    /**
+     * Build the per-attribute model that reproduces the pre-model behaviour of
+     * a config that only has the legacy value fields set — same attributes,
+     * same enabled set, same values, same order. Used when
+     * {@code secuserAttributes} is null (not migrated) and as the seed the
+     * upsert persists on the next save.
+     */
+    public static List<SecUserAttribute> deriveFromLegacy(VendorIntegrationIsvaConfig cfg) {
+        Set<String> optionalOn = new LinkedHashSet<>();
+        for (String a : legacyEnabledOptional(cfg)) {
+            optionalOn.add(a.toLowerCase(Locale.ROOT));
+        }
+        String loginType = nonNull(cfg.getSecLoginType(), "Default");
+        String authority = nonNull(cfg.getSecAuthority(), "Default");
+        int years = cfg.getDefaultValidUntilYears();
+        List<SecUserAttribute> out = new ArrayList<>();
+        for (String name : CANONICAL_ORDER) {
+            boolean enabled = isRequiredAttr(name)
+                    || optionalOn.contains(name.toLowerCase(Locale.ROOT));
+            out.add(new SecUserAttribute(name, enabled,
+                    legacyKind(name), legacyValue(name, loginType, authority, years)));
+        }
+        return out;
+    }
+
+    private static SecUserAttributeValueKind legacyKind(String name) {
+        return switch (name) {
+            case "secLoginType", "secAuthority", "secAcctValid", "secPwdValid" ->
+                    SecUserAttributeValueKind.LITERAL;
+            default -> SecUserAttributeValueKind.COMPUTED;
+        };
+    }
+
+    private static String legacyValue(String name, String loginType,
+                                      String authority, int years) {
+        return switch (name) {
+            case "secLogin" -> "${user.uid}";
+            case "secLoginType" -> loginType;
+            case "secAuthority" -> authority;
+            case "secAcctValid" -> "TRUE";
+            case "secPwdValid" -> "TRUE";
+            case "secValidUntil" -> "nowPlusYears(" + years + ")";
+            case "secPwdLastChanged" -> "now()";
+            case "secUUID" -> "uuid()";
+            case "principalName" -> "${user.uid}";
+            // <secAuthority>%<uid> — secAuthority via a ${sec.*} reference (so
+            // the dependency resolver composes it), uid straight from the
+            // demographic payload. Matches the pre-model Default%<uid> shape
+            // without requiring principalName to be enabled.
+            case "secDomainId" -> "${sec.secAuthority}%${user.uid}";
+            default -> throw new IllegalStateException("Unknown overlay attribute: " + name);
+        };
+    }
+
+    /**
+     * Resolve every enabled attribute to its concrete value for one user, in
+     * the effective model's order. {@code COMPUTED} values are evaluated via
+     * {@link SecUserExpressionEvaluator}; {@code ${sec.*}} references are
+     * resolved on demand against the same model, so a value that depends on
+     * another (e.g. {@code secDomainId} → {@code secAuthority}) resolves in
+     * dependency order. Cyclic references and references to a disabled /
+     * unknown attribute fail loudly at plan time.
+     */
+    public static Map<String, String> resolveValues(VendorIntegrationIsvaConfig cfg,
+                                                     Map<String, List<String>> userAttrs,
+                                                     Instant now) {
+        List<SecUserAttribute> attrs = effectiveAttributes(cfg);
+        Map<String, SecUserAttribute> byName = new LinkedHashMap<>();
+        for (SecUserAttribute a : attrs) {
+            if (a.enabled()) {
+                byName.put(a.name().toLowerCase(Locale.ROOT), a);
+            }
+        }
+        Map<String, String> memo = new java.util.HashMap<>();
+        Set<String> visiting = new LinkedHashSet<>();
+        Map<String, String> out = new LinkedHashMap<>();
+        for (SecUserAttribute a : attrs) {
+            if (a.enabled()) {
+                out.put(a.name(),
+                        resolveOne(a.name(), byName, userAttrs, now, memo, visiting));
+            }
+        }
+        return out;
+    }
+
+    private static String resolveOne(String name,
+                                     Map<String, SecUserAttribute> byName,
+                                     Map<String, List<String>> userAttrs,
+                                     Instant now,
+                                     Map<String, String> memo,
+                                     Set<String> visiting) {
+        String key = name.toLowerCase(Locale.ROOT);
+        String done = memo.get(key);
+        if (done != null) {
+            return done;
+        }
+        if (visiting.contains(key)) {
+            throw new IllegalArgumentException(
+                    "Cyclic secUser attribute expression involving '" + name + "'");
+        }
+        SecUserAttribute a = byName.get(key);
+        if (a == null) {
+            throw new IllegalArgumentException(
+                    "secUser attribute expression references '" + name
+                            + "', which is not a written attribute in this config. "
+                            + "Enable it, or reference a base user attribute "
+                            + "(${user." + name + "}) instead.");
+        }
+        visiting.add(key);
+        String value = a.valueKind() == SecUserAttributeValueKind.LITERAL
+                ? nonNull(a.value(), "")
+                : SecUserExpressionEvaluator.evaluate(a.value(), userAttrs,
+                        dep -> resolveOne(dep, byName, userAttrs, now, memo, visiting), now);
+        visiting.remove(key);
+        memo.put(key, value);
+        return value;
     }
 
     // ── revoke ───────────────────────────────────────────────────────
@@ -473,8 +623,7 @@ public class IsvaSecUserPlans {
         // entry to its demographic counterpart. Without it ISVA
         // can't authenticate via the secUser path.
         attrs.add(new Attribute("secDN", payload.dn()));
-        String uid = firstValueOrEmpty(payload.attributes().get("uid"));
-        for (Map.Entry<String, String> e : secDefaults(cfg, uid).entrySet()) {
+        for (Map.Entry<String, String> e : secDefaults(cfg, payload.attributes()).entrySet()) {
             addIfAbsent(attrs, e.getKey(), e.getValue());
         }
         return attrs;
@@ -490,45 +639,14 @@ public class IsvaSecUserPlans {
      * <p>The timestamps ({@code secValidUntil}, {@code secPwdLastChanged})
      * are computed per call from {@code Instant.now()}.</p>
      */
-    private Map<String, String> secDefaults(VendorIntegrationIsvaConfig cfg, String uid) {
-        // writtenOverlayAttrNames is the single source of truth for which
-        // attributes a grant emits (the two always-on MUST attrs plus the
-        // enabled optional overlay); here we attach each name's value.
-        // secLoginType / secAuthority are MUST on IBM's stock secUser, so
-        // they always appear; the optional attrs (secLogin, secValidUntil,
-        // …) appear only when the directory's configured overlay includes
-        // them — a deployment whose secUser schema omits one trims it out
-        // rather than failing every grant with "attribute not allowed".
-        Map<String, String> defaults = new LinkedHashMap<>();
-        Instant now = Instant.now();
-        for (String name : writtenOverlayAttrNames(cfg)) {
-            defaults.put(name, overlayValue(name, cfg, uid, now));
-        }
-        return defaults;
-    }
-
-    /** The value written for a given overlay attribute name. */
-    private String overlayValue(String name, VendorIntegrationIsvaConfig cfg,
-                                String uid, Instant now) {
-        return switch (name) {
-            case "secLogin" -> uid;
-            case "secLoginType" -> nonNull(cfg.getSecLoginType(), "Default");
-            case "secAuthority" -> nonNull(cfg.getSecAuthority(), "Default");
-            case "secAcctValid" -> "TRUE";
-            case "secPwdValid" -> "TRUE";
-            case "secValidUntil" -> generalizedTime(now.plusSeconds(
-                    yearsInSeconds(cfg.getDefaultValidUntilYears())));
-            case "secPwdLastChanged" -> generalizedTime(now);
-            // IVIA identity attributes (opt-in). secUUID is a fresh opaque
-            // id; when secUUID is also the RDN the RDN value is written first
-            // and addIfAbsent skips this one, so the RDN value wins.
-            case "secUUID" -> UUID.randomUUID().toString();
-            case "principalName" -> uid;
-            // <secAuthority>%<principalName> — the principal value is the uid,
-            // matching how principalName is written above (e.g. Default%jdoe).
-            case "secDomainId" -> nonNull(cfg.getSecAuthority(), "Default") + "%" + uid;
-            default -> throw new IllegalStateException("Unknown overlay attribute: " + name);
-        };
+    private Map<String, String> secDefaults(VendorIntegrationIsvaConfig cfg,
+                                            Map<String, List<String>> userAttrs) {
+        // The unified per-attribute model is the single source of truth for
+        // which attributes a grant emits and how each value is produced —
+        // literal, or a computed expression evaluated against this user. One
+        // shared Instant.now() keeps secValidUntil / secPwdLastChanged on the
+        // same entry agreeing to the microsecond, as before.
+        return resolveValues(cfg, userAttrs, Instant.now());
     }
 
     private static void addIfAbsent(List<Attribute> attrs, String name, String value) {
