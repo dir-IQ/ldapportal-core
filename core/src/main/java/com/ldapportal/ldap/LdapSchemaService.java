@@ -127,6 +127,104 @@ public class LdapSchemaService {
     }
 
     /**
+     * Rich detail for a single objectClass — a superset of
+     * {@link ObjectClassAttributes} adding the inheritance hierarchy: the
+     * ancestor chain walked up the {@code SUP} links, the direct subclasses
+     * (reverse index), and the class kind (STRUCTURAL / AUXILIARY / ABSTRACT).
+     * The schema is already in memory from the same fetch, so this adds no
+     * LDAP round trips.
+     *
+     * @throws LdapOperationException if the objectClass does not exist in the schema
+     */
+    public ObjectClassDetail getObjectClassDetail(DirectoryConnection dc, String objectClass) {
+        Schema schema = fetchSchema(dc);
+        ObjectClassDefinition ocd = schema.getObjectClass(objectClass);
+        if (ocd == null) {
+            throw new LdapOperationException(
+                "ObjectClass '" + objectClass + "' not found in schema for ["
+                + dc.getDisplayName() + "]");
+        }
+        return buildObjectClassDetail(schema, ocd);
+    }
+
+    /** Visible for testing: builds the detail from an already-resolved schema + class. */
+    static ObjectClassDetail buildObjectClassDetail(Schema schema, ObjectClassDefinition ocd) {
+        return new ObjectClassDetail(
+            ocd.getNameOrOID(),
+            ocd.getOID(),
+            ocd.getDescription(),
+            ocd.getObjectClassType() == null ? null : ocd.getObjectClassType().getName(),
+            collectAttributeNames(schema, ocd, true),
+            collectAttributeNames(schema, ocd, false),
+            collectSuperiors(schema, ocd),
+            collectSubclasses(schema, ocd));
+    }
+
+    /**
+     * The ancestor chain, nearest parent first (e.g. for {@code secUser}:
+     * {@code eUser}, {@code cimManagedElement}, {@code top}). LDAP permits
+     * multiple {@code SUP} classes, so this is a breadth-first walk of a DAG
+     * rather than a strict chain; the visited set both de-duplicates a diamond
+     * and guards against a malformed cyclic schema. Names that don't resolve to
+     * a definition are still reported — a dangling SUP is worth seeing.
+     */
+    private static List<String> collectSuperiors(Schema schema, ObjectClassDefinition ocd) {
+        List<String> chain = new ArrayList<>();
+        Set<String> visited = new HashSet<>();
+        visited.add(ocd.getNameOrOID().toLowerCase(Locale.ROOT));
+        Deque<ObjectClassDefinition> queue = new ArrayDeque<>();
+        queue.add(ocd);
+        while (!queue.isEmpty()) {
+            ObjectClassDefinition current = queue.poll();
+            String[] superNames = current.getSuperiorClasses();
+            if (superNames == null) {
+                continue;
+            }
+            for (String superName : superNames) {
+                if (!visited.add(superName.toLowerCase(Locale.ROOT))) {
+                    continue;
+                }
+                ObjectClassDefinition superOcd = schema.getObjectClass(superName);
+                // Report the definition's canonical name when it resolves, so
+                // an alias in the SUP clause still links to the right entry.
+                chain.add(superOcd != null ? superOcd.getNameOrOID() : superName);
+                if (superOcd != null) {
+                    queue.add(superOcd);
+                }
+            }
+        }
+        return chain;
+    }
+
+    /**
+     * Direct subclasses: every objectClass naming this one in its {@code SUP}
+     * clause (by any alias or by OID). Sorted case-insensitively for a stable,
+     * readable list. Only direct children — the browser lets you walk further
+     * down by clicking through.
+     */
+    private static List<String> collectSubclasses(Schema schema, ObjectClassDefinition ocd) {
+        Set<String> targets = new HashSet<>();
+        for (String name : ocd.getNames()) {
+            targets.add(name.toLowerCase(Locale.ROOT));
+        }
+        targets.add(ocd.getOID().toLowerCase(Locale.ROOT));
+
+        List<String> subs = new ArrayList<>();
+        for (ObjectClassDefinition candidate : schema.getObjectClasses()) {
+            if (candidate.getNameOrOID().equalsIgnoreCase(ocd.getNameOrOID())) {
+                continue;   // a class is not its own subclass
+            }
+            if (containsAny(candidate.getSuperiorClasses(), targets)) {
+                subs.add(candidate.getNameOrOID());
+            }
+        }
+        subs.sort(String.CASE_INSENSITIVE_ORDER);
+        return subs.stream()
+            .filter(distinctByKey(n -> n.toLowerCase(Locale.ROOT)))
+            .collect(Collectors.toList());
+    }
+
+    /**
      * Returns detailed information about a specific attributeType.
      *
      * @throws LdapOperationException if the attribute does not exist in the schema
@@ -397,6 +495,27 @@ public class LdapSchemaService {
         String oid,
         Set<String> required,
         Set<String> optional
+    ) {}
+
+    /**
+     * Rich detail for a single objectClass — drives the schema browser's
+     * objectClass view. A superset of {@link ObjectClassAttributes} (same
+     * {@code required} / {@code optional} sets, so existing consumers of the
+     * single-class endpoint keep working) plus the inheritance hierarchy.
+     *
+     * @param superiors ancestors, nearest parent first, walking {@code SUP}
+     * @param subclasses direct children, case-insensitively sorted
+     * @param kind STRUCTURAL / AUXILIARY / ABSTRACT, or null when unspecified
+     */
+    public record ObjectClassDetail(
+        String objectClassName,
+        String oid,
+        String description,
+        String kind,
+        Set<String> required,
+        Set<String> optional,
+        List<String> superiors,
+        List<String> subclasses
     ) {}
 
     /**

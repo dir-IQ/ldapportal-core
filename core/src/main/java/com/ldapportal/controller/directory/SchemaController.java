@@ -8,6 +8,7 @@ import com.ldapportal.entity.enums.FeatureKey;
 import com.ldapportal.ldap.LdapSchemaService.AttributeTypeDetail;
 import com.ldapportal.ldap.LdapSchemaService.AttributeTypeInfo;
 import com.ldapportal.ldap.LdapSchemaService.ObjectClassAttributes;
+import com.ldapportal.ldap.LdapSchemaService.ObjectClassDetail;
 import com.ldapportal.ldap.LdapSchemaService.SchemaListItem;
 import com.ldapportal.service.LdapOperationService;
 import lombok.RequiredArgsConstructor;
@@ -42,13 +43,20 @@ public class SchemaController {
         return service.getObjectClassNames(directoryId, principal);
     }
 
+    /**
+     * Single objectClass detail. Returns {@link ObjectClassDetail} — a superset
+     * of {@link ObjectClassAttributes} carrying the same {@code required} /
+     * {@code optional} sets plus the inheritance hierarchy (ancestors,
+     * subclasses, class kind), so callers that only read the attribute sets are
+     * unaffected.
+     */
     @GetMapping("/object-classes/{name}")
     @RequiresFeature(FeatureKey.SCHEMA_READ)
-    public ObjectClassAttributes getObjectClass(
+    public ObjectClassDetail getObjectClass(
             @DirectoryId @PathVariable UUID directoryId,
             @PathVariable String name,
             @AuthenticationPrincipal AuthPrincipal principal) {
-        return service.getObjectClassAttributes(directoryId, principal, name);
+        return service.getObjectClassDetail(directoryId, principal, name);
     }
 
     @GetMapping("/object-classes/bulk")
