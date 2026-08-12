@@ -243,3 +243,53 @@ describe('SchemaBrowserView schema management toolbar', () => {
     expect(vi.mocked(listObjectClasses)).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('SchemaBrowserView list de-dup + filter', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    authState.canManage = false
+    stubResponses()
+    Element.prototype.scrollIntoView = vi.fn() as unknown as () => void
+  })
+
+  // List rows are the font-mono buttons in the left panel (tab / chip buttons
+  // aren't font-mono, and no row is selected on initial load so no detail chips
+  // are present).
+  const listRowNames = (w: ReturnType<typeof mountView>) =>
+    w.findAll('button.font-mono').map((b) => b.text())
+
+  it('collapses duplicate object-class names to a single row', async () => {
+    vi.mocked(listObjectClasses).mockResolvedValue({
+      data: [
+        { name: 'eUser', oid: '1' }, { name: 'eUser', oid: '2' },
+        { name: 'eUser', oid: '3' }, { name: 'container', oid: '4' },
+      ],
+    } as never)
+
+    const w = mountView()
+    await flushPromises()
+
+    const names = listRowNames(w)
+    expect(names.filter((n) => n === 'eUser')).toHaveLength(1)
+    expect(names).toContain('container')
+  })
+
+  it('filters the list as you type (unique keys keep it reconciling)', async () => {
+    vi.mocked(listObjectClasses).mockResolvedValue({
+      data: [
+        { name: 'eUser', oid: '1' }, { name: 'eUser', oid: '2' },
+        { name: 'container', oid: '4' },
+      ],
+    } as never)
+
+    const w = mountView()
+    await flushPromises()
+
+    await w.find('input[type="text"]').setValue('eu')
+
+    const names = listRowNames(w)
+    expect(names).toContain('eUser')
+    expect(names).not.toContain('container')
+  })
+})

@@ -342,9 +342,20 @@ async function loadList() {
   try {
     const fn = activeTab.value === 'objectClasses' ? listObjectClasses : listAttributeTypes
     const { data } = await fn(selectedDirId.value)
-    allItems.value = Array.isArray(data)
+    const mapped = Array.isArray(data)
       ? data.map((d: SchemaListItem | string) => typeof d === 'string' ? { name: d, oid: null } : d)
       : []
+    // Defensive de-dup by name: some directories (notably OUD) return the same
+    // schema element more than once. The list is keyed by name, and duplicate
+    // keys break Vue's reconciliation — the list stops updating when the filter
+    // changes. Collapse them so the keys stay unique and the filter works.
+    const seen = new Set<string>()
+    allItems.value = mapped.filter((item) => {
+      const key = item.name.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
   } catch (e) {
     notif.error(apiError(e))
   } finally {

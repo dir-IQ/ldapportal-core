@@ -13,6 +13,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
@@ -40,10 +42,19 @@ public class LdapSchemaService {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
         }
-        Schema schema = fetchSchema(dc);
+        return objectClassItems(fetchSchema(dc));
+    }
+
+    /**
+     * Map the schema's objectClass definitions to sorted, name-deduplicated
+     * list items. Package-private + static so it's unit-testable against a
+     * hand-built {@link Schema} without a live directory connection.
+     */
+    static List<SchemaListItem> objectClassItems(Schema schema) {
         return schema.getObjectClasses().stream()
             .map(ocd -> new SchemaListItem(ocd.getNameOrOID(), ocd.getOID()))
             .sorted(Comparator.comparing(SchemaListItem::name, String.CASE_INSENSITIVE_ORDER))
+            .filter(distinctByKey(i -> i.name().toLowerCase(Locale.ROOT)))
             .collect(Collectors.toList());
     }
 
@@ -55,8 +66,31 @@ public class LdapSchemaService {
      * chip editors (a Phase 1.5 feature). Trades a few bytes per attribute
      * over the wire for an N+1 round trip we'd otherwise need.
      */
+    /**
+     * Stateful de-dup predicate that keeps the first element seen for each key.
+     * Some directories — notably OUD — return the same schema element more than
+     * once (e.g. an objectClass whose definition is present in several schema
+     * files), so the raw definition list can carry several entries that resolve
+     * to the same display name. Collapsing them keeps the browser list clean
+     * and, just as importantly, keeps element names unique — the browser's list
+     * is keyed by name, and duplicate keys break its reconciliation (a stale,
+     * un-filterable list). Sequential stream use only.
+     */
+    private static <T> Predicate<T> distinctByKey(Function<? super T, ?> keyExtractor) {
+        Set<Object> seen = new HashSet<>();
+        return t -> seen.add(keyExtractor.apply(t));
+    }
+
     public List<AttributeTypeInfo> getAttributeTypeNames(DirectoryConnection dc) {
-        Schema schema = fetchSchema(dc);
+        return attributeTypeItems(fetchSchema(dc));
+    }
+
+    /**
+     * Map the schema's attributeType definitions to sorted, name-deduplicated
+     * list items. Package-private + static for unit-testing (see
+     * {@link #objectClassItems}).
+     */
+    static List<AttributeTypeInfo> attributeTypeItems(Schema schema) {
         return schema.getAttributeTypes().stream()
             .map(atd -> new AttributeTypeInfo(
                 atd.getNameOrOID(),
@@ -64,6 +98,7 @@ public class LdapSchemaService {
                 atd.getSyntaxOID(),
                 atd.isSingleValued()))
             .sorted(Comparator.comparing(AttributeTypeInfo::name, String.CASE_INSENSITIVE_ORDER))
+            .filter(distinctByKey(i -> i.name().toLowerCase(Locale.ROOT)))
             .collect(Collectors.toList());
     }
 
