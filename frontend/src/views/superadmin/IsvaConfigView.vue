@@ -550,13 +550,16 @@ function extractErrorMessage(e: unknown, fallback: string): string {
                        border-b border-gray-100 dark:border-gray-800"
                 :data-testid="`attr-row-${attr.name}`"
               >
-                <div>
-                  <code class="text-sm text-gray-800 dark:text-gray-100">{{ attr.name }}</code>
+                <div class="self-center">
+                  <code
+                    class="text-sm text-gray-800 dark:text-gray-100 cursor-help
+                           underline decoration-dotted decoration-gray-400 underline-offset-2"
+                    :title="ATTR_HINTS[attr.name]"
+                  >{{ attr.name }}</code>
                   <span v-if="isRequiredAttr(attr.name)" class="ml-1 text-gray-400"
                         title="Required — can't be unticked">&#128274;</span>
-                  <p class="text-xs text-gray-500 mt-0.5">{{ ATTR_HINTS[attr.name] }}</p>
                 </div>
-                <div class="flex justify-center pt-1">
+                <div class="flex justify-center self-center">
                   <input
                     type="checkbox"
                     class="rounded"
@@ -612,28 +615,6 @@ function extractErrorMessage(e: unknown, fallback: string): string {
               </p>
             </div>
           </details>
-        </div>
-
-        <div class="rounded-md border border-gray-200 dark:border-gray-700
-                    bg-gray-50 dark:bg-gray-800/50 p-3" data-testid="account-lifecycle-note">
-          <p class="text-sm font-medium text-gray-900 dark:text-gray-100 mb-1">
-            Account lifecycle
-          </p>
-          <p class="text-xs text-gray-600 dark:text-gray-300">
-            The <code>secUser</code> account mirrors the user's demographic
-            entry automatically — no separate delete policy to choose:
-          </p>
-          <ul class="mt-1 list-disc pl-5 text-xs text-gray-600 dark:text-gray-300 space-y-0.5">
-            <li>
-              <span class="font-medium">Disable</span> a user →
-              <code>secAcctValid=FALSE</code> on its <code>secUser</code>
-              (re-enabling flips it back).
-            </li>
-            <li>
-              <span class="font-medium">Delete</span> a user →
-              its <code>secUser</code> entry is deleted too.
-            </li>
-          </ul>
         </div>
 
         <div class="flex items-start gap-2">
