@@ -252,7 +252,7 @@
           <FormField label="cn (Common Name)" v-model="local.attributes.cn" required />
           <FormField label="sn (Surname)" v-model="local.attributes.sn" />
           <FormField label="mail" v-model="local.attributes.mail" />
-          <FormField label="userPassword" type="password" v-model="local.attributes.userPassword" />
+          <FormField label="userPassword" type="password" revealable v-model="local.attributes.userPassword" />
         </template>
       </div>
 
@@ -319,6 +319,7 @@
                       :label="fieldLabel(attr)"
                       v-model="local.attributes[attr.attributeName]"
                       :type="mapInputType(attr.inputType)"
+                      :revealable="mapInputType(attr.inputType) === 'password'"
                       :options="attr.inputType === 'SELECT' ? parseOptions(attr.allowedValues) : undefined"
                       :required="attr.requiredOnCreate"
                       :disabled="!attr.editableOnUpdate || isNamingAttr(attr.attributeName)"
