@@ -16,6 +16,18 @@ import type { AxiosResponse } from 'axios';
 export type IsvaTopologyMode = 'INLINE' | 'LINKED';
 export type IsvaGroupMemberTarget = 'DEMOGRAPHIC_DN' | 'SECUSER_DN';
 export type IsvaRdnValueSource = 'GENERATED_UUID' | 'UID';
+export type SecUserAttributeValueKind = 'LITERAL' | 'COMPUTED';
+
+// One row of the unified secUser attribute model — name, whether a grant
+// writes it, and how its value is produced (a literal, or a computed
+// expression: ${user.<attr>} / ${sec.<attr>} references plus uuid() / now() /
+// nowPlusYears(n)).
+export interface SecUserAttribute {
+  name: string;
+  enabled: boolean;
+  valueKind: SecUserAttributeValueKind;
+  value: string;
+}
 
 export interface IsvaConfigDto {
   enabled: boolean;
@@ -28,6 +40,10 @@ export interface IsvaConfigDto {
   // Applies to both modes
   secuserObjectClasses: string[];
   secuserOverlayAttributes: string[];
+
+  // The effective per-attribute model — always populated (derived from the
+  // legacy fields server-side when no explicit model is stored).
+  secuserAttributes: SecUserAttribute[];
 
   // Linked-mode-only — null in INLINE responses
   managementDitBaseDn: string | null;
@@ -51,8 +67,14 @@ export interface UpsertIsvaConfigRequest {
   // Applies to both modes — secUser is normalized in server-side if omitted
   secuserObjectClasses: string[];
   // Applies to both modes — the optional sec* overlay attributes to write.
-  // Normalized to the known optional attributes server-side.
+  // Normalized to the known optional attributes server-side. Legacy: the
+  // server prefers secuserAttributes below when that is supplied.
   secuserOverlayAttributes: string[];
+
+  // The unified per-attribute model — authoritative when supplied. Normalized
+  // to the canonical full set server-side. null → server derives from the
+  // legacy value fields.
+  secuserAttributes: SecUserAttribute[] | null;
 
   // Required when topologyMode = LINKED
   managementDitBaseDn: string | null;

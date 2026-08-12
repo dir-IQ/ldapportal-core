@@ -7,6 +7,8 @@ import com.ldapportal.addons.isva.dto.UpsertIsvaConfigRequest;
 import com.ldapportal.addons.isva.entity.IsvaGroupMemberTarget;
 import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
+import com.ldapportal.addons.isva.entity.SecUserAttribute;
+import com.ldapportal.addons.isva.entity.SecUserAttributeValueKind;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.addons.isva.repository.VendorIntegrationIsvaConfigRepository;
 import com.ldapportal.addons.isva.service.IsvaConfigProbeService;
@@ -112,7 +114,7 @@ class IsvaConfigControllerTest {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, true,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
 
         IsvaConfigDto body = controller.upsert(directoryId, null, principal, req).getBody();
 
@@ -123,6 +125,67 @@ class IsvaConfigControllerTest {
         // INLINE mode → linked-mode fields cleared.
         assertThat(body.managementDitBaseDn()).isNull();
         assertThat(body.updatedBy()).isEqualTo("alice");
+    }
+
+    @Test
+    void upsert_noModel_dtoReturnsDerivedEffectiveModel() {
+        // A request without secuserAttributes leaves the column null; the DTO
+        // still exposes a full derived model so the config page has a complete
+        // table to render.
+        when(configRepo.findById(directoryId)).thenReturn(Optional.empty());
+        when(configRepo.saveAndFlush(any(VendorIntegrationIsvaConfig.class)))
+                .thenAnswer(IsvaConfigControllerTest::saveAnswer);
+
+        UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
+                true, IsvaTopologyMode.INLINE, "Default", "Default",
+                100, true,
+                null, null, null, null, null, null, null);
+
+        IsvaConfigDto body = controller.upsert(directoryId, null, principal, req).getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.secuserAttributes()).extracting(SecUserAttribute::name)
+                .containsExactly("secLogin", "secLoginType", "secAuthority",
+                        "secAcctValid", "secPwdValid", "secValidUntil",
+                        "secPwdLastChanged", "secUUID", "principalName", "secDomainId");
+        // Stored column stays null (derive-on-read).
+        ArgumentCaptor<VendorIntegrationIsvaConfig> captor =
+                ArgumentCaptor.forClass(VendorIntegrationIsvaConfig.class);
+        verify(configRepo).saveAndFlush(captor.capture());
+        assertThat(captor.getValue().getSecuserAttributes()).isNull();
+    }
+
+    @Test
+    void upsert_withModel_normalizesToCanonicalFullSet_andPersists() {
+        // A partial model (just secDomainId enabled) is normalized to the full
+        // canonical set with required attrs forced on, then stored.
+        when(configRepo.findById(directoryId)).thenReturn(Optional.empty());
+        when(configRepo.saveAndFlush(any(VendorIntegrationIsvaConfig.class)))
+                .thenAnswer(IsvaConfigControllerTest::saveAnswer);
+
+        UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
+                true, IsvaTopologyMode.INLINE, "Default", "Default",
+                100, true,
+                null, null, null, null, null, null,
+                List.of(new SecUserAttribute("secDomainId", true,
+                        SecUserAttributeValueKind.COMPUTED, "${sec.secAuthority}%${user.uid}")));
+
+        IsvaConfigDto body = controller.upsert(directoryId, null, principal, req).getBody();
+
+        assertThat(body).isNotNull();
+        ArgumentCaptor<VendorIntegrationIsvaConfig> captor =
+                ArgumentCaptor.forClass(VendorIntegrationIsvaConfig.class);
+        verify(configRepo).saveAndFlush(captor.capture());
+        List<SecUserAttribute> stored = captor.getValue().getSecuserAttributes();
+        assertThat(stored).extracting(SecUserAttribute::name).hasSize(10);
+        // Required MUST attrs forced enabled even though the request omitted them.
+        assertThat(stored).filteredOn(a -> a.name().equals("secLoginType"))
+                .singleElement().returns(true, SecUserAttribute::enabled);
+        // The supplied row survives.
+        assertThat(stored).filteredOn(a -> a.name().equals("secDomainId"))
+                .singleElement()
+                .returns(true, SecUserAttribute::enabled)
+                .returns("${sec.secAuthority}%${user.uid}", SecUserAttribute::value);
     }
 
     @Test
@@ -140,7 +203,8 @@ class IsvaConfigControllerTest {
                 "secAuthority=Default,o=acme,c=us",
                 "principalName",
                 IsvaRdnValueSource.UID,
-                IsvaGroupMemberTarget.DEMOGRAPHIC_DN);
+                IsvaGroupMemberTarget.DEMOGRAPHIC_DN,
+                null);
 
         IsvaConfigDto body = controller.upsert(directoryId, null, principal, req).getBody();
 
@@ -164,7 +228,7 @@ class IsvaConfigControllerTest {
                 null,   // objectClasses → normalized to [secUser]
                 null,   // overlay attrs → normalized to default set
                 "   ",   // blank → invalid
-                "secUUID", null, null);
+                "secUUID", null, null, null);
 
         assertThatThrownBy(() -> controller.upsert(directoryId, null, principal, req))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -187,7 +251,7 @@ class IsvaConfigControllerTest {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, true,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
 
         IsvaConfigDto body = controller.upsert(directoryId, null, principal, req).getBody();
         assertThat(body).isNotNull();
@@ -206,7 +270,7 @@ class IsvaConfigControllerTest {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, true,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
 
         assertThatThrownBy(() -> controller.upsert(directoryId, null, principal, req))
                 .isInstanceOf(ResourceNotFoundException.class);
@@ -223,7 +287,7 @@ class IsvaConfigControllerTest {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "  ", "Default",
                 100, true,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
 
         ArgumentCaptor<VendorIntegrationIsvaConfig> captor =
                 ArgumentCaptor.forClass(VendorIntegrationIsvaConfig.class);
@@ -305,7 +369,7 @@ class IsvaConfigControllerTest {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, true,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
 
         IsvaConfigDto body = bySlugController.upsert("corp-ldap", null, principal, req).getBody();
 
@@ -353,7 +417,7 @@ class IsvaConfigControllerTest {
         UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
                 true, IsvaTopologyMode.INLINE, "Default", "Default",
                 100, true,
-                null, null, null, null, null, null);
+                null, null, null, null, null, null, null);
 
         // If-Match "1" parses to expectedVersion 1, but the row is at 5.
         assertThatThrownBy(() -> controller.upsert(directoryId, "\"1\"", principal, req))
