@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva.dto;
 
+import com.ldapportal.addons.isva.IsvaSecUserPlans;
 import com.ldapportal.addons.isva.entity.IsvaGroupMemberTarget;
 import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
+import com.ldapportal.addons.isva.entity.SecUserAttribute;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 
 import java.time.OffsetDateTime;
@@ -28,6 +30,11 @@ public record IsvaConfigDto(
         List<String> secuserObjectClasses,
         List<String> secuserOverlayAttributes,
 
+        // The effective per-attribute model — always populated (derived from
+        // the legacy fields when no explicit model is stored), so the config
+        // page always has a complete table to render and round-trip.
+        List<SecUserAttribute> secuserAttributes,
+
         // Linked-mode-only — null in inline-mode responses
         String managementDitBaseDn,
         String secuserRdnAttribute,
@@ -50,6 +57,7 @@ public record IsvaConfigDto(
                 entity.isRequireSecGroup(),
                 entity.getSecuserObjectClasses(),
                 entity.getSecuserOverlayAttributes(),
+                IsvaSecUserPlans.effectiveAttributes(entity),
                 entity.getManagementDitBaseDn(),
                 entity.getSecuserRdnAttribute(),
                 entity.getSecuserRdnValueSource(),

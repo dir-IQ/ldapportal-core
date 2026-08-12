@@ -310,6 +310,50 @@ public class IsvaSecUserPlans {
         return out;
     }
 
+    /**
+     * Normalize an operator-supplied model to the canonical full set: every
+     * known attribute present exactly once, in canonical order, with the two
+     * MUST attrs ({@code secLoginType}, {@code secAuthority}) forced enabled.
+     * A supplied row wins for enabled / kind / value; unknown attribute names
+     * are dropped; a missing known attribute falls back to a sensible disabled
+     * default. This is what the config upsert stores, so a saved model always
+     * round-trips to a complete, stable shape the config page can render.
+     */
+    public static List<SecUserAttribute> normalizeModel(List<SecUserAttribute> requested) {
+        Map<String, SecUserAttribute> byName = new LinkedHashMap<>();
+        if (requested != null) {
+            for (SecUserAttribute a : requested) {
+                if (a == null || a.name() == null || a.name().isBlank()) {
+                    continue;
+                }
+                byName.put(a.name().trim().toLowerCase(Locale.ROOT), a);
+            }
+        }
+        List<SecUserAttribute> out = new ArrayList<>();
+        for (String name : CANONICAL_ORDER) {
+            SecUserAttribute supplied = byName.get(name.toLowerCase(Locale.ROOT));
+            if (supplied == null) {
+                out.add(defaultAttribute(name));
+                continue;
+            }
+            boolean enabled = isRequiredAttr(name) || supplied.enabled();
+            SecUserAttributeValueKind kind = supplied.valueKind() != null
+                    ? supplied.valueKind() : legacyKind(name);
+            String value = supplied.value() != null
+                    ? supplied.value()
+                    : legacyValue(name, "Default", "Default", 100);
+            out.add(new SecUserAttribute(name, enabled, kind, value));
+        }
+        return out;
+    }
+
+    /** A known attribute's stock default row (disabled unless it's a MUST attr),
+     * used to fill a gap when a supplied model omits one. */
+    private static SecUserAttribute defaultAttribute(String name) {
+        return new SecUserAttribute(name, isRequiredAttr(name),
+                legacyKind(name), legacyValue(name, "Default", "Default", 100));
+    }
+
     private static SecUserAttributeValueKind legacyKind(String name) {
         return switch (name) {
             case "secLoginType", "secAuthority", "secAcctValid", "secPwdValid" ->

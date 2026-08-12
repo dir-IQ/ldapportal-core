@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva.service;
 
+import com.ldapportal.addons.isva.IsvaSecUserPlans;
 import com.ldapportal.addons.isva.dto.IsvaConfigDto;
 import com.ldapportal.addons.isva.dto.ProbeResult;
 import com.ldapportal.addons.isva.dto.UpsertIsvaConfigRequest;
@@ -93,6 +94,13 @@ public class IsvaConfigService {
         // attributes, canonical spelling + order. null → full default set.
         entity.setSecuserOverlayAttributes(
                 normalizeOverlayAttributes(req.secuserOverlayAttributes()));
+        // The unified per-attribute model is authoritative when supplied; store
+        // it normalized to the canonical full set. null clears it, so the plan
+        // builders fall back to deriving an equivalent model from the legacy
+        // value fields above (PUT semantics: absent model = "derive").
+        entity.setSecuserAttributes(req.secuserAttributes() != null
+                ? IsvaSecUserPlans.normalizeModel(req.secuserAttributes())
+                : null);
 
         // Linked-mode fields — set when LINKED, null when INLINE so
         // a topology-mode flip doesn't leave stale linked config
@@ -168,7 +176,11 @@ public class IsvaConfigService {
                     cfg.getManagementDitBaseDn(),
                     cfg.getSecuserRdnAttribute(),
                     cfg.getSecuserRdnValueSource(),
-                    cfg.getGroupMemberTarget());
+                    cfg.getGroupMemberTarget(),
+                    // Export the raw stored model (null when the config still
+                    // derives from legacy fields) so exports stay minimal and a
+                    // re-apply derives the same behaviour.
+                    cfg.getSecuserAttributes());
             out.add(new IsvaConfigExport(dir.getSlug(), req));
         }
         out.sort(java.util.Comparator.comparing(IsvaConfigExport::directorySlug));

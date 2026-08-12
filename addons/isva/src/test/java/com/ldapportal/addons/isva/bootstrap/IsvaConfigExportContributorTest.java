@@ -31,7 +31,7 @@ class IsvaConfigExportContributorTest {
                 true, List.of("secUser"),
                 List.of("secLogin", "secAcctValid", "secPwdValid",
                         "secValidUntil", "secPwdLastChanged"),
-                null, null, null, null);   // linked-mode-only fields unset
+                null, null, null, null, null);   // linked-mode-only + model unset
         when(isvaConfigService.exportAll()).thenReturn(List.of(
                 new IsvaConfigService.IsvaConfigExport("corp-ldap", cfg)));
 
