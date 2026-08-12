@@ -170,6 +170,14 @@ public class LdapOperationService {
         return schemaService.getAttributesForObjectClass(dc, objectClass);
     }
 
+    /** Rich objectClass detail (attributes + inheritance hierarchy) for the schema browser. */
+    public com.ldapportal.ldap.LdapSchemaService.ObjectClassDetail getObjectClassDetail(
+            UUID directoryId, AuthPrincipal principal, String objectClass) {
+        DirectoryConnection dc = loadDirectory(directoryId, principal);
+        permissionService.requireDirectoryAccess(principal, directoryId);
+        return schemaService.getObjectClassDetail(dc, objectClass);
+    }
+
     public ObjectClassAttributes getObjectClassAttributesBulk(UUID directoryId, AuthPrincipal principal,
                                                               List<String> objectClasses) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
