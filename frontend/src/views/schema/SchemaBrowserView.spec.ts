@@ -243,3 +243,130 @@ describe('SchemaBrowserView schema management toolbar', () => {
     expect(vi.mocked(listObjectClasses)).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('SchemaBrowserView object-class hierarchy', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    authState.canManage = false
+    stubResponses()
+    Element.prototype.scrollIntoView = vi.fn() as unknown as () => void
+  })
+
+  const OC_DETAIL = {
+    oid: '1.3.18.0.2.6.79',
+    kind: 'STRUCTURAL',
+    description: 'An IVIA secUser',
+    required: ['objectClass'],
+    optional: ['principalName'],
+    superiors: ['eUser', 'cimManagedElement', 'top'],
+    subclasses: ['secUserChild'],
+  }
+
+  /** Open the single object class the stub list carries. */
+  async function openObjectClass(w: ReturnType<typeof mountView>) {
+    await flushPromises()
+    await btn(w, 'person')!.trigger('click')
+    await flushPromises()
+  }
+
+  it('renders the ancestor chain and subclasses', async () => {
+    vi.mocked(getObjectClass).mockResolvedValue({ data: OC_DETAIL } as never)
+    const w = mountView()
+    await openObjectClass(w)
+
+    const panel = w.find('[data-testid="oc-hierarchy"]')
+    expect(panel.exists()).toBe(true)
+    expect(panel.text()).toContain('eUser')
+    expect(panel.text()).toContain('cimManagedElement')
+    expect(panel.text()).toContain('top')
+    expect(panel.text()).toContain('secUserChild')
+    expect(panel.text()).toContain('STRUCTURAL')
+  })
+
+  it('navigates to a superclass and leaves a back link', async () => {
+    vi.mocked(getObjectClass).mockResolvedValue({ data: OC_DETAIL } as never)
+    const w = mountView()
+    await openObjectClass(w)
+
+    await btn(w, 'eUser')!.trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(getObjectClass)).toHaveBeenLastCalledWith('dir-1', 'eUser')
+    // Same-tab hops are recorded, so climbing the chain stays reversible.
+    expect(w.text()).toContain('Back to person')
+  })
+
+  it('omits the hierarchy panel when the class has none', async () => {
+    vi.mocked(getObjectClass).mockResolvedValue({
+      data: { oid: '2.5.6.6', required: ['cn'], optional: [] },
+    } as never)
+    const w = mountView()
+    await openObjectClass(w)
+
+    expect(w.find('[data-testid="oc-hierarchy"]').exists()).toBe(false)
+  })
+
+  it('does not record history for plain list-row clicks', async () => {
+    vi.mocked(listObjectClasses).mockResolvedValue({
+      data: [{ name: 'person', oid: '1' }, { name: 'device', oid: '2' }],
+    } as never)
+    vi.mocked(getObjectClass).mockResolvedValue({ data: OC_DETAIL } as never)
+    const w = mountView()
+    await openObjectClass(w)          // list click
+    await btn(w, 'device')!.trigger('click')   // another list click
+    await flushPromises()
+
+    expect(w.text()).not.toContain('Back to')
+  })
+})
+
+describe('SchemaBrowserView list de-dup + filter', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    authState.canManage = false
+    stubResponses()
+    Element.prototype.scrollIntoView = vi.fn() as unknown as () => void
+  })
+
+  // List rows are the font-mono buttons in the left panel (tab / chip buttons
+  // aren't font-mono, and no row is selected on initial load so no detail chips
+  // are present).
+  const listRowNames = (w: ReturnType<typeof mountView>) =>
+    w.findAll('button.font-mono').map((b) => b.text())
+
+  it('collapses duplicate object-class names to a single row', async () => {
+    vi.mocked(listObjectClasses).mockResolvedValue({
+      data: [
+        { name: 'eUser', oid: '1' }, { name: 'eUser', oid: '2' },
+        { name: 'eUser', oid: '3' }, { name: 'container', oid: '4' },
+      ],
+    } as never)
+
+    const w = mountView()
+    await flushPromises()
+
+    const names = listRowNames(w)
+    expect(names.filter((n) => n === 'eUser')).toHaveLength(1)
+    expect(names).toContain('container')
+  })
+
+  it('filters the list as you type (unique keys keep it reconciling)', async () => {
+    vi.mocked(listObjectClasses).mockResolvedValue({
+      data: [
+        { name: 'eUser', oid: '1' }, { name: 'eUser', oid: '2' },
+        { name: 'container', oid: '4' },
+      ],
+    } as never)
+
+    const w = mountView()
+    await flushPromises()
+
+    await w.find('input[type="text"]').setValue('eu')
+
+    const names = listRowNames(w)
+    expect(names).toContain('eUser')
+    expect(names).not.toContain('container')
+  })
+})

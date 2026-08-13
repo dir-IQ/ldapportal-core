@@ -208,7 +208,8 @@ function emptyProfile(): ProfileForm {
   return {
     name: '', description: '', themeColor: '', targetUserDn: '', targetGroupDn: '',
     objectClassNames: [], rdnAttribute: '',
-    showDnField: true, dnTemplate: '',
+    // Default to Automatic DN mode (app composes <rdn>=<value>,<targetOU>).
+    showDnField: false, dnTemplate: '',
     dnColumnSpan: undefined, dnSectionName: undefined, dnDisplayOrder: undefined,
     enabled: true, selfRegistrationAllowed: false,
     passwordLength: 16, passwordUppercase: true, passwordLowercase: true,
@@ -286,7 +287,11 @@ async function openEdit(p: ProfileRow) {
     targetUserDn: p.targetUserDn,
     targetGroupDn: p.targetGroupDn || '',
     objectClassNames: [...p.objectClassNames], rdnAttribute: p.rdnAttribute,
-    showDnField: p.showDnField, dnTemplate: p.dnTemplate || '',
+    // Reconcile legacy profiles that predate the DN-mode interlock: operator-
+    // entered DN and self-registration are now mutually exclusive, and a self-
+    // registration profile is inherently automatic (DN = <rdn>=<value>), so keep
+    // self-registration and drop into Automatic mode.
+    showDnField: p.showDnField && !p.selfRegistrationAllowed, dnTemplate: p.dnTemplate || '',
     dnColumnSpan: p.dnColumnSpan ?? undefined, dnSectionName: p.dnSectionName ?? undefined, dnDisplayOrder: p.dnDisplayOrder ?? undefined,
     enabled: p.enabled,
     selfRegistrationAllowed: p.selfRegistrationAllowed,
@@ -406,6 +411,15 @@ async function save() {
   }
   if (!profile.value.rdnAttribute) {
     notif.error('RDN Attribute is required')
+    return
+  }
+  // A HIDDEN_FIXED field injects its Default Value server-side, so a blank one
+  // would write an empty attribute. objectClass is exempt — it is system-managed
+  // and its value comes from the object-class list, not the Default Value.
+  const blankFixed = profile.value.attributeConfigs.find(
+    a => a.inputType === 'HIDDEN_FIXED' && !isSystemFixedAttribute(a) && !(a.defaultValue || '').trim())
+  if (blankFixed) {
+    notif.error(`"${blankFixed.attributeName}" is HIDDEN_FIXED and needs a Default Value`)
     return
   }
   // Surface schema-invalid attributes before persisting: the directory will
@@ -1027,6 +1041,10 @@ function isRdnAttribute(attr: AttributeConfig) {
   return attr.attributeName === profile.value.rdnAttribute
 }
 
+// True in operator-entered DN mode: the operator sets the DN on the create form.
+// False = automatic mode (app composes <rdn>=<value>,<targetOU>).
+const dnTemplateActive = computed(() => !!(profile.value.dnTemplate || '').trim())
+
 // Naming attributes derived from the DN template's leading RDN. A template
 // like "o=${o}+cn=${cn},ou=People,…" makes *those* attribute types name new
 // entries (a multi-valued RDN), regardless of the designated RDN attribute.
@@ -1036,16 +1054,38 @@ const templateNamingAttrs = computed<Set<string>>(() => {
   return new Set(parseLeadingRdn(tpl).map(a => a.name.toLowerCase()))
 })
 
-// An attribute whose value names new entries: the designated (default) RDN
-// attribute, plus any attribute the DN template's leading RDN references.
-// These are forced required and can't be removed — their values feed the DN.
+// An attribute whose value names new entries. A DN template is authoritative
+// when present (operator-entered mode) — the template's leading RDN names the
+// entry, so those attributes are the naming ones and the RDN picker is a locked
+// seed. Otherwise the designated RDN attribute names entries. Naming attributes
+// are forced required and can't be removed — their values feed the DN.
 function isNamingAttribute(attr: AttributeConfig): boolean {
-  return isRdnAttribute(attr) || templateNamingAttrs.value.has(attr.attributeName.toLowerCase())
+  if (dnTemplateActive.value) {
+    return templateNamingAttrs.value.has(attr.attributeName.toLowerCase())
+  }
+  return isRdnAttribute(attr)
+}
+
+// Naming attributes are only *enforced* (forced required, non-removable, locked)
+// in Automatic mode, where the RDN attribute deterministically names the entry.
+// In operator-entered mode the operator may enter any valid DN, so template
+// naming fields are still badged as naming but never forced — the backend
+// validates whatever attributes the submitted DN's RDN actually uses.
+function isEnforcedNamingAttribute(attr: AttributeConfig): boolean {
+  return !profile.value.showDnField && isNamingAttribute(attr)
 }
 
 // Helper: check if an attribute is schema-required
 function isSchemaRequired(attr: AttributeConfig) {
   return schemaRequiredAttrs.value.has(attr.attributeName.toLowerCase())
+}
+
+// objectClass is a system-managed HIDDEN_FIXED attribute: it is auto-added and
+// its value derives from the profile's object-class list, not operator input.
+// Its input type must stay HIDDEN_FIXED (making it an editable field is
+// incoherent), so the type selector is locked for it.
+function isSystemFixedAttribute(attr: AttributeConfig) {
+  return attr.attributeName.toLowerCase() === 'objectclass'
 }
 
 // True when the Hidden toggle is locked *only* because a required attribute has
@@ -1057,11 +1097,30 @@ function hiddenLockedPendingComputed(attr: AttributeConfig): boolean {
     && !attr.computedExpression
     && !isRdnAttribute(attr)
     && !isAutoGeneratedPasswordField(attr)
+    && attr.inputType !== 'HIDDEN_FIXED'
 }
 
-// Helper: check if an attribute can be removed (naming and required attributes cannot)
+// Helper: check if an attribute can be removed (enforced-naming and required
+// attributes cannot). In operator-entered mode a template naming attribute is
+// not enforced, so it can be removed — the DN still injects its value.
 function canRemoveAttribute(attr: AttributeConfig) {
-  return !isNamingAttribute(attr) && !isSchemaRequired(attr) && !attr.requiredOnCreate
+  return !isEnforcedNamingAttribute(attr) && !isSchemaRequired(attr) && !attr.requiredOnCreate
+}
+
+// Alphabetical view of the attributes for the Attributes tab, so a long list is
+// quick to scan. This sorts a shallow copy of the *same* config objects, never
+// profile.attributeConfigs itself — that array's order is load-bearing (it
+// drives the saved displayOrder and the form layout), and v-model edits on the
+// copied references still mutate the real configs.
+const sortedAttributeConfigs = computed(() =>
+  [...profile.value.attributeConfigs].sort((a, b) =>
+    a.attributeName.localeCompare(b.attributeName, undefined, { sensitivity: 'base' })))
+
+// Remove by object reference — the Attributes tab renders the sorted view, so a
+// row's position there is not its index in profile.attributeConfigs.
+function removeAttributeConfig(attr: AttributeConfig) {
+  const idx = profile.value.attributeConfigs.indexOf(attr)
+  if (idx >= 0) profile.value.attributeConfigs.splice(idx, 1)
 }
 
 // Available attributes from selected object classes that haven't been added yet
@@ -1095,11 +1154,81 @@ function toggleAttrPicker() {
   showAttrPicker.value = !showAttrPicker.value
 }
 
+// True when this attribute name is (or would be) a naming attribute: the
+// designated RDN, or one referenced by the DN template's leading RDN.
+function isNamingAttributeName(name: string): boolean {
+  const lower = name.toLowerCase()
+  return lower === (profile.value.rdnAttribute || '').toLowerCase()
+    || templateNamingAttrs.value.has(lower)
+}
+
+// DN creation mode. Automatic composes <rdn>=<value>,<targetOU> (not editable);
+// operator-entered shows an editable DN on the create form, optionally seeded by
+// a template. Backed by showDnField. Switching modes reconciles the dependent
+// state (self-registration is unavailable in operator-entered; a template only
+// exists in operator-entered).
+type DnMode = 'auto' | 'operator'
+const dnMode = computed<DnMode>({
+  get: () => (profile.value.showDnField ? 'operator' : 'auto'),
+  set: (mode) => setDnMode(mode),
+})
+
+function setDnMode(mode: DnMode) {
+  if (mode === 'operator') {
+    profile.value.showDnField = true
+    if (profile.value.selfRegistrationAllowed) {
+      profile.value.selfRegistrationAllowed = false
+      notif.info('Self-registration turned off — it requires an automatically-composed DN.')
+    }
+  } else {
+    profile.value.showDnField = false
+    if ((profile.value.dnTemplate || '').trim()) {
+      profile.value.dnTemplate = ''
+      notif.info('DN template cleared — automatic mode composes the DN from the RDN attribute.')
+    }
+    // Now authoritative naming: ensure the RDN attribute is a supplyable field.
+    ensureRdnAttributePresent()
+  }
+}
+
+// The RDN attribute must exist as a form field so its value can be supplied at
+// create time. In automatic mode the designated RDN names the entry, so it's
+// added — required — if it isn't configured yet, and an existing one is forced
+// required unless it's computed (a computed RDN derives its own value). In
+// operator-entered mode the operator supplies the DN, so the RDN is only a seed
+// and this doesn't run. Empty-config profiles use the fallback create form.
+function ensureRdnAttributePresent() {
+  const name = profile.value.rdnAttribute
+  if (!name) return
+  if (profile.value.showDnField) return
+  if (profile.value.attributeConfigs.length === 0) return
+  const existing = profile.value.attributeConfigs.find(
+    a => a.attributeName.toLowerCase() === name.toLowerCase())
+  if (existing) {
+    if (!existing.computedExpression) existing.requiredOnCreate = true
+    return
+  }
+  profile.value.attributeConfigs.push({
+    attributeName: name, customLabel: guessLabel(name), inputType: 'TEXT',
+    requiredOnCreate: true, editableOnCreate: true,
+    editableOnUpdate: true, selfServiceEdit: false, selfRegistrationEdit: false,
+    defaultValue: '', computedExpression: '', validationRegex: '',
+    validationMessage: '', allowedValues: '', minLength: null,
+    maxLength: null, sectionName: '', columnSpan: 6, hidden: false,
+    registrationSectionName: null, registrationColumnSpan: null, registrationDisplayOrder: null,
+    selfServiceSectionName: null, selfServiceColumnSpan: null, selfServiceDisplayOrder: null,
+  })
+}
+
+function onRdnAttributeChange() {
+  ensureRdnAttributePresent()
+}
+
 function addSelectedAttributes() {
   for (const name of attrPickerSelection.value) {
     profile.value.attributeConfigs.push({
       attributeName: name, customLabel: guessLabel(name), inputType: 'TEXT',
-      requiredOnCreate: schemaRequiredAttrs.value.has(name.toLowerCase()), editableOnCreate: true,
+      requiredOnCreate: (!profile.value.showDnField && isNamingAttributeName(name)) || schemaRequiredAttrs.value.has(name.toLowerCase()), editableOnCreate: true,
       editableOnUpdate: true, selfServiceEdit: false,
       selfRegistrationEdit: false,
       defaultValue: '', computedExpression: '', validationRegex: '',
@@ -1188,14 +1317,39 @@ function showFieldFor(inputType: string, fieldName: string) {
   return (rules[fieldName] || []).includes(inputType)
 }
 
-// Naming attributes are always required — their values feed the entry's DN.
-// Covers the designated RDN attribute and every attribute the DN template's
-// leading RDN references (a multi-valued-RDN template marks several).
-watch(() => [profile.value.rdnAttribute, profile.value.dnTemplate], () => {
+// In Automatic mode the naming attribute deterministically feeds the DN, so it's
+// forced required. In operator-entered mode the operator can enter any valid DN,
+// so nothing is forced (isEnforcedNamingAttribute is false there).
+watch(() => [profile.value.rdnAttribute, profile.value.dnTemplate, profile.value.showDnField], () => {
   for (const attr of profile.value.attributeConfigs) {
-    if (isNamingAttribute(attr)) attr.requiredOnCreate = true
+    if (isEnforcedNamingAttribute(attr)) attr.requiredOnCreate = true
   }
 })
+
+// When a DN template is set (operator-entered mode), it — not the picker — names
+// the entry, so keep the designated RDN attribute reconciled to the template's
+// leading RDN. Only rewrites it when it genuinely diverges.
+watch(() => profile.value.dnTemplate, (tpl) => {
+  const t = (tpl || '').trim()
+  if (!t) return
+  const leadingNames = parseLeadingRdn(t).map(a => a.name)
+  if (!leadingNames.length) return
+  const currentLower = (profile.value.rdnAttribute || '').toLowerCase()
+  if (!leadingNames.some(n => n.toLowerCase() === currentLower)) {
+    profile.value.rdnAttribute = leadingNames[0]
+  }
+})
+
+// A HIDDEN_FIXED attribute is never shown to the end user — its value is applied
+// server-side. Keep `hidden` in lock-step so the two representations can't drift:
+// a HIDDEN_FIXED field left with hidden=false (older/migrated profiles, or the
+// operator picking the type) would otherwise leak into the form-layout preview.
+// Runs on load (immediate) and whenever an input type changes.
+watch(() => profile.value.attributeConfigs.map(a => a.inputType), () => {
+  for (const attr of profile.value.attributeConfigs) {
+    if (attr.inputType === 'HIDDEN_FIXED') attr.hidden = true
+  }
+}, { immediate: true })
 
 // Attribute configs with RDN flag for the layout designer
 //
@@ -1214,10 +1368,19 @@ function isAutoGeneratedPasswordField(a: { inputType?: string | null; attributeN
   return generated && isPasswordField(a)
 }
 
+// Fields the admin form-layout designer lays out. Excludes fields the operator
+// never sees on the admin form: the auto-generated password and HIDDEN_FIXED
+// attributes (server-applied constants such as objectClass). These are filtered
+// out of the designer and merged back untouched by the setter, so they survive
+// the wholesale replace and never surface in the layout preview.
+function isAdminLayoutManaged(a: AttributeConfig): boolean {
+  return !isAutoGeneratedPasswordField(a) && a.inputType !== 'HIDDEN_FIXED'
+}
+
 const layoutAttributeConfigs = computed<LayoutRow[]>({
   get() {
     return profile.value.attributeConfigs
-      .filter(a => !isAutoGeneratedPasswordField(a))
+      .filter(isAdminLayoutManaged)
       .map(a => ({
         ...a,
         rdn: a.attributeName === profile.value.rdnAttribute,
@@ -1226,9 +1389,14 @@ const layoutAttributeConfigs = computed<LayoutRow[]>({
   },
   set(val: LayoutRow[]) {
     const laidOut = val.map(({ rdn, naming, ...rest }) => rest)
-    // Re-append the auto-generated password field the designer never saw, so it
-    // survives the wholesale replace below.
-    const preserved = profile.value.attributeConfigs.filter(isAutoGeneratedPasswordField)
+    // Re-append every field the designer doesn't emit, so it survives the
+    // wholesale replace below: the auto-generated password and HIDDEN_FIXED
+    // fields (filtered out of the designer), plus hidden fields (the designer
+    // receives them to track un-hide positions but renders — and emits — only
+    // visible ones, so without this they'd be dropped from the saved profile).
+    // The designer never toggles `hidden`, so a hidden field can't also appear
+    // in `laidOut`; there's no duplication.
+    const preserved = profile.value.attributeConfigs.filter(a => !isAdminLayoutManaged(a) || a.hidden)
     profile.value.attributeConfigs = [...laidOut, ...preserved]
   }
 })
@@ -1476,7 +1644,7 @@ function toggleApprover(accountId: string) {
                  class="mt-2 text-xs text-gray-500">Checking…</div>
           </div>
           <div class="grid grid-cols-3 gap-4 items-start">
-            <div class="col-span-2">
+            <div class="col-span-3">
               <label class="block text-sm font-medium text-gray-700 mb-1">Object Classes</label>
               <div v-if="profile.objectClassNames.length" class="flex gap-2 mb-2 flex-wrap">
                 <span v-for="oc in profile.objectClassNames" :key="oc"
@@ -1493,30 +1661,71 @@ function toggleApprover(accountId: string) {
                 <button class="btn-primary text-xs" @click="addObjectClass" :disabled="!ocToAdd">Add</button>
               </div>
             </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">
-                RDN Attribute <span class="text-red-500">*</span>
-              </label>
-              <select v-model="profile.rdnAttribute" aria-label="RDN attribute" class="input w-full"
-                :disabled="profile.objectClassNames.length === 0">
-                <option value="">{{ profile.objectClassNames.length === 0 ? 'Add an object class first' : 'Select RDN attribute…' }}</option>
-                <option v-for="attr in rdnCandidates" :key="attr" :value="attr">{{ attr }}</option>
-              </select>
-              <p class="text-[11px] text-gray-500 mt-1">
-                Default naming attribute: seeds the DN as
-                <code>&lt;attribute&gt;=&lt;value&gt;,&lt;target OU&gt;</code> and names self-service
-                registrations. A DN template (Layout tab) overrides which attributes name
-                admin-created entries — including multi-valued RDNs such as
-                <code>o=${'{'}o{'}'}+cn=${'{'}cn{'}'}</code>.
-              </p>
+            <div class="col-span-3 border-t border-gray-100 pt-3">
+              <label class="block text-sm font-medium text-gray-700 mb-1">DN &amp; naming</label>
+              <div class="space-y-1 mb-2">
+                <label class="flex items-start gap-2 text-sm">
+                  <input type="radio" value="auto" v-model="dnMode" :disabled="profile.objectClassNames.length === 0" class="mt-0.5" />
+                  <span><span class="font-medium">Automatic</span> — the app composes
+                    <code>&lt;attribute&gt;=&lt;value&gt;,&lt;target OU&gt;</code> from a naming attribute; the operator can't edit it.</span>
+                </label>
+                <label class="flex items-start gap-2 text-sm">
+                  <input type="radio" value="operator" v-model="dnMode" :disabled="profile.objectClassNames.length === 0" class="mt-0.5" />
+                  <span><span class="font-medium">Operator-entered</span> — the operator sets the DN on the create form,
+                    optionally seeded by a template. Self-registration is unavailable in this mode.</span>
+                </label>
+              </div>
+              <!-- Automatic: the naming attribute deterministically names the entry. -->
+              <div v-if="dnMode === 'auto'" class="max-w-md">
+                <label class="block text-xs text-gray-500">
+                  Naming (RDN) attribute <span class="text-red-500">*</span>
+                </label>
+                <select v-model="profile.rdnAttribute" aria-label="RDN attribute" class="input w-full text-sm"
+                  :disabled="profile.objectClassNames.length === 0" @change="onRdnAttributeChange">
+                  <option value="">{{ profile.objectClassNames.length === 0 ? 'Add an object class first' : 'Select attribute…' }}</option>
+                  <option v-for="attr in rdnCandidates" :key="attr" :value="attr">{{ attr }}</option>
+                </select>
+                <p class="text-[11px] text-gray-500 mt-1">
+                  Names the entry. A computed attribute yields a locked computed name.
+                </p>
+              </div>
+
+              <!-- Operator-entered: the DN template seeds the editable DN. The
+                   attribute seed is only the fallback when there's no template,
+                   so it's hidden while a template is defined (the template's
+                   leading RDN is the naming source). -->
+              <template v-else>
+                <div>
+                  <label class="block text-xs text-gray-500">DN template (optional)</label>
+                  <input v-model="profile.dnTemplate" type="text" aria-label="DN template" class="input w-full font-mono text-xs"
+                    placeholder="cn=${givenName} ${sn},ou=People,dc=example,dc=com" />
+                  <p class="text-[11px] text-gray-500 mt-1">
+                    Pre-fills the editable DN. <code>${'{'}attr{'}'}</code> tokens resolve to the new user's values; a
+                    <code>+</code> makes a multi-valued RDN.
+                  </p>
+                </div>
+                <div v-if="!dnTemplateActive" class="mt-3 max-w-md">
+                  <label class="block text-xs text-gray-500">Seed the DN from attribute <span class="text-red-500">*</span></label>
+                  <select v-model="profile.rdnAttribute" aria-label="Seed attribute" class="input w-full text-sm"
+                    :disabled="profile.objectClassNames.length === 0" @change="onRdnAttributeChange">
+                    <option value="">{{ profile.objectClassNames.length === 0 ? 'Add an object class first' : 'Select attribute…' }}</option>
+                    <option v-for="attr in rdnCandidates" :key="attr" :value="attr">{{ attr }}</option>
+                  </select>
+                  <p class="text-[11px] text-gray-500 mt-1">
+                    With no template, the editable DN pre-fills as <code>&lt;attribute&gt;=&lt;value&gt;,&lt;target OU&gt;</code>.
+                  </p>
+                </div>
+              </template>
             </div>
           </div>
           <div class="flex gap-6">
             <label class="flex items-center gap-2 text-sm">
               <input type="checkbox" v-model="profile.enabled" /> Profile is enabled
             </label>
-            <label class="flex items-center gap-2 text-sm">
-              <input type="checkbox" v-model="profile.selfRegistrationAllowed" /> Self-registration is enabled for this profile
+            <label class="flex items-center gap-2 text-sm"
+              :class="dnMode === 'operator' ? 'text-gray-400 cursor-not-allowed' : ''"
+              :title="dnMode === 'operator' ? 'Self-registration requires an automatically-composed DN (Automatic mode)' : undefined">
+              <input type="checkbox" v-model="profile.selfRegistrationAllowed" :disabled="dnMode === 'operator'" /> Self-registration is enabled for this profile
             </label>
           </div>
 
@@ -1563,11 +1772,11 @@ function toggleApprover(accountId: string) {
           <div v-if="profile.attributeConfigs.length === 0" class="text-gray-500 text-sm">
             Add object classes in the General tab to populate attributes.
           </div>
-          <div v-for="(attr, i) in profile.attributeConfigs" :key="i"
+          <div v-for="(attr, i) in sortedAttributeConfigs" :key="attr.attributeName"
             class="border border-gray-300 rounded-lg p-3 space-y-2">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <span class="font-medium text-sm">{{ attr.attributeName }}</span>
+                <span class="font-mono text-sm font-medium bg-gray-100 text-gray-800 border border-gray-200 rounded px-1.5 py-0.5">{{ attr.attributeName }}</span>
                 <span v-if="isNamingAttribute(attr)"
                   class="text-[10px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5 font-medium"
                   :title="templateNamingAttrs.has(attr.attributeName.toLowerCase())
@@ -1581,7 +1790,7 @@ function toggleApprover(accountId: string) {
               </div>
               <button v-if="canRemoveAttribute(attr)"
                 class="text-red-500 text-xs hover:underline"
-                @click="profile.attributeConfigs.splice(i, 1)">Remove</button>
+                @click="removeAttributeConfig(attr)">Remove</button>
               <span v-else class="text-xs text-gray-500 italic">cannot remove</span>
             </div>
             <div class="grid grid-cols-3 gap-3 text-sm">
@@ -1591,14 +1800,25 @@ function toggleApprover(accountId: string) {
               </div>
               <div>
                 <label :for="`sp-attr-${i}-inputType`" class="block text-xs text-gray-500">Input Type</label>
-                <select :id="`sp-attr-${i}-inputType`" v-model="attr.inputType" class="input w-full text-sm">
+                <select :id="`sp-attr-${i}-inputType`" v-model="attr.inputType" class="input w-full text-sm"
+                  :disabled="isSystemFixedAttribute(attr)"
+                  :title="isSystemFixedAttribute(attr) ? 'objectClass is system-managed and always HIDDEN_FIXED.' : undefined">
                   <option v-for="t in ['TEXT','TEXTAREA','PASSWORD','BOOLEAN','DATE','DATETIME','MULTI_VALUE','DN_LOOKUP','DN','SELECT','HIDDEN_FIXED']"
                     :key="t" :value="t">{{ t }}</option>
                 </select>
               </div>
               <div v-if="showFieldFor(attr.inputType, 'defaultValue')">
                 <label :for="`sp-attr-${i}-defaultValue`" class="block text-xs text-gray-500">Default Value</label>
-                <input :id="`sp-attr-${i}-defaultValue`" v-model="attr.defaultValue" class="input w-full text-sm" />
+                <!-- objectClass is system-managed: its value comes from the
+                     profile's object-class list, not this field. Lock it so a
+                     stray value can't be entered (the server ignores it). -->
+                <input :id="`sp-attr-${i}-defaultValue`" v-model="attr.defaultValue"
+                       :disabled="isSystemFixedAttribute(attr)"
+                       :placeholder="isSystemFixedAttribute(attr) ? 'Managed by the Object Classes list' : ''"
+                       class="input w-full text-sm disabled:bg-gray-100 disabled:text-gray-400 dark:disabled:bg-gray-800" />
+                <p v-if="isSystemFixedAttribute(attr)" class="mt-1 text-xs text-gray-400">
+                  Set by the profile's <strong>Object Classes</strong> list — not editable here.
+                </p>
               </div>
               <div v-if="showFieldFor(attr.inputType, 'computedExpression')">
                 <label :for="`sp-attr-${i}-computedExpression`" class="block text-xs text-gray-500">Computed Expression</label>
@@ -1620,16 +1840,18 @@ function toggleApprover(accountId: string) {
             <div class="flex gap-4 text-xs">
               <label class="flex items-center gap-1">
                 <input type="checkbox" v-model="attr.requiredOnCreate"
-                  :disabled="isNamingAttribute(attr) || isSchemaRequired(attr) || isAutoGeneratedPasswordField(attr)" /> Required
+                  :disabled="isEnforcedNamingAttribute(attr) || isSchemaRequired(attr) || isAutoGeneratedPasswordField(attr)" /> Required
               </label>
               <label class="flex items-center gap-1"><input type="checkbox" v-model="attr.editableOnCreate" :disabled="isAutoGeneratedPasswordField(attr)" /> Editable (create)</label>
               <label class="flex items-center gap-1"><input type="checkbox" v-model="attr.editableOnUpdate" :disabled="isAutoGeneratedPasswordField(attr)" /> Editable (update)</label>
               <label class="flex items-center gap-1"><input type="checkbox" v-model="attr.selfServiceEdit" :disabled="isAutoGeneratedPasswordField(attr)" /> Self-service</label>
               <label v-if="profile.selfRegistrationAllowed" class="flex items-center gap-1"><input type="checkbox" v-model="attr.selfRegistrationEdit" :disabled="isAutoGeneratedPasswordField(attr)" /> Self-registration</label>
               <label class="flex items-center gap-1"
-                :title="hiddenLockedPendingComputed(attr) ? 'A required attribute can only be hidden once it has a computed expression, so the value can be set without operator input.' : undefined">
+                :title="attr.inputType === 'HIDDEN_FIXED'
+                  ? 'HIDDEN_FIXED attributes are applied server-side and never shown, so they are always hidden.'
+                  : (hiddenLockedPendingComputed(attr) ? 'A required attribute can only be hidden once it has a computed expression, so the value can be set without operator input.' : undefined)">
                 <input type="checkbox" v-model="attr.hidden"
-                  :disabled="((attr.requiredOnCreate || isSchemaRequired(attr)) && !attr.computedExpression) || isRdnAttribute(attr) || isAutoGeneratedPasswordField(attr)" /> Hidden
+                  :disabled="attr.inputType === 'HIDDEN_FIXED' || ((attr.requiredOnCreate || isSchemaRequired(attr)) && !attr.computedExpression) || isRdnAttribute(attr) || isAutoGeneratedPasswordField(attr)" /> Hidden
               </label>
               <span v-if="hiddenLockedPendingComputed(attr)" class="text-gray-400 italic">
                 add a computed expression to allow hiding
@@ -1656,7 +1878,10 @@ function toggleApprover(accountId: string) {
             </button>
           </div>
 
-          <!-- Admin layout -->
+          <!-- Admin layout. hideDnToggle hides the designer's own "Show DN field"
+               toggle and DN-template input — both now live on the General tab
+               (DN & naming). The designer still reads showDnField/dnTemplate to
+               place and preview the editable DN field in operator-entered mode. -->
           <FormLayoutDesigner
             v-if="layoutMode === 'admin'"
             v-model:attributeConfigs="layoutAttributeConfigs"
@@ -1665,6 +1890,7 @@ function toggleApprover(accountId: string) {
             v-model:dnColumnSpan="profile.dnColumnSpan"
             v-model:dnSectionName="profile.dnSectionName"
             v-model:dnDisplayOrder="profile.dnDisplayOrder"
+            :hideDnToggle="true"
           />
 
           <!-- Self-service layout -->

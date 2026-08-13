@@ -11,15 +11,60 @@ import {
   type UpsertIsvaConfigRequest,
   type ProbeResult,
   type IsvaTopologyMode,
-  type IsvaDeletePolicy,
   type IsvaGroupMemberTarget,
-  type IsvaDemographicDeleteMode,
   type IsvaRdnValueSource,
+  type SecUserAttribute,
+  type SecUserAttributeValueKind,
 } from '@/api/isvaConfig'
 import { getDirectory } from '@/api/directories'
 import { IVIA_NAME, IVIA_ABBR } from '@/constants/productNames'
 import { useNotificationStore } from '@/stores/notifications'
 import { useConfirm } from '@/composables/useConfirm'
+
+// The unified secUser attribute model, in the backend's canonical order.
+// Mirrors IsvaSecUserPlans.CANONICAL_ORDER / REQUIRED_ATTRS. secLoginType and
+// secAuthority are MUST on IBM's stock secUser, so they're always enabled and
+// can't be unticked (their values stay editable).
+const REQUIRED_ATTRS = ['secLoginType', 'secAuthority'] as const
+
+function isRequiredAttr(name: string): boolean {
+  return REQUIRED_ATTRS.some((r) => r.toLowerCase() === name.toLowerCase())
+}
+
+// One-line help per attribute, shown under its row.
+const ATTR_HINTS: Record<string, string> = {
+  secLogin: "The login the account authenticates as — typically the user's uid.",
+  secLoginType: 'MUST on IBM\'s stock secUser. Usually "Default".',
+  secAuthority: 'MUST on IBM\'s stock secUser. The authority/domain — usually "Default".',
+  secAcctValid: 'Whether the account is active. TRUE on create; flipped to FALSE on disable.',
+  secPwdValid: 'Whether the password is valid. TRUE on create.',
+  secValidUntil: 'Account expiry. nowPlusYears(n) sets it n years out.',
+  secPwdLastChanged: 'Password-age stamp for IVIA rotation. now() on create.',
+  secUUID: 'Opaque per-user id native IVIA accounts carry. Off unless your schema permits it.',
+  principalName: 'The principal/login (the uid). Off unless your schema permits it.',
+  secDomainId: 'Concatenated <authority>%<principal>. Off unless your schema permits it.',
+}
+
+// The default model for a fresh / unset config — matches the backend's
+// legacy-derived defaults: the two MUST attrs plus the historical default
+// overlay set enabled, the three IVIA identity attributes off.
+function defaultAttributeModel(): SecUserAttribute[] {
+  const c = (name: string, enabled: boolean,
+             valueKind: SecUserAttributeValueKind, value: string): SecUserAttribute =>
+    ({ name, enabled, valueKind, value })
+  return [
+    c('secLogin', true, 'COMPUTED', '${user.uid}'),
+    c('secLoginType', true, 'LITERAL', 'Default'),
+    c('secAuthority', true, 'LITERAL', 'Default'),
+    c('secAcctValid', true, 'LITERAL', 'TRUE'),
+    c('secPwdValid', true, 'LITERAL', 'TRUE'),
+    c('secValidUntil', true, 'COMPUTED', 'nowPlusYears(100)'),
+    c('secPwdLastChanged', true, 'COMPUTED', 'now()'),
+    c('secUUID', false, 'COMPUTED', 'uuid()'),
+    c('principalName', false, 'COMPUTED', '${user.uid}'),
+    c('secDomainId', false, 'COMPUTED', '${sec.secAuthority}%${user.uid}'),
+  ]
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -40,35 +85,39 @@ const probeResult = ref<ProbeResult | null>(null)
 interface Form {
   enabled: boolean
   topologyMode: IsvaTopologyMode
-  secAuthority: string
-  defaultValidUntilYears: number
-  deletePolicy: IsvaDeletePolicy
   requireSecGroup: boolean
   secuserObjectClasses: string[]
+  // The unified per-attribute model — the standalone secAuthority /
+  // secLoginType / valid-until inputs and the overlay checkboxes are now rows
+  // in this table.
+  secuserAttributes: SecUserAttribute[]
   managementDitBaseDn: string
   secuserRdnAttribute: string
   secuserRdnValueSource: IsvaRdnValueSource
   groupMemberTarget: IsvaGroupMemberTarget
-  onDemographicDelete: IsvaDemographicDeleteMode
 }
 
 function emptyForm(): Form {
   return {
     enabled: false,
     topologyMode: 'INLINE',
-    secAuthority: 'Default',
-    defaultValidUntilYears: 100,
-    deletePolicy: 'DISABLE',
     // Opt-in since enforcement shipped (V504) — defaulting the gate on
     // would refuse memberships in plain (non-secGroup) groups.
     requireSecGroup: false,
     secuserObjectClasses: ['secUser'],
+    secuserAttributes: defaultAttributeModel(),
     managementDitBaseDn: '',
     secuserRdnAttribute: 'secUUID',
     secuserRdnValueSource: 'GENERATED_UUID',
     groupMemberTarget: 'DEMOGRAPHIC_DN',
-    onDemographicDelete: 'LEAVE',
   }
+}
+
+// Deep snapshot for the pristine baseline — the form now nests an array of
+// row objects, so a shallow {...form} would share those rows and defeat the
+// isDirty comparison when a row is edited in place.
+function snapshot(f: Form): Form {
+  return JSON.parse(JSON.stringify(f)) as Form
 }
 
 const form = ref<Form>(emptyForm())
@@ -102,7 +151,8 @@ const isLinkedMode = computed(() => form.value.topologyMode === 'LINKED')
 // controller validates more strictly; this catches the obvious
 // "linked mode with empty management DIT" before the round-trip.
 const canSave = computed(() => {
-  if (form.value.defaultValidUntilYears < 1) return false
+  // Every written attribute needs a value (a literal or an expression).
+  if (form.value.secuserAttributes.some((a) => a.enabled && !a.value.trim())) return false
   if (isLinkedMode.value && !form.value.managementDitBaseDn.trim()) return false
   return true
 })
@@ -156,25 +206,26 @@ onMounted(async () => {
   // Whatever we landed on (server DTO, defaults, or defaults with the
   // first exposed mode), capture as the pristine snapshot so the
   // initial state isn't reported as dirty.
-  pristine.value = { ...form.value }
+  pristine.value = snapshot(form.value)
   loading.value = false
 })
 
 function populateFromDto(dto: IsvaConfigDto) {
   form.value.enabled = dto.enabled
   form.value.topologyMode = dto.topologyMode
-  form.value.secAuthority = dto.secAuthority ?? 'Default'
-  form.value.defaultValidUntilYears = dto.defaultValidUntilYears
-  form.value.deletePolicy = dto.deletePolicy
   form.value.requireSecGroup = dto.requireSecGroup
   form.value.secuserObjectClasses = dto.secuserObjectClasses?.length
     ? [...dto.secuserObjectClasses]
     : ['secUser']
+  // The DTO always carries a full model (server derives one when none is
+  // stored); fall back to defaults only if it's somehow absent.
+  form.value.secuserAttributes = dto.secuserAttributes?.length
+    ? dto.secuserAttributes.map((a) => ({ ...a }))
+    : defaultAttributeModel()
   form.value.managementDitBaseDn = dto.managementDitBaseDn ?? ''
   form.value.secuserRdnAttribute = dto.secuserRdnAttribute ?? 'secUUID'
   form.value.secuserRdnValueSource = dto.secuserRdnValueSource ?? 'GENERATED_UUID'
   form.value.groupMemberTarget = dto.groupMemberTarget ?? 'DEMOGRAPHIC_DN'
-  form.value.onDemographicDelete = dto.onDemographicDelete ?? 'LEAVE'
 }
 
 // secUser object-class chip editor. secUser is load-bearing (the
@@ -214,6 +265,31 @@ function removeObjectClass(name: string) {
     .filter((oc) => oc !== name)
 }
 
+// Attribute-row edits (On toggle, kind, value) are bound with v-model and
+// mutate the row objects in place; pristine is a deep snapshot (see snapshot())
+// so the isDirty comparison still fires.
+
+// The legacy value fields the request still carries are derived from the
+// corresponding rows, so any consumer that still reads them (e.g. the
+// account-status snapshot) stays consistent with the model.
+function literalValueOf(name: string): string {
+  const a = form.value.secuserAttributes.find(
+    (x) => x.name.toLowerCase() === name.toLowerCase())
+  return a && a.valueKind === 'LITERAL' ? a.value : ''
+}
+
+function yearsFromValidUntil(): number {
+  const a = form.value.secuserAttributes.find((x) => x.name === 'secValidUntil')
+  const m = a?.value.match(/nowPlusYears\(\s*(\d+)\s*\)/)
+  return m ? Number(m[1]) : 100
+}
+
+function enabledOptionalNames(): string[] {
+  return form.value.secuserAttributes
+    .filter((a) => a.enabled && !isRequiredAttr(a.name))
+    .map((a) => a.name)
+}
+
 async function save() {
   if (!canSave.value || saving.value) return
   saving.value = true
@@ -221,25 +297,31 @@ async function save() {
     const payload: UpsertIsvaConfigRequest = {
       enabled: form.value.enabled,
       topologyMode: form.value.topologyMode,
-      secAuthority: form.value.secAuthority,
-      defaultValidUntilYears: form.value.defaultValidUntilYears,
-      deletePolicy: form.value.deletePolicy,
+      // Legacy value fields, derived from the model rows so back-end readers
+      // that still consult them stay consistent. The model below is
+      // authoritative for what a grant actually writes.
+      secAuthority: literalValueOf('secAuthority') || 'Default',
+      secLoginType: literalValueOf('secLoginType') || 'Default',
+      defaultValidUntilYears: yearsFromValidUntil(),
       requireSecGroup: form.value.requireSecGroup,
       // Applies to both modes; server normalizes (ensures secUser present).
       secuserObjectClasses: form.value.secuserObjectClasses,
+      // Legacy: enabled optional names. Superseded by secuserAttributes.
+      secuserOverlayAttributes: enabledOptionalNames(),
+      // The authoritative per-attribute model.
+      secuserAttributes: form.value.secuserAttributes,
       // Linked-only — server clears these when topologyMode = INLINE,
       // so it's safe to send the form values regardless.
       managementDitBaseDn: form.value.managementDitBaseDn.trim() || null,
       secuserRdnAttribute: form.value.secuserRdnAttribute.trim() || null,
       secuserRdnValueSource: form.value.secuserRdnValueSource,
       groupMemberTarget: form.value.groupMemberTarget,
-      onDemographicDelete: form.value.onDemographicDelete,
     }
     const { data } = await upsertIsvaConfig(directoryId.value, payload)
     populateFromDto(data)
     // Reset pristine to the server-confirmed shape, which clears
     // isDirty and hides the action bar.
-    pristine.value = { ...form.value }
+    pristine.value = snapshot(form.value)
     notif.success(`${IVIA_ABBR} integration saved.`)
   } catch (e: unknown) {
     notif.error(extractErrorMessage(e, 'Save failed.'))
@@ -251,7 +333,7 @@ async function save() {
 function discard() {
   // Restore the form to the last-loaded/saved snapshot. Action bar
   // disappears on its own because isDirty flips false.
-  form.value = { ...pristine.value }
+  form.value = snapshot(pristine.value)
   // Clear any stale probe result that might have survived the edits
   // we're now throwing away.
   probeResult.value = null
@@ -392,68 +474,6 @@ function extractErrorMessage(e: unknown, fallback: string): string {
         <h2 class="text-base font-semibold text-gray-900">Common settings</h2>
 
         <div>
-          <label class="label" for="secAuthority">secAuthority</label>
-          <input id="secAuthority" type="text" v-model="form.secAuthority"
-                 class="input w-full" placeholder="Default" />
-          <p class="text-xs text-gray-500 mt-1">
-            Authority name written to every user's <code>secAuthority</code>
-            attribute. Default is <code>Default</code>; only override for
-            multi-authority deployments.
-          </p>
-        </div>
-
-        <div>
-          <label class="label" for="defaultValidUntilYears">
-            secValidUntil default (years)
-          </label>
-          <input id="defaultValidUntilYears" type="number" min="1"
-                 v-model.number="form.defaultValidUntilYears"
-                 class="input w-full" placeholder="100" />
-          <p class="text-xs text-gray-500 mt-1">
-            New users are created with <code>secValidUntil</code> set to
-            <em>now + N years</em>. Admins can shorten per-user later.
-          </p>
-        </div>
-
-        <fieldset>
-          <legend class="text-sm font-medium text-gray-900 mb-2">Delete behaviour</legend>
-          <div class="space-y-2">
-            <label class="flex items-start gap-2 text-sm">
-              <input type="radio" name="delete" value="DISABLE"
-                     v-model="form.deletePolicy" class="mt-1" />
-              <span>
-                <span class="font-medium">Disable</span> (recommended) — flips
-                <code>secAcctValid=FALSE</code>; preserves audit + policy.
-              </span>
-            </label>
-            <label class="flex items-start gap-2 text-sm">
-              <input type="radio" name="delete" value="HARD_DELETE"
-                     v-model="form.deletePolicy" class="mt-1" />
-              <span>
-                <span class="font-medium">Hard delete</span> — actually
-                <code>DEL</code>s the entry. Destroys {{ IVIA_ABBR }} policy
-                associations.
-              </span>
-            </label>
-          </div>
-        </fieldset>
-
-        <div class="flex items-start gap-2">
-          <input id="requireSecGroup" type="checkbox"
-                 v-model="form.requireSecGroup" class="rounded mt-1" />
-          <div>
-            <label for="requireSecGroup" class="text-sm font-medium text-gray-900">
-              Require <code>secGroup</code> overlay on groups
-            </label>
-            <p class="text-xs text-gray-500">
-              When on, group-membership writes refuse to add a user to a
-              group that lacks <code>objectClass: secGroup</code> — {{ IVIA_ABBR }}
-              would silently ignore the membership otherwise.
-            </p>
-          </div>
-        </div>
-
-        <div>
           <label class="label" for="newObjectClass">secUser object classes</label>
           <!-- Write-target phrasing tracks the selected topology so only the
                relevant mode's behaviour is described (inline overlays the
@@ -493,6 +513,122 @@ function extractErrorMessage(e: unknown, fallback: string): string {
               @keydown.enter.prevent="addObjectClass"
             />
             <button type="button" class="btn-secondary" @click="addObjectClass">Add</button>
+          </div>
+        </div>
+
+        <!-- Unified secUser attribute table: each attribute's On toggle, value
+             kind, and literal/expression value in one place. secLoginType /
+             secAuthority are required (MUST on stock secUser) and locked on. -->
+        <div>
+          <label class="label">secUser attributes</label>
+          <p class="text-xs text-gray-500 mb-2" data-testid="secuser-attributes-help">
+            Every <code>sec*</code> attribute a grant writes, and how each value
+            is produced — a <strong>literal</strong>, or a <strong>computed</strong>
+            expression evaluated per user.
+            <code>secLoginType</code> and <code>secAuthority</code> are required
+            by IBM's stock <code>secUser</code> and can't be unticked (their
+            values stay editable). Untick any your directory's <code>secUser</code>
+            schema doesn't permit — leaving one ticked that the schema forbids
+            makes provisioning fail with <em>"attribute not allowed by
+            objectClass secUser"</em>. Use <strong>Probe</strong> below to detect
+            mismatches.
+          </p>
+          <div class="overflow-x-auto" data-testid="secuser-attributes-table">
+            <div class="min-w-[34rem]">
+              <div class="grid grid-cols-[1.5fr_auto_7rem_2fr] gap-x-3 items-center px-1 pb-1
+                          text-xs font-medium text-gray-500 dark:text-gray-400
+                          border-b border-gray-200 dark:border-gray-700">
+                <span>Attribute</span>
+                <span class="text-center">On</span>
+                <span>Value kind</span>
+                <span>Literal / expression</span>
+              </div>
+              <div
+                v-for="attr in form.secuserAttributes"
+                :key="attr.name"
+                class="grid grid-cols-[1.5fr_auto_7rem_2fr] gap-x-3 items-start py-2
+                       border-b border-gray-100 dark:border-gray-800"
+                :data-testid="`attr-row-${attr.name}`"
+              >
+                <div class="self-center">
+                  <code
+                    class="text-sm text-gray-800 dark:text-gray-100 cursor-help
+                           underline decoration-dotted decoration-gray-400 underline-offset-2"
+                    :title="ATTR_HINTS[attr.name]"
+                  >{{ attr.name }}</code>
+                  <span v-if="isRequiredAttr(attr.name)" class="ml-1 text-gray-400"
+                        title="Required — can't be unticked">&#128274;</span>
+                </div>
+                <div class="flex justify-center self-center">
+                  <input
+                    type="checkbox"
+                    class="rounded"
+                    v-model="attr.enabled"
+                    :disabled="isRequiredAttr(attr.name)"
+                    :aria-label="`Write ${attr.name}`"
+                  />
+                </div>
+                <select
+                  class="input"
+                  v-model="attr.valueKind"
+                  :disabled="!attr.enabled"
+                  :aria-label="`${attr.name} value kind`"
+                >
+                  <option value="LITERAL">Literal</option>
+                  <option value="COMPUTED">Computed</option>
+                </select>
+                <input
+                  type="text"
+                  class="input w-full font-mono text-xs"
+                  v-model="attr.value"
+                  :disabled="!attr.enabled"
+                  :aria-label="`${attr.name} value`"
+                  :placeholder="attr.valueKind === 'COMPUTED'
+                    ? 'e.g. ${user.uid}' : 'literal value'"
+                />
+              </div>
+            </div>
+          </div>
+          <details class="mt-2 text-xs text-gray-600 dark:text-gray-300"
+                   data-testid="expression-help">
+            <summary class="cursor-pointer text-gray-700 dark:text-gray-200">
+              Expression reference
+            </summary>
+            <div class="mt-1 space-y-1 pl-1">
+              <p>
+                <strong>References</strong> —
+                <code>&dollar;{user.&lt;attr&gt;}</code> a demographic attribute
+                (e.g. <code>&dollar;{user.uid}</code>);
+                <code>&dollar;{sec.&lt;attr&gt;}</code> another
+                <code>secUser</code> attribute in this table (e.g.
+                <code>&dollar;{sec.secAuthority}</code>).
+              </p>
+              <p>
+                <strong>Functions</strong> — <code>uuid()</code> a fresh id;
+                <code>now()</code> the current time;
+                <code>nowPlusYears(n)</code> n years out.
+              </p>
+              <p>
+                Literal text passes through, so
+                <code>&dollar;{sec.secAuthority}%&dollar;{user.uid}</code> yields
+                e.g. <code>Default%jdoe</code>.
+              </p>
+            </div>
+          </details>
+        </div>
+
+        <div class="flex items-start gap-2">
+          <input id="requireSecGroup" type="checkbox"
+                 v-model="form.requireSecGroup" class="rounded mt-1" />
+          <div>
+            <label for="requireSecGroup" class="text-sm font-medium text-gray-900">
+              Require <code>secGroup</code> overlay on groups
+            </label>
+            <p class="text-xs text-gray-500">
+              When on, group-membership writes refuse to add a user to a
+              group that lacks <code>objectClass: secGroup</code> — {{ IVIA_ABBR }}
+              would silently ignore the membership otherwise.
+            </p>
           </div>
         </div>
       </section>
@@ -577,32 +713,6 @@ function extractErrorMessage(e: unknown, fallback: string): string {
             existing group in the directory browser first.
           </p>
         </fieldset>
-
-        <fieldset>
-          <legend class="text-sm font-medium text-gray-900 mb-2">
-            On demographic-entry delete
-          </legend>
-          <div class="space-y-2">
-            <label class="flex items-start gap-2 text-sm">
-              <input type="radio" name="ondemodelete" value="LEAVE"
-                     v-model="form.onDemographicDelete" class="mt-1" />
-              <span>
-                <span class="font-medium">Leave</span> (default) — touch only
-                the secUser entry on soft-delete; demographic stays as-is.
-              </span>
-            </label>
-            <label class="flex items-start gap-2 text-sm">
-              <input type="radio" name="ondemodelete" value="DISABLE_AND_MARK"
-                     v-model="form.onDemographicDelete" class="mt-1" />
-              <span>
-                <span class="font-medium">Disable and mark</span> — also
-                annotate the demographic entry on soft-delete by writing this
-                directory's configured enable/disable attribute (its disable
-                value). Requires that attribute to be set on the directory.
-              </span>
-            </label>
-          </div>
-        </fieldset>
       </section>
 
       <!-- Probe — runs against the persisted config. Sits below the
@@ -650,6 +760,48 @@ function extractErrorMessage(e: unknown, fallback: string): string {
                  : probeResult.schemaValid === false ? 'no' : 'unknown' }}
             </span>
           </p>
+          <!-- Code-vs-schema attribute mismatch: the attributes the app
+               would write that the target secUser schema forbids (or the
+               MUST attrs it requires that the app wouldn't write). This is
+               the direct cause of "attribute not allowed" / "missing
+               required attribute" provisioning failures. -->
+          <div
+            v-if="probeResult.disallowedWriteAttributes.length
+                  || probeResult.missingRequiredAttributes.length"
+            data-testid="probe-attr-mismatch"
+            class="rounded-md border border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/40 p-3 space-y-2"
+          >
+            <p class="font-medium text-red-700 dark:text-red-300">
+              secUser attribute mismatches
+            </p>
+            <div v-if="probeResult.disallowedWriteAttributes.length">
+              <p class="text-red-700 dark:text-red-300">
+                Written by the app but <strong>not permitted</strong> by the
+                target <code>secUser</code> schema — untick these under
+                “secUser overlay attributes”:
+              </p>
+              <div class="flex flex-wrap gap-1.5 mt-1">
+                <code
+                  v-for="a in probeResult.disallowedWriteAttributes"
+                  :key="a"
+                  class="rounded bg-red-100 dark:bg-red-900/60 px-1.5 py-0.5 text-xs text-red-800 dark:text-red-200"
+                >{{ a }}</code>
+              </div>
+            </div>
+            <div v-if="probeResult.missingRequiredAttributes.length">
+              <p class="text-red-700 dark:text-red-300">
+                <strong>Required</strong> by the target <code>secUser</code>
+                schema but not written by the app:
+              </p>
+              <div class="flex flex-wrap gap-1.5 mt-1">
+                <code
+                  v-for="a in probeResult.missingRequiredAttributes"
+                  :key="a"
+                  class="rounded bg-red-100 dark:bg-red-900/60 px-1.5 py-0.5 text-xs text-red-800 dark:text-red-200"
+                >{{ a }}</code>
+              </div>
+            </div>
+          </div>
           <ul v-if="probeResult.warnings.length" class="list-disc list-inside text-gray-600">
             <li v-for="w in probeResult.warnings" :key="w">{{ w }}</li>
           </ul>

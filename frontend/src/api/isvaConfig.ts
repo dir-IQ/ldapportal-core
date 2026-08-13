@@ -14,28 +14,42 @@ import client from './client';
 import type { AxiosResponse } from 'axios';
 
 export type IsvaTopologyMode = 'INLINE' | 'LINKED';
-export type IsvaDeletePolicy = 'DISABLE' | 'HARD_DELETE';
 export type IsvaGroupMemberTarget = 'DEMOGRAPHIC_DN' | 'SECUSER_DN';
-export type IsvaDemographicDeleteMode = 'LEAVE' | 'DISABLE_AND_MARK';
 export type IsvaRdnValueSource = 'GENERATED_UUID' | 'UID';
+export type SecUserAttributeValueKind = 'LITERAL' | 'COMPUTED';
+
+// One row of the unified secUser attribute model — name, whether a grant
+// writes it, and how its value is produced (a literal, or a computed
+// expression: ${user.<attr>} / ${sec.<attr>} references plus uuid() / now() /
+// nowPlusYears(n)).
+export interface SecUserAttribute {
+  name: string;
+  enabled: boolean;
+  valueKind: SecUserAttributeValueKind;
+  value: string;
+}
 
 export interface IsvaConfigDto {
   enabled: boolean;
   topologyMode: IsvaTopologyMode;
   secAuthority: string | null;
+  secLoginType: string | null;
   defaultValidUntilYears: number;
-  deletePolicy: IsvaDeletePolicy;
   requireSecGroup: boolean;
 
   // Applies to both modes
   secuserObjectClasses: string[];
+  secuserOverlayAttributes: string[];
+
+  // The effective per-attribute model — always populated (derived from the
+  // legacy fields server-side when no explicit model is stored).
+  secuserAttributes: SecUserAttribute[];
 
   // Linked-mode-only — null in INLINE responses
   managementDitBaseDn: string | null;
   secuserRdnAttribute: string | null;
   secuserRdnValueSource: IsvaRdnValueSource | null;
   groupMemberTarget: IsvaGroupMemberTarget | null;
-  onDemographicDelete: IsvaDemographicDeleteMode | null;
 
   createdAt: string;
   updatedAt: string;
@@ -46,19 +60,27 @@ export interface UpsertIsvaConfigRequest {
   enabled: boolean;
   topologyMode: IsvaTopologyMode;
   secAuthority: string | null;
+  secLoginType: string | null;
   defaultValidUntilYears: number;
-  deletePolicy: IsvaDeletePolicy;
   requireSecGroup: boolean;
 
   // Applies to both modes — secUser is normalized in server-side if omitted
   secuserObjectClasses: string[];
+  // Applies to both modes — the optional sec* overlay attributes to write.
+  // Normalized to the known optional attributes server-side. Legacy: the
+  // server prefers secuserAttributes below when that is supplied.
+  secuserOverlayAttributes: string[];
+
+  // The unified per-attribute model — authoritative when supplied. Normalized
+  // to the canonical full set server-side. null → server derives from the
+  // legacy value fields.
+  secuserAttributes: SecUserAttribute[] | null;
 
   // Required when topologyMode = LINKED
   managementDitBaseDn: string | null;
   secuserRdnAttribute: string | null;
   secuserRdnValueSource: IsvaRdnValueSource | null;
   groupMemberTarget: IsvaGroupMemberTarget | null;
-  onDemographicDelete: IsvaDemographicDeleteMode | null;
 }
 
 export interface ProbeResult {
@@ -68,6 +90,11 @@ export interface ProbeResult {
   // attribute is permitted by one; false = a check failed; null =
   // server schema couldn't be read to decide.
   schemaValid: boolean | null;
+  // Attributes the app would write that the target secUser schema forbids
+  // (each → "attribute not allowed"); and MUST attributes it requires that
+  // the app wouldn't write (each → "missing required attribute").
+  disallowedWriteAttributes: string[];
+  missingRequiredAttributes: string[];
   warnings: string[];
 }
 

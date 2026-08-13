@@ -9,6 +9,7 @@ import com.ldapportal.entity.ProfileAttributeConfig;
 import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.ApproverMode;
+import com.ldapportal.entity.enums.InputType;
 import com.ldapportal.repository.AccountRepository;
 import com.ldapportal.repository.AdminProfileRoleRepository;
 import com.ldapportal.repository.DirectoryConnectionRepository;
@@ -189,6 +190,44 @@ class ProvisioningProfileServiceTest {
         assertThatThrownBy(() -> service.validateAttributes(profileId, attrs))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("validation pattern is invalid");
+    }
+
+    @Test
+    void applyDefaults_ignoresObjectClassConfig_leavesRequestObjectClassesIntact() {
+        // A stray/typo'd HIDDEN_FIXED default on the system-managed objectClass
+        // config (the "L" bug) must never be applied — object classes come from
+        // the profile's object-class list, not this default.
+        ProfileAttributeConfig oc = new ProfileAttributeConfig();
+        oc.setAttributeName("objectClass");
+        oc.setInputType(InputType.HIDDEN_FIXED);
+        oc.setDefaultValue("L");
+        given(attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(oc));
+
+        Map<String, List<String>> attrs = new HashMap<>();
+        attrs.put("objectClass", new ArrayList<>(List.of("top", "inetOrgPerson")));
+
+        service.applyDefaults(profileId, attrs);
+
+        assertThat(attrs.get("objectClass")).containsExactly("top", "inetOrgPerson");
+    }
+
+    @Test
+    void validateAttributes_objectClassConfig_neverRaisesRequired() {
+        // objectClass is system-managed; a required config for it (stored here
+        // lower-cased, as the auto-add does) must not raise a phantom "required"
+        // when the payload carries the camel-cased "objectClass" the UI sends.
+        ProfileAttributeConfig oc = new ProfileAttributeConfig();
+        oc.setAttributeName("objectclass");
+        oc.setRequiredOnCreate(true);
+        given(attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId))
+                .willReturn(List.of(oc));
+
+        Map<String, List<String>> attrs = new HashMap<>();
+        attrs.put("objectClass", List.of("top", "inetOrgPerson"));
+
+        assertThatCode(() -> service.validateAttributes(profileId, attrs))
+                .doesNotThrowAnyException();
     }
 
     // ── validateModification (update path: edit-gating + value constraints) ──
@@ -424,6 +463,159 @@ class ProvisioningProfileServiceTest {
         given(dirRepo.findById(directoryId)).willReturn(Optional.of(dir));
         given(profileRepo.save(any())).willAnswer(inv -> inv.getArgument(0));
         return dir;
+    }
+
+    // ── Hidden required-attribute validation ─────────────────────────────────
+
+    private static com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry attrEntry(
+            String name, String inputType, boolean required, boolean hidden, String computed) {
+        return new com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry(
+                name, null, inputType, required, true, true, false, false,
+                null, computed, null, null, null, null, null, null, 6, hidden,
+                null, null, null, null);
+    }
+
+    private com.ldapportal.dto.profile.CreateProfileRequest reqFull(
+            String rdnAttribute, String dnTemplate, boolean showDnField, boolean selfRegistration,
+            List<com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry> configs) {
+        return new com.ldapportal.dto.profile.CreateProfileRequest(
+                "engineers", null, null, "ou=People,dc=example,dc=com", null,
+                List.of("inetOrgPerson"), rdnAttribute, showDnField,
+                dnTemplate, null, null, null,
+                true, selfRegistration,
+                null, null, null, null, null, null, null, null,
+                false, false, null, configs, List.of());
+    }
+
+    // Automatic DN mode (showDnField=false), self-registration off — the setup
+    // the RDN-must-be-configured guard governs.
+    private com.ldapportal.dto.profile.CreateProfileRequest reqWith(
+            String rdnAttribute, String dnTemplate,
+            List<com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry> configs) {
+        return reqFull(rdnAttribute, dnTemplate, false, false, configs);
+    }
+
+    // rdnAttribute is 'uid'; prepend a valid (required) uid config so the profile
+    // satisfies the RDN-must-be-configured guard and the test exercises whatever
+    // it actually targets.
+    private com.ldapportal.dto.profile.CreateProfileRequest createReqWithConfigs(
+            List<com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry> configs) {
+        var withRdn = new java.util.ArrayList<>(List.of(attrEntry("uid", "TEXT", true, false, null)));
+        withRdn.addAll(configs);
+        return reqWith("uid", null, withRdn);
+    }
+
+    @Test
+    void createProfile_hiddenFixedRequiredAttribute_savesWithoutComputedExpression() {
+        // objectClass is required, hidden, and HIDDEN_FIXED — its value is
+        // applied server-side, so it must not trip the "required hidden needs a
+        // computed expression" rule. Regression: this rejected every profile
+        // carrying an objectClass config.
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+
+        var req = createReqWithConfigs(List.of(
+                attrEntry("objectClass", "HIDDEN_FIXED", true, true, null)));
+
+        assertThatCode(() -> service.create(directoryId, req, true, null))
+                .doesNotThrowAnyException();
+
+        org.mockito.Mockito.verify(attrConfigRepo).save(org.mockito.ArgumentMatchers.argThat(
+                c -> "objectClass".equals(c.getAttributeName()) && c.isHidden()));
+    }
+
+    @Test
+    void createProfile_hiddenRequiredNonFixedAttribute_rejectedWithoutComputedExpression() {
+        // A plain required attribute that is hidden with no computed expression
+        // and no server-side fill still has no way to get a value, so it stays
+        // rejected — the HIDDEN_FIXED exemption must not weaken the general rule.
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+
+        var req = createReqWithConfigs(List.of(
+                attrEntry("employeeType", "TEXT", true, true, null)));
+
+        assertThatThrownBy(() -> service.create(directoryId, req, true, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("cannot be hidden");
+    }
+
+    // ── RDN attribute must be a configured form field ────────────────────────
+
+    @Test
+    void createProfile_rdnAttributeNotConfigured_rejected() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        // rdnAttribute 'uid' with no matching config and no DN template.
+        var req = reqWith("uid", null, List.of(attrEntry("cn", "TEXT", true, false, null)));
+
+        assertThatThrownBy(() -> service.create(directoryId, req, true, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must be a configured form attribute");
+    }
+
+    @Test
+    void createProfile_rdnAttributeConfiguredButNotRequired_rejected() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        // uid is present but neither required nor derived — its value can't be
+        // guaranteed at create time.
+        var req = reqWith("uid", null, List.of(attrEntry("uid", "TEXT", false, false, null)));
+
+        assertThatThrownBy(() -> service.create(directoryId, req, true, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must be required or have a computed value");
+    }
+
+    @Test
+    void createProfile_rdnAttributeRequired_ok() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        var req = reqWith("uid", null, List.of(attrEntry("uid", "TEXT", true, false, null)));
+
+        assertThatCode(() -> service.create(directoryId, req, true, null))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void createProfile_rdnAttributeComputed_ok() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        // A computed RDN derives its own value, so it need not be required.
+        var req = reqWith("cn", null, List.of(attrEntry("cn", "TEXT", false, false, "${sn}")));
+
+        assertThatCode(() -> service.create(directoryId, req, true, null))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void createProfile_operatorEnteredMode_skipsRdnGuard() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        // In operator-entered mode (showDnField=true) the operator supplies the DN,
+        // so the RDN attribute need not be a configured/required field.
+        var req = reqFull("uid", null, true, false,
+                List.of(attrEntry("cn", "TEXT", true, false, null)));
+
+        assertThatCode(() -> service.create(directoryId, req, true, null))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void createProfile_selfRegistrationWithOperatorEnteredDn_rejected() {
+        UUID directoryId = UUID.randomUUID();
+        // Interlock throws in applyCommonFields, before the profile is saved, so
+        // stub only the directory lookup (a profileRepo.save stub would be unused).
+        var dir = new com.ldapportal.entity.DirectoryConnection();
+        dir.setId(directoryId);
+        given(dirRepo.findById(directoryId)).willReturn(Optional.of(dir));
+        // Operator-entered DN + self-registration is contradictory.
+        var req = reqFull("uid", null, true, true,
+                List.of(attrEntry("uid", "TEXT", true, false, null)));
+
+        assertThatThrownBy(() -> service.create(directoryId, req, true, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Self-registration requires an automatically-composed DN");
     }
 
     @Test

@@ -36,8 +36,11 @@ Before flipping the toggle, the target directory must:
    `secschema.def` in older releases). Apply it to your directory's
    schema *before* enabling — without `secUser`, `secAcctValid`,
    `secValidUntil`, `secPwdLastChanged`, `secPwdValid`, `secLogin`,
-   `secDN`, the very first user provisioned will fail with
-   `LDAPException: object class violation`. Most directories take
+   `secLoginType`, `secAuthority`, `secDN`, the very first user
+   provisioned will fail with `LDAPException: object class violation`
+   (e.g. `missing attribute secLoginType which is required by object
+   class secUser` — `secLoginType` and `secAuthority` are MUST attributes
+   of IBM's stock `secUser`). Most directories take
    the LDIF via the usual schema-load tool:
    - OpenLDAP: `ldapadd -Y EXTERNAL -H ldapi:/// -f secschema.ldif`
    - 389DS: `dsconf … schema attributetypes add …` (run the script
@@ -75,16 +78,14 @@ in the directory list (`/superadmin/directories`). Field by field:
 |-------|------------------|
 | **Enabled** | Master switch. With this off the interceptor is dormant and provisioning behaves identically to a no-ISVA directory. Use this to stage a config before enabling. |
 | **Topology mode** | `INLINE` vs `LINKED` (see above). Toggling from one to the other clears the linked-only fields below so a stale value can't haunt you. |
-| **secAuthority** | Domain name written to `secAuthority` on every entry. Defaults to `Default`, which matches a vanilla ISVA install. Override if your ISVA deployment is sliced into multiple authorities. |
-| **Default valid-until (years)** | Provisioning sets `secValidUntil` to `now + N years` on new users. The default of 100 effectively means "never expires"; lower it to enforce a periodic re-credentialling cadence. |
-| **Delete policy** | `DISABLE` (soft) flips `secAcctValid=FALSE` + `secValidUntil=now`; `HARD_DELETE` issues a real LDAP DEL. Default is `DISABLE` — the safer choice for environments that need an audit trail for departed users. |
+| **Account lifecycle** *(not a setting — automatic)* | The `secUser` account mirrors the demographic entry's lifecycle, so there's no delete-policy knob to choose. **Disabling** a user flips `secAcctValid=FALSE` on its `secUser` (and, when the overlay includes `secValidUntil`, stamps it to `now`); **re-enabling** flips it back to `TRUE` (and pushes `secValidUntil` back out to its configured expiry); **Deleting** a user removes its `secUser` too — inline is a single DEL of the shared entry; linked DELs the paired secUser then the demographic entry. |
 | **Require secGroup** | When on, every group-membership write first checks the target group for `objectClass: secGroup` (ISVA's group representation) and refuses with a 422 when it's missing — the LDAP write would succeed but ISVA would silently ignore the membership. Remediate by adding the secGroup overlay to the group (`pdadmin group import`) or turning the flag off. A group the bind can't read is let through; the write then fails (or succeeds) on the server's own verdict. Off (the default) matches deployments that manage groups outside of ISVA. |
 | **secUser object classes** | The objectClass set written to the secUser identity — overlaid onto the demographic entry (inline) or stamped on the paired entry (linked). `secUser` is always present (re-added if you remove it); add others your schema needs, e.g. `eUser` to bring in `principalName`. Applies to both modes. |
+| **secUser attributes** | The unified table of every `sec*` attribute a grant writes — one row each, with an **On** toggle, a **value kind** (Literal / Computed), and the **value**. `secLoginType` and `secAuthority` are MUST on IBM's stock `secUser`, so they're always on and can't be unticked (their values stay editable — usually `Default`). The historical default set is `secLogin`, `secAcctValid`, `secPwdValid`, `secValidUntil`, `secPwdLastChanged`; three **opt-in identity attributes** — `secUUID`, `principalName`, `secDomainId` — are off by default (not every schema permits them). Untick any your directory's `secUser` schema forbids, or every grant fails with `attribute <x> is not allowed by objectClass secUser`; **Probe** detects mismatches. A **Literal** value is written verbatim (`TRUE`, `Default`). A **Computed** value is an expression evaluated per user: `${user.<attr>}` reads a demographic attribute (e.g. `${user.uid}`), `${sec.<attr>}` reads another `secUser` attribute in the table (e.g. `${sec.secAuthority}`), and `uuid()` / `now()` / `nowPlusYears(n)` cover generated and timestamp values. Literal text passes through, so `secDomainId` = `${sec.secAuthority}%${user.uid}` yields e.g. `Default%jdoe` (the `%` is literal). `${sec.*}` references resolve in dependency order; a reference to a disabled attribute is rejected. Applies to both modes. |
 | **Management DIT base DN** *(linked only)* | The subtree under which secUser entries live (e.g. `secAuthority=Default,o=acme,c=us`). The bind DN needs write access here. Required when topology mode is LINKED — the server will reject a save without it. |
 | **secUser RDN attribute** *(linked only)* | The attribute that names secUser entries — free-form. `secUUID` (default) and `secLogin` are the stock choices; any attribute your configured object classes permit works (e.g. `principalName` from `eUser`). |
 | **RDN value source** *(linked only)* | Where the RDN value comes from, independent of the attribute name. `GENERATED_UUID` (default) mints an opaque UUID per user; `UID` mirrors the user's `uid` (a rename then forces a directory rename). `secUUID`+`GENERATED_UUID` and `secLogin`/`principalName`+`UID` are the natural pairings. |
 | **Group member target** *(linked only)* | `DEMOGRAPHIC_DN` writes the user's demographic DN into group member attributes; `SECUSER_DN` writes the paired secUser DN. The right answer depends on how your ACLs resolve group membership — ISVA's own ACLs follow `SECUSER_DN`, but if your application checks groups against demographic DNs, use that instead. |
-| **On demographic delete** *(linked only)* | What to do on the demographic side when a delete-with-DISABLE-policy fires. `LEAVE` leaves the demographic entry alone (only the secUser is disabled). `DISABLE_AND_MARK` is reserved for a future v1.1; today it logs and treats as `LEAVE`. |
 
 ### Deployment setting: exposed topology modes
 
@@ -117,7 +118,7 @@ layered on the directory-level toggle:
 | Setting | Effect |
 |---------|--------|
 | **Inherit** (default) | Follow the directory. A profile with no override set inherits whatever the directory **Enabled** flag says. |
-| **Exempt** (`FORCE_OFF`) | Fully exempt this profile from ISVA in an otherwise ISVA-enabled directory. Create / delete / password / group operations for entries under the profile are plain LDAP — no `secUser` writes, no soft-disable, no linked-mode secUser lookup — exactly as if ISVA weren't installed. |
+| **Exempt** (`FORCE_OFF`) | Fully exempt this profile from ISVA in an otherwise ISVA-enabled directory. Create / delete / enable-disable / password / group operations for entries under the profile are plain LDAP — no `secUser` writes, no lifecycle mirror, no linked-mode secUser lookup — exactly as if ISVA weren't installed. |
 
 The override is **narrowing-only**: a profile can turn ISVA *off* for itself,
 but it cannot turn ISVA *on* in a directory where the master **Enabled** flag
@@ -184,22 +185,30 @@ After saving the config:
    objectclasses") — and, in linked mode, that the configured RDN
    attribute is permitted by one of those classes (so a
    `principalName` RDN without the `eUser` class is caught here, not at
-   provisioning time) and that the management DIT is reachable. A green
-   probe doesn't *guarantee* every operation will succeed, but a red
-   probe always points at one of the prereqs above. (The schema verdict
-   shows as **yes / no / unknown** — *unknown* means the server didn't
-   return its schema to the bind DN.)
+   provisioning time) and that the management DIT is reachable. It also
+   compares the attributes the app would write against the target
+   `secUser` schema and reports the mismatches directly — a **secUser
+   attribute mismatches** panel lists any attribute the app writes that
+   the schema *forbids* (untick it under **secUser overlay attributes**)
+   and any MUST attribute the schema *requires* that the app doesn't
+   write. This is the fast path to fixing `attribute not allowed` /
+   `missing required attribute` errors: probe, read the two lists, adjust
+   the overlay, re-probe. A green probe doesn't *guarantee* every
+   operation will succeed, but a red probe always points at one of the
+   prereqs above. (The schema verdict shows as **yes / no / unknown** —
+   *unknown* means the server didn't return its schema to the bind DN.)
 2. **Provision a test user.** Create one through LDAP Portal's normal
    user-create flow. Inspect the resulting entry in your directory
    browser — you should see the `sec*` attributes alongside the
    demographic ones (inline mode) or two entries paired by `secDN`
    (linked mode).
-3. **Soft-disable a test user.** Delete the user with the
-   policy=DISABLE config. Confirm `secAcctValid=FALSE` and
-   `secValidUntil=<now in generalizedTime>` on the secUser entry.
+3. **Disable a test user.** Disable the user through LDAP Portal's
+   normal enable/disable action. Confirm `secAcctValid=FALSE` (and,
+   when the overlay includes `secValidUntil`, `secValidUntil=<now in
+   generalizedTime>`) on the secUser entry. Re-enabling flips
+   `secAcctValid` back to `TRUE`.
 4. **Check the audit log.** Every row touching the ISVA-enabled
-   directory carries `details.vendorIntegration = "ISVA"`. Soft-
-   disable rows additionally carry `details.softDisable = true`.
+   directory carries `details.vendorIntegration = "ISVA"`.
    When the create / delete was driven by a provisioning profile the
    row also carries `details.profileId = "<uuid>"` so reports can
    slice by profile.
@@ -242,9 +251,9 @@ entry: a user exists on the demographic side without a paired secUser
 in the management DIT. Two paths:
 - Repair via `pdadmin user import <uid>` — ISVA will create the
   missing secUser using whatever defaults its config says.
-- Hard-delete the demographic via LDAP Portal (switch delete policy
-  to `HARD_DELETE` temporarily, delete, switch back). Hard-delete is
-  the operator's escape hatch for orphan cleanup.
+- Delete the demographic via LDAP Portal — a delete of an orphan
+  demographic (no paired secUser) simply DELs the demographic entry,
+  which is exactly the orphan-cleanup path.
 
 **`Group target is configured as SECUSER_DN, but no linked secUser
 entry was found …` on a group-membership add.** Same orphan issue,

@@ -688,6 +688,15 @@ public class ProvisioningProfileService {
                 attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId);
 
         for (ProfileAttributeConfig config : configs) {
+            // objectClass is system-managed (see applyDefaults) — its value
+            // comes from the object-class list, not this config. Skip it so a
+            // required objectClass config (and the exact-case key lookup
+            // below, which misses a camel-cased "objectClass" payload) can't
+            // raise a phantom "objectClass is required".
+            if ("objectClass".equalsIgnoreCase(config.getAttributeName())) {
+                continue;
+            }
+
             List<String> values = attributes.get(config.getAttributeName());
             String value = (values != null && !values.isEmpty()) ? values.get(0) : null;
 
@@ -859,6 +868,17 @@ public class ProvisioningProfileService {
                 attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(profileId);
 
         for (ProfileAttributeConfig config : configs) {
+            // objectClass is system-managed: its value comes from the
+            // profile's object-class list, never from an attribute-config
+            // default. Skip it — applying a (possibly stale/typo'd)
+            // HIDDEN_FIXED default here would overwrite the real
+            // objectClasses with a single bogus value (e.g. "L") and break
+            // every create with a directory schema violation. Mirrors the
+            // exemption the profile editor already documents client-side.
+            if ("objectClass".equalsIgnoreCase(config.getAttributeName())) {
+                continue;
+            }
+
             List<String> values = attributes.get(config.getAttributeName());
             boolean hasValue = values != null && !values.isEmpty()
                     && values.get(0) != null && !values.get(0).isBlank();
@@ -995,6 +1015,15 @@ public class ProvisioningProfileService {
                                     Boolean passwordLowercase, Boolean passwordDigits,
                                     Boolean passwordSpecial, String passwordSpecialChars,
                                     Boolean emailPasswordToUser, String passwordDisposition) {
+        // Operator-entered DN (showDnField) and self-registration are mutually
+        // exclusive: self-registration composes the DN automatically from the RDN
+        // attribute and can't have an operator typing one. Enforce it here so the
+        // two can't drift regardless of entry point (UI, API, migration).
+        if (showDnField && selfRegistrationAllowed) {
+            throw new IllegalArgumentException(
+                    "Self-registration requires an automatically-composed DN; turn off "
+                    + "operator-entered DN or self-registration");
+        }
         profile.setName(name);
         profile.setDescription(description);
         profile.setTargetUserDn(targetUserDn);
@@ -1065,15 +1094,48 @@ public class ProvisioningProfileService {
             }
         }
 
+        // In Automatic DN mode (showDnField == false) the entry's DN is
+        // "<rdnAttribute>=<value>,<targetUserDn>", composed by the app, and that
+        // value comes from the RDN attribute's own form field — so the RDN
+        // attribute must be a configured field whose value is guaranteed at create
+        // time: required, or derived (computed / HIDDEN_FIXED). Otherwise the
+        // create form has no way to supply the RDN and the directory rejects the
+        // add. In operator-entered mode (showDnField == true) the operator supplies
+        // the DN directly (optionally via a template), so this doesn't apply; an
+        // empty config list uses the fallback create form, which carries its own
+        // RDN value field — both are exempt.
+        if (!safeEntries.isEmpty()
+                && !profile.isShowDnField()
+                && profile.getRdnAttribute() != null && !profile.getRdnAttribute().isBlank()) {
+            String rdn = profile.getRdnAttribute();
+            AttributeConfigEntry rdnCfg = safeEntries.stream()
+                    .filter(e -> e.attributeName().equalsIgnoreCase(rdn))
+                    .findFirst().orElse(null);
+            if (rdnCfg == null) {
+                throw new IllegalArgumentException(
+                        "The RDN attribute '" + rdn + "' must be a configured form attribute");
+            }
+            boolean derived = (rdnCfg.computedExpression() != null && !rdnCfg.computedExpression().isBlank())
+                    || InputType.HIDDEN_FIXED.name().equals(rdnCfg.inputType());
+            if (!rdnCfg.requiredOnCreate() && !derived) {
+                throw new IllegalArgumentException(
+                        "The RDN attribute '" + rdn + "' must be required or have a computed value");
+            }
+        }
+
         for (AttributeConfigEntry e : safeEntries) {
-            // A required password field may be hidden when the profile
-            // auto-generates it (GENERATED_*) — the server fills it at create
-            // time, so the operator never needs to see or enter it.
+            // A required attribute may be hidden when the server supplies its
+            // value at create time, so the operator never needs to see or enter
+            // it: a password the profile auto-generates (GENERATED_*), or a
+            // HIDDEN_FIXED attribute whose value the server applies from the
+            // config (e.g. the always-hidden objectClass).
             boolean filledByGeneration = isPasswordAttribute(e)
                     && profile.getPasswordDisposition().isGenerated();
+            boolean filledServerSide = filledByGeneration
+                    || InputType.HIDDEN_FIXED.name().equals(e.inputType());
             if (e.requiredOnCreate() && e.hidden()
                     && (e.computedExpression() == null || e.computedExpression().isBlank())
-                    && !filledByGeneration) {
+                    && !filledServerSide) {
                 throw new IllegalArgumentException(
                         "Required attribute '" + e.attributeName() + "' cannot be hidden unless it has a computed expression");
             }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva.service;
 
+import com.ldapportal.addons.isva.IsvaSecUserPlans;
 import com.ldapportal.addons.isva.dto.IsvaConfigDto;
 import com.ldapportal.addons.isva.dto.ProbeResult;
 import com.ldapportal.addons.isva.dto.UpsertIsvaConfigRequest;
@@ -18,8 +19,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -81,12 +84,23 @@ public class IsvaConfigService {
         entity.setEnabled(req.enabled());
         entity.setTopologyMode(req.topologyMode());
         entity.setSecAuthority(blankToNull(req.secAuthority()));
+        entity.setSecLoginType(blankToNull(req.secLoginType()));
         entity.setDefaultValidUntilYears(req.defaultValidUntilYears());
-        entity.setDeletePolicy(req.deletePolicy());
         entity.setRequireSecGroup(req.requireSecGroup());
         // Applies to both modes — normalize so secUser is always present
         // and the list is trimmed / de-duplicated.
         entity.setSecuserObjectClasses(normalizeObjectClasses(req.secuserObjectClasses()));
+        // Applies to both modes — restrict to the known optional overlay
+        // attributes, canonical spelling + order. null → full default set.
+        entity.setSecuserOverlayAttributes(
+                normalizeOverlayAttributes(req.secuserOverlayAttributes()));
+        // The unified per-attribute model is authoritative when supplied; store
+        // it normalized to the canonical full set. null clears it, so the plan
+        // builders fall back to deriving an equivalent model from the legacy
+        // value fields above (PUT semantics: absent model = "derive").
+        entity.setSecuserAttributes(req.secuserAttributes() != null
+                ? IsvaSecUserPlans.normalizeModel(req.secuserAttributes())
+                : null);
 
         // Linked-mode fields — set when LINKED, null when INLINE so
         // a topology-mode flip doesn't leave stale linked config
@@ -98,16 +112,14 @@ public class IsvaConfigService {
                     ? req.secuserRdnValueSource() : IsvaRdnValueSource.GENERATED_UUID);
             entity.setGroupMemberTarget(req.groupMemberTarget() != null
                     ? req.groupMemberTarget() : entity.getGroupMemberTarget());
-            entity.setOnDemographicDelete(req.onDemographicDelete() != null
-                    ? req.onDemographicDelete() : entity.getOnDemographicDelete());
         } else {
             entity.setManagementDitBaseDn(null);
             // Leave secuserRdnAttribute / secuserRdnValueSource /
-            // groupMemberTarget / onDemographicDelete at their stored
-            // defaults — they're ignored in INLINE mode anyway and
-            // clearing them would be unnecessary churn against the
-            // audit columns. (secuserObjectClasses is set above; it
-            // applies to inline mode too.)
+            // groupMemberTarget at their stored defaults — they're
+            // ignored in INLINE mode anyway and clearing them would be
+            // unnecessary churn against the audit columns.
+            // (secuserObjectClasses is set above; it applies to inline
+            // mode too.)
         }
 
         entity.setUpdatedBy(principal != null ? principal.username() : "system");
@@ -156,15 +168,19 @@ public class IsvaConfigService {
                     cfg.isEnabled(),
                     cfg.getTopologyMode(),
                     cfg.getSecAuthority(),
+                    cfg.getSecLoginType(),
                     cfg.getDefaultValidUntilYears(),
-                    cfg.getDeletePolicy(),
                     cfg.isRequireSecGroup(),
                     cfg.getSecuserObjectClasses(),
+                    cfg.getSecuserOverlayAttributes(),
                     cfg.getManagementDitBaseDn(),
                     cfg.getSecuserRdnAttribute(),
                     cfg.getSecuserRdnValueSource(),
                     cfg.getGroupMemberTarget(),
-                    cfg.getOnDemographicDelete());
+                    // Export the raw stored model (null when the config still
+                    // derives from legacy fields) so exports stay minimal and a
+                    // re-apply derives the same behaviour.
+                    cfg.getSecuserAttributes());
             out.add(new IsvaConfigExport(dir.getSlug(), req));
         }
         out.sort(java.util.Comparator.comparing(IsvaConfigExport::directorySlug));
@@ -236,6 +252,39 @@ public class IsvaConfigService {
         }
         seen.putIfAbsent("secuser", "secUser");
         return new ArrayList<>(seen.values());
+    }
+
+    /**
+     * Normalize the configured optional-overlay attribute list: keep only
+     * the attributes the code knows how to write
+     * ({@link com.ldapportal.addons.isva.IsvaSecUserPlans#KNOWN_OVERLAY_ATTRS}),
+     * in canonical spelling and stable order, matched case-insensitively.
+     * Unknown names are dropped (the code has no value to write for them,
+     * and {@code secLoginType} / {@code secAuthority} are always-on MUST
+     * attrs, not toggleable here). A {@code null} request resolves to the
+     * default set ({@code OPTIONAL_OVERLAY_ATTRS} — the IVIA identity attrs
+     * stay off unless explicitly enabled); an explicitly empty list writes
+     * no optional attrs.
+     */
+    private static List<String> normalizeOverlayAttributes(List<String> requested) {
+        if (requested == null) {
+            return new ArrayList<>(
+                    com.ldapportal.addons.isva.IsvaSecUserPlans.OPTIONAL_OVERLAY_ATTRS);
+        }
+        Set<String> want = new LinkedHashSet<>();
+        for (String a : requested) {
+            if (a != null && !a.isBlank()) {
+                want.add(a.trim().toLowerCase());
+            }
+        }
+        List<String> out = new ArrayList<>();
+        for (String canonical
+                : com.ldapportal.addons.isva.IsvaSecUserPlans.KNOWN_OVERLAY_ATTRS) {
+            if (want.contains(canonical.toLowerCase())) {
+                out.add(canonical);
+            }
+        }
+        return out;
     }
 
     private static String blankToNull(String value) {

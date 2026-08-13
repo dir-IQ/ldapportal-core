@@ -53,7 +53,7 @@
             v-for="item in filteredList"
             :key="item.name"
             :data-selected="selected === item.name || undefined"
-            @click="navigateTo(activeTab, item.name)"
+            @click="navigateTo(activeTab, item.name, false)"
             :class="selected === item.name ? 'bg-blue-50 text-blue-700 font-medium' : 'text-gray-700 hover:bg-gray-50'"
             class="w-full text-left px-3 py-2 text-sm border-b border-gray-50 last:border-0 font-mono"
           >{{ item.name }}</button>
@@ -73,6 +73,48 @@
 
           <!-- Object class detail -->
           <template v-if="oc">
+            <!-- Facts + inheritance. The ancestor chain reads root-last
+                 (secUser › eUser › cimManagedElement › top) and every hop is
+                 clickable, reusing the same cross-navigation + back stack the
+                 attribute chips use. -->
+            <dl v-if="oc.kind || oc.description || oc.superiors?.length || oc.subclasses?.length"
+                class="grid grid-cols-[9rem_1fr] gap-x-4 gap-y-2 text-sm mb-5"
+                data-testid="oc-hierarchy">
+              <template v-if="oc.kind">
+                <dt class="text-xs font-semibold text-gray-500 uppercase tracking-wider self-center">Kind</dt>
+                <dd class="text-gray-800">{{ oc.kind }}</dd>
+              </template>
+
+              <template v-if="oc.description">
+                <dt class="text-xs font-semibold text-gray-500 uppercase tracking-wider self-center">Description</dt>
+                <dd class="text-gray-800">{{ oc.description }}</dd>
+              </template>
+
+              <template v-if="oc.superiors?.length">
+                <dt class="text-xs font-semibold text-gray-500 uppercase tracking-wider self-center">Inherits from</dt>
+                <dd class="flex flex-wrap items-center gap-1">
+                  <span class="text-[13px] font-mono text-gray-500">{{ selected }}</span>
+                  <template v-for="sup in oc.superiors" :key="sup">
+                    <span class="text-gray-300">&rsaquo;</span>
+                    <button
+                      @click="navigateTo('objectClasses', sup)"
+                      class="text-[13px] bg-gray-100 text-gray-700 rounded px-2 py-0.5 font-mono hover:bg-gray-200 hover:underline cursor-pointer transition-colors"
+                    >{{ sup }}</button>
+                  </template>
+                </dd>
+              </template>
+
+              <template v-if="oc.subclasses?.length">
+                <dt class="text-xs font-semibold text-gray-500 uppercase tracking-wider self-center">Subclasses</dt>
+                <dd class="flex flex-wrap gap-1">
+                  <button v-for="sub in oc.subclasses" :key="sub"
+                    @click="navigateTo('objectClasses', sub)"
+                    class="text-[13px] bg-gray-100 text-gray-700 rounded px-2 py-0.5 font-mono hover:bg-gray-200 hover:underline cursor-pointer transition-colors"
+                  >{{ sub }}</button>
+                </dd>
+              </template>
+            </dl>
+
             <div v-if="oc.required?.length" class="mb-4">
               <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Required Attributes</p>
               <div class="flex flex-wrap gap-1">
@@ -204,8 +246,15 @@ interface SchemaListItem {
 }
 interface ObjectClassDetail {
   oid?: string | null
+  description?: string | null
+  /** STRUCTURAL / AUXILIARY / ABSTRACT, or null when the schema doesn't say. */
+  kind?: string | null
   required?: string[]
   optional?: string[]
+  /** Ancestors, nearest parent first (e.g. eUser, cimManagedElement, top). */
+  superiors?: string[]
+  /** Direct children — object classes naming this one as their SUP. */
+  subclasses?: string[]
 }
 interface SyntaxInfo {
   oid: string
@@ -342,9 +391,20 @@ async function loadList() {
   try {
     const fn = activeTab.value === 'objectClasses' ? listObjectClasses : listAttributeTypes
     const { data } = await fn(selectedDirId.value)
-    allItems.value = Array.isArray(data)
+    const mapped = Array.isArray(data)
       ? data.map((d: SchemaListItem | string) => typeof d === 'string' ? { name: d, oid: null } : d)
       : []
+    // Defensive de-dup by name: some directories (notably OUD) return the same
+    // schema element more than once. The list is keyed by name, and duplicate
+    // keys break Vue's reconciliation — the list stops updating when the filter
+    // changes. Collapse them so the keys stay unique and the filter works.
+    const seen = new Set<string>()
+    allItems.value = mapped.filter((item) => {
+      const key = item.name.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
   } catch (e) {
     notif.error(apiError(e))
   } finally {
@@ -390,13 +450,19 @@ function switchTab(tab: TabKey) {
 }
 
 /**
- * Open {@code name} in {@code tab}. When that means crossing from one tab to
- * the other (following a chip), remember where we were so {@link goBack} can
- * return there.
+ * Open {@code name} in {@code tab}. Following a link (an attribute chip, or a
+ * superclass / subclass in the hierarchy) remembers where we were so
+ * {@link goBack} can return there — including same-tab hops, which is how
+ * walking up an inheritance chain stays reversible.
+ *
+ * {@code record} is false for plain list-row clicks: browsing the list isn't
+ * "following" anything, and recording it would grow a back stack nobody asked
+ * for.
  */
-async function navigateTo(tab: TabKey, name: string) {
+async function navigateTo(tab: TabKey, name: string, record = true) {
   const crossing = tab !== activeTab.value
-  if (crossing && selected.value) {
+  // Record whenever we're actually leaving a different item behind.
+  if (record && selected.value && !(!crossing && selected.value === name)) {
     navStack.value.push({ tab: activeTab.value, name: selected.value })
   }
   if (crossing) {

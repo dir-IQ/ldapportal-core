@@ -5,7 +5,24 @@
       <!-- ── Step 1: pick file + conflict mode ───────────────────────────── -->
       <template v-if="phase === 'pick'">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">LDIF File</label>
+          <div class="flex items-center justify-between mb-1">
+            <label class="block text-sm font-medium text-gray-700">LDIF Source</label>
+            <div class="flex rounded-lg border border-gray-200 overflow-hidden text-xs">
+              <button type="button" @click="sourceMode = 'file'"
+                      :class="['px-3 py-1.5 border-r border-gray-200',
+                               sourceMode === 'file' ? 'bg-blue-600 text-white font-medium' : 'bg-white text-gray-600 hover:bg-gray-50']">
+                Upload file
+              </button>
+              <button type="button" @click="sourceMode = 'paste'"
+                      :class="['px-3 py-1.5',
+                               sourceMode === 'paste' ? 'bg-blue-600 text-white font-medium' : 'bg-white text-gray-600 hover:bg-gray-50']">
+                Paste LDIF
+              </button>
+            </div>
+          </div>
+
+          <!-- Upload-file mode -->
+          <template v-if="sourceMode === 'file'">
           <div
             role="button"
             tabindex="0"
@@ -32,6 +49,23 @@
             </div>
           </div>
           <input ref="fileInput" type="file" accept=".ldif" class="hidden" aria-label="LDIF file" @change="onFileSelect" />
+          </template>
+
+          <!-- Paste mode: type/paste LDIF (entries or change records) directly. -->
+          <template v-else>
+            <textarea v-model="pastedText" rows="12" spellcheck="false"
+                      class="input w-full font-mono text-[13px]"
+                      aria-label="LDIF contents"
+                      placeholder="dn: cn=example,dc=example,dc=com&#10;changetype: modify&#10;add: objectClass&#10;objectClass: eUser"></textarea>
+            <div class="flex items-center justify-between mt-1">
+              <button type="button" @click="pasteFileInput?.click()"
+                      class="text-xs text-blue-600 hover:text-blue-800">Load from file…</button>
+              <button v-if="pastedText" type="button" @click="pastedText = ''"
+                      class="text-xs text-red-500 hover:text-red-700">Clear</button>
+            </div>
+            <input ref="pasteFileInput" type="file" accept=".ldif" class="hidden"
+                   aria-label="Load LDIF file into the editor" @change="loadFileIntoBox" />
+          </template>
         </div>
 
         <div>
@@ -250,7 +284,7 @@
     <template #footer>
       <button @click="back" v-if="phase === 'preview'" :disabled="busy" class="btn-neutral">Back</button>
       <button @click="close" :disabled="busy" class="btn-neutral">{{ phase === 'applied' ? 'Close' : 'Cancel' }}</button>
-      <button v-if="phase === 'pick'" @click="doPreview" :disabled="!file || busy" class="btn-primary">
+      <button v-if="phase === 'pick'" @click="doPreview" :disabled="!canPreview || busy" class="btn-primary">
         {{ busy ? 'Analyzing…' : 'Preview' }}
       </button>
       <button v-else-if="phase === 'preview'" @click="doApply" :disabled="busy || !applicableCount" class="btn-primary">
@@ -328,6 +362,10 @@ const PAGE_SIZE = 50
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const file = ref<File | null>(null)
+// Source of the LDIF: an uploaded file, or text pasted into the editor.
+const sourceMode = ref<'file' | 'paste'>('file')
+const pastedText = ref('')
+const pasteFileInput = ref<HTMLInputElement | null>(null)
 const conflictHandling = ref<'SKIP' | 'OVERWRITE'>('SKIP')
 // Checked = provision IVIA secUser overlays for imported users (the default).
 const provisionVendorAccounts = ref(true)
@@ -426,12 +464,19 @@ const rangeEnd = computed(() => page.value * PAGE_SIZE + rows.value.length)
 // button never offers to import entries the server will reject. 0 → disabled.
 const applicableCount = computed(() => summary.value?.applicableCount ?? 0)
 
+// Preview is possible with a picked file (file mode) or non-empty text
+// (paste mode).
+const canPreview = computed(() =>
+  sourceMode.value === 'paste' ? pastedText.value.trim().length > 0 : !!file.value)
+
 watch(visible, (open) => {
   if (open) reset()
 })
 
 function reset() {
   file.value = null
+  sourceMode.value = 'file'
+  pastedText.value = ''
   error.value = ''
   busy.value = false
   conflictHandling.value = 'SKIP'
@@ -484,6 +529,22 @@ function onDrop(e: DragEvent) {
   setFile(e.dataTransfer?.files?.[0])
 }
 
+// Paste mode: read a chosen file's text into the editor so it can be
+// tweaked before previewing. Doesn't enforce the .ldif extension — the
+// text is edited and validated by the preview like any other paste.
+async function loadFileIntoBox(e: Event) {
+  const input = e.target as HTMLInputElement
+  const f = input.files?.[0]
+  input.value = '' // allow re-selecting the same file
+  if (!f) return
+  try {
+    pastedText.value = await f.text()
+    error.value = ''
+  } catch {
+    error.value = 'Could not read the file'
+  }
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
@@ -496,7 +557,13 @@ function errMsg(e: unknown, fallback = 'Something went wrong'): string {
 }
 
 async function doPreview() {
-  if (!file.value) return
+  // Paste mode synthesizes a File from the textarea so the rest of the
+  // pipeline (multipart preview → paged rows → apply) is byte-for-byte
+  // identical to a file upload — no backend change needed.
+  const source = sourceMode.value === 'paste'
+    ? new File([pastedText.value], 'pasted.ldif', { type: 'application/octet-stream' })
+    : file.value
+  if (!source) return
   error.value = ''
   busy.value = true
   // Load the directory's IVIA config so the preview can show whether secUser
@@ -510,7 +577,7 @@ async function doPreview() {
   detail.value = null
   excludedRows.value = new Set()
   try {
-    const { data } = await previewLdif(props.directoryId, file.value, conflictHandling.value)
+    const { data } = await previewLdif(props.directoryId, source, conflictHandling.value)
     const s = data as PreviewSummary
     summary.value = s
     previewId.value = s.previewId

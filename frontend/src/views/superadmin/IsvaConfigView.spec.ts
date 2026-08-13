@@ -66,20 +66,38 @@ import IsvaConfigView from './IsvaConfigView.vue'
 
 const notFound = { response: { status: 404 } }
 
+function attrModel() {
+  const c = (name: string, enabled: boolean, valueKind: string, value: string) =>
+    ({ name, enabled, valueKind, value })
+  return [
+    c('secLogin', true, 'COMPUTED', '${user.uid}'),
+    c('secLoginType', true, 'LITERAL', 'Default'),
+    c('secAuthority', true, 'LITERAL', 'Default'),
+    c('secAcctValid', true, 'LITERAL', 'TRUE'),
+    c('secPwdValid', true, 'LITERAL', 'TRUE'),
+    c('secValidUntil', true, 'COMPUTED', 'nowPlusYears(100)'),
+    c('secPwdLastChanged', true, 'COMPUTED', 'now()'),
+    c('secUUID', false, 'COMPUTED', 'uuid()'),
+    c('principalName', false, 'COMPUTED', '${user.uid}'),
+    c('secDomainId', false, 'COMPUTED', '${sec.secAuthority}%${user.uid}'),
+  ]
+}
+
 function inlineConfigDto() {
   return {
     enabled: true,
     topologyMode: 'INLINE',
     secAuthority: 'Default',
+    secLoginType: 'Default',
     defaultValidUntilYears: 100,
-    deletePolicy: 'DISABLE',
     requireSecGroup: true,
     secuserObjectClasses: ['secUser'],
+    secuserOverlayAttributes: ['secLogin', 'secAcctValid', 'secPwdValid', 'secValidUntil', 'secPwdLastChanged'],
+    secuserAttributes: attrModel(),
     managementDitBaseDn: null,
     secuserRdnAttribute: null,
     secuserRdnValueSource: null,
     groupMemberTarget: null,
-    onDemographicDelete: null,
     createdAt: '', updatedAt: '', updatedBy: 'alice',
   }
 }
@@ -93,7 +111,6 @@ function linkedConfigDto() {
     secuserRdnAttribute: 'principalName',
     secuserRdnValueSource: 'UID',
     groupMemberTarget: 'DEMOGRAPHIC_DN',
-    onDemographicDelete: 'LEAVE',
   }
 }
 
@@ -363,7 +380,10 @@ describe('IsvaConfigView probe gating', () => {
     hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['INLINE', 'LINKED'] } })
     hoisted.getIsvaConfig.mockResolvedValue({ data: inlineConfigDto() })
     hoisted.probeIsvaConfig.mockResolvedValue({
-      data: { reachable: true, sampleSecUserFound: false, schemaValid: null, warnings: [] },
+      data: {
+        reachable: true, sampleSecUserFound: false, schemaValid: null,
+        disallowedWriteAttributes: [], missingRequiredAttributes: [], warnings: [],
+      },
     })
 
     const wrapper = await mountView()
@@ -374,5 +394,88 @@ describe('IsvaConfigView probe gating', () => {
     expect(hoisted.probeIsvaConfig).toHaveBeenCalledWith('dir-1')
     // Critically: probe did NOT implicitly save.
     expect(hoisted.upsertIsvaConfig).not.toHaveBeenCalled()
+  })
+
+  it('Probe surfaces secUser attribute mismatches', async () => {
+    hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['INLINE', 'LINKED'] } })
+    hoisted.getIsvaConfig.mockResolvedValue({ data: inlineConfigDto() })
+    hoisted.probeIsvaConfig.mockResolvedValue({
+      data: {
+        reachable: true, sampleSecUserFound: true, schemaValid: false,
+        disallowedWriteAttributes: ['secLogin', 'secValidUntil'],
+        missingRequiredAttributes: [],
+        warnings: [],
+      },
+    })
+
+    const wrapper = await mountView()
+    const probeBtn = wrapper.findAll('button').find((b) => b.text() === 'Probe')
+    await probeBtn!.trigger('click')
+    await flushPromises()
+
+    const mismatch = wrapper.find('[data-testid="probe-attr-mismatch"]')
+    expect(mismatch.exists()).toBe(true)
+    expect(mismatch.text()).toContain('secLogin')
+    expect(mismatch.text()).toContain('secValidUntil')
+  })
+})
+
+describe('IsvaConfigView secUser attributes table', () => {
+  beforeEach(() => {
+    hoisted.upsertIsvaConfig.mockReset()
+  })
+
+  it('renders a row per attribute and locks the required ones', async () => {
+    hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['INLINE'] } })
+    hoisted.getIsvaConfig.mockResolvedValue({ data: inlineConfigDto() })
+
+    const wrapper = await mountView()
+
+    // One row per known attribute.
+    expect(wrapper.findAll('[data-testid^="attr-row-"]')).toHaveLength(10)
+
+    // The retired standalone inputs are gone — they're rows now.
+    expect(wrapper.find('#secAuthority').exists()).toBe(false)
+    expect(wrapper.find('#secLoginType').exists()).toBe(false)
+    expect(wrapper.find('#defaultValidUntilYears').exists()).toBe(false)
+
+    // Required attrs: On checkbox is disabled (can't be unticked).
+    const loginTypeOn = wrapper.find('[data-testid="attr-row-secLoginType"] input[type="checkbox"]')
+    expect(loginTypeOn.attributes('disabled')).toBeDefined()
+    // Optional attr: enabled to toggle.
+    const uuidOn = wrapper.find('[data-testid="attr-row-secUUID"] input[type="checkbox"]')
+    expect(uuidOn.attributes('disabled')).toBeUndefined()
+  })
+
+  it('save sends the model and derives legacy fields from the rows', async () => {
+    hoisted.getIsvaUiOptions.mockResolvedValue({ data: { exposedTopologyModes: ['INLINE'] } })
+    hoisted.getIsvaConfig.mockResolvedValue({ data: inlineConfigDto() })
+    hoisted.upsertIsvaConfig.mockImplementation((_dir, payload) =>
+      Promise.resolve({ data: { ...inlineConfigDto(), ...payload } }))
+
+    const wrapper = await mountView()
+
+    // Edit the secAuthority row's literal value.
+    const authorityValue = wrapper.find('[data-testid="attr-row-secAuthority"] input[type="text"]')
+    await authorityValue.setValue('Corp')
+    // Enable secUUID.
+    await wrapper.find('[data-testid="attr-row-secUUID"] input[type="checkbox"]').setValue(true)
+
+    expect(wrapper.text()).toContain('Unsaved changes')
+    const saveBtn = wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Save' && b.attributes('class')?.includes('btn-primary'))
+    await saveBtn!.trigger('click')
+    await flushPromises()
+
+    const payload = hoisted.upsertIsvaConfig.mock.calls[0][1]
+    // The model is sent, with the edited value + newly-enabled secUUID.
+    const authorityRow = payload.secuserAttributes.find((a: { name: string }) => a.name === 'secAuthority')
+    expect(authorityRow.value).toBe('Corp')
+    expect(payload.secuserAttributes.find((a: { name: string }) => a.name === 'secUUID').enabled).toBe(true)
+    // Legacy fields derived from the rows for back-end readers.
+    expect(payload.secAuthority).toBe('Corp')
+    expect(payload.defaultValidUntilYears).toBe(100)
+    expect(payload.secuserOverlayAttributes).toContain('secUUID')
   })
 })

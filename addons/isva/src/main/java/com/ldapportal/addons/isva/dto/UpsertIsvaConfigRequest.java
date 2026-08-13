@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva.dto;
 
-import com.ldapportal.addons.isva.entity.IsvaDemographicDeleteMode;
-import com.ldapportal.addons.isva.entity.IsvaDeletePolicy;
 import com.ldapportal.addons.isva.entity.IsvaGroupMemberTarget;
 import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
+import com.ldapportal.addons.isva.entity.SecUserAttribute;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 
@@ -27,19 +26,31 @@ public record UpsertIsvaConfigRequest(
 
         @NotNull IsvaTopologyMode topologyMode,
         String secAuthority,
+        String secLoginType,
 
         @Min(1) int defaultValidUntilYears,
 
-        @NotNull IsvaDeletePolicy deletePolicy,
         boolean requireSecGroup,
 
         // Applies to both modes — secUser is normalized in if omitted
         List<String> secuserObjectClasses,
+
+        // Applies to both modes — the optional sec* overlay attributes to
+        // write. null → server default (full set); normalized to the known
+        // optional attributes server-side. Legacy: superseded by
+        // secuserAttributes below when that is supplied.
+        List<String> secuserOverlayAttributes,
 
         // Linked-mode-only
         String managementDitBaseDn,
         String secuserRdnAttribute,
         IsvaRdnValueSource secuserRdnValueSource,
         IsvaGroupMemberTarget groupMemberTarget,
-        IsvaDemographicDeleteMode onDemographicDelete) {
+
+        // The unified per-attribute model — one entry per secUser attribute
+        // (name, enabled, literal-vs-computed, value/expression). When
+        // supplied, this is the authoritative source for what a grant writes;
+        // it's normalized to the canonical full set server-side. null → the
+        // server derives an equivalent model from the legacy value fields.
+        List<SecUserAttribute> secuserAttributes) {
 }

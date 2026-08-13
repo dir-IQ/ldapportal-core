@@ -32,12 +32,17 @@ import java.util.UUID;
  *
  * <p>Linked-mode-only fields ({@link #managementDitBaseDn},
  * {@link #secuserRdnAttribute}, {@link #secuserRdnValueSource},
- * {@link #groupMemberTarget}, {@link #onDemographicDelete}) are
- * nullable. ({@link #secuserObjectClasses} applies to both modes.)
+ * {@link #groupMemberTarget}) are nullable.
+ * ({@link #secuserObjectClasses} applies to both modes.)
  * The DB-level
  * {@code CHECK} constraint in the Flyway migration enforces that
  * {@code management_dit_base_dn} is non-null when
  * {@code topology_mode = LINKED}.</p>
+ *
+ * <p>There's no delete-policy or on-demographic-delete field: the
+ * secUser side mirrors the demographic entry's lifecycle
+ * automatically — deleting a user deletes its secUser, disabling a
+ * user disables its secUser. See {@code IsvaProvisioningInterceptor}.</p>
  */
 @Entity
 @Table(name = "vendor_integration_isva_config")
@@ -75,15 +80,19 @@ public class VendorIntegrationIsvaConfig {
     @Column(name = "sec_authority", length = 255)
     private String secAuthority = "Default";
 
+    /** Value written to {@code secLoginType} on every secUser entry.
+     * IBM's stock {@code secUser} objectClass lists this as a MUST
+     * attribute (alongside {@code secAuthority}), so provisioning fails
+     * with an object-class violation when it's absent. Deployment-varying;
+     * defaults to {@code Default}, matching a vanilla ISVA install. */
+    @Column(name = "sec_login_type", length = 255)
+    private String secLoginType = "Default";
+
     /** secValidUntil default = now + N years. Sufficiently far-future
      * so the account doesn't "expire" by accident; admins can override
      * per-user via the profile editor. */
     @Column(name = "default_valid_until_years", nullable = false)
     private int defaultValidUntilYears = 100;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "delete_policy", nullable = false, length = 16)
-    private IsvaDeletePolicy deletePolicy = IsvaDeletePolicy.DISABLE;
 
     /** Gate group-membership writes on the target group carrying
      * {@code objectClass: secGroup} (refuse otherwise — ISVA ignores
@@ -102,6 +111,40 @@ public class VendorIntegrationIsvaConfig {
     @Convert(converter = SecObjectClassListConverter.class)
     @Column(name = "secuser_object_classes", columnDefinition = "TEXT")
     private List<String> secuserObjectClasses = new ArrayList<>(List.of("secUser"));
+
+    /** The optional {@code sec*} overlay attributes written onto the
+     * secUser identity on every grant — a subset of
+     * {@link com.ldapportal.addons.isva.IsvaSecUserPlans#OPTIONAL_OVERLAY_ATTRS}.
+     * {@code secLoginType} / {@code secAuthority} are always written (MUST
+     * on IBM's stock secUser) and are not part of this list. Deployments
+     * whose {@code secUser} schema omits some optional attributes (e.g. no
+     * {@code secValidUntil} or {@code secLogin}) trim the set so
+     * provisioning doesn't fail with "attribute not allowed by objectClass
+     * secUser". Applies to both topology modes. Defaults to the full set,
+     * preserving prior behaviour. */
+    @Convert(converter = SecObjectClassListConverter.class)
+    @Column(name = "secuser_overlay_attributes", columnDefinition = "TEXT")
+    private List<String> secuserOverlayAttributes = new ArrayList<>(List.of(
+            "secLogin", "secAcctValid", "secPwdValid",
+            "secValidUntil", "secPwdLastChanged"));
+
+    /**
+     * The unified per-attribute overlay model — one row per {@code secUser}
+     * attribute (name, enabled, literal-vs-computed, value/expression). When
+     * set, this is the single source of truth for what a grant writes and how
+     * each value is computed, superseding the legacy split representation
+     * ({@link #secuserOverlayAttributes} + {@link #secAuthority} /
+     * {@link #secLoginType} / {@link #defaultValidUntilYears}).
+     *
+     * <p>{@code null} means "not migrated" — the plan builders derive an
+     * equivalent model from the legacy fields on the fly
+     * ({@code IsvaSecUserPlans.effectiveAttributes}), so a config saved before
+     * this model existed provisions byte-identically. The next save persists
+     * the derived model, making it explicit. Applies to both topology modes.</p>
+     */
+    @Convert(converter = SecUserAttributesConverter.class)
+    @Column(name = "secuser_attributes", columnDefinition = "TEXT")
+    private List<SecUserAttribute> secuserAttributes;
 
     // ── LINKED-mode-only ─────────────────────────────────────────────
 
@@ -128,10 +171,6 @@ public class VendorIntegrationIsvaConfig {
     @Enumerated(EnumType.STRING)
     @Column(name = "group_member_target", length = 16)
     private IsvaGroupMemberTarget groupMemberTarget = IsvaGroupMemberTarget.DEMOGRAPHIC_DN;
-
-    @Enumerated(EnumType.STRING)
-    @Column(name = "on_demographic_delete", length = 24)
-    private IsvaDemographicDeleteMode onDemographicDelete = IsvaDemographicDeleteMode.LEAVE;
 
     // ── Audit columns ────────────────────────────────────────────────
 

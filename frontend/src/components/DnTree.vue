@@ -103,19 +103,35 @@ function select(node) {
 }
 
 /**
+ * Normalize a DN for comparison. LDAP DNs are case-insensitive on
+ * attribute names and tolerate whitespace around the RDN separators,
+ * so a server's canonical form (what tree nodes carry) can differ
+ * character-for-character from a DN the app assembled by string
+ * manipulation (e.g. the parent DN a delete/rename returns). Compare
+ * on a normalized form so refreshNode still finds the node — otherwise
+ * a formatting-only mismatch leaves the tree stale after a delete.
+ */
+function normDn(dn) {
+  return (dn || '').trim().toLowerCase().replace(/\s*,\s*/g, ',')
+}
+
+/**
  * Refresh a node's children from externally provided data.
  * Propagates recursively through child DnTree instances until
  * the target DN is found at the correct level.
  */
 function refreshNode(dn, children) {
-  // Check if the target DN is one of our direct nodes
-  const node = props.nodes.find(n => n.dn === dn)
+  // Check if the target DN is one of our direct nodes (normalized
+  // comparison — see normDn).
+  const node = props.nodes.find(n => normDn(n.dn) === normDn(dn))
   if (node) {
-    // This is our level — update childrenMap and expand
+    // This is our level — update childrenMap and expand. Key by the
+    // node's own dn (the template reads childrenMap/expanded by node.dn),
+    // not the passed-in dn which may be a formatting variant.
     const updated = new Map(childrenMap.value)
-    updated.set(dn, children)
+    updated.set(node.dn, children)
     childrenMap.value = updated
-    expanded.add(dn)
+    expanded.add(node.dn)
     node.hasChildren = children.length > 0
     return true
   }

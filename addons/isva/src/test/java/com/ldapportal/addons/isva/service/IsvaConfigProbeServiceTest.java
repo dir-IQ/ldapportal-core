@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva.service;
 
+import com.ldapportal.addons.isva.IsvaSecUserPlans;
 import com.ldapportal.addons.isva.dto.ProbeResult;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
@@ -70,7 +71,7 @@ class IsvaConfigProbeServiceTest {
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(BIND_PASS);
         connectionFactory = new LdapConnectionFactory(encryptionService);
-        probeService = new IsvaConfigProbeService(connectionFactory);
+        probeService = new IsvaConfigProbeService(connectionFactory, new IsvaSecUserPlans());
         dir = buildDc();
     }
 
@@ -224,7 +225,120 @@ class IsvaConfigProbeServiceTest {
                         .contains("secUser").contains("eUser"));
     }
 
+    // ── code-vs-schema attribute mismatch ──────────────────────────
+
+    @Test
+    void reportsDisallowed_whenAppWritesAttributeSchemaForbids() throws Exception {
+        // Real-world case: this secUser permits neither secValidUntil nor
+        // secLogin, yet the default overlay writes both. The probe must
+        // surface them as the code-vs-schema mismatch so the operator can
+        // untick them before provisioning fails with "attribute not allowed".
+        VendorIntegrationIsvaConfig cfg = config(IsvaTopologyMode.INLINE);
+
+        ProbeResult result = probeWithSchema(leanSecUserSchema(), cfg);
+
+        assertThat(result.disallowedWriteAttributes())
+                .contains("secLogin", "secValidUntil");
+        assertThat(result.schemaValid()).isFalse();
+        assertThat(result.warnings()).anySatisfy(w ->
+                assertThat(w).contains("do not permit").contains("secValidUntil"));
+    }
+
+    @Test
+    void noDisallowed_whenOverlayTrimmedToMatchSchema() throws Exception {
+        // Trim the overlay to exactly what the lean secUser permits →
+        // no mismatch. secLoginType / secAuthority are always written and
+        // this schema permits them, so they don't trip the check.
+        VendorIntegrationIsvaConfig cfg = config(IsvaTopologyMode.INLINE);
+        cfg.setSecuserOverlayAttributes(java.util.List.of(
+                "secAcctValid", "secPwdValid", "secPwdLastChanged"));
+
+        ProbeResult result = probeWithSchema(leanSecUserSchema(), cfg);
+
+        assertThat(result.disallowedWriteAttributes()).isEmpty();
+        assertThat(result.missingRequiredAttributes()).isEmpty();
+    }
+
+    @Test
+    void reportsMissingRequired_whenSchemaRequiresAttributeAppDoesNotWrite()
+            throws Exception {
+        // secUser MUST secHomeDir (a MUST the app never writes) → surfaced.
+        VendorIntegrationIsvaConfig cfg = config(IsvaTopologyMode.INLINE);
+
+        ProbeResult result = probeWithSchema(requiredExtraSchema(), cfg);
+
+        assertThat(result.missingRequiredAttributes()).contains("secHomeDir");
+        assertThat(result.schemaValid()).isFalse();
+        assertThat(result.warnings()).anySatisfy(w ->
+                assertThat(w).contains("missing required").contains("secHomeDir"));
+    }
+
     // ── helpers ────────────────────────────────────────────────────
+
+    /**
+     * A schema whose secUser permits secLoginType / secAuthority / the
+     * account flags but NOT secLogin or secValidUntil — the shape of a
+     * real deployment that trips the default overlay.
+     */
+    private static Schema leanSecUserSchema() throws Exception {
+        Entry e = Schema.getDefaultStandardSchema().getSchemaEntry().duplicate();
+        addSecStarAttributeTypes(e);
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.1 NAME 'secUUID' EQUALITY caseIgnoreMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )");
+        e.addAttribute("objectClasses",
+                "( 1.3.6.1.4.1.99999.1.2.1 NAME 'secUser' SUP top AUXILIARY "
+                        + "MAY ( secLoginType $ secAuthority $ secAcctValid $ secPwdValid $ "
+                        + "secPwdLastChanged $ secUUID ) )");
+        return new Schema(e);
+    }
+
+    /**
+     * A schema whose secUser has a MUST attribute ({@code secHomeDir}) the
+     * app never writes — exercises the missing-required detection.
+     */
+    private static Schema requiredExtraSchema() throws Exception {
+        Entry e = Schema.getDefaultStandardSchema().getSchemaEntry().duplicate();
+        addSecStarAttributeTypes(e);
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.1 NAME 'secUUID' EQUALITY caseIgnoreMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )");
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.2 NAME 'secLogin' EQUALITY caseIgnoreMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )");
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.20 NAME 'secHomeDir' EQUALITY caseIgnoreMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )");
+        e.addAttribute("objectClasses",
+                "( 1.3.6.1.4.1.99999.1.2.1 NAME 'secUser' SUP top AUXILIARY "
+                        + "MUST ( secHomeDir ) "
+                        + "MAY ( secLogin $ secLoginType $ secAuthority $ secAcctValid $ "
+                        + "secPwdValid $ secValidUntil $ secPwdLastChanged $ secUUID ) )");
+        return new Schema(e);
+    }
+
+    /** The sec* overlay attribute types the app writes, shared by the
+     * schema fixtures so a default-overlay grant validates. */
+    private static void addSecStarAttributeTypes(Entry e) throws Exception {
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.10 NAME 'secLoginType' EQUALITY caseIgnoreMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )");
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.11 NAME 'secAuthority' EQUALITY caseIgnoreMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )");
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.12 NAME 'secAcctValid' EQUALITY caseIgnoreMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )");
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.13 NAME 'secPwdValid' EQUALITY caseIgnoreMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 SINGLE-VALUE )");
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.14 NAME 'secValidUntil' EQUALITY generalizedTimeMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.24 SINGLE-VALUE )");
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.15 NAME 'secPwdLastChanged' EQUALITY generalizedTimeMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.24 SINGLE-VALUE )");
+    }
 
     /**
      * A schema extending the UnboundID default standard schema with the
@@ -245,9 +359,13 @@ class IsvaConfigProbeServiceTest {
         e.addAttribute("attributeTypes",
                 "( 1.3.6.1.4.1.99999.1.1.4 NAME 'principalName' EQUALITY caseIgnoreMatch "
                         + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )");
+        addSecStarAttributeTypes(e);
+        // secUser MAY carries the full sec* overlay the app writes so a
+        // default-overlay grant fits with no attribute mismatch.
         e.addAttribute("objectClasses",
                 "( 1.3.6.1.4.1.99999.1.2.1 NAME 'secUser' SUP top AUXILIARY "
-                        + "MAY ( secLogin $ secDN $ secUUID ) )");
+                        + "MAY ( secLogin $ secLoginType $ secAuthority $ secAcctValid $ "
+                        + "secPwdValid $ secValidUntil $ secPwdLastChanged $ secDN $ secUUID ) )");
         if (withEUser) {
             e.addAttribute("objectClasses",
                     "( 1.3.6.1.4.1.99999.1.2.2 NAME 'eUser' SUP top AUXILIARY "
@@ -270,13 +388,22 @@ class IsvaConfigProbeServiceTest {
         e.addAttribute("attributeTypes",
                 "( 1.3.6.1.4.1.99999.1.1.4 NAME 'principalName' EQUALITY caseIgnoreMatch "
                         + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )");
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.2 NAME 'secLogin' EQUALITY caseIgnoreMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )");
+        e.addAttribute("attributeTypes",
+                "( 1.3.6.1.4.1.99999.1.1.3 NAME 'secDN' EQUALITY distinguishedNameMatch "
+                        + "SYNTAX 1.3.6.1.4.1.1466.115.121.1.12 )");
+        addSecStarAttributeTypes(e);
         e.addAttribute("objectClasses",
                 "( 1.3.6.1.4.1.99999.1.2.2 NAME 'eUser' SUP top STRUCTURAL "
                         + "MAY ( principalName ) )");
         e.addAttribute("objectClasses",
                 "( 1.3.6.1.4.1.99999.1.2.1 NAME 'secUser' SUP "
                         + (secUserSupEUser ? "eUser" : "top")
-                        + " STRUCTURAL MAY ( secUUID ) )");
+                        + " STRUCTURAL MAY ( secLogin $ secLoginType $ secAuthority $ "
+                        + "secAcctValid $ secPwdValid $ secValidUntil $ secPwdLastChanged $ "
+                        + "secDN $ secUUID ) )");
         return new Schema(e);
     }
 
@@ -302,7 +429,7 @@ class IsvaConfigProbeServiceTest {
             if (cfg.getTopologyMode() == IsvaTopologyMode.LINKED) {
                 cfg.setManagementDitBaseDn(BASE);
             }
-            return new IsvaConfigProbeService(factory).probe(d, cfg);
+            return new IsvaConfigProbeService(factory, new IsvaSecUserPlans()).probe(d, cfg);
         } finally {
             factory.closeAll();
             server.shutDown(true);

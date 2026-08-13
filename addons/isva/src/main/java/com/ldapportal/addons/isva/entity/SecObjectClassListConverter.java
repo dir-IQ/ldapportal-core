@@ -8,17 +8,19 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Maps the {@code secuser_object_classes} column (a {@code TEXT}
- * comma-separated list) to/from a {@code List<String>} on the entity.
+ * Maps a {@code TEXT} comma-separated list column to/from a
+ * {@code List<String>} on the entity. Used for both
+ * {@code secuser_object_classes} and {@code secuser_overlay_attributes}
+ * — both hold LDAP objectClass / attribute names.
  *
  * <p>A delimited column rather than a child table is deliberate: this
  * is a single-row-per-directory config and the codebase keeps that
- * config flat. LDAP objectClass names are restricted to letters,
- * digits and hyphens, so a comma is an unambiguous, never-occurring
- * delimiter — no escaping needed.</p>
+ * config flat. LDAP objectClass / attribute names are restricted to
+ * letters, digits and hyphens, so a comma is an unambiguous,
+ * never-occurring delimiter — no escaping needed.</p>
  *
  * <p>Not {@code autoApply} — applied explicitly via {@code @Convert}
- * on the one field that uses it, so it can't accidentally catch other
+ * on each field that uses it, so it can't accidentally catch other
  * {@code List<String>} columns a future migration might add.</p>
  */
 @Converter

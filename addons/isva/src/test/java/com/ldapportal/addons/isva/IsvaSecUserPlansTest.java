@@ -47,6 +47,7 @@ class IsvaSecUserPlansTest {
         assertThat(objectClassValues(attrs))
                 .containsExactlyInAnyOrder("inetOrgPerson", "person", "secUser");
         assertThat(attrValue(attrs, "secLogin")).isEqualTo("alice");
+        assertThat(attrValue(attrs, "secLoginType")).isEqualTo("Default");
         assertThat(attrValue(attrs, "secAuthority")).isEqualTo("Default");
         assertThat(attrValue(attrs, "secAcctValid")).isEqualTo("TRUE");
         assertThat(attrValue(attrs, "secPwdValid")).isEqualTo("TRUE");
@@ -70,6 +71,41 @@ class IsvaSecUserPlansTest {
     }
 
     @Test
+    void grantInline_honoursConfiguredSecLoginType() {
+        VendorIntegrationIsvaConfig cfg = inlineConfig();
+        cfg.setSecLoginType("Full");
+
+        List<Attribute> attrs = plans.grantInline(
+                BaselinePlans.attributesFromMap(Map.of(
+                        "objectClass", List.of("inetOrgPerson"),
+                        "uid", List.of("alice"))),
+                cfg, payload("uid=alice,dc=x", "alice"));
+
+        assertThat(attrValue(attrs, "secLoginType")).isEqualTo("Full");
+    }
+
+    @Test
+    void grantInline_trimmedOverlay_omitsDisabledOptionalAttrs() {
+        // A directory whose secUser schema has no secValidUntil / secLogin
+        // trims them from the overlay; a grant must then not write them.
+        VendorIntegrationIsvaConfig cfg = trimmedOverlayConfig();
+
+        List<Attribute> attrs = plans.grantInline(
+                BaselinePlans.attributesFromMap(Map.of(
+                        "objectClass", List.of("inetOrgPerson"),
+                        "uid", List.of("alice"))),
+                cfg, payload("uid=alice,dc=x", "alice"));
+
+        // Always-on MUST attrs still written.
+        assertThat(attrValue(attrs, "secLoginType")).isEqualTo("Default");
+        assertThat(attrValue(attrs, "secAuthority")).isEqualTo("Default");
+        assertThat(attrValue(attrs, "secAcctValid")).isEqualTo("TRUE");
+        // Trimmed optional attrs absent.
+        assertThat(attrValue(attrs, "secLogin")).isNull();
+        assertThat(attrValue(attrs, "secValidUntil")).isNull();
+    }
+
+    @Test
     void grantInline_defersToCallerSuppliedSecAttribute() {
         // A profile that already populated secAuthority must not be
         // overwritten by the ISVA default.
@@ -88,13 +124,14 @@ class IsvaSecUserPlansTest {
     @Test
     void grantInlineOnExisting_producesAddMods_forObjectClassAndSecStar() {
         ModifyStep step = plans.grantInlineOnExisting(
-                "uid=alice,dc=x", inlineConfig(), "alice");
+                "uid=alice,dc=x", inlineConfig(), Map.of("uid", List.of("alice")));
 
         assertThat(step.targetDn()).isEqualTo("uid=alice,dc=x");
         // Every modification is an ADD (we're layering onto an existing entry).
         assertThat(step.mods()).allMatch(m -> m.getModificationType() == ModificationType.ADD);
         assertThat(modValue(step.mods(), "objectClass")).isEqualTo("secUser");
         assertThat(modValue(step.mods(), "secLogin")).isEqualTo("alice");
+        assertThat(modValue(step.mods(), "secLoginType")).isEqualTo("Default");
         assertThat(modValue(step.mods(), "secAuthority")).isEqualTo("Default");
         assertThat(modValue(step.mods(), "secAcctValid")).isEqualTo("TRUE");
         assertThat(modValue(step.mods(), "secPwdValid")).isEqualTo("TRUE");
@@ -180,16 +217,89 @@ class IsvaSecUserPlansTest {
         assertThat(objectClassValues(step.attributes())).contains("secUser", "eUser");
     }
 
+    // ── IVIA identity overlay attrs (secUUID / principalName / secDomainId) ──
+
+    @Test
+    void grantLinked_identityOverlay_writesSecUuidPrincipalNameAndDomainId() {
+        // The customer shape: principalName RDN, with the opt-in identity
+        // attributes native IVIA accounts carry enabled.
+        VendorIntegrationIsvaConfig cfg = linkedConfig();
+        cfg.setSecuserObjectClasses(List.of("secUser", "eUser"));
+        cfg.setSecuserRdnAttribute("principalName");
+        cfg.setSecuserRdnValueSource(IsvaRdnValueSource.UID);
+        cfg.setSecuserOverlayAttributes(List.of(
+                "secAcctValid", "secPwdValid", "secPwdLastChanged",
+                "secUUID", "principalName", "secDomainId"));
+
+        AddStep step = plans.grantLinked(cfg, payload("uid=alice,ou=people,dc=x", "alice"));
+
+        assertThat(attrValue(step.attributes(), "principalName")).isEqualTo("alice");
+        assertThat(attrValue(step.attributes(), "secUUID"))
+                .matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+        // secDomainId = <secAuthority>%<principalName>, '%' literal.
+        assertThat(attrValue(step.attributes(), "secDomainId")).isEqualTo("Default%alice");
+    }
+
+    @Test
+    void grantLinked_defaultOverlay_omitsOptInIdentityAttrs() {
+        // With a non-secUUID RDN and the default overlay, the opt-in identity
+        // attrs stay off — principalName appears only because it's the RDN.
+        VendorIntegrationIsvaConfig cfg = linkedConfig();
+        cfg.setSecuserObjectClasses(List.of("secUser", "eUser"));
+        cfg.setSecuserRdnAttribute("principalName");
+        cfg.setSecuserRdnValueSource(IsvaRdnValueSource.UID);
+
+        AddStep step = plans.grantLinked(cfg, payload("uid=alice,dc=x", "alice"));
+
+        assertThat(attrValue(step.attributes(), "secUUID")).isNull();
+        assertThat(attrValue(step.attributes(), "secDomainId")).isNull();
+        assertThat(attrValue(step.attributes(), "principalName")).isEqualTo("alice");
+    }
+
+    @Test
+    void grantLinked_secUuidRdnAndOverlay_writesSingleRdnValue() {
+        // secUUID is both the RDN and enabled in the overlay — the RDN value
+        // wins (addIfAbsent), so exactly one secUUID is written, not a second
+        // freshly-generated one.
+        VendorIntegrationIsvaConfig cfg = linkedConfig();  // RDN=secUUID, GENERATED_UUID
+        cfg.setSecuserOverlayAttributes(List.of("secUUID"));
+
+        AddStep step = plans.grantLinked(cfg, payload("uid=alice,dc=x", "alice"));
+
+        long secUuidCount = step.attributes().stream()
+                .filter(a -> a.getName().equalsIgnoreCase("secUUID"))
+                .count();
+        assertThat(secUuidCount).isEqualTo(1);
+        String rdnValue = step.targetDn().substring(
+                step.targetDn().indexOf('=') + 1, step.targetDn().indexOf(','));
+        assertThat(attrValue(step.attributes(), "secUUID")).isEqualTo(rdnValue);
+    }
+
     // ── revoke ──────────────────────────────────────────────────────
 
     @Test
     void disable_replacesAcctValidFalse_andExpiresValidUntil() {
-        ModifyStep step = plans.disable("secUUID=abc,secAuthority=Default,o=acme,c=us");
+        ModifyStep step = plans.disable("secUUID=abc,secAuthority=Default,o=acme,c=us",
+                inlineConfig());
 
         assertThat(step.targetDn()).isEqualTo("secUUID=abc,secAuthority=Default,o=acme,c=us");
         assertThat(step.mods()).allMatch(m -> m.getModificationType() == ModificationType.REPLACE);
         assertThat(modValue(step.mods(), "secAcctValid")).isEqualTo("FALSE");
         assertThat(modValue(step.mods(), "secValidUntil")).matches("\\d{14}Z");
+    }
+
+    @Test
+    void disable_omitsSecValidUntil_whenNotInOverlay() {
+        VendorIntegrationIsvaConfig cfg = inlineConfig();
+        cfg.setSecuserOverlayAttributes(List.of("secLogin", "secAcctValid", "secPwdValid"));
+
+        ModifyStep step = plans.disable("uid=alice,dc=x", cfg);
+
+        assertThat(modValue(step.mods(), "secAcctValid")).isEqualTo("FALSE");
+        // secValidUntil isn't part of this directory's overlay → not written,
+        // so soft-disable doesn't trip an "attribute not allowed" rejection.
+        assertThat(step.mods())
+                .noneMatch(m -> m.getAttributeName().equalsIgnoreCase("secValidUntil"));
     }
 
     @Test
@@ -199,37 +309,30 @@ class IsvaSecUserPlansTest {
     }
 
     /**
-     * SEC_OVERLAY_ATTRS drives the inline-mode hard revoke; it must
-     * cover every attribute {@link IsvaSecUserPlans#grantInlineOnExisting}
-     * writes via {@code secDefaults}. Without this assertion a
-     * future {@code secDefaults} entry can land without a matching
-     * SEC_OVERLAY_ATTRS entry, and inline-mode hard revoke would
-     * silently leave the new attribute orphaned on the demographic
-     * entry.
+     * {@code writtenOverlayAttrNames} is the single source of truth for
+     * both what a grant writes and what an inline hard-revoke strips.
+     * This pins that a grant's actual MODIFY-ADD mods enumerate exactly
+     * that list, so the two can never drift — for the full-overlay default
+     * and for a trimmed overlay alike.
      */
     @Test
-    void secOverlayAttrs_matchesEveryKey_secDefaultsWrites() {
-        // Build a representative grant; the resulting MODIFY-ADD
-        // mods enumerate exactly what secDefaults wrote. Skip the
-        // objectClass mod — SEC_OVERLAY_ATTRS is about sec* attrs,
-        // not the objectClass.
-        ModifyStep grant = plans.grantInlineOnExisting(
-                "uid=alice,dc=x", inlineConfig(), "alice");
-        java.util.Set<String> grantSecAttrs = new java.util.HashSet<>();
-        for (Modification m : grant.mods()) {
-            String name = m.getAttributeName();
-            if ("objectClass".equalsIgnoreCase(name)) continue;
-            grantSecAttrs.add(name);
+    void writtenOverlayAttrNames_matchesEveryKey_aGrantWrites() {
+        for (VendorIntegrationIsvaConfig cfg
+                : List.of(inlineConfig(), trimmedOverlayConfig())) {
+            ModifyStep grant = plans.grantInlineOnExisting(
+                    "uid=alice,dc=x", cfg, Map.of("uid", List.of("alice")));
+            java.util.Set<String> grantSecAttrs = new java.util.HashSet<>();
+            for (Modification m : grant.mods()) {
+                String name = m.getAttributeName();
+                if ("objectClass".equalsIgnoreCase(name)) continue;
+                grantSecAttrs.add(name);
+            }
+            assertThat(grantSecAttrs)
+                    .as("A grant must write exactly writtenOverlayAttrNames(cfg) so "
+                            + "revokeInlineOnExisting strips the same set.")
+                    .isEqualTo(new java.util.HashSet<>(
+                            IsvaSecUserPlans.writtenOverlayAttrNames(cfg)));
         }
-
-        java.util.Set<String> overlayAttrs =
-                new java.util.HashSet<>(IsvaSecUserPlans.SEC_OVERLAY_ATTRS);
-
-        assertThat(grantSecAttrs)
-                .as("Every attribute secDefaults writes must appear in "
-                        + "SEC_OVERLAY_ATTRS so revokeInlineOnExisting "
-                        + "strips it. Mismatch means schema drift.")
-                .isEqualTo(overlayAttrs);
     }
 
     @Test
@@ -254,7 +357,8 @@ class IsvaSecUserPlansTest {
             }
         }
         assertThat(deletedAttrs)
-                .containsExactlyInAnyOrderElementsOf(IsvaSecUserPlans.SEC_OVERLAY_ATTRS);
+                .containsExactlyInAnyOrderElementsOf(
+                        IsvaSecUserPlans.writtenOverlayAttrNames(inlineConfig()));
     }
 
     @Test
@@ -323,6 +427,15 @@ class IsvaSecUserPlansTest {
         VendorIntegrationIsvaConfig cfg = inlineConfig();
         cfg.setTopologyMode(IsvaTopologyMode.LINKED);
         cfg.setManagementDitBaseDn("secAuthority=Default,o=acme,c=us");
+        return cfg;
+    }
+
+    /** Inline config whose overlay omits secLogin + secValidUntil — the
+     * shape a deployment whose secUser schema lacks them would use. */
+    private VendorIntegrationIsvaConfig trimmedOverlayConfig() {
+        VendorIntegrationIsvaConfig cfg = inlineConfig();
+        cfg.setSecuserOverlayAttributes(List.of(
+                "secAcctValid", "secPwdValid", "secPwdLastChanged"));
         return cfg;
     }
 

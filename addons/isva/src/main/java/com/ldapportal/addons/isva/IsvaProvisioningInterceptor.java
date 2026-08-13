@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva;
 
-import com.ldapportal.addons.isva.entity.IsvaDemographicDeleteMode;
-import com.ldapportal.addons.isva.entity.IsvaDeletePolicy;
 import com.ldapportal.addons.isva.entity.IsvaGroupMemberTarget;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
 import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
@@ -12,6 +10,7 @@ import com.ldapportal.core.provisioning.AddStep;
 import com.ldapportal.core.provisioning.BaselinePlans;
 import com.ldapportal.core.provisioning.DeletePlan;
 import com.ldapportal.core.provisioning.DeleteStep;
+import com.ldapportal.core.provisioning.EnableDisablePlan;
 import com.ldapportal.core.provisioning.GroupMemberPlan;
 import com.ldapportal.core.provisioning.LdapOperationStep;
 import com.ldapportal.core.provisioning.ModifyStep;
@@ -23,7 +22,6 @@ import com.ldapportal.core.provisioning.ProvisioningRefusedException;
 import com.ldapportal.core.provisioning.UserCreatePayload;
 import com.ldapportal.core.provisioning.UserCreatePlan;
 import com.ldapportal.entity.DirectoryConnection;
-import com.ldapportal.entity.enums.EnableDisableValueType;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
@@ -58,15 +56,21 @@ import java.util.Optional;
  * {@link IsvaSecUserPlans}; this interceptor composes them for the
  * user-lifecycle paths.</p>
  *
+ * <p>The secUser side mirrors the demographic entry's lifecycle:
+ * deleting a user deletes its secUser, and disabling / re-enabling a
+ * user flips {@code secAcctValid} on its secUser
+ * ({@link #planUserSetEnabled}). There's no separate delete-policy
+ * knob — delete always removes both entries; the soft path is the
+ * disable verb.</p>
+ *
  * <p>Orphan handling for linked-mode operations whose lookup
  * returns empty:</p>
  * <ul>
- *   <li><b>delete (DISABLE)</b> — refuse with a clear message.
- *       Nothing to disable; the demographic is orphaned. Operator
- *       can hard-delete instead.</li>
- *   <li><b>delete (HARD_DELETE)</b> — proceed with only the
- *       demographic DEL. Orphan demographics are the case
- *       hard-delete is most useful for.</li>
+ *   <li><b>delete</b> — proceed with only the demographic DEL.
+ *       Orphan demographics are exactly the case delete cleans up.</li>
+ *   <li><b>enable / disable</b> — proceed with only the demographic
+ *       enable/disable write. A missing secUser must not block a
+ *       reversible lifecycle change on the demographic side.</li>
  *   <li><b>password set</b> — refuse. Without a secUser to stamp,
  *       ISVA's password-rotation logic would silently disagree
  *       with the actual change.</li>
@@ -148,102 +152,98 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
         }
 
         return switch (cfg.getTopologyMode()) {
-            case INLINE -> planInlineUserDelete(cfg, demographicDn);
+            case INLINE -> planInlineUserDelete(demographicDn);
             case LINKED -> planLinkedUserDelete(dir, cfg, demographicDn);
         };
     }
 
-    private DeletePlan planInlineUserDelete(VendorIntegrationIsvaConfig cfg, String dn) {
-        if (cfg.getDeletePolicy() == IsvaDeletePolicy.HARD_DELETE) {
-            return DeletePlan.singleStep(DeleteStep.of(dn));
-        }
-        // Inline mode: the secUser IS the demographic entry, so the
-        // revoke MODIFY targets the same DN.
-        return DeletePlan.singleStep(secUserPlans.disable(dn));
+    /**
+     * Delete mirrors the demographic entry: removing the user removes its
+     * ISVA account too. In inline mode the secUser <em>is</em> the
+     * demographic entry, so a single DEL removes both — identical to the
+     * baseline. (Soft-disable is no longer a delete-time choice; disabling
+     * a user is a separate lifecycle verb — see {@link #planUserSetEnabled}
+     * — which mirror-disables the secUser instead.)
+     */
+    private DeletePlan planInlineUserDelete(String dn) {
+        return DeletePlan.singleStep(DeleteStep.of(dn));
     }
 
+    /**
+     * Linked-mode delete: DEL the paired secUser entry then the
+     * demographic entry, mirroring the demographic removal onto the ISVA
+     * account. The secUser goes first so a failure to delete the
+     * demographic leaves a recoverable {@code secUser-gone +
+     * demographic-still-present} state rather than an orphaned secUser.
+     * An orphan demographic with no secUser degrades to just the
+     * demographic DEL.
+     */
     private DeletePlan planLinkedUserDelete(DirectoryConnection dir,
                                               VendorIntegrationIsvaConfig cfg,
                                               String demographicDn) {
         Optional<String> secUserDn = linkedUserLookup.findSecUserDn(
                 dir, cfg.getManagementDitBaseDn(), demographicDn);
 
-        if (cfg.getDeletePolicy() == IsvaDeletePolicy.HARD_DELETE) {
-            // DEL secUser FIRST so a step-2 failure (couldn't delete
-            // demographic) leaves a recoverable secUser-gone +
-            // demographic-still-present state. Reverse order would
-            // leave an orphaned secUser.
-            //
-            // Orphan demographic with no secUser: only the
-            // demographic DEL.
-            List<LdapOperationStep> steps = new ArrayList<>();
-            secUserDn.ifPresent(s -> steps.add(secUserPlans.hardDelete(s)));
-            steps.add(DeleteStep.of(demographicDn));
-            return new DeletePlan(steps);
-        }
-
-        // DISABLE: refuse if there's no secUser to disable. Hard-
-        // delete is the operator's escape hatch for orphan
-        // demographics.
-        if (secUserDn.isEmpty()) {
-            throw new ProvisioningRefusedException(
-                    "No linked secUser entry found for demographic DN " + demographicDn
-                            + " under " + cfg.getManagementDitBaseDn()
-                            + ". This is an orphaned demographic — use hard-delete to remove "
-                            + "the demographic entry, or run pdadmin user import to repair.");
-        }
-
         List<LdapOperationStep> steps = new ArrayList<>();
-        steps.add(secUserPlans.disable(secUserDn.get()));
-
-        // DISABLE_AND_MARK: also annotate the demographic entry, reusing the
-        // directory's own configured enable/disable attribute as the marker
-        // (e.g. AD userAccountControl=514, nsAccountLock=TRUE). The secUser
-        // MODIFY runs first so a failure to mark the demographic leaves a
-        // recoverable state (secUser disabled, demographic re-markable on a
-        // retry). demographicDisableMark refuses up-front when there's nothing
-        // configured to write, so the operator's explicit "mark" choice can
-        // never silently degrade to a no-op.
-        if (cfg.getOnDemographicDelete() == IsvaDemographicDeleteMode.DISABLE_AND_MARK) {
-            steps.add(demographicDisableMark(dir, demographicDn));
-        }
-
+        secUserDn.ifPresent(s -> steps.add(secUserPlans.hardDelete(s)));
+        steps.add(DeleteStep.of(demographicDn));
         return new DeletePlan(steps);
     }
 
+    // ── user enable / disable (lifecycle mirror) ─────────────────────
+
+    @Override
+    public EnableDisablePlan planUserSetEnabled(DirectoryConnection dir,
+                                                String demographicDn,
+                                                boolean enabled,
+                                                ProvisioningContext ctx) {
+        VendorIntegrationIsvaConfig cfg = activeConfigOrNull(dir);
+        if (cfg == null || isExempt(ctx)) {
+            return BaselinePlans.userSetEnabled(dir, demographicDn, enabled);
+        }
+
+        return switch (cfg.getTopologyMode()) {
+            case INLINE -> planInlineUserSetEnabled(dir, cfg, demographicDn, enabled);
+            case LINKED -> planLinkedUserSetEnabled(dir, cfg, demographicDn, enabled);
+        };
+    }
+
     /**
-     * Builds the demographic-side disable marker for DISABLE_AND_MARK, reusing
-     * the directory's configured enable/disable attribute and disable value —
-     * the same mapping {@code LdapUserService.disableUser} applies (BOOLEAN
-     * writes a fixed {@code FALSE}; STRING writes the configured disable value).
-     * Refuses when nothing is configured to write, so an explicit "mark" choice
-     * can never degrade to a silent no-op.
+     * Inline mode: the secUser is the demographic entry, so fold the
+     * {@code secAcctValid} flip (and, on the overlay, {@code secValidUntil})
+     * into the same MODIFY that writes the directory's enable/disable
+     * attribute — one entry, one round-trip, both sides in step.
      */
-    private ModifyStep demographicDisableMark(DirectoryConnection dir, String demographicDn) {
-        String attr = dir.getEnableDisableAttribute();
-        if (attr == null || attr.isBlank()) {
-            throw new ProvisioningRefusedException(
-                    "on_demographic_delete=DISABLE_AND_MARK on directory "
-                            + dir.getDisplayName() + " requires an enable/disable attribute to "
-                            + "mark the demographic entry, but none is configured. Set the "
-                            + "directory's enable/disable attribute (and disable value), or "
-                            + "switch on_demographic_delete to LEAVE.");
-        }
-        String value;
-        if (dir.getEnableDisableValueType() == EnableDisableValueType.BOOLEAN) {
-            value = "FALSE";
-        } else {
-            value = dir.getDisableValue();
-            if (value == null || value.isBlank()) {
-                throw new ProvisioningRefusedException(
-                        "on_demographic_delete=DISABLE_AND_MARK on directory "
-                                + dir.getDisplayName() + " uses a STRING enable/disable attribute ("
-                                + attr + ") but no disable value is configured. Set the directory's "
-                                + "disable value, or switch on_demographic_delete to LEAVE.");
-            }
-        }
-        return ModifyStep.of(demographicDn,
-                List.of(new Modification(ModificationType.REPLACE, attr, value)));
+    private EnableDisablePlan planInlineUserSetEnabled(DirectoryConnection dir,
+                                                       VendorIntegrationIsvaConfig cfg,
+                                                       String demographicDn,
+                                                       boolean enabled) {
+        EnableDisablePlan base = BaselinePlans.userSetEnabled(dir, demographicDn, enabled);
+        ModifyStep baseStep = (ModifyStep) base.steps().get(0);
+        List<Modification> mods = new ArrayList<>(baseStep.mods());
+        mods.addAll(secUserPlans.setEnabledMods(cfg, enabled));
+        return EnableDisablePlan.singleStep(ModifyStep.of(demographicDn, mods));
+    }
+
+    /**
+     * Linked mode: the baseline enable/disable MODIFY on the demographic
+     * entry, plus a {@code secAcctValid} flip on the paired secUser entry.
+     * An orphan demographic with no secUser degrades to just the
+     * demographic write — enabling / disabling a user must not be blocked
+     * by a missing ISVA account (unlike a delete, this is reversible and
+     * the demographic side is still meaningful on its own).
+     */
+    private EnableDisablePlan planLinkedUserSetEnabled(DirectoryConnection dir,
+                                                       VendorIntegrationIsvaConfig cfg,
+                                                       String demographicDn,
+                                                       boolean enabled) {
+        EnableDisablePlan base = BaselinePlans.userSetEnabled(dir, demographicDn, enabled);
+        List<LdapOperationStep> steps = new ArrayList<>(base.steps());
+        Optional<String> secUserDn = linkedUserLookup.findSecUserDn(
+                dir, cfg.getManagementDitBaseDn(), demographicDn);
+        secUserDn.ifPresent(s -> steps.add(
+                enabled ? secUserPlans.enable(s, cfg) : secUserPlans.disable(s, cfg)));
+        return new EnableDisablePlan(steps);
     }
 
     // ── password set ─────────────────────────────────────────────────

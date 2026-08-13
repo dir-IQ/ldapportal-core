@@ -42,7 +42,7 @@ vi.mock('@/api/playbooks', () => ({
 
 import UserListView from './UserListView.vue'
 import * as usersApi from '@/api/users'
-import { listProfiles } from '@/api/profiles'
+import { listProfiles, getProfile } from '@/api/profiles'
 
 const stubs = {
   LdapFilterBuilder: true,
@@ -323,5 +323,84 @@ describe('UserListView edit save sends only changed attributes', () => {
     expect(payload.modifications).toEqual([
       { operation: 'REPLACE', attribute: 'mail', values: ['new@x.com'] },
     ])
+  })
+})
+
+// regression: the edit form resolved a user's profile by objectClass superset
+// only. An entry missing even one of the profile's configured objectClasses —
+// created before the class was added to the profile, or loaded out-of-band —
+// matched nothing, so UserForm got a null config and rendered raw attribute
+// textareas labelled with bare LDAP names instead of the customized form.
+// Resolution now follows the entry DN, like the backend's resolveProfileForDn.
+describe('UserListView edit resolves the profile that owns the entry', () => {
+  const PROFILE = {
+    id: 'p1',
+    name: 'Employees',
+    enabled: true,
+    targetUserDn: 'ou=people,dc=x',
+    objectClassNames: ['top', 'inetOrgPerson', 'posixAccount'],
+  }
+
+  const editStubs = {
+    ...stubs,
+    UserForm: {
+      name: 'UserForm',
+      props: ['data', 'isEdit', 'userTemplateConfig', 'dirId', 'profileId'],
+      template: '<div />',
+      methods: { validate() { return true } },
+    },
+  }
+
+  // The entry carries only top + inetOrgPerson: posixAccount is configured on
+  // the profile but absent here, which is exactly what used to break it.
+  async function openEditFor(objectClass: string[]) {
+    state.features = ALL
+    vi.mocked(listProfiles).mockResolvedValue({ data: [PROFILE] } as never)
+    vi.mocked(getProfile).mockResolvedValue({ data: { ...PROFILE, attributeConfigs: [
+      { attributeName: 'employeeNumber', customLabel: 'Employee ID' },
+    ] } } as Awaited<ReturnType<typeof getProfile>>)
+    vi.mocked(usersApi.getUser).mockResolvedValue({
+      data: { attributes: { uid: ['jdoe'], objectclass: objectClass } },
+    } as Awaited<ReturnType<typeof usersApi.getUser>>)
+    const wrapper = mount(UserListView, { global: { stubs: editStubs } })
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'Edit')!.trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  beforeEach(() => vi.clearAllMocks())
+
+  it('loads the profile config for an entry missing one of its objectClasses', async () => {
+    const wrapper = await openEditFor(['top', 'inetOrgPerson'])
+    expect(getProfile).toHaveBeenCalledWith('d1', 'p1')
+    expect(wrapper.findComponent({ name: 'UserForm' }).props('userTemplateConfig'))
+      .toMatchObject({ id: 'p1' })
+  })
+
+  it('still resolves when the entry returns no objectClass at all', async () => {
+    // getUser failing falls the caller back to search-result attributes, which
+    // carry only the display columns — no objectClass to match on.
+    const wrapper = await openEditFor([])
+    expect(wrapper.findComponent({ name: 'UserForm' }).props('userTemplateConfig'))
+      .toMatchObject({ id: 'p1' })
+  })
+
+  it('leaves the config null for an entry outside every profile OU and class set', async () => {
+    state.features = ALL
+    vi.mocked(listProfiles).mockResolvedValue({ data: [
+      { ...PROFILE, targetUserDn: 'ou=contractors,dc=x' },
+    ] } as never)
+    vi.mocked(usersApi.getUser).mockResolvedValue({
+      data: { attributes: { uid: ['jdoe'], objectclass: ['top', 'inetOrgPerson'] } },
+    } as Awaited<ReturnType<typeof usersApi.getUser>>)
+    const wrapper = mount(UserListView, { global: { stubs: editStubs } })
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'Edit')!.trigger('click')
+    await flushPromises()
+    expect(getProfile).not.toHaveBeenCalled()
+    // The view passes `profileConfig ?? undefined`, so an unresolved profile
+    // reaches UserForm as undefined and it renders its raw-attribute fallback.
+    expect(wrapper.findComponent({ name: 'UserForm' }).props('userTemplateConfig')).toBeUndefined()
   })
 })
