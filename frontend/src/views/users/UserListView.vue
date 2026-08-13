@@ -843,15 +843,42 @@ const profileConfig     = ref<ProfileLite | null>(null)
 // the admin has a role on), so when the directory exposes ≤1 such profile there
 // is nowhere to move a user and the action is hidden (see the ActionMenu gate).
 const hasOtherProfiles = computed(() => allProfiles.value.length > 1)
-// The row's current profile, resolved by DN containment (mirrors the backend's
-// resolveProfileForDn) so the modal can drop it from the destination list.
-const moveSourceProfile = computed<ProfileLite | null>(() => {
-  const dn = moveTarget.value?.dn?.toLowerCase()
-  if (!dn) return null
-  return allProfiles.value
-    .filter(p => p.targetUserDn && dn.endsWith(p.targetUserDn.toLowerCase()))
-    .sort((a, b) => (b.targetUserDn?.length ?? 0) - (a.targetUserDn?.length ?? 0))[0] ?? null
-})
+
+/**
+ * The profile that owns an existing entry.
+ *
+ * DN containment is authoritative — this mirrors the backend's
+ * ProvisioningProfileService.resolveProfileForDn (the profile whose target OU
+ * is a suffix of the entry DN, most specific wins), which is what audit,
+ * approvals, self-service and the Move flow all resolve with. objectClass is
+ * only a fallback for an entry that sits outside every profile's OU: matching
+ * on it alone silently mis-resolves as soon as an entry's classes drift from
+ * the profile's configured set — an entry created before an objectClass was
+ * added to the profile, or loaded out-of-band, matches nothing and drops the
+ * whole customized edit form back to raw attribute names.
+ *
+ * Both lists are permission- and enabled-scoped (see loadProfiles), so a
+ * disabled profile or one the admin has no role on still resolves to null.
+ */
+function resolveProfileForEntry(dn: string, objectClasses: string[] = []): ProfileLite | null {
+  const dnLower = dn.toLowerCase()
+  const byDn = allProfiles.value
+    .filter(p => p.targetUserDn && dnLower.endsWith(p.targetUserDn.toLowerCase()))
+    .sort((a, b) => (b.targetUserDn?.length ?? 0) - (a.targetUserDn?.length ?? 0))[0]
+  if (byDn) return byDn
+  if (!objectClasses.length) return null
+  // The empty-list guard keeps `every` from matching vacuously: a profile
+  // declaring no object classes would otherwise claim every entry.
+  return allProfiles.value.find(p =>
+    (p.objectClassNames || []).length > 0 &&
+    (p.objectClassNames || []).every(oc => objectClasses.includes(oc.toLowerCase()))
+  ) ?? null
+}
+
+// The row's current profile, so the modal can drop it from the destination
+// list. DN-only by design: Move is about which OU the entry lives in.
+const moveSourceProfile = computed<ProfileLite | null>(() =>
+  moveTarget.value?.dn ? resolveProfileForEntry(moveTarget.value.dn) : null)
 const moveTargets = computed<ProfileLite[]>(() =>
   allProfiles.value.filter(p => p.id !== moveSourceProfile.value?.id))
 const moveDestTargetDn = computed(() =>
@@ -1034,23 +1061,22 @@ async function openEdit(row: UserRow) {
     console.warn('Failed to fetch full user entry, using search data:', err.message ?? e)
   }
 
-  // Try to resolve a matching profile from the available profiles
+  // Resolve the profile that owns this entry — its attribute configs drive the
+  // customized form (labels, input types, sections, and fields the entry
+  // doesn't carry yet). Without one, UserForm falls back to raw per-attribute
+  // textareas labelled with the bare LDAP names.
   profileConfig.value = null
   const ocRaw = attrs.objectClass || attrs.objectclass || []
   const ocArr = Array.isArray(ocRaw) ? ocRaw : [ocRaw]
   const userOCs = ocArr.filter((s): s is string => typeof s === 'string').map(s => s.toLowerCase())
-  if (userOCs.length && allProfiles.value.length) {
-    const match = allProfiles.value.find(p =>
-      (p.objectClassNames || []).every(oc => userOCs.includes(oc.toLowerCase()))
-    )
-    if (match) {
-      try {
-        const { data } = await getProfile(dirId, match.id)
-        profileConfig.value = data
-      } catch (e) {
-        const err = e as { message?: string }
-        console.warn('Failed to load profile for edit:', err.message ?? e)
-      }
+  const match = resolveProfileForEntry(row.dn, userOCs)
+  if (match) {
+    try {
+      const { data } = await getProfile(dirId, match.id)
+      profileConfig.value = data
+    } catch (e) {
+      const err = e as { message?: string }
+      console.warn('Failed to load profile for edit:', err.message ?? e)
     }
   }
 
