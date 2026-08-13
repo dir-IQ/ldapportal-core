@@ -74,47 +74,78 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { updateEntry, browseObjectClassesBulk } from '@/api/browse'
 import CopyButton from '@/components/CopyButton.vue'
 
-const props = defineProps({
-  directoryId: { type: String, required: true },
-  dn:          { type: String, required: true },
-  attributes:  { type: Object, required: true },
-})
+/** One row of the attribute editor, backing the form state below. */
+interface EditableAttribute {
+  name: string
+  values: string[]
+  readonly: boolean
+  /** Set once the schema loads — a MUST attribute of one of the entry's classes. */
+  required: boolean
+  /** True for a row the operator added via the picker (not on the entry yet). */
+  isNew: boolean
+}
 
-const emit = defineEmits(['updated', 'cancel'])
+/** A single LDAP modification as the browse endpoint expects it. */
+interface AttributeModification {
+  operation: 'ADD' | 'REPLACE' | 'DELETE'
+  attribute: string
+  values: string[]
+}
+
+/** The refreshed entry the browse endpoint returns after a successful modify. */
+interface BrowseResult {
+  dn: string
+  attributes: Record<string, string[]>
+}
+
+const props = defineProps<{
+  directoryId: string
+  dn: string
+  attributes: Record<string, string[]>
+}>()
+
+const emit = defineEmits<{
+  updated: [result: BrowseResult]
+  cancel: []
+}>()
 
 const loadingSchema    = ref(false)
-const schemaOptional   = ref([])
+const schemaOptional   = ref<string[]>([])
 const submitting       = ref(false)
 const error            = ref('')
 const newAttrToAdd     = ref('')
 
 // The RDN attribute name (first component of the DN)
-const rdnAttr = computed(() => {
+const rdnAttr = computed<string>(() => {
   const eq = props.dn.indexOf('=')
   return eq > 0 ? props.dn.substring(0, eq) : ''
 })
 
 // Deep-clone the original attributes so we can diff later
-const originalAttrs = ref({})
-const editAttrs     = ref([])
+const originalAttrs = ref<Record<string, string[]>>({})
+const editAttrs     = ref<EditableAttribute[]>([])
 
-// Attributes that should be read-only
-const READONLY_ATTRS = ['objectClass']
+// Attributes that should be read-only. Compared case-insensitively: attribute
+// keys reach the client in whatever case the source used — the browse endpoint
+// passes the directory's own base name through (LdapBrowseService), while
+// LdapEntryMapper lower-cases — so an exact-case match silently stops guarding
+// the moment an entry arrives keyed `objectclass`.
+const READONLY_ATTRS = ['objectclass']
 
-function isReadonly(attrName) {
-  return READONLY_ATTRS.includes(attrName) ||
-         attrName.toLowerCase() === rdnAttr.value.toLowerCase()
+function isReadonly(attrName: string): boolean {
+  const lower = attrName.toLowerCase()
+  return READONLY_ATTRS.includes(lower) || lower === rdnAttr.value.toLowerCase()
 }
 
 // Build the editable attribute list from props
-function initAttributes() {
-  const clone = {}
-  const attrs = []
+function initAttributes(): void {
+  const clone: Record<string, string[]> = {}
+  const attrs: EditableAttribute[] = []
   for (const [name, values] of Object.entries(props.attributes)) {
     clone[name] = [...values]
     attrs.push({
@@ -140,20 +171,21 @@ function initAttributes() {
 const editableAttributes = computed(() => editAttrs.value)
 
 // Attributes from schema that aren't currently on the entry
-const availableNewAttrs = computed(() => {
+const availableNewAttrs = computed<string[]>(() => {
   const current = new Set(editAttrs.value.map(a => a.name))
-  return schemaOptional.value.filter(a => !current.has(a) && !READONLY_ATTRS.includes(a))
+  return schemaOptional.value.filter(
+    a => !current.has(a) && !READONLY_ATTRS.includes(a.toLowerCase()))
 })
 
-function addValue(attr) {
+function addValue(attr: EditableAttribute): void {
   attr.values.push('')
 }
 
-function removeValue(attr, index) {
+function removeValue(attr: EditableAttribute, index: number): void {
   attr.values.splice(index, 1)
 }
 
-function addAttribute() {
+function addAttribute(): void {
   if (!newAttrToAdd.value) return
   editAttrs.value.push({
     name: newAttrToAdd.value,
@@ -170,8 +202,8 @@ const hasChanges = computed(() => {
   return computeModifications().length > 0
 })
 
-function computeModifications() {
-  const mods = []
+function computeModifications(): AttributeModification[] {
+  const mods: AttributeModification[] = []
 
   // Check existing attributes for changes
   for (const attr of editAttrs.value) {
@@ -209,7 +241,7 @@ function computeModifications() {
   return mods
 }
 
-async function submit() {
+async function submit(): Promise<void> {
   error.value = ''
   const mods = computeModifications()
   if (mods.length === 0) return
@@ -217,9 +249,16 @@ async function submit() {
   submitting.value = true
   try {
     const { data } = await updateEntry(props.directoryId, props.dn, { modifications: mods })
-    emit('updated', data)
+    emit('updated', data as BrowseResult)
   } catch (e) {
-    error.value = e.response?.data?.detail || e.response?.data?.message || e.message
+    const err = e as {
+      response?: { data?: { detail?: string, message?: string } },
+      message?: string,
+    }
+    error.value = err.response?.data?.detail
+      || err.response?.data?.message
+      || err.message
+      || 'Failed to save the entry'
   } finally {
     submitting.value = false
   }
