@@ -179,6 +179,10 @@
               </div>
             </div>
 
+            <!-- Group membership, shown above the raw attributes for group
+                 object classes only. Open re-selects the member entry. -->
+            <GroupMembersPanel :attributes="entryDetail.attributes" @open="selectEntry" />
+
             <div v-if="Object.keys(entryDetail.attributes).length === 0" class="text-sm text-gray-500">
               No attributes returned for this entry.
             </div>
@@ -302,41 +306,72 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
-import { browse, deleteEntry, moveEntry, renameEntry, exportLdif, importLdif } from '@/api/browse'
+import { browse, deleteEntry, moveEntry, renameEntry, exportLdif } from '@/api/browse'
+import type { components } from '@/api/openapi'
 import DnTree from '@/components/DnTree.vue'
 import CreateEntryForm from '@/components/CreateEntryForm.vue'
 import EditEntryForm from '@/components/EditEntryForm.vue'
+import GroupMembersPanel from '@/components/GroupMembersPanel.vue'
 import LdifImportModal from '@/components/LdifImportModal.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import CopyButton from '@/components/CopyButton.vue'
 
+type BrowseResult = components['schemas']['BrowseResult']
+type ChildEntry = components['schemas']['ChildEntry']
+
+interface DirectoryOption {
+  id: string
+  displayName: string
+  directoryType?: string
+}
+
+interface TreeNode {
+  dn: string
+  rdn: string
+  hasChildren: boolean
+  /** Children already returned with the root browse; consumed on first expand. */
+  _preloaded?: ChildEntry[]
+}
+
+interface EntryDetail {
+  dn: string
+  attributes: Record<string, string[]>
+}
+
+/** The subset of DnTree's exposed API this view calls. */
+interface DnTreeHandle {
+  refreshNode: (dn: string, children: ChildEntry[]) => boolean
+}
+
+type ApiError = { response?: { data?: { detail?: string, message?: string } }, message?: string }
+
 const notif = useNotificationStore()
 
-const directories   = ref([])
+const directories   = ref<DirectoryOption[]>([])
 const loadingDirs   = ref(false)
 const route = useRoute()
 const selectedDirId = ref('')
 
 const treeLoading   = ref(false)
-const rootNodes     = ref([])
+const rootNodes     = ref<TreeNode[]>([])
 const selectedDn    = ref('')
 const detailLoading = ref(false)
-const entryDetail   = ref(null)
+const entryDetail   = ref<EntryDetail | null>(null)
 const creatingEntry   = ref(false)
 const editingEntry    = ref(false)
-const treeRef         = ref(null)
+const treeRef         = ref<DnTreeHandle | null>(null)
 const showActionsMenu   = ref(false)
-const menuRef           = ref(null)
+const menuRef           = ref<HTMLElement | null>(null)
 const showDeleteConfirm = ref(false)
 const deleteRecursive   = ref(false)
 // 'entry' = delete the selected entry (optionally recursively);
 // 'children' = delete its descendants only, keeping the entry.
-const deleteMode        = ref('entry')
+const deleteMode        = ref<'entry' | 'children'>('entry')
 const deleting          = ref(false)
 const deleteError       = ref('')
 
@@ -353,28 +388,39 @@ const renameError       = ref('')
 const showImportModal   = ref(false)
 const refreshing        = ref(false)
 
+function toDetail(result: BrowseResult): EntryDetail {
+  return { dn: result.dn ?? '', attributes: result.attributes ?? {} }
+}
+
+function toRootNode(result: BrowseResult): TreeNode {
+  const dn = result.dn ?? ''
+  const children = result.children ?? []
+  return { dn, rdn: dn, hasChildren: children.length > 0, _preloaded: children }
+}
+
 // Manual refresh of the currently-selected branch: re-fetch the selected
 // node's immediate children from the server and swap them into the tree,
 // and refresh this entry's attribute detail. Scoped to the selected branch
 // (not the whole tree) per the toolbar button next to Actions.
-async function refreshSelectedBranch() {
+async function refreshSelectedBranch(): Promise<void> {
   if (!selectedDirId.value || !selectedDn.value || refreshing.value) return
   refreshing.value = true
   try {
-    const { data } = await browse(selectedDirId.value, selectedDn.value)
+    const { data } = await browse(selectedDirId.value, selectedDn.value) as { data: BrowseResult }
     if (treeRef.value) {
-      treeRef.value.refreshNode(selectedDn.value, data.children)
+      treeRef.value.refreshNode(selectedDn.value, data.children ?? [])
     }
-    entryDetail.value = { dn: data.dn, attributes: data.attributes }
+    entryDetail.value = toDetail(data)
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    const err = e as ApiError
+    notif.error(err.response?.data?.detail || err.message || 'Refresh failed')
   } finally {
     refreshing.value = false
   }
 }
 
-function onClickOutside(e) {
-  if (menuRef.value && !menuRef.value.contains(e.target)) {
+function onClickOutside(e: MouseEvent): void {
+  if (menuRef.value && !menuRef.value.contains(e.target as Node)) {
     showActionsMenu.value = false
   }
 }
@@ -382,7 +428,7 @@ function onClickOutside(e) {
 onMounted(() => document.addEventListener('click', onClickOutside))
 onUnmounted(() => document.removeEventListener('click', onClickOutside))
 
-const sortedAttributes = computed(() => {
+const sortedAttributes = computed<Array<[string, string[]]>>(() => {
   if (!entryDetail.value?.attributes) return []
   return Object.entries(entryDetail.value.attributes)
     .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
@@ -397,25 +443,21 @@ watch(selectedDirId, async (dirId) => {
 
   treeLoading.value = true
   try {
-    const { data } = await browse(dirId)
+    const { data } = await browse(dirId) as { data: BrowseResult }
     // Root node is the directory base DN itself
-    rootNodes.value = [{
-      dn: data.dn,
-      rdn: data.dn,
-      hasChildren: data.children.length > 0,
-      _preloaded: data.children,
-    }]
+    rootNodes.value = [toRootNode(data)]
     // Auto-select root
-    entryDetail.value = data
-    selectedDn.value = data.dn
+    entryDetail.value = toDetail(data)
+    selectedDn.value = data.dn ?? ''
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    const err = e as ApiError
+    notif.error(err.response?.data?.detail || err.message || 'Failed to load directory')
   } finally {
     treeLoading.value = false
   }
 })
 
-async function loadChildren(dn) {
+async function loadChildren(dn: string): Promise<ChildEntry[]> {
   // If children were preloaded (for root node), use them
   const rootNode = rootNodes.value.find(n => n.dn === dn)
   if (rootNode?._preloaded) {
@@ -424,39 +466,40 @@ async function loadChildren(dn) {
     return children
   }
 
-  const { data } = await browse(selectedDirId.value, dn)
-  return data.children
+  const { data } = await browse(selectedDirId.value, dn) as { data: BrowseResult }
+  return data.children ?? []
 }
 
-async function selectEntry(dn) {
+async function selectEntry(dn: string): Promise<void> {
   selectedDn.value = dn
   detailLoading.value = true
   try {
-    const { data } = await browse(selectedDirId.value, dn)
-    entryDetail.value = { dn: data.dn, attributes: data.attributes }
+    const { data } = await browse(selectedDirId.value, dn) as { data: BrowseResult }
+    entryDetail.value = toDetail(data)
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    const err = e as ApiError
+    notif.error(err.response?.data?.detail || err.message || 'Failed to load entry')
     entryDetail.value = null
   } finally {
     detailLoading.value = false
   }
 }
 
-async function onEntryUpdated(browseResult) {
+function onEntryUpdated(browseResult: BrowseResult): void {
   editingEntry.value = false
   // Refresh entry detail from the returned browse result
-  entryDetail.value = { dn: browseResult.dn, attributes: browseResult.attributes }
+  entryDetail.value = toDetail(browseResult)
   notif.success('Entry updated successfully')
 }
 
-function openDeleteConfirm(mode) {
+function openDeleteConfirm(mode: 'entry' | 'children'): void {
   deleteMode.value = mode
   deleteRecursive.value = false
   deleteError.value = ''
   showDeleteConfirm.value = true
 }
 
-async function onDeleteConfirmed() {
+async function onDeleteConfirmed(): Promise<void> {
   deleteError.value = ''
   deleting.value = true
   const childrenOnly = deleteMode.value === 'children'
@@ -466,56 +509,57 @@ async function onDeleteConfirmed() {
     // we refresh that node and select it.
     const { data: browseResult } = await deleteEntry(
       selectedDirId.value, selectedDn.value,
-      childrenOnly ? false : deleteRecursive.value, childrenOnly)
+      childrenOnly ? false : deleteRecursive.value, childrenOnly) as { data: BrowseResult }
     showDeleteConfirm.value = false
-    const refreshDn = browseResult.dn
+    const refreshDn = browseResult.dn ?? ''
     if (treeRef.value) {
-      treeRef.value.refreshNode(refreshDn, browseResult.children)
+      treeRef.value.refreshNode(refreshDn, browseResult.children ?? [])
     }
     selectedDn.value = refreshDn
-    entryDetail.value = { dn: browseResult.dn, attributes: browseResult.attributes }
+    entryDetail.value = toDetail(browseResult)
     notif.success(childrenOnly ? 'Child entries deleted successfully' : 'Entry deleted successfully')
   } catch (e) {
-    deleteError.value = e.response?.data?.detail || e.response?.data?.message || e.message
+    const err = e as ApiError
+    deleteError.value = err.response?.data?.detail || err.response?.data?.message || err.message || 'Delete failed'
   } finally {
     deleting.value = false
   }
 }
 
-function extractParentDn(dn) {
+function extractParentDn(dn: string): string {
   const idx = dn.indexOf(',')
   return idx > 0 ? dn.substring(idx + 1) : dn
 }
 
-function extractRdn(dn) {
+function extractRdn(dn: string): string {
   const idx = dn.indexOf(',')
   return idx > 0 ? dn.substring(0, idx) : dn
 }
 
-function openMoveModal() {
+function openMoveModal(): void {
   moveTargetDn.value = extractParentDn(selectedDn.value)
   moveError.value = ''
   showMoveModal.value = true
 }
 
-function openRenameModal() {
+function openRenameModal(): void {
   renameNewRdn.value = extractRdn(selectedDn.value)
   renameError.value = ''
   showRenameModal.value = true
 }
 
-async function onMoveConfirmed() {
+async function onMoveConfirmed(): Promise<void> {
   moveError.value = ''
   moving.value = true
   try {
-    const { data: newParentBrowse } = await moveEntry(selectedDirId.value, selectedDn.value, moveTargetDn.value)
+    const { data: newParentBrowse } = await moveEntry(selectedDirId.value, selectedDn.value, moveTargetDn.value) as { data: BrowseResult }
     showMoveModal.value = false
     // Refresh the old parent's tree node (remove the moved entry)
     const oldParentDn = extractParentDn(selectedDn.value)
-    const { data: oldParentBrowse } = await browse(selectedDirId.value, oldParentDn)
+    const { data: oldParentBrowse } = await browse(selectedDirId.value, oldParentDn) as { data: BrowseResult }
     if (treeRef.value) {
-      treeRef.value.refreshNode(oldParentDn, oldParentBrowse.children)
-      treeRef.value.refreshNode(moveTargetDn.value, newParentBrowse.children)
+      treeRef.value.refreshNode(oldParentDn, oldParentBrowse.children ?? [])
+      treeRef.value.refreshNode(moveTargetDn.value, newParentBrowse.children ?? [])
     }
     // Select the entry at its new location
     const rdn = extractRdn(selectedDn.value)
@@ -523,47 +567,49 @@ async function onMoveConfirmed() {
     await selectEntry(newDn)
     notif.success('Entry moved successfully')
   } catch (e) {
-    moveError.value = e.response?.data?.detail || e.response?.data?.message || e.message
+    const err = e as ApiError
+    moveError.value = err.response?.data?.detail || err.response?.data?.message || err.message || 'Move failed'
   } finally {
     moving.value = false
   }
 }
 
-async function onRenameConfirmed() {
+async function onRenameConfirmed(): Promise<void> {
   renameError.value = ''
   renaming.value = true
   try {
-    const { data: parentBrowse } = await renameEntry(selectedDirId.value, selectedDn.value, renameNewRdn.value)
+    const { data: parentBrowse } = await renameEntry(selectedDirId.value, selectedDn.value, renameNewRdn.value) as { data: BrowseResult }
     showRenameModal.value = false
     const parentDn = extractParentDn(selectedDn.value)
     if (treeRef.value) {
-      treeRef.value.refreshNode(parentDn, parentBrowse.children)
+      treeRef.value.refreshNode(parentDn, parentBrowse.children ?? [])
     }
     // Select the entry at its new DN
     const newDn = renameNewRdn.value + ',' + parentDn
     await selectEntry(newDn)
     notif.success('Entry renamed successfully')
   } catch (e) {
-    renameError.value = e.response?.data?.detail || e.response?.data?.message || e.message
+    const err = e as ApiError
+    renameError.value = err.response?.data?.detail || err.response?.data?.message || err.message || 'Rename failed'
   } finally {
     renaming.value = false
   }
 }
 
-async function onEntryCreated(browseResult) {
+async function onEntryCreated(browseResult: BrowseResult): Promise<void> {
   creatingEntry.value = false
   // The server returned the parent's browse result — use it to refresh the tree
   if (treeRef.value) {
-    treeRef.value.refreshNode(selectedDn.value, browseResult.children)
+    treeRef.value.refreshNode(selectedDn.value, browseResult.children ?? [])
   }
   // Reload the current entry detail
   await selectEntry(selectedDn.value)
   notif.success('Entry created successfully')
 }
 
-async function doExportLdif(scope) {
+async function doExportLdif(scope: 'base' | 'one' | 'sub'): Promise<void> {
   try {
-    const { data } = await exportLdif(selectedDirId.value, selectedDn.value, scope)
+    const { data } = await exportLdif(selectedDirId.value, selectedDn.value, scope) as { data: Blob }
     const url = URL.createObjectURL(data)
     const a = document.createElement('a')
     a.href = url
@@ -571,26 +617,23 @@ async function doExportLdif(scope) {
     a.click()
     URL.revokeObjectURL(url)
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    const err = e as ApiError
+    notif.error(err.response?.data?.detail || err.message || 'Export failed')
   }
 }
 
-async function onLdifImported() {
+async function onLdifImported(): Promise<void> {
   // Refresh tree from root
   if (selectedDirId.value) {
     treeLoading.value = true
     try {
-      const { data } = await browse(selectedDirId.value)
-      rootNodes.value = [{
-        dn: data.dn,
-        rdn: data.dn,
-        hasChildren: data.children.length > 0,
-        _preloaded: data.children,
-      }]
-      entryDetail.value = data
-      selectedDn.value = data.dn
+      const { data } = await browse(selectedDirId.value) as { data: BrowseResult }
+      rootNodes.value = [toRootNode(data)]
+      entryDetail.value = toDetail(data)
+      selectedDn.value = data.dn ?? ''
     } catch (e) {
-      notif.error(e.response?.data?.detail || e.message)
+      const err = e as ApiError
+      notif.error(err.response?.data?.detail || err.message || 'Failed to reload directory')
     } finally {
       treeLoading.value = false
     }
@@ -598,7 +641,7 @@ async function onLdifImported() {
   notif.success('LDIF import completed')
 }
 
-function formatValue(val) {
+function formatValue(val: string): string {
   // Detect likely binary data (contains non-printable characters)
   if (val && /[\x00-\x08\x0E-\x1F]/.test(val)) {
     return `[binary data, ${val.length} bytes]`
@@ -609,7 +652,7 @@ function formatValue(val) {
 onMounted(async () => {
   loadingDirs.value = true
   try {
-    const { data } = await listDirectories()
+    const { data } = await listDirectories() as { data: DirectoryOption[] }
     directories.value = data.filter(d => d.directoryType !== 'ENTRA_ID')
     // Honor a ?dir=<id> deep-link (e.g. from the dashboard Directories panel);
     // fall back to the first directory when absent or not browsable here.
@@ -619,7 +662,8 @@ onMounted(async () => {
       : directories.value[0]?.id
     if (preselect) selectedDirId.value = preselect
   } catch (e) {
-    notif.error(e.response?.data?.detail || e.message)
+    const err = e as ApiError
+    notif.error(err.response?.data?.detail || err.message || 'Failed to load directories')
   } finally {
     loadingDirs.value = false
   }
