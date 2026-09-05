@@ -38,7 +38,7 @@ public class UserPreferencesService {
 
     /** Top-level namespaces the document is allowed to carry. */
     static final Set<String> NAMESPACES = Set.of(
-            "appearance", "tables", "filters", "search", "modals", "sidebar");
+            "appearance", "tables", "filters", "search", "modals", "sidebar", "panels");
 
     /** Document version marker, written alongside any first write. */
     private static final String SCHEMA_VERSION_KEY = "schemaVersion";
