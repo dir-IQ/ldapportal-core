@@ -31,6 +31,7 @@ export type PreferenceNamespace =
   | 'search'
   | 'modals'
   | 'sidebar'
+  | 'panels'
 
 const FLUSH_DELAY_MS = 350
 

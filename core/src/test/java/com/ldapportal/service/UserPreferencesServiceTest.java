@@ -84,6 +84,16 @@ class UserPreferencesServiceTest {
     }
 
     @Test
+    void panelsNamespaceAccepted() throws Exception {
+        given(repo.findById(accountId)).willReturn(Optional.empty());
+
+        Map<String, Object> doc = service.applyMergePatch(accountId,
+                json("{\"panels\":{\"browser-group-members\":320}}"));
+
+        assertThat(doc).containsKey("panels");
+    }
+
+    @Test
     void nonObjectPatchRejected() throws Exception {
         assertThatThrownBy(() -> service.applyMergePatch(accountId, json("[1,2,3]")))
                 .isInstanceOf(IllegalArgumentException.class)

@@ -32,7 +32,12 @@
     <p v-if="!members.length" class="mt-2 text-sm text-gray-500">This group has no members.</p>
 
     <template v-else>
-      <ul class="mt-2.5 space-y-1 max-h-60 overflow-y-auto" aria-label="Group members">
+      <ul
+        class="mt-2.5 space-y-1 overflow-y-auto"
+        :style="{ maxHeight: `${listMaxHeight}px` }"
+        aria-label="Group members"
+        data-testid="member-list"
+      >
         <li
           v-for="row in filteredRows"
           :key="row.value"
@@ -58,6 +63,22 @@
           No members match “{{ filter }}”.
         </li>
       </ul>
+      <!-- Height grip. Drag (pointer) or ArrowUp/ArrowDown (keyboard) changes
+           the list's max-height; the chosen height is remembered in the user's
+           preferences so it survives switching entries and browsers. Short
+           groups still take only their natural height. -->
+      <button
+        type="button"
+        class="mt-1 w-full h-2.5 flex items-center justify-center cursor-ns-resize rounded text-gray-300 hover:text-gray-500 focus-visible:text-gray-500"
+        aria-label="Resize member list"
+        title="Drag, or use the arrow keys, to change the list height"
+        data-testid="member-list-grip"
+        @pointerdown="onResizePointerDown"
+        @keydown.up.prevent="nudgeHeight(-RESIZE_STEP)"
+        @keydown.down.prevent="nudgeHeight(RESIZE_STEP)"
+      >
+        <span class="block w-10 h-1 rounded-full bg-current" aria-hidden="true"></span>
+      </button>
       <p class="mt-2 text-xs text-gray-500">
         <template v-if="isDnValued">Open selects the member entry in the browser.</template>
         <template v-else>posixGroup members are user IDs, not DNs.</template>
@@ -67,8 +88,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
+import { usePreferencesStore } from '@/stores/preferences'
 import { resolveGroupMembers } from '@/utils/groupMembers'
 
 const props = defineProps<{
@@ -98,6 +120,67 @@ const GROUP_CLASSES = new Set([
 ])
 
 const notif = useNotificationStore()
+const prefs = usePreferencesStore()
+
+// ── List height ─────────────────────────────────────────────────────────────
+// The member list scrolls past a max-height the user can drag. Persisted under
+// the `panels` preference namespace so it follows the user across devices.
+const HEIGHT_PREF_KEY = 'browser-group-members'
+const DEFAULT_MAX_HEIGHT = 240   // matches the former max-h-60
+const MIN_MAX_HEIGHT = 96
+const MAX_MAX_HEIGHT = 1200
+const RESIZE_STEP = 24
+
+function clampHeight(h: number): number {
+  return Math.min(MAX_MAX_HEIGHT, Math.max(MIN_MAX_HEIGHT, Math.round(h)))
+}
+
+function readStoredHeight(): number {
+  const stored = prefs.read<unknown>('panels', HEIGHT_PREF_KEY, null)
+  return typeof stored === 'number' && Number.isFinite(stored)
+    ? clampHeight(stored)
+    : DEFAULT_MAX_HEIGHT
+}
+
+const listMaxHeight = ref<number>(readStoredHeight())
+
+let dragStartY = 0
+let dragStartHeight = 0
+
+function onResizePointerMove(e: PointerEvent): void {
+  listMaxHeight.value = clampHeight(dragStartHeight + (e.clientY - dragStartY))
+}
+
+function onResizePointerUp(): void {
+  document.body.style.removeProperty('user-select')
+  window.removeEventListener('pointermove', onResizePointerMove)
+  window.removeEventListener('pointerup', onResizePointerUp)
+  persistHeight()
+}
+
+function onResizePointerDown(e: PointerEvent): void {
+  if (e.button !== 0) return
+  dragStartY = e.clientY
+  dragStartHeight = listMaxHeight.value
+  document.body.style.userSelect = 'none'
+  window.addEventListener('pointermove', onResizePointerMove)
+  window.addEventListener('pointerup', onResizePointerUp)
+  e.preventDefault()
+}
+
+function nudgeHeight(delta: number): void {
+  listMaxHeight.value = clampHeight(listMaxHeight.value + delta)
+  persistHeight()
+}
+
+function persistHeight(): void {
+  prefs.write('panels', HEIGHT_PREF_KEY, listMaxHeight.value)
+}
+
+onBeforeUnmount(() => {
+  window.removeEventListener('pointermove', onResizePointerMove)
+  window.removeEventListener('pointerup', onResizePointerUp)
+})
 
 const filter = ref('')
 const copied = ref(false)

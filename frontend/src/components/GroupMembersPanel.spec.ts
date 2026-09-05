@@ -2,7 +2,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { usePreferencesStore } from '@/stores/preferences'
 import GroupMembersPanel from './GroupMembersPanel.vue'
+
+// The preferences store debounces a merge-patch to the server after a write;
+// stub the API so a persisted height never leaves the test.
+vi.mock('@/api/preferences', () => ({
+  getPreferences: vi.fn().mockResolvedValue({ data: {} }),
+  patchPreferences: vi.fn().mockResolvedValue({ data: {} }),
+}))
 
 const MEMBERS = [
   'uid=alice,ou=People,dc=example,dc=com',
@@ -108,6 +116,76 @@ describe('GroupMembersPanel', () => {
     await w.setProps({ attributes: { objectClass: ['groupOfNames'], member: MEMBERS.slice(0, 2) } })
     expect((w.find('input').element as HTMLInputElement).value).toBe('')
     expect(w.findAll('li')).toHaveLength(2)
+  })
+
+  describe('resizable height', () => {
+    const GROUP = { objectClass: ['groupOfNames'], member: MEMBERS }
+    const listMaxHeight = (w: ReturnType<typeof mountWith>) =>
+      (w.find('[data-testid="member-list"]').element as HTMLElement).style.maxHeight
+
+    function pointer(type: string, clientY: number): PointerEvent {
+      // jsdom lacks a PointerEvent constructor; a MouseEvent carries the
+      // fields the handlers read (button, clientY).
+      return new MouseEvent(type, { bubbles: true, clientY, button: 0 }) as unknown as PointerEvent
+    }
+
+    it('caps the list at 240px by default', () => {
+      const w = mountWith(GROUP)
+      expect(listMaxHeight(w)).toBe('240px')
+      expect(w.find('[data-testid="member-list-grip"]').exists()).toBe(true)
+    })
+
+    it('restores a height saved in the panels preference namespace', () => {
+      usePreferencesStore().doc = { panels: { 'browser-group-members': 420 } }
+      const w = mountWith(GROUP)
+      expect(listMaxHeight(w)).toBe('420px')
+    })
+
+    it('ignores a malformed stored height', () => {
+      usePreferencesStore().doc = { panels: { 'browser-group-members': 'tall' } }
+      const w = mountWith(GROUP)
+      expect(listMaxHeight(w)).toBe('240px')
+    })
+
+    it('follows a pointer drag on the grip and persists the result on release', async () => {
+      const w = mountWith(GROUP)
+      const grip = w.find('[data-testid="member-list-grip"]')
+      grip.element.dispatchEvent(pointer('pointerdown', 100))
+      window.dispatchEvent(pointer('pointermove', 180))
+      await w.vm.$nextTick()
+      expect(listMaxHeight(w)).toBe('320px')
+      expect(document.body.style.userSelect).toBe('none')
+
+      window.dispatchEvent(pointer('pointerup', 180))
+      await w.vm.$nextTick()
+      expect(document.body.style.userSelect).toBe('')
+      expect(usePreferencesStore().read('panels', 'browser-group-members', null)).toBe(320)
+
+      // Listeners are gone: further moves do nothing.
+      window.dispatchEvent(pointer('pointermove', 400))
+      await w.vm.$nextTick()
+      expect(listMaxHeight(w)).toBe('320px')
+    })
+
+    it('clamps a drag to the minimum height', async () => {
+      const w = mountWith(GROUP)
+      w.find('[data-testid="member-list-grip"]').element.dispatchEvent(pointer('pointerdown', 500))
+      window.dispatchEvent(pointer('pointermove', 0))
+      await w.vm.$nextTick()
+      expect(listMaxHeight(w)).toBe('96px')
+      window.dispatchEvent(pointer('pointerup', 0))
+    })
+
+    it('resizes in 24px steps from the keyboard and persists', async () => {
+      const w = mountWith(GROUP)
+      const grip = w.find('[data-testid="member-list-grip"]')
+      await grip.trigger('keydown', { key: 'ArrowDown' })
+      expect(listMaxHeight(w)).toBe('264px')
+      await grip.trigger('keydown', { key: 'ArrowUp' })
+      await grip.trigger('keydown', { key: 'ArrowUp' })
+      expect(listMaxHeight(w)).toBe('216px')
+      expect(usePreferencesStore().read('panels', 'browser-group-members', null)).toBe(216)
+    })
   })
 
   it('copies every member DN, one per line', async () => {
