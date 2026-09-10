@@ -200,6 +200,8 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
+import { useProfilePickerStore } from '@/stores/profilePicker'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useApi, downloadBlob } from '@/composables/useApi'
@@ -282,6 +284,7 @@ const can = computed(() => ({
 }))
 
 const dirId         = route.params.dirId as string
+const profilePicker = useProfilePickerStore()
 const groups        = ref<GroupRow[]>([])
 // Cap-hit signal — directory had at least FETCH_LIMIT matching
 // groups. >= guards against future drift; equality is what the
@@ -666,7 +669,13 @@ async function loadProfiles() {
     // disabled profiles can't.
     const enabled: ProfileLite[] = profiles.filter((p: ProfileLite) => p.enabled !== false)
     allProfiles.value = enabled
-    if (enabled.length === 1) {
+    // Follow the sidebar picker when it points at one of this directory's
+    // profiles (see UserListView.loadProfiles for the rationale).
+    const picked = enabled.find((p: ProfileLite) => p.id === profilePicker.selectedId)
+    if (picked) {
+      selectedProfileId.value = picked.id
+      profileData.value = picked
+    } else if (enabled.length === 1) {
       selectedProfileId.value = enabled[0].id
       profileData.value = enabled[0]
     }
@@ -681,6 +690,12 @@ function onProfileChange() {
   profileData.value = p || null
   load()
 }
+
+// A sidebar profile switch remounts this page. Warn while the create or edit
+// form is open, or while the Members drawer holds an un-added DN or bulk list.
+useUnsavedChangesGuard('Groups', () =>
+  showCreate.value || showEdit.value
+  || (showMembers.value && (newMemberDn.value.trim() !== '' || bulkMemberDns.value.trim() !== '')))
 
 onMounted(async () => {
   await loadProfiles()

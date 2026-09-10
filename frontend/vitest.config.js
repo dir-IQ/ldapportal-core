@@ -1,4 +1,3 @@
-import { fileURLToPath, URL } from 'node:url'
 import { mergeConfig, defineConfig } from 'vitest/config'
 import viteConfig from './vite.config.js'
 
@@ -40,10 +39,9 @@ export default mergeConfig(
         ],
       },
     },
-    resolve: {
-      alias: {
-        '@': fileURLToPath(new URL('./src', import.meta.url)),
-      },
-    },
+    // No resolve.alias override here: vite.config.js already supplies `@`,
+    // and mergeConfig would place an override *ahead* of it — hiding the
+    // edition alias that maps `@/ee` to the community shim, so any spec
+    // that imports a component using `@/ee` failed to resolve it.
   }),
 )

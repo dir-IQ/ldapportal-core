@@ -525,6 +525,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
@@ -1225,6 +1226,11 @@ async function doGroupExport() {
     groupExporting.value = false
   }
 }
+
+// A sidebar profile switch remounts this page. A chosen import file (user or
+// group), or an open template editor, is work the user would have to redo.
+useUnsavedChangesGuard('Bulk Operations', () =>
+  importFile.value !== null || groupImportFile.value !== null || showTemplateModal.value)
 </script>
 
 <style scoped>

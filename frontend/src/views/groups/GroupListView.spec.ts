@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 
 const state = vi.hoisted(() => ({ features: [] as string[] }))
 
@@ -29,6 +30,10 @@ vi.mock('@/api/groups', () => ({
 }))
 vi.mock('@/api/csvTemplates', () => ({ exportGroupCsv: vi.fn() }))
 vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ data: [] }) }))
+
+// The view registers an unsaved-changes guard (and reads the sidebar
+// picker) through real Pinia stores; give every test a fresh instance.
+beforeEach(() => setActivePinia(createPinia()))
 
 import GroupListView from './GroupListView.vue'
 import { createGroup, updateGroup } from '@/api/groups'

@@ -31,4 +31,13 @@ describe('ConfirmDialog', () => {
     await cancel!.trigger('click')
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual([false])
   })
+
+  it('renders a custom cancel label for yes/no prompts', () => {
+    const wrapper = mount(ConfirmDialog, {
+      props: { modelValue: true, title: 'Switch?', message: 'Sure?', confirmLabel: 'Yes', cancelLabel: 'No' },
+      global: { stubs: { teleport: true } },
+    })
+    const labels = wrapper.findAll('button').map((b) => b.text())
+    expect(labels).toEqual(['No', 'Yes'])
+  })
 })

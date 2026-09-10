@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 
 const hoisted = vi.hoisted(() => ({
   hasFeature: vi.fn((_k: string) => true),
@@ -47,6 +48,10 @@ vi.mock('@/stores/notifications', () => ({
 vi.mock('@/stores/profilePicker', () => ({
   useProfilePickerStore: () => ({ selectedProfile: null }),
 }))
+
+// The view registers an unsaved-changes guard (and reads the sidebar
+// picker) through real Pinia stores; give every test a fresh instance.
+beforeEach(() => setActivePinia(createPinia()))
 
 import ReportJobsView from './ReportJobsView.vue'
 
