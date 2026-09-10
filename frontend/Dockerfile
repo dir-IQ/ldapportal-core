@@ -11,7 +11,12 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-RUN npm run build
+# Public base path the SPA is served under. Leave at "/" for a root
+# deployment; pass --build-arg VITE_BASE_PATH=/idm/ when a reverse proxy
+# (e.g. a WebSEAL junction) exposes the app under a URL prefix. Baked into
+# the bundle, so build one image per prefix. See docs/deployment-webseal-dual-frontend.md §3.5.
+ARG VITE_BASE_PATH=/
+RUN VITE_BASE_PATH="$VITE_BASE_PATH" npm run build
 
 FROM nginx:alpine
 # Default BACKEND_APP suits docker-compose (the backend service is "app");

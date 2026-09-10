@@ -110,6 +110,16 @@ defineEmits(['update:modelValue'])
           Consult your WebSEAL documentation for the full list of flags relevant to your
           deployment (ACLs, auth policy, session sharing, etc.).
         </p>
+        <p class="mt-2">
+          <strong>Junction name matters.</strong> The app assumes it is served at the
+          origin root. Behind a virtual-host junction (<code>-v idm.example.com</code>) that
+          holds. Behind a path junction such as <code>/idm</code>, build the frontend image
+          with <code>--build-arg VITE_BASE_PATH=/idm/</code> so the app requests
+          <code>/idm/api/v1</code> and <code>/idm/assets</code> itself — WebSEAL rewrites
+          links in HTML but not the URLs the JavaScript bundle issues. See
+          <em>docs/deployment-webseal-dual-frontend.md</em> §3.5, including when to set
+          <code>APP_PUBLIC_BASE_PATH</code> on the backend.
+        </p>
       </section>
 
       <!-- 4. Network path -->
