@@ -43,48 +43,25 @@ buildah bud -f frontend/Dockerfile --build-arg VITE_BASE_PATH=/idm/ -t $ECR_REPO
     - buildah run "$ctr" -- grep -q '/idm/assets/' /usr/share/nginx/html/index.html
     - buildah rm "$ctr"
 
-Defaulted container "web" out of: web, opentelemetry-auto-instrumentation-java (init), opentelemetry-auto-instrumentation-nodejs (init), opentelemetry-auto-instrumentation-python (init), opentelemetry-auto-instrumentation-dotnet (init)
-<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8">
-    <link rel="icon" type="image/svg+xml" href="/idm/favicon.svg">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LDAP Portal</title>
-    <!--
-      Pre-paint theme/density from the "prefs-hint" cookie so there's no flash
-      of the wrong theme. The authoritative preference lives server-side (the
-      user-preferences document); this cookie is a disposable render hint the
-      server sets at login and the app keeps in sync. Keep this in sync with
-      src/utils/prefsHint.ts.
-    -->
-    <script>
-      (function () {
-        try {
-          var hit = document.cookie.split('; ').find(function (c) {
-            return c.indexOf('prefs-hint=') === 0;
-          });
-          var theme = 'light', density = 'comfortable';
-          if (hit) {
-            var parts = decodeURIComponent(hit.slice('prefs-hint='.length)).split('.');
-            if (parts[0]) theme = parts[0];
-            if (parts[1]) density = parts[1];
-          }
-          var root = document.documentElement;
-          if (theme === 'system') {
-            var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-            root.setAttribute('data-theme', dark ? 'dark' : 'light');
-          } else {
-            root.setAttribute('data-theme', theme);
-          }
-          if (density === 'compact') root.setAttribute('data-density', 'compact');
-        } catch (e) { /* fall back to default light / comfortable */ }
-      })();
-    </script>
-    <script type="module" crossorigin src="/idm/assets/index-VF0gs048.js"></script>
-    <link rel="stylesheet" crossorigin href="/idm/assets/index-BK_vLbit.css">
-  </head>
-  <body>
-    <div id="app"></div>
-  </body>
-</html>
+
+  # Direct (non-WebSEAL) access: the /idm prefix reaches nginx, so serve
+# the same bundle under it and proxy the prefixed API.
+location /idm/api/v1/ {
+    proxy_pass http://${BACKEND_APP}:8080/api/v1/;
+    # No WebSEAL on this path to rewrite cookie paths, so do it here.
+    proxy_cookie_path /api/v1 /idm/api/v1;
+    proxy_cookie_path / /idm/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # Not behind WebSEAL: never forward a client-supplied identity header.
+    proxy_set_header iv-user "";
+    proxy_set_header iv-groups "";
+    proxy_set_header iv-creds "";
+}
+
+location /idm/ {
+    alias /usr/share/nginx/html/;
+    try_files $uri $uri/ /index.html;
+}
