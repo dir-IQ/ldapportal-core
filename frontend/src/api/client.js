@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import axios from 'axios'
+import { withBase } from '@/utils/basePath'
 
+// The API lives next to the SPA under the same public base path ("/api/v1"
+// at the root, "/idm/api/v1" behind a path-prefixed proxy), so the two
+// always share an origin and the session cookie's Path.
 const client = axios.create({
-  baseURL: '/api/v1',
+  baseURL: withBase('api/v1'),
   headers: { 'Content-Type': 'application/json' },
   withCredentials: true, // send the httpOnly JWT cookie on every request
 })
@@ -16,13 +20,15 @@ client.interceptors.response.use(
     const status = err.response?.status
     if (status === 401) {
       const path = window.location.pathname
+      const loginPath = withBase('login')
+      const selfServiceLoginPath = withBase('self-service/login')
       // Don't redirect if already on a login page
-      if (path !== '/login' && path !== '/self-service/login') {
+      if (path !== loginPath && path !== selfServiceLoginPath) {
         // Self-service users go to self-service login; admins go to admin login
-        if (path.startsWith('/self-service')) {
-          window.location.href = '/self-service/login'
-        } else if (!path.startsWith('/register')) {
-          window.location.href = '/login'
+        if (path.startsWith(withBase('self-service'))) {
+          window.location.href = selfServiceLoginPath
+        } else if (!path.startsWith(withBase('register'))) {
+          window.location.href = loginPath
         }
       }
     } else if (status === 402) {

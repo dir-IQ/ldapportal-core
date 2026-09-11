@@ -8,7 +8,7 @@
       </div>
       <div v-else class="space-y-4">
         <p class="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{{ errorMsg }}</p>
-        <a href="/login" class="text-sm text-blue-600 hover:text-blue-800 font-medium">Back to login</a>
+        <RouterLink to="/login" class="text-sm text-blue-600 hover:text-blue-800 font-medium">Back to login</RouterLink>
       </div>
     </div>
   </div>

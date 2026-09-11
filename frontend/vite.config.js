@@ -47,7 +47,23 @@ const alias = [
   { find: '@', replacement: SRC },
 ]
 
+// Public base path. Set VITE_BASE_PATH=/idm/ when the app is exposed under a
+// URL prefix by a reverse proxy (e.g. a WebSEAL junction named /idm): Vite
+// then prefixes every asset URL and `import.meta.env.BASE_URL`, which the
+// router and the API client both consume (src/utils/basePath.ts). Unset =
+// served at the origin root, exactly as before. Baked in at build time, so
+// the frontend image is built per prefix (see frontend/Dockerfile).
+const BASE_PATH = normalizeBasePath(process.env.VITE_BASE_PATH)
+function normalizeBasePath(raw) {
+  const core = (raw ?? '').trim().replace(/\/{2,}/g, '/').replace(/^\/+|\/+$/g, '')
+  return core ? `/${core}/` : '/'
+}
+// The dev proxy must catch the prefixed API path and strip the prefix, since
+// the local backend always serves /api/v1 at its root.
+const DEV_API_PREFIX = `${BASE_PATH}api/v1`
+
 export default defineConfig({
+  base: BASE_PATH,
   plugins: [
     vue(),
     tailwindcss(),
@@ -61,10 +77,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api/v1': {
+      [DEV_API_PREFIX]: {
         target: 'http://localhost:8080',
         changeOrigin: true,
         secure: false,  // allow self-signed certs in local dev
+        rewrite: BASE_PATH === '/' ? undefined : (p) => p.slice(BASE_PATH.length - 1),
       }
     }
   }
