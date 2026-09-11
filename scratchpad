@@ -38,3 +38,7 @@ computing gzip size...
 
 
 buildah bud -f frontend/Dockerfile --build-arg VITE_BASE_PATH=/idm/ -t $ECR_REPO_URI/$FRONTEND_REPO_NAME:$IMAGE_TAG frontend
+
+    - ctr=$(buildah from "$ECR_REPO_URI/$FRONTEND_REPO_NAME:$IMAGE_TAG")
+    - buildah run "$ctr" -- grep -q '/idm/assets/' /usr/share/nginx/html/index.html
+    - buildah rm "$ctr"
