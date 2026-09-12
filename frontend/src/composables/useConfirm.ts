@@ -22,6 +22,8 @@ export interface ConfirmOptions {
   message: string
   /** Affirmative button label. Defaults to "Confirm". */
   confirmLabel?: string
+  /** Dismiss button label. Defaults to "Cancel". */
+  cancelLabel?: string
   /** Optional Tailwind class string overriding the affirmative button. */
   confirmClass?: string
   /** Renders the affirmative button red when true. */

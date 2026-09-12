@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { dirId: 'd1' } }) }))
 vi.mock('@/stores/notifications', () => ({
@@ -42,6 +43,10 @@ vi.mock('@/api/csvTemplates', () => ({
 }))
 
 import { previewCsv, importCsv } from '@/api/csvTemplates'
+// The view registers an unsaved-changes guard (and reads the sidebar
+// picker) through real Pinia stores; give every test a fresh instance.
+beforeEach(() => setActivePinia(createPinia()))
+
 import BulkView from './BulkView.vue'
 
 const global = {

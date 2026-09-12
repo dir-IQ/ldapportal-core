@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, defineAsyncComponent } from 'vue'
+import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import { useRouter } from 'vue-router'
 // Lazy-load vuedraggable (+ its sortablejs dependency) — it's only rendered
 // in edit mode, so most users never pay the bundle cost on their first
@@ -516,6 +517,10 @@ async function onReset() {
     layoutStore.reset()
   }
 }
+
+// A sidebar profile switch remounts this page; an in-progress layout edit
+// (unsaved draft) is discarded with it.
+useUnsavedChangesGuard('Dashboard', () => layoutStore.editing)
 </script>
 
 <template>

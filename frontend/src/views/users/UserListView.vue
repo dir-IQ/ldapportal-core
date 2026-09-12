@@ -479,6 +479,8 @@
 
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, watch } from 'vue'
+import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
+import { useProfilePickerStore } from '@/stores/profilePicker'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
@@ -653,6 +655,7 @@ function memberOfValues(attrs: Record<string, string[] | string | null>): string
 const groupsExpanded = ref(false)
 
 const dirId          = route.params.dirId as string
+const profilePicker  = useProfilePickerStore()
 const users          = ref<UserRow[]>([])
 const filterText     = ref('')
 const limit          = ref(FETCH_LIMIT)
@@ -1539,7 +1542,14 @@ async function loadProfiles() {
     // separate (unfiltered) list endpoint.
     const enabled: ProfileLite[] = profiles.filter((p: ProfileLite) => p.enabled !== false)
     allProfiles.value = enabled
-    if (enabled.length === 1) {
+    // Follow the sidebar picker when it points at one of this directory's
+    // profiles: a sidebar switch remounts this view, and the reload should
+    // land on the newly picked profile rather than fall back to "All".
+    const picked = enabled.find((p: ProfileLite) => p.id === profilePicker.selectedId)
+    if (picked) {
+      selectedProfileId.value = picked.id
+      profileData.value = picked
+    } else if (enabled.length === 1) {
       selectedProfileId.value = enabled[0].id
       profileData.value = enabled[0]
     }
@@ -1555,6 +1565,13 @@ function onProfileChange() {
   limit.value = FETCH_LIMIT
   load()
 }
+
+// A sidebar profile switch remounts this page. Warn first while any editor
+// dialog is open — the create/edit form, bulk update, bulk membership, move,
+// password reset or playbook run — since whatever was typed there is lost.
+useUnsavedChangesGuard('Users', () =>
+  showModal.value || showBulkUpdate.value || showBulkMembership.value
+  || showMove.value || showResetPassword.value || showPlaybookModal.value)
 
 onMounted(async () => {
   await loadProfiles()

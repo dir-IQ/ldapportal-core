@@ -558,6 +558,34 @@ What this buys you, and the rules:
 
 ---
 
+## Unsaved-changes guard
+
+The sidebar profile picker remounts the active admin page so it reloads
+for the newly picked profile. A page that can hold unsaved work declares
+it once, from `<script setup>`, and AppLayout asks before switching:
+
+```ts
+import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
+
+// "Users" is the name shown in the warning. The predicate is evaluated
+// lazily when a switch is attempted, so reference refs directly.
+useUnsavedChangesGuard('Users', () => showEditDialog.value || showBulkUpdate.value)
+```
+
+- Name the page as its heading reads (`Users`, `Bulk Operations`).
+- "Dirty" is usually "an editor dialog is open or a form is partly
+  filled"; exact per-field change tracking is not required.
+- Registration is scoped to the component and removed on unmount —
+  never keep a guard alive for a page that has left.
+- Specs mounting such a view need `setActivePinia(createPinia())`; the
+  guard lives in the `unsavedChanges` Pinia store, which
+  `AppLayout.onPickerChange` reads via `dirtyPage()`.
+
+Applied in `UserListView`, `GroupListView`, `BulkView`,
+`ReportJobsView` and `DashboardView`.
+
+---
+
 ## When to update this doc
 
 - A pattern was applied 3+ times across different files but isn't

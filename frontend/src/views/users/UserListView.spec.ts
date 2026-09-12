@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 
 const state = vi.hoisted(() => ({ features: [] as string[] }))
 
@@ -40,8 +41,13 @@ vi.mock('@/api/playbooks', () => ({
   previewPlaybook: vi.fn(), executePlaybook: vi.fn(), rollbackExecution: vi.fn(),
 }))
 
+// The view registers an unsaved-changes guard (and reads the sidebar
+// picker) through real Pinia stores; give every test a fresh instance.
+beforeEach(() => setActivePinia(createPinia()))
+
 import UserListView from './UserListView.vue'
 import * as usersApi from '@/api/users'
+import { useUnsavedChangesStore } from '@/stores/unsavedChanges'
 import { listProfiles, getProfile } from '@/api/profiles'
 
 const stubs = {
@@ -376,6 +382,29 @@ describe('UserListView edit resolves the profile that owns the entry', () => {
     expect(getProfile).toHaveBeenCalledWith('d1', 'p1')
     expect(wrapper.findComponent({ name: 'UserForm' }).props('userTemplateConfig'))
       .toMatchObject({ id: 'p1' })
+  })
+
+  it('flags the Users page as having unsaved changes while the edit dialog is open, and clears on unmount', async () => {
+    const guard = useUnsavedChangesStore()
+    const wrapper = await openEditFor(['top', 'inetOrgPerson'])
+    expect(guard.dirtyPage()).toBe('Users')
+    wrapper.unmount()
+    expect(guard.dirtyPage()).toBeNull()
+  })
+
+  it('preselects the sidebar-picked profile instead of falling back to "All"', async () => {
+    state.features = ALL
+    vi.mocked(listProfiles).mockResolvedValue({ data: [
+      PROFILE,
+      { ...PROFILE, id: 'p2', name: 'Contractors', targetUserDn: 'ou=contractors,dc=x' },
+    ] } as never)
+    const { useProfilePickerStore } = await import('@/stores/profilePicker')
+    useProfilePickerStore().setSelectedId('p2')
+    const wrapper = mount(UserListView, { global: { stubs: editStubs } })
+    await flushPromises()
+    expect((wrapper.find('#ul-profile').element as HTMLSelectElement).value).toBe('p2')
+    expect(vi.mocked(usersApi.searchUsers).mock.calls.at(-1)?.[1])
+      .toMatchObject({ baseDn: 'ou=contractors,dc=x' })
   })
 
   it('still resolves when the entry returns no objectClass at all', async () => {

@@ -23,6 +23,7 @@ export const useConfirmStore = defineStore('confirm', () => {
    *    title: string,
    *    message: string,
    *    confirmLabel: string,
+   *    cancelLabel: string,
    *    confirmClass: string,
    *    danger: boolean,
    *  } | null>} */
@@ -41,6 +42,7 @@ export const useConfirmStore = defineStore('confirm', () => {
       title: opts.title ?? 'Confirm',
       message: opts.message ?? 'Are you sure?',
       confirmLabel: opts.confirmLabel ?? 'Confirm',
+      cancelLabel: opts.cancelLabel ?? 'Cancel',
       confirmClass: opts.confirmClass ?? '',
       danger: opts.danger ?? false,
     }

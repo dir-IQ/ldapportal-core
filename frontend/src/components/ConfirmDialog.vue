@@ -12,7 +12,7 @@
           <button
             @click="$emit('update:modelValue', false)"
             class="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50"
-          >Cancel</button>
+          >{{ cancelLabel }}</button>
           <button
             @click="confirm"
             :class="[
@@ -36,6 +36,8 @@ const props = withDefaults(
     title?: string
     message?: string
     confirmLabel?: string
+    /** Dismiss button label. Defaults to "Cancel"; use "No" for yes/no prompts. */
+    cancelLabel?: string
     confirmClass?: string
     danger?: boolean
   }>(),
@@ -44,6 +46,7 @@ const props = withDefaults(
     title: 'Confirm',
     message: 'Are you sure?',
     confirmLabel: 'Confirm',
+    cancelLabel: 'Cancel',
     confirmClass: '',
     danger: false,
   },

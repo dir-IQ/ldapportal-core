@@ -38,9 +38,12 @@
       <!-- Profile picker (admin users only) -->
       <div v-if="!auth.isSuperadmin && !collapsed" class="px-3 py-3 border-b border-white/15">
         <label class="text-xs text-white/70 uppercase tracking-wider mb-1 block">Profile</label>
+        <!-- Not v-model: the change is intercepted so a page with unsaved
+             work can veto the switch (onPickerChange reverts the control). -->
         <select
-          v-model="pickerValue"
+          :value="pickerValue"
           class="w-full bg-white/10 border border-white/20 text-white rounded px-2 py-1 text-sm"
+          @change="onPickerChange"
         >
           <option value="" disabled class="bg-white text-gray-900">--- select profile ---</option>
           <option v-for="p in profiles" :key="p.id" :value="p.id" class="bg-white text-gray-900">
@@ -280,8 +283,11 @@
         <button @click="reloadHard" class="underline hover:no-underline shrink-0">Reload now</button>
       </div>
       <LicenseExpirationBanner />
+      <!-- Keyed on the path AND a reload counter: a profile switch inside
+           the same directory keeps the path but must still remount the
+           page so it reloads for the newly picked profile. -->
       <RouterView v-slot="{ Component, route }">
-        <component :is="Component" :key="route.path" />
+        <component :is="Component" :key="`${route.path}#${viewReloadKey}`" />
       </RouterView>
     </main>
 
@@ -308,6 +314,7 @@
       :title="confirmStore.params.title"
       :message="confirmStore.params.message"
       :confirm-label="confirmStore.params.confirmLabel"
+      :cancel-label="confirmStore.params.cancelLabel"
       :confirm-class="confirmStore.params.confirmClass"
       :danger="confirmStore.params.danger"
       @update:model-value="(v) => v || confirmStore.resolve(false)"
@@ -336,8 +343,12 @@ import LicenseExpirationBanner from '@/components/LicenseExpirationBanner.vue'
 import UpgradeModal from '@/components/UpgradeModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { useConfirmStore } from '@/stores/confirm'
+import { useConfirm } from '@/composables/useConfirm'
+import { useUnsavedChangesStore } from '@/stores/unsavedChanges'
 
 const confirmStore = useConfirmStore()
+const confirm = useConfirm()
+const unsavedChanges = useUnsavedChangesStore()
 
 // Build identifier + skew detector. clientSha comes from
 // vite.config.js's `define` block; serverSha / serverImageVersion are
@@ -371,6 +382,12 @@ const route  = useRoute()
 
 const profiles       = ref<ProfileSummary[]>([])   // flat list of authorized profiles (admin only)
 const pickerValue    = ref<string>('')   // profile id
+// Bumped on every user-driven profile switch; part of the RouterView key so
+// the active page remounts (and reloads) even when the path is unchanged.
+const viewReloadKey  = ref(0)
+// Route names whose path carries the directory id; a profile switch into
+// another directory navigates these to the same page under the new id.
+const dirSections = ['users', 'groups', 'audit', 'bulk', 'reports', 'hrConnection', 'hrEmployees', 'approvals', 'accessReviews']
 const showNoProfiles = ref(false)
 const pendingCount   = ref(0)
 /**
@@ -481,6 +498,47 @@ onMounted(async () => {
 // their queries to the picked profile's target OU.
 watch(pickerValue, (id) => profilePicker.setSelectedId(id))
 
+/**
+ * User picked a profile in the sidebar. The active page is reloaded for
+ * the new profile (remount via viewReloadKey; a directory change also
+ * navigates, see the currentDirId watcher). If the page reports unsaved
+ * work, ask first and put the control back on refusal.
+ */
+async function onPickerChange(e: Event): Promise<void> {
+  const select = e.target as HTMLSelectElement
+  const nextId = select.value
+  const prevId = pickerValue.value
+  if (nextId === prevId) return
+
+  const dirtyPage = unsavedChanges.dirtyPage()
+  if (dirtyPage) {
+    const nextName = profiles.value.find(p => p.id === nextId)?.name ?? nextId
+    const proceed = await confirm({
+      title: 'Switch profile?',
+      message: `The ${dirtyPage} page has unsaved changes that will be lost if it's reloaded for profile ${nextName}. Switch anyway?`,
+      confirmLabel: 'Yes',
+      cancelLabel: 'No',
+      danger: true,
+    })
+    if (!proceed) {
+      // :value didn't change, so Vue won't repaint the control — reset it by hand.
+      select.value = prevId
+      return
+    }
+  }
+
+  const prevDirId = currentDirId.value
+  pickerValue.value = nextId
+  // A directory change on a directory-scoped page navigates (currentDirId
+  // watcher), and the new path already remounts the view. Bump the key only
+  // when the path will stay put — same directory, or a top-level page such
+  // as the dashboard — so the page reloads exactly once either way.
+  const routeName = typeof route.name === 'string' ? route.name : ''
+  if (currentDirId.value === prevDirId || !dirSections.includes(routeName)) {
+    viewReloadKey.value++
+  }
+}
+
 // Keep picker in sync when route dirId changes externally
 watch(() => route.params.dirId, (dirId) => {
   if (!dirId) return
@@ -492,7 +550,6 @@ watch(() => route.params.dirId, (dirId) => {
 // Navigate when user picks a different profile.
 // Only fires when the user is already on a directory-scoped page — otherwise
 // we'd hijack top-level views like /dashboard on initial profile auto-select.
-const dirSections = ['users', 'groups', 'audit', 'bulk', 'reports', 'hrConnection', 'hrEmployees', 'approvals', 'accessReviews']
 watch(currentDirId, (newDirId) => {
   if (!newDirId || newDirId === route.params.dirId) return
   const name = typeof route.name === 'string' ? route.name : ''

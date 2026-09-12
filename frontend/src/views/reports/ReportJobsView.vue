@@ -381,6 +381,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
@@ -957,6 +958,9 @@ onMounted(async () => {
     }
   }
 })
+
+// A sidebar profile switch remounts this page; an open schedule form is lost.
+useUnsavedChangesGuard('Operational Reports', () => showJobForm.value)
 </script>
 
 <style scoped>
