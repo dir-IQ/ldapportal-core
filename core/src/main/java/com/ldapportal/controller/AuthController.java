@@ -144,7 +144,7 @@ public class AuthController {
                 .httpOnly(true)
                 .secure(appProperties.getCookie().isSecure())
                 .sameSite("Strict")
-                .path("/api/v1")
+                .path(appProperties.publicPath("/api/v1"))
                 .maxAge(Duration.ofMinutes(appProperties.getJwt().getExpiryMinutes()))
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
@@ -172,7 +172,7 @@ public class AuthController {
                 .httpOnly(false)
                 .secure(appProperties.getCookie().isSecure())
                 .sameSite("Strict")
-                .path("/")
+                .path(appProperties.publicPath("/"))
                 .maxAge(Duration.ofDays(365))
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, hint.toString());
@@ -214,7 +214,7 @@ public class AuthController {
                 .httpOnly(true)
                 .secure(appProperties.getCookie().isSecure())
                 .sameSite("Strict")
-                .path("/api/v1")
+                .path(appProperties.publicPath("/api/v1"))
                 .maxAge(0)
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
@@ -225,7 +225,7 @@ public class AuthController {
                 .httpOnly(false)
                 .secure(appProperties.getCookie().isSecure())
                 .sameSite("Strict")
-                .path("/")
+                .path(appProperties.publicPath("/"))
                 .maxAge(0)
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, hintCleared.toString());
@@ -532,7 +532,7 @@ public class AuthController {
                 .httpOnly(true)
                 .secure(appProperties.getCookie().isSecure())
                 .sameSite("Strict")
-                .path("/api/v1")
+                .path(appProperties.publicPath("/api/v1"))
                 .maxAge(Duration.ofMinutes(appProperties.getJwt().getExpiryMinutes()))
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
@@ -605,7 +605,7 @@ public class AuthController {
                 .httpOnly(true)
                 .secure(appProperties.getCookie().isSecure())
                 .sameSite("Strict")
-                .path("/api/v1")
+                .path(appProperties.publicPath("/api/v1"))
                 .maxAge(Duration.ofMinutes(appProperties.getJwt().getExpiryMinutes()))
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
@@ -637,7 +637,7 @@ public class AuthController {
                 .httpOnly(true)
                 .secure(appProperties.getCookie().isSecure())
                 .sameSite("Strict")
-                .path("/api/v1")
+                .path(appProperties.publicPath("/api/v1"))
                 .maxAge(Duration.ofMinutes(appProperties.getJwt().getExpiryMinutes()))
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
@@ -666,7 +666,7 @@ public class AuthController {
         if (("http".equals(scheme) && port != 80) || ("https".equals(scheme) && port != 443)) {
             uri.append(":").append(port);
         }
-        uri.append("/oidc/callback");
+        uri.append(appProperties.publicPath("/oidc/callback"));
         return uri.toString();
     }
 
@@ -679,8 +679,15 @@ public class AuthController {
     private String buildPostLogoutRedirectUri(HttpServletRequest request) {
         String configured = applicationSettingsService.getEntity().getOidcRedirectUri();
         if (configured != null && !configured.isBlank()) {
-            // Strip the /oidc/callback (or similar) path suffix so we land on
-            // the app root — the frontend handles post-logout UX from there.
+            // Strip the /oidc/callback suffix so we land on the app root — the
+            // frontend handles post-logout UX from there. Only the callback
+            // segment goes: a configured URI such as https://host/idm/oidc/callback
+            // must land on https://host/idm, not on the origin root, when the
+            // app lives under a path prefix.
+            String suffix = "/oidc/callback";
+            if (configured.endsWith(suffix)) {
+                return configured.substring(0, configured.length() - suffix.length());
+            }
             int pathStart = configured.indexOf('/', configured.indexOf("://") + 3);
             return pathStart > 0 ? configured.substring(0, pathStart) : configured;
         }
@@ -691,6 +698,7 @@ public class AuthController {
         if (("http".equals(scheme) && port != 80) || ("https".equals(scheme) && port != 443)) {
             uri.append(":").append(port);
         }
+        uri.append(appProperties.getPublicBasePath());
         return uri.toString();
     }
 

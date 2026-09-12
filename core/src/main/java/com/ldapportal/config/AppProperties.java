@@ -38,6 +38,54 @@ public class AppProperties {
     @Valid
     private Auth auth = new Auth();
 
+    /**
+     * Public URL path prefix the browser sees in front of the app, e.g.
+     * {@code /idm} when a reverse proxy exposes it under a path rather than
+     * at the origin root. Empty (the default) means the app is served at the
+     * root. The prefix is applied to browser-facing paths only: the session
+     * and preferences cookie {@code Path} attributes and the OIDC redirect
+     * URI. The backend keeps serving {@code /api/v1}; the proxy is expected
+     * to strip the prefix before forwarding.
+     *
+     * <p>Leave this unset behind a standard WebSEAL junction: WebSEAL strips
+     * the junction name on the way in and rewrites cookie {@code Path}
+     * attributes to include it on the way out, so the backend must not add
+     * it a second time. Set it for proxies that do not rewrite cookie paths
+     * (e.g. an nginx ingress with a path rewrite).</p>
+     */
+    private String publicBasePath = "";
+
+    /** Normalised form: {@code ""} for the root, otherwise {@code /prefix} (leading slash, no trailing). */
+    public String getPublicBasePath() {
+        return normalizeBasePath(publicBasePath);
+    }
+
+    /**
+     * Prefix a root-relative path with the public base path, e.g.
+     * {@code publicPath("/api/v1")} → {@code /idm/api/v1}, or {@code /api/v1}
+     * when no prefix is configured.
+     */
+    public String publicPath(String rootRelativePath) {
+        String base = getPublicBasePath();
+        if (rootRelativePath == null || rootRelativePath.isBlank() || "/".equals(rootRelativePath)) {
+            return base.isEmpty() ? "/" : base + "/";
+        }
+        String rel = rootRelativePath.startsWith("/") ? rootRelativePath : "/" + rootRelativePath;
+        return base + rel;
+    }
+
+    /**
+     * Accepts operator input leniently — {@code idm}, {@code /idm}, {@code /idm/},
+     * {@code //idm//} — and yields {@code /idm}; blank or {@code /} yields {@code ""}.
+     */
+    static String normalizeBasePath(String raw) {
+        if (raw == null) return "";
+        String s = raw.trim().replaceAll("/{2,}", "/");
+        while (s.endsWith("/")) s = s.substring(0, s.length() - 1);
+        if (s.isEmpty()) return "";
+        return s.startsWith("/") ? s : "/" + s;
+    }
+
     // ── Nested config classes ─────────────────────────────────────────────────
 
     @Getter

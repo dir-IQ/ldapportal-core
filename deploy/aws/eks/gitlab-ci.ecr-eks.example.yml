@@ -107,6 +107,8 @@ publish-frontend:
   needs: []
   script:
     - IMAGE="$ECR_REGISTRY/ldapportal-frontend"
+    # Add --build-arg VITE_BASE_PATH=/idm/ when the app is exposed under a URL
+    # prefix (e.g. a WebSEAL path junction). See docs/deployment-webseal-dual-frontend.md §3.5.
     - docker build -f frontend/Dockerfile -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" frontend
     - docker push "$IMAGE:$CI_COMMIT_TAG"
     - docker push "$IMAGE:latest"

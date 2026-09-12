@@ -89,6 +89,14 @@ app:
     # Set to false only in local development (plain HTTP).  Always true in production.
     secure: ${COOKIE_SECURE:true}
 
+  # Public URL path prefix in front of the app (e.g. /idm) when a reverse
+  # proxy exposes it under a path instead of the origin root. Applied to the
+  # cookie Path attributes and the OIDC redirect URI only — the proxy must
+  # strip the prefix before forwarding, the backend still serves /api/v1.
+  # Leave unset behind a standard WebSEAL junction (WebSEAL rewrites cookie
+  # paths itself). Pair with the frontend image's VITE_BASE_PATH build arg.
+  public-base-path: ${APP_PUBLIC_BASE_PATH:}
+
   approval:
     # Auto-approve requests submitted by superadmins. Config-only (not a
     # DB/UI setting) so a superadmin can't grant themselves the bypass.

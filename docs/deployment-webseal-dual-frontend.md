@@ -155,6 +155,58 @@ sa.example.com         → (direct ingress)   → SPA + /api/v1  ─┘
 
 ---
 
+### 3.5 Path-prefixed junction (e.g. `/idm`)
+
+By default the SPA assumes it lives at the origin root: it requests
+`/api/v1/...`, its assets under `/assets/...`, and the router's history
+paths from `/`. A standard WebSEAL junction named `/idm` strips the junction
+name before forwarding, and WebSEAL rewrites absolute links inside HTML —
+but it cannot rewrite the URLs the JavaScript bundle issues. Those
+`/api/v1/...` calls arrive at the WebSEAL root instead of the junction (a
+`-j` junction cookie can paper over that only after the user has first
+visited `/idm/`). The clean options:
+
+- **Virtual-host junction (zero config):** `-t ssl -v idm.example.com`. The
+  app keeps the origin root on its own hostname and nothing below applies.
+- **Path prefix:** build the frontend for the prefix so every URL the SPA
+  generates already carries it:
+
+  ```bash
+  docker build -f frontend/Dockerfile --build-arg VITE_BASE_PATH=/idm/ \
+    -t ldapportal-frontend:idm frontend/
+  ```
+
+  The bundle then requests `/idm/api/v1/...` and `/idm/assets/...`, and the
+  router serves `/idm/login`, `/idm/dashboard`, and so on. WebSEAL strips
+  `/idm` on the way in, so the frontend nginx and the backend keep serving at
+  their roots — no nginx or backend path change is needed. One image per
+  prefix: the base path is baked at build time.
+
+  Junction shape (no reliance on `-j` for routing):
+
+  ```
+  pdadmin> server task default-webseald-HOST create -t ssl \
+      -h frontend-host -p 8080 -c iv-user,iv-groups /idm
+  ```
+
+**Cookies under a prefix.** The backend issues the session cookie with
+`Path=/api/v1`. WebSEAL rewrites the `Path` of cookies from a junctioned
+server to include the junction name, so the browser stores
+`Path=/idm/api/v1` and returns it on the prefixed API calls. Confirm this in
+the browser's cookie inspector after the first sign-in. If your proxy does
+**not** rewrite cookie paths (an nginx ingress with a rewrite rule, for
+example), set `APP_PUBLIC_BASE_PATH=/idm` on the backend: the session and
+preferences cookies are then issued with the prefixed `Path`, and the
+default OIDC redirect URI becomes `https://host/idm/oidc/callback`. Do not
+set it behind a WebSEAL junction that already rewrites paths, or the prefix
+is applied twice.
+
+Readiness probes and health checks that hit the frontend must still target
+the frontend's own root (`/`), since the prefix exists only on the WebSEAL
+side.
+
+---
+
 ## 4. Account provisioning
 
 - **Admins:** create with **Auth Type = WEBSEAL** and a **username matching the
