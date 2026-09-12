@@ -6,6 +6,9 @@ import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.listener.InMemoryDirectoryServer;
 import com.unboundid.ldap.listener.InMemoryDirectoryServerConfig;
+import com.unboundid.ldap.listener.interceptor.InMemoryInterceptedSearchEntry;
+import com.unboundid.ldap.listener.interceptor.InMemoryInterceptedSearchRequest;
+import com.unboundid.ldap.listener.interceptor.InMemoryOperationInterceptor;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Entry;
 import com.unboundid.ldap.sdk.SearchScope;
@@ -17,7 +20,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -46,6 +52,15 @@ class LdapBrowseServiceTest {
     private InMemoryDirectoryServer inMemoryServer;
     private DirectoryConnection     dc;
 
+    /** Counts every search request the in-memory server receives. */
+    private final AtomicInteger searchCount = new AtomicInteger();
+    /**
+     * Optional per-entry injector for the subordinate hint attributes. The
+     * in-memory server doesn't maintain hasSubordinates / numSubordinates
+     * itself, so tests that need them stamp the values in on the way out.
+     */
+    private volatile Function<String, Map<String, String>> hintInjector = dn -> Map.of();
+
     private static final String BASE_DN   = "dc=example,dc=com";
     private static final String BIND_DN   = "cn=admin,dc=example,dc=com";
     private static final String BIND_PASS = "adminpass";
@@ -60,6 +75,23 @@ class LdapBrowseServiceTest {
         // includeOperational tests can't verify their presence.
         InMemoryDirectoryServerConfig config = new InMemoryDirectoryServerConfig(BASE_DN);
         config.addAdditionalBindCredentials(BIND_DN, BIND_PASS);
+        config.addInMemoryOperationInterceptor(new InMemoryOperationInterceptor() {
+            @Override
+            public void processSearchRequest(InMemoryInterceptedSearchRequest request) {
+                searchCount.incrementAndGet();
+            }
+
+            @Override
+            public void processSearchEntry(InMemoryInterceptedSearchEntry entry) {
+                Map<String, String> hints = hintInjector.apply(entry.getSearchEntry().getDN());
+                if (hints.isEmpty()) {
+                    return;
+                }
+                Entry patched = entry.getSearchEntry().duplicate();
+                hints.forEach((name, value) -> patched.setAttribute(name, value));
+                entry.setSearchEntry(patched);
+            }
+        });
         inMemoryServer = new InMemoryDirectoryServer(config);
 
         inMemoryServer.add(new Entry(BASE_DN,
@@ -281,6 +313,87 @@ class LdapBrowseServiceTest {
     void deleteEntry_default_removesTheEntryItself() throws Exception {
         browseService.deleteEntry(dc, ALICE_DN, false, false);
         assertThat(inMemoryServer.getEntry(ALICE_DN)).isNull();
+    }
+
+    // ── child listing: subordinate hints vs. per-child probe ─────────────────
+
+    private static final String TEAM_OU = "ou=team," + BASE_DN;
+
+    /** Adds ou=team (with one child) so the base has one container and one leaf. */
+    private void addTeamBranch() throws Exception {
+        inMemoryServer.add(new Entry(TEAM_OU,
+                new Attribute("objectClass", "top", "organizationalUnit"), new Attribute("ou", "team")));
+        inMemoryServer.add(new Entry("cn=Bob," + TEAM_OU,
+                new Attribute("objectClass", "top", "person"),
+                new Attribute("cn", "Bob"), new Attribute("sn", "B")));
+    }
+
+    private LdapBrowseService.ChildEntry child(LdapBrowseService.BrowseResult result, String dn) {
+        return result.children().stream()
+                .filter(c -> c.dn().equalsIgnoreCase(dn))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("child not listed: " + dn));
+    }
+
+    @Test
+    void browse_noSubordinateHints_probesEachChild() throws Exception {
+        addTeamBranch();
+        searchCount.set(0);
+
+        LdapBrowseService.BrowseResult result = browseService.browse(dc, BASE_DN);
+
+        assertThat(child(result, TEAM_OU).hasChildren()).isTrue();
+        assertThat(child(result, ALICE_DN).hasChildren()).isFalse();
+        // 1 entry read + 1 one-level listing + 1 probe per child (2 children).
+        assertThat(searchCount.get()).isEqualTo(4);
+    }
+
+    @Test
+    void browse_hasSubordinatesPresent_skipsPerChildProbe() throws Exception {
+        addTeamBranch();
+        hintInjector = dn -> dn.equalsIgnoreCase(TEAM_OU)
+                ? Map.of("hasSubordinates", "TRUE")
+                : Map.of("hasSubordinates", "FALSE");
+        searchCount.set(0);
+
+        LdapBrowseService.BrowseResult result = browseService.browse(dc, BASE_DN);
+
+        assertThat(child(result, TEAM_OU).hasChildren()).isTrue();
+        assertThat(child(result, ALICE_DN).hasChildren()).isFalse();
+        // 1 entry read + 1 one-level listing — no probes at all.
+        assertThat(searchCount.get()).isEqualTo(2);
+    }
+
+    @Test
+    void browse_numSubordinatesPresent_skipsPerChildProbe() throws Exception {
+        addTeamBranch();
+        hintInjector = dn -> dn.equalsIgnoreCase(TEAM_OU)
+                ? Map.of("numSubordinates", "1")
+                : Map.of("numSubordinates", "0");
+        searchCount.set(0);
+
+        LdapBrowseService.BrowseResult result = browseService.browse(dc, BASE_DN);
+
+        assertThat(child(result, TEAM_OU).hasChildren()).isTrue();
+        assertThat(child(result, ALICE_DN).hasChildren()).isFalse();
+        assertThat(searchCount.get()).isEqualTo(2);
+    }
+
+    @Test
+    void browse_hintOnSomeChildrenOnly_probesOnlyTheOthers() throws Exception {
+        addTeamBranch();
+        // Only the container carries a hint; the leaf must still be probed.
+        hintInjector = dn -> dn.equalsIgnoreCase(TEAM_OU)
+                ? Map.of("hasSubordinates", "TRUE")
+                : Map.of();
+        searchCount.set(0);
+
+        LdapBrowseService.BrowseResult result = browseService.browse(dc, BASE_DN);
+
+        assertThat(child(result, TEAM_OU).hasChildren()).isTrue();
+        assertThat(child(result, ALICE_DN).hasChildren()).isFalse();
+        // entry read + listing + exactly one probe (for Alice).
+        assertThat(searchCount.get()).isEqualTo(3);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────────

@@ -105,6 +105,33 @@ public class LdapBrowseService {
         return attrs;
     }
 
+    /**
+     * Operational attributes a server may maintain on each entry that tell us
+     * whether it has children without a follow-up search per child. Which one
+     * is present depends on the vendor:
+     * <ul>
+     *   <li>{@code hasSubordinates} — OpenLDAP (back-mdb), 389 DS, IBM SDS,
+     *       OUD/OpenDJ. Boolean, exact.</li>
+     *   <li>{@code numSubordinates} — 389 DS, IBM SDS, OUD/OpenDJ. Exact
+     *       count of immediate children.</li>
+     *   <li>{@code msDS-Approx-Immed-Subordinates} — Active Directory.
+     *       Constructed on read; an estimate from index statistics. Apache
+     *       Directory Studio relies on it for the same expand-arrow hint, so
+     *       we follow that precedent rather than probing every AD child.</li>
+     * </ul>
+     * Operational attributes are only returned when named explicitly, and
+     * servers silently ignore names they don't know, so requesting all three
+     * is safe everywhere. When none comes back the caller falls back to the
+     * one-level probe.
+     */
+    static final String ATTR_HAS_SUBORDINATES    = "hasSubordinates";
+    static final String ATTR_NUM_SUBORDINATES    = "numSubordinates";
+    static final String ATTR_AD_APPROX_SUBORDINATES = "msDS-Approx-Immed-Subordinates";
+
+    private static final String[] CHILD_LISTING_ATTRS = {
+            ATTR_HAS_SUBORDINATES, ATTR_NUM_SUBORDINATES, ATTR_AD_APPROX_SUBORDINATES
+    };
+
     private List<ChildEntry> listChildren(LDAPInterface conn,
                                            DirectoryConnection dc,
                                            String baseDn) throws LDAPException {
@@ -113,17 +140,25 @@ public class LdapBrowseService {
         try {
             ASN1OctetString cookie = null;
             do {
+                // Ask only for the subordinate hints (operational attributes,
+                // so no user attributes come back). Before this, every child
+                // cost a second one-level search just to decide whether to
+                // draw the expand arrow — expanding a branch of N entries was
+                // N+1 round-trips. With the hints in the listing itself the
+                // probe only runs for servers that don't maintain any of them
+                // (see hasChildrenHint).
                 SearchRequest request = new SearchRequest(
                         baseDn, SearchScope.ONE,
                         Filter.createPresenceFilter("objectClass"),
-                        "dn");
+                        CHILD_LISTING_ATTRS);
                 request.addControl(new SimplePagedResultsControl(dc.getPagingSize(), cookie));
 
                 SearchResult result = conn.search(request);
                 for (SearchResultEntry child : result.getSearchEntries()) {
                     String childDn = child.getDN();
                     String rdn = extractRdn(childDn, baseDn);
-                    boolean hasChildren = hasSubEntries(conn, childDn);
+                    Boolean hint = hasChildrenHint(child);
+                    boolean hasChildren = hint != null ? hint : hasSubEntries(conn, childDn);
                     children.add(new ChildEntry(childDn, rdn, hasChildren));
                 }
 
@@ -142,6 +177,34 @@ public class LdapBrowseService {
 
         children.sort(Comparator.comparing(ChildEntry::rdn, String.CASE_INSENSITIVE_ORDER));
         return children;
+    }
+
+    /**
+     * Derives the has-children hint from the subordinate attributes on a
+     * listed entry, or {@code null} when the server returned none of them
+     * (meaning the caller must probe). Package-private for unit testing.
+     *
+     * <p>Precedence: the exact boolean first, then the exact count, then
+     * AD's estimate. A count that fails to parse is treated as absent
+     * rather than as zero, so a malformed value can never hide a subtree.</p>
+     */
+    static Boolean hasChildrenHint(Entry entry) {
+        String has = entry.getAttributeValue(ATTR_HAS_SUBORDINATES);
+        if (has != null) {
+            return "TRUE".equalsIgnoreCase(has.trim());
+        }
+        for (String countAttr : new String[]{ATTR_NUM_SUBORDINATES, ATTR_AD_APPROX_SUBORDINATES}) {
+            String raw = entry.getAttributeValue(countAttr);
+            if (raw == null) {
+                continue;
+            }
+            try {
+                return Long.parseLong(raw.trim()) > 0;
+            } catch (NumberFormatException e) {
+                log.debug("Ignoring unparseable {}='{}' on {}", countAttr, raw, entry.getDN());
+            }
+        }
+        return null;
     }
 
     private boolean hasSubEntries(LDAPInterface conn, String dn) {
