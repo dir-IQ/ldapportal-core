@@ -208,6 +208,14 @@ public class AuthController {
                     logoutUrl = webSealAuthenticationService.logoutUrlFor(authType).orElse(null);
                 }
             }
+        } else {
+            // No usable JWT (expired, or already cleared) — the endpoint is
+            // permitAll so the SPA can still tear down. The browser may still
+            // hold a live WebSEAL session though: it does exactly when this
+            // request arrived through a trusted junction carrying iv-user. Send
+            // it to /pkmslogout in that case, otherwise the next visit is
+            // silently signed straight back in by the pre-auth probe.
+            logoutUrl = webSealAuthenticationService.logoutUrlForJunctionRequest(request).orElse(null);
         }
 
         ResponseCookie cookie = ResponseCookie.from(JWT_COOKIE, "")

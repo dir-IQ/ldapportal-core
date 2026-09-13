@@ -8,6 +8,12 @@ vi.mock('@/api/auth', () => ({
   login: vi.fn(),
   logout: vi.fn(),
   me: vi.fn(),
+  websealAuthorize: vi.fn(),
+}))
+// init() consults the public branding payload (enabled sign-in methods) to
+// decide whether a WebSEAL pre-auth probe is worth a request.
+vi.mock('@/api/settings', () => ({
+  getBranding: vi.fn().mockResolvedValue({ data: { enabledAuthTypes: ['LOCAL'] } }),
 }))
 vi.mock('@/api/selfservice', () => ({
   selfServiceLogin: vi.fn(),
@@ -23,8 +29,9 @@ vi.mock('@/api/preferences', () => ({
 }))
 
 import { useAuthStore } from './auth'
-import { login as apiLogin, me } from '@/api/auth'
+import { login as apiLogin, me, websealAuthorize } from '@/api/auth'
 import { getSetupStatus } from '@/api/setup'
+import { getBranding } from '@/api/settings'
 
 describe('useAuthStore', () => {
   beforeEach(() => {
@@ -97,6 +104,76 @@ describe('useAuthStore', () => {
 
       expect(getSetupStatus).toHaveBeenCalledTimes(1)
       expect(store.setupPending).toBe(true)
+    })
+
+    it('asks /auth/me not to hard-redirect on 401 (the router guard owns that redirect)', async () => {
+      me.mockResolvedValue({ data: { id: 'a5', username: 'admin', accountType: 'ADMIN' } })
+
+      await useAuthStore().init()
+
+      expect(me).toHaveBeenCalledWith({ skipAuthRedirect: true })
+    })
+  })
+
+  /**
+   * A WebSEAL sign-in used to reach the app with no JWT, get bounced to
+   * /login by the guard, and only then run the pre-auth probe — a visible
+   * flash of the login page on every SSO arrival. The probe now runs inside
+   * the boot-time session restore, so the guard sees a logged-in user and
+   * routes straight to the requested page.
+   */
+  describe('init() — WebSEAL silent session restore', () => {
+    const unauthorized = () => Object.assign(new Error('401'), { response: { status: 401 } })
+
+    it('completes the pre-auth probe and re-fetches /auth/me when WEBSEAL is enabled', async () => {
+      getBranding.mockResolvedValue({ data: { enabledAuthTypes: ['LOCAL', 'WEBSEAL'] } })
+      me.mockRejectedValueOnce(unauthorized())
+        .mockResolvedValueOnce({ data: { id: 'w1', username: 'alice', accountType: 'ADMIN', authType: 'WEBSEAL' } })
+      websealAuthorize.mockResolvedValue({ data: { id: 'w1', username: 'alice', accountType: 'ADMIN' } })
+
+      const store = useAuthStore()
+      await store.init()
+
+      expect(websealAuthorize).toHaveBeenCalledTimes(1)
+      expect(me).toHaveBeenCalledTimes(2)
+      expect(store.isLoggedIn).toBe(true)
+      expect(store.username).toBe('alice')
+    })
+
+    it('skips the probe entirely when WEBSEAL is not an enabled sign-in method', async () => {
+      getBranding.mockResolvedValue({ data: { enabledAuthTypes: ['LOCAL'] } })
+      me.mockRejectedValue(unauthorized())
+
+      const store = useAuthStore()
+      await store.init()
+
+      expect(websealAuthorize).not.toHaveBeenCalled()
+      expect(me).toHaveBeenCalledTimes(1)
+      expect(store.isLoggedIn).toBe(false)
+    })
+
+    it('falls back to logged-out when the probe is rejected (no junction in front)', async () => {
+      getBranding.mockResolvedValue({ data: { enabledAuthTypes: ['LOCAL', 'WEBSEAL'] } })
+      me.mockRejectedValue(unauthorized())
+      websealAuthorize.mockRejectedValue(unauthorized())
+
+      const store = useAuthStore()
+      await store.init()
+
+      expect(websealAuthorize).toHaveBeenCalledTimes(1)
+      expect(me).toHaveBeenCalledTimes(1)
+      expect(store.isLoggedIn).toBe(false)
+    })
+
+    it('does not probe on a non-401 failure (backend down is not "no session")', async () => {
+      getBranding.mockResolvedValue({ data: { enabledAuthTypes: ['LOCAL', 'WEBSEAL'] } })
+      me.mockRejectedValue(Object.assign(new Error('503'), { response: { status: 503 } }))
+
+      const store = useAuthStore()
+      await store.init()
+
+      expect(websealAuthorize).not.toHaveBeenCalled()
+      expect(store.isLoggedIn).toBe(false)
     })
   })
 

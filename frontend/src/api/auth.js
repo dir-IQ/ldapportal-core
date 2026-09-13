@@ -7,8 +7,13 @@ export const login = (username, password) =>
 export const logout = () =>
   client.post('/auth/logout')
 
-export const me = () =>
-  client.get('/auth/me')
+/**
+ * Current principal. Pass `{ skipAuthRedirect: true }` when a 401 is an
+ * expected outcome the caller handles (the boot-time session restore), so
+ * the client's 401 interceptor doesn't hard-navigate to /login.
+ */
+export const me = (config) =>
+  client.get('/auth/me', config)
 
 export const myProfiles = () =>
   client.get('/auth/me/profiles')
@@ -26,7 +31,7 @@ export const oidcCallback = (code, state) =>
  * the normal login form".
  */
 export const websealAuthorize = () =>
-  client.get('/auth/webseal/authorize')
+  client.get('/auth/webseal/authorize', { skipAuthRedirect: true })
 
 export const updatePreferences = (prefs) =>
   client.post('/auth/me/preferences', prefs)

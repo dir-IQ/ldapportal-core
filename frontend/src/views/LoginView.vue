@@ -104,9 +104,17 @@ onMounted(async () => {
  * the request landed here through a trusted WebSEAL junction carrying a
  * valid iv-user header. Any failure responds 401 with an empty body — we
  * treat that as "no WebSEAL session, fall back to the login form".
+ *
+ * Normally the auth store's boot-time session restore has already run this
+ * probe (so a WebSEAL user never routes here at all); when it has, just
+ * leave. This remains as the fallback for a direct /login visit.
  */
 async function tryWebsealPreAuth() {
   if (!settings.enabledAuthTypes.includes('WEBSEAL')) return
+  if (auth.isLoggedIn && !auth.isSelfService) {
+    navigateAfterLogin()
+    return
+  }
   try {
     await websealAuthorize()
   } catch {

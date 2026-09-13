@@ -72,48 +72,11 @@ public class WebSealAuthenticationService {
     @Transactional
     public Optional<WebSealLoginResult> authenticate(HttpServletRequest request) {
         ApplicationSettings settings = settingsRepo.findFirstBy().orElse(null);
-        if (settings == null) return Optional.empty();
-        if (!settings.getEnabledAuthTypes().contains(AccountType.WEBSEAL)) return Optional.empty();
-
+        String username = trustedIvUser(request, settings);
+        if (username == null) return Optional.empty();
+        String peer        = request.getRemoteAddr();
         String userHeader  = headerName(settings.getWebsealUserHeader(),   "iv-user");
         String groupHeader = headerName(settings.getWebsealGroupsHeader(), "iv-groups");
-
-        // Is an identity header present at all? If so, the request reached us
-        // through *something* that injects it (a WebSEAL junction / reverse
-        // proxy), so a subsequent rejection is almost certainly a
-        // misconfiguration worth logging for the operator — as opposed to a
-        // plain login-page visit with no junction in front, which stays silent.
-        // The header is NOT trusted here; presence only gates the diagnostics
-        // below (the trust decision is still the peer-IP check).
-        String rawUser = request.getHeader(userHeader);
-        boolean junctionPresent = rawUser != null && !rawUser.isBlank();
-
-        CidrChecker trust = CidrChecker.parse(settings.getWebsealTrustedProxies());
-        if (trust.isEmpty()) {
-            // Empty allow-list = fail closed. Prevents a deployment mistake
-            // (feature ticked on but no proxies configured) from silently
-            // accepting arbitrary iv-user headers.
-            if (junctionPresent) {
-                log.warn("WebSEAL sign-in rejected: peer {} presented a '{}' header but the WebSEAL "
-                        + "Trusted Proxies allow-list is empty. Set Settings -> Authentication -> "
-                        + "WebSEAL -> Trusted Proxies to the junction's source IP/CIDR.",
-                        request.getRemoteAddr(), userHeader);
-            }
-            return Optional.empty();
-        }
-
-        String peer = request.getRemoteAddr();
-        if (!trust.contains(peer)) {
-            if (junctionPresent) {
-                log.warn("WebSEAL sign-in rejected: peer {} presented a '{}' header but is not within "
-                        + "the configured Trusted Proxies [{}]. Verify the CIDR matches the junction's "
-                        + "source IP.", peer, userHeader, settings.getWebsealTrustedProxies());
-            }
-            return Optional.empty();
-        }
-
-        if (!junctionPresent) return Optional.empty();
-        final String username = rawUser.trim();
 
         // Pre-provisioning: the account must exist with authType=WEBSEAL and
         // be active. No groups → roles mapping; roles come from the stored
@@ -163,7 +126,74 @@ public class WebSealAuthenticationService {
                 .filter(url -> url != null && !url.isBlank());
     }
 
+    /**
+     * Build the WebSEAL logout URL for a request that arrived through a
+     * trusted junction, regardless of whether the app-side JWT still
+     * identifies the user. The browser holds a WebSEAL session exactly when
+     * the request carries a trusted {@code iv-user} header, so this is the
+     * right signal once the JWT has expired: without it, logout after the
+     * token's lifetime clears nothing on the WebSEAL side and the next visit
+     * silently signs the user straight back in.
+     */
+    public Optional<String> logoutUrlForJunctionRequest(HttpServletRequest request) {
+        ApplicationSettings settings = settingsRepo.findFirstBy().orElse(null);
+        if (trustedIvUser(request, settings) == null) return Optional.empty();
+        return Optional.ofNullable(settings.getWebsealLogoutUrl())
+                .filter(url -> !url.isBlank());
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * The trust decision shared by sign-in and logout: returns the trimmed
+     * {@code iv-user} value when WEBSEAL is enabled, the request's immediate
+     * peer is inside the Trusted Proxies allow-list, and the header is
+     * present. Returns {@code null} otherwise. Logs operator-facing warnings
+     * only when a header is present but rejected — a plain visit with no
+     * junction in front stays silent.
+     */
+    private static String trustedIvUser(HttpServletRequest request, ApplicationSettings settings) {
+        if (settings == null) return null;
+        if (!settings.getEnabledAuthTypes().contains(AccountType.WEBSEAL)) return null;
+
+        String userHeader = headerName(settings.getWebsealUserHeader(), "iv-user");
+
+        // Is an identity header present at all? If so, the request reached us
+        // through *something* that injects it (a WebSEAL junction / reverse
+        // proxy), so a subsequent rejection is almost certainly a
+        // misconfiguration worth logging for the operator — as opposed to a
+        // plain login-page visit with no junction in front, which stays silent.
+        // The header is NOT trusted here; presence only gates the diagnostics
+        // below (the trust decision is still the peer-IP check).
+        String rawUser = request.getHeader(userHeader);
+        boolean junctionPresent = rawUser != null && !rawUser.isBlank();
+
+        CidrChecker trust = CidrChecker.parse(settings.getWebsealTrustedProxies());
+        if (trust.isEmpty()) {
+            // Empty allow-list = fail closed. Prevents a deployment mistake
+            // (feature ticked on but no proxies configured) from silently
+            // accepting arbitrary iv-user headers.
+            if (junctionPresent) {
+                log.warn("WebSEAL sign-in rejected: peer {} presented a '{}' header but the WebSEAL "
+                        + "Trusted Proxies allow-list is empty. Set Settings -> Authentication -> "
+                        + "WebSEAL -> Trusted Proxies to the junction's source IP/CIDR.",
+                        request.getRemoteAddr(), userHeader);
+            }
+            return null;
+        }
+
+        String peer = request.getRemoteAddr();
+        if (!trust.contains(peer)) {
+            if (junctionPresent) {
+                log.warn("WebSEAL sign-in rejected: peer {} presented a '{}' header but is not within "
+                        + "the configured Trusted Proxies [{}]. Verify the CIDR matches the junction's "
+                        + "source IP.", peer, userHeader, settings.getWebsealTrustedProxies());
+            }
+            return null;
+        }
+
+        return junctionPresent ? rawUser.trim() : null;
+    }
 
     private static String headerName(String configured, String fallback) {
         return (configured == null || configured.isBlank()) ? fallback : configured.trim();
