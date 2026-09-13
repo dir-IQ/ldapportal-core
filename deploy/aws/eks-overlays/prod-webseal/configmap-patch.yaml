@@ -10,15 +10,18 @@
 # from this ConfigMap.
 #
 #   DB_URL              → your RDS endpoint (keep ?sslmode=require).
-#   CORS_ALLOWED_ORIGIN → each frontend is served same-origin with its /api/v1
-#                         proxy, so the browser never makes a cross-origin API
-#                         call and CORS is not exercised. Left as the admin
-#                         origin for completeness.
+#   CORS_ALLOWED_ORIGIN → BOTH public origins, comma-separated. Each frontend
+#                         is served same-origin with its /api/v1 proxy, but the
+#                         backend still evaluates every browser POST against
+#                         this list (it sees an internal scheme/host, so the
+#                         Origin header never matches its own view). A missing
+#                         origin = 403 "Invalid CORS request" on Logout and
+#                         every save. See docs/deployment-webseal-dual-frontend.md §3.4.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: ldapportal-config
 data:
   DB_URL: "jdbc:postgresql://REPLACE_RDS_ENDPOINT:5432/ldapportal?sslmode=require"
-  CORS_ALLOWED_ORIGIN: "https://admin.example.com"
+  CORS_ALLOWED_ORIGIN: "https://admin.example.com,https://sa.example.com"
   LDAPPORTAL_ENTITLEMENTS_GRANT: "DIRECTORY_SYNC"

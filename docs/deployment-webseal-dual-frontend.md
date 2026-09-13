@@ -92,6 +92,7 @@ Both frontends talk to **one** backend. Settings that matter:
 | Groups Header (`websealGroupsHeader`) | `iv-groups` (default) | Audit-only; never used for authz. |
 | Logout URL (`websealLogoutUrl`) | `/pkmslogout` (default) | Admin logout redirects here to clear the WebSEAL session. |
 | Cookie secure (`app.cookie.secure`) | `true` | Production must be HTTPS end-to-end. Only set `false` for local plain-HTTP dev. |
+| `CORS_ALLOWED_ORIGIN` | **Both** public origins, comma-separated: `https://admin.example.com,https://sa.example.com` | Exactly the origins in the browser's address bar (the WebSEAL host for admins). See §3.4 — same-origin is not enough behind a proxy. |
 
 **Do not put any intermediate proxy/LB between WebSEAL and the backend that
 would NAT the peer IP** (see §5). The Trusted Proxies list must contain the
@@ -109,9 +110,10 @@ would NAT the peer IP** (see §5). The Trusted Proxies list must contain the
   present — the user lands on the requested page without ever seeing `/login`.
   `/login` itself still runs the same probe as a fallback for direct visits.
 - Logout returns the WebSEAL sign-off URL (`websealLogoutUrl`) when the account
-  is WEBSEAL-typed, and also when the JWT has already expired but the request
-  still arrives through the trusted junction with `iv-user` — so an idle admin
-  clicking Logout hours later is still sent to `/pkmslogout`.
+  is WEBSEAL-typed, and otherwise whenever the request arrives through the
+  trusted junction with `iv-user` — a LOCAL account on a single-host junction,
+  or a JWT that has already expired — so the browser's WebSEAL session is
+  always ended and the pre-auth probe cannot sign the user straight back in.
 - Serve the SPA assets and proxy `/api/v1` under the **same hostname** as the
   junction (see §3.4 for why).
 
@@ -146,7 +148,16 @@ Consequences for a two-frontend layout:
    should serve its SPA assets *and* reverse-proxy `/api/v1` to the shared
    backend under that same hostname. With `SameSite=Strict` and a host-only
    cookie, a cross-origin SPA→API call would not carry the session cookie and
-   would fail. Same-origin per frontend also means **no CORS** is required.
+   would fail. Same-origin per frontend means the browser never makes a
+   cross-origin call — but it does **not** mean CORS is never exercised on
+   the backend. Browsers attach `Origin` to every POST/PUT/PATCH/DELETE,
+   same-origin included, and Spring decides "is this CORS?" by comparing it
+   with the scheme/host/port the *backend* sees, which behind WebSEAL and
+   nginx is an internal `http://svc:8080`. So a same-origin Logout POST is
+   checked against `CORS_ALLOWED_ORIGIN`: either leave it unset (no policy
+   registered, nothing is checked) or list **every** public origin. A
+   mismatch surfaces as `403 Invalid CORS request` on Logout and every save,
+   with the offending origin logged at WARN by the backend.
 2. **Two hostnames ⇒ two independent sessions.** The admin UI and superadmin UI
    each get their own `jwt` cookie scoped to their own host. Logging into one
    does not create a session on the other, and the WebSEAL SSO session never
@@ -280,7 +291,9 @@ Admin (WebSEAL) flow:
 - [ ] An IdP user with **no** pre-provisioned WEBSEAL account gets 401.
 - [ ] Logout redirects to `/pkmslogout` and terminates the WebSEAL session —
       including when clicked after the app's JWT lifetime (default 60 min)
-      has elapsed.
+      has elapsed. A `403 Invalid CORS request` here means the WebSEAL
+      host is missing from `CORS_ALLOWED_ORIGIN` (§3.4); the backend log
+      names the rejected origin.
 
 Superadmin (LOCAL) flow:
 

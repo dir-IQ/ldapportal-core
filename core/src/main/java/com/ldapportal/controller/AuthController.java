@@ -40,6 +40,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
@@ -74,6 +75,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
+@Slf4j
 public class AuthController {
 
     private static final String JWT_COOKIE = "jwt";
@@ -195,28 +197,36 @@ public class AuthController {
         //     Without this, a refresh brings the user right back in because
         //     WebSEAL still trusts the browser.
         String logoutUrl = null;
+        AccountType authType = null;
         if (principal != null) {
             String postLogoutRedirectUri = buildPostLogoutRedirectUri(request);
             logoutUrl = oidcAuthenticationService
                     .buildLogoutUrl(principal.id(), postLogoutRedirectUri)
                     .orElse(null);
             if (logoutUrl == null) {
-                AccountType authType = accountRepo.findById(principal.id())
+                authType = accountRepo.findById(principal.id())
                         .map(Account::getAuthType)
                         .orElse(null);
                 if (authType != null) {
                     logoutUrl = webSealAuthenticationService.logoutUrlFor(authType).orElse(null);
                 }
             }
-        } else {
-            // No usable JWT (expired, or already cleared) — the endpoint is
-            // permitAll so the SPA can still tear down. The browser may still
-            // hold a live WebSEAL session though: it does exactly when this
-            // request arrived through a trusted junction carrying iv-user. Send
-            // it to /pkmslogout in that case, otherwise the next visit is
-            // silently signed straight back in by the pre-auth probe.
-            logoutUrl = webSealAuthenticationService.logoutUrlForJunctionRequest(request).orElse(null);
         }
+        boolean viaJunction = false;
+        if (logoutUrl == null) {
+            // Whatever the *account* is (LOCAL through a single-host junction,
+            // or no usable JWT at all because it expired), the *browser* holds
+            // a live WebSEAL session exactly when this request arrived through
+            // a trusted junction carrying iv-user. Send it to /pkmslogout then,
+            // otherwise the next visit is silently signed straight back in by
+            // the pre-auth probe and Logout appears to do nothing.
+            logoutUrl = webSealAuthenticationService.logoutUrlForJunctionRequest(request).orElse(null);
+            viaJunction = logoutUrl != null;
+        }
+        log.info("Logout: user={} authType={} websealJunction={} -> {}",
+                principal != null ? principal.username() : "<no jwt>",
+                authType, viaJunction,
+                logoutUrl != null ? "redirect " + logoutUrl : "no external sign-off");
 
         ResponseCookie cookie = ResponseCookie.from(JWT_COOKIE, "")
                 .httpOnly(true)

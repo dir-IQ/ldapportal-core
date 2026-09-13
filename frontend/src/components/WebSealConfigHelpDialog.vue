@@ -264,6 +264,17 @@ defineEmits(['update:modelValue'])
               (<code>192.168.1.5</code> is treated as <code>/32</code>).</dd>
           </div>
           <div>
+            <dt class="font-semibold text-red-700">Logout (or any save) fails with 403 "Invalid CORS request"</dt>
+            <dd>The backend's <code>CORS_ALLOWED_ORIGIN</code> doesn't include the origin in the
+              browser's address bar — behind WebSEAL that is the WebSEAL host, not the frontend
+              service. Browsers attach <code>Origin</code> to every POST, and behind a junction the
+              backend can't tell a same-origin call from a cross-origin one, so it checks the
+              list. Set it to every public origin, comma-separated
+              (e.g. <code>https://webseal.example.com,https://sa.example.com</code>), or leave it
+              unset if the app and API share one origin with no proxy in between. The backend log
+              names the rejected origin next to the configured list.</dd>
+          </div>
+          <div>
             <dt class="font-semibold text-red-700">Works in dev, fails in production</dt>
             <dd>Usually a proxy layer between WebSEAL and the app: the peer IP the backend
               sees is that intermediate proxy's, not WebSEAL's. Either add the intermediate

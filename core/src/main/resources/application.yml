@@ -97,6 +97,16 @@ app:
   # paths itself). Pair with the frontend image's VITE_BASE_PATH build arg.
   public-base-path: ${APP_PUBLIC_BASE_PATH:}
 
+  cors:
+    # Browser-facing origin(s) allowed to call /api/v1, comma-separated, exactly
+    # as shown in the browser's address bar (scheme://host[:port], no path).
+    # Unset = no CORS policy (SPA and API share one origin, nothing between).
+    # Behind a reverse proxy or WebSEAL junction the backend sees an internal
+    # scheme/host, so same-origin POSTs still look cross-origin to it: list
+    # every public origin or every POST/PUT/PATCH/DELETE (Logout included)
+    # fails with 403 "Invalid CORS request".
+    allowed-origins: ${CORS_ALLOWED_ORIGIN:}
+
   approval:
     # Auto-approve requests submitted by superadmins. Config-only (not a
     # DB/UI setting) so a superadmin can't grant themselves the bypass.

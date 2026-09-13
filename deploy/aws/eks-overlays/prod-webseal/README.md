@@ -52,7 +52,7 @@ break the trust boundary (see the anti-patterns in the design doc §5).
 
 - `ACCOUNT_ID` / `us-east-1` / `v1.0.0` — ECR registry, region, image tag (`kustomization.yaml`).
 - `REPLACE_RDS_ENDPOINT` — RDS host (`configmap-patch.yaml`).
-- `admin.example.com` / `sa.example.com` — your two hostnames (both ingresses; admin also in CORS).
+- `admin.example.com` / `sa.example.com` — your two hostnames (both ingresses; **both** in `CORS_ALLOWED_ORIGIN`, comma-separated).
 - `REPLACE_ME` (cert id) on **both** ingresses — ACM certs for each hostname (or one SAN cert).
 - IRSA role ARN (`serviceaccount-patch.yaml`) and the secret ARNs / region (`secretproviderclass.yaml`).
 
