@@ -54,7 +54,7 @@ import java.util.stream.Collectors;
  * the entry's attributes, and supports creating new entries.
  *
  * <pre>
- *   GET  /api/v1/superadmin/directories/{directoryId}/browse?dn=...
+ *   GET  /api/v1/superadmin/directories/{directoryId}/browse?dn=...&filter=...&limit=...
  *   POST /api/v1/superadmin/directories/{directoryId}/browse
  *   GET  /api/v1/superadmin/directories/{directoryId}/browse/schema/object-classes
  *   GET  /api/v1/superadmin/directories/{directoryId}/browse/schema/object-classes/bulk?names=...
@@ -74,11 +74,27 @@ public class BrowseController {
     private final AuditService auditService;
     private final DirectoryConnectionRepository dirRepo;
 
+    /**
+     * Lists an entry and a page of its direct children.
+     *
+     * @param dn     entry to browse; defaults to the directory's base DN
+     * @param filter optional child filter — a raw LDAP filter when it starts
+     *               with {@code (}, otherwise plain text matched as a
+     *               substring against the common naming attributes
+     * @param limit  maximum children to return; omitted or {@code 0} means
+     *               all (subject to the service's hard ceiling). Negative is
+     *               a 400.
+     */
     @GetMapping
     public BrowseResult browse(@PathVariable UUID directoryId,
-                               @RequestParam(required = false) String dn) {
+                               @RequestParam(required = false) String dn,
+                               @RequestParam(required = false) String filter,
+                               @RequestParam(required = false) Integer limit) {
+        if (limit != null && limit < 0) {
+            throw new IllegalArgumentException("limit must be zero or positive");
+        }
         DirectoryConnection dc = loadDirectory(directoryId);
-        return browseService.browse(dc, dn);
+        return browseService.browse(dc, dn, filter, limit == null ? 0 : limit);
     }
 
     @PostMapping

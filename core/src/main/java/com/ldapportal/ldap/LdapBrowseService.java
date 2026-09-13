@@ -31,27 +31,139 @@ public class LdapBrowseService {
     private final LdapConnectionFactory connectionFactory;
 
     /**
-     * Fetches the entry at {@code dn} together with its direct children.
+     * Hard ceiling on the number of children a single browse returns, even
+     * when the caller asks for "all". Bounds the worst case of a load-all on
+     * the root of a very large directory; the response says so via
+     * {@link BrowseResult#truncated()} so the UI can explain.
+     */
+    public static final int MAX_CHILDREN = 50_000;
+
+    /**
+     * Attributes a plain-text branch filter is matched against (substring,
+     * case-insensitive per the server's matching rule). Covers the naming
+     * attributes used for RDNs across OpenLDAP, AD and IBM directories plus
+     * the common "who is this" attributes. Servers ignore names they don't
+     * have, and a substring filter on an attribute without a substring rule
+     * evaluates to undefined (never a match), so the list is safe everywhere.
+     */
+    static final List<String> QUICK_FILTER_ATTRS = List.of(
+            "cn", "uid", "sAMAccountName", "ou", "o", "dc", "l", "c",
+            "mail", "sn", "givenName", "displayName");
+
+    /**
+     * Fetches the entry at {@code dn} together with all of its direct
+     * children (subject to {@link #MAX_CHILDREN}).
      *
      * @param dc   directory connection
      * @param dn   the base DN to browse (null falls back to directory base DN)
      * @return browse result containing the entry's attributes and child list
      */
     public BrowseResult browse(DirectoryConnection dc, String dn) {
+        return browse(dc, dn, null, 0);
+    }
+
+    /**
+     * Fetches the entry at {@code dn} together with a bounded, optionally
+     * filtered page of its direct children.
+     *
+     * @param dc     directory connection
+     * @param dn     the base DN to browse (null falls back to directory base DN)
+     * @param filter optional child filter: a raw LDAP filter when it starts
+     *               with {@code (}, otherwise plain text matched as a
+     *               substring against {@link #QUICK_FILTER_ATTRS}. Blank
+     *               means no filter.
+     * @param limit  maximum children to return; {@code <= 0} means all
+     *               (still capped at {@link #MAX_CHILDREN})
+     * @return browse result; {@link BrowseResult#truncated()} is set when
+     *         more children matched than were returned
+     */
+    public BrowseResult browse(DirectoryConnection dc, String dn, String filter, int limit) {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
         }
         String baseDn = (dn != null && !dn.isBlank()) ? dn : dc.getBaseDn();
+        Filter childFilter = buildChildFilter(filter);
+        int effectiveLimit = (limit <= 0) ? MAX_CHILDREN : Math.min(limit, MAX_CHILDREN);
 
         return connectionFactory.withConnection(dc, conn -> {
             // 1. Read the entry itself
             Map<String, List<String>> attributes = readEntry(conn, baseDn);
 
             // 2. One-level search to find direct children
-            List<ChildEntry> children = listChildren(conn, dc, baseDn);
+            ChildListing listing = listChildren(conn, dc, baseDn, childFilter, effectiveLimit);
 
-            return new BrowseResult(baseDn, attributes, children);
+            // 3. Child count. The server-maintained count on the parent is
+            //    the cheap, always-available answer; an untruncated,
+            //    unfiltered listing is an exact answer that beats an
+            //    estimate. A filtered listing says nothing about the total.
+            SubordinateCount serverCount = subordinateCount(attributes);
+            Integer childCount = serverCount != null ? serverCount.count() : null;
+            boolean approximate = serverCount != null && serverCount.approximate();
+            boolean filtered = childFilter != null;
+            if (!filtered && !listing.truncated() && (childCount == null || approximate)) {
+                childCount = listing.children().size();
+                approximate = false;
+            }
+
+            return new BrowseResult(baseDn, attributes, listing.children(),
+                    listing.truncated(), childCount, approximate);
         });
+    }
+
+    /**
+     * Turns the user's branch filter into an LDAP filter. {@code null} when
+     * there is nothing to filter by (the caller then lists every child).
+     *
+     * @throws IllegalArgumentException when a raw filter fails to parse — the
+     *         controller maps it to a 400
+     */
+    static Filter buildChildFilter(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        String t = text.trim();
+        if (t.startsWith("(")) {
+            try {
+                return Filter.create(t);
+            } catch (LDAPException e) {
+                throw new IllegalArgumentException("Invalid LDAP filter: " + e.getMessage(), e);
+            }
+        }
+        // createSubstringFilter escapes the value, so user text like "a*b"
+        // or "(x" is matched literally rather than parsed.
+        List<Filter> ors = new ArrayList<>(QUICK_FILTER_ATTRS.size());
+        for (String attr : QUICK_FILTER_ATTRS) {
+            ors.add(Filter.createSubstringFilter(attr, null, new String[]{t}, null));
+        }
+        return Filter.createORFilter(ors);
+    }
+
+    private record SubordinateCount(int count, boolean approximate) {}
+
+    /** Reads the parent's own subordinate count from its operational attributes, if the server keeps one. */
+    private static SubordinateCount subordinateCount(Map<String, List<String>> attributes) {
+        Integer exact = firstInt(attributes, ATTR_NUM_SUBORDINATES);
+        if (exact != null) {
+            return new SubordinateCount(exact, false);
+        }
+        Integer approx = firstInt(attributes, ATTR_AD_APPROX_SUBORDINATES);
+        if (approx != null) {
+            return new SubordinateCount(approx, true);
+        }
+        return null;
+    }
+
+    private static Integer firstInt(Map<String, List<String>> attributes, String name) {
+        for (var e : attributes.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(name) && !e.getValue().isEmpty()) {
+                try {
+                    return Integer.parseInt(e.getValue().get(0).trim());
+                } catch (NumberFormatException ex) {
+                    return null;
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -94,7 +206,11 @@ public class LdapBrowseService {
         // without "+" the entry view omits server-maintained values such as
         // OUD/OpenDJ's isMemberOf (reverse group membership), createTimestamp,
         // modifyTimestamp, and entryUUID. The browser shows the full picture.
-        SearchResultEntry entry = conn.getEntry(dn, "*", "+");
+        // The subordinate hints are named explicitly as well: AD doesn't
+        // honour "+" and only returns constructed attributes such as
+        // msDS-Approx-Immed-Subordinates when asked for by name.
+        SearchResultEntry entry = conn.getEntry(dn, "*", "+",
+                ATTR_HAS_SUBORDINATES, ATTR_NUM_SUBORDINATES, ATTR_AD_APPROX_SUBORDINATES);
         if (entry == null) {
             return Map.of();
         }
@@ -132,10 +248,28 @@ public class LdapBrowseService {
             ATTR_HAS_SUBORDINATES, ATTR_NUM_SUBORDINATES, ATTR_AD_APPROX_SUBORDINATES
     };
 
+    /**
+     * Every direct child of {@code baseDn}, unfiltered and unbounded. Used by
+     * the recursive delete paths, which must see the whole branch — a cap
+     * there would leave entries behind and make the parent delete fail.
+     */
     private List<ChildEntry> listChildren(LDAPInterface conn,
                                            DirectoryConnection dc,
                                            String baseDn) throws LDAPException {
+        return listChildren(conn, dc, baseDn, null, Integer.MAX_VALUE).children();
+    }
+
+    /** A page of children plus whether more were available. */
+    record ChildListing(List<ChildEntry> children, boolean truncated) {}
+
+    private ChildListing listChildren(LDAPInterface conn,
+                                      DirectoryConnection dc,
+                                      String baseDn,
+                                      Filter childFilter,
+                                      int limit) throws LDAPException {
         List<ChildEntry> children = new ArrayList<>();
+        boolean truncated = false;
+        Filter filter = childFilter != null ? childFilter : Filter.createPresenceFilter("objectClass");
 
         try {
             ASN1OctetString cookie = null;
@@ -148,13 +282,20 @@ public class LdapBrowseService {
                 // probe only runs for servers that don't maintain any of them
                 // (see hasChildrenHint).
                 SearchRequest request = new SearchRequest(
-                        baseDn, SearchScope.ONE,
-                        Filter.createPresenceFilter("objectClass"),
-                        CHILD_LISTING_ATTRS);
-                request.addControl(new SimplePagedResultsControl(dc.getPagingSize(), cookie));
+                        baseDn, SearchScope.ONE, filter, CHILD_LISTING_ATTRS);
+                // Page size never exceeds what we still need plus one: the
+                // extra entry is how we learn there was more without paying
+                // for a whole further page.
+                int remaining = limit - children.size();
+                int pageSize = remaining >= dc.getPagingSize() ? dc.getPagingSize() : remaining + 1;
+                request.addControl(new SimplePagedResultsControl(pageSize, cookie));
 
                 SearchResult result = conn.search(request);
                 for (SearchResultEntry child : result.getSearchEntries()) {
+                    if (children.size() >= limit) {
+                        truncated = true;
+                        break;
+                    }
                     String childDn = child.getDN();
                     String rdn = extractRdn(childDn, baseDn);
                     Boolean hint = hasChildrenHint(child);
@@ -166,17 +307,40 @@ public class LdapBrowseService {
                         SimplePagedResultsControl.get(result);
                 cookie = (pageResponse != null && pageResponse.moreResultsToReturn())
                         ? pageResponse.getCookie() : null;
+                if (truncated && cookie != null && cookie.getValue().length > 0) {
+                    abandonPaging(conn, baseDn, filter, cookie);
+                    cookie = null;
+                }
             } while (cookie != null && cookie.getValue().length > 0);
         } catch (LDAPSearchException e) {
             if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
                 log.debug("Base '{}' does not exist — returning empty children", baseDn);
-                return children;
+                return new ChildListing(children, false);
             }
             throw e;
         }
 
         children.sort(Comparator.comparing(ChildEntry::rdn, String.CASE_INSENSITIVE_ORDER));
-        return children;
+        return new ChildListing(children, truncated);
+    }
+
+    /**
+     * Tells the server we won't be asking for the remaining pages. RFC 2696
+     * §3: a request with the cookie and a page size of zero lets the server
+     * release the paging state instead of holding it until the connection
+     * closes. Best-effort — a server that rejects it costs us nothing.
+     */
+    private void abandonPaging(LDAPInterface conn, String baseDn, Filter filter,
+                               ASN1OctetString cookie) {
+        try {
+            SearchRequest abandon = new SearchRequest(
+                    baseDn, SearchScope.ONE, filter, "1.1");
+            abandon.addControl(new SimplePagedResultsControl(0, cookie));
+            conn.search(abandon);
+        } catch (LDAPException e) {
+            log.debug("Ignoring failure to release paged-results state under {}: {}",
+                    baseDn, e.getResultCode());
+        }
     }
 
     /**
@@ -527,11 +691,28 @@ public class LdapBrowseService {
 
     // ── Value objects ─────────────────────────────────────────────────────────
 
+    /**
+     * @param truncated              more children matched than were returned
+     * @param childCount             total direct children of this entry when
+     *                               known (server-maintained count, or the
+     *                               size of a complete unfiltered listing);
+     *                               null when the server keeps no count and
+     *                               the listing was cut short
+     * @param childCountApproximate  the count is an estimate (Active
+     *                               Directory's msDS-Approx-Immed-Subordinates)
+     */
     public record BrowseResult(
             String dn,
             Map<String, List<String>> attributes,
-            List<ChildEntry> children
-    ) {}
+            List<ChildEntry> children,
+            boolean truncated,
+            Integer childCount,
+            boolean childCountApproximate
+    ) {
+        public BrowseResult(String dn, Map<String, List<String>> attributes, List<ChildEntry> children) {
+            this(dn, attributes, children, false, children == null ? null : children.size(), false);
+        }
+    }
 
     public record ChildEntry(
             String dn,
