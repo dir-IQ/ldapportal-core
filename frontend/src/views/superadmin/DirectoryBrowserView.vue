@@ -23,6 +23,31 @@
     <div class="flex gap-4 flex-1 min-h-0">
       <!-- Left panel: DIT tree (1/3) -->
       <div class="w-1/3 shrink-0 bg-white border border-gray-200 rounded-xl overflow-y-auto p-3">
+        <!-- Branch filter. Narrows the selected node's children server-side
+             (one-level search) so a branch with thousands of entries can be
+             searched without loading it. Plain text matches the naming
+             attributes; text starting with "(" is sent as a raw LDAP filter.
+             The tree itself shows the "Filtered by …" footer + Clear under
+             the branch, so this input only needs to drive it. Kept above
+             the v-if/v-else chain that renders the tree, not inside it. -->
+        <div v-if="!treeLoading && rootNodes.length > 0 && selectedDn"
+             class="mb-2 flex items-center gap-2">
+          <input
+            v-model="branchFilter"
+            type="search"
+            class="input-sm flex-1 min-w-0"
+            :placeholder="`Filter children of ${extractRdn(selectedDn)}`"
+            aria-label="Filter children of the selected entry"
+            title="Plain text matches cn, uid, ou, mail, … — start with ( for a raw LDAP filter"
+            @keyup.enter="applyBranchFilter"
+          />
+          <button
+            v-if="branchFilter"
+            type="button"
+            class="btn-sm"
+            @click="branchFilter = ''; applyBranchFilter()"
+          >Clear</button>
+        </div>
         <div v-if="!selectedDirId" class="text-sm text-gray-500 text-center mt-8">
           Select a directory to browse.
         </div>
@@ -313,7 +338,7 @@ import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
 import { browse, deleteEntry, moveEntry, renameEntry, exportLdif } from '@/api/browse'
 import type { components } from '@/api/openapi'
-import DnTree from '@/components/DnTree.vue'
+import DnTree, { type ChildPage, type LoadChildrenOptions } from '@/components/DnTree.vue'
 import CreateEntryForm from '@/components/CreateEntryForm.vue'
 import EditEntryForm from '@/components/EditEntryForm.vue'
 import GroupMembersPanel from '@/components/GroupMembersPanel.vue'
@@ -334,9 +359,16 @@ interface TreeNode {
   dn: string
   rdn: string
   hasChildren: boolean
-  /** Children already returned with the root browse; consumed on first expand. */
-  _preloaded?: ChildEntry[]
+  /** Child page already returned with the root browse; consumed on first expand. */
+  _preloaded?: ChildPage
 }
+
+/**
+ * Children fetched per branch expansion. Past this the tree shows
+ * "Showing N of M" with Load all; the branch filter is the way to find one
+ * entry among thousands without loading them.
+ */
+const BRANCH_PAGE_SIZE = 500
 
 interface EntryDetail {
   dn: string
@@ -345,7 +377,9 @@ interface EntryDetail {
 
 /** The subset of DnTree's exposed API this view calls. */
 interface DnTreeHandle {
-  refreshNode: (dn: string, children: ChildEntry[]) => boolean
+  refreshNode: (dn: string, children: ChildEntry[] | ChildPage) => boolean
+  filterNode: (dn: string, filter: string) => Promise<boolean>
+  getFilter: (dn: string) => string | null
 }
 
 type ApiError = { response?: { data?: { detail?: string, message?: string } }, message?: string }
@@ -388,15 +422,58 @@ const renameError       = ref('')
 const showImportModal   = ref(false)
 const refreshing        = ref(false)
 
+const branchFilter      = ref('')
+let branchFilterTimer: ReturnType<typeof setTimeout> | null = null
+// Set while the input is being synced from the tree on a selection change,
+// so the sync itself doesn't fire a (redundant) filter request.
+let syncingBranchFilter = false
+
 function toDetail(result: BrowseResult): EntryDetail {
   return { dn: result.dn ?? '', attributes: result.attributes ?? {} }
 }
 
+function toPage(result: BrowseResult): ChildPage {
+  return {
+    // The generated type marks every field optional; the tree needs a DN.
+    children: (result.children ?? []).map(c => ({
+      dn: c.dn ?? '', rdn: c.rdn, hasChildren: c.hasChildren === true,
+    })),
+    truncated: result.truncated === true,
+    childCount: result.childCount ?? null,
+    childCountApproximate: result.childCountApproximate === true,
+  }
+}
+
 function toRootNode(result: BrowseResult): TreeNode {
   const dn = result.dn ?? ''
-  const children = result.children ?? []
-  return { dn, rdn: dn, hasChildren: children.length > 0, _preloaded: children }
+  const page = toPage(result)
+  return { dn, rdn: dn, hasChildren: page.children.length > 0, _preloaded: page }
 }
+
+// ── Branch filter ──────────────────────────────────────────────────────────
+
+async function applyBranchFilter(): Promise<void> {
+  if (branchFilterTimer) {
+    clearTimeout(branchFilterTimer)
+    branchFilterTimer = null
+  }
+  if (!treeRef.value || !selectedDn.value) return
+  await treeRef.value.filterNode(selectedDn.value, branchFilter.value)
+}
+
+// Debounced apply while typing; Enter applies immediately.
+watch(branchFilter, () => {
+  if (syncingBranchFilter) return
+  if (branchFilterTimer) clearTimeout(branchFilterTimer)
+  branchFilterTimer = setTimeout(() => { void applyBranchFilter() }, 300)
+})
+
+// Selecting another node shows that node's own filter (or none) in the box.
+watch(selectedDn, (dn) => {
+  syncingBranchFilter = true
+  branchFilter.value = (dn && treeRef.value?.getFilter(dn)) || ''
+  syncingBranchFilter = false
+})
 
 // Manual refresh of the currently-selected branch: re-fetch the selected
 // node's immediate children from the server and swap them into the tree,
@@ -406,9 +483,10 @@ async function refreshSelectedBranch(): Promise<void> {
   if (!selectedDirId.value || !selectedDn.value || refreshing.value) return
   refreshing.value = true
   try {
-    const { data } = await browse(selectedDirId.value, selectedDn.value) as { data: BrowseResult }
+    const { data } = await browse(selectedDirId.value, selectedDn.value,
+      { limit: BRANCH_PAGE_SIZE }) as { data: BrowseResult }
     if (treeRef.value) {
-      treeRef.value.refreshNode(selectedDn.value, data.children ?? [])
+      treeRef.value.refreshNode(selectedDn.value, toPage(data))
     }
     entryDetail.value = toDetail(data)
   } catch (e) {
@@ -443,7 +521,7 @@ watch(selectedDirId, async (dirId) => {
 
   treeLoading.value = true
   try {
-    const { data } = await browse(dirId) as { data: BrowseResult }
+    const { data } = await browse(dirId, undefined, { limit: BRANCH_PAGE_SIZE }) as { data: BrowseResult }
     // Root node is the directory base DN itself
     rootNodes.value = [toRootNode(data)]
     // Auto-select root
@@ -457,17 +535,21 @@ watch(selectedDirId, async (dirId) => {
   }
 })
 
-async function loadChildren(dn: string): Promise<ChildEntry[]> {
-  // If children were preloaded (for root node), use them
+async function loadChildren(dn: string, opts: LoadChildrenOptions = {}): Promise<ChildPage> {
+  // If children were preloaded (for root node), use them — unless the tree
+  // is asking for something other than the default first page.
   const rootNode = rootNodes.value.find(n => n.dn === dn)
-  if (rootNode?._preloaded) {
-    const children = rootNode._preloaded
+  if (rootNode?._preloaded && !opts.filter && !opts.all) {
+    const page = rootNode._preloaded
     delete rootNode._preloaded
-    return children
+    return page
   }
 
-  const { data } = await browse(selectedDirId.value, dn) as { data: BrowseResult }
-  return data.children ?? []
+  const { data } = await browse(selectedDirId.value, dn, {
+    filter: opts.filter,
+    limit: opts.all ? 0 : BRANCH_PAGE_SIZE,
+  }) as { data: BrowseResult }
+  return toPage(data)
 }
 
 async function selectEntry(dn: string): Promise<void> {
@@ -513,7 +595,7 @@ async function onDeleteConfirmed(): Promise<void> {
     showDeleteConfirm.value = false
     const refreshDn = browseResult.dn ?? ''
     if (treeRef.value) {
-      treeRef.value.refreshNode(refreshDn, browseResult.children ?? [])
+      treeRef.value.refreshNode(refreshDn, toPage(browseResult))
     }
     selectedDn.value = refreshDn
     entryDetail.value = toDetail(browseResult)
@@ -558,8 +640,8 @@ async function onMoveConfirmed(): Promise<void> {
     const oldParentDn = extractParentDn(selectedDn.value)
     const { data: oldParentBrowse } = await browse(selectedDirId.value, oldParentDn) as { data: BrowseResult }
     if (treeRef.value) {
-      treeRef.value.refreshNode(oldParentDn, oldParentBrowse.children ?? [])
-      treeRef.value.refreshNode(moveTargetDn.value, newParentBrowse.children ?? [])
+      treeRef.value.refreshNode(oldParentDn, toPage(oldParentBrowse))
+      treeRef.value.refreshNode(moveTargetDn.value, toPage(newParentBrowse))
     }
     // Select the entry at its new location
     const rdn = extractRdn(selectedDn.value)
@@ -582,7 +664,7 @@ async function onRenameConfirmed(): Promise<void> {
     showRenameModal.value = false
     const parentDn = extractParentDn(selectedDn.value)
     if (treeRef.value) {
-      treeRef.value.refreshNode(parentDn, parentBrowse.children ?? [])
+      treeRef.value.refreshNode(parentDn, toPage(parentBrowse))
     }
     // Select the entry at its new DN
     const newDn = renameNewRdn.value + ',' + parentDn
@@ -600,7 +682,7 @@ async function onEntryCreated(browseResult: BrowseResult): Promise<void> {
   creatingEntry.value = false
   // The server returned the parent's browse result — use it to refresh the tree
   if (treeRef.value) {
-    treeRef.value.refreshNode(selectedDn.value, browseResult.children ?? [])
+    treeRef.value.refreshNode(selectedDn.value, toPage(browseResult))
   }
   // Reload the current entry detail
   await selectEntry(selectedDn.value)
@@ -627,7 +709,8 @@ async function onLdifImported(): Promise<void> {
   if (selectedDirId.value) {
     treeLoading.value = true
     try {
-      const { data } = await browse(selectedDirId.value) as { data: BrowseResult }
+      const { data } = await browse(selectedDirId.value, undefined,
+        { limit: BRANCH_PAGE_SIZE }) as { data: BrowseResult }
       rootNodes.value = [toRootNode(data)]
       entryDetail.value = toDetail(data)
       selectedDn.value = data.dn ?? ''

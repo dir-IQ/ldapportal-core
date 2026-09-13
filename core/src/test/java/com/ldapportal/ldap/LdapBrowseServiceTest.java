@@ -396,6 +396,125 @@ class LdapBrowseServiceTest {
         assertThat(searchCount.get()).isEqualTo(3);
     }
 
+    // ── child page: limit, filter, count ──────────────────────────────────────
+
+    /** Adds {@code n} leaf people directly under the base, cn=p00 … cn=p(n-1). */
+    private void addPeople(int n) throws Exception {
+        for (int i = 0; i < n; i++) {
+            String cn = String.format("p%02d", i);
+            inMemoryServer.add(new Entry("cn=" + cn + "," + BASE_DN,
+                    new Attribute("objectClass", "top", "person"),
+                    new Attribute("cn", cn), new Attribute("sn", "P")));
+        }
+    }
+
+    @Test
+    void browse_limit_returnsFirstPageAndFlagsTruncation() throws Exception {
+        addPeople(12);                       // + Alice = 13 children
+        // Leaves carry an explicit "no children" hint so the probe count
+        // doesn't blur the assertion below.
+        hintInjector = dn -> Map.of("hasSubordinates", "FALSE");
+        searchCount.set(0);
+
+        LdapBrowseService.BrowseResult result = browseService.browse(dc, BASE_DN, null, 5);
+
+        assertThat(result.children()).hasSize(5);
+        assertThat(result.truncated()).isTrue();
+        // No server-side count and the listing was cut short → unknown.
+        assertThat(result.childCount()).isNull();
+        // entry read + one listing page (limit + 1 fits in one page) + the
+        // zero-size request that releases the server's paging state.
+        assertThat(searchCount.get()).isEqualTo(3);
+    }
+
+    @Test
+    void browse_limitZero_returnsEverythingWithExactCount() throws Exception {
+        addPeople(12);
+
+        LdapBrowseService.BrowseResult result = browseService.browse(dc, BASE_DN, null, 0);
+
+        assertThat(result.children()).hasSize(13);
+        assertThat(result.truncated()).isFalse();
+        assertThat(result.childCount()).isEqualTo(13);
+        assertThat(result.childCountApproximate()).isFalse();
+    }
+
+    @Test
+    void browse_limitAcrossPages_stopsAtLimit() throws Exception {
+        addPeople(12);
+        dc.setPagingSize(4);                 // force several pages
+
+        LdapBrowseService.BrowseResult result = browseService.browse(dc, BASE_DN, null, 10);
+
+        assertThat(result.children()).hasSize(10);
+        assertThat(result.truncated()).isTrue();
+    }
+
+    @Test
+    void browse_quickFilter_matchesSubstringAcrossNamingAttributes() throws Exception {
+        addTeamBranch();                     // ou=team + cn=Alice under base
+
+        LdapBrowseService.BrowseResult byOu = browseService.browse(dc, BASE_DN, "tea", 0);
+        assertThat(byOu.children()).extracting(LdapBrowseService.ChildEntry::rdn)
+                .containsExactly("ou=team");
+
+        LdapBrowseService.BrowseResult byCn = browseService.browse(dc, BASE_DN, "LIC", 0);
+        assertThat(byCn.children()).extracting(LdapBrowseService.ChildEntry::rdn)
+                .containsExactly("cn=Alice");
+
+        // A filtered listing says nothing about the branch's total.
+        assertThat(byCn.childCount()).isNull();
+        assertThat(byCn.truncated()).isFalse();
+    }
+
+    @Test
+    void browse_quickFilter_treatsFilterMetacharactersLiterally() throws Exception {
+        addTeamBranch();
+        // "*" would match everything if it were passed through unescaped.
+        LdapBrowseService.BrowseResult result = browseService.browse(dc, BASE_DN, "*", 0);
+        assertThat(result.children()).isEmpty();
+    }
+
+    @Test
+    void browse_rawFilter_isUsedVerbatim() throws Exception {
+        addTeamBranch();
+
+        LdapBrowseService.BrowseResult result = browseService.browse(dc, BASE_DN, "(cn=Al*)", 0);
+
+        assertThat(result.children()).extracting(LdapBrowseService.ChildEntry::rdn)
+                .containsExactly("cn=Alice");
+    }
+
+    @Test
+    void browse_serverCountOnParent_isReportedWhenTruncated() throws Exception {
+        addPeople(12);
+        hintInjector = dn -> dn.equalsIgnoreCase(BASE_DN)
+                ? Map.of("numSubordinates", "13")
+                : Map.of();
+
+        LdapBrowseService.BrowseResult result = browseService.browse(dc, BASE_DN, null, 5);
+
+        assertThat(result.truncated()).isTrue();
+        assertThat(result.childCount()).isEqualTo(13);
+        assertThat(result.childCountApproximate()).isFalse();
+    }
+
+    @Test
+    void browse_adEstimate_isFlaggedApproximate_untilAFullListingBeatsIt() throws Exception {
+        addPeople(12);
+        hintInjector = dn -> dn.equalsIgnoreCase(BASE_DN)
+                ? Map.of("msDS-Approx-Immed-Subordinates", "99")
+                : Map.of();
+
+        LdapBrowseService.BrowseResult page = browseService.browse(dc, BASE_DN, null, 5);
+        assertThat(page.childCount()).isEqualTo(99);
+        assertThat(page.childCountApproximate()).isTrue();
+
+        LdapBrowseService.BrowseResult all = browseService.browse(dc, BASE_DN, null, 0);
+        assertThat(all.childCount()).isEqualTo(13);
+        assertThat(all.childCountApproximate()).isFalse();
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
 
     private DirectoryConnection buildDc() {

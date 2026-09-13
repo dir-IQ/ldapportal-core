@@ -3088,6 +3088,10 @@ export interface components {
                 [key: string]: string[];
             };
             children?: components["schemas"]["ChildEntry"][];
+            truncated?: boolean;
+            /** Format: int32 */
+            childCount?: number;
+            childCountApproximate?: boolean;
         };
         ChildEntry: {
             dn?: string;
@@ -5097,6 +5101,9 @@ export interface operations {
         parameters: {
             query?: {
                 dn?: string;
+                filter?: string;
+                /** Format: int32 */
+                limit?: number;
             };
             header?: never;
             path: {

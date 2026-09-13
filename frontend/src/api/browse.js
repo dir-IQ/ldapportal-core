@@ -3,8 +3,22 @@ import client from './client'
 
 const base = (dirId) => `/superadmin/directories/${dirId}/browse`
 
-export const browse = (dirId, dn) =>
-  client.get(base(dirId), { params: { dn: dn || undefined } })
+/**
+ * @param {string} dirId
+ * @param {string} [dn]  entry to browse; defaults to the directory base DN
+ * @param {{ filter?: string, limit?: number }} [opts]
+ *   filter — child filter: raw LDAP filter when it starts with "(", otherwise
+ *            plain text matched against the naming attributes;
+ *   limit  — max children to return; 0 / omitted = all (server-capped)
+ */
+export const browse = (dirId, dn, opts = {}) =>
+  client.get(base(dirId), {
+    params: {
+      dn: dn || undefined,
+      filter: opts.filter || undefined,
+      limit: opts.limit || undefined,
+    },
+  })
 
 export const directoryBrowse = (dirId, dn) =>
   client.get(`/directories/${dirId}/browse`, { params: { dn: dn || undefined } })
