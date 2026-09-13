@@ -151,6 +151,42 @@ class AuthControllerTest extends BaseControllerTest {
                 .andExpect(jsonPath("$.logoutUrl").value("/pkmslogout"));
     }
 
+    /**
+     * Single-host WebSEAL deployment: the account may be LOCAL (the user typed
+     * an app password after WebSEAL authenticated the browser), but the
+     * browser still holds a WebSEAL session. Logout must end it, or the
+     * pre-auth probe signs the user straight back in and Logout appears to
+     * do nothing.
+     */
+    @Test
+    void logout_localAccountThroughTrustedJunction_returnsWebsealLogoutUrl() throws Exception {
+        AuthPrincipal principal = new AuthPrincipal(PrincipalType.SUPERADMIN, ACCOUNT_ID, "root");
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                principal, null, List.of(new SimpleGrantedAuthority("ROLE_SUPERADMIN")));
+        Account account = new Account();
+        account.setAuthType(AccountType.LOCAL);
+        given(accountRepository.findById(ACCOUNT_ID)).willReturn(Optional.of(account));
+        given(applicationSettingsService.getEntity()).willReturn(new ApplicationSettings());
+        given(webSealAuthenticationService.logoutUrlFor(AccountType.LOCAL)).willReturn(Optional.empty());
+        given(webSealAuthenticationService.logoutUrlForJunctionRequest(any()))
+                .willReturn(Optional.of("/pkmslogout"));
+
+        mockMvc.perform(post("/api/v1/auth/logout").with(authentication(auth)).header("iv-user", "root"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.logoutUrl").value("/pkmslogout"));
+    }
+
+    /**
+     * With no CORS_ALLOWED_ORIGIN configured no policy is registered, so a
+     * request carrying a foreign Origin (any browser POST behind a proxy)
+     * is not rejected — the browser's own same-origin policy applies.
+     */
+    @Test
+    void logout_withOriginHeaderAndNoCorsPolicy_isNotRejected() throws Exception {
+        mockMvc.perform(post("/api/v1/auth/logout").header("Origin", "https://lidm.example.com"))
+                .andExpect(status().isOk());
+    }
+
     @Test
     void logout_noJwtAndNoJunction_returnsNoLogoutUrl() throws Exception {
         given(webSealAuthenticationService.logoutUrlForJunctionRequest(any()))

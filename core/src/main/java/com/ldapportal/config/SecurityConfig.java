@@ -24,6 +24,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import lombok.extern.slf4j.Slf4j;
+
 import java.util.List;
 
 /**
@@ -48,16 +50,18 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
+@Slf4j
 public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http,
                                            JwtAuthenticationFilter jwtFilter,
                                            ApiTokenAuthenticationFilter apiTokenFilter,
-                                           ObjectMapper objectMapper) throws Exception {
+                                           ObjectMapper objectMapper,
+                                           CorsConfigurationSource corsConfigurationSource) throws Exception {
         http
             .csrf(AbstractHttpConfigurer::disable)
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             // ── Security response headers ──────────────────────────────────────
             .headers(h -> h
@@ -138,27 +142,39 @@ public class SecurityConfig {
     /**
      * CORS policy for the REST API.
      *
-     * <p>When {@code CORS_ALLOWED_ORIGIN} is set, only that origin is
-     * permitted (with credentials).  When unset, no {@link CorsConfiguration}
-     * is registered, so Spring Security skips CORS processing entirely and
-     * the browser's default Same-Origin Policy applies — which is the correct
-     * default for single-origin deployments.</p>
+     * <p>When {@code CORS_ALLOWED_ORIGIN} lists one or more origins, only those
+     * are permitted (with credentials). When empty, no {@link CorsConfiguration}
+     * is registered for {@code /api/v1/**}, so Spring Security skips CORS
+     * processing entirely and the browser's default Same-Origin Policy applies
+     * — the correct default when the SPA and the API share one origin with
+     * nothing in between.</p>
      *
-     * <p><strong>Important:</strong> registering a {@link CorsConfiguration}
-     * with an empty allowed-origins list causes Spring to reject any request
-     * that carries an {@code Origin} header (including same-site POSTs from
-     * some browsers and dev-proxy setups).  That is why we register nothing
-     * when the env var is absent.</p>
+     * <p><strong>Same-origin is not enough behind a proxy.</strong> Browsers
+     * send {@code Origin} on every POST/PUT/PATCH/DELETE, same-origin included,
+     * and Spring decides "is this CORS?" by comparing it with the scheme/host/
+     * port the <em>backend</em> sees. Behind a reverse proxy or WebSEAL junction
+     * that is an internal {@code http://svc:8080}, so a perfectly same-origin
+     * Logout POST looks cross-origin and is checked against this list. That is
+     * why the list must name exactly the origin(s) in the browser's address
+     * bar, and why a rejection is logged at WARN with both values — the 403
+     * body ("Invalid CORS request") says nothing else.</p>
+     *
+     * <p>Registering a {@link CorsConfiguration} with an empty allowed-origins
+     * list would reject any request carrying {@code Origin}; hence nothing is
+     * registered when the list is empty.</p>
      */
     @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
+    public CorsConfigurationSource corsConfigurationSource(AppProperties appProperties) {
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        String allowedOrigin = System.getenv("CORS_ALLOWED_ORIGIN");
-        if (allowedOrigin != null && !allowedOrigin.isBlank()) {
-            CorsConfiguration config = new CorsConfiguration();
-            config.setAllowedOrigins(List.of(allowedOrigin));
+        List<String> allowedOrigins = appProperties.getCors().getAllowedOrigins().stream()
+                .map(String::trim)
+                .filter(o -> !o.isEmpty())
+                .toList();
+        if (!allowedOrigins.isEmpty()) {
+            CorsConfiguration config = new RejectionLoggingCorsConfiguration();
+            config.setAllowedOrigins(allowedOrigins);
             config.setAllowCredentials(true); // required for cookie-based auth
-            config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+            config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
             config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With"));
             config.setMaxAge(3600L);
             source.registerCorsConfiguration("/api/v1/**", config);
@@ -175,5 +191,26 @@ public class SecurityConfig {
         source.registerCorsConfiguration("/api/v1/auditor/**", auditorCors);
 
         return source;
+    }
+
+    /**
+     * {@link CorsConfiguration} that says <em>why</em> a request was refused.
+     * Spring's rejection is a bare 403 "Invalid CORS request"; naming the
+     * offending {@code Origin} next to the configured allow-list turns a
+     * mystery into a one-line config fix.
+     */
+    static final class RejectionLoggingCorsConfiguration extends CorsConfiguration {
+        @Override
+        public String checkOrigin(String requestOrigin) {
+            String allowed = super.checkOrigin(requestOrigin);
+            if (allowed == null && requestOrigin != null) {
+                log.warn("Rejected request from Origin '{}': not in CORS_ALLOWED_ORIGIN {}. Browsers send "
+                        + "Origin on every POST/PUT/PATCH/DELETE, same-origin included, and behind a reverse "
+                        + "proxy or WebSEAL junction the backend cannot tell them apart — the allow-list must "
+                        + "name exactly the origin shown in the browser's address bar (scheme://host[:port]).",
+                        requestOrigin, getAllowedOrigins());
+            }
+            return allowed;
+        }
     }
 }

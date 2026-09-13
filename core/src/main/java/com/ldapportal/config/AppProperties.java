@@ -9,6 +9,9 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Typed access to the {@code app.*} configuration namespace defined in
  * {@code application.yml}.  Validated at startup so missing/blank required
@@ -37,6 +40,9 @@ public class AppProperties {
 
     @Valid
     private Auth auth = new Auth();
+
+    @Valid
+    private Cors cors = new Cors();
 
     /**
      * Public URL path prefix the browser sees in front of the app, e.g.
@@ -151,6 +157,27 @@ public class AppProperties {
          * cannot grant themselves the bypass. Defaults to {@code false}.
          */
         private boolean superadminBypass = false;
+    }
+
+    @Getter
+    @Setter
+    public static class Cors {
+        /**
+         * Browser-facing origins allowed to call {@code /api/v1} with
+         * credentials, exactly as the browser reports them in the
+         * {@code Origin} header ({@code scheme://host[:port]}, no path).
+         * Loaded comma-separated from {@code CORS_ALLOWED_ORIGIN}. Empty (the
+         * default) registers no CORS policy, which is right when the SPA and
+         * the API share one origin with nothing in between.
+         *
+         * <p>Behind a reverse proxy or WebSEAL junction the backend sees an
+         * internal scheme/host, so a browser's same-origin POST (which always
+         * carries {@code Origin}) still looks cross-origin to Spring and is
+         * checked against this list. List every public hostname the app is
+         * reached at — in a dual-frontend deployment both the admin (WebSEAL)
+         * and the superadmin origins.</p>
+         */
+        private List<String> allowedOrigins = new ArrayList<>();
     }
 
     @Getter

@@ -343,6 +343,7 @@ import LicenseExpirationBanner from '@/components/LicenseExpirationBanner.vue'
 import UpgradeModal from '@/components/UpgradeModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import { useConfirmStore } from '@/stores/confirm'
+import { useNotificationStore } from '@/stores/notifications'
 import { useConfirm } from '@/composables/useConfirm'
 import { useUnsavedChangesStore } from '@/stores/unsavedChanges'
 
@@ -378,6 +379,7 @@ const settings      = useSettingsStore()
 
 onMounted(() => settings.init())
 const router = useRouter()
+const notif  = useNotificationStore()
 const route  = useRoute()
 
 const profiles       = ref<ProfileSummary[]>([])   // flat list of authorized profiles (admin only)
@@ -613,7 +615,21 @@ async function handleNoProfilesOk() {
 }
 
 async function handleLogout() {
-  const logoutUrl = await auth.logout()
+  let logoutUrl: string | null
+  try {
+    logoutUrl = await auth.logout()
+  } catch (err) {
+    // A rejected logout (e.g. 403 "Invalid CORS request" behind a proxy whose
+    // origin isn't in CORS_ALLOWED_ORIGIN) used to fail silently, leaving the
+    // user signed in with no clue why. Say so instead of swallowing it.
+    const e = err as { response?: { status?: number, data?: { detail?: string } } }
+    const status = e.response?.status
+    const detail = e.response?.data?.detail
+    notif.error(status
+      ? `Logout failed (${status}${detail ? ': ' + detail : ''}). Check the backend log.`
+      : 'Logout failed. Check your connection and try again.')
+    return
+  }
   // If the server returned an IdP end_session_endpoint URL, navigate there
   // so the IdP can terminate its session too. The IdP will redirect back to
   // our post_logout_redirect_uri when done.
