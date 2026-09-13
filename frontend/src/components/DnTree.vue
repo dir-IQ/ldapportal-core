@@ -74,8 +74,10 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { nextTick, reactive, ref } from 'vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { escapeLdapValue } from '@/composables/useLdapFilter'
+import { parseLeadingRdn } from '@/utils/dn'
 
 /** A node as rendered by the tree. Matches the API's ChildEntry shape. */
 export interface DnTreeNode {
@@ -118,6 +120,7 @@ interface DnTreeHandle {
   filterNode: (dn: string, filter: string) => Promise<boolean>
   loadAll: (dn: string) => Promise<boolean>
   getFilter: (dn: string) => string | null
+  revealNode: (ancestors: string[], targetDn: string) => Promise<boolean>
 }
 
 /**
@@ -349,6 +352,54 @@ async function loadAll(dn: string): Promise<boolean> {
   return false
 }
 
+/**
+ * Open the tree along `ancestors` (this level's node first, the target's
+ * parent last) so that `targetDn` is listed. Each level is loaded on demand.
+ * If the parent's listing is capped or filtered and the target isn't in it,
+ * the parent is re-listed with an exact filter on the target's RDN, which
+ * finds it without loading the whole branch. Resolves true when the target
+ * is in the tree afterwards.
+ */
+async function revealNode(ancestors: string[], targetDn: string): Promise<boolean> {
+  if (ancestors.length === 0) return false
+  const node = findNode(ancestors[0])
+  if (!node) return false
+
+  // We know this node has at least the target below it, whatever the
+  // server's hint said, and the template only renders children when
+  // hasChildren is set.
+  node.hasChildren = true
+  expanded.add(node.dn)
+  if (!childrenMap.value.has(node.dn) && !(await load(node, {}))) {
+    return false
+  }
+
+  if (ancestors.length > 1) {
+    // Let the child DnTree for this node mount so childRefs has it.
+    await nextTick()
+    const child = childRefs.get(node.dn)
+    return child ? child.revealNode(ancestors.slice(1), targetDn) : false
+  }
+
+  const listed = () => (childrenMap.value.get(node.dn) ?? [])
+    .some(c => normDn(c.dn) === normDn(targetDn))
+  if (listed()) return true
+
+  const meta = pageMeta.value.get(node.dn)
+  const rdnFilter = exactRdnFilter(targetDn)
+  if ((meta?.truncated || meta?.filter) && rdnFilter) {
+    await load(node, { filter: rdnFilter })
+    return listed()
+  }
+  return false
+}
+
+/** `(uid=jsmith)` for `uid=jsmith,…` — an exact one-level filter for the entry's RDN. */
+function exactRdnFilter(dn: string): string | null {
+  const ava = parseLeadingRdn(dn)[0]
+  return ava ? `(${ava.name}=${escapeLdapValue(ava.value)})` : null
+}
+
 /** The active filter on `dn`'s listing, '' when unfiltered, null when the DN isn't loaded here. */
 function getFilter(dn: string): string | null {
   const node = findNode(dn)
@@ -362,5 +413,5 @@ function getFilter(dn: string): string | null {
   return null
 }
 
-defineExpose({ refreshNode, filterNode, loadAll, getFilter })
+defineExpose({ refreshNode, filterNode, loadAll, getFilter, revealNode })
 </script>

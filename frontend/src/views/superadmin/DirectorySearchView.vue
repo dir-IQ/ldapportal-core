@@ -220,6 +220,14 @@
         </template>
         <template #cell-dn="{ value }">
           <span class="font-mono text-blue-600 break-all">{{ value }}</span>
+          <!-- Opens the Directory Browser with the tree expanded down to
+               this entry — the way to find one entry among thousands in a
+               branch without loading the branch. -->
+          <RouterLink
+            :to="{ name: 'directoryBrowser', query: { dir: form.directoryId, dn: String(value) } }"
+            class="ml-2 text-xs text-blue-600 hover:underline whitespace-nowrap"
+            :title="`Reveal ${value} in the Directory Browser`"
+          >Browse</RouterLink>
         </template>
       </ResultsTable>
 
@@ -258,6 +266,14 @@
         </template>
         <template #cell-dn="{ value }">
           <span class="font-mono text-blue-600 break-all">{{ value }}</span>
+          <!-- Opens the Directory Browser with the tree expanded down to
+               this entry — the way to find one entry among thousands in a
+               branch without loading the branch. -->
+          <RouterLink
+            :to="{ name: 'directoryBrowser', query: { dir: form.directoryId, dn: String(value) } }"
+            class="ml-2 text-xs text-blue-600 hover:underline whitespace-nowrap"
+            :title="`Reveal ${value} in the Directory Browser`"
+          >Browse</RouterLink>
         </template>
       </EditableResultsTable>
     </div>
@@ -340,6 +356,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 import { usePreferencesStore } from '@/stores/preferences'

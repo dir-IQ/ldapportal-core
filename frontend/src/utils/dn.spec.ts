@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from 'vitest'
-import { parseLeadingRdn, ensureNamingValues, normalizeDnForCompare, dnEquals } from './dn'
+import { parseLeadingRdn, ensureNamingValues, normalizeDnForCompare, dnEquals, ancestorChain } from './dn'
 
 describe('parseLeadingRdn', () => {
   it('parses a single-valued RDN', () => {
@@ -107,5 +107,25 @@ describe('dnEquals', () => {
   it('handles empty input', () => {
     expect(dnEquals('', '')).toBe(true)
     expect(dnEquals('cn=jim,dc=x', '')).toBe(false)
+  })
+})
+
+describe('ancestorChain', () => {
+  it('lists the base down to the direct parent, outermost first', () => {
+    expect(ancestorChain('uid=a,ou=people,ou=eu,dc=x', 'dc=x'))
+      .toEqual(['dc=x', 'ou=eu,dc=x', 'ou=people,ou=eu,dc=x'])
+  })
+
+  it('is empty for the base itself and null outside it', () => {
+    expect(ancestorChain('dc=x', 'dc=x')).toEqual([])
+    expect(ancestorChain('DC=X', 'dc=x')).toEqual([])
+    expect(ancestorChain('uid=a,dc=other', 'dc=x')).toBeNull()
+    expect(ancestorChain('dc=x', 'ou=people,dc=x')).toBeNull()
+    expect(ancestorChain('', 'dc=x')).toBeNull()
+  })
+
+  it('matches the base case-insensitively and keeps escaped commas intact', () => {
+    expect(ancestorChain('cn=Moffett\\, Jim,ou=People,DC=Example,DC=Com', 'dc=example,dc=com'))
+      .toEqual(['DC=Example,DC=Com', 'ou=People,DC=Example,DC=Com'])
   })
 })
