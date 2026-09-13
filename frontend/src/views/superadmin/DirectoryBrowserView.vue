@@ -332,8 +332,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { ancestorChain, dnEquals } from '@/utils/dn'
 import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
 import { browse, deleteEntry, moveEntry, renameEntry, exportLdif } from '@/api/browse'
@@ -380,6 +381,7 @@ interface DnTreeHandle {
   refreshNode: (dn: string, children: ChildEntry[] | ChildPage) => boolean
   filterNode: (dn: string, filter: string) => Promise<boolean>
   getFilter: (dn: string) => string | null
+  revealNode: (ancestors: string[], targetDn: string) => Promise<boolean>
 }
 
 type ApiError = { response?: { data?: { detail?: string, message?: string } }, message?: string }
@@ -421,6 +423,10 @@ const renameError       = ref('')
 
 const showImportModal   = ref(false)
 const refreshing        = ref(false)
+
+// A ?dn=… deep-link waiting for the directory's root to load before the
+// tree can be opened down to it (see revealDn).
+let pendingRevealDn: string | null = null
 
 const branchFilter      = ref('')
 let branchFilterTimer: ReturnType<typeof setTimeout> | null = null
@@ -532,6 +538,56 @@ watch(selectedDirId, async (dirId) => {
     notif.error(err.response?.data?.detail || err.message || 'Failed to load directory')
   } finally {
     treeLoading.value = false
+  }
+
+  if (pendingRevealDn) {
+    const dn = pendingRevealDn
+    pendingRevealDn = null
+    await revealDn(dn)
+  }
+})
+
+// ── Deep link to an entry (?dir=…&dn=…) ────────────────────────────────────
+
+/**
+ * Open the tree down to `dn` and select it. Used by "Reveal in browser"
+ * links from Directory Search. If the entry sits outside the configured
+ * base DN, or isn't found in the tree, its details are still shown on the
+ * right so the link is never a dead end.
+ */
+async function revealDn(dn: string): Promise<void> {
+  const rootDn = rootNodes.value[0]?.dn ?? ''
+  const ancestors = rootDn ? ancestorChain(dn, rootDn) : null
+  if (ancestors && ancestors.length === 0) {
+    // The target is the root itself — already selected on load.
+    return
+  }
+  // The tree mounts on the tick after rootNodes is set.
+  await nextTick()
+  let revealed = false
+  if (ancestors && treeRef.value) {
+    revealed = await treeRef.value.revealNode(ancestors, dn)
+  }
+  await selectEntry(dn)
+  if (!revealed) {
+    notif.info(ancestors
+      ? 'Entry not found under its parent in the tree; showing its details.'
+      : 'Entry is outside this directory\'s base DN; showing its details.')
+  }
+}
+
+// A later navigation to the same route with different query params reuses
+// this component, so react to them here as well as on mount.
+watch(() => [route.query.dir, route.query.dn], ([dir, dn]) => {
+  const targetDn = typeof dn === 'string' && dn ? dn : null
+  const targetDir = typeof dir === 'string' && directories.value.some(d => d.id === dir) ? dir : null
+  if (targetDir && targetDir !== selectedDirId.value) {
+    pendingRevealDn = targetDn
+    selectedDirId.value = targetDir
+    return
+  }
+  if (targetDn && !dnEquals(targetDn, selectedDn.value)) {
+    void revealDn(targetDn)
   }
 })
 
@@ -743,6 +799,8 @@ onMounted(async () => {
     const preselect = requested && directories.value.some(d => d.id === requested)
       ? requested
       : directories.value[0]?.id
+    // A ?dn=… deep-link is opened once the root has loaded (see revealDn).
+    pendingRevealDn = typeof route.query.dn === 'string' && route.query.dn ? route.query.dn : null
     if (preselect) selectedDirId.value = preselect
   } catch (e) {
     const err = e as ApiError

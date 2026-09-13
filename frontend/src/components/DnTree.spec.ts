@@ -89,6 +89,7 @@ type TreeApi = {
   filterNode: (dn: string, filter: string) => Promise<boolean>
   loadAll: (dn: string) => Promise<boolean>
   getFilter: (dn: string) => string | null
+  revealNode: (ancestors: string[], targetDn: string) => Promise<boolean>
 }
 
 function mountWith(loadChildren: LoadChildrenFn) {
@@ -227,5 +228,63 @@ describe('DnTree branch filter', () => {
 
     expect(api.getFilter(PEOPLE)).toBe('')
     expect(footer(wrapper).exists()).toBe(false)
+  })
+})
+
+describe('DnTree.revealNode', () => {
+  const EU = 'ou=eu,' + PEOPLE
+  const CAROL = { dn: 'uid=carol,' + EU, rdn: 'uid=carol', hasChildren: false }
+
+  it('opens each level down to the target, loading on demand', async () => {
+    const load = vi.fn<LoadChildrenFn>(async (dn) => {
+      if (dn === PEOPLE) return [ALICE, { dn: EU, rdn: 'ou=eu', hasChildren: true }]
+      if (dn === EU) return [CAROL]
+      return []
+    })
+    const { wrapper, api } = mountWith(load)
+    expect(wrapper.text()).not.toContain('ou=eu')
+
+    const found = await api.revealNode([PEOPLE, EU], CAROL.dn)
+    await flushPromises()
+
+    expect(found).toBe(true)
+    expect(load.mock.calls.map(c => c[0])).toEqual([PEOPLE, EU])
+    expect(wrapper.text()).toContain('uid=carol')
+  })
+
+  it('re-lists a capped parent with an exact RDN filter when the target is not on the page', async () => {
+    const load = vi.fn<LoadChildrenFn>(async (_dn, opts) => opts?.filter
+      ? { children: [{ dn: 'uid=zed,' + PEOPLE, rdn: 'uid=zed', hasChildren: false }] }
+      : { children: [ALICE, BOB], truncated: true, childCount: 900 })
+    const { wrapper, api } = mountWith(load)
+
+    const found = await api.revealNode([PEOPLE], 'uid=zed,' + PEOPLE)
+    await flushPromises()
+
+    expect(found).toBe(true)
+    expect(load).toHaveBeenLastCalledWith(PEOPLE, { filter: '(uid=zed)' })
+    expect(wrapper.text()).toContain('uid=zed')
+    expect(api.getFilter(PEOPLE)).toBe('(uid=zed)')
+  })
+
+  it('escapes filter specials in the RDN value', async () => {
+    const weird = 'cn=a(b)*,' + PEOPLE
+    const load = vi.fn<LoadChildrenFn>(async (_dn, opts) => opts?.filter
+      ? { children: [{ dn: weird, rdn: 'cn=a(b)*', hasChildren: false }] }
+      : { children: [ALICE], truncated: true })
+    const { api } = mountWith(load)
+
+    expect(await api.revealNode([PEOPLE], weird)).toBe(true)
+    expect(load).toHaveBeenLastCalledWith(PEOPLE, { filter: '(cn=a\\28b\\29\\2a)' })
+  })
+
+  it('reports false when the target is genuinely absent or the path does not start here', async () => {
+    const load = vi.fn<LoadChildrenFn>(async () => ({ children: [ALICE, BOB], truncated: false }))
+    const { api } = mountWith(load)
+
+    expect(await api.revealNode([PEOPLE], 'uid=nobody,' + PEOPLE)).toBe(false)
+    // Complete, unfiltered listing → no point re-querying.
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(await api.revealNode(['ou=other,dc=x'], 'uid=x,ou=other,dc=x')).toBe(false)
   })
 })

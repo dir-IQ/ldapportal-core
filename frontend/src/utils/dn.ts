@@ -138,3 +138,29 @@ export function normalizeDnForCompare(dn: string): string {
 export function dnEquals(a: string, b: string): boolean {
   return normalizeDnForCompare(a) === normalizeDnForCompare(b)
 }
+
+/**
+ * The DNs on the path from {@code baseDn} down to the *parent* of {@code dn},
+ * outermost first — what a tree has to expand, level by level, to reveal
+ * {@code dn}. Each ancestor is spelled with the target DN's own RDN text so
+ * it matches what the tree nodes carry. Returns {@code []} when {@code dn}
+ * *is* the base, and {@code null} when {@code dn} does not sit under it.
+ *
+ * ```
+ * ancestorChain('uid=a,ou=people,dc=x', 'dc=x')
+ *   → ['dc=x', 'ou=people,dc=x']
+ * ```
+ */
+export function ancestorChain(dn: string, baseDn: string): string[] | null {
+  if (!dn || !baseDn) return null
+  const parts = splitUnescaped(dn, ',')
+  const baseParts = splitUnescaped(baseDn, ',')
+  const relative = parts.length - baseParts.length
+  if (relative < 0) return null
+  if (!dnEquals(parts.slice(relative).join(','), baseDn)) return null
+  const chain: string[] = []
+  for (let k = relative; k >= 1; k--) {
+    chain.push(parts.slice(k).join(','))
+  }
+  return chain
+}

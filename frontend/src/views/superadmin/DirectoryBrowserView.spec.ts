@@ -19,7 +19,9 @@ import DirectoryBrowserView from './DirectoryBrowserView.vue'
 import { browse } from '@/api/browse'
 import { listDirectories } from '@/api/directories'
 
-vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }) }))
+// Mutable so each test can set the ?dir=&dn= deep-link before mounting.
+const route = vi.hoisted(() => ({ query: {} as Record<string, string> }))
+vi.mock('vue-router', () => ({ useRoute: () => route }))
 vi.mock('@/api/directories', () => ({ listDirectories: vi.fn() }))
 vi.mock('@/api/browse', () => ({
   browse: vi.fn(),
@@ -36,6 +38,7 @@ function ok<T>(data: T): AxiosResponse<T> {
 const DIR = 'dir-1'
 const BASE = 'dc=example,dc=com'
 const PEOPLE = 'ou=people,' + BASE
+const ALICE_DN = 'uid=alice,' + PEOPLE
 
 const rootPage = {
   dn: BASE,
@@ -96,12 +99,45 @@ describe('DirectoryBrowserView branch paging + filter', () => {
     vi.mocked(listDirectories).mockResolvedValue(ok([{ id: DIR, displayName: 'Example', directoryType: 'OPENLDAP' }]))
     vi.mocked(browse).mockImplementation(async (_dir: string, dn?: string, opts: { filter?: string, limit?: number } = {}) => {
       if (!dn || dn === BASE) return ok(rootPage)
+      if (dn === ALICE_DN) return ok({ dn: ALICE_DN, attributes: { uid: ['alice'] }, children: [] })
       return ok(peoplePage({ filter: opts.filter, all: opts.limit === 0 }))
     })
   })
 
   afterEach(() => {
     vi.clearAllMocks()
+    route.query = {}
+  })
+
+  it('opens the tree down to a ?dn= deep-link and selects the entry', async () => {
+    route.query = { dir: DIR, dn: ALICE_DN }
+    const wrapper = await mountView()
+    await flushPromises()
+
+    // Root page, then the parent branch (bounded), then the entry itself.
+    expect(browse).toHaveBeenCalledWith(DIR, undefined, { limit: 500 })
+    expect(browse).toHaveBeenCalledWith(DIR, PEOPLE, { filter: undefined, limit: 500 })
+    expect(browse).toHaveBeenCalledWith(DIR, ALICE_DN)
+
+    const selected = wrapper.findAll('.dn-tree li > div').find(d => d.classes().includes('bg-blue-100'))
+    expect(selected?.text()).toContain('uid=alice')
+    expect(wrapper.find('input[aria-label="Filter children of the selected entry"]').attributes('placeholder'))
+      .toBe('Filter children of uid=alice')
+  })
+
+  it('still shows the entry when the deep-linked DN is outside the base', async () => {
+    const outside = 'uid=x,dc=elsewhere'
+    vi.mocked(browse).mockImplementation(async (_dir: string, dn?: string) => {
+      if (!dn || dn === BASE) return ok(rootPage)
+      if (dn === outside) return ok({ dn: outside, attributes: { uid: ['x'] }, children: [] })
+      return ok(peoplePage())
+    })
+    route.query = { dir: DIR, dn: outside }
+    await mountView()
+    await flushPromises()
+
+    expect(browse).toHaveBeenCalledWith(DIR, outside)
+    expect(browse).not.toHaveBeenCalledWith(DIR, PEOPLE, expect.anything())
   })
 
   it('loads the root as a bounded page', async () => {
