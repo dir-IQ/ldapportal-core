@@ -6,7 +6,11 @@
  *   rather than the whole branch;
  * - typing in the branch-filter box re-lists the selected node's children
  *   with that filter after a debounce, and Enter applies it immediately;
- * - Load all on a truncated branch re-requests it unbounded (limit 0).
+ * - Load all on a truncated branch re-requests it unbounded (limit 0);
+ * - the selection is mirrored into ?dir=&dn= (replace on landing, push
+ *   between entries, nothing when the URL already says so);
+ * - after a write the affected branch is re-listed on the tree's own terms
+ *   rather than from the listing the mutation returned.
  *
  * DnTree is mounted for real so the wiring is exercised end to end; the
  * entry-detail side panel's heavier children are stubbed.
@@ -16,12 +20,14 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { AxiosResponse } from 'axios'
 import DirectoryBrowserView from './DirectoryBrowserView.vue'
-import { browse } from '@/api/browse'
+import { browse, deleteEntry } from '@/api/browse'
 import { listDirectories } from '@/api/directories'
 
 // Mutable so each test can set the ?dir=&dn= deep-link before mounting.
 const route = vi.hoisted(() => ({ query: {} as Record<string, string> }))
-vi.mock('vue-router', () => ({ useRoute: () => route }))
+// The view mirrors its selection into the URL; capture those writes.
+const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
+vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
 vi.mock('@/api/directories', () => ({ listDirectories: vi.fn() }))
 vi.mock('@/api/browse', () => ({
   browse: vi.fn(),
@@ -109,15 +115,71 @@ describe('DirectoryBrowserView branch paging + filter', () => {
     route.query = {}
   })
 
+  it('mirrors the selection into the URL: replace on landing, push between entries', async () => {
+    const wrapper = await mountView()
+    // Landing with no ?dir= fixes the URL in place (no history entry).
+    expect(router.replace).toHaveBeenCalledWith({ query: { dir: DIR, dn: undefined } })
+    expect(router.push).not.toHaveBeenCalled()
+    // Pretend the router applied it, as it would.
+    route.query = { dir: DIR }
+
+    await wrapper.find('button[aria-label="Toggle children"]').trigger('click')
+    await flushPromises()
+    await treeRow(wrapper, 'ou=people').find('div').trigger('click')
+    await flushPromises()
+
+    expect(router.push).toHaveBeenCalledWith({ query: { dir: DIR, dn: PEOPLE } })
+  })
+
+  it('does not rewrite the URL when a deep-link already says where we are', async () => {
+    route.query = { dir: DIR, dn: ALICE_DN }
+    await mountView()
+    await flushPromises()
+
+    expect(router.push).not.toHaveBeenCalled()
+    expect(router.replace).not.toHaveBeenCalled()
+  })
+
+  it('re-lists the affected branch after a delete instead of trusting the returned listing', async () => {
+    const wrapper = await mountView()
+    await wrapper.find('button[aria-label="Toggle children"]').trigger('click')
+    await flushPromises()
+    await treeRow(wrapper, 'ou=people').find('div').trigger('click') // select + expand ou=people
+    await flushPromises()
+    // Select alice, the entry we are about to delete.
+    await treeRow(wrapper, 'uid=alice').find('div').trigger('click')
+    await flushPromises()
+    vi.mocked(browse).mockClear()
+
+    // The mutation response carries a stale, unbounded courtesy listing
+    // (including an entry the tree must not pick up from it).
+    vi.mocked(deleteEntry).mockResolvedValue(ok({
+      dn: PEOPLE,
+      attributes: { ou: ['people'] },
+      children: [{ dn: 'uid=ghost,' + PEOPLE, rdn: 'uid=ghost', hasChildren: false }],
+    }))
+    const vm = wrapper.vm as unknown as { onDeleteConfirmed: () => Promise<void> }
+    await vm.onDeleteConfirmed()
+    await flushPromises()
+
+    expect(deleteEntry).toHaveBeenCalledWith(DIR, ALICE_DN, false, false)
+    // The branch is re-fetched with the tree's page settings…
+    expect(browse).toHaveBeenCalledWith(DIR, PEOPLE, { filter: undefined, limit: 500 })
+    // …and rendered from that fetch, not from the mutation response.
+    expect(wrapper.text()).not.toContain('uid=ghost')
+    expect(wrapper.text()).toContain('uid=alice')
+  })
+
   it('opens the tree down to a ?dn= deep-link and selects the entry', async () => {
     route.query = { dir: DIR, dn: ALICE_DN }
     const wrapper = await mountView()
     await flushPromises()
 
-    // Root page, then the parent branch (bounded), then the entry itself.
+    // Root page, then the parent branch (bounded), then the entry itself
+    // (detail only — the smallest page, its children are ignored).
     expect(browse).toHaveBeenCalledWith(DIR, undefined, { limit: 500 })
     expect(browse).toHaveBeenCalledWith(DIR, PEOPLE, { filter: undefined, limit: 500 })
-    expect(browse).toHaveBeenCalledWith(DIR, ALICE_DN)
+    expect(browse).toHaveBeenCalledWith(DIR, ALICE_DN, { limit: 1 })
 
     const selected = wrapper.findAll('.dn-tree li > div').find(d => d.classes().includes('bg-blue-100'))
     expect(selected?.text()).toContain('uid=alice')
@@ -136,7 +198,7 @@ describe('DirectoryBrowserView branch paging + filter', () => {
     await mountView()
     await flushPromises()
 
-    expect(browse).toHaveBeenCalledWith(DIR, outside)
+    expect(browse).toHaveBeenCalledWith(DIR, outside, { limit: 1 })
     expect(browse).not.toHaveBeenCalledWith(DIR, PEOPLE, expect.anything())
   })
 

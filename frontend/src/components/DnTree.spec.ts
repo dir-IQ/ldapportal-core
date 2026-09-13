@@ -90,6 +90,7 @@ type TreeApi = {
   loadAll: (dn: string) => Promise<boolean>
   getFilter: (dn: string) => string | null
   revealNode: (ancestors: string[], targetDn: string) => Promise<boolean>
+  reloadNode: (dn: string) => Promise<boolean>
 }
 
 function mountWith(loadChildren: LoadChildrenFn) {
@@ -286,5 +287,60 @@ describe('DnTree.revealNode', () => {
     // Complete, unfiltered listing → no point re-querying.
     expect(load).toHaveBeenCalledTimes(1)
     expect(await api.revealNode(['ou=other,dc=x'], 'uid=x,ou=other,dc=x')).toBe(false)
+  })
+})
+
+describe('DnTree.reloadNode', () => {
+  it('re-fetches with the branch\'s active filter', async () => {
+    const load = vi.fn<LoadChildrenFn>(async () => [ALICE])
+    const { api } = mountWith(load)
+    await api.filterNode(PEOPLE, 'ali')
+    load.mockClear()
+
+    expect(await api.reloadNode(PEOPLE)).toBe(true)
+
+    expect(load).toHaveBeenCalledWith(PEOPLE, { filter: 'ali' })
+    expect(api.getFilter(PEOPLE)).toBe('ali')
+  })
+
+  it('keeps a fully loaded branch fully loaded', async () => {
+    const load = vi.fn<LoadChildrenFn>(async (_dn, opts) => opts?.all
+      ? { children: [ALICE, BOB], truncated: false }
+      : { children: [ALICE], truncated: true, childCount: 2 })
+    const { wrapper, api } = mountWith(load)
+    await expandRoot(wrapper)
+    await api.loadAll(PEOPLE)
+    load.mockClear()
+
+    await api.reloadNode(PEOPLE)
+
+    expect(load).toHaveBeenCalledWith(PEOPLE, { all: true, filter: undefined })
+    expect(footer(wrapper).exists()).toBe(false)
+  })
+
+  it('updates the expand arrow of a node that was never expanded, and delegates', async () => {
+    const GROUPS = 'ou=groups,' + PEOPLE
+    let groupsHasKids = false
+    const load = vi.fn<LoadChildrenFn>(async (dn) => {
+      if (dn === PEOPLE) return [{ dn: GROUPS, rdn: 'ou=groups', hasChildren: false }]
+      return groupsHasKids ? [{ dn: 'cn=admins,' + GROUPS, rdn: 'cn=admins', hasChildren: false }] : []
+    })
+    const { wrapper, api } = mountWith(load)
+    await expandRoot(wrapper)
+    // Innermost <li> for ou=groups (the root <li> contains its text too).
+    const groupsRow = wrapper.findAll('li').filter(li => li.text().includes('ou=groups')).at(-1)!
+    expect(groupsRow.find('button[aria-label="Toggle children"]').exists()).toBe(false)
+
+    // Something was created under ou=groups elsewhere; the nested level
+    // owns the node, so the reload has to be delegated to it.
+    groupsHasKids = true
+    expect(await api.reloadNode('OU=Groups, ' + PEOPLE)).toBe(true)
+    await flushPromises()
+
+    expect(load).toHaveBeenLastCalledWith(GROUPS, { filter: undefined })
+    expect(groupsRow.find('button[aria-label="Toggle children"]').exists()).toBe(true)
+    // Not auto-expanded — only the arrow changed.
+    expect(wrapper.text()).not.toContain('cn=admins')
+    expect(await api.reloadNode('ou=nowhere,dc=x')).toBe(false)
   })
 })

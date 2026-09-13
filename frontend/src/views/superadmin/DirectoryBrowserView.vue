@@ -333,7 +333,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { ancestorChain, dnEquals } from '@/utils/dn'
 import { useNotificationStore } from '@/stores/notifications'
 import { listDirectories } from '@/api/directories'
@@ -371,6 +371,13 @@ interface TreeNode {
  */
 const BRANCH_PAGE_SIZE = 500
 
+/**
+ * Browse options for reads that only need the entry's attributes (the
+ * detail panel). `limit: 0` means "all children", so the smallest page the
+ * API allows is one; the children in these responses are ignored.
+ */
+const DETAIL_ONLY = { limit: 1 } as const
+
 interface EntryDetail {
   dn: string
   attributes: Record<string, string[]>
@@ -378,10 +385,10 @@ interface EntryDetail {
 
 /** The subset of DnTree's exposed API this view calls. */
 interface DnTreeHandle {
-  refreshNode: (dn: string, children: ChildEntry[] | ChildPage) => boolean
   filterNode: (dn: string, filter: string) => Promise<boolean>
   getFilter: (dn: string) => string | null
   revealNode: (ancestors: string[], targetDn: string) => Promise<boolean>
+  reloadNode: (dn: string) => Promise<boolean>
 }
 
 type ApiError = { response?: { data?: { detail?: string, message?: string } }, message?: string }
@@ -391,6 +398,7 @@ const notif = useNotificationStore()
 const directories   = ref<DirectoryOption[]>([])
 const loadingDirs   = ref(false)
 const route = useRoute()
+const router = useRouter()
 const selectedDirId = ref('')
 
 const treeLoading   = ref(false)
@@ -427,6 +435,9 @@ const refreshing        = ref(false)
 // A ?dn=… deep-link waiting for the directory's root to load before the
 // tree can be opened down to it (see revealDn).
 let pendingRevealDn: string | null = null
+// True while a deep-link reveal is walking the tree, so the URL sync below
+// doesn't record the intermediate root selection as a history entry.
+let revealing = false
 
 const branchFilter      = ref('')
 let branchFilterTimer: ReturnType<typeof setTimeout> | null = null
@@ -489,11 +500,8 @@ async function refreshSelectedBranch(): Promise<void> {
   if (!selectedDirId.value || !selectedDn.value || refreshing.value) return
   refreshing.value = true
   try {
-    const { data } = await browse(selectedDirId.value, selectedDn.value,
-      { limit: BRANCH_PAGE_SIZE }) as { data: BrowseResult }
-    if (treeRef.value) {
-      treeRef.value.refreshNode(selectedDn.value, toPage(data))
-    }
+    await refreshBranch(selectedDn.value)
+    const { data } = await browse(selectedDirId.value, selectedDn.value, DETAIL_ONLY) as { data: BrowseResult }
     entryDetail.value = toDetail(data)
   } catch (e) {
     const err = e as ApiError
@@ -562,13 +570,18 @@ async function revealDn(dn: string): Promise<void> {
     // The target is the root itself — already selected on load.
     return
   }
-  // The tree mounts on the tick after rootNodes is set.
-  await nextTick()
+  revealing = true
   let revealed = false
-  if (ancestors && treeRef.value) {
-    revealed = await treeRef.value.revealNode(ancestors, dn)
+  try {
+    // The tree mounts on the tick after rootNodes is set.
+    await nextTick()
+    if (ancestors && treeRef.value) {
+      revealed = await treeRef.value.revealNode(ancestors, dn)
+    }
+    await selectEntry(dn)
+  } finally {
+    revealing = false
   }
-  await selectEntry(dn)
   if (!revealed) {
     notif.info(ancestors
       ? 'Entry not found under its parent in the tree; showing its details.'
@@ -591,6 +604,44 @@ watch(() => [route.query.dir, route.query.dn], ([dir, dn]) => {
   }
 })
 
+// ── URL ↔ selection sync ───────────────────────────────────────────────────
+//
+// Mirror the selected directory and entry into ?dir=&dn= so any entry's
+// link can be copied straight from the address bar and the back button
+// steps through entries. The root entry is represented by the bare ?dir=
+// so the plain directory link stays canonical. Writes that would leave the
+// URL as it is are skipped, which is also what stops the route watcher
+// above and this watcher from feeding each other.
+watch([selectedDirId, selectedDn], ([dirId, dn]) => {
+  if (!dirId || treeLoading.value || revealing || pendingRevealDn) return
+  const rootDn = rootNodes.value[0]?.dn ?? ''
+  const wantDn = dn && !dnEquals(dn, rootDn) ? dn : undefined
+  const haveDir = typeof route.query.dir === 'string' ? route.query.dir : undefined
+  const haveDn = typeof route.query.dn === 'string' ? route.query.dn : undefined
+  const sameDn = wantDn ? (haveDn !== undefined && dnEquals(haveDn, wantDn)) : haveDn === undefined
+  if (haveDir === dirId && sameDn) return
+
+  const query: LocationQueryRaw = { ...route.query, dir: dirId, dn: wantDn }
+  // Moving between entries is a navigation worth a history entry; landing
+  // on the page or switching directory just fixes the URL up in place.
+  if (haveDir === dirId) {
+    void router.push({ query })
+  } else {
+    void router.replace({ query })
+  }
+})
+
+/**
+ * Re-list a branch after a write, keeping the tree's current page size and
+ * filter for it. The listing a mutation response carries is ignored on
+ * purpose: it is a plain first page and would replace a filtered or
+ * fully-loaded view.
+ */
+async function refreshBranch(dn: string): Promise<void> {
+  if (!dn || !treeRef.value) return
+  await treeRef.value.reloadNode(dn)
+}
+
 async function loadChildren(dn: string, opts: LoadChildrenOptions = {}): Promise<ChildPage> {
   // If children were preloaded (for root node), use them — unless the tree
   // is asking for something other than the default first page.
@@ -612,7 +663,7 @@ async function selectEntry(dn: string): Promise<void> {
   selectedDn.value = dn
   detailLoading.value = true
   try {
-    const { data } = await browse(selectedDirId.value, dn) as { data: BrowseResult }
+    const { data } = await browse(selectedDirId.value, dn, DETAIL_ONLY) as { data: BrowseResult }
     entryDetail.value = toDetail(data)
   } catch (e) {
     const err = e as ApiError
@@ -650,9 +701,7 @@ async function onDeleteConfirmed(): Promise<void> {
       childrenOnly ? false : deleteRecursive.value, childrenOnly) as { data: BrowseResult }
     showDeleteConfirm.value = false
     const refreshDn = browseResult.dn ?? ''
-    if (treeRef.value) {
-      treeRef.value.refreshNode(refreshDn, toPage(browseResult))
-    }
+    await refreshBranch(refreshDn)
     selectedDn.value = refreshDn
     entryDetail.value = toDetail(browseResult)
     notif.success(childrenOnly ? 'Child entries deleted successfully' : 'Entry deleted successfully')
@@ -690,15 +739,12 @@ async function onMoveConfirmed(): Promise<void> {
   moveError.value = ''
   moving.value = true
   try {
-    const { data: newParentBrowse } = await moveEntry(selectedDirId.value, selectedDn.value, moveTargetDn.value) as { data: BrowseResult }
+    await moveEntry(selectedDirId.value, selectedDn.value, moveTargetDn.value)
     showMoveModal.value = false
-    // Refresh the old parent's tree node (remove the moved entry)
+    // Old parent loses the entry, new parent gains it.
     const oldParentDn = extractParentDn(selectedDn.value)
-    const { data: oldParentBrowse } = await browse(selectedDirId.value, oldParentDn) as { data: BrowseResult }
-    if (treeRef.value) {
-      treeRef.value.refreshNode(oldParentDn, toPage(oldParentBrowse))
-      treeRef.value.refreshNode(moveTargetDn.value, toPage(newParentBrowse))
-    }
+    await refreshBranch(oldParentDn)
+    await refreshBranch(moveTargetDn.value)
     // Select the entry at its new location
     const rdn = extractRdn(selectedDn.value)
     const newDn = rdn + ',' + moveTargetDn.value
@@ -716,12 +762,10 @@ async function onRenameConfirmed(): Promise<void> {
   renameError.value = ''
   renaming.value = true
   try {
-    const { data: parentBrowse } = await renameEntry(selectedDirId.value, selectedDn.value, renameNewRdn.value) as { data: BrowseResult }
+    await renameEntry(selectedDirId.value, selectedDn.value, renameNewRdn.value)
     showRenameModal.value = false
     const parentDn = extractParentDn(selectedDn.value)
-    if (treeRef.value) {
-      treeRef.value.refreshNode(parentDn, toPage(parentBrowse))
-    }
+    await refreshBranch(parentDn)
     // Select the entry at its new DN
     const newDn = renameNewRdn.value + ',' + parentDn
     await selectEntry(newDn)
@@ -734,12 +778,10 @@ async function onRenameConfirmed(): Promise<void> {
   }
 }
 
-async function onEntryCreated(browseResult: BrowseResult): Promise<void> {
+async function onEntryCreated(): Promise<void> {
   creatingEntry.value = false
-  // The server returned the parent's browse result — use it to refresh the tree
-  if (treeRef.value) {
-    treeRef.value.refreshNode(selectedDn.value, toPage(browseResult))
-  }
+  // Re-list the parent (the selected entry) on the tree's own terms.
+  await refreshBranch(selectedDn.value)
   // Reload the current entry detail
   await selectEntry(selectedDn.value)
   notif.success('Entry created successfully')

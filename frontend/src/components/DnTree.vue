@@ -112,6 +112,8 @@ interface PageMeta {
   childCount: number | null
   approximate: boolean
   filter: string
+  /** The listing was requested unbounded (Load all), so a reload keeps it that way. */
+  all: boolean
 }
 
 /** The subset of a child DnTree's exposed API this component delegates to. */
@@ -121,6 +123,7 @@ interface DnTreeHandle {
   loadAll: (dn: string) => Promise<boolean>
   getFilter: (dn: string) => string | null
   revealNode: (ancestors: string[], targetDn: string) => Promise<boolean>
+  reloadNode: (dn: string) => Promise<boolean>
 }
 
 /**
@@ -163,7 +166,7 @@ function toPage(result: DnTreeNode[] | ChildPage): ChildPage {
   return Array.isArray(result) ? { children: result } : result
 }
 
-function storePage(dn: string, page: ChildPage, filter: string): void {
+function storePage(dn: string, page: ChildPage, opts: LoadChildrenOptions): void {
   const children = new Map(childrenMap.value)
   children.set(dn, page.children ?? [])
   childrenMap.value = children
@@ -173,7 +176,8 @@ function storePage(dn: string, page: ChildPage, filter: string): void {
     truncated: page.truncated === true,
     childCount: page.childCount ?? null,
     approximate: page.childCountApproximate === true,
-    filter,
+    filter: opts.filter ?? '',
+    all: opts.all === true,
   })
   pageMeta.value = meta
 }
@@ -184,7 +188,7 @@ async function load(node: DnTreeNode, opts: LoadChildrenOptions): Promise<boolea
   busy.add(node.dn)
   try {
     const page = toPage(await props.loadChildren(node.dn, opts))
-    storePage(node.dn, page, opts.filter ?? '')
+    storePage(node.dn, page, opts)
     return true
   } catch (e) {
     console.warn('Failed to load children for', node.dn, e)
@@ -290,7 +294,7 @@ function refreshNode(dn: string, children: DnTreeNode[] | ChildPage): boolean {
     // not the passed-in dn which may be a formatting variant. A refresh
     // is an unfiltered listing, so any branch filter is dropped.
     const page = toPage(children)
-    storePage(node.dn, page, '')
+    storePage(node.dn, page, {})
     expanded.add(node.dn)
     node.hasChildren = page.children.length > 0
     return true
@@ -400,6 +404,36 @@ function exactRdnFilter(dn: string): string | null {
   return ava ? `(${ava.name}=${escapeLdapValue(ava.value)})` : null
 }
 
+/**
+ * Re-fetch `dn`'s children from the server, keeping the branch's current
+ * view: the same filter, and unbounded if it had been loaded in full. This
+ * is what the browser calls after a create/delete/move/rename instead of
+ * using the listing the mutation returned, so a capped or filtered branch
+ * stays capped or filtered. A node that is in the tree but was never
+ * expanded gets a first page fetched (not shown until expanded) so its
+ * expand arrow reflects whether it now has children. Resolves true once a
+ * tree level owned the DN.
+ */
+async function reloadNode(dn: string): Promise<boolean> {
+  const node = findNode(dn)
+  if (node) {
+    const meta = pageMeta.value.get(node.dn)
+    const opts: LoadChildrenOptions = { filter: meta?.filter || undefined }
+    if (meta?.all) opts.all = true
+    const ok = await load(node, opts)
+    if (ok && !opts.filter) {
+      node.hasChildren = (childrenMap.value.get(node.dn)?.length ?? 0) > 0
+    }
+    return true
+  }
+  for (const [, childTree] of childRefs) {
+    if (await childTree?.reloadNode(dn)) {
+      return true
+    }
+  }
+  return false
+}
+
 /** The active filter on `dn`'s listing, '' when unfiltered, null when the DN isn't loaded here. */
 function getFilter(dn: string): string | null {
   const node = findNode(dn)
@@ -413,5 +447,5 @@ function getFilter(dn: string): string | null {
   return null
 }
 
-defineExpose({ refreshNode, filterNode, loadAll, getFilter, revealNode })
+defineExpose({ refreshNode, filterNode, loadAll, getFilter, revealNode, reloadNode })
 </script>

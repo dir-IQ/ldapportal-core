@@ -75,6 +75,15 @@ public class BrowseController {
     private final DirectoryConnectionRepository dirRepo;
 
     /**
+     * Children returned alongside a create/update/delete/move/rename
+     * response. The browser re-lists the affected branch itself with its
+     * own page size and filter, so this listing is only a courtesy first
+     * page — listing an entire 50k branch on every delete was the last
+     * unbounded read in the browser's write paths.
+     */
+    static final int REFRESH_CHILD_LIMIT = 500;
+
+    /**
      * Lists an entry and a page of its direct children.
      *
      * @param dn     entry to browse; defaults to the directory's base DN
@@ -111,7 +120,7 @@ public class BrowseController {
 
         // Return the parent's browse result so the UI can refresh the tree
         String parentDn = extractParentDn(req.dn(), dc.getBaseDn());
-        return browseService.browse(dc, parentDn);
+        return browseService.browse(dc, parentDn, null, REFRESH_CHILD_LIMIT);
     }
 
     @PutMapping
@@ -133,7 +142,7 @@ public class BrowseController {
         auditService.record(principal, directoryId, AuditAction.ENTRY_UPDATE, dn,
                 Map.of("modifications", req.modifications().size()));
 
-        return browseService.browse(dc, dn);
+        return browseService.browse(dc, dn, null, REFRESH_CHILD_LIMIT);
     }
 
     @DeleteMapping
@@ -153,7 +162,7 @@ public class BrowseController {
         // refresh that node; a full delete removes the entry, so return the
         // parent's listing to refresh the parent instead.
         String refreshDn = childrenOnly ? dn : extractParentDn(dn, dc.getBaseDn());
-        return browseService.browse(dc, refreshDn);
+        return browseService.browse(dc, refreshDn, null, REFRESH_CHILD_LIMIT);
     }
 
     @PostMapping("/move")
@@ -167,7 +176,7 @@ public class BrowseController {
         auditService.record(principal, directoryId, AuditAction.ENTRY_MOVE, dn,
                 Map.of("newParentDn", req.newParentDn()));
 
-        return browseService.browse(dc, req.newParentDn());
+        return browseService.browse(dc, req.newParentDn(), null, REFRESH_CHILD_LIMIT);
     }
 
     @PostMapping("/rename")
@@ -182,7 +191,7 @@ public class BrowseController {
         auditService.record(principal, directoryId, AuditAction.ENTRY_RENAME, dn,
                 Map.of("newRdn", req.newRdn()));
 
-        return browseService.browse(dc, parentDn);
+        return browseService.browse(dc, parentDn, null, REFRESH_CHILD_LIMIT);
     }
 
     private ModificationType toModificationType(AttributeModification.Operation op) {

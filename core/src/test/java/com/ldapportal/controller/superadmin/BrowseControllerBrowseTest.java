@@ -30,6 +30,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -120,6 +121,24 @@ class BrowseControllerBrowseTest extends BaseControllerTest {
                         .with(authentication(superadminAuth())))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.detail").value("Invalid LDAP filter: unbalanced"));
+    }
+
+    @Test
+    void deleteEntry_refreshListingIsBounded() throws Exception {
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dir()));
+        // A full delete refreshes the parent; the courtesy listing is a
+        // first page, never the whole branch.
+        when(browseService.browse(any(), eq(BASE), isNull(), eq(BrowseController.REFRESH_CHILD_LIMIT)))
+                .thenReturn(page(true, 12400, false));
+
+        mockMvc.perform(delete("/api/v1/superadmin/directories/{id}/browse", dirId)
+                        .param("dn", "ou=people," + BASE)
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.truncated").value(true))
+                .andExpect(jsonPath("$.childCount").value(12400));
+
+        verify(browseService, never()).browse(any(), any());
     }
 
     @Test
