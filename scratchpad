@@ -1,30 +1,3 @@
-
-[1/2] STEP 1/7: FROM node:22-alpine AS build
-Resolving "node" using unqualified-search registries (/etc/containers/registries.conf)
-Trying to pull docker.io/library/node:22-alpine...
-Getting image source signatures
-Copying blob sha256:16da5a6403776464b5bf551ef294de57da242eac594527ea551a46e7f76ac2d6
-Copying blob sha256:efbef6f9e333972a10ca323e700496a64e7ddcc3a6725e6afbbae52e690f4a4a
-Copying blob sha256:a2980c1fee17dfd6263234b253955e0e9d5f38d47c0e71c001139897134899d0
-Copying blob sha256:55afa1ecc21d2bb5e5045f32dafee56272ffd89860bac26f6c32123439af26a4
-Copying config sha256:395425e54d98ebbd748d388685a0c2de151a30fa92fffc10ba30fa63f3db64d6
-Writing manifest to image destination
-[1/2] STEP 2/7: WORKDIR /app
-[1/2] STEP 3/7: COPY package.json package-lock.json ./
-[1/2] STEP 4/7: RUN npm ci
-npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
-added 436 packages, and audited 437 packages in 14s
-111 packages are looking for funding
-  run `npm fund` for details
-12 vulnerabilities (2 low, 6 moderate, 4 high)
-To address all issues, run:
-  npm audit fix
-Run `npm audit` for details.
-npm notice
-npm notice New major version of npm available! 10.9.8 -> 12.0.2
-npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.0.2
-npm notice To update run: npm install -g npm@12.0.2
-npm notice
 [1/2] STEP 5/7: COPY . .
 [1/2] STEP 6/7: ARG VITE_BASE_PATH=/
 [1/2] STEP 7/7: RUN VITE_BASE_PATH="$VITE_BASE_PATH" npm run build
@@ -32,114 +5,16 @@ npm notice
 > vite build
 vite v7.3.6 building client environment for production...
 transforming...
-✓ 390 modules transformed.
-rendering chunks...
-computing gzip size...
-
-
-buildah bud -f frontend/Dockerfile --build-arg VITE_BASE_PATH=/idm/ -t $ECR_REPO_URI/$FRONTEND_REPO_NAME:$IMAGE_TAG frontend
-
-    - ctr=$(buildah from "$ECR_REPO_URI/$FRONTEND_REPO_NAME:$IMAGE_TAG")
-    - buildah run "$ctr" -- grep -q '/idm/assets/' /usr/share/nginx/html/index.html
-    - buildah rm "$ctr"
-
-
-  # Direct (non-WebSEAL) access: the /idm prefix reaches nginx, so serve
-# the same bundle under it and proxy the prefixed API.
-location /idm/api/v1/ {
-    proxy_pass http://${BACKEND_APP}:8080/api/v1/;
-    # No WebSEAL on this path to rewrite cookie paths, so do it here.
-    proxy_cookie_path /api/v1 /idm/api/v1;
-    proxy_cookie_path / /idm/;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    # Not behind WebSEAL: never forward a client-supplied identity header.
-    proxy_set_header iv-user "";
-    proxy_set_header iv-groups "";
-    proxy_set_header iv-creds "";
-}
-
-location /idm/ {
-    alias /usr/share/nginx/html/;
-    try_files $uri $uri/ /index.html;
-}
-
-
-
-
-# SPDX-License-Identifier: Apache-2.0
-#
-# TEMPORARY combined nginx template: serves the /idm-prefixed frontend image
-# both behind a transparent-path WebSEAL junction (`create -x ... /idm`) and
-# by direct access, from one pod.
-#
-# Trust note: this template forwards iv-user / iv-groups on every path, so the
-# backend sees a WebSEAL identity whether the request came through WebSEAL or
-# not. Anyone who can reach this pod directly can therefore forge iv-user.
-# Only use it while the direct hostname is on the INTERNAL load balancer
-# (VPN / bastion), and revert to the split admin + superadmin templates once
-# the WebSEAL junction is working.
-#
-# NGINX_ENVSUBST_FILTER=BACKEND_APP (set in the image) keeps envsubst away
-# from $1, $uri, $host and the other nginx runtime variables used here.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: ldapportal-frontend-nginx
-  labels:
-    app.kubernetes.io/name: ldapportal
-    app.kubernetes.io/component: frontend
-data:
-  default.conf.template: |
-    server {
-        listen 8080;
-
-        root /usr/share/nginx/html;
-        index index.html;
-
-        client_max_body_size 50m;
-
-        # Bare prefix → canonical trailing slash so relative asset URLs resolve.
-        location = /idm {
-            return 301 /idm/;
-        }
-
-        # Prefixed API (what the /idm build actually calls). Forward to the
-        # backend at its root path and map the backend's cookie paths
-        # (Path=/api/v1, Path=/) onto the prefix, since neither a transparent
-        # junction nor direct access rewrites them. If the browser ever shows
-        # Path=/idm/idm/api/v1 after a WebSEAL sign-in, WebSEAL is rewriting
-        # them too — delete the two proxy_cookie_path lines in that case.
-        location /idm/api/v1 {
-            proxy_pass http://${BACKEND_APP}:8080/api/v1;
-            proxy_cookie_path /api/v1 /idm/api/v1;
-            proxy_cookie_path / /idm/;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            # iv-user / iv-groups pass through unchanged (see trust note).
-        }
-
-        # Prefixed SPA: drop the prefix internally so the root locations serve
-        # the file, or fall back to index.html for deep links.
-        location /idm/ {
-            rewrite ^/idm/(.*)$ /$1 last;
-        }
-
-        # Unprefixed paths: health probes, and anything that still arrives at
-        # the root (for example while the junction is a standard one).
-        location /api/v1 {
-            proxy_pass http://${BACKEND_APP}:8080;
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-        }
-
-        location / {
-            try_files $uri $uri/ /index.html;
-        }
-    }
+✓ 259 modules transformed.
+✗ Build failed in 6.41s
+error during build:
+[vite:load-fallback] Could not load /app/src/stores/unsavedChanges (imported by src/components/AppLayout.vue?vue&type=script&setup=true&lang.ts): ENOENT: no such file or directory, open '/app/src/stores/unsavedChanges'
+    at async open (node:internal/fs/promises:639:25)
+    at async Object.readFile (node:internal/fs/promises:1252:14)
+    at async Object.handler (file:///app/node_modules/vite/dist/node/chunks/config.js:33249:21)
+    at async PluginDriver.hookFirstAndGetPlugin (file:///app/node_modules/rollup/dist/es/shared/node-entry.js:22453:28)
+    at async file:///app/node_modules/rollup/dist/es/shared/node-entry.js:21445:33
+    at async Queue.work (file:///app/node_modules/rollup/dist/es/shared/node-entry.js:22681:32)
+subprocess exited with status 1
+subprocess exited with status 1
+Error: building at STEP "RUN VITE_BASE_PATH="$VITE_BASE_PATH" npm run build": exit status 1
