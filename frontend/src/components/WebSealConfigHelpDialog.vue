@@ -185,9 +185,10 @@ defineEmits(['update:modelValue'])
         <h3 class="text-base font-semibold text-gray-900 mb-2">6. Enable WEBSEAL as a login method</h3>
         <p>
           Tick <strong>WEBSEAL</strong> in the <em>Enabled login methods</em> list at the top
-          of this section and save. This app's login page will then probe
-          <code>/auth/webseal/authorize</code> on every load and auto-sign-in the user when
-          the request carries a trusted <code>iv-user</code> header.
+          of this section and save. On every page load that arrives without a session, this
+          app then probes <code>/auth/webseal/authorize</code> before routing, and auto-signs-in
+          the user when the request carries a trusted <code>iv-user</code> header — so a
+          WebSEAL sign-in lands directly on the requested page without showing the login form.
         </p>
         <p class="mt-2">
           Leave <strong>LOCAL</strong> ticked for emergency access — the UI will prompt before
@@ -224,13 +225,15 @@ defineEmits(['update:modelValue'])
           <li>In an incognito window, navigate to the app through WebSEAL.</li>
           <li>Authenticate at the WebSEAL login page.</li>
           <li>
-            On arrival at this app's <code>/login</code>, you should be redirected immediately
-            to the dashboard. If you see the normal login form instead, something in the chain
-            failed — check the Troubleshooting section.
+            You should land directly on the dashboard (or the page you requested) without
+            the login form appearing at all. If you see the normal login form instead,
+            something in the chain failed — check the Troubleshooting section.
           </li>
           <li>
             Click <strong>Logout</strong>. The browser should navigate to
-            <code>/pkmslogout</code>, which terminates the WebSEAL session.
+            <code>/pkmslogout</code>, which terminates the WebSEAL session. This holds even
+            after this app's own session token has expired: the request still arrives through
+            the trusted junction, which is enough for logout to hand back the sign-off URL.
           </li>
         </ol>
       </section>

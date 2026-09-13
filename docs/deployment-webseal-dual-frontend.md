@@ -103,8 +103,15 @@ would NAT the peer IP** (see §5). The Trusted Proxies list must contain the
   injects `iv-user` / `iv-groups` (`-c iv-user,iv-groups` on the junction).
 - The junction must **overwrite** any client-supplied `iv-*` header from its own
   authenticated session — never pass an inbound one through.
-- On `/login`, the admin SPA silently probes `GET /api/v1/auth/webseal/authorize`
-  and is auto-signed-in when the trusted `iv-user` header is present.
+- When a page load arrives with no session, the admin SPA silently probes
+  `GET /api/v1/auth/webseal/authorize` during its boot-time session restore
+  (before routing) and is auto-signed-in when the trusted `iv-user` header is
+  present — the user lands on the requested page without ever seeing `/login`.
+  `/login` itself still runs the same probe as a fallback for direct visits.
+- Logout returns the WebSEAL sign-off URL (`websealLogoutUrl`) when the account
+  is WEBSEAL-typed, and also when the JWT has already expired but the request
+  still arrives through the trusted junction with `iv-user` — so an idle admin
+  clicking Logout hours later is still sent to `/pkmslogout`.
 - Serve the SPA assets and proxy `/api/v1` under the **same hostname** as the
   junction (see §3.4 for why).
 
@@ -267,9 +274,13 @@ Network / trust:
 
 Admin (WebSEAL) flow:
 
-- [ ] Incognito → admin host → IdP login → lands on dashboard auto-signed-in.
+- [ ] Incognito → admin host → IdP login → lands on dashboard auto-signed-in,
+      with no flash of the `/login` form in between (deep links such as
+      `/directories/<id>/users` land on that page directly).
 - [ ] An IdP user with **no** pre-provisioned WEBSEAL account gets 401.
-- [ ] Logout redirects to `/pkmslogout` and terminates the WebSEAL session.
+- [ ] Logout redirects to `/pkmslogout` and terminates the WebSEAL session —
+      including when clicked after the app's JWT lifetime (default 60 min)
+      has elapsed.
 
 Superadmin (LOCAL) flow:
 

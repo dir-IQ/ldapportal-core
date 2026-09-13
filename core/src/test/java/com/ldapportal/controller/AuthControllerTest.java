@@ -12,6 +12,7 @@ import com.ldapportal.auth.dto.LoginRequest;
 import com.ldapportal.auth.dto.LoginResponse;
 import com.ldapportal.entity.Account;
 import com.ldapportal.entity.ApplicationSettings;
+import com.ldapportal.entity.enums.AccountType;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.LdapUserService;
@@ -112,6 +113,52 @@ class AuthControllerTest extends BaseControllerTest {
     void me_unauthenticated_returns401() throws Exception {
         mockMvc.perform(get("/api/v1/auth/me"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // ── Logout → external sign-off URL ──────────────────────────────────────
+
+    @Test
+    void logout_websealAccount_returnsConfiguredLogoutUrl() throws Exception {
+        AuthPrincipal principal = new AuthPrincipal(PrincipalType.ADMIN, ACCOUNT_ID, "alice");
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                principal, null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
+        Account account = new Account();
+        account.setAuthType(AccountType.WEBSEAL);
+        given(accountRepository.findById(ACCOUNT_ID)).willReturn(Optional.of(account));
+        given(applicationSettingsService.getEntity()).willReturn(new ApplicationSettings());
+        given(webSealAuthenticationService.logoutUrlFor(AccountType.WEBSEAL))
+                .willReturn(Optional.of("/pkmslogout"));
+
+        mockMvc.perform(post("/api/v1/auth/logout").with(authentication(auth)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.logoutUrl").value("/pkmslogout"));
+    }
+
+    /**
+     * Regression: with the JWT expired the principal is null, so the
+     * account-type lookup can't run — yet the browser still holds a live
+     * WebSEAL session. Logout must still hand back /pkmslogout when the
+     * request itself arrived through the trusted junction, otherwise the
+     * pre-auth probe signs the user straight back in on the next visit.
+     */
+    @Test
+    void logout_noJwtButTrustedJunctionRequest_returnsWebsealLogoutUrl() throws Exception {
+        given(webSealAuthenticationService.logoutUrlForJunctionRequest(any()))
+                .willReturn(Optional.of("/pkmslogout"));
+
+        mockMvc.perform(post("/api/v1/auth/logout").header("iv-user", "alice"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.logoutUrl").value("/pkmslogout"));
+    }
+
+    @Test
+    void logout_noJwtAndNoJunction_returnsNoLogoutUrl() throws Exception {
+        given(webSealAuthenticationService.logoutUrlForJunctionRequest(any()))
+                .willReturn(Optional.empty());
+
+        mockMvc.perform(post("/api/v1/auth/logout"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.logoutUrl").doesNotExist());
     }
 
     @Test

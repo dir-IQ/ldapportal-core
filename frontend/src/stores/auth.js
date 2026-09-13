@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { login as apiLogin, logout as apiLogout, me } from '@/api/auth'
+import { login as apiLogin, logout as apiLogout, me, websealAuthorize } from '@/api/auth'
 import { selfServiceLogin as apiSelfServiceLogin } from '@/api/selfservice'
 import { getSetupStatus } from '@/api/setup'
 import { useTheme } from '@/composables/useTheme'
 import { useDensity } from '@/composables/useDensity'
 import { usePreferencesStore } from '@/stores/preferences'
+import { useSettingsStore } from '@/stores/settings'
 
 export const useAuthStore = defineStore('auth', () => {
   const principal   = ref(null)
@@ -121,13 +122,52 @@ export const useAuthStore = defineStore('auth', () => {
     if (initialized.value) return
     initialized.value = true
     try {
-      const { data } = await me()
+      const data = await restoreSession()
       principal.value = principalFromMe(data)
       syncPreferencesFromAccount(data)
       await hydratePreferences(data.accountType)
       await refreshSetupStatusIfSuperadmin(data.accountType)
     } catch {
       principal.value = null
+    }
+  }
+
+  /**
+   * Fetch /auth/me for the boot-time session restore. When there is no JWT
+   * yet but the page arrived through a WebSEAL junction, silently complete
+   * the header pre-auth here — before the router decides where to send the
+   * user — so a WebSEAL sign-in lands straight on the requested page instead
+   * of flashing /login while LoginView runs the same probe. The 401 from the
+   * first /auth/me is an expected answer, so it must not trigger the
+   * client's hard redirect to /login (that would also drop the deep link).
+   */
+  async function restoreSession() {
+    try {
+      const { data } = await me({ skipAuthRedirect: true })
+      return data
+    } catch (err) {
+      if (err?.response?.status !== 401) throw err
+      if (!(await tryWebsealPreAuth())) throw err
+      const { data } = await me({ skipAuthRedirect: true })
+      return data
+    }
+  }
+
+  /**
+   * Probe GET /auth/webseal/authorize when WEBSEAL is an enabled sign-in
+   * method. Returns true when the server accepted the trusted iv-user header
+   * and set the JWT cookie. Gated on the public branding payload so
+   * deployments without WebSEAL never pay for the extra request.
+   */
+  async function tryWebsealPreAuth() {
+    const settings = useSettingsStore()
+    try { await settings.init() } catch { /* store already swallows */ }
+    if (!settings.enabledAuthTypes.includes('WEBSEAL')) return false
+    try {
+      await websealAuthorize()
+      return true
+    } catch {
+      return false  // 401 or network error — no WebSEAL session, carry on.
     }
   }
 

@@ -203,6 +203,50 @@ class WebSealAuthenticationServiceTest {
         assertThat(service.logoutUrlFor(AccountType.LOCAL)).isEmpty();
     }
 
+    // ── Logout URL without a JWT (expired token, live WebSEAL session) ──────
+
+    @Test
+    void logoutUrlForJunctionRequest_returns_configured_url_when_trusted_peer_presents_iv_user() {
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.of(settings(EnumSet.of(AccountType.WEBSEAL), "10.0.0.0/8")));
+        when(request.getRemoteAddr()).thenReturn("10.1.2.3");
+        when(request.getHeader("iv-user")).thenReturn("alice");
+        assertThat(service.logoutUrlForJunctionRequest(request)).contains("/pkmslogout");
+    }
+
+    @Test
+    void logoutUrlForJunctionRequest_is_empty_when_peer_untrusted() {
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.of(settings(EnumSet.of(AccountType.WEBSEAL), "10.0.0.0/8")));
+        when(request.getRemoteAddr()).thenReturn("203.0.113.5");
+        when(request.getHeader("iv-user")).thenReturn("alice");
+        assertThat(service.logoutUrlForJunctionRequest(request)).isEmpty();
+    }
+
+    @Test
+    void logoutUrlForJunctionRequest_is_empty_when_no_iv_user_header() {
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.of(settings(EnumSet.of(AccountType.WEBSEAL), "10.0.0.0/8")));
+        when(request.getRemoteAddr()).thenReturn("10.1.2.3");
+        when(request.getHeader("iv-user")).thenReturn(null);
+        assertThat(service.logoutUrlForJunctionRequest(request)).isEmpty();
+    }
+
+    @Test
+    void logoutUrlForJunctionRequest_is_empty_when_WEBSEAL_disabled_or_unconfigured() {
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.of(settings(Set.of(AccountType.LOCAL), "10.0.0.0/8")));
+        assertThat(service.logoutUrlForJunctionRequest(request)).isEmpty();
+
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.empty());
+        assertThat(service.logoutUrlForJunctionRequest(request)).isEmpty();
+    }
+
+    @Test
+    void logoutUrlForJunctionRequest_never_touches_accounts_or_issues_tokens() {
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.of(settings(EnumSet.of(AccountType.WEBSEAL), "10.0.0.0/8")));
+        when(request.getRemoteAddr()).thenReturn("10.1.2.3");
+        when(request.getHeader("iv-user")).thenReturn("alice");
+        service.logoutUrlForJunctionRequest(request);
+        org.mockito.Mockito.verifyNoInteractions(accountRepo, jwtTokenService);
+    }
+
     // ── Rejection diagnostics (operator-facing logging) ─────────────────────
     // When a junction IS in front (an iv-user header is present) but auth is
     // rejected, log a WARN so an admin can diagnose a misconfigured CIDR — but

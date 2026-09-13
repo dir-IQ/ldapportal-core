@@ -11,14 +11,19 @@ const client = axios.create({
   withCredentials: true, // send the httpOnly JWT cookie on every request
 })
 
-// On 401 redirect to the appropriate login page.
+// On 401 redirect to the appropriate login page. A request may opt out with
+// `{ skipAuthRedirect: true }` in its axios config — used by the session
+// probes (/auth/me on boot, the WebSEAL pre-auth probe) where a 401 is an
+// expected answer the caller handles itself, not a session expiry. Without
+// the opt-out, the router's own redirect (which preserves the deep link in
+// `?redirect=`) loses the race to this hard navigation.
 // On 402 (license: missing entitlement / limit exceeded) surface the
 // global UpgradeModal so users see why their action was rejected.
 client.interceptors.response.use(
   res => res,
   err => {
     const status = err.response?.status
-    if (status === 401) {
+    if (status === 401 && !err.config?.skipAuthRedirect) {
       const path = window.location.pathname
       const loginPath = withBase('login')
       const selfServiceLoginPath = withBase('self-service/login')
