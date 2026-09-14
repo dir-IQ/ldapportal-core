@@ -119,6 +119,59 @@ class LdapBrowseServiceTest {
         inMemoryServer.shutDown(true);
     }
 
+    // ── searchPage: truncation, match count, load-all (addPeople is below) ─────
+
+    @Test
+    void searchPage_underLimit_isCompleteWithExactTotal() throws Exception {
+        addPeople(5); // + Alice = 6 persons
+
+        LdapBrowseService.SearchPage page = browseService.searchPage(
+                dc, BASE_DN, SearchScope.SUB, "(objectClass=person)", List.of("cn"), 10, 0, false);
+
+        assertThat(page.entries()).hasSize(6);
+        assertThat(page.truncated()).isFalse();
+        assertThat(page.total()).isEqualTo(6);
+        assertThat(page.totalIsLowerBound()).isFalse();
+    }
+
+    @Test
+    void searchPage_overLimit_truncatesToLimitAndCountsEveryMatch() throws Exception {
+        addPeople(30); // + Alice = 31 persons
+        dc.setPagingSize(7); // the count must page through, not stop at one page
+        searchCount.set(0);
+
+        LdapBrowseService.SearchPage page = browseService.searchPage(
+                dc, BASE_DN, SearchScope.SUB, "(objectClass=person)", List.of("cn"), 10, 0, false);
+
+        assertThat(page.entries()).hasSize(10);
+        assertThat(page.truncated()).isTrue();
+        assertThat(page.total()).isEqualTo(31);
+        assertThat(page.totalIsLowerBound()).isFalse();
+    }
+
+    @Test
+    void searchPage_limitZero_loadsEveryMatch() throws Exception {
+        addPeople(30);
+        dc.setPagingSize(7);
+
+        LdapBrowseService.SearchPage page = browseService.searchPage(
+                dc, BASE_DN, SearchScope.SUB, "(objectClass=person)", List.of("cn"), 0, 0, false);
+
+        assertThat(page.entries()).hasSize(31);
+        assertThat(page.truncated()).isFalse();
+        assertThat(page.total()).isEqualTo(31);
+    }
+
+    @Test
+    void searchPage_noMatches_isEmptyAndComplete() {
+        LdapBrowseService.SearchPage page = browseService.searchPage(
+                dc, BASE_DN, SearchScope.SUB, "(cn=nobody)", List.of(), 10, 0, false);
+
+        assertThat(page.entries()).isEmpty();
+        assertThat(page.truncated()).isFalse();
+        assertThat(page.total()).isZero();
+    }
+
     // ── attribute-array construction (the 4 quadrants) ───────────────────────
 
     @Test

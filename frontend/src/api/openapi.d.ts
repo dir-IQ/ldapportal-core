@@ -4343,6 +4343,13 @@ export interface components {
             /** Format: int32 */
             memberCount?: number;
         };
+        SearchPage: {
+            entries?: components["schemas"]["SearchEntry"][];
+            truncated?: boolean;
+            /** Format: int32 */
+            total?: number;
+            totalIsLowerBound?: boolean;
+        };
         SearchEntry: {
             dn?: string;
             attributes?: {
@@ -9119,7 +9126,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["SearchEntry"][];
+                    "*/*": components["schemas"]["SearchPage"];
                 };
             };
         };

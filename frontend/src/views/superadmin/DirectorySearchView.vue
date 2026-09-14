@@ -276,6 +276,34 @@
           >Browse</RouterLink>
         </template>
       </EditableResultsTable>
+
+      <!-- Truncation notice: the page stopped at the size limit. "Load all"
+           re-runs the search unbounded (the server still caps at its own
+           ceiling, in which case the notice stays but without the action). -->
+      <p
+        v-if="searchMeta?.truncated && results.length"
+        class="mt-3 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2"
+        role="status"
+        data-testid="search-truncated"
+      >
+        First {{ results.length.toLocaleString() }} of
+        {{ searchMeta.totalIsLowerBound ? 'more than ' : '' }}{{ searchMeta.total.toLocaleString() }}
+        entries returned.
+        <template v-if="!searchMeta.all">
+          Either
+          <button
+            type="button"
+            class="font-medium text-blue-700 hover:underline disabled:opacity-50"
+            :disabled="searching || loadingAll"
+            @click="loadAll"
+            data-testid="search-load-all"
+          >{{ loadingAll ? 'Loading all…' : 'Load All' }}</button>
+          or narrow the search filter.
+        </template>
+        <template v-else>
+          Narrow the search filter to see the rest.
+        </template>
+      </p>
     </div>
 
     <!-- Entry detail dialog. Backdrop click intentionally does NOT close it
@@ -380,6 +408,24 @@ interface DirectoryEntry {
   attributes: Record<string, string[]>
 }
 
+/** What the search endpoint says lies beyond the page it returned. */
+interface SearchPage {
+  entries?: DirectoryEntry[]
+  truncated?: boolean
+  total?: number
+  totalIsLowerBound?: boolean
+}
+interface SearchMeta {
+  truncated: boolean
+  total: number
+  totalIsLowerBound: boolean
+  /** The page was requested unbounded (Load all), so there is nothing more to load. */
+  all: boolean
+}
+
+/** Page size the search runs with unless the operator lowers it; also the server's per-page ceiling. */
+const DEFAULT_LIMIT = 1000
+
 interface SavedSearch {
   name: string
   baseDn: string
@@ -433,6 +479,8 @@ const loadingDirs = ref(false)
 const searching   = ref(false)
 const hasSearched = ref(false)
 const results      = ref<DirectoryEntry[]>([])
+const searchMeta   = ref<SearchMeta | null>(null)
+const loadingAll   = ref(false)
 const selectedEntry = ref<DirectoryEntry | null>(null)
 const entryGroups   = ref<Array<{ dn: string, cn: string }> | null>(null)
 const loadingGroups = ref(false)
@@ -443,7 +491,7 @@ const form = ref({
   scope: 'sub',
   filter: '',
   attributes: '',
-  limit: 100,
+  limit: DEFAULT_LIMIT,
   timeLimit: 0,           // 0 = no server-side timeout
   includeOperational: false,
 })
@@ -590,7 +638,7 @@ function onRowSaved(dn: string, response: LdapEntryResponse): void {
 // disclosure and need this hint.
 const advancedFieldsActive = computed(() =>
   form.value.scope !== 'sub'
-  || form.value.limit !== 100
+  || form.value.limit !== DEFAULT_LIMIT
   || (form.value.timeLimit ?? 0) !== 0,
 )
 
@@ -627,7 +675,17 @@ const tableRows = computed(() =>
   }),
 )
 
-async function doSearch(): Promise<void> {
+/** The Search button: one page of results at the configured size limit. */
+function doSearch(): Promise<void> {
+  return runSearch(false)
+}
+
+/**
+ * Runs the search. `all` re-runs it unbounded (limit 0 — the server caps at
+ * its own ceiling and reports it in the response), which is what the
+ * "Load all" action in the truncation notice does.
+ */
+async function runSearch(all: boolean): Promise<void> {
   if (!form.value.directoryId) return
   searching.value = true
   hasSearched.value = false
@@ -661,7 +719,7 @@ async function doSearch(): Promise<void> {
       scope: form.value.scope,
       filter: form.value.filter || undefined,
       attributes: attrs || undefined,
-      limit: form.value.limit,
+      limit: all ? 0 : form.value.limit,
     }
     // Only send the new params when they deviate from defaults — keeps
     // the wire request short for the common case and means a
@@ -675,7 +733,14 @@ async function doSearch(): Promise<void> {
       params.includeOperational = true
     }
     const { data } = await searchEntries(form.value.directoryId, params)
-    results.value = Array.isArray(data) ? (data as DirectoryEntry[]) : []
+    const page = (data ?? {}) as SearchPage
+    results.value = Array.isArray(page.entries) ? page.entries : []
+    searchMeta.value = {
+      truncated: page.truncated === true,
+      total: page.total ?? results.value.length,
+      totalIsLowerBound: page.totalIsLowerBound === true,
+      all,
+    }
     hasSearched.value = true
     saveToHistory(form.value)
   } catch (e) {
@@ -683,6 +748,17 @@ async function doSearch(): Promise<void> {
     notif.error(err.response?.data?.detail || err.message || 'Search failed')
   } finally {
     searching.value = false
+  }
+}
+
+/** "Load all" from the truncation notice: the same search, unbounded. */
+async function loadAll(): Promise<void> {
+  if (loadingAll.value) return
+  loadingAll.value = true
+  try {
+    await runSearch(true)
+  } finally {
+    loadingAll.value = false
   }
 }
 
@@ -761,7 +837,7 @@ async function loadGroups(dn: string): Promise<void> {
       attributes: 'cn,dn',
       limit: 200,
     })
-    const arr = Array.isArray(data) ? (data as DirectoryEntry[]) : []
+    const arr = Array.isArray((data as SearchPage)?.entries) ? (data as SearchPage).entries! : []
     entryGroups.value = arr
       .map(e => ({ dn: e.dn, cn: (e.attributes?.cn || [])[0] || '' }))
       .sort((a, b) => (a.cn || a.dn).localeCompare(b.cn || b.dn))
@@ -777,10 +853,11 @@ async function loadGroups(dn: string): Promise<void> {
 function clearForm(): void {
   form.value = {
     ...form.value,
-    baseDn: '', scope: 'sub', filter: '', attributes: '', limit: 100,
+    baseDn: '', scope: 'sub', filter: '', attributes: '', limit: DEFAULT_LIMIT,
     timeLimit: 0, includeOperational: false,
   }
   results.value = []
+  searchMeta.value = null
   hasSearched.value = false
 }
 
