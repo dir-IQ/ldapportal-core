@@ -36,9 +36,15 @@ vi.mock('@/api/profiles', () => ({ listAllProfiles: vi.fn().mockResolvedValue({ 
 vi.mock('@/stores/notifications', () => ({
   useNotificationStore: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }),
 }))
+const authState = vi.hoisted(() => ({ canManageAccounts: true }))
 vi.mock('@/stores/auth', () => ({
   // Owner so the SUPERADMIN Permissions tab is offered (it's owner-gated).
-  useAuthStore: () => ({ principal: { id: 'me' }, isSuperadminOwner: true }),
+  useAuthStore: () => ({
+    principal: { id: 'me' },
+    isSuperadminOwner: true,
+    hasSuperadminPermission: (key: string) =>
+      key === 'superadmin.manage_application_accounts' ? authState.canManageAccounts : true,
+  }),
 }))
 vi.mock('@/stores/settings', () => ({
   useSettingsStore: () => ({ enabledAuthTypes: ['LOCAL'] }),
@@ -84,6 +90,7 @@ function saveButton(wrapper: ReturnType<typeof mount>) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  authState.canManageAccounts = true
   adminApi.listAdmins.mockResolvedValue({ data: rows() })
   adminApi.getFeatureCatalog.mockResolvedValue({ data: [
     { key: 'USER_CREATE', dbValue: 'user.create' },
@@ -175,9 +182,9 @@ describe('AdminUsersView superadmin permissions tab', () => {
     // Lazy-load of the account's current grants.
     expect(superApi.getSuperadminPermissions).toHaveBeenCalledWith('s1')
 
-    // Grant a single scoped permission, then save from the modal footer.
-    const licenseLabel = wrapper.findAll('label').find(l => l.text().includes('View license'))!
-    await licenseLabel.find('input[type="checkbox"]').setValue(true)
+    // Grant a single scoped permission (License → View), then save from the modal footer.
+    const licenseRow = wrapper.findAll('[role="radiogroup"]').find(r => r.text().includes('License'))!
+    await licenseRow.find('input[type="radio"][value="view"]').trigger('change')
     await saveButton(wrapper).trigger('click')
     await flushPromises()
 
@@ -283,3 +290,85 @@ describe('AdminUsersView server validation errors', () => {
     expect(summary.text()).not.toContain('Validation failed')
   })
 })
+
+describe('AdminUsersView superadmin permission tiers', () => {
+  /** The radio for `tier` in the area row labelled `areaLabel`. */
+  function tierRadio(wrapper: ReturnType<typeof mount>, areaLabel: string, tier: string) {
+    const row = wrapper.findAll('[role="radiogroup"]').find(r => r.text().includes(areaLabel))!
+    return row.find(`input[type="radio"][value="${tier}"]`)
+  }
+
+  async function openSuperadminPermissions(wrapper: ReturnType<typeof mount>) {
+    await editButtons(wrapper)[1].trigger('click') // superadmin row
+    await wrapper.findAll('button').find(b => b.text() === 'Permissions')!.trigger('click')
+    await flushPromises()
+  }
+
+  it('renders one None / View / Manage row per area and reflects the stored grant', async () => {
+    superApi.getSuperadminPermissions.mockResolvedValue({
+      data: { all: [], granted: ['superadmin.view_directories', 'superadmin.manage_api_tokens'], effective: [], owner: false },
+    })
+    const wrapper = mount(AdminUsersView, { global: { stubs } })
+    await flushPromises()
+    await openSuperadminPermissions(wrapper)
+
+    expect((tierRadio(wrapper, 'Directory connections', 'view').element as HTMLInputElement).checked).toBe(true)
+    expect((tierRadio(wrapper, 'API tokens', 'manage').element as HTMLInputElement).checked).toBe(true)
+    expect((tierRadio(wrapper, 'Provisioning profiles', 'none').element as HTMLInputElement).checked).toBe(true)
+    // View-only and manage-only areas offer just the tiers they have keys for.
+    expect(tierRadio(wrapper, 'License', 'manage').exists()).toBe(false)
+    expect(tierRadio(wrapper, 'Directory schema', 'view').exists()).toBe(false)
+  })
+
+  it('stores one key per area: View keeps the view key, Manage swaps it for the manage key', async () => {
+    superApi.getSuperadminPermissions.mockResolvedValue({
+      data: { all: [], granted: ['superadmin.view_directories'], effective: [], owner: false },
+    })
+    const wrapper = mount(AdminUsersView, { global: { stubs } })
+    await flushPromises()
+    await openSuperadminPermissions(wrapper)
+
+    await tierRadio(wrapper, 'Directory connections', 'manage').trigger('change')
+    await tierRadio(wrapper, 'Integrations', 'view').trigger('change')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(superApi.updateSuperadminPermissions).toHaveBeenCalledWith('s1',
+      expect.arrayContaining(['superadmin.manage_directories', 'superadmin.view_integrations']))
+    const stored = superApi.updateSuperadminPermissions.mock.calls[0][1] as string[]
+    expect(stored).not.toContain('superadmin.view_directories')
+    expect(stored).toHaveLength(2)
+  })
+
+  it('shows every area at its top tier, locked, while the account is an owner', async () => {
+    superApi.getSuperadminPermissions.mockResolvedValue({
+      data: { all: [], granted: ['superadmin.manage_superadmins'], effective: [], owner: true },
+    })
+    adminApi.listAdmins.mockResolvedValue({ data: [
+      ...rows(),
+      { id: 's2', username: 'root2', displayName: 'Root2', email: 'r2@x', role: 'SUPERADMIN', authType: 'LOCAL', active: true },
+    ] })
+    const wrapper = mount(AdminUsersView, { global: { stubs } })
+    await flushPromises()
+    await openSuperadminPermissions(wrapper)
+
+    const manage = tierRadio(wrapper, 'Directory connections', 'manage').element as HTMLInputElement
+    expect(manage.checked).toBe(true)
+    expect(wrapper.find('fieldset').attributes('disabled')).toBeDefined()
+  })
+})
+
+describe('AdminUsersView view-only access', () => {
+  it('hides every write control for a superadmin holding only the view tier', async () => {
+    authState.canManageAccounts = false
+    const wrapper = mount(AdminUsersView, { global: { stubs } })
+    await flushPromises()
+
+    expect(wrapper.findAll('button').some(b => b.text() === '+ New Admin')).toBe(false)
+    expect(editButtons(wrapper)).toHaveLength(0)
+    expect(deleteButtons(wrapper)).toHaveLength(0)
+    // The read-only breakdown stays available.
+    expect(wrapper.findAll('[data-action="What can they do?"]').length).toBeGreaterThan(0)
+  })
+})
+

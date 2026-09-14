@@ -11,6 +11,9 @@ vi.mock('vue-router', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }))
 
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ hasSuperadminPermission: () => true }),
+}))
 vi.mock('@/api/directories', () => ({
   listDirectories: vi.fn(() =>
     Promise.resolve({ data: [

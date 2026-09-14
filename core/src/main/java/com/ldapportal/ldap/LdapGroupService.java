@@ -113,7 +113,10 @@ public class LdapGroupService {
                 }
 
                 for (SearchResultEntry entry : searchResult.getSearchEntries()) {
-                    results.add(LdapEntryMapper.toGroup(entry));
+                    // AD returns >MaxValRange members as `member;range=…`
+                    // chunks; complete them on the same connection so the
+                    // mapped group carries its full membership.
+                    results.add(LdapEntryMapper.toGroup(RangedAttributeResolver.resolve(conn, entry)));
                     if (results.size() >= maxResults) {
                         return results;
                     }
@@ -164,7 +167,7 @@ public class LdapGroupService {
             if (entry == null) {
                 throw new ResourceNotFoundException("LDAP group", dn);
             }
-            return LdapEntryMapper.toGroup(entry);
+            return LdapEntryMapper.toGroup(RangedAttributeResolver.resolve(conn, entry));
         });
     }
 

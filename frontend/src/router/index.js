@@ -120,6 +120,7 @@ const router = createRouter({
           path: 'settings/:section?',
           name: 'settings',
           component: () => import('@/views/settings/SettingsView.vue'),
+          meta: { requiresSuperadminPermission: 'superadmin.view_application_settings' },
         },
 
         // Superadmin
@@ -137,13 +138,13 @@ const router = createRouter({
           path: 'superadmin/admins',
           name: 'adminUsers',
           component: () => import('@/views/superadmin/AdminUsersView.vue'),
-          meta: { requiresSuperadmin: true },
+          meta: { requiresSuperadmin: true, requiresSuperadminPermission: 'superadmin.view_application_accounts' },
         },
         {
           path: 'superadmin/api-tokens',
           name: 'apiTokens',
           component: () => import('@/views/superadmin/ApiTokensView.vue'),
-          meta: { requiresSuperadmin: true },
+          meta: { requiresSuperadmin: true, requiresSuperadminPermission: 'superadmin.view_api_tokens' },
         },
         // The license view moved into Application Settings as a section
         // (/settings/license). Keep a redirect for anyone with a stale
@@ -156,13 +157,13 @@ const router = createRouter({
           path: 'superadmin/directories',
           name: 'manageDirectories',
           component: () => import('@/views/superadmin/DirectoriesManageView.vue'),
-          meta: { requiresSuperadmin: true },
+          meta: { requiresSuperadmin: true, requiresSuperadminPermission: 'superadmin.view_directories' },
         },
         {
           path: 'superadmin/directories/:directoryId/discover',
           name: 'discoveryWizard',
           component: () => import('@/views/superadmin/DiscoveryWizardView.vue'),
-          meta: { requiresSuperadmin: true },
+          meta: { requiresSuperadmin: true, requiresSuperadminPermission: 'superadmin.manage_directories' },
         },
         {
           // ISVA full-mode integration config — hidden from the
@@ -175,13 +176,13 @@ const router = createRouter({
           path: 'superadmin/directories/:id/isva-config',
           name: 'isvaConfig',
           component: () => import('@/views/superadmin/IsvaConfigView.vue'),
-          meta: { requiresSuperadmin: true },
+          meta: { requiresSuperadmin: true, requiresSuperadminPermission: 'superadmin.view_integrations' },
         },
         {
           path: 'superadmin/entra/:directoryId',
           name: 'entraBrowser',
           component: () => import('@/views/superadmin/EntraBrowserView.vue'),
-          meta: { requiresSuperadmin: true },
+          meta: { requiresSuperadmin: true, requiresSuperadminPermission: 'superadmin.view_directories' },
         },
         {
           path: 'superadmin/audit-log',
@@ -193,7 +194,7 @@ const router = createRouter({
           path: 'superadmin/audit-sources',
           name: 'auditSources',
           component: () => import('@/views/superadmin/AuditSourcesView.vue'),
-          meta: { requiresSuperadmin: true },
+          meta: { requiresSuperadmin: true, requiresSuperadminPermission: 'superadmin.view_integrations' },
         },
         {
           path: 'superadmin/directory-sync',
@@ -203,13 +204,13 @@ const router = createRouter({
           // the link doesn't render in editions that withhold the
           // entitlement. Deep links still resolve to this route; the
           // API then returns 403 and the view surfaces an error.
-          meta: { requiresSuperadmin: true },
+          meta: { requiresSuperadmin: true, requiresSuperadminPermission: 'superadmin.view_directory_sync' },
         },
         {
           path: 'superadmin/profiles',
           name: 'profiles',
           component: () => import('@/views/profiles/SuperadminProfilesView.vue'),
-          meta: { requiresSuperadmin: true },
+          meta: { requiresSuperadmin: true, requiresSuperadminPermission: 'superadmin.view_provisioning_profiles' },
         },
         {
           path: 'superadmin/directory-browser',
@@ -358,6 +359,14 @@ router.beforeEach(async (to) => {
     return { name: 'selfServiceProfile' }
   }
   if (to.meta.requiresSuperadmin && !auth.isSuperadmin) {
+    return { path: await resolveHomePath(auth) }
+  }
+  // System-scoped superadmin permission (view tier is enough to open a page;
+  // the page hides its write controls behind the manage tier). Scoped
+  // superadmins without the grant land on the dashboard, the same place the
+  // sidebar sends them since the link isn't rendered for them either.
+  if (to.meta.requiresSuperadminPermission
+      && !auth.hasSuperadminPermission(to.meta.requiresSuperadminPermission)) {
     return { path: await resolveHomePath(auth) }
   }
   if (to.meta.requiresCompliance && !auth.isComplianceEnabled) {

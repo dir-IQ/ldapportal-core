@@ -3,6 +3,7 @@ package com.ldapportal.core.events.controller;
 
 import com.ldapportal.auth.AuthContextHelper;
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.core.events.dto.CreateEventSubscriptionRequest;
 import com.ldapportal.core.events.dto.EventSubscriptionResponse;
 import com.ldapportal.core.events.dto.TestDeliveryResult;
@@ -10,6 +11,7 @@ import com.ldapportal.core.events.dto.UpdateEventSubscriptionRequest;
 import com.ldapportal.core.events.entity.EventSubscription;
 import com.ldapportal.core.events.enums.ChannelType;
 import com.ldapportal.core.events.service.EventSubscriptionService;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -25,6 +27,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/superadmin/event-subscriptions")
 @PreAuthorize("hasRole('SUPERADMIN')")
+@RequiresSuperadminPermission(SuperadminPermission.VIEW_EVENT_BACKBONE)
 @RequiredArgsConstructor
 public class EventSubscriptionController {
 
@@ -44,6 +47,7 @@ public class EventSubscriptionController {
     }
 
     @PostMapping
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_EVENT_BACKBONE)
     @ResponseStatus(HttpStatus.CREATED)
     public EventSubscriptionResponse create(
             @Valid @RequestBody CreateEventSubscriptionRequest req,
@@ -54,6 +58,7 @@ public class EventSubscriptionController {
     }
 
     @PutMapping("/{id}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_EVENT_BACKBONE)
     public EventSubscriptionResponse update(
             @PathVariable UUID id,
             @Valid @RequestBody UpdateEventSubscriptionRequest req) {
@@ -62,6 +67,7 @@ public class EventSubscriptionController {
     }
 
     @PatchMapping("/{id}/enabled")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_EVENT_BACKBONE)
     public EventSubscriptionResponse setEnabled(
             @PathVariable UUID id,
             @RequestBody Map<String, Boolean> body) {
@@ -74,6 +80,7 @@ public class EventSubscriptionController {
     }
 
     @DeleteMapping("/{id}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_EVENT_BACKBONE)
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void delete(@PathVariable UUID id) {
         rejectApiTokenCaller();
@@ -81,6 +88,7 @@ public class EventSubscriptionController {
     }
 
     @PostMapping("/{id}/test")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_EVENT_BACKBONE)
     public TestDeliveryResult testDelivery(
             @PathVariable UUID id,
             @AuthenticationPrincipal AuthPrincipal principal) {

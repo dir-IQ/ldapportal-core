@@ -6,7 +6,7 @@
         <h1 class="text-2xl font-bold text-gray-900">Manage Accounts</h1>
         <p class="text-sm text-gray-500 mt-1">Create and manage superadmin and admin accounts</p>
       </div>
-      <button @click="openCreate" class="btn-primary">+ New Admin</button>
+      <button v-if="canManageAccounts" @click="openCreate" class="btn-primary">+ New Admin</button>
     </div>
 
     <DataTable :columns="cols" :rows="admins" :loading="loading" row-key="id" empty-text="No admin users found.">
@@ -33,10 +33,10 @@
           { label: 'What can they do?', onClick: () => openEffectivePermissions(row as AdminRow),
             title: 'Show the computed ‘what can this admin actually do?’ breakdown per profile' },
           { label: 'Delete',           onClick: () => confirmDelete(row as AdminRow), danger: true,
-            hidden: (row as AdminRow).id === currentPrincipalId },
+            hidden: !canManageAccounts || (row as AdminRow).id === currentPrincipalId },
         ]">
           <template #primary>
-            <button @click="openEdit(row as AdminRow)" class="btn-secondary btn-compact">Edit</button>
+            <button v-if="canManageAccounts" @click="openEdit(row as AdminRow)" class="btn-secondary btn-compact">Edit</button>
           </template>
         </ActionMenu>
       </template>
@@ -154,18 +154,37 @@
                 </span>
               </span>
             </label>
+            <!-- Per-area access tier. View grants the read-only endpoints and
+                 page; Manage adds the writes (and implies View server-side, so
+                 only one key per area is stored). -->
             <fieldset :disabled="saPermIsOwner" :class="saPermIsOwner ? 'opacity-50' : ''">
-              <legend class="text-xs font-medium uppercase tracking-wide text-gray-500 mb-2">Or grant specific permissions</legend>
-              <div class="space-y-1.5">
-                <label v-for="key in saScopedCatalog" :key="key" class="flex items-center gap-2 text-sm cursor-pointer">
-                  <input
-                    type="checkbox"
-                    :checked="saPermIsOwner || saPermChecked.has(key)"
-                    @change="toggleSaPerm(key)"
-                    class="rounded border-gray-300"
-                  />
-                  <span class="text-gray-700">{{ saPermLabel(key) }}</span>
-                </label>
+              <legend class="text-xs font-medium uppercase tracking-wide text-gray-500 mb-1">Or grant access per area</legend>
+              <p class="text-xs text-gray-500 mb-2">
+                <strong class="font-medium text-gray-700">View</strong> allows browsing an area without changing it;
+                <strong class="font-medium text-gray-700">Manage</strong> also allows creating, editing, and deleting.
+              </p>
+              <div class="divide-y divide-gray-100">
+                <div v-for="area in SUPERADMIN_PERMISSION_AREAS" :key="area.id"
+                     class="flex items-center justify-between gap-3 py-1.5"
+                     role="radiogroup" :aria-label="`${area.label} access`">
+                  <span class="min-w-0">
+                    <span class="block text-sm text-gray-700">{{ area.label }}</span>
+                    <span v-if="area.description" class="block text-xs text-gray-500">{{ area.description }}</span>
+                  </span>
+                  <span class="flex items-center gap-3 shrink-0 text-xs text-gray-700">
+                    <label v-for="tier in areaTiers(area)" :key="tier" class="inline-flex items-center gap-1 cursor-pointer">
+                      <input
+                        type="radio"
+                        :name="`sa-perm-${area.id}`"
+                        :value="tier"
+                        :checked="saAreaTier(area) === tier"
+                        @change="setSaAreaTier(area, tier)"
+                        class="border-gray-300"
+                      />
+                      <span>{{ areaTierLabel(area, tier) }}</span>
+                    </label>
+                  </span>
+                </div>
               </div>
             </fieldset>
           </template>
@@ -310,8 +329,14 @@ import {
 } from '@/api/superadmin'
 import {
   SUPERADMIN_OWNER_KEY,
-  SUPERADMIN_PERMISSION_LABELS,
-  superadminPermissionLabel,
+  SUPERADMIN_PERMISSION_AREAS,
+  areaTier,
+  areaTierLabel,
+  areaTiers,
+  areaTopTier,
+  areaKeysForTier,
+  type SuperadminPermissionArea,
+  type SuperadminPermissionTier,
 } from '@/constants/superadminPermissions'
 import { featurePermissionLabel } from '@/constants/featurePermissions'
 import { listAllProfiles } from '@/api/profiles'
@@ -469,22 +494,26 @@ function openEffectivePermissions(row: AdminRow): void {
 // the account's current grants on tab activation; create mode starts from an
 // empty draft. Either way the selection is committed from the modal footer's
 // Save (see save()), not via a separate modal. The scoped catalogue comes from
-// the static label map, which mirrors the backend SuperadminPermission enum, so
+// the static area list, which mirrors the backend SuperadminPermission enum, so
 // it's available before any account exists (create flow has no id to query).
+// Each area is edited as a tier (None / View / Manage); the draft keeps the raw
+// granted keys so a grant the editor doesn't model still round-trips.
 const saPermLoading = ref(false)
 const saPermLoaded  = ref(false)
 const saPermChecked = ref<Set<string>>(new Set())
 const saPermIsOwner = ref(false)
 
-const saScopedCatalog: string[] = Object.keys(SUPERADMIN_PERMISSION_LABELS)
-  .filter(k => k !== SUPERADMIN_OWNER_KEY)
+// The tier shown for an area: an owner effectively holds the top tier of
+// every area; otherwise resolve from the granted keys.
+function saAreaTier(area: SuperadminPermissionArea): SuperadminPermissionTier {
+  return saPermIsOwner.value ? areaTopTier(area) : areaTier(area, saPermChecked.value)
+}
 
-function saPermLabel(key: string): string { return superadminPermissionLabel(key) }
-
-function toggleSaPerm(key: string): void {
+function setSaAreaTier(area: SuperadminPermissionArea, tier: SuperadminPermissionTier): void {
   const next = new Set(saPermChecked.value)
-  if (next.has(key)) next.delete(key)
-  else next.add(key)
+  if (area.view) next.delete(area.view)
+  if (area.manage) next.delete(area.manage)
+  for (const key of areaKeysForTier(area, tier)) next.add(key)
   saPermChecked.value = next
 }
 
@@ -529,6 +558,12 @@ const ownerToggleLocked = computed(
     && form.value.role === 'SUPERADMIN'
     && saPermIsOwner.value
     && superadminCount.value <= 1,
+)
+
+// Viewers (VIEW_APPLICATION_ACCOUNTS only) can list accounts and open the
+// effective-permissions breakdown; every write control is hidden for them.
+const canManageAccounts = computed(
+  () => auth.hasSuperadminPermission('superadmin.manage_application_accounts'),
 )
 
 const editing: Ref<string | null> = ref(null) // admin id when editing, null when creating

@@ -3,8 +3,10 @@ package com.ldapportal.addons.isva.controller;
 
 import com.ldapportal.addons.isva.IsvaUiOptions;
 import com.ldapportal.addons.isva.dto.IsvaUiOptionsDto;
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.core.entitlement.Entitled;
 import com.ldapportal.core.entitlement.Entitlement;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -29,6 +31,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/isva/ui-options")
 @RequiredArgsConstructor
 @PreAuthorize("hasRole('SUPERADMIN')")
+@RequiresSuperadminPermission(SuperadminPermission.VIEW_INTEGRATIONS)
 @Entitled(Entitlement.VENDOR_INTEGRATIONS_ISVA)
 public class IsvaUiOptionsController {
 

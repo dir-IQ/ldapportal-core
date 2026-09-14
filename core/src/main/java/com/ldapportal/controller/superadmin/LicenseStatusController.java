@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.core.entitlement.FileLicenseProvider;
@@ -8,6 +9,7 @@ import com.ldapportal.core.entitlement.License;
 import com.ldapportal.core.entitlement.LicenseProvider;
 import com.ldapportal.core.entitlement.LicenseVerifier;
 import com.ldapportal.dto.license.LicenseStatusDto;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -46,6 +48,7 @@ public class LicenseStatusController {
 
     @GetMapping("/status")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_LICENSE)
     public LicenseStatusDto status() {
         License lic = entitlementService.current();
         Instant now = Instant.now();

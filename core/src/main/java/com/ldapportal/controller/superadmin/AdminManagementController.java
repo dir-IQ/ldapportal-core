@@ -49,7 +49,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/superadmin/admins")
 @PreAuthorize("hasRole('SUPERADMIN')")
-@RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)
+@RequiresSuperadminPermission(SuperadminPermission.VIEW_APPLICATION_ACCOUNTS)
 @RequiredArgsConstructor
 public class AdminManagementController {
 
@@ -65,6 +65,7 @@ public class AdminManagementController {
     }
 
     @PostMapping
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)
     public ResponseEntity<AdminAccountResponse> create(@Valid @RequestBody AdminAccountRequest req,
                                                         @org.springframework.security.core.annotation.AuthenticationPrincipal
                                                                 com.ldapportal.auth.AuthPrincipal principal) {
@@ -78,6 +79,7 @@ public class AdminManagementController {
      * the same step.
      */
     @PostMapping("/with-permissions")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)
     public ResponseEntity<AdminAccountResponse> createWithPermissions(
             @Valid @RequestBody com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
             @org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -92,6 +94,7 @@ public class AdminManagementController {
     }
 
     @PutMapping("/{adminId}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)
     public ResponseEntity<AdminAccountResponse> update(
             @PathVariable UUID adminId,
             @Valid @RequestBody AdminAccountRequest req,
@@ -116,6 +119,7 @@ public class AdminManagementController {
      * (412 on mismatch); it is ignored when the apply creates the account.</p>
      */
     @PutMapping("/by-username/{username}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)
     public ResponseEntity<AdminAccountResponse> upsertByUsername(
             @PathVariable String username,
             @Valid @RequestBody com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
@@ -137,6 +141,7 @@ public class AdminManagementController {
     }
 
     @DeleteMapping("/{adminId}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)
     public ResponseEntity<Void> delete(@PathVariable UUID adminId,
                                         @org.springframework.security.core.annotation.AuthenticationPrincipal
                                                 com.ldapportal.auth.AuthPrincipal principal) {
@@ -151,6 +156,7 @@ public class AdminManagementController {
      * satisfy {@link com.ldapportal.service.AccountPasswordPolicy}.
      */
     @PostMapping("/{adminId}/reset-password")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)
     public ResponseEntity<Void> resetPassword(
             @PathVariable UUID adminId,
             @Valid @RequestBody com.ldapportal.dto.superadmin.ResetPasswordRequest req,
@@ -201,6 +207,7 @@ public class AdminManagementController {
     // ── Dimension 1+2: profile roles ──────────────────────────────────────────
 
     @PutMapping("/{adminId}/permissions/profile-roles")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)
     public ProfileRoleResponse assignProfileRole(
             @PathVariable UUID adminId,
             @Valid @RequestBody ProfileRoleRequest req,
@@ -210,6 +217,7 @@ public class AdminManagementController {
     }
 
     @DeleteMapping("/{adminId}/permissions/profile-roles/{profileId}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)
     public ResponseEntity<Void> removeProfileRole(@PathVariable UUID adminId,
                                                    @PathVariable UUID profileId,
                                                    @org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -221,6 +229,7 @@ public class AdminManagementController {
     // ── Dimension 3: feature permissions ─────────────────────────────────────
 
     @PutMapping("/{adminId}/permissions/features")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)
     public ResponseEntity<Void> setFeaturePermissions(
             @PathVariable UUID adminId,
             @RequestBody List<@Valid FeaturePermissionRequest> permissions,
@@ -231,6 +240,7 @@ public class AdminManagementController {
     }
 
     @DeleteMapping("/{adminId}/permissions/features/{featureKey}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)
     public ResponseEntity<Void> clearFeaturePermission(
             @PathVariable UUID adminId,
             @PathVariable FeatureKey featureKey,

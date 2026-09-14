@@ -110,6 +110,44 @@ class AuthControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void me_superadminWithManageDirectoryData_getsEveryExposedFeature() throws Exception {
+        AuthPrincipal principal = new AuthPrincipal(PrincipalType.SUPERADMIN, ACCOUNT_ID, "alice");
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                principal, null, List.of(new SimpleGrantedAuthority("ROLE_SUPERADMIN")));
+        given(entitlementService.exposed(com.ldapportal.entity.enums.FeatureKey.class))
+                .willReturn(List.of(com.ldapportal.entity.enums.FeatureKey.USER_READ,
+                                    com.ldapportal.entity.enums.FeatureKey.USER_CREATE));
+        given(superadminPermissionService.effective(ACCOUNT_ID))
+                .willReturn(java.util.EnumSet.of(
+                        com.ldapportal.entity.enums.SuperadminPermission.MANAGE_DIRECTORY_DATA));
+
+        mockMvc.perform(get("/api/v1/auth/me").with(authentication(auth)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.features", org.hamcrest.Matchers.containsInAnyOrder("user.read", "user.create")))
+                .andExpect(jsonPath("$.superadminPermissions", org.hamcrest.Matchers.contains("superadmin.manage_directory_data")));
+    }
+
+    @Test
+    void me_superadminWithoutManageDirectoryData_getsOnlyReadFeatures() throws Exception {
+        AuthPrincipal principal = new AuthPrincipal(PrincipalType.SUPERADMIN, ACCOUNT_ID, "alice");
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                principal, null, List.of(new SimpleGrantedAuthority("ROLE_SUPERADMIN")));
+        given(entitlementService.exposed(com.ldapportal.entity.enums.FeatureKey.class))
+                .willReturn(List.of(com.ldapportal.entity.enums.FeatureKey.USER_READ,
+                                    com.ldapportal.entity.enums.FeatureKey.USER_CREATE,
+                                    com.ldapportal.entity.enums.FeatureKey.BULK_EXPORT,
+                                    com.ldapportal.entity.enums.FeatureKey.BULK_IMPORT));
+        given(superadminPermissionService.effective(ACCOUNT_ID))
+                .willReturn(java.util.EnumSet.of(
+                        com.ldapportal.entity.enums.SuperadminPermission.MANAGE_DIRECTORIES,
+                        com.ldapportal.entity.enums.SuperadminPermission.VIEW_DIRECTORIES));
+
+        mockMvc.perform(get("/api/v1/auth/me").with(authentication(auth)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.features", org.hamcrest.Matchers.containsInAnyOrder("user.read", "bulk.export")));
+    }
+
+    @Test
     void me_unauthenticated_returns401() throws Exception {
         mockMvc.perform(get("/api/v1/auth/me"))
                 .andExpect(status().isUnauthorized());
