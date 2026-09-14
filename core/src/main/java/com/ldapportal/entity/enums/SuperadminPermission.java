@@ -30,6 +30,12 @@ import java.util.Set;
  * keep working unchanged. Controllers put the {@code VIEW_*} key at class
  * level and the {@code MANAGE_*} key on each write method.</p>
  *
+ * <p><b>Directory data:</b> the tiers above gate the <em>configuration</em>
+ * plane. Directory entries are gated by the directory-scoped
+ * {@link FeatureKey} model instead; {@link #MANAGE_DIRECTORY_DATA} is the one
+ * superadmin key that reaches into it — see
+ * {@link com.ldapportal.auth.PermissionService#requireFeature}.</p>
+ *
  * <p><b>Owner model:</b> a superadmin holding {@link #MANAGE_SUPERADMINS} is a
  * full owner — treated as holding every permission, and the only role allowed
  * to edit other superadmins' permission sets. See
@@ -80,6 +86,14 @@ public enum SuperadminPermission {
     MANAGE_EVENT_BACKBONE       ("superadmin.manage_event_backbone", VIEW_EVENT_BACKBONE),
     /** Apply directory-schema changes (attributeTypes / objectClasses) via LDIF. */
     MANAGE_SCHEMA               ("superadmin.manage_schema"),
+    /**
+     * Change directory <em>entries</em>: create / modify / delete / move /
+     * rename, LDIF import, and every directory-scoped write feature (user and
+     * group edits, bulk changes, playbook execution, …). Every superadmin can
+     * read, search, and export entries; without this key those reads are all
+     * they get — the same surface a {@link BaseRole#READ_ONLY} admin has.
+     */
+    MANAGE_DIRECTORY_DATA       ("superadmin.manage_directory_data"),
     /** View license status. */
     VIEW_LICENSE                ("superadmin.view_license");
 

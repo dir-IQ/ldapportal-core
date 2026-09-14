@@ -4385,6 +4385,7 @@ export interface components {
             /** @enum {string} */
             role?: "SUPERADMIN" | "ADMIN";
             superadmin?: boolean;
+            superadminCanEditEntries?: boolean;
             profiles?: components["schemas"]["ProfileEffective"][];
         };
         FeatureEffective: {

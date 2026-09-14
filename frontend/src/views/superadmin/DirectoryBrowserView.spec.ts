@@ -29,6 +29,13 @@ const route = vi.hoisted(() => ({ query: {} as Record<string, string> }))
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
 vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router }))
 vi.mock('@/api/directories', () => ({ listDirectories: vi.fn() }))
+const authState = vi.hoisted(() => ({ canEditEntries: true }))
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({
+    hasSuperadminPermission: (key: string) =>
+      key === 'superadmin.manage_directory_data' ? authState.canEditEntries : true,
+  }),
+}))
 vi.mock('@/api/browse', () => ({
   browse: vi.fn(),
   deleteEntry: vi.fn(),
@@ -113,6 +120,23 @@ describe('DirectoryBrowserView branch paging + filter', () => {
   afterEach(() => {
     vi.clearAllMocks()
     route.query = {}
+    authState.canEditEntries = true
+  })
+
+  it('offers only read actions (export) to a superadmin without Manage directory entries', async () => {
+    authState.canEditEntries = false
+    const wrapper = await mountView()
+    await wrapper.find('button[aria-label="Toggle children"]').trigger('click')
+    await flushPromises()
+    await treeRow(wrapper, 'ou=people').find('div').trigger('click')
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text().startsWith('Actions'))!.trigger('click')
+
+    const labels = wrapper.findAll('button').map(b => b.text())
+    expect(labels.some(l => /export/i.test(l))).toBe(true)
+    for (const write of [/create/i, /^edit/i, /rename/i, /move/i, /import/i, /delete/i]) {
+      expect(labels.some(l => write.test(l)), String(write)).toBe(false)
+    }
   })
 
   it('mirrors the selection into the URL: replace on landing, push between entries', async () => {

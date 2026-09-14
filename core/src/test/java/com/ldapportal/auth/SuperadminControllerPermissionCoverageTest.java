@@ -32,14 +32,22 @@ import static org.assertj.core.api.Assertions.assertThat;
  * to a {@code MANAGE_*} key — a class-level {@code VIEW_*} key alone would let
  * a view-only superadmin through to the write.
  *
- * <p>Directory <em>data</em> endpoints (the superadmin browse controller) are
- * out of scope: they gate on the directory-scoped feature model, not on
- * system-scoped superadmin permissions.</p>
+ * <p>The superadmin browse controller is the one exception on reads: every
+ * superadmin may read, search, and export directory entries, so its read
+ * endpoints carry no key. Its entry writes must still resolve to
+ * {@code MANAGE_DIRECTORY_DATA}. Two of its POSTs are reads in disguise (the
+ * LDIF preview parses without writing; the integrity check only scans) and
+ * are allow-listed by name.</p>
  */
 class SuperadminControllerPermissionCoverageTest {
 
-    private static final Set<String> DIRECTORY_DATA_CONTROLLERS = Set.of(
-            "com.ldapportal.controller.superadmin.BrowseController");
+    /** Controllers whose unannotated read endpoints are open to every superadmin. */
+    private static final Set<String> READ_OPEN_CONTROLLERS = Set.of("BrowseController");
+
+    /** POST endpoints that perform no directory write. */
+    private static final Set<String> READ_ONLY_POSTS = Set.of(
+            "BrowseController#previewLdif",
+            "BrowseController#integrityCheck");
 
     private static final List<Class<? extends Annotation>> WRITE_MAPPINGS =
             List.of(PostMapping.class, PutMapping.class, DeleteMapping.class, PatchMapping.class);
@@ -55,9 +63,11 @@ class SuperadminControllerPermissionCoverageTest {
                 SuperadminPermission resolved = onMethod != null ? onMethod.value()
                         : onClass != null ? onClass.value() : null;
                 String where = controller.getSimpleName() + "#" + m.getName();
+                boolean write = isWrite(m) && !READ_ONLY_POSTS.contains(where);
                 if (resolved == null) {
+                    if (!write && READ_OPEN_CONTROLLERS.contains(controller.getSimpleName())) continue;
                     problems.add(where + " has no @RequiresSuperadminPermission (class or method)");
-                } else if (isWrite(m) && resolved.isViewTier()) {
+                } else if (write && resolved.isViewTier()) {
                     problems.add(where + " is a write but resolves to view-tier " + resolved);
                 }
             }
@@ -71,7 +81,7 @@ class SuperadminControllerPermissionCoverageTest {
         List<Class<?>> result = new ArrayList<>();
         for (BeanDefinition bd : scanner.findCandidateComponents("com.ldapportal")) {
             String name = bd.getBeanClassName();
-            if (name == null || DIRECTORY_DATA_CONTROLLERS.contains(name)) continue;
+            if (name == null) continue;
             Class<?> c;
             try {
                 c = Class.forName(name);

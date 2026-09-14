@@ -182,10 +182,14 @@ Don't share the superadmin account. Create dedicated admin accounts:
    - **None** — the area is hidden from the sidebar and its endpoints refuse
      the account.
 
-   Directory *data* (browsing, searching, and editing entries through the
-   superadmin directory browser) is not covered by these tiers — a superadmin
-   who should only read directory entries is better created as an ADMIN
-   account with the READ_ONLY base role.
+   Directory *entries* are one row of their own. Every superadmin can browse,
+   search, and export entries, run reports, and act on approvals in every
+   directory. **Manage directory entries** additionally allows creating,
+   editing, deleting, moving, renaming, and importing entries, along with the
+   directory write features (user and group edits, bulk changes, playbook
+   execution). Without it the account is read-only on directory data, the same
+   surface a READ_ONLY admin has — and API tokens created by that account
+   inherit the restriction.
 
 ---
 

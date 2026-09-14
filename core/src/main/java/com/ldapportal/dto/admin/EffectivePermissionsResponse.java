@@ -18,13 +18,18 @@ import java.util.UUID;
  * model produced the allow/deny outcome.</p>
  *
  * <p>Superadmin accounts are reported with {@code superadmin=true} and an
- * empty profiles list — they bypass all scoping and feature checks.</p>
+ * empty profiles list — they bypass profile / DN scoping in every directory.
+ * {@code superadminCanEditEntries} says whether the account also holds the
+ * {@code MANAGE_DIRECTORY_DATA} grant (directory write features and the
+ * superadmin browser's entry writes); without it the account is read-only on
+ * directory data. Always {@code false} for non-superadmins.</p>
  */
 public record EffectivePermissionsResponse(
         UUID adminId,
         String username,
         AccountRole role,
         boolean superadmin,
+        boolean superadminCanEditEntries,
         List<ProfileEffective> profiles) {
 
     public record ProfileEffective(
