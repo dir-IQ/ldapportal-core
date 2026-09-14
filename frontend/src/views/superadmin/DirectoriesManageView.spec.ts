@@ -13,12 +13,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
 const api = vi.hoisted(() => ({
-  listDirectories: vi.fn(),
+  listDirectoryConnections: vi.fn(),
   getDirectoryStatus: vi.fn(),
 }))
 
 vi.mock('@/api/directories', () => ({
-  listDirectories: api.listDirectories,
+  listDirectoryConnections: api.listDirectoryConnections,
   createDirectory: vi.fn(),
   updateDirectory: vi.fn(),
   deleteDirectory: vi.fn(),
@@ -55,7 +55,7 @@ function dir(id: string, enabled: boolean) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  api.listDirectories.mockResolvedValue({ data: [dir('up', true), dir('down', true), dir('off', false)] })
+  api.listDirectoryConnections.mockResolvedValue({ data: [dir('up', true), dir('down', true), dir('off', false)] })
   api.getDirectoryStatus.mockImplementation((id: string) =>
     Promise.resolve({ data: id === 'up'
       ? { success: true, message: 'Reachable', elapsedMs: 12 }
@@ -122,7 +122,7 @@ describe('DirectoriesManageView status column', () => {
   })
 
   it('renders directories alphabetically by display name, regardless of API order', async () => {
-    api.listDirectories.mockResolvedValue({
+    api.listDirectoryConnections.mockResolvedValue({
       data: [
         { ...dir('z', true), displayName: 'Zebra' },
         { ...dir('a', true), displayName: 'apple' },

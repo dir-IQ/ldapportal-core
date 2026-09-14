@@ -218,7 +218,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
-import { listDirectories, createDirectory, updateDirectory, deleteDirectory, testDirectory, evictPool, getDirectoryStatus } from '@/api/directories'
+import { listDirectoryConnections, createDirectory, updateDirectory, deleteDirectory, testDirectory, evictPool, getDirectoryStatus } from '@/api/directories'
 import { testEntraConnection } from '@/api/entra'
 import FormField from '@/components/FormField.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -505,7 +505,7 @@ function capabilitiesTooltip(d: DirectoryRow) {
 async function load() {
   loading.value = true
   try {
-    const { data } = await listDirectories()
+    const { data } = await listDirectoryConnections()
     // Runtime rows are richer than the stale generated schema (capabilities,
     // replication, extra directory types); treat them as DirectoryRow.
     // Present alphabetically by display name (case-insensitive) so the list

@@ -3,6 +3,7 @@ package com.ldapportal.service;
 
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.dto.admin.AdminAccountRequest;
+import com.ldapportal.dto.admin.AccountSummaryResponse;
 import com.ldapportal.dto.admin.AdminAccountResponse;
 import com.ldapportal.dto.admin.AdminPermissionsResponse;
 
@@ -76,6 +77,13 @@ public class AdminManagementService {
         // row-level actions to expose for SUPERADMIN rows.
         return accountRepo.findAll().stream()
                 .map(AdminAccountResponse::from)
+                .toList();
+    }
+
+    /** Picker view of every account (id, username, display name, role, active) — no contact or login details. */
+    public List<AccountSummaryResponse> listAccountSummaries() {
+        return accountRepo.findAll().stream()
+                .map(AccountSummaryResponse::from)
                 .toList();
     }
 

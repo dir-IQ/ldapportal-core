@@ -4,6 +4,7 @@ package com.ldapportal.controller.superadmin;
 import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.dto.directory.DirectoryConnectionRequest;
 import com.ldapportal.dto.directory.DirectoryConnectionResponse;
+import com.ldapportal.dto.directory.DirectorySummaryResponse;
 import com.ldapportal.dto.directory.TestConnectionRequest;
 import com.ldapportal.dto.directory.TestConnectionResult;
 import com.ldapportal.entity.enums.SuperadminPermission;
@@ -46,15 +47,29 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/superadmin/directories")
 @PreAuthorize("hasRole('SUPERADMIN')")
-@RequiresSuperadminPermission(SuperadminPermission.VIEW_DIRECTORIES)
+// VIEW_DIRECTORIES sits on each read rather than on the class so that
+// /summary — the directory picker every other superadmin page uses — can
+// stay open to any superadmin. Writes carry MANAGE_DIRECTORIES.
 @RequiredArgsConstructor
 public class DirectoryConnectionController {
 
     private final DirectoryConnectionService service;
 
     @GetMapping
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_DIRECTORIES)
     public List<DirectoryConnectionResponse> list() {
         return service.listDirectories();
+    }
+
+    /**
+     * Directory identities for pickers (id, slug, type, name, enabled). Open to
+     * every superadmin: browsing, searching, reports, sync, profiles, and the
+     * rest all need to choose a directory even without the Directory
+     * Connections area. No connection configuration is included.
+     */
+    @GetMapping("/summary")
+    public List<DirectorySummaryResponse> summary() {
+        return service.listSummaries();
     }
 
     @PostMapping
@@ -65,6 +80,7 @@ public class DirectoryConnectionController {
     }
 
     @GetMapping("/{id}")
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_DIRECTORIES)
     public ResponseEntity<DirectoryConnectionResponse> get(@PathVariable UUID id) {
         return withETag(service.getDirectory(id), HttpStatus.OK);
     }
@@ -126,6 +142,7 @@ public class DirectoryConnectionController {
     }
 
     @GetMapping("/{id}/status")
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_DIRECTORIES)
     public TestConnectionResult status(@PathVariable UUID id) {
         return service.checkConnection(id);
     }

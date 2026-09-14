@@ -1940,6 +1940,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/superadmin/directories/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/superadmin/directories/{id}/status": {
         parameters: {
             query?: never;
@@ -3013,6 +3029,15 @@ export interface components {
             namingContexts?: string[];
             /** Format: date-time */
             probedAt?: string;
+        };
+        DirectorySummaryResponse: {
+            /** Format: uuid */
+            id?: string;
+            slug?: string;
+            /** @enum {string} */
+            directoryType?: "GENERIC" | "ACTIVE_DIRECTORY" | "OPENLDAP" | "IBM_DIRECTORY_SERVER" | "ORACLE_UNIFIED_DIRECTORY" | "ENTRA_ID";
+            displayName?: string;
+            enabled?: boolean;
         };
         DirectoryConnectionResponse: {
             /** Format: uuid */
@@ -6677,6 +6702,26 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["SyncResult"];
+                };
+            };
+        };
+    };
+    summary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["DirectorySummaryResponse"][];
                 };
             };
         };

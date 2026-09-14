@@ -63,6 +63,19 @@ class DirectoryConnectionServiceTest {
     }
 
     @Test
+    void listSummaries_returnsIdentitiesWithoutLoadingBaseDns() {
+        when(dirRepo.findAll()).thenReturn(List.of(existing()));
+
+        var result = service.listSummaries();
+
+        org.assertj.core.api.Assertions.assertThat(result).hasSize(1);
+        org.assertj.core.api.Assertions.assertThat(result.get(0).id()).isEqualTo(DIR_ID);
+        org.assertj.core.api.Assertions.assertThat(result.get(0).displayName())
+                .isEqualTo(existing().getDisplayName());
+        verify(userBaseDnRepo, never()).findAllByDirectoryIdOrderByDisplayOrderAsc(any());
+    }
+
+    @Test
     void updateDirectory_noConnectionChange_skipsEvictAndProbe() {
         service.updateDirectory(DIR_ID, matchingRequest("ldap.example.com"));
 
