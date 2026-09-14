@@ -171,19 +171,27 @@
     </AppModal>
 
     <!-- Members drawer -->
-    <AppModal v-model="showMembers" :title="`Members — ${selectedGroup?.cn || ''}`" size="lg">
+    <AppModal v-model="showMembers" :title="`Members — ${selectedGroup?.cn || ''}`" size="xl">
+      <!-- Client-side filter over the loaded member list (no server call);
+           "Add Members" is the single add path — one DN or many, one per
+           line — so there's no separate single-entry picker. -->
       <div class="mb-3 flex gap-2">
-        <DnPicker v-model="newMemberDn" :directory-id="dirId" class="flex-1" />
-        <button @click="addMember" class="btn-primary">Add</button>
-        <button @click="toggleBulk('add')" class="btn-secondary" :aria-pressed="bulkMode === 'add'">Bulk Add</button>
+        <input
+          v-model="memberFilter"
+          type="search"
+          placeholder="Filter members"
+          aria-label="Filter members"
+          class="input flex-1"
+        />
+        <button @click="toggleBulk('add')" class="btn-secondary" :aria-pressed="bulkMode === 'add'">Add Members</button>
         <button @click="toggleBulk('remove')" class="btn-danger-soft" :aria-pressed="bulkMode === 'remove'">Bulk Remove</button>
       </div>
-      <!-- One panel serves both bulk verbs: the textarea, DN-shape warning
-           and per-line result list are identical; only the label, submit
+      <!-- One panel serves both verbs: the textarea, DN-shape warning and
+           per-line result list are identical; only the label, submit
            button and result wording change with bulkMode. -->
       <div v-if="bulkMode" class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
         <label for="gl-bulk-members" class="block text-xs font-medium text-gray-600 mb-1">
-          {{ bulkMode === 'add' ? 'Add' : 'Remove' }} multiple members (one DN per line)
+          {{ bulkMode === 'add' ? 'Add members' : 'Remove members' }} (one DN per line)
         </label>
         <textarea id="gl-bulk-members" v-model="bulkMemberDns" rows="4" placeholder="cn=Alice,ou=Users,dc=example,dc=com&#10;cn=Bob,ou=Users,dc=example,dc=com"
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2"></textarea>
@@ -199,7 +207,7 @@
         </div>
         <div class="flex justify-end">
           <button v-if="bulkMode === 'add'" @click="doBulkAdd" :disabled="bulkBusy || !bulkMemberDns.trim()" class="btn-primary text-xs">
-            {{ bulkBusy ? 'Adding…' : 'Add All' }}
+            {{ bulkBusy ? 'Adding…' : 'Add' }}
           </button>
           <button v-else @click="doBulkRemove" :disabled="bulkBusy || !bulkMemberDns.trim()" class="btn-danger text-xs">
             {{ bulkBusy ? 'Removing…' : 'Remove All' }}
@@ -207,13 +215,15 @@
         </div>
       </div>
       <!-- Fills the modal's remaining height (scrolls only past it) instead
-           of a fixed cap — the modal body is a flex column. -->
-      <ul class="divide-y divide-gray-100 min-h-0 overflow-y-auto">
-        <li v-for="dn in members" :key="dn" class="flex items-center justify-between py-2 text-sm">
+           of a fixed cap — the modal body is a flex column. pr-3 keeps the
+           Remove link clear of the scrollbar. -->
+      <ul class="divide-y divide-gray-100 min-h-0 overflow-y-auto pr-3">
+        <li v-for="dn in filteredMembers" :key="dn" class="flex items-center justify-between gap-4 py-2 text-sm">
           <span class="text-xs text-gray-700 truncate" :title="dn">{{ dn }}</span>
-          <button @click="removeMember(dn)" class="text-red-500 hover:text-red-700 text-xs">Remove</button>
+          <button @click="removeMember(dn)" class="text-red-500 hover:text-red-700 text-xs shrink-0">Remove</button>
         </li>
         <li v-if="!members.length" class="py-4 text-center text-gray-500 text-sm">No members</li>
+        <li v-else-if="!filteredMembers.length" class="py-4 text-center text-gray-500 text-sm">No members match the filter</li>
       </ul>
     </AppModal>
 
@@ -239,7 +249,6 @@ import ActionMenu from '@/components/ActionMenu.vue'
 import AppModal from '@/components/AppModal.vue'
 import FormField from '@/components/FormField.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
-import DnPicker from '@/components/DnPicker.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import { validateDn } from '@/utils/attributeValidation'
 import { resolveGroupMembers, type MemberAttr } from '@/utils/groupMembers'
@@ -337,7 +346,13 @@ const showDelete    = ref(false)
 const selectedGroup = ref<GroupRow | null>(null)
 const deleteTarget  = ref<GroupRow | null>(null)
 const members       = ref<string[]>([])
-const newMemberDn   = ref('')
+// View-only filter over `members` (case-insensitive substring on the DN);
+// never sent to the server.
+const memberFilter  = ref('')
+const filteredMembers = computed(() => {
+  const q = memberFilter.value.trim().toLowerCase()
+  return q ? members.value.filter(m => m.toLowerCase().includes(q)) : members.value
+})
 const saving        = ref(false)
 const exporting     = ref(false)
 const allProfiles     = ref<ProfileLite[]>([])
@@ -632,7 +647,7 @@ async function doEdit() {
 function openMembers(row: GroupRow) {
   selectedGroup.value = row
   members.value       = [...row._members]
-  newMemberDn.value   = ''
+  memberFilter.value  = ''
   bulkMode.value      = null
   bulkMemberDns.value = ''
   bulkResult.value    = null
@@ -659,22 +674,6 @@ function syncSelectedGroupCount() {
   grp._memberCount = members.value.length
 }
 
-async function addMember() {
-  if (!newMemberDn.value.trim() || !selectedGroup.value) return
-  const grp = selectedGroup.value
-  const res = await call(
-    () => groupsApi.addGroupMember(dirId, grp.dn, { memberAttribute: grp._memberAttr, memberValue: newMemberDn.value }),
-  )
-  if (res?.status === 202) {
-    notif.success('Group member addition submitted for approval')
-  } else {
-    notif.success('Member added')
-    members.value.push(newMemberDn.value)
-    syncSelectedGroupCount()
-  }
-  newMemberDn.value = ''
-}
-
 async function doBulkAdd() {
   if (!selectedGroup.value) return
   const dns = bulkLines()
@@ -682,10 +681,18 @@ async function doBulkAdd() {
   bulkBusy.value = true
   bulkResult.value = null
   try {
-    const { data } = await groupsApi.addGroupMembersBulk(dirId, selectedGroup.value.dn, {
+    const res = await groupsApi.addGroupMembersBulk(dirId, selectedGroup.value.dn, {
       memberAttribute: selectedGroup.value._memberAttr,
       memberValues: dns,
     })
+    // Approval-gated OU: the server queues the whole batch (202) and
+    // nothing has changed yet, so leave the list alone.
+    if (res.status === 202) {
+      notif.success('Group member addition submitted for approval')
+      bulkMemberDns.value = ''
+      return
+    }
+    const data = res.data
     bulkResult.value = { verb: 'Added', succeeded: data.added, failed: data.failed, errors: data.errors }
     // Refresh members list
     for (const d of dns) {
@@ -777,10 +784,10 @@ function onProfileChange() {
 }
 
 // A sidebar profile switch remounts this page. Warn while the create or edit
-// form is open, or while the Members drawer holds an un-added DN or bulk list.
+// form is open, or while the Members drawer holds an unsent DN list.
 useUnsavedChangesGuard('Groups', () =>
   showCreate.value || showEdit.value
-  || (showMembers.value && (newMemberDn.value.trim() !== '' || bulkMemberDns.value.trim() !== '')))
+  || (showMembers.value && bulkMemberDns.value.trim() !== ''))
 
 onMounted(async () => {
   await loadProfiles()
