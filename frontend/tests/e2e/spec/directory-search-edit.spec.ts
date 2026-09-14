@@ -91,10 +91,15 @@ test.describe('Directory search inline edit @smoke', () => {
       `/api/v1/superadmin/directories/${directoryId}/browse/search?${params.toString()}`,
     )
     expect(response.ok()).toBe(true)
-    const entries = await response.json() as Array<{
-      dn: string
-      attributes: Record<string, string[]>
-    }>
+    // The search endpoint returns a page: the entries plus whether the
+    // page was cut short and how many entries matched in all.
+    const page = await response.json() as {
+      entries: Array<{ dn: string, attributes: Record<string, string[]> }>
+      truncated: boolean
+      total: number
+    }
+    expect(page.truncated).toBe(false)
+    const entries = page.entries
     expect(entries).toHaveLength(1)
     expect(entries[0].attributes.employeeNumber).toContain(newEmpNumber)
   })

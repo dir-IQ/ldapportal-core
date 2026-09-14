@@ -30,10 +30,15 @@ test.describe('LDAP users browse/search @smoke', () => {
     )
     expect(response.ok()).toBe(true)
 
-    const entries = await response.json() as Array<{
-      dn: string
-      attributes: Record<string, string[]>
-    }>
+    // The search endpoint returns a page: the entries plus whether the
+    // page was cut short and how many entries matched in all.
+    const page = await response.json() as {
+      entries: Array<{ dn: string, attributes: Record<string, string[]> }>
+      truncated: boolean
+      total: number
+    }
+    expect(page.truncated).toBe(false)
+    const entries = page.entries
     expect(entries.length).toBe(1)
     const alice = entries[0]
     expect(alice.dn).toBe('cn=seedAlice,ou=seed,ou=test,dc=test,dc=local')
@@ -63,10 +68,15 @@ test.describe('LDAP users browse/search @smoke', () => {
     )
     expect(response.ok()).toBe(true)
 
-    const entries = await response.json() as Array<{
-      dn: string
-      attributes: Record<string, string[]>
-    }>
+    // The search endpoint returns a page: the entries plus whether the
+    // page was cut short and how many entries matched in all.
+    const page = await response.json() as {
+      entries: Array<{ dn: string, attributes: Record<string, string[]> }>
+      truncated: boolean
+      total: number
+    }
+    expect(page.truncated).toBe(false)
+    const entries = page.entries
     expect(entries.length).toBe(1)
     const alice = entries[0]
     // Sanity: user attributes still come back when no `attributes` param
