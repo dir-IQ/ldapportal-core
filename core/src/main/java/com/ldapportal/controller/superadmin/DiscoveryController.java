@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.dto.discovery.CommitDiscoveryRequest;
 import com.ldapportal.dto.discovery.CommitDiscoveryResponse;
 import com.ldapportal.dto.discovery.DiscoveryProposalResponse;
 import com.ldapportal.dto.discovery.DiscoveryRequest;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.service.DirectoryDiscoveryService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +18,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/superadmin/directories/{directoryId}/discover")
 @PreAuthorize("hasRole('SUPERADMIN')")
+@RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORIES)
 @RequiredArgsConstructor
 public class DiscoveryController {
 

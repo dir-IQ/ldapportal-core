@@ -6,7 +6,7 @@
         <h1 class="text-2xl font-bold text-gray-900">Directory Synchronization</h1>
         <p class="text-sm text-gray-500 mt-1">Membership-driven source → target synchronization</p>
       </div>
-      <button @click="openLinkModal()" class="btn-primary">+ New Link</button>
+      <button v-if="canManage" @click="openLinkModal()" class="btn-primary">+ New Link</button>
     </div>
 
     <!-- ── Links (each expands to its nested sync sets) ─────────────────── -->
@@ -39,9 +39,9 @@
         </span>
       </template>
       <template #actions="{ row }">
-        <ActionMenu :items="[{ label: 'Delete', onClick: () => removeLink(row), danger: true }]">
+        <ActionMenu :items="[{ label: 'Delete', onClick: () => removeLink(row), danger: true, hidden: !canManage }]">
           <template #primary>
-            <button class="btn-secondary btn-compact" @click.stop="openLinkModal(row)">Edit</button>
+            <button v-if="canManage" class="btn-secondary btn-compact" @click.stop="openLinkModal(row)">Edit</button>
           </template>
         </ActionMenu>
       </template>
@@ -53,7 +53,7 @@
             <h3 class="text-sm font-semibold text-gray-700">
               Sync sets — {{ dirName(row.sourceDirId) }} → {{ dirName(row.targetDirId) }}
             </h3>
-            <button class="btn-secondary btn-compact" @click="openSetModal()">+ New Set</button>
+            <button v-if="canManage" class="btn-secondary btn-compact" @click="openSetModal()">+ New Set</button>
           </div>
           <DataTable :columns="setCols" :rows="sets" :loading="loadingSets" row-key="id"
                      empty-text="No sync sets for this link yet." :highlight-key="selectedSetId ?? undefined"
@@ -80,9 +80,9 @@
               </span>
             </template>
             <template #actions="{ row: s }">
-              <ActionMenu :items="[{ label: 'Delete', onClick: () => removeSet(s), danger: true }]">
+              <ActionMenu :items="[{ label: 'Delete', onClick: () => removeSet(s), danger: true, hidden: !canManage }]">
                 <template #primary>
-                  <button class="btn-secondary btn-compact" @click.stop="openSetModal(s)">Edit</button>
+                  <button v-if="canManage" class="btn-secondary btn-compact" @click.stop="openSetModal(s)">Edit</button>
                 </template>
               </ActionMenu>
             </template>
@@ -297,6 +297,7 @@ import TransformRulesEditor from '@/components/TransformRulesEditor.vue'
 import ExcludedAttributesEditor from '@/components/sync/ExcludedAttributesEditor.vue'
 import MembershipInventoryModal from '@/components/sync/MembershipInventoryModal.vue'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
 import { listDirectories } from '@/api/directories'
 import {
   listSyncLinks, createSyncLink, updateSyncLink, deleteSyncLink,
@@ -309,6 +310,10 @@ import {
 interface DirOption { id: string; displayName: string }
 
 const notif = useNotificationStore()
+const auth = useAuthStore()
+// VIEW_DIRECTORY_SYNC shows links, sets, and previews; every write control
+// needs MANAGE_DIRECTORY_SYNC (enforced server-side as well).
+const canManage = computed(() => auth.hasSuperadminPermission('superadmin.manage_directory_sync'))
 const route = useRoute()
 
 const directories = ref<DirOption[]>([])

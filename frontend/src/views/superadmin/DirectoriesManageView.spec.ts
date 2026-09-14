@@ -34,7 +34,8 @@ vi.mock('@/stores/notifications', () => ({
 }))
 
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ isIsvaIntegrationEnabled: false, isDirectorySyncEnabled: false, isHrEnabled: false }),
+  useAuthStore: () => ({ isIsvaIntegrationEnabled: false, isDirectorySyncEnabled: false, isHrEnabled: false,
+    hasSuperadminPermission: () => true }),
 }))
 
 import DirectoriesManageView from './DirectoriesManageView.vue'

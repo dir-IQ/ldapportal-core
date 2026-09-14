@@ -6,8 +6,10 @@ import com.ldapportal.addons.isva.dto.ProbeResult;
 import com.ldapportal.addons.isva.dto.UpsertIsvaConfigRequest;
 import com.ldapportal.addons.isva.service.IsvaConfigService;
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.core.entitlement.Entitled;
 import com.ldapportal.core.entitlement.Entitlement;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.web.ETagSupport;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -59,6 +61,7 @@ public class IsvaConfigBySlugController {
 
     @PutMapping
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_INTEGRATIONS)
     public ResponseEntity<IsvaConfigDto> upsert(
             @PathVariable String slug,
             @RequestHeader(value = HttpHeaders.IF_MATCH, required = false) String ifMatch,
@@ -71,6 +74,7 @@ public class IsvaConfigBySlugController {
 
     @PostMapping("/probe")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_INTEGRATIONS)
     public ResponseEntity<ProbeResult> probe(@PathVariable String slug) {
         return ResponseEntity.ok(service.probe(service.resolveDirectoryIdBySlug(slug)));
     }

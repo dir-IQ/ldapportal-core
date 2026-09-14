@@ -162,12 +162,30 @@ Don't share the superadmin account. Create dedicated admin accounts:
 2. Click **Create Account**
 3. Set username, display name, email, and password
 4. Assign a role:
-   - **SUPERADMIN** — full access to everything
+   - **SUPERADMIN** — system-wide configuration (directories, profiles,
+     integrations, settings, accounts). By default a new superadmin is an
+     **Owner** with full access; an owner can scope another superadmin
+     instead (see step 7).
    - **ADMIN** — access scoped to assigned profiles
 5. For ADMIN accounts, assign profiles with a base role:
    - **ADMIN** — can create, edit, delete users
    - **READ_ONLY** — can view users and run reports
 6. Fine-tune permissions per feature (e.g., allow bulk export but not bulk import)
+7. For SUPERADMIN accounts, an owner can turn off **Owner (full access)** and
+   pick an access tier per area on the **Permissions** tab:
+   - **View** — open the area and read everything in it (list directory
+     connections, inspect provisioning profiles, see API token metadata, …)
+     without being able to add, change, or delete anything. The sidebar link
+     shows, and write buttons are hidden; the API rejects writes regardless.
+   - **Manage** — everything View allows plus create / edit / delete for that
+     area. Manage implies View, so only one grant per area is stored.
+   - **None** — the area is hidden from the sidebar and its endpoints refuse
+     the account.
+
+   Directory *data* (browsing, searching, and editing entries through the
+   superadmin directory browser) is not covered by these tiers — a superadmin
+   who should only read directory entries is better created as an ADMIN
+   account with the READ_ONLY base role.
 
 ---
 

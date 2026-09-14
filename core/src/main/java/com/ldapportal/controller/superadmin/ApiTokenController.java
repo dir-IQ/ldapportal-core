@@ -4,11 +4,13 @@ package com.ldapportal.controller.superadmin;
 import com.ldapportal.auth.ApiTokenService;
 import com.ldapportal.auth.AuthContextHelper;
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.dto.apitoken.ApiTokenCreateResponse;
 import com.ldapportal.dto.apitoken.ApiTokenResponse;
 import com.ldapportal.dto.apitoken.CreateApiTokenRequest;
 import com.ldapportal.dto.apitoken.UpsertApiTokenRequest;
 import com.ldapportal.entity.Account;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.AccountRepository;
 import com.ldapportal.web.ETagSupport;
@@ -47,6 +49,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/superadmin/api-tokens")
 @PreAuthorize("hasRole('SUPERADMIN')")
+@RequiresSuperadminPermission(SuperadminPermission.VIEW_API_TOKENS)
 @RequiredArgsConstructor
 public class ApiTokenController {
 
@@ -68,6 +71,7 @@ public class ApiTokenController {
     }
 
     @PostMapping
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_API_TOKENS)
     @ResponseStatus(HttpStatus.CREATED)
     public ApiTokenCreateResponse create(
             @Valid @RequestBody CreateApiTokenRequest req,
@@ -98,6 +102,7 @@ public class ApiTokenController {
      * response carries the token's version as an {@code ETag}.</p>
      */
     @PutMapping("/by-name/{name}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_API_TOKENS)
     public ResponseEntity<ApiTokenCreateResponse> upsertByName(
             @PathVariable String name,
             @Valid @RequestBody UpsertApiTokenRequest req,
@@ -117,6 +122,7 @@ public class ApiTokenController {
     }
 
     @PostMapping("/{id}/rotate")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_API_TOKENS)
     public ApiTokenCreateResponse rotate(
             @PathVariable UUID id,
             @AuthenticationPrincipal AuthPrincipal principal) {
@@ -128,6 +134,7 @@ public class ApiTokenController {
     }
 
     @DeleteMapping("/{id}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_API_TOKENS)
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void revoke(@PathVariable UUID id,
                        @AuthenticationPrincipal AuthPrincipal principal) {

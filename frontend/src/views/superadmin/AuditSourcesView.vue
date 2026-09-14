@@ -6,7 +6,7 @@
         <h1 class="text-2xl font-bold text-gray-900">Audit Data Sources</h1>
         <p class="text-sm text-gray-500 mt-1">LDAP changelog reader connections for audit log polling</p>
       </div>
-      <button @click="openCreate" class="btn-primary">+ New Source</button>
+      <button v-if="canManage" @click="openCreate" class="btn-primary">+ New Source</button>
     </div>
 
     <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -39,8 +39,10 @@
               </span>
             </td>
             <td class="px-4 py-3 text-right whitespace-nowrap">
-              <button @click="openEdit(s)" class="text-blue-600 hover:text-blue-800 text-xs font-medium mr-3">Edit</button>
-              <button @click="confirmDelete(s)" class="text-red-500 hover:text-red-700 text-xs font-medium">Delete</button>
+              <template v-if="canManage">
+                <button @click="openEdit(s)" class="text-blue-600 hover:text-blue-800 text-xs font-medium mr-3">Edit</button>
+                <button @click="confirmDelete(s)" class="text-red-500 hover:text-red-700 text-xs font-medium">Delete</button>
+              </template>
             </td>
           </tr>
         </tbody>
@@ -114,8 +116,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
 import { listAuditSources, createAuditSource, updateAuditSource, deleteAuditSource, testAuditSource } from '@/api/auditDataSources'
 import FormField from '@/components/FormField.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -156,6 +159,10 @@ function errMsg(e: unknown, fallback = 'Something went wrong'): string {
 }
 
 const notif = useNotificationStore()
+const auth = useAuthStore()
+// Audit sources are part of the Integrations area: VIEW_INTEGRATIONS lists
+// them, MANAGE_INTEGRATIONS (enforced server-side) is needed to change them.
+const canManage = computed(() => auth.hasSuperadminPermission('superadmin.manage_integrations'))
 
 const loading      = ref(false)
 const saving       = ref(false)

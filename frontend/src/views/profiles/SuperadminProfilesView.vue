@@ -171,6 +171,9 @@ const profileCols = [
 
 const notif = useNotificationStore()
 const auth = useAuthStore()
+// View-tier superadmins (VIEW_PROVISIONING_PROFILES) can list profiles; the
+// editor and every write need MANAGE_PROVISIONING_PROFILES (enforced server-side).
+const canManage = computed(() => auth.hasSuperadminPermission('superadmin.manage_provisioning_profiles'))
 const confirm = useConfirm()
 
 const loading = ref(false)
@@ -1494,7 +1497,7 @@ function toggleApprover(accountId: string) {
         <h1 class="text-2xl font-bold text-gray-900">Provisioning Profiles</h1>
         <p class="text-sm text-gray-500 mt-1">Configure provisioning profiles and attribute mappings</p>
       </div>
-      <button class="btn-primary" @click="openCreate">+ Create Profile</button>
+      <button v-if="canManage" class="btn-primary" @click="openCreate">+ Create Profile</button>
     </div>
 
     <DataTable :columns="profileCols" :rows="profiles" :loading="loading" row-key="id" empty-text="No provisioning profiles configured.">
@@ -1512,11 +1515,11 @@ function toggleApprover(accountId: string) {
       </template>
       <template #actions="{ row }">
         <ActionMenu :items="[
-          { label: 'Clone',  onClick: () => openClone(row as ProfileRow) },
-          { label: 'Delete', onClick: () => confirmDelete(row as ProfileRow), danger: true },
+          { label: 'Clone',  onClick: () => openClone(row as ProfileRow), hidden: !canManage },
+          { label: 'Delete', onClick: () => confirmDelete(row as ProfileRow), danger: true, hidden: !canManage },
         ]">
           <template #primary>
-            <button @click="openEdit(row as ProfileRow)" class="btn-secondary btn-compact">Edit</button>
+            <button v-if="canManage" @click="openEdit(row as ProfileRow)" class="btn-secondary btn-compact">Edit</button>
           </template>
         </ActionMenu>
       </template>
