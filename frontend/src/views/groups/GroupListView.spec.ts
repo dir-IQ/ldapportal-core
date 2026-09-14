@@ -26,7 +26,7 @@ vi.mock('@/composables/useApi', () => ({
 vi.mock('@/api/groups', () => ({
   searchGroups: vi.fn().mockResolvedValue({ data: [{ dn: 'cn=staff,ou=groups,dc=x', attributes: { cn: ['staff'], member: ['uid=a,dc=x'] } }] }),
   getGroup: vi.fn(), createGroup: vi.fn(), updateGroup: vi.fn(), deleteGroup: vi.fn(),
-  addGroupMember: vi.fn(), removeGroupMember: vi.fn(), addGroupMembersBulk: vi.fn(),
+  removeGroupMember: vi.fn(), addGroupMembersBulk: vi.fn(),
   removeGroupMembersBulk: vi.fn(),
 }))
 vi.mock('@/api/csvTemplates', () => ({ exportGroupCsv: vi.fn() }))
@@ -37,11 +37,11 @@ vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ dat
 beforeEach(() => setActivePinia(createPinia()))
 
 import GroupListView from './GroupListView.vue'
-import { createGroup, updateGroup, removeGroupMembersBulk } from '@/api/groups'
+import { createGroup, updateGroup, addGroupMembersBulk, removeGroupMembersBulk } from '@/api/groups'
 
 const stubs = {
   LdapFilterBuilder: true, RecentSearches: true, AppModal: true, FormField: true,
-  ConfirmDialog: true, DnPicker: true, CopyButton: true,
+  ConfirmDialog: true, CopyButton: true,
   ResultsTable: {
     props: ['rows', 'columns', 'rowKey', 'tableKey', 'emptyText'],
     template: `<div><slot name="toolbar" /><template v-for="r in rows" :key="r.dn"><slot name="cell-actions" :row="r" /></template></div>`,
@@ -181,6 +181,84 @@ describe('GroupListView member count column', () => {
     expect(vm.bulkMode).toBe('remove')
     vm.toggleBulk('remove')
     expect(vm.bulkMode).toBeNull()
+  })
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+})
+
+// The Members dialog: "Add Members" (the bulk textarea) is the only add
+// path, and the filter box narrows the shown list client-side.
+describe('GroupListView members dialog', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  // Render AppModal's default slot so the dialog's own buttons are visible.
+  const dialogStubs = { ...stubs, AppModal: { template: '<div><slot /></div>' } }
+
+  async function mountDialog() {
+    state.features = ['group.read', 'group.manage_members']
+    const wrapper = mount(GroupListView, { global: { stubs: dialogStubs } })
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.openMembers(vm.groups[0])
+    await flushPromises()
+    return { wrapper, vm }
+  }
+
+  it('offers Add Members and Bulk Remove, with no single-entry add', async () => {
+    const { wrapper } = await mountDialog()
+    const labels = wrapper.findAll('button').map(b => b.text())
+    expect(labels).toContain('Add Members')
+    expect(labels).toContain('Bulk Remove')
+    expect(labels).not.toContain('Bulk Add')
+    expect(labels).not.toContain('Add')
+    expect(wrapper.find('input[aria-label="Filter members"]').exists()).toBe(true)
+  })
+
+  it('filters the shown members client-side without calling the API', async () => {
+    const { vm } = await mountDialog()
+    vm.members = ['uid=alice,dc=x', 'uid=bob,dc=x', 'uid=carol,dc=x']
+    vm.memberFilter = 'AL'
+    expect(vm.filteredMembers).toEqual(['uid=alice,dc=x'])
+    vm.memberFilter = 'zzz'
+    expect(vm.filteredMembers).toEqual([])
+    vm.memberFilter = ''
+    expect(vm.filteredMembers).toHaveLength(3)
+    expect(addGroupMembersBulk).not.toHaveBeenCalled()
+  })
+
+  it('resets the filter when the dialog is reopened', async () => {
+    const { vm } = await mountDialog()
+    vm.memberFilter = 'x'
+    vm.openMembers(vm.groups[0])
+    expect(vm.memberFilter).toBe('')
+  })
+
+  it('Add Members submits the pasted DNs through the bulk endpoint', async () => {
+    vi.mocked(addGroupMembersBulk).mockResolvedValue({
+      status: 200, data: { added: 1, failed: 0, errors: [] },
+    } as any)
+    const { vm } = await mountDialog()
+    vm.toggleBulk('add')
+    vm.bulkMemberDns = 'uid=new,dc=x'
+    await vm.doBulkAdd()
+    expect(addGroupMembersBulk).toHaveBeenCalledWith('d1', 'cn=staff,ou=groups,dc=x', {
+      memberAttribute: 'member', memberValues: ['uid=new,dc=x'],
+    })
+    expect(vm.members).toContain('uid=new,dc=x')
+    expect(vm.groups[0]._memberCount).toBe(2)
+  })
+
+  it('an approval-gated add (202) leaves the member list untouched', async () => {
+    vi.mocked(addGroupMembersBulk).mockResolvedValue({
+      status: 202, data: { message: 'queued', approvalId: 'a1' },
+    } as any)
+    const { vm } = await mountDialog()
+    vm.toggleBulk('add')
+    vm.bulkMemberDns = 'uid=new,dc=x'
+    await vm.doBulkAdd()
+    expect(vm.members).toEqual(['uid=a,dc=x'])
+    expect(vm.bulkResult).toBeNull()
+    expect(vm.bulkMemberDns).toBe('')
   })
   /* eslint-enable @typescript-eslint/no-explicit-any */
 })
