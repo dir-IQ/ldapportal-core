@@ -1518,7 +1518,7 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["addMembersBulk"];
-        delete?: never;
+        delete: operations["removeMembersBulk"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4221,6 +4221,17 @@ export interface components {
         BulkMemberRequest: {
             memberAttribute: string;
             memberValues: string[];
+        };
+        BulkMemberRemoveResult: {
+            /** Format: int32 */
+            removed: number;
+            /** Format: int32 */
+            failed: number;
+            errors: components["schemas"]["BulkMemberError"][];
+        };
+        BulkMemberError: {
+            memberValue: string;
+            error: string;
         };
         ApprovalRejectRequest: {
             reason: string;
@@ -8334,6 +8345,34 @@ export interface operations {
                 };
                 content: {
                     "*/*": Record<string, never>;
+                };
+            };
+        };
+    };
+    removeMembersBulk: {
+        parameters: {
+            query: {
+                dn: string;
+            };
+            header?: never;
+            path: {
+                directoryId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BulkMemberRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BulkMemberRemoveResult"];
                 };
             };
         };
