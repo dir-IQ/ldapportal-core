@@ -2,6 +2,7 @@
 package com.ldapportal.core.reports.schedule;
 
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.PermissionService;
 import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.core.reports.ReportData;
@@ -30,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -45,6 +47,7 @@ class ScheduledReportJobServiceTest {
     private final EmailService emailService = mock(EmailService.class);
     private final S3UploadService s3 = mock(S3UploadService.class);
     private final Clock clock = Clock.fixed(Instant.parse("2026-06-20T08:00:00Z"), ZoneOffset.UTC);
+    private final PermissionService permissionService = mock(PermissionService.class);
 
     private ScheduledReportJobService service;
     private final UUID dirId = UUID.randomUUID();
@@ -52,7 +55,7 @@ class ScheduledReportJobServiceTest {
     @BeforeEach
     void setup() {
         service = new ScheduledReportJobService(jobRepo, dirRepo, List.of(contentProvider), List.of(renderer),
-                entitlements, emailService, s3, clock);
+                entitlements, emailService, s3, clock, permissionService);
         when(contentProvider.supportedTypes())
                 .thenReturn(List.of(ScheduledReportType.core("DISABLED_ACCOUNTS", "Disabled Accounts")));
         when(entitlements.exposes(any())).thenReturn(true);
@@ -69,6 +72,7 @@ class ScheduledReportJobServiceTest {
     void create_normalizesCron_setsCreatedBy_andSaves() {
         when(jobRepo.save(any())).thenAnswer(i -> i.getArgument(0));
         AuthPrincipal principal = new AuthPrincipal(PrincipalType.ADMIN, UUID.randomUUID(), "admin");
+        when(permissionService.resolveSearchBaseDns(principal, dirId, null)).thenReturn(List.of("ou=people,dc=example,dc=com"));
 
         ScheduledReportJob saved = service.create(dirId, req(ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL, "a@b.com"), principal);
 
@@ -299,4 +303,83 @@ class ScheduledReportJobServiceTest {
         assertThat(ScheduledReportJobService.normalizeCron("0 8 * * MON")).isEqualTo("0 0 8 * * MON");
         assertThat(ScheduledReportJobService.normalizeCron("0 0 8 * * MON")).isEqualTo("0 0 8 * * MON");
     }
+
+    // ── creator scope: the scheduler runs as the system, so pin it at save ──
+
+    private ReportJobRequest reqWithParams(Map<String, Object> params) {
+        return new ReportJobRequest("Weekly", "DISABLED_ACCOUNTS", params,
+                "0 8 * * MON", ReportOutputFormat.CSV, ReportDeliveryMethod.EMAIL, "a@b.com", null, "UTC", true);
+    }
+
+    @Test
+    void create_admin_withoutScope_storesTheirSingleAuthorizedOu() {
+        when(jobRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.ADMIN, UUID.randomUUID(), "admin");
+        when(permissionService.resolveSearchBaseDns(admin, dirId, null)).thenReturn(List.of("ou=people,dc=example,dc=com"));
+
+        ScheduledReportJob saved = service.create(dirId, reqWithParams(Map.of("lookbackDays", 30)), admin);
+
+        assertThat(saved.getReportParams()).containsEntry("scopeBaseDn", "ou=people,dc=example,dc=com");
+    }
+
+    @Test
+    void create_admin_requestedScopeIsClamped_notTrusted() {
+        when(jobRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.ADMIN, UUID.randomUUID(), "admin");
+        when(permissionService.resolveSearchBaseDns(admin, dirId, "dc=example,dc=com"))
+                .thenReturn(List.of("ou=people,dc=example,dc=com"));
+
+        ScheduledReportJob saved = service.create(dirId,
+                reqWithParams(Map.of("scopeBaseDn", "dc=example,dc=com")), admin);
+
+        assertThat(saved.getReportParams()).containsEntry("scopeBaseDn", "ou=people,dc=example,dc=com");
+    }
+
+    @Test
+    void create_admin_scopeOutsideTheirOus_isRefusedBeforeSaving() {
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.ADMIN, UUID.randomUUID(), "admin");
+        when(permissionService.resolveSearchBaseDns(admin, dirId, "ou=other,dc=example,dc=com"))
+                .thenThrow(new org.springframework.security.access.AccessDeniedException("outside"));
+
+        assertThatThrownBy(() -> service.create(dirId,
+                reqWithParams(Map.of("scopeBaseDn", "ou=other,dc=example,dc=com")), admin))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        verify(jobRepo, never()).save(any());
+    }
+
+    @Test
+    void create_admin_severalOusAndNoScope_mustPickOne() {
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.ADMIN, UUID.randomUUID(), "admin");
+        when(permissionService.resolveSearchBaseDns(admin, dirId, null))
+                .thenReturn(List.of("ou=a,dc=example,dc=com", "ou=b,dc=example,dc=com"));
+
+        assertThatThrownBy(() -> service.create(dirId, reqWithParams(Map.of()), admin))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("scopeBaseDn");
+        verify(jobRepo, never()).save(any());
+    }
+
+    @Test
+    void create_admin_branchDnParam_isCheckedAgainstTheirScope() {
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.ADMIN, UUID.randomUUID(), "admin");
+        when(permissionService.resolveSearchBaseDns(admin, dirId, null)).thenReturn(List.of("ou=people,dc=example,dc=com"));
+        org.mockito.Mockito.doThrow(new org.springframework.security.access.AccessDeniedException("outside"))
+                .when(permissionService).requireDnWithinScope(admin, dirId, "ou=other,dc=example,dc=com");
+
+        assertThatThrownBy(() -> service.create(dirId,
+                reqWithParams(Map.of("branchDn", "ou=other,dc=example,dc=com")), admin))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+    }
+
+    @Test
+    void create_superadmin_scopeIsStoredAsSent() {
+        when(jobRepo.save(any())).thenAnswer(i -> i.getArgument(0));
+        AuthPrincipal root = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "root");
+
+        ScheduledReportJob saved = service.create(dirId, reqWithParams(Map.of("lookbackDays", 30)), root);
+
+        assertThat(saved.getReportParams()).doesNotContainKey("scopeBaseDn");
+        org.mockito.Mockito.verifyNoInteractions(permissionService);
+    }
 }
+

@@ -73,7 +73,7 @@ public class ReportController {
         rateLimiter.check(principal.username(), "report-run");
         DirectoryConnection dc = dirRepo.findById(directoryId)
                 .orElseThrow(() -> new ResourceNotFoundException("DirectoryConnection", directoryId));
-        return reportService.run(dc, req.reportType(), req.reportParams(), directoryId);
+        return reportService.run(dc, req.reportType(), req.reportParams(), directoryId, principal);
     }
 
     /**
@@ -101,7 +101,7 @@ public class ReportController {
         DirectoryConnection dc = dirRepo.findById(directoryId)
                 .orElseThrow(() -> new ResourceNotFoundException("DirectoryConnection", directoryId));
 
-        ReportData data = reportService.run(dc, req.reportType(), req.reportParams(), directoryId);
+        ReportData data = reportService.run(dc, req.reportType(), req.reportParams(), directoryId, principal);
         byte[] csv = CsvUtils.write(data.columns(), data.rows());
 
         String filename = req.reportType().toLowerCase() + ".csv";

@@ -37,6 +37,7 @@ import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ConflictHandling;
 import com.ldapportal.entity.enums.ImportErrorHandling;
 import com.ldapportal.entity.enums.DirectoryType;
+import com.ldapportal.entity.enums.FeatureKey;
 import com.ldapportal.entity.enums.InputType;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapBrowseService;
@@ -112,6 +113,57 @@ public class LdapOperationService {
     // direct dependency would form a cycle. Only the batch membership path
     // needs it, and it resolves through the provider on demand.
     private final org.springframework.beans.factory.ObjectProvider<ApprovalWorkflowService> approvalServiceProvider;
+
+    // ── Attribute policy for the generic update paths ─────────────────────────
+    //
+    // The feature catalogue splits password resets, enable/disable, and group
+    // membership out of the plain edit keys, but the generic update endpoints
+    // accept arbitrary attribute modifications. Without this check a holder
+    // of USER_EDIT could write userPassword or the account-control attribute,
+    // and a holder of GROUP_EDIT could rewrite member, making a deny on the
+    // specific key meaningless. The UI never sends these on the edit paths;
+    // the API has to refuse them itself.
+
+    private static final Set<String> PASSWORD_ATTRIBUTES = Set.of("userpassword", "unicodepwd");
+
+    private static final Set<String> MEMBERSHIP_ATTRIBUTES = Set.of("member", "uniquemember", "memberuid");
+
+    /** Vendor account-control attributes; keep in sync with LdapDirectoryProvider.isEnabled. */
+    private static final Set<String> ENABLE_DISABLE_ATTRIBUTES = Set.of(
+            "useraccountcontrol", "nsaccountlock", "ds-pwp-account-disabled",
+            "logindisabled", "pwdaccountlockedtime");
+
+    /** Attribute name without options ({@code userPassword;binary} → {@code userpassword}). */
+    private static String attributeKey(String attribute) {
+        String base = attribute.indexOf(';') >= 0 ? attribute.substring(0, attribute.indexOf(';')) : attribute;
+        return base.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private void requireUserAttributeKeys(AuthPrincipal principal, UUID directoryId,
+                                          DirectoryConnection dc, List<AttributeModification> mods) {
+        Set<String> enableAttrs = new HashSet<>(ENABLE_DISABLE_ATTRIBUTES);
+        String configured = dc.getEnableDisableAttribute();
+        if (configured != null && !configured.isBlank()) {
+            enableAttrs.add(attributeKey(configured));
+        }
+        for (AttributeModification m : mods) {
+            String key = attributeKey(m.attribute());
+            if (PASSWORD_ATTRIBUTES.contains(key)) {
+                permissionService.requireFeature(principal, directoryId, FeatureKey.USER_RESET_PASSWORD);
+            } else if (enableAttrs.contains(key)) {
+                permissionService.requireFeature(principal, directoryId, FeatureKey.USER_ENABLE_DISABLE);
+            }
+        }
+    }
+
+    private void requireGroupAttributeKeys(AuthPrincipal principal, UUID directoryId,
+                                           List<AttributeModification> mods) {
+        for (AttributeModification m : mods) {
+            if (MEMBERSHIP_ATTRIBUTES.contains(attributeKey(m.attribute()))) {
+                permissionService.requireFeature(principal, directoryId, FeatureKey.GROUP_MANAGE_MEMBERS);
+            }
+        }
+    }
 
     // ── Browse ────────────────────────────────────────────────────────────────
 
@@ -322,6 +374,7 @@ public class LdapOperationService {
                                         String ifUnmodifiedSince) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
+        requireUserAttributeKeys(principal, directoryId, dc, req.modifications());
         if (ifUnmodifiedSince != null && !ifUnmodifiedSince.isBlank()) {
             requireUnmodifiedSince(
                     userService.getUser(dc, dn, "modifyTimestamp"), dn, ifUnmodifiedSince);
@@ -371,6 +424,7 @@ public class LdapOperationService {
                                          String ifUnmodifiedSince) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
+        requireGroupAttributeKeys(principal, directoryId, req.modifications());
         if (ifUnmodifiedSince != null && !ifUnmodifiedSince.isBlank()) {
             requireUnmodifiedSince(
                     groupService.getGroup(dc, dn, "modifyTimestamp"), dn, ifUnmodifiedSince);
@@ -413,6 +467,7 @@ public class LdapOperationService {
                                                            BulkAttributeUpdateRequest req) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         req.dns().forEach(dn -> permissionService.requireDnWithinScope(principal, directoryId, dn));
+        requireUserAttributeKeys(principal, directoryId, dc, req.modifications());
 
         List<Modification> mods = req.modifications().stream()
                 .map(m -> new Modification(

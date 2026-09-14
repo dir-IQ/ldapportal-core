@@ -98,7 +98,7 @@ public class ReportJobController {
             @PathVariable UUID jobId,
             @AuthenticationPrincipal AuthPrincipal principal,
             @Valid @RequestBody ReportJobRequest req) {
-        return ReportJobResponse.from(jobService.update(directoryId, jobId, req));
+        return ReportJobResponse.from(jobService.update(directoryId, jobId, req, principal));
     }
 
     @DeleteMapping("/report-jobs/{jobId}")

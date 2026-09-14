@@ -5,7 +5,9 @@ import com.ldapportal.core.governance.MembershipGate;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PermissionService;
 import com.ldapportal.auth.PrincipalType;
+import com.ldapportal.entity.enums.FeatureKey;
 import com.ldapportal.dto.ldap.AttributeModification;
+import com.ldapportal.dto.ldap.BulkAttributeUpdateRequest;
 import com.ldapportal.core.provisioning.ProvisioningRefusedException;
 import com.ldapportal.dto.ldap.CreateEntryRequest;
 import com.ldapportal.dto.ldap.LdapEntryResponse;
@@ -160,6 +162,85 @@ class LdapOperationServiceTest {
 
         verify(userService).updateUser(eq(dc), eq(dn), any());
         assertThat(resp.dn()).isEqualTo(dn);
+    }
+
+    // ── Attribute policy: the edit keys do not include password / enable / members ──
+
+    private static UpdateEntryRequest replace(String attribute, String value) {
+        return new UpdateEntryRequest(List.of(
+                new AttributeModification(AttributeModification.Operation.REPLACE, attribute, List.of(value))));
+    }
+
+    @Test
+    void updateUser_passwordAttribute_requiresResetPasswordKey() {
+        String dn = "cn=Dave,ou=Users,dc=example,dc=com";
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(enabledDir(true)));
+        doThrow(new AccessDeniedException("no reset"))
+                .when(permissionService).requireFeature(any(), eq(dirId), eq(FeatureKey.USER_RESET_PASSWORD));
+
+        assertThatThrownBy(() -> service.updateUser(dirId, adminPrincipal(), dn, replace("userPassword", "x")))
+                .isInstanceOf(AccessDeniedException.class);
+        verify(userService, never()).updateUser(any(), anyString(), any());
+    }
+
+    @Test
+    void updateUser_accountControlAttribute_requiresEnableDisableKey() {
+        String dn = "cn=Dave,ou=Users,dc=example,dc=com";
+        DirectoryConnection dc = enabledDir(true);
+        dc.setEnableDisableAttribute("customLock");
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        doThrow(new AccessDeniedException("no enable"))
+                .when(permissionService).requireFeature(any(), eq(dirId), eq(FeatureKey.USER_ENABLE_DISABLE));
+
+        // The vendor attribute and the directory's configured one are both covered.
+        assertThatThrownBy(() -> service.updateUser(dirId, adminPrincipal(), dn, replace("userAccountControl", "514")))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> service.updateUser(dirId, adminPrincipal(), dn, replace("customLock", "TRUE")))
+                .isInstanceOf(AccessDeniedException.class);
+        verify(userService, never()).updateUser(any(), anyString(), any());
+    }
+
+    @Test
+    void updateUser_ordinaryAttribute_needsNoExtraKey() {
+        String dn = "cn=Dave,ou=Users,dc=example,dc=com";
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        when(userService.getUser(dc, dn, "*", "modifyTimestamp"))
+                .thenReturn(new LdapUser(dn, Map.of("mail", List.of("d@example.com"))));
+
+        service.updateUser(dirId, adminPrincipal(), dn, replace("mail", "d@example.com"));
+
+        verify(permissionService, never()).requireFeature(any(), any(), any());
+        verify(userService).updateUser(eq(dc), eq(dn), any());
+    }
+
+    @Test
+    void bulkUpdateAttributes_passwordAttribute_requiresResetPasswordKey() {
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(enabledDir(true)));
+        doThrow(new AccessDeniedException("no reset"))
+                .when(permissionService).requireFeature(any(), eq(dirId), eq(FeatureKey.USER_RESET_PASSWORD));
+        BulkAttributeUpdateRequest req = new BulkAttributeUpdateRequest(
+                List.of("cn=a,ou=Users,dc=example,dc=com"),
+                List.of(new AttributeModification(AttributeModification.Operation.REPLACE, "unicodePwd", List.of("x"))));
+
+        assertThatThrownBy(() -> service.bulkUpdateAttributes(dirId, adminPrincipal(), req))
+                .isInstanceOf(AccessDeniedException.class);
+        verify(userService, never()).updateUser(any(), anyString(), any());
+    }
+
+    @Test
+    void updateGroup_membershipAttribute_requiresManageMembersKey() {
+        String dn = "cn=Staff,ou=Groups,dc=example,dc=com";
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(enabledDir(true)));
+        doThrow(new AccessDeniedException("no members"))
+                .when(permissionService).requireFeature(any(), eq(dirId), eq(FeatureKey.GROUP_MANAGE_MEMBERS));
+
+        for (String attr : List.of("member", "uniqueMember", "memberUid")) {
+            assertThatThrownBy(() -> service.updateGroup(dirId, adminPrincipal(), dn,
+                    replace(attr, "uid=x,ou=Users,dc=example,dc=com")))
+                    .isInstanceOf(AccessDeniedException.class);
+        }
+        verify(groupService, never()).updateGroup(any(), anyString(), any());
     }
 
     // ── If-Unmodified-Since-LDAP precondition (inline edit, Phase 1.5) ────────
