@@ -26,3 +26,6 @@ export const removeGroupMember = (dirId, dn, data) =>
 
 export const addGroupMembersBulk = (dirId, dn, data) =>
   client.post(`${base(dirId)}/members/bulk`, data, { params: { dn } })
+
+export const removeGroupMembersBulk = (dirId, dn, data) =>
+  client.delete(`${base(dirId)}/members/bulk`, { data, params: { dn } })

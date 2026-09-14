@@ -27,6 +27,7 @@ vi.mock('@/api/groups', () => ({
   searchGroups: vi.fn().mockResolvedValue({ data: [{ dn: 'cn=staff,ou=groups,dc=x', attributes: { cn: ['staff'], member: ['uid=a,dc=x'] } }] }),
   getGroup: vi.fn(), createGroup: vi.fn(), updateGroup: vi.fn(), deleteGroup: vi.fn(),
   addGroupMember: vi.fn(), removeGroupMember: vi.fn(), addGroupMembersBulk: vi.fn(),
+  removeGroupMembersBulk: vi.fn(),
 }))
 vi.mock('@/api/csvTemplates', () => ({ exportGroupCsv: vi.fn() }))
 vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ data: [] }) }))
@@ -36,7 +37,7 @@ vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ dat
 beforeEach(() => setActivePinia(createPinia()))
 
 import GroupListView from './GroupListView.vue'
-import { createGroup, updateGroup } from '@/api/groups'
+import { createGroup, updateGroup, removeGroupMembersBulk } from '@/api/groups'
 
 const stubs = {
   LdapFilterBuilder: true, RecentSearches: true, AppModal: true, FormField: true,
@@ -124,6 +125,62 @@ describe('GroupListView owner DN validation', () => {
     await vm.doEdit()
     expect(updateGroup).not.toHaveBeenCalled()
     expect(vm.editOwnerError).toBe('Not a valid DN')
+  })
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+})
+
+// The Members column is a synthetic, numeric row field so the table sorts it
+// numerically; its value tracks the drawer as members are added / removed.
+describe('GroupListView member count column', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  async function mountVm(features = ['group.read', 'group.manage_members']) {
+    state.features = features
+    const wrapper = mount(GroupListView, { global: { stubs } })
+    await flushPromises()
+    return wrapper.vm as any
+  }
+
+  it('exposes a numeric _memberCount column after the default attribute columns', async () => {
+    const vm = await mountVm()
+    const keys = vm.cols.map((c: { key: string }) => c.key)
+    expect(keys.indexOf('_memberCount')).toBeGreaterThan(keys.indexOf('cn'))
+    expect(keys.indexOf('_memberCount')).toBeLessThan(keys.indexOf('actions'))
+    expect(vm.groups[0]._memberCount).toBe(1)
+    expect(typeof vm.groups[0]._memberCount).toBe('number')
+  })
+
+  it('bulk remove drops only the values the server removed and syncs the row count', async () => {
+    vi.mocked(removeGroupMembersBulk).mockResolvedValue({
+      data: { removed: 1, failed: 1, errors: [{ memberValue: 'uid=ghost,dc=x', error: 'not a member' }] },
+    } as any)
+    const vm = await mountVm()
+    vm.openMembers(vm.groups[0])
+    vm.toggleBulk('remove')
+    vm.bulkMemberDns = 'uid=a,dc=x\nuid=ghost,dc=x'
+    await vm.doBulkRemove()
+
+    expect(removeGroupMembersBulk).toHaveBeenCalledWith('d1', 'cn=staff,ou=groups,dc=x', {
+      memberAttribute: 'member',
+      memberValues: ['uid=a,dc=x', 'uid=ghost,dc=x'],
+    })
+    expect(vm.members).toEqual([])
+    expect(vm.groups[0]._memberCount).toBe(0)
+    expect(vm.bulkResult).toMatchObject({ verb: 'Removed', succeeded: 1, failed: 1 })
+    // Mirrors bulk add: the textarea clears once at least one value went through.
+    expect(vm.bulkMemberDns).toBe('')
+  })
+
+  it('toggling the same bulk verb closes the panel, the other verb switches it', async () => {
+    const vm = await mountVm()
+    vm.openMembers(vm.groups[0])
+    vm.toggleBulk('add')
+    expect(vm.bulkMode).toBe('add')
+    vm.toggleBulk('remove')
+    expect(vm.bulkMode).toBe('remove')
+    vm.toggleBulk('remove')
+    expect(vm.bulkMode).toBeNull()
   })
   /* eslint-enable @typescript-eslint/no-explicit-any */
 })

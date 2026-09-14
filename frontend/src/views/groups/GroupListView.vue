@@ -83,6 +83,20 @@
       <template #cell-description="{ value }">
         <span class="cell-muted">{{ value }}</span>
       </template>
+      <!-- Member count. The list search returns every attribute, so the
+           count comes straight from the row's resolved member values — no
+           per-row round-trip. Clicking it opens the Members drawer (same
+           as the action button) when the admin may manage members. -->
+      <template #cell-_memberCount="{ value, row }">
+        <button
+          v-if="can.manageMembers"
+          type="button"
+          class="tabular-nums text-blue-600 hover:underline"
+          :aria-label="`View ${value} members of ${(row as unknown as GroupRow).cn || (row as unknown as GroupRow).dn}`"
+          @click="openMembers(row as unknown as GroupRow)"
+        >{{ value }}</button>
+        <span v-else class="cell-muted tabular-nums">{{ value }}</span>
+      </template>
       <template #cell-actions="{ row }">
         <ActionMenu :items="[
           { label: 'Members', onClick: () => openMembers(row as unknown as GroupRow), hidden: !can.manageMembers },
@@ -161,10 +175,16 @@
       <div class="mb-3 flex gap-2">
         <DnPicker v-model="newMemberDn" :directory-id="dirId" class="flex-1" />
         <button @click="addMember" class="btn-primary">Add</button>
-        <button @click="showBulkAdd = !showBulkAdd" class="btn-secondary">Bulk Add</button>
+        <button @click="toggleBulk('add')" class="btn-secondary" :aria-pressed="bulkMode === 'add'">Bulk Add</button>
+        <button @click="toggleBulk('remove')" class="btn-danger-soft" :aria-pressed="bulkMode === 'remove'">Bulk Remove</button>
       </div>
-      <div v-if="showBulkAdd" class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
-        <label for="gl-bulk-members" class="block text-xs font-medium text-gray-600 mb-1">Add multiple members (one DN per line)</label>
+      <!-- One panel serves both bulk verbs: the textarea, DN-shape warning
+           and per-line result list are identical; only the label, submit
+           button and result wording change with bulkMode. -->
+      <div v-if="bulkMode" class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+        <label for="gl-bulk-members" class="block text-xs font-medium text-gray-600 mb-1">
+          {{ bulkMode === 'add' ? 'Add' : 'Remove' }} multiple members (one DN per line)
+        </label>
         <textarea id="gl-bulk-members" v-model="bulkMemberDns" rows="4" placeholder="cn=Alice,ou=Users,dc=example,dc=com&#10;cn=Bob,ou=Users,dc=example,dc=com"
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2"></textarea>
         <p v-if="bulkInvalidLines.length" class="mb-2 text-xs text-amber-700">
@@ -172,14 +192,17 @@
           (expected e.g. <span class="font-mono">cn=Alice,ou=Users,dc=example,dc=com</span>) — they'll be sent as-is and may fail.
         </p>
         <div v-if="bulkResult" class="mb-2 p-2 rounded-lg text-xs" :class="bulkResult.failed ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-green-50 border border-green-200 text-green-800'">
-          Added {{ bulkResult.added }}, failed {{ bulkResult.failed }}.
+          {{ bulkResult.verb }} {{ bulkResult.succeeded }}, failed {{ bulkResult.failed }}.
           <ul v-if="bulkResult.errors?.length" class="mt-1 list-disc pl-4">
             <li v-for="(e, i) in bulkResult.errors" :key="i">{{ e.memberValue }}: {{ e.error }}</li>
           </ul>
         </div>
         <div class="flex justify-end">
-          <button @click="doBulkAdd" :disabled="bulkAdding || !bulkMemberDns.trim()" class="btn-primary text-xs">
-            {{ bulkAdding ? 'Adding…' : 'Add All' }}
+          <button v-if="bulkMode === 'add'" @click="doBulkAdd" :disabled="bulkBusy || !bulkMemberDns.trim()" class="btn-primary text-xs">
+            {{ bulkBusy ? 'Adding…' : 'Add All' }}
+          </button>
+          <button v-else @click="doBulkRemove" :disabled="bulkBusy || !bulkMemberDns.trim()" class="btn-danger text-xs">
+            {{ bulkBusy ? 'Removing…' : 'Remove All' }}
           </button>
         </div>
       </div>
@@ -240,6 +263,8 @@ interface GroupRow {
   _owner: string
   _members: string[]
   _memberAttr: MemberAttr
+  /** Numeric (not string) so ResultsTable sorts the column numerically. */
+  _memberCount: number
   __entry: { dn: string, attributes?: Record<string, string[] | string | null> }
   [key: string]: unknown
 }
@@ -252,8 +277,13 @@ interface CreateForm {
   description: string
 }
 
+type BulkMode = 'add' | 'remove'
+
+/** Normalised view of the add ({@code added}) / remove ({@code removed})
+ *  bulk results so one banner renders both. */
 interface BulkResult {
-  added: number
+  verb: 'Added' | 'Removed'
+  succeeded: number
   failed: number
   errors?: Array<{ memberValue: string, error: string }>
 }
@@ -323,9 +353,9 @@ const profileAttributeNames = computed<string[]>(() =>
     .map(a => a.attributeName)
     .filter((n): n is string => typeof n === 'string' && n.length > 0),
 )
-const showBulkAdd   = ref(false)
+const bulkMode      = ref<BulkMode | null>(null)
 const bulkMemberDns = ref('')
-const bulkAdding    = ref(false)
+const bulkBusy      = ref(false)
 const bulkResult    = ref<BulkResult | null>(null)
 const createForm    = ref<CreateForm>({ parentDn: '', cn: '', objectClass: 'groupOfNames', owner: '', description: '' })
 const editForm      = ref({ owner: '', description: '' })
@@ -405,6 +435,10 @@ const cols = computed(() => {
   return [
     { key: 'dn', label: 'DN', alwaysVisible: true },
     ...defaults.map(k => ({ key: k, label: k === 'cn' ? 'Name' : k })),
+    // Synthetic, sortable member-count column (numeric sort via the
+    // number-typed row field). Sits after the curated defaults so it
+    // reads as part of the group's summary, not its raw attributes.
+    { key: '_memberCount', label: 'Members', defaultWidth: 100 },
     ...extras.map(k => ({ key: k, label: k, defaultHidden: true })),
     // See UserListView for the rationale on 200 — three side-by-side
     // elements (Edit + first menu-item button + kebab trigger) don't
@@ -468,6 +502,7 @@ async function load() {
       row._owner      = Array.isArray(owner) ? (owner[0] || '') : (owner || '')
       row._members    = members
       row._memberAttr = memberAttr
+      row._memberCount = members.length
       return row as unknown as GroupRow
     })
   })
@@ -598,10 +633,30 @@ function openMembers(row: GroupRow) {
   selectedGroup.value = row
   members.value       = [...row._members]
   newMemberDn.value   = ''
-  showBulkAdd.value   = false
+  bulkMode.value      = null
   bulkMemberDns.value = ''
   bulkResult.value    = null
   showMembers.value   = true
+}
+
+// Toggle the shared bulk panel: same verb closes it, the other verb
+// switches it (keeping any pasted DNs, clearing the previous result).
+function toggleBulk(mode: BulkMode) {
+  bulkResult.value = null
+  bulkMode.value = bulkMode.value === mode ? null : mode
+}
+
+function bulkLines(): string[] {
+  return bulkMemberDns.value.split('\n').map(s => s.trim()).filter(Boolean)
+}
+
+// Keep the list-row count in step with the drawer so the Members column
+// doesn't go stale until the next reload.
+function syncSelectedGroupCount() {
+  const grp = selectedGroup.value
+  if (!grp) return
+  grp._members = [...members.value]
+  grp._memberCount = members.value.length
 }
 
 async function addMember() {
@@ -615,32 +670,61 @@ async function addMember() {
   } else {
     notif.success('Member added')
     members.value.push(newMemberDn.value)
+    syncSelectedGroupCount()
   }
   newMemberDn.value = ''
 }
 
 async function doBulkAdd() {
   if (!selectedGroup.value) return
-  const dns = bulkMemberDns.value.split('\n').map(s => s.trim()).filter(Boolean)
+  const dns = bulkLines()
   if (!dns.length) return
-  bulkAdding.value = true
+  bulkBusy.value = true
   bulkResult.value = null
   try {
     const { data } = await groupsApi.addGroupMembersBulk(dirId, selectedGroup.value.dn, {
       memberAttribute: selectedGroup.value._memberAttr,
       memberValues: dns,
     })
-    bulkResult.value = data
+    bulkResult.value = { verb: 'Added', succeeded: data.added, failed: data.failed, errors: data.errors }
     // Refresh members list
     for (const d of dns) {
       if (!members.value.includes(d)) members.value.push(d)
     }
+    syncSelectedGroupCount()
     if (data.added > 0) bulkMemberDns.value = ''
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
     notif.error(err.response?.data?.detail || err.message)
   } finally {
-    bulkAdding.value = false
+    bulkBusy.value = false
+  }
+}
+
+async function doBulkRemove() {
+  if (!selectedGroup.value) return
+  const dns = bulkLines()
+  if (!dns.length) return
+  bulkBusy.value = true
+  bulkResult.value = null
+  try {
+    const { data } = await groupsApi.removeGroupMembersBulk(dirId, selectedGroup.value.dn, {
+      memberAttribute: selectedGroup.value._memberAttr,
+      memberValues: dns,
+    })
+    bulkResult.value = { verb: 'Removed', succeeded: data.removed, failed: data.failed, errors: data.errors }
+    // Drop only the values the server actually removed; failed lines stay
+    // listed so the admin can see which ones didn't go through.
+    const failedSet = new Set((data.errors ?? []).map((e: { memberValue: string }) => e.memberValue))
+    const removedSet = new Set(dns.filter(d => !failedSet.has(d)))
+    members.value = members.value.filter(m => !removedSet.has(m))
+    syncSelectedGroupCount()
+    if (data.removed > 0) bulkMemberDns.value = ''
+  } catch (e) {
+    const err = e as { response?: { data?: { detail?: string } }, message?: string }
+    notif.error(err.response?.data?.detail || err.message)
+  } finally {
+    bulkBusy.value = false
   }
 }
 
@@ -652,6 +736,7 @@ async function removeMember(dn: string) {
     { successMsg: 'Member removed' }
   )
   members.value = members.value.filter(m => m !== dn)
+  syncSelectedGroupCount()
 }
 
 function confirmDelete(row: GroupRow) { deleteTarget.value = row; showDelete.value = true }

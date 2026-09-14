@@ -4,6 +4,7 @@ package com.ldapportal.controller.directory;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.DirectoryId;
 import com.ldapportal.auth.RequiresFeature;
+import com.ldapportal.dto.ldap.BulkMemberRemoveResult;
 import com.ldapportal.dto.ldap.BulkMemberRequest;
 import com.ldapportal.dto.ldap.BulkMemberResult;
 import com.ldapportal.dto.ldap.BulkMemberResult.BulkMemberError;
@@ -219,5 +220,34 @@ public class GroupController {
         }
 
         return ResponseEntity.ok(new BulkMemberResult(added, errors.size(), errors));
+    }
+
+    /**
+     * Removes several members from a group in one request. Like single-member
+     * removal (see the M4 note above) this has no approval gate; each value is
+     * attempted independently and failures are reported per value.
+     */
+    @DeleteMapping("/members/bulk")
+    @RequiresFeature(FeatureKey.GROUP_MANAGE_MEMBERS)
+    public ResponseEntity<BulkMemberRemoveResult> removeMembersBulk(
+            @DirectoryId @PathVariable UUID directoryId,
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @RequestParam String dn,
+            @Valid @RequestBody BulkMemberRequest req) {
+
+        int removed = 0;
+        List<BulkMemberError> errors = new ArrayList<>();
+
+        for (String memberValue : req.memberValues()) {
+            try {
+                service.removeGroupMember(directoryId, principal, dn, req.memberAttribute(), memberValue);
+                removed++;
+            } catch (Exception e) {
+                String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                errors.add(new BulkMemberError(memberValue, msg));
+            }
+        }
+
+        return ResponseEntity.ok(new BulkMemberRemoveResult(removed, errors.size(), errors));
     }
 }

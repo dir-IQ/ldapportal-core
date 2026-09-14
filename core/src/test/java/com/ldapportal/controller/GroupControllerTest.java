@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ldapportal.controller.directory.GroupController;
 import com.ldapportal.dto.ldap.CreateEntryRequest;
 import com.ldapportal.dto.ldap.AttributeModification;
+import com.ldapportal.dto.ldap.BulkMemberRequest;
 import com.ldapportal.dto.ldap.LdapEntryResponse;
 import com.ldapportal.dto.ldap.MemberRequest;
 import com.ldapportal.dto.ldap.UpdateEntryRequest;
@@ -28,6 +29,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willDoNothing;
+import static org.mockito.BDDMockito.willThrow;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -198,5 +200,38 @@ class GroupControllerTest extends BaseControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isNoContent());
+    }
+
+    // ── DELETE /members/bulk ──────────────────────────────────────────────────
+
+    @Test
+    void removeMembersBulk_admin_returnsPerValueResult() throws Exception {
+        String bob   = "uid=bob,ou=people,dc=example,dc=com";
+        String carol = "uid=carol,ou=people,dc=example,dc=com";
+        BulkMemberRequest req = new BulkMemberRequest("member", List.of(bob, carol));
+        willDoNothing().given(ldapService).removeGroupMember(eq(DIR_ID), any(), eq(ENTRY_DN), eq("member"), eq(bob));
+        willThrow(new IllegalArgumentException("not a member"))
+                .given(ldapService).removeGroupMember(eq(DIR_ID), any(), eq(ENTRY_DN), eq("member"), eq(carol));
+
+        mockMvc.perform(delete(BASE_URL + "/members/bulk")
+                        .param("dn", ENTRY_DN)
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.removed").value(1))
+                .andExpect(jsonPath("$.failed").value(1))
+                .andExpect(jsonPath("$.errors[0].memberValue").value(carol))
+                .andExpect(jsonPath("$.errors[0].error").value("not a member"));
+    }
+
+    @Test
+    void removeMembersBulk_emptyValues_returns400() throws Exception {
+        mockMvc.perform(delete(BASE_URL + "/members/bulk")
+                        .param("dn", ENTRY_DN)
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"memberAttribute\":\"member\",\"memberValues\":[]}"))
+                .andExpect(status().isBadRequest());
     }
 }
