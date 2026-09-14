@@ -2,6 +2,8 @@
 import client from './client'
 
 export const listAdmins    = ()           => client.get('/superadmin/admins')
+// Picker listing (id, username, displayName, role, active) — open to every superadmin.
+export const listAccountSummaries = ()    => client.get('/superadmin/admins/summary')
 export const getAdmin      = (id)         => client.get(`/superadmin/admins/${id}`)
 export const createAdmin   = (data)       => client.post('/superadmin/admins', data)
 export const createAdminWithPermissions = (data) =>

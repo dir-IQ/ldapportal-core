@@ -93,6 +93,22 @@ class AdminManagementServiceTest {
                 .containsExactly(AccountRole.ADMIN, AccountRole.SUPERADMIN);
     }
 
+    @Test
+    void listAccountSummaries_returnsIdentitiesOnly() {
+        Account alice = adminAccount("alice");
+        alice.setDisplayName("Alice A");
+        Account root  = adminAccount("root");
+        root.setRole(AccountRole.SUPERADMIN);
+        when(accountRepo.findAll()).thenReturn(List.of(alice, root));
+
+        List<com.ldapportal.dto.admin.AccountSummaryResponse> result = service.listAccountSummaries();
+
+        assertThat(result).extracting(com.ldapportal.dto.admin.AccountSummaryResponse::username)
+                .containsExactly("alice", "root");
+        assertThat(result.get(0).displayName()).isEqualTo("Alice A");
+        assertThat(result.get(1).role()).isEqualTo(AccountRole.SUPERADMIN);
+    }
+
     // ── getAdmin ──────────────────────────────────────────────────────────────
 
     @Test

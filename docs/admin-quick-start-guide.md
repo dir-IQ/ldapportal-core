@@ -180,7 +180,11 @@ Don't share the superadmin account. Create dedicated admin accounts:
    - **Manage** — everything View allows plus create / edit / delete for that
      area. Manage implies View, so only one grant per area is stored.
    - **None** — the area is hidden from the sidebar and its endpoints refuse
-     the account.
+     the account. Two picker listings stay readable by every superadmin
+     regardless: directory identities (name, type, enabled) and account
+     identities (username, display name, role), because pages in other areas
+     need to choose a directory or an approver. Connection settings, account
+     details, and every write remain behind the area's grant.
 
    Directory *entries* are one row of their own. Every superadmin can browse,
    search, and export entries, run reports, and act on approvals in every

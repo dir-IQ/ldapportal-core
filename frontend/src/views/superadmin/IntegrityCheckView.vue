@@ -96,7 +96,7 @@ import DnPicker from '@/components/DnPicker.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import type { components } from '@/api/openapi'
 
-type Directory = components['schemas']['DirectoryConnectionResponse']
+type Directory = components['schemas']['DirectorySummaryResponse']
 
 interface IntegrityIssue {
   type: string

@@ -4,6 +4,7 @@ package com.ldapportal.service;
 import com.ldapportal.dto.directory.BaseDnRequest;
 import com.ldapportal.dto.directory.DirectoryConnectionRequest;
 import com.ldapportal.dto.directory.DirectoryConnectionResponse;
+import com.ldapportal.dto.directory.DirectorySummaryResponse;
 import com.ldapportal.dto.directory.TestConnectionRequest;
 import com.ldapportal.dto.directory.TestConnectionResult;
 import com.ldapportal.entity.AuditDataSource;
@@ -65,6 +66,11 @@ public class DirectoryConnectionService {
 
     public List<DirectoryConnectionResponse> listDirectories() {
         return dirRepo.findAll().stream().map(this::toResponse).toList();
+    }
+
+    /** Picker view of every directory (id, slug, type, name, enabled) — no connection config. */
+    public List<DirectorySummaryResponse> listSummaries() {
+        return dirRepo.findAll().stream().map(DirectorySummaryResponse::from).toList();
     }
 
     public DirectoryConnectionResponse getDirectory(UUID id) {

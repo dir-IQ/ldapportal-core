@@ -12,7 +12,7 @@ import { listDirectories } from '@/api/directories'
 import { listObjectClasses, getObjectClass } from '@/api/schema'
 import { permittedAttrSet, unsupportedAttrs } from '@/utils/schemaPermitted'
 import { parseLeadingRdn } from '@/utils/dn'
-import { listAdmins } from '@/api/adminManagement'
+import { listAccountSummaries } from '@/api/adminManagement'
 import type { components } from '@/api/openapi'
 import AppModal from '@/components/AppModal.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
@@ -24,7 +24,7 @@ import IsvaProfileOverrideControl from '@/components/profiles/IsvaProfileOverrid
 import { setIsvaProfileOverride } from '@/api/isvaConfig'
 import { useConfirm } from '@/composables/useConfirm'
 
-type DirectoryConn = components['schemas']['DirectoryConnectionResponse']
+type DirectoryConn = components['schemas']['DirectorySummaryResponse']
 
 interface AttributeConfig {
   attributeName: string
@@ -135,8 +135,8 @@ interface AdminRow {
   id: string
   username: string
   displayName?: string | null
-  email?: string | null
   role: string
+  active: boolean
 }
 
 interface ComplianceRow {
@@ -235,8 +235,10 @@ function emptyApproval(): ApprovalForm {
 onMounted(async () => {
   loading.value = true
   try {
+    // Directory and account listings are the picker (summary) variants, which
+    // every superadmin may read — this page only needs VIEW_PROVISIONING_PROFILES.
     const [profilesRes, dirsRes, adminsRes] = await Promise.all([
-      listAllProfiles(), listDirectories(), listAdmins()
+      listAllProfiles(), listDirectories(), listAccountSummaries()
     ])
     profiles.value = profilesRes.data
     directories.value = dirsRes.data.filter((d) => d.directoryType !== 'ENTRA_ID')
@@ -2154,7 +2156,7 @@ function toggleApprover(accountId: string) {
                       :checked="profileApprovers.includes(admin.id)"
                       @change="toggleApprover(admin.id)" />
                     {{ admin.username }}
-                    <span class="text-gray-500" v-if="admin.email">({{ admin.email }})</span>
+                    <span class="text-gray-500" v-if="admin.displayName && admin.displayName !== admin.username">({{ admin.displayName }})</span>
                   </label>
                 </div>
               </div>
