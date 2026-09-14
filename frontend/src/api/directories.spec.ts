@@ -15,7 +15,7 @@ vi.mock('./apiClient', () => ({
 }))
 
 import { apiGet } from './apiClient'
-import { listDirectories } from './directories'
+import { listDirectories, listDirectoryConnections } from './directories'
 
 describe('listDirectories', () => {
   it('returns directories sorted case-insensitively by display name', async () => {
@@ -32,3 +32,26 @@ describe('listDirectories', () => {
     expect(res.data.map((d) => d.displayName)).toEqual(['Apple', 'mango', 'zebra'])
   })
 })
+
+describe('listDirectoryConnections', () => {
+  it('reads the full listing and sorts it the same way', async () => {
+    vi.mocked(apiGet).mockResolvedValue({
+      data: [
+        { id: '1', displayName: 'zebra', host: 'z' },
+        { id: '2', displayName: 'Apple', host: 'a' },
+      ],
+    } as never)
+
+    const res = await listDirectoryConnections()
+
+    expect(vi.mocked(apiGet)).toHaveBeenCalledWith('/api/v1/superadmin/directories')
+    expect(res.data.map((d) => d.displayName)).toEqual(['Apple', 'zebra'])
+  })
+
+  it('listDirectories reads the summary endpoint', async () => {
+    vi.mocked(apiGet).mockResolvedValue({ data: [] } as never)
+    await listDirectories()
+    expect(vi.mocked(apiGet)).toHaveBeenCalledWith('/api/v1/superadmin/directories/summary')
+  })
+})
+

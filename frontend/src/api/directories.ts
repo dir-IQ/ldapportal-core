@@ -17,6 +17,7 @@ import type { components } from './openapi';
 import type { AxiosResponse } from 'axios';
 
 type Directory = components['schemas']['DirectoryConnectionResponse'];
+export type DirectorySummary = components['schemas']['DirectorySummaryResponse'];
 type DirectoryRequest = components['schemas']['DirectoryConnectionRequest'];
 // The /test endpoint uses its own request/response schemas — not DirectoryConnectionRequest.
 type TestConnectionRequest = components['schemas']['TestConnectionRequest'];
@@ -26,10 +27,21 @@ type TestConnectionResult = components['schemas']['TestConnectionResult'];
 // — the single chokepoint every `listDirectories()` consumer (and the
 // useDirectoryPicker composable) funnels through — so they all render in
 // case-insensitive alphabetical order by display name.
-const byDisplayName = (a: Directory, b: Directory): number =>
+const byDisplayName = (a: { displayName?: string }, b: { displayName?: string }): number =>
   (a.displayName ?? '').localeCompare(b.displayName ?? '', undefined, { sensitivity: 'base' });
 
-export const listDirectories = async (): Promise<AxiosResponse<Directory[]>> => {
+// Picker listing: identities only (id, slug, type, name, enabled). Served to
+// every superadmin, so pages outside the Directory Connections area keep
+// working for a scoped superadmin without VIEW_DIRECTORIES.
+export const listDirectories = async (): Promise<AxiosResponse<DirectorySummary[]>> => {
+  const res = await apiGet('/api/v1/superadmin/directories/summary');
+  res.data = [...res.data].sort(byDisplayName);
+  return res;
+};
+
+// Full connection listing (host, bind DN, pool settings, …) for the Directory
+// Connections page itself; requires VIEW_DIRECTORIES.
+export const listDirectoryConnections = async (): Promise<AxiosResponse<Directory[]>> => {
   const res = await apiGet('/api/v1/superadmin/directories');
   res.data = [...res.data].sort(byDisplayName);
   return res;

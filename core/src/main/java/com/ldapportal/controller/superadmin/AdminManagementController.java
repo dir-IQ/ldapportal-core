@@ -2,6 +2,7 @@
 package com.ldapportal.controller.superadmin;
 
 import com.ldapportal.dto.admin.AdminAccountRequest;
+import com.ldapportal.dto.admin.AccountSummaryResponse;
 import com.ldapportal.dto.admin.AdminAccountResponse;
 import com.ldapportal.dto.admin.AdminPermissionsResponse;
 
@@ -49,7 +50,9 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/superadmin/admins")
 @PreAuthorize("hasRole('SUPERADMIN')")
-@RequiresSuperadminPermission(SuperadminPermission.VIEW_APPLICATION_ACCOUNTS)
+// VIEW_APPLICATION_ACCOUNTS sits on each read rather than on the class so
+// that /summary — the approver picker the profile editor uses — can stay open
+// to any superadmin. Writes carry MANAGE_APPLICATION_ACCOUNTS.
 @RequiredArgsConstructor
 public class AdminManagementController {
 
@@ -60,8 +63,20 @@ public class AdminManagementController {
     // ── Account CRUD ──────────────────────────────────────────────────────────
 
     @GetMapping
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_APPLICATION_ACCOUNTS)
     public List<AdminAccountResponse> list() {
         return service.listAdmins();
+    }
+
+    /**
+     * Account identities for pickers (id, username, display name, role,
+     * active). Open to every superadmin: the provisioning-profile editor needs
+     * approver candidates even without the Application Accounts area. No
+     * contact or login details are included.
+     */
+    @GetMapping("/summary")
+    public List<AccountSummaryResponse> summary() {
+        return service.listAccountSummaries();
     }
 
     @PostMapping
@@ -89,6 +104,7 @@ public class AdminManagementController {
     }
 
     @GetMapping("/{adminId}")
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_APPLICATION_ACCOUNTS)
     public ResponseEntity<AdminAccountResponse> get(@PathVariable UUID adminId) {
         return withETag(service.getAdmin(adminId), HttpStatus.OK);
     }
@@ -179,6 +195,7 @@ public class AdminManagementController {
      * never offers a toggle that can't take effect.</p>
      */
     @GetMapping("/permissions/feature-catalog")
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_APPLICATION_ACCOUNTS)
     public List<com.ldapportal.dto.admin.FeatureCatalogEntry> featureCatalog() {
         return entitlementService.exposed(FeatureKey.class).stream()
                 .map(com.ldapportal.dto.admin.FeatureCatalogEntry::of)
@@ -188,6 +205,7 @@ public class AdminManagementController {
     // ── Permission summary ────────────────────────────────────────────────────
 
     @GetMapping("/{adminId}/permissions")
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_APPLICATION_ACCOUNTS)
     public AdminPermissionsResponse getPermissions(@PathVariable UUID adminId) {
         return service.getPermissions(adminId);
     }
@@ -200,6 +218,7 @@ public class AdminManagementController {
      * to cross-reference three tables by hand.
      */
     @GetMapping("/{adminId}/effective-permissions")
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_APPLICATION_ACCOUNTS)
     public com.ldapportal.dto.admin.EffectivePermissionsResponse getEffectivePermissions(@PathVariable UUID adminId) {
         return effectivePermissionsService.resolve(adminId);
     }

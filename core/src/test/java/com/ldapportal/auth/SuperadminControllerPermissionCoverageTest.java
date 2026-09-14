@@ -32,7 +32,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * to a {@code MANAGE_*} key — a class-level {@code VIEW_*} key alone would let
  * a view-only superadmin through to the write.
  *
- * <p>The superadmin browse controller is the one exception on reads: every
+ * <p>Two picker listings ({@code /directories/summary},
+ * {@code /admins/summary}) are open to every superadmin by design and are
+ * allow-listed by name. The superadmin browse controller is the other exception on reads: every
  * superadmin may read, search, and export directory entries, so its read
  * endpoints carry no key. Its entry writes must still resolve to
  * {@code MANAGE_DIRECTORY_DATA}. Two of its POSTs are reads in disguise (the
@@ -48,6 +50,15 @@ class SuperadminControllerPermissionCoverageTest {
     private static final Set<String> READ_ONLY_POSTS = Set.of(
             "BrowseController#previewLdif",
             "BrowseController#integrityCheck");
+
+    /**
+     * Picker listings deliberately open to every superadmin: pages outside an
+     * area still need to choose a directory or an approver account. They
+     * return identities only (no connection config, no account details).
+     */
+    private static final Set<String> OPEN_SUMMARY_READS = Set.of(
+            "DirectoryConnectionController#summary",
+            "AdminManagementController#summary");
 
     private static final List<Class<? extends Annotation>> WRITE_MAPPINGS =
             List.of(PostMapping.class, PutMapping.class, DeleteMapping.class, PatchMapping.class);
@@ -66,6 +77,7 @@ class SuperadminControllerPermissionCoverageTest {
                 boolean write = isWrite(m) && !READ_ONLY_POSTS.contains(where);
                 if (resolved == null) {
                     if (!write && READ_OPEN_CONTROLLERS.contains(controller.getSimpleName())) continue;
+                    if (!write && OPEN_SUMMARY_READS.contains(where)) continue;
                     problems.add(where + " has no @RequiresSuperadminPermission (class or method)");
                 } else if (write && resolved.isViewTier()) {
                     problems.add(where + " is a write but resolves to view-tier " + resolved);
