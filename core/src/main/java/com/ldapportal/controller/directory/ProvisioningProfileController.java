@@ -2,8 +2,10 @@
 package com.ldapportal.controller.directory;
 
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.dto.profile.*;
 import com.ldapportal.auth.PermissionService;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.service.PasswordGeneratorService;
 import com.ldapportal.service.ProvisioningProfileService;
 import com.ldapportal.entity.ProvisioningProfile;
@@ -71,6 +73,7 @@ public class ProvisioningProfileController {
      */
     @PostMapping("/api/v1/directories/{directoryId}/profiles/probe-target-ou")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public com.ldapportal.service.ProvisioningProfileService.TargetOuProbeResult
             probeTargetOu(@PathVariable UUID directoryId,
                            @RequestParam String dn) {
@@ -79,6 +82,7 @@ public class ProvisioningProfileController {
 
     @PostMapping("/api/v1/directories/{directoryId}/profiles")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public ResponseEntity<ProfileResponse> create(
             @PathVariable UUID directoryId,
             @Valid @RequestBody CreateProfileRequest req,
@@ -101,6 +105,7 @@ public class ProvisioningProfileController {
 
     @PutMapping("/api/v1/directories/{directoryId}/profiles/{profileId}")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public ProfileResponse update(@PathVariable UUID directoryId,
                                    @PathVariable UUID profileId,
                                    @Valid @RequestBody UpdateProfileRequest req,
@@ -111,6 +116,7 @@ public class ProvisioningProfileController {
 
     @DeleteMapping("/api/v1/directories/{directoryId}/profiles/{profileId}")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public ResponseEntity<Void> delete(@PathVariable UUID directoryId,
                                         @PathVariable UUID profileId,
                                         @AuthenticationPrincipal AuthPrincipal principal) {
@@ -120,6 +126,7 @@ public class ProvisioningProfileController {
 
     @PostMapping("/api/v1/directories/{directoryId}/profiles/{profileId}/clone")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public ResponseEntity<ProfileResponse> clone(
             @PathVariable UUID directoryId,
             @PathVariable UUID profileId,
@@ -145,6 +152,7 @@ public class ProvisioningProfileController {
      */
     @PostMapping("/api/v1/directories/{directoryId}/profiles/{profileId}/seed-attribute-defaults")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public ProfileResponse seedAttributeDefaults(
             @PathVariable UUID directoryId,
             @PathVariable UUID profileId,
@@ -157,6 +165,7 @@ public class ProvisioningProfileController {
 
     @PostMapping("/api/v1/directories/{directoryId}/profiles/{profileId}/evaluate-group-changes")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public GroupChangePreview evaluateGroupChanges(@PathVariable UUID directoryId,
                                                     @PathVariable UUID profileId) {
         return service.evaluateGroupChanges(directoryId, profileId);
@@ -164,6 +173,7 @@ public class ProvisioningProfileController {
 
     @PostMapping("/api/v1/directories/{directoryId}/profiles/{profileId}/apply-group-changes")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public GroupChangePreview applyGroupChanges(@PathVariable UUID directoryId,
                                                 @PathVariable UUID profileId,
                                                 @AuthenticationPrincipal AuthPrincipal principal) {
@@ -172,6 +182,7 @@ public class ProvisioningProfileController {
 
     @PostMapping("/api/v1/directories/{directoryId}/profiles/apply-selective-group-changes")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public Map<String, Integer> applySelectiveGroupChanges(
             @PathVariable UUID directoryId,
             @Valid @RequestBody SelectiveGroupChangeRequest request,
@@ -195,12 +206,14 @@ public class ProvisioningProfileController {
 
     @GetMapping("/api/v1/profiles/{profileId}/lifecycle")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_PROVISIONING_PROFILES)
     public LifecyclePolicyResponse getLifecyclePolicy(@PathVariable UUID profileId) {
         return service.getLifecyclePolicy(profileId);
     }
 
     @PutMapping("/api/v1/profiles/{profileId}/lifecycle")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public LifecyclePolicyResponse setLifecyclePolicy(
             @PathVariable UUID profileId,
             @Valid @RequestBody LifecyclePolicyRequest req) {
@@ -209,6 +222,7 @@ public class ProvisioningProfileController {
 
     @DeleteMapping("/api/v1/profiles/{profileId}/lifecycle")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public ResponseEntity<Void> deleteLifecyclePolicy(@PathVariable UUID profileId) {
         service.deleteLifecyclePolicy(profileId);
         return ResponseEntity.noContent().build();
@@ -218,12 +232,14 @@ public class ProvisioningProfileController {
 
     @GetMapping("/api/v1/profiles/{profileId}/approval")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_PROVISIONING_PROFILES)
     public ApprovalConfigResponse getApprovalConfig(@PathVariable UUID profileId) {
         return service.getApprovalConfig(profileId);
     }
 
     @PutMapping("/api/v1/profiles/{profileId}/approval")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public ApprovalConfigResponse setApprovalConfig(
             @PathVariable UUID profileId,
             @Valid @RequestBody ApprovalConfigRequest req) {
@@ -234,12 +250,14 @@ public class ProvisioningProfileController {
 
     @GetMapping("/api/v1/profiles/{profileId}/approvers")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_PROVISIONING_PROFILES)
     public List<ProfileApproverResponse> getApprovers(@PathVariable UUID profileId) {
         return service.getApprovers(profileId);
     }
 
     @PutMapping("/api/v1/profiles/{profileId}/approvers")
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public List<ProfileApproverResponse> setApprovers(
             @PathVariable UUID profileId,
             @Valid @RequestBody SetProfileApproversRequest req) {
@@ -248,6 +266,9 @@ public class ProvisioningProfileController {
 
     // ── Superadmin list all profiles ──────────────────────────────────────────
 
+    // Deliberately not gated by VIEW_PROVISIONING_PROFILES: the account editor
+    // (application accounts) and other superadmin pages list profiles to
+    // populate pickers, so any superadmin may read this summary listing.
     @GetMapping("/api/v1/profiles")
     @PreAuthorize("hasRole('SUPERADMIN')")
     public List<ProfileResponse> listAll() {

@@ -39,6 +39,9 @@ vi.mock('@/api/isvaConfig', () => ({
 }))
 
 // The view fetches the directory's display name for its heading.
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ hasSuperadminPermission: () => true }),
+}))
 vi.mock('@/api/directories', () => ({
   getDirectory: hoisted.getDirectory,
 }))

@@ -19,6 +19,7 @@ import {
 import { getDirectory } from '@/api/directories'
 import { IVIA_NAME, IVIA_ABBR } from '@/constants/productNames'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
 
 // The unified secUser attribute model, in the backend's canonical order.
@@ -73,6 +74,10 @@ const directoryId = computed(() => route.params.id as string)
 // heading. Empty until the fetch resolves (or if it fails).
 const directoryName = ref('')
 const notif = useNotificationStore()
+const auth = useAuthStore()
+// VIEW_INTEGRATIONS opens the page; saving needs MANAGE_INTEGRATIONS (the
+// backend rejects the PUT without it).
+const canManage = computed(() => auth.hasSuperadminPermission('superadmin.manage_integrations'))
 const confirm = useConfirm()
 
 const loading = ref(true)
@@ -840,7 +845,8 @@ function extractErrorMessage(e: unknown, fallback: string): string {
             <button
               type="button"
               class="btn-primary"
-              :disabled="saving || !canSave"
+              :disabled="saving || !canSave || !canManage"
+              :title="canManage ? undefined : 'Your account holds view-only access to integrations'"
               @click="save"
             >{{ saving ? 'Saving…' : 'Save' }}</button>
           </div>

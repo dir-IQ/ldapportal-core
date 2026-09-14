@@ -6,7 +6,7 @@
         <h1 class="text-2xl font-bold text-gray-900">Directory Connections</h1>
         <p class="text-sm text-gray-500 mt-1">Manage LDAP directory connections</p>
       </div>
-      <button @click="openCreate" class="btn-primary">+ New Directory</button>
+      <button v-if="canManage" @click="openCreate" class="btn-primary">+ New Directory</button>
     </div>
 
     <DataTable :columns="dirCols" :rows="dirs" :loading="loading" row-key="id"
@@ -41,7 +41,7 @@
       <template #actions="{ row }">
         <ActionMenu :items="[
           { label: 'Discover',   onClick: () => $router.push(`/superadmin/directories/${row.id}/discover`),
-            hidden: !row.enabled || row.directoryType === 'ENTRA_ID' },
+            hidden: !canManage || !row.enabled || row.directoryType === 'ENTRA_ID' },
           { label: 'Browse',     onClick: () => $router.push(`/superadmin/entra/${row.id}`),
             hidden: row.directoryType !== 'ENTRA_ID' },
           { label: `${IVIA_ABBR} integration`,
@@ -51,11 +51,11 @@
             // directory is Entra (ISVA doesn't run on Entra anyway).
             hidden: !auth.isIsvaIntegrationEnabled || row.directoryType === 'ENTRA_ID' },
           { label: 'Evict pool', onClick: () => doEvictPool(row),
-            hidden: row.directoryType === 'ENTRA_ID' },
-          { label: 'Delete',     onClick: () => confirmDelete(row), danger: true },
+            hidden: !canManage || row.directoryType === 'ENTRA_ID' },
+          { label: 'Delete',     onClick: () => confirmDelete(row), danger: true, hidden: !canManage },
         ]">
           <template #primary>
-            <button @click="openEdit(row)" class="btn-secondary btn-compact">Edit</button>
+            <button v-if="canManage" @click="openEdit(row)" class="btn-secondary btn-compact">Edit</button>
           </template>
         </ActionMenu>
       </template>
@@ -352,6 +352,9 @@ const dirCols = [
 
 const notif = useNotificationStore()
 const auth = useAuthStore()
+// View-tier superadmins (VIEW_DIRECTORIES) see the list and status; every
+// write control needs MANAGE_DIRECTORIES, which the backend enforces too.
+const canManage = computed(() => auth.hasSuperadminPermission('superadmin.manage_directories'))
 
 const loading      = ref(false)
 const saving       = ref(false)

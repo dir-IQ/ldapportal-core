@@ -76,16 +76,13 @@ public class PermissionService {
     /**
      * Whether {@code principal} holds the given system-scoped superadmin
      * permission. Non-superadmins never hold one. Owners (holders of
-     * {@link SuperadminPermission#MANAGE_SUPERADMINS}) implicitly hold all.
+     * {@link SuperadminPermission#MANAGE_SUPERADMINS}) implicitly hold all,
+     * and a {@code MANAGE_*} grant implicitly holds its {@code VIEW_*}
+     * counterpart (see {@link SuperadminPermission#expand}).
      */
     public boolean hasSuperadminPermission(AuthPrincipal principal, SuperadminPermission permission) {
         if (principal == null || !principal.isSuperadmin()) return false;
-        UUID id = principal.id();
-        if (superadminPermissionRepo.existsByAccountIdAndPermission(
-                id, SuperadminPermission.MANAGE_SUPERADMINS)) {
-            return true; // owner ⇒ all
-        }
-        return superadminPermissionRepo.existsByAccountIdAndPermission(id, permission);
+        return effectiveSuperadminPermissions(principal.id()).contains(permission);
     }
 
     /**
@@ -99,16 +96,14 @@ public class PermissionService {
 
     /**
      * Effective permission set for a superadmin account — the granted rows,
-     * expanded to the full catalogue when the account is an owner.
+     * expanded to the full catalogue when the account is an owner and to the
+     * implied view-tier keys otherwise.
      */
     public Set<SuperadminPermission> effectiveSuperadminPermissions(UUID accountId) {
         Set<SuperadminPermission> granted = superadminPermissionRepo.findAllByAccountId(accountId).stream()
                 .map(SuperadminPermissionGrant::getPermission)
                 .collect(Collectors.toCollection(() -> EnumSet.noneOf(SuperadminPermission.class)));
-        if (granted.contains(SuperadminPermission.MANAGE_SUPERADMINS)) {
-            return EnumSet.allOf(SuperadminPermission.class);
-        }
-        return granted;
+        return SuperadminPermission.expand(granted);
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
