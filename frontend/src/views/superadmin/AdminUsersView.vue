@@ -181,7 +181,7 @@
                         @change="setSaAreaTier(area, tier)"
                         class="border-gray-300"
                       />
-                      <span>{{ SUPERADMIN_TIER_LABELS[tier] }}</span>
+                      <span>{{ areaTierLabel(area, tier) }}</span>
                     </label>
                   </span>
                 </div>
@@ -330,8 +330,8 @@ import {
 import {
   SUPERADMIN_OWNER_KEY,
   SUPERADMIN_PERMISSION_AREAS,
-  SUPERADMIN_TIER_LABELS,
   areaTier,
+  areaTierLabel,
   areaTiers,
   areaTopTier,
   areaKeysForTier,

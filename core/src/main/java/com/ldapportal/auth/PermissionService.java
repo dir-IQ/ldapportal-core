@@ -40,7 +40,10 @@ import java.util.stream.Stream;
  *       default.</li>
  * </ol>
  *
- * <p>Superadmins bypass all checks and are always granted access.</p>
+ * <p>Superadmins bypass the profile / DN scoping checks (they see every
+ * directory) and hold every read feature. Directory <em>write</em> features
+ * additionally require the {@link SuperadminPermission#MANAGE_DIRECTORY_DATA}
+ * grant — see {@link #requireFeature}.</p>
  *
  * <h3>Directory vs profile</h3>
  * <p>A directory can host multiple profiles. The controller layer passes a
@@ -54,9 +57,11 @@ public class PermissionService {
 
     /**
      * Features available to {@link BaseRole#READ_ONLY} admins by default.
-     * Everything else requires {@link BaseRole#ADMIN}.
+     * Everything else requires {@link BaseRole#ADMIN}. The same set is what a
+     * superadmin without {@link SuperadminPermission#MANAGE_DIRECTORY_DATA}
+     * may use — see {@link #superadminMayUseFeature}.
      */
-    private static final Set<FeatureKey> READONLY_DEFAULT_FEATURES = Set.of(
+    public static final Set<FeatureKey> READONLY_DEFAULT_FEATURES = Set.of(
             FeatureKey.BULK_EXPORT,
             FeatureKey.REPORTS_RUN,
             FeatureKey.DIRECTORY_BROWSE,
@@ -164,7 +169,13 @@ public class PermissionService {
      * @throws AccessDeniedException if no profile resolves the feature as allowed
      */
     public void requireFeature(AuthPrincipal principal, UUID directoryId, FeatureKey feature) {
-        if (principal.isSuperadmin()) return;
+        if (principal.isSuperadmin()) {
+            if (superadminMayUseFeature(principal, feature)) return;
+            throw new AccessDeniedException(
+                    "Feature [" + feature.getDbValue() + "] requires the "
+                            + SuperadminPermission.MANAGE_DIRECTORY_DATA.getDbValue()
+                            + " superadmin permission");
+        }
 
         requireDirectoryAccess(principal, directoryId);
 
@@ -184,6 +195,19 @@ public class PermissionService {
 
         throw new AccessDeniedException(
                 "Feature [" + feature.getDbValue() + "] is not granted by any profile for this admin");
+    }
+
+    /**
+     * Whether a superadmin may use a directory-scoped feature. Read features
+     * (the {@link #READONLY_DEFAULT_FEATURES} set) are always available to a
+     * superadmin — they see every directory. Anything else is a directory
+     * <em>write</em> and needs {@link SuperadminPermission#MANAGE_DIRECTORY_DATA}
+     * (owners hold it implicitly). The read check runs first so the common
+     * case costs no query.
+     */
+    public boolean superadminMayUseFeature(AuthPrincipal principal, FeatureKey feature) {
+        if (READONLY_DEFAULT_FEATURES.contains(feature)) return true;
+        return hasSuperadminPermission(principal, SuperadminPermission.MANAGE_DIRECTORY_DATA);
     }
 
     /**

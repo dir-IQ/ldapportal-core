@@ -9,13 +9,16 @@ import com.ldapportal.entity.Account;
 import com.ldapportal.entity.AdminFeaturePermission;
 import com.ldapportal.entity.AdminProfileRole;
 import com.ldapportal.entity.ProvisioningProfile;
+import com.ldapportal.entity.SuperadminPermissionGrant;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.BaseRole;
 import com.ldapportal.entity.enums.FeatureKey;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.AccountRepository;
 import com.ldapportal.repository.AdminFeaturePermissionRepository;
 import com.ldapportal.repository.AdminProfileRoleRepository;
+import com.ldapportal.repository.SuperadminPermissionGrantRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,11 +26,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Computes a human-readable "what can this admin actually do?" breakdown for
@@ -56,6 +61,7 @@ public class EffectivePermissionsService {
     private final AccountRepository                  accountRepo;
     private final AdminProfileRoleRepository         profileRoleRepo;
     private final AdminFeaturePermissionRepository   featurePermissionRepo;
+    private final SuperadminPermissionGrantRepository superadminGrantRepo;
     private final com.ldapportal.core.entitlement.EntitlementService entitlementService;
 
     @Transactional(readOnly = true)
@@ -63,11 +69,17 @@ public class EffectivePermissionsService {
         Account admin = accountRepo.findById(adminId)
                 .orElseThrow(() -> new ResourceNotFoundException("Account", adminId));
 
-        // Superadmins bypass everything — expose that explicitly instead of
-        // trying to enumerate "all features allowed" in every profile.
+        // Superadmins bypass profile scoping — expose that explicitly instead of
+        // trying to enumerate "all features allowed" in every profile. The one
+        // thing that varies is whether they may change directory entries.
         if (admin.getRole() == AccountRole.SUPERADMIN) {
+            Set<SuperadminPermission> granted = superadminGrantRepo.findAllByAccountId(admin.getId()).stream()
+                    .map(SuperadminPermissionGrant::getPermission)
+                    .collect(Collectors.toCollection(() -> EnumSet.noneOf(SuperadminPermission.class)));
+            boolean canEditEntries = SuperadminPermission.expand(granted)
+                    .contains(SuperadminPermission.MANAGE_DIRECTORY_DATA);
             return new EffectivePermissionsResponse(
-                    admin.getId(), admin.getUsername(), admin.getRole(), true, List.of());
+                    admin.getId(), admin.getUsername(), admin.getRole(), true, canEditEntries, List.of());
         }
 
         // Index admin-wide overrides (profile IS NULL) by feature so the
@@ -104,7 +116,7 @@ public class EffectivePermissionsService {
                 .thenComparing(ProfileEffective::profileName, Comparator.nullsLast(String::compareToIgnoreCase)));
 
         return new EffectivePermissionsResponse(
-                admin.getId(), admin.getUsername(), admin.getRole(), false, profileSummaries);
+                admin.getId(), admin.getUsername(), admin.getRole(), false, false, profileSummaries);
     }
 
     private ProfileEffective summarize(ProvisioningProfile profile,

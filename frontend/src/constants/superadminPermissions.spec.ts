@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   SUPERADMIN_PERMISSION_AREAS, SUPERADMIN_PERMISSION_LABELS, SUPERADMIN_OWNER_KEY,
-  areaTier, areaTiers, areaTopTier, areaKeysForTier,
+  areaTier, areaTiers, areaTopTier, areaKeysForTier, areaTierLabel,
 } from './superadminPermissions'
 
 describe('superadmin permission areas', () => {
@@ -35,6 +35,15 @@ describe('superadmin permission areas', () => {
     expect(areaTier(dirs, new Set(['superadmin.view_directories']))).toBe('view')
     expect(areaTier(dirs, new Set(['superadmin.manage_directories']))).toBe('manage')
     expect(areaTier(dirs, new Set(['superadmin.view_directories', 'superadmin.manage_directories']))).toBe('manage')
+  })
+
+  it('labels the lowest tier per area: None by default, Read-only for directory entries', () => {
+    const dirs = SUPERADMIN_PERMISSION_AREAS.find(a => a.id === 'directories')!
+    const data = SUPERADMIN_PERMISSION_AREAS.find(a => a.id === 'directory_data')!
+    expect(areaTierLabel(dirs, 'none')).toBe('None')
+    expect(areaTierLabel(data, 'none')).toBe('Read-only')
+    expect(areaTierLabel(data, 'manage')).toBe('Manage')
+    expect(areaTiers(data)).toEqual(['none', 'manage'])
   })
 
   it('stores exactly one key per area tier', () => {

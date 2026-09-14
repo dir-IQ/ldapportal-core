@@ -26,6 +26,7 @@ export const SUPERADMIN_PERMISSION_LABELS: Record<string, string> = {
   'superadmin.view_event_backbone': 'View event backbone',
   'superadmin.manage_event_backbone': 'Manage event backbone',
   'superadmin.manage_schema': 'Manage directory schema',
+  'superadmin.manage_directory_data': 'Manage directory entries',
   'superadmin.view_license': 'View license',
 }
 
@@ -46,6 +47,11 @@ export interface SuperadminPermissionArea {
   description?: string
   view?: string
   manage?: string
+  /**
+   * Label for the `none` tier when it does not mean "no access" — e.g. every
+   * superadmin can read directory entries, so the lowest tier is "Read-only".
+   */
+  noneLabel?: string
 }
 
 export type SuperadminPermissionTier = 'none' | 'view' | 'manage'
@@ -81,9 +87,17 @@ export const SUPERADMIN_PERMISSION_AREAS: readonly SuperadminPermissionArea[] = 
   { id: 'schema', label: 'Directory schema',
     description: 'Apply schema changes via LDIF (reading schema needs no grant)',
     manage: 'superadmin.manage_schema' },
+  { id: 'directory_data', label: 'Directory entries',
+    description: 'Create, edit, delete, move, rename, and import entries; browsing, searching, and exporting need no grant',
+    manage: 'superadmin.manage_directory_data', noneLabel: 'Read-only' },
   { id: 'license', label: 'License',
     view: 'superadmin.view_license' },
 ]
+
+/** Display label for a tier within an area (honours the area's `noneLabel`). */
+export function areaTierLabel(area: SuperadminPermissionArea, tier: SuperadminPermissionTier): string {
+  return tier === 'none' && area.noneLabel ? area.noneLabel : SUPERADMIN_TIER_LABELS[tier]
+}
 
 /** The tiers an area actually offers, lowest first. */
 export function areaTiers(area: SuperadminPermissionArea): SuperadminPermissionTier[] {

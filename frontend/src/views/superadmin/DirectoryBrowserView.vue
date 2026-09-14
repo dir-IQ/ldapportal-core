@@ -157,23 +157,25 @@
                   </button>
                 <div v-if="showActionsMenu"
                      class="absolute right-0 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1">
-                  <button @click="creatingEntry = true; showActionsMenu = false"
-                          class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                    New Entry
-                  </button>
-                  <button @click="editingEntry = true; showActionsMenu = false"
-                          class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                    Edit Entry
-                  </button>
-                  <button @click="openRenameModal(); showActionsMenu = false"
-                          class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                    Rename Entry
-                  </button>
-                  <button @click="openMoveModal(); showActionsMenu = false"
-                          class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
-                    Move Entry
-                  </button>
-                  <div class="border-t border-gray-100 my-1"></div>
+                  <template v-if="canEditEntries">
+                    <button @click="creatingEntry = true; showActionsMenu = false"
+                            class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                      New Entry
+                    </button>
+                    <button @click="editingEntry = true; showActionsMenu = false"
+                            class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                      Edit Entry
+                    </button>
+                    <button @click="openRenameModal(); showActionsMenu = false"
+                            class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                      Rename Entry
+                    </button>
+                    <button @click="openMoveModal(); showActionsMenu = false"
+                            class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
+                      Move Entry
+                    </button>
+                  </template>
+                  <div v-if="canEditEntries" class="border-t border-gray-100 my-1"></div>
                   <button @click="doExportLdif('base'); showActionsMenu = false"
                           class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                     Export LDIF — This Entry
@@ -186,19 +188,21 @@
                           class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                     Export LDIF — Entire Subtree
                   </button>
-                  <button @click="showImportModal = true; showActionsMenu = false"
+                  <button v-if="canEditEntries" @click="showImportModal = true; showActionsMenu = false"
                           class="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">
                     Import LDIF
                   </button>
-                  <div class="border-t border-gray-100 my-1"></div>
-                  <button @click="openDeleteConfirm('children'); showActionsMenu = false"
-                          class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">
-                    Delete Children Only
-                  </button>
-                  <button @click="openDeleteConfirm('entry'); showActionsMenu = false"
-                          class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">
-                    Delete Entry
-                  </button>
+                  <template v-if="canEditEntries">
+                    <div class="border-t border-gray-100 my-1"></div>
+                    <button @click="openDeleteConfirm('children'); showActionsMenu = false"
+                            class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">
+                      Delete Children Only
+                    </button>
+                    <button @click="openDeleteConfirm('entry'); showActionsMenu = false"
+                            class="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50">
+                      Delete Entry
+                    </button>
+                  </template>
                   </div>
                 </div>
               </div>
@@ -336,6 +340,7 @@ import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter, type LocationQueryRaw } from 'vue-router'
 import { ancestorChain, dnEquals } from '@/utils/dn'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
 import { listDirectories } from '@/api/directories'
 import { browse, deleteEntry, moveEntry, renameEntry, exportLdif } from '@/api/browse'
 import type { components } from '@/api/openapi'
@@ -394,6 +399,7 @@ interface DnTreeHandle {
 type ApiError = { response?: { data?: { detail?: string, message?: string } }, message?: string }
 
 const notif = useNotificationStore()
+const auth = useAuthStore()
 
 const directories   = ref<DirectoryOption[]>([])
 const loadingDirs   = ref(false)
@@ -408,6 +414,13 @@ const detailLoading = ref(false)
 const entryDetail   = ref<EntryDetail | null>(null)
 const creatingEntry   = ref(false)
 const editingEntry    = ref(false)
+
+// Every superadmin can browse, search, and export entries. Creating, editing,
+// renaming, moving, deleting, and LDIF import need MANAGE_DIRECTORY_DATA,
+// which the browse API enforces as well; hide those actions without it.
+const canEditEntries = computed(
+  () => auth.hasSuperadminPermission('superadmin.manage_directory_data'),
+)
 const treeRef         = ref<DnTreeHandle | null>(null)
 const showActionsMenu   = ref(false)
 const menuRef           = ref<HTMLElement | null>(null)
