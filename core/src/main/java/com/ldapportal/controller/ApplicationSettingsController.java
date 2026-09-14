@@ -44,6 +44,7 @@ public class ApplicationSettingsController {
     /** Returns current settings (superadmin only). */
     @GetMapping
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.VIEW_APPLICATION_SETTINGS)
     public ApplicationSettingsDto get() {
         return service.get();
     }

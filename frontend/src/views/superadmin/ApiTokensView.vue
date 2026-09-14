@@ -9,7 +9,7 @@
           shown once at creation or rotation — store it immediately.
         </p>
       </div>
-      <button @click="openCreate" class="btn-primary">+ New token</button>
+      <button v-if="canManage" @click="openCreate" class="btn-primary">+ New token</button>
     </div>
 
     <div class="flex items-center gap-3 mb-3">
@@ -141,6 +141,7 @@
 import { ref, computed, onMounted } from 'vue'
 import type { Ref } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
 import {
   listApiTokens,
   createApiToken,
@@ -173,6 +174,10 @@ function errMsg(e: unknown, fallback: string): string {
 }
 
 const notif = useNotificationStore()
+const auth = useAuthStore()
+// VIEW_API_TOKENS lists token metadata; create / rotate / revoke need
+// MANAGE_API_TOKENS (enforced server-side as well).
+const canManage = computed(() => auth.hasSuperadminPermission('superadmin.manage_api_tokens'))
 
 // Friendly labels for the server's validation field keys (the
 // CreateApiTokenRequest record components) so a 400 surfaces inline + in the
@@ -232,6 +237,7 @@ function fmtDateTime(iso: string): string {
 // ── Row actions ──────────────────────────────────────────────────────────────
 
 function rowActions(row: ApiTokenResponse) {
+  if (!canManage.value) return []
   return [
     { label: 'Rotate', onClick: () => rotate(row), hidden: row.status !== 'ACTIVE' },
     {

@@ -1,37 +1,53 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<script setup>
+<script setup lang="ts">
 import { ref, computed } from 'vue'
 import { SECTIONS, sectionIsDirty } from './sectionsRegistry'
 import { useAuthStore } from '@/stores/auth'
 
-const props = defineProps({
-  activeId: { type: String, required: true },
-  form:     { type: Object, default: null },
-  savedForm:{ type: Object, default: null },
-})
-defineEmits(['select'])
+interface SettingsSection {
+  id: string
+  label: string
+  /** SVG path data for the sidebar icon. */
+  icon: string
+  /** Form keys the section edits (drives per-section dirty tracking). */
+  fields: string[]
+  /** Hidden on community builds (no signed license to show, etc.). */
+  hideOnCommunity?: boolean
+  /** Shown only to superadmins holding this system-scoped permission key. */
+  requiresSuperadminPermission?: string
+}
+
+const props = withDefaults(defineProps<{
+  activeId: string
+  form?: object | null
+  savedForm?: object | null
+}>(), { form: null, savedForm: null })
+defineEmits<{ (e: 'select', id: string): void }>()
 
 const auth = useAuthStore()
-const query = ref('')
-const searchInput = ref(null)
+const query = ref<string>('')
+const searchInput = ref<HTMLInputElement | null>(null)
 
-const visibleSections = computed(() => (
-  auth.isCommunityDistribution ? SECTIONS.filter(s => !s.hideOnCommunity) : SECTIONS
-))
+const visibleSections = computed<SettingsSection[]>(() =>
+  (SECTIONS as SettingsSection[]).filter(s =>
+    !(s.hideOnCommunity && auth.isCommunityDistribution)
+    && !(s.requiresSuperadminPermission && !auth.hasSuperadminPermission(s.requiresSuperadminPermission)),
+  ),
+)
 
-const filtered = computed(() => {
+const filtered = computed<SettingsSection[]>(() => {
   const q = query.value.trim().toLowerCase()
   if (!q) return visibleSections.value
   return visibleSections.value.filter(s => s.label.toLowerCase().includes(q))
 })
 
-function isDirty(section) {
+function isDirty(section: SettingsSection): boolean {
   return sectionIsDirty(section, props.form, props.savedForm)
 }
 
 // Exposed so the parent can wire a keyboard shortcut (Cmd/Ctrl+K) to focus
 // the search input without poking at the DOM from the outside.
-function focusSearch() {
+function focusSearch(): void {
   searchInput.value?.focus()
   searchInput.value?.select()
 }

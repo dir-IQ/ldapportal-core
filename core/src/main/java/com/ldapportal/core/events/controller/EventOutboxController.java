@@ -2,11 +2,13 @@
 package com.ldapportal.core.events.controller;
 
 import com.ldapportal.auth.AuthContextHelper;
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.core.events.dto.OutboxEntryResponse;
 import com.ldapportal.core.events.entity.OutboxEntry;
 import com.ldapportal.core.events.enums.OutboxStatus;
 import com.ldapportal.core.events.repository.EventSubscriptionRepository;
 import com.ldapportal.core.events.repository.OutboxEntryRepository;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.exception.ConflictException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +26,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/superadmin/event-outbox")
 @PreAuthorize("hasRole('SUPERADMIN')")
+@RequiresSuperadminPermission(SuperadminPermission.VIEW_EVENT_BACKBONE)
 @RequiredArgsConstructor
 public class EventOutboxController {
 
@@ -62,6 +65,7 @@ public class EventOutboxController {
     }
 
     @PostMapping("/{id}/requeue")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_EVENT_BACKBONE)
     @Transactional
     public OutboxEntryResponse requeue(@PathVariable UUID id) {
         rejectApiTokenCaller();

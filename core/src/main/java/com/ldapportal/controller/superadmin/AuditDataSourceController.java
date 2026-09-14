@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.dto.audit.AuditSourceRequest;
 import com.ldapportal.dto.audit.AuditSourceResponse;
 import com.ldapportal.dto.directory.TestConnectionResult;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.service.AuditDataSourceService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +33,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/superadmin/audit-sources")
 @PreAuthorize("hasRole('SUPERADMIN')")
+@RequiresSuperadminPermission(SuperadminPermission.VIEW_INTEGRATIONS)
 @RequiredArgsConstructor
 public class AuditDataSourceController {
 
@@ -42,11 +45,13 @@ public class AuditDataSourceController {
     }
 
     @PostMapping
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_INTEGRATIONS)
     public ResponseEntity<AuditSourceResponse> create(@Valid @RequestBody AuditSourceRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.create(req));
     }
 
     @PostMapping("/test")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_INTEGRATIONS)
     public TestConnectionResult test(@Valid @RequestBody AuditSourceRequest req) {
         return service.testConnection(req);
     }
@@ -57,6 +62,7 @@ public class AuditDataSourceController {
     }
 
     @PutMapping("/{id}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_INTEGRATIONS)
     public AuditSourceResponse update(@PathVariable UUID id,
                                       @Valid @RequestBody AuditSourceRequest req) {
         return service.update(id, req);
@@ -67,6 +73,7 @@ public class AuditDataSourceController {
      * IaC design). 201 on first apply (created), 200 thereafter (updated).
      */
     @PutMapping("/by-slug/{slug}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_INTEGRATIONS)
     public ResponseEntity<AuditSourceResponse> upsertBySlug(@PathVariable String slug,
                                                             @Valid @RequestBody AuditSourceRequest req) {
         AuditDataSourceService.UpsertOutcome outcome = service.upsertBySlug(slug, req);
@@ -76,6 +83,7 @@ public class AuditDataSourceController {
     }
 
     @DeleteMapping("/{id}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_INTEGRATIONS)
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         service.delete(id);
         return ResponseEntity.noContent().build();

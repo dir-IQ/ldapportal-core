@@ -5,8 +5,10 @@ import com.ldapportal.addons.isva.dto.IsvaProfileOverrideDto;
 import com.ldapportal.addons.isva.entity.IsvaProfileOverride;
 import com.ldapportal.addons.isva.service.IsvaProfileOverrideService;
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.core.entitlement.Entitled;
 import com.ldapportal.core.entitlement.Entitlement;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.ProvisioningProfileRepository;
 import jakarta.validation.Valid;
@@ -46,6 +48,7 @@ import java.util.UUID;
 @RequestMapping("/api/v1/directories/{directoryId}/profiles/{profileId}/isva-override")
 @RequiredArgsConstructor
 @PreAuthorize("hasRole('SUPERADMIN')")
+@RequiresSuperadminPermission(SuperadminPermission.VIEW_PROVISIONING_PROFILES)
 @Entitled(Entitlement.VENDOR_INTEGRATIONS_ISVA)
 public class IsvaProfileOverrideController {
 
@@ -60,6 +63,7 @@ public class IsvaProfileOverrideController {
     }
 
     @PutMapping
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
     public ResponseEntity<IsvaProfileOverrideDto> set(@PathVariable UUID directoryId,
                                                       @PathVariable UUID profileId,
                                                       @AuthenticationPrincipal AuthPrincipal principal,

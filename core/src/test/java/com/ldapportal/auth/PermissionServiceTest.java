@@ -63,8 +63,45 @@ class PermissionServiceTest {
     }
 
     @Test
-    void requireFeature_superadmin_neverHitsAnyRepo() {
-        permissionService.requireFeature(superadmin(), dirId, FeatureKey.USER_CREATE);
+    void requireFeature_superadmin_readFeature_neverHitsAnyRepo() {
+        permissionService.requireFeature(superadmin(), dirId, FeatureKey.USER_READ);
+        permissionService.requireFeature(superadmin(), dirId, FeatureKey.DIRECTORY_BROWSE);
+        permissionService.requireFeature(superadmin(), dirId, FeatureKey.BULK_EXPORT);
+        permissionService.requireFeature(superadmin(), dirId, FeatureKey.APPROVAL_MANAGE);
+        verifyNoInteractions(profileRoleRepo, featurePermissionRepo, superadminPermissionRepo);
+    }
+
+    @Test
+    void requireFeature_superadmin_writeFeature_passesWithManageDirectoryData() {
+        AuthPrincipal p = superadmin();
+        when(superadminPermissionRepo.findAllByAccountId(p.id()))
+                .thenReturn(List.of(grant(SuperadminPermission.MANAGE_DIRECTORY_DATA)));
+
+        permissionService.requireFeature(p, dirId, FeatureKey.USER_CREATE);
+        verifyNoInteractions(profileRoleRepo, featurePermissionRepo);
+    }
+
+    @Test
+    void requireFeature_superadmin_writeFeature_passesForOwner() {
+        AuthPrincipal p = superadmin();
+        when(superadminPermissionRepo.findAllByAccountId(p.id()))
+                .thenReturn(List.of(grant(SuperadminPermission.MANAGE_SUPERADMINS)));
+
+        permissionService.requireFeature(p, dirId, FeatureKey.BULK_IMPORT);
+    }
+
+    @Test
+    void requireFeature_superadmin_writeFeature_deniedWithoutManageDirectoryData() {
+        AuthPrincipal p = superadmin();
+        when(superadminPermissionRepo.findAllByAccountId(p.id()))
+                .thenReturn(List.of(grant(SuperadminPermission.MANAGE_DIRECTORIES)));
+
+        assertThatThrownBy(() -> permissionService.requireFeature(p, dirId, FeatureKey.USER_CREATE))
+                .isInstanceOf(AccessDeniedException.class)
+                .hasMessageContaining("manage_directory_data");
+        assertThatThrownBy(() -> permissionService.requireFeature(p, dirId, FeatureKey.PLAYBOOK_EXECUTE))
+                .isInstanceOf(AccessDeniedException.class);
+        // Scoping never applies to a superadmin, even a read-only one.
         verifyNoInteractions(profileRoleRepo, featurePermissionRepo);
     }
 
@@ -316,8 +353,8 @@ class PermissionServiceTest {
     @Test
     void hasSuperadminPermission_owner_holdsEveryPermission() {
         AuthPrincipal p = superadmin();
-        when(superadminPermissionRepo.existsByAccountIdAndPermission(
-                p.id(), SuperadminPermission.MANAGE_SUPERADMINS)).thenReturn(true);
+        when(superadminPermissionRepo.findAllByAccountId(p.id()))
+                .thenReturn(List.of(grant(SuperadminPermission.MANAGE_SUPERADMINS)));
 
         assertThat(permissionService.hasSuperadminPermission(
                 p, SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)).isTrue();
@@ -326,9 +363,8 @@ class PermissionServiceTest {
     @Test
     void effectiveSuperadminPermissions_owner_expandsToAll() {
         UUID id = UUID.randomUUID();
-        SuperadminPermissionGrant ownerGrant = new SuperadminPermissionGrant();
-        ownerGrant.setPermission(SuperadminPermission.MANAGE_SUPERADMINS);
-        when(superadminPermissionRepo.findAllByAccountId(id)).thenReturn(List.of(ownerGrant));
+        when(superadminPermissionRepo.findAllByAccountId(id))
+                .thenReturn(List.of(grant(SuperadminPermission.MANAGE_SUPERADMINS)));
 
         assertThat(permissionService.effectiveSuperadminPermissions(id))
                 .containsExactlyInAnyOrder(SuperadminPermission.values());
@@ -337,10 +373,8 @@ class PermissionServiceTest {
     @Test
     void hasSuperadminPermission_scoped_onlyGrantedKeys() {
         AuthPrincipal p = superadmin();
-        when(superadminPermissionRepo.existsByAccountIdAndPermission(
-                p.id(), SuperadminPermission.MANAGE_SUPERADMINS)).thenReturn(false);
-        when(superadminPermissionRepo.existsByAccountIdAndPermission(
-                p.id(), SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)).thenReturn(true);
+        when(superadminPermissionRepo.findAllByAccountId(p.id()))
+                .thenReturn(List.of(grant(SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)));
 
         assertThat(permissionService.hasSuperadminPermission(
                 p, SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)).isTrue();
@@ -349,10 +383,57 @@ class PermissionServiceTest {
     }
 
     @Test
+    void hasSuperadminPermission_manageGrant_impliesViewOfSameArea() {
+        AuthPrincipal p = superadmin();
+        when(superadminPermissionRepo.findAllByAccountId(p.id()))
+                .thenReturn(List.of(grant(SuperadminPermission.MANAGE_DIRECTORIES)));
+
+        assertThat(permissionService.hasSuperadminPermission(
+                p, SuperadminPermission.VIEW_DIRECTORIES)).isTrue();
+        assertThat(permissionService.hasSuperadminPermission(
+                p, SuperadminPermission.VIEW_API_TOKENS)).isFalse();
+    }
+
+    @Test
+    void hasSuperadminPermission_viewGrant_doesNotGrantManage() {
+        AuthPrincipal p = superadmin();
+        when(superadminPermissionRepo.findAllByAccountId(p.id()))
+                .thenReturn(List.of(grant(SuperadminPermission.VIEW_DIRECTORIES)));
+
+        assertThat(permissionService.hasSuperadminPermission(
+                p, SuperadminPermission.VIEW_DIRECTORIES)).isTrue();
+        assertThat(permissionService.hasSuperadminPermission(
+                p, SuperadminPermission.MANAGE_DIRECTORIES)).isFalse();
+        assertThatThrownBy(() -> permissionService.requireSuperadminPermission(
+                p, SuperadminPermission.MANAGE_DIRECTORIES))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void effectiveSuperadminPermissions_scoped_includesImpliedViewKeys() {
+        UUID id = UUID.randomUUID();
+        when(superadminPermissionRepo.findAllByAccountId(id))
+                .thenReturn(List.of(grant(SuperadminPermission.MANAGE_API_TOKENS),
+                                    grant(SuperadminPermission.VIEW_LICENSE)));
+
+        assertThat(permissionService.effectiveSuperadminPermissions(id))
+                .containsExactlyInAnyOrder(
+                        SuperadminPermission.MANAGE_API_TOKENS,
+                        SuperadminPermission.VIEW_API_TOKENS,
+                        SuperadminPermission.VIEW_LICENSE);
+    }
+
+    @Test
     void hasSuperadminPermission_nonSuperadmin_isFalse() {
         assertThat(permissionService.hasSuperadminPermission(
                 admin(), SuperadminPermission.MANAGE_APPLICATION_ACCOUNTS)).isFalse();
         verifyNoInteractions(superadminPermissionRepo);
+    }
+
+    private static SuperadminPermissionGrant grant(SuperadminPermission permission) {
+        SuperadminPermissionGrant g = new SuperadminPermissionGrant();
+        g.setPermission(permission);
+        return g;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

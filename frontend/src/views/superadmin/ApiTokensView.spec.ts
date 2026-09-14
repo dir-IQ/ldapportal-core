@@ -16,6 +16,9 @@ const tokenApi = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api/apiTokens', () => tokenApi)
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ hasSuperadminPermission: () => true }),
+}))
 vi.mock('@/stores/notifications', () => ({
   useNotificationStore: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }),
 }))

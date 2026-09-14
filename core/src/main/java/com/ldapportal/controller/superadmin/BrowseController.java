@@ -2,6 +2,7 @@
 package com.ldapportal.controller.superadmin;
 
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.dto.ldap.ApplyLdifPreviewRequest;
 import com.ldapportal.dto.ldap.AttributeModification;
 import com.ldapportal.dto.ldap.CreateEntryRequest;
@@ -17,6 +18,7 @@ import com.ldapportal.dto.ldap.UpdateEntryRequest;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ConflictHandling;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.IntegrityCheckService;
 import com.ldapportal.ldap.LdapBrowseService;
@@ -63,6 +65,9 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/v1/superadmin/directories/{directoryId}/browse")
 @PreAuthorize("hasRole('SUPERADMIN')")
+// Reads (browse, search, export, schema, LDIF preview, integrity check) are
+// open to every superadmin; the entry writes below additionally require
+// MANAGE_DIRECTORY_DATA, mirroring the feature-key gate on the directory API.
 @RequiredArgsConstructor
 public class BrowseController {
 
@@ -108,6 +113,7 @@ public class BrowseController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_DATA)
     public BrowseResult createEntry(@PathVariable UUID directoryId,
                                     @AuthenticationPrincipal AuthPrincipal principal,
                                     @Valid @RequestBody CreateEntryRequest req) {
@@ -124,6 +130,7 @@ public class BrowseController {
     }
 
     @PutMapping
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_DATA)
     public BrowseResult updateEntry(@PathVariable UUID directoryId,
                                     @AuthenticationPrincipal AuthPrincipal principal,
                                     @RequestParam String dn,
@@ -146,6 +153,7 @@ public class BrowseController {
     }
 
     @DeleteMapping
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_DATA)
     public BrowseResult deleteEntry(@PathVariable UUID directoryId,
                                     @AuthenticationPrincipal AuthPrincipal principal,
                                     @RequestParam String dn,
@@ -166,6 +174,7 @@ public class BrowseController {
     }
 
     @PostMapping("/move")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_DATA)
     public BrowseResult moveEntry(@PathVariable UUID directoryId,
                                   @AuthenticationPrincipal AuthPrincipal principal,
                                   @RequestParam String dn,
@@ -180,6 +189,7 @@ public class BrowseController {
     }
 
     @PostMapping("/rename")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_DATA)
     public BrowseResult renameEntry(@PathVariable UUID directoryId,
                                     @AuthenticationPrincipal AuthPrincipal principal,
                                     @RequestParam String dn,
@@ -272,6 +282,7 @@ public class BrowseController {
     // ── LDIF Import ─────────────────────────────────────────────────────────
 
     @PostMapping("/import/ldif")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_DATA)
     public LdifImportResult importLdif(@PathVariable UUID directoryId,
                                        @AuthenticationPrincipal AuthPrincipal principal,
                                        @RequestParam("file") MultipartFile file,
@@ -330,6 +341,7 @@ public class BrowseController {
     }
 
     @PostMapping("/import/ldif/preview/{previewId}/apply")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_DATA)
     public LdifImportResult applyPreview(@PathVariable UUID directoryId,
                                          @PathVariable UUID previewId,
                                          @AuthenticationPrincipal AuthPrincipal principal,

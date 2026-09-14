@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.core.entitlement.Entitled;
 import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.dto.PageResponse;
@@ -9,6 +10,7 @@ import com.ldapportal.dto.sync.RecomputeKeyRequest;
 import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncSetResponse;
 import com.ldapportal.entity.enums.MembershipState;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.service.SyncConfigService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -32,6 +34,7 @@ import java.util.UUID;
 @RequestMapping("/api/v1/superadmin/sync/sets")
 @Entitled(Entitlement.DIRECTORY_SYNC)
 @PreAuthorize("hasRole('SUPERADMIN')")
+@RequiresSuperadminPermission(SuperadminPermission.VIEW_DIRECTORY_SYNC)
 @RequiredArgsConstructor
 public class SyncSetController {
 
@@ -53,6 +56,7 @@ public class SyncSetController {
     }
 
     @PostMapping
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public ResponseEntity<SyncSetResponse> create(@Valid @RequestBody SyncSetRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.createSet(req));
     }
@@ -63,11 +67,13 @@ public class SyncSetController {
     }
 
     @PutMapping("/{id}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public SyncSetResponse update(@PathVariable UUID id, @Valid @RequestBody SyncSetRequest req) {
         return service.updateSet(id, req);
     }
 
     @DeleteMapping("/{id}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         service.deleteSet(id);
         return ResponseEntity.noContent().build();
@@ -87,6 +93,7 @@ public class SyncSetController {
     }
 
     @PostMapping("/{id}/reconcile")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public Map<String, Integer> reconcile(@PathVariable UUID id) {
         return Map.of("enumerated", service.reconcileNow(id));
     }
@@ -107,12 +114,14 @@ public class SyncSetController {
     }
 
     @PostMapping("/{id}/recompute")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public ResponseEntity<Void> recompute(@PathVariable UUID id, @Valid @RequestBody RecomputeKeyRequest req) {
         service.recompute(id, req.key());
         return ResponseEntity.accepted().build();
     }
 
     @DeleteMapping("/{id}/memberships/{identity}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public ResponseEntity<Void> dismiss(@PathVariable UUID id, @PathVariable String identity) {
         service.dismissMembership(id, identity);
         return ResponseEntity.noContent().build();

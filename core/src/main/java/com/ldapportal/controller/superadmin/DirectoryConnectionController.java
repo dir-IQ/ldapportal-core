@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.dto.directory.DirectoryConnectionRequest;
 import com.ldapportal.dto.directory.DirectoryConnectionResponse;
 import com.ldapportal.dto.directory.TestConnectionRequest;
 import com.ldapportal.dto.directory.TestConnectionResult;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.service.DirectoryConnectionService;
 import com.ldapportal.web.ETagSupport;
 import jakarta.validation.Valid;
@@ -44,6 +46,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/superadmin/directories")
 @PreAuthorize("hasRole('SUPERADMIN')")
+@RequiresSuperadminPermission(SuperadminPermission.VIEW_DIRECTORIES)
 @RequiredArgsConstructor
 public class DirectoryConnectionController {
 
@@ -55,6 +58,7 @@ public class DirectoryConnectionController {
     }
 
     @PostMapping
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORIES)
     public ResponseEntity<DirectoryConnectionResponse> create(
             @Valid @RequestBody DirectoryConnectionRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.createDirectory(req));
@@ -66,6 +70,7 @@ public class DirectoryConnectionController {
     }
 
     @PutMapping("/{id}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORIES)
     public ResponseEntity<DirectoryConnectionResponse> update(
             @PathVariable UUID id,
             @Valid @RequestBody DirectoryConnectionRequest req,
@@ -88,6 +93,7 @@ public class DirectoryConnectionController {
      * directory (no prior version).</p>
      */
     @PutMapping("/by-slug/{slug}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORIES)
     public ResponseEntity<DirectoryConnectionResponse> upsertBySlug(
             @PathVariable String slug,
             @Valid @RequestBody DirectoryConnectionRequest req,
@@ -106,12 +112,14 @@ public class DirectoryConnectionController {
     }
 
     @DeleteMapping("/{id}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORIES)
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         service.deleteDirectory(id);
         return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/{id}/evict-pool")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORIES)
     public ResponseEntity<Void> evictPool(@PathVariable UUID id) {
         service.evictPool(id);
         return ResponseEntity.noContent().build();
@@ -123,6 +131,7 @@ public class DirectoryConnectionController {
     }
 
     @PostMapping("/test")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORIES)
     public TestConnectionResult test(@Valid @RequestBody TestConnectionRequest req) {
         return service.testConnection(req);
     }
