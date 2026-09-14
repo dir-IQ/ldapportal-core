@@ -167,7 +167,7 @@
             <svg :class="['w-3 h-3 transition-transform', sections.configure ? '' : '-rotate-90']" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
           </button>
           <template v-if="sections.configure || collapsed">
-          <RouterLink to="/superadmin/directories" class="nav-item">
+          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.view_directories')" to="/superadmin/directories" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2V5z"/><path d="M6.5 3v14"/><path d="M2.5 7h4M2.5 11h4"/></svg>
             <span v-if="!collapsed">Directory Connections</span>
           </RouterLink>
@@ -180,11 +180,11 @@
                this distribution and gate it on auth.hasFeature('HYBRID')
                (the entitlement check must match the route's actual
                availability, not just superadmin role). -->
-          <RouterLink v-if="auth.isDirectorySyncEnabled" to="/superadmin/directory-sync" class="nav-item">
+          <RouterLink v-if="auth.isDirectorySyncEnabled && auth.hasSuperadminPermission('superadmin.view_directory_sync')" to="/superadmin/directory-sync" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10a7 7 0 0 1 12.9-3.8M17 10a7 7 0 0 1-12.9 3.8"/><path d="M16 3v4h-4M4 17v-4h4"/></svg>
             <span v-if="!collapsed">Directory Synchronization</span>
           </RouterLink>
-          <RouterLink to="/superadmin/profiles" class="nav-item">
+          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.view_provisioning_profiles')" to="/superadmin/profiles" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="2" width="14" height="16" rx="2"/><path d="M7 6h6M7 10h6M7 14h3"/><path d="M14 13l1.5 1.5 3-3"/></svg>
             <span v-if="!collapsed">Provisioning Profiles</span>
           </RouterLink>
@@ -208,7 +208,7 @@
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l4-8 4 4 6-10"/><path d="M14 3h4v4"/></svg>
             <span v-if="!collapsed">Access Drift Policy</span>
           </RouterLink>
-          <RouterLink to="/superadmin/audit-sources" class="nav-item">
+          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.view_integrations')" to="/superadmin/audit-sources" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16z"/><path d="M10 6v4l2.5 2.5"/></svg>
             <span v-if="!collapsed">Audit Sources</span>
           </RouterLink>
@@ -216,15 +216,15 @@
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="5" r="2.5"/><path d="M2 14c0-2.76 2.24-5 5-5s5 2.24 5 5"/><path d="M14 6h4M14 9h3M14 12h2"/></svg>
             <span v-if="!collapsed">HR Integration</span>
           </RouterLink>
-          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_application_accounts')" to="/superadmin/admins" class="nav-item">
+          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.view_application_accounts')" to="/superadmin/admins" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="5.5" r="3.25"/><path d="M3.5 18c0-3.59 2.91-6.5 6.5-6.5s6.5 2.91 6.5 6.5"/><path d="M13.5 2.5l1 2 2 .5-1.5 1.5.5 2-2-1.25L11.5 8.5l.5-2L10.5 5l2-.5 1-2z"/></svg>
             <span v-if="!collapsed">Application Accounts</span>
           </RouterLink>
-          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_api_tokens')" to="/superadmin/api-tokens" class="nav-item">
+          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.view_api_tokens')" to="/superadmin/api-tokens" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="3.25"/><path d="M11.2 8.8 3 17v0h3v-2h2v-2h2l1.2-1.2"/></svg>
             <span v-if="!collapsed">API Tokens</span>
           </RouterLink>
-          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_application_settings')" to="/settings" class="nav-item">
+          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.view_application_settings')" to="/settings" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="2.5"/><path d="M10 1.5v2M10 16.5v2M18.5 10h-2M3.5 10h-2M16 4l-1.4 1.4M5.4 14.6 4 16M16 16l-1.4-1.4M5.4 5.4 4 4"/></svg>
             <span v-if="!collapsed">Application Settings</span>
           </RouterLink>

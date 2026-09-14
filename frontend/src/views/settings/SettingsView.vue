@@ -123,6 +123,10 @@ const brandingStore = useSettingsStore()
 const auth = useAuthStore()
 const confirm = useConfirm()
 
+// VIEW_APPLICATION_SETTINGS opens the page; saving (and the SIEM test /
+// backfill actions) need MANAGE_APPLICATION_SETTINGS, enforced server-side.
+const canManage = computed(() => auth.hasSuperadminPermission('superadmin.manage_application_settings'))
+
 const loading         = ref<boolean>(false)
 const saving          = ref<boolean>(false)
 const settings        = ref<SettingsData | null>(null)  // raw server response (for *Configured hints)
@@ -436,7 +440,7 @@ watch(activeId, (id: string) => {
           <h1 class="text-xl font-bold text-gray-900">Application Settings</h1>
           <p class="text-xs text-gray-500 mt-0.5">{{ activeSection?.label }}</p>
         </div>
-        <div class="flex items-center gap-2">
+        <div v-if="canManage" class="flex items-center gap-2">
           <span v-if="isDirty" class="text-xs text-amber-600">Unsaved changes</span>
           <button type="button" @click="doReset" :disabled="!isDirty || saving"
                   class="btn-neutral btn-compact">
@@ -447,12 +451,15 @@ watch(activeId, (id: string) => {
             {{ saving ? 'Saving…' : 'Save' }}
           </button>
         </div>
+        <span v-else class="text-xs text-gray-500" title="Your account holds view-only access to application settings">
+          Read-only
+        </span>
       </header>
 
       <!-- Scrollable section content -->
       <div class="flex-1 overflow-y-auto p-6">
         <div v-if="loading" class="text-sm text-gray-500">Loading…</div>
-        <form v-else @submit.prevent="doSave" class="max-w-3xl">
+        <form v-else @submit.prevent="canManage && doSave()" class="max-w-3xl">
           <component
             :is="activeSection?.component"
             :form="form"

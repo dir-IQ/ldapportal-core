@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.RequiresSuperadminPermission;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.service.ConfigExportService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -39,6 +41,7 @@ public class ConfigExportController {
 
     @GetMapping(value = "/export", produces = APPLICATION_YAML)
     @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_SETTINGS)
     public ResponseEntity<String> export() {
         String yaml = configExportService.exportYaml();
         return ResponseEntity.ok()

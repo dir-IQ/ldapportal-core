@@ -35,6 +35,7 @@ interface EffectiveData {
   username: string
   role: string
   superadmin: boolean
+  superadminCanEditEntries: boolean
   profiles: ProfileEffective[]
 }
 interface FeatureOverride {
@@ -160,7 +161,14 @@ const filteredFeatures = computed<FeatureEffective[]>(() => {
       <!-- Superadmin short-circuit -->
       <div v-if="data.superadmin" class="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900">
         <p class="font-semibold mb-1">Superadmin</p>
-        <p>This account bypasses all scoping and feature checks — it can perform any action in any directory.</p>
+        <p v-if="data.superadminCanEditEntries">
+          This account bypasses profile scoping and holds Manage directory entries — it can perform any action in any directory.
+        </p>
+        <p v-else>
+          This account bypasses profile scoping and can browse, search, export, run reports, and act on approvals in any directory,
+          but it does not hold Manage directory entries: creating, editing, deleting, moving, importing, or otherwise changing
+          entries is refused. Grant it from the account's Permissions tab.
+        </p>
       </div>
 
       <template v-else>

@@ -102,6 +102,10 @@ export const SECTIONS = [
     // nothing meaningful to show. The sidebar filters this out when
     // auth.isCommunityDistribution is true (ee classes absent).
     hideOnCommunity: true,
+    // Also gated on the VIEW_LICENSE superadmin permission (the status
+    // endpoint enforces it), so scoped superadmins without it don't get a
+    // panel that can only error.
+    requiresSuperadminPermission: 'superadmin.view_license',
   },
 ]
 

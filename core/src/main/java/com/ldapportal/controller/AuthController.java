@@ -285,19 +285,27 @@ public class AuthController {
 
         // Include effective feature permissions (mirrors PermissionService.requireFeature logic)
         if (principal.isSuperadmin()) {
+            // System-scoped superadmin permissions (effective — owners get all)
+            // so the SPA can hide/disable superadmin actions the account can't perform.
+            java.util.Set<com.ldapportal.entity.enums.SuperadminPermission> effective =
+                    superadminPermissionService.effective(principal.id());
+            body.put("superadminPermissions", effective.stream()
+                    .map(com.ldapportal.entity.enums.SuperadminPermission::getDbValue)
+                    .sorted()
+                    .toList());
             // Edition-filtered: a superadmin on the community edition must not be
             // handed feature keys (access reviews, SoD, HR) whose capability isn't
             // entitled — they'd surface UI for features with no backend.
+            // Tier-filtered too (mirrors PermissionService.superadminMayUseFeature):
+            // without MANAGE_DIRECTORY_DATA only the read features are handed
+            // out, so the directory pages hide their write controls.
+            boolean canEditEntries = effective.contains(
+                    com.ldapportal.entity.enums.SuperadminPermission.MANAGE_DIRECTORY_DATA);
             body.put("features", entitlementService.exposed(com.ldapportal.entity.enums.FeatureKey.class).stream()
+                    .filter(fk -> canEditEntries
+                            || com.ldapportal.auth.PermissionService.READONLY_DEFAULT_FEATURES.contains(fk))
                     .map(com.ldapportal.entity.enums.FeatureKey::getDbValue)
                     .toList());
-            // System-scoped superadmin permissions (effective — owners get all)
-            // so the SPA can hide/disable superadmin actions the account can't perform.
-            body.put("superadminPermissions",
-                    superadminPermissionService.effective(principal.id()).stream()
-                            .map(com.ldapportal.entity.enums.SuperadminPermission::getDbValue)
-                            .sorted()
-                            .toList());
         } else if (principal.type() == PrincipalType.SELF_SERVICE) {
             body.put("features", List.of());
         } else {

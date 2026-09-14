@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.entity.DirectoryConnection;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.entra.EntraDirectoryProvider;
 import com.ldapportal.entra.EntraEntitlementService;
 import com.ldapportal.entra.EntraSyncService;
@@ -24,6 +26,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/superadmin/entra/{directoryId}")
 @PreAuthorize("hasRole('SUPERADMIN')")
+@RequiresSuperadminPermission(SuperadminPermission.VIEW_DIRECTORIES)
 @RequiredArgsConstructor
 public class EntraController {
 
@@ -37,6 +40,7 @@ public class EntraController {
     private final EncryptionService encryptionService;
 
     @PostMapping("/test-connection")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORIES)
     public Map<String, Object> testConnection(@PathVariable UUID directoryId,
                                                @RequestBody Map<String, String> body) {
         long start = System.currentTimeMillis();
@@ -85,6 +89,7 @@ public class EntraController {
     }
 
     @PostMapping("/sync")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORIES)
     public EntraSyncService.SyncResult triggerSync(@PathVariable UUID directoryId,
                                                      @RequestParam(defaultValue = "false") boolean full) {
         DirectoryConnection dc = dirRepo.findById(directoryId)

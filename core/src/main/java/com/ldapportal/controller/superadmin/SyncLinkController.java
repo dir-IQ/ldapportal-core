@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.core.entitlement.Entitled;
 import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.dto.sync.SyncLinkRequest;
 import com.ldapportal.dto.sync.SyncLinkResponse;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.service.SyncConfigService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +26,7 @@ import java.util.UUID;
 @RequestMapping("/api/v1/superadmin/sync/links")
 @Entitled(Entitlement.DIRECTORY_SYNC)
 @PreAuthorize("hasRole('SUPERADMIN')")
+@RequiresSuperadminPermission(SuperadminPermission.VIEW_DIRECTORY_SYNC)
 @RequiredArgsConstructor
 public class SyncLinkController {
 
@@ -35,6 +38,7 @@ public class SyncLinkController {
     }
 
     @PostMapping
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public ResponseEntity<SyncLinkResponse> create(@Valid @RequestBody SyncLinkRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.createLink(req));
     }
@@ -45,11 +49,13 @@ public class SyncLinkController {
     }
 
     @PutMapping("/{id}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public SyncLinkResponse update(@PathVariable UUID id, @Valid @RequestBody SyncLinkRequest req) {
         return service.updateLink(id, req);
     }
 
     @DeleteMapping("/{id}")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public ResponseEntity<Void> delete(@PathVariable UUID id) {
         service.deleteLink(id);
         return ResponseEntity.noContent().build();
