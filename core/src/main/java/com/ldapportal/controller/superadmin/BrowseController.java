@@ -24,6 +24,7 @@ import com.ldapportal.ldap.IntegrityCheckService;
 import com.ldapportal.ldap.LdapBrowseService;
 import com.ldapportal.ldap.LdapBrowseService.BrowseResult;
 import com.ldapportal.ldap.LdapBrowseService.SearchEntry;
+import com.ldapportal.ldap.LdapBrowseService.SearchPage;
 import com.ldapportal.ldap.LdapSchemaService;
 import com.ldapportal.ldap.LdapSchemaService.ObjectClassAttributes;
 import com.ldapportal.ldap.LdifPreviewService;
@@ -214,14 +215,22 @@ public class BrowseController {
 
     // ── Search ────────────────────────────────────────────────────────────────
 
+    /**
+     * Searches entries. {@code limit} is the page size (1–1000, default
+     * 1000); {@code 0} asks for every match, capped server-side at
+     * {@link LdapBrowseService#MAX_SEARCH_RESULTS} — the page's "Load all".
+     * The response says whether the page was cut short and how many entries
+     * matched in all, so the UI can offer Load all or suggest a narrower
+     * filter.
+     */
     @GetMapping("/search")
-    public List<SearchEntry> searchEntries(
+    public SearchPage searchEntries(
             @PathVariable UUID directoryId,
             @RequestParam(required = false) String baseDn,
             @RequestParam(defaultValue = "sub") String scope,
             @RequestParam(required = false) String filter,
             @RequestParam(required = false) String attributes,
-            @RequestParam(defaultValue = "100") int limit,
+            @RequestParam(defaultValue = "1000") int limit,
             @RequestParam(defaultValue = "0") int timeLimit,
             @RequestParam(defaultValue = "false") boolean includeOperational) {
         DirectoryConnection dc = loadDirectory(directoryId);
@@ -232,7 +241,8 @@ public class BrowseController {
             default     -> SearchScope.SUB;
         };
 
-        int safeLimit = Math.max(1, Math.min(limit, 1000));
+        // 0 (or negative) = every match, up to the service ceiling; otherwise 1..1000 per page.
+        int safeLimit = limit <= 0 ? 0 : Math.min(limit, 1000);
         // Time limit: clamp to [0, 3600]. 0 means "no server-side limit"
         // (matches LDAP's standard semantic). Cap at 1 hour so a user
         // can't pin a connection forever via a single query.
@@ -249,7 +259,7 @@ public class BrowseController {
                         .filter(s -> !s.isEmpty())
                         .toList();
 
-        return browseService.searchEntries(
+        return browseService.searchPage(
                 dc, baseDn, searchScope, filter, attrList, safeLimit,
                 safeTimeLimit, includeOperational);
     }

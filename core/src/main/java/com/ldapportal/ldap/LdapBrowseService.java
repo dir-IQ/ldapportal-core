@@ -332,9 +332,14 @@ public class LdapBrowseService {
      */
     private void abandonPaging(LDAPInterface conn, String baseDn, Filter filter,
                                ASN1OctetString cookie) {
+        abandonPaging(conn, baseDn, SearchScope.ONE, filter, cookie);
+    }
+
+    private void abandonPaging(LDAPInterface conn, String baseDn, SearchScope scope,
+                               Filter filter, ASN1OctetString cookie) {
         try {
             SearchRequest abandon = new SearchRequest(
-                    baseDn, SearchScope.ONE, filter, "1.1");
+                    baseDn, scope, filter, "1.1");
             abandon.addControl(new SimplePagedResultsControl(0, cookie));
             conn.search(abandon);
         } catch (LDAPException e) {
@@ -686,6 +691,109 @@ public class LdapBrowseService {
             } while (cookie != null && cookie.getValue().length > 0);
 
             return results;
+        });
+    }
+
+    // ── Paged search (directory search page) ───────────────────────────────
+
+    /**
+     * Hard ceiling on the number of entries a search returns even when the
+     * caller asks for every match (limit 0, the page's "Load all"), and on
+     * how far a truncated search counts its matches. Mirrors
+     * {@link #MAX_CHILDREN} for the browser.
+     */
+    public static final int MAX_SEARCH_RESULTS = 50_000;
+
+    /**
+     * A page of search results plus what lies beyond it.
+     *
+     * @param entries           the entries returned (at most the requested limit)
+     * @param truncated         more entries matched than were returned
+     * @param total             how many entries matched in all — exact when
+     *                          the page was complete or the count finished;
+     *                          otherwise the number counted before stopping
+     * @param totalIsLowerBound the count stopped early (the
+     *                          {@link #MAX_SEARCH_RESULTS} ceiling, or a size
+     *                          or time limit the server enforced), so at
+     *                          least {@code total} entries matched
+     */
+    public record SearchPage(List<SearchEntry> entries, boolean truncated,
+                             int total, boolean totalIsLowerBound) {}
+
+    /**
+     * Like {@link #searchEntries} but reports whether the page was cut short
+     * and, when it was, how many entries matched in all. {@code limit} is the
+     * page size; {@code 0} asks for every match, capped at
+     * {@link #MAX_SEARCH_RESULTS}. The "were there more?" answer costs no
+     * extra round-trip (one entry beyond the page is requested); the count
+     * runs only for a truncated page and fetches DNs only.
+     */
+    public SearchPage searchPage(DirectoryConnection dc, String baseDn,
+                                 SearchScope scope, String filter,
+                                 List<String> attributes, int limit,
+                                 int timeLimitSeconds,
+                                 boolean includeOperational) {
+        int effectiveLimit = limit <= 0 ? MAX_SEARCH_RESULTS : Math.min(limit, MAX_SEARCH_RESULTS);
+        List<SearchEntry> fetched = searchEntries(dc, baseDn, scope, filter, attributes,
+                effectiveLimit + 1, timeLimitSeconds, includeOperational);
+        if (fetched.size() <= effectiveLimit) {
+            return new SearchPage(fetched, false, fetched.size(), false);
+        }
+        List<SearchEntry> page = List.copyOf(fetched.subList(0, effectiveLimit));
+        MatchCount count = countMatches(dc, baseDn, scope, filter, timeLimitSeconds);
+        // The page itself proves at least effectiveLimit + 1 matches exist.
+        int total = Math.max(count.count(), effectiveLimit + 1);
+        return new SearchPage(page, true, total, count.lowerBound());
+    }
+
+    /** @param lowerBound the count stopped early; at least {@code count} matched */
+    record MatchCount(int count, boolean lowerBound) {}
+
+    /**
+     * Counts the entries matching a search without fetching any attributes
+     * ({@code 1.1}), paging through at most {@link #MAX_SEARCH_RESULTS}. A
+     * server-enforced size or time limit ends the count early with what was
+     * counted so far marked as a lower bound.
+     */
+    private MatchCount countMatches(DirectoryConnection dc, String baseDn, SearchScope scope,
+                                    String filter, int timeLimitSeconds) {
+        String searchBase = (baseDn != null && !baseDn.isBlank()) ? baseDn : dc.getBaseDn();
+        String effectiveFilter = (filter == null || filter.isBlank()) ? "(objectClass=*)" : filter;
+
+        return connectionFactory.withConnection(dc, conn -> {
+            Filter parsed = Filter.create(effectiveFilter);
+            int count = 0;
+            ASN1OctetString cookie = null;
+            try {
+                do {
+                    SearchRequest request = new SearchRequest(searchBase, scope, parsed, "1.1");
+                    request.addControl(new SimplePagedResultsControl(dc.getPagingSize(), cookie));
+                    if (timeLimitSeconds > 0) {
+                        request.setTimeLimitSeconds(timeLimitSeconds);
+                    }
+                    SearchResult result = conn.search(request);
+                    count += result.getEntryCount();
+
+                    SimplePagedResultsControl pageResponse = SimplePagedResultsControl.get(result);
+                    cookie = (pageResponse != null && pageResponse.moreResultsToReturn())
+                            ? pageResponse.getCookie() : null;
+                    if (count >= MAX_SEARCH_RESULTS && cookie != null && cookie.getValue().length > 0) {
+                        abandonPaging(conn, searchBase, scope, parsed, cookie);
+                        return new MatchCount(count, true);
+                    }
+                } while (cookie != null && cookie.getValue().length > 0);
+                return new MatchCount(count, false);
+            } catch (LDAPSearchException e) {
+                if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
+                    return new MatchCount(count, false);
+                }
+                if (e.getResultCode() == ResultCode.SIZE_LIMIT_EXCEEDED
+                        || e.getResultCode() == ResultCode.TIME_LIMIT_EXCEEDED
+                        || e.getResultCode() == ResultCode.ADMIN_LIMIT_EXCEEDED) {
+                    return new MatchCount(count + e.getEntryCount(), true);
+                }
+                throw e;
+            }
         });
     }
 
