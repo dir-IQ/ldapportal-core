@@ -514,20 +514,28 @@ async function doDelete() {
 
 const cloneTarget = ref<ProfileRow | null>(null)
 const cloneName = ref('')
+// Directory the copy is created in. Defaults to the source's directory;
+// picking another one clones across directories (DNs copied as-is).
+const cloneDirId = ref<string | null>(null)
 const showCloneModal = ref(false)
+
+const cloneCrossDirectory = computed(() =>
+  !!cloneTarget.value && !!cloneDirId.value && cloneDirId.value !== cloneTarget.value.directoryId)
 
 function openClone(p: ProfileRow) {
   cloneTarget.value = p
   cloneName.value = p.name + ' (Copy)'
+  cloneDirId.value = p.directoryId
   showCloneModal.value = true
 }
 
 async function doClone() {
   if (!cloneName.value.trim() || !cloneTarget.value) return
   showCloneModal.value = false
+  const targetDirId = cloneCrossDirectory.value ? cloneDirId.value : null
   try {
-    await cloneProfile(cloneTarget.value.directoryId, cloneTarget.value.id, cloneName.value.trim())
-    notif.success('Profile cloned')
+    await cloneProfile(cloneTarget.value.directoryId, cloneTarget.value.id, cloneName.value.trim(), targetDirId)
+    notif.success(targetDirId ? `Profile cloned into ${dirName(targetDirId)}` : 'Profile cloned')
     await reload()
   } catch (e) {
     notif.error(errMsg(e))
@@ -2202,6 +2210,17 @@ function toggleApprover(accountId: string) {
           <label for="sp-clone-name" class="block text-sm font-medium text-gray-700 mb-1">New Profile Name</label>
           <input id="sp-clone-name" v-model="cloneName" class="input w-full" placeholder="Profile name"
                  @keydown.enter="doClone" />
+        </div>
+        <div>
+          <label for="sp-clone-directory" class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
+          <select id="sp-clone-directory" v-model="cloneDirId" class="input w-full">
+            <option v-for="d in directories" :key="d.id" :value="d.id">{{ d.displayName }}</option>
+          </select>
+          <p v-if="cloneCrossDirectory" class="mt-1 text-xs text-gray-500">
+            Target OUs, group assignments and other DNs are copied as-is from
+            {{ cloneTarget?.directoryName ?? 'the source directory' }}; review them for
+            the new directory before enabling the profile. Additional-profile links are not copied.
+          </p>
         </div>
       </div>
       <template #footer>

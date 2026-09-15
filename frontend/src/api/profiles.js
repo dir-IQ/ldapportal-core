@@ -19,7 +19,18 @@ export const updateProfile     = (dirId, profileId, data, force = false) =>
 export const probeTargetOu    = (dirId, dn) =>
   client.post(`${dirBase(dirId)}/probe-target-ou`, null, { params: { dn } })
 export const deleteProfile     = (dirId, profileId)          => client.delete(`${dirBase(dirId)}/${profileId}`)
-export const cloneProfile      = (dirId, profileId, name)    => client.post(`${dirBase(dirId)}/${profileId}/clone`, { name })
+/**
+ * Clone a profile. `targetDirectoryId` is optional: when set (and different
+ * from `dirId`) the copy is created in that directory instead of alongside
+ * the source.
+ * @param {string} dirId
+ * @param {string} profileId
+ * @param {string} name
+ * @param {string | null} [targetDirectoryId]
+ */
+export const cloneProfile      = (dirId, profileId, name, targetDirectoryId = null) =>
+  client.post(`${dirBase(dirId)}/${profileId}/clone`,
+    targetDirectoryId ? { name, targetDirectoryId } : { name })
 
 // Seeds a curated set of attribute configs for a known schema
 // (currently 'inetOrgPerson'). Refuses 409 if the profile already
