@@ -2,6 +2,7 @@
 package com.ldapportal.core.reports.schedule;
 
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.PermissionService;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.core.reports.ReportData;
 import com.ldapportal.dto.reports.ReportJobRequest;
@@ -62,6 +63,7 @@ public class ScheduledReportJobService {
     private final EmailService emailService;
     private final S3UploadService s3UploadService;
     private final Clock clock;
+    private final PermissionService permissionService;
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -78,6 +80,7 @@ public class ScheduledReportJobService {
 
     @Transactional
     public ScheduledReportJob create(UUID directoryId, ReportJobRequest req, AuthPrincipal principal) {
+        req = withCreatorScope(directoryId, req, principal);
         validate(req);
         ScheduledReportJob job = new ScheduledReportJob();
         job.setDirectoryId(directoryId);
@@ -87,8 +90,10 @@ public class ScheduledReportJobService {
     }
 
     @Transactional
-    public ScheduledReportJob update(UUID directoryId, UUID jobId, ReportJobRequest req) {
+    public ScheduledReportJob update(UUID directoryId, UUID jobId, ReportJobRequest req,
+                                     AuthPrincipal principal) {
         ScheduledReportJob job = get(directoryId, jobId);
+        req = withCreatorScope(directoryId, req, principal);
         validate(req);
         apply(job, req);
         return jobRepo.save(job);
@@ -107,6 +112,47 @@ public class ScheduledReportJobService {
     }
 
     // ── Validation ──────────────────────────────────────────────────────────────
+
+    /**
+     * Pin a non-superadmin's job to their authorized OUs. The scheduler runs
+     * jobs as the system, so the stored scope has to be settled here: the
+     * requested {@code scopeBaseDn} is clamped to the admin's OUs (or refused
+     * when it lies outside them), an absent one is derived from their single
+     * OU, and the per-type DN params ({@code branchDn}, {@code groupDn}) are
+     * checked the same way. A superadmin's request is stored as sent.
+     */
+    private ReportJobRequest withCreatorScope(UUID directoryId, ReportJobRequest req,
+                                              AuthPrincipal principal) {
+        if (principal == null || principal.isSuperadmin()) {
+            return req;
+        }
+        Map<String, Object> params = new LinkedHashMap<>(
+                req.reportParams() != null ? req.reportParams() : Map.of());
+        String requested = stringParam(params, "scopeBaseDn");
+        List<String> bases = permissionService.resolveSearchBaseDns(principal, directoryId, requested);
+        if (bases.size() != 1) {
+            throw new IllegalArgumentException(
+                    "scopeBaseDn is required: your access spans " + bases.size()
+                            + " OUs, so pick the one this job should report on");
+        }
+        params.put("scopeBaseDn", bases.get(0));
+        for (String key : List.of("branchDn", "groupDn")) {
+            String dn = stringParam(params, key);
+            if (dn != null) {
+                permissionService.requireDnWithinScope(principal, directoryId, dn);
+            }
+        }
+        return new ReportJobRequest(req.name(), req.reportType(), params, req.cronExpression(),
+                req.outputFormat(), req.deliveryMethod(), req.recipientEmail(), req.s3KeyPrefix(),
+                req.timezone(), req.enabled());
+    }
+
+    private static String stringParam(Map<String, Object> params, String key) {
+        Object raw = params.get(key);
+        if (raw == null) return null;
+        String s = raw.toString().trim();
+        return s.isEmpty() ? null : s;
+    }
 
     private void validate(ReportJobRequest req) {
         // cron (normalized to 6-field) must parse

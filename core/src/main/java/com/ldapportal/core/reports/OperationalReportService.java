@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.core.reports;
 
+import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.PermissionService;
 import com.ldapportal.dto.profile.GroupChangePreview;
 import com.ldapportal.entity.AuditEvent;
 import com.ldapportal.entity.DirectoryConnection;
@@ -18,6 +20,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.time.OffsetDateTime;
@@ -25,12 +28,16 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.function.Predicate;
 
 /**
  * Executes operational reports on demand. Operational reports are
@@ -81,7 +88,29 @@ public class OperationalReportService {
      * Consulted only after the built-in {@link OperationalReportType} names
      * fail to match the requested type.
      */
+    private final PermissionService              permissionService;
     private final List<OperationalReportProvider> reportProviders;
+
+    /**
+     * The subtree(s) a report may read and the DN filter applied to
+     * audit-backed rows. Unbounded for superadmins and for scheduled runs
+     * (the scheduler stores a scope settled at job creation); for an admin it
+     * is clamped to their authorized OUs exactly the way the user and group
+     * listings are, so a report can never read past what the admin could
+     * browse. {@code bases} holds a single {@code null} when unbounded.
+     */
+    record ReportScope(List<String> bases, Predicate<String> dnAllowed, boolean restricted) {
+        static ReportScope unbounded(String requestedBase) {
+            return new ReportScope(Collections.singletonList(requestedBase), dn -> true, false);
+        }
+
+        /** Refuse an explicit DN parameter (branch, group) outside the scope. */
+        void requireInScope(String dn) {
+            if (restricted && !dnAllowed.test(dn)) {
+                throw new AccessDeniedException("DN [" + dn + "] is outside your authorized OUs");
+            }
+        }
+    }
 
     /**
      * Runs the requested operational report and returns the structured
@@ -91,36 +120,73 @@ public class OperationalReportService {
      * or an addon-contributed {@link OperationalReportProvider#reportId()};
      * anything matching neither is a 400 ({@link IllegalArgumentException}).</p>
      */
+    /**
+     * System / scheduled entry point: no principal, so the scope is whatever
+     * {@code params["scopeBaseDn"]} says (the scheduler stores a scope that
+     * was validated against the creating admin when the job was saved).
+     */
     public ReportData run(DirectoryConnection dc,
                           String reportType,
                           Map<String, Object> params,
                           UUID directoryId) {
-        requireLdapDirectory(dc);
         Map<String, Object> safeParams = params != null ? params : Map.of();
-        // Admin-view scoping: when reportParams carries scopeBaseDn
-        // (set by the frontend for non-superadmin sessions from the
-        // picked profile's targetUserDn), use it as the LDAP search
-        // base for report types that would otherwise scan the whole
-        // directory. Report types that already require an explicit DN
-        // (USERS_IN_BRANCH, USERS_IN_GROUP) ignore the override.
-        String scope = scopeBaseDn(safeParams);
+        return run(dc, reportType, safeParams, directoryId,
+                ReportScope.unbounded(scopeBaseDn(safeParams)));
+    }
+
+    /**
+     * Interactive entry point. The requested {@code scopeBaseDn} (which the
+     * frontend fills in from the picked profile) is only a hint: for an admin
+     * it is clamped to their authorized OUs, or refused when it lies outside
+     * them, and when absent the report runs over every OU they hold. A
+     * superadmin's request passes through unchanged.
+     */
+    public ReportData run(DirectoryConnection dc,
+                          String reportType,
+                          Map<String, Object> params,
+                          UUID directoryId,
+                          AuthPrincipal principal) {
+        Map<String, Object> safeParams = params != null ? params : Map.of();
+        return run(dc, reportType, safeParams, directoryId,
+                scopeFor(principal, directoryId, scopeBaseDn(safeParams)));
+    }
+
+    private ReportScope scopeFor(AuthPrincipal principal, UUID directoryId, String requestedBase) {
+        if (principal == null || principal.isSuperadmin()) {
+            return ReportScope.unbounded(requestedBase);
+        }
+        List<String> bases = permissionService.resolveSearchBaseDns(principal, directoryId, requestedBase);
+        return new ReportScope(bases,
+                dn -> permissionService.isDnWithinScope(principal, directoryId, dn), true);
+    }
+
+    private ReportData run(DirectoryConnection dc,
+                           String reportType,
+                           Map<String, Object> safeParams,
+                           UUID directoryId,
+                           ReportScope scope) {
+        requireLdapDirectory(dc);
 
         OperationalReportType builtin = builtinOrNull(reportType);
         if (builtin != null) {
             return switch (builtin) {
-                case USERS_IN_GROUP         -> runUsersInGroupReport(dc, safeParams);
-                case USERS_IN_BRANCH        -> runLdapReport(dc,
-                        "(|(objectClass=inetOrgPerson)(objectClass=person))",
-                        requireString(safeParams, "branchDn"));
-                case USERS_WITH_NO_GROUP    -> runUsersByGroupCountReport(dc, scope, safeParams);
-                case RECENTLY_ADDED         -> runLdapReport(dc,
-                        buildRecentFilter("createTimestamp", safeParams), scope);
-                case RECENTLY_MODIFIED      -> runLdapReport(dc,
-                        buildRecentFilter("modifyTimestamp", safeParams), scope);
-                case RECENTLY_DELETED       -> runDeletedReport(directoryId, safeParams);
-                case DISABLED_ACCOUNTS      -> runDisabledAccountsReport(dc, scope);
-                case MISSING_PROFILE_GROUPS -> runMissingProfileGroupsReport(dc, directoryId);
-                case AUDIT_ENTRIES          -> runAuditEntriesReport(directoryId, safeParams);
+                case USERS_IN_GROUP         -> runUsersInGroupReport(dc, safeParams, scope);
+                case USERS_IN_BRANCH        -> {
+                    String branchDn = requireString(safeParams, "branchDn");
+                    scope.requireInScope(branchDn);
+                    yield runLdapReport(dc,
+                            "(|(objectClass=inetOrgPerson)(objectClass=person))", branchDn);
+                }
+                case USERS_WITH_NO_GROUP    -> perBase(scope,
+                        base -> runUsersByGroupCountReport(dc, base, safeParams));
+                case RECENTLY_ADDED         -> perBase(scope, base -> runLdapReport(dc,
+                        buildRecentFilter("createTimestamp", safeParams), base));
+                case RECENTLY_MODIFIED      -> perBase(scope, base -> runLdapReport(dc,
+                        buildRecentFilter("modifyTimestamp", safeParams), base));
+                case RECENTLY_DELETED       -> runDeletedReport(directoryId, safeParams, scope);
+                case DISABLED_ACCOUNTS      -> perBase(scope, base -> runDisabledAccountsReport(dc, base));
+                case MISSING_PROFILE_GROUPS -> runMissingProfileGroupsReport(dc, directoryId, scope);
+                case AUDIT_ENTRIES          -> runAuditEntriesReport(directoryId, safeParams, scope);
             };
         }
 
@@ -135,7 +201,26 @@ public class OperationalReportService {
                     "Report '" + reportType + "' is not available for directory "
                             + dc.getDisplayName() + ".");
         }
-        return provider.run(dc, safeParams, scope);
+        return perBase(scope, base -> provider.run(dc, safeParams, base));
+    }
+
+    /**
+     * Run a base-scoped report once per search base and merge the rows
+     * (an admin may hold several OUs). A single base — the common case, and
+     * every unbounded run — is passed straight through.
+     */
+    private static ReportData perBase(ReportScope scope, Function<String, ReportData> runner) {
+        if (scope.bases().size() == 1) {
+            return runner.apply(scope.bases().get(0));
+        }
+        List<String> columns = null;
+        LinkedHashSet<Map<String, String>> rows = new LinkedHashSet<>();
+        for (String base : scope.bases()) {
+            ReportData part = runner.apply(base);
+            if (columns == null) columns = part.columns();
+            rows.addAll(part.rows());
+        }
+        return new ReportData(columns == null ? List.of() : columns, new ArrayList<>(rows));
     }
 
     /** Resolve a built-in report type by name, or null if not a built-in. */
@@ -160,8 +245,10 @@ public class OperationalReportService {
 
     // ── Per-type implementations ──────────────────────────────────────────────
 
-    private ReportData runUsersInGroupReport(DirectoryConnection dc, Map<String, Object> params) {
+    private ReportData runUsersInGroupReport(DirectoryConnection dc, Map<String, Object> params,
+                                             ReportScope scope) {
         String groupDn = requireString(params, "groupDn");
+        scope.requireInScope(groupDn);
         List<String> memberDns = new ArrayList<>();
         try {
             LdapGroup group = groupService.getGroup(dc, groupDn,
@@ -170,6 +257,8 @@ public class OperationalReportService {
         } catch (Exception e) {
             log.warn("Could not read group {}: {}", groupDn, e.getMessage());
         }
+        // A group may hold members from OUs the admin cannot read.
+        memberDns.removeIf(m -> !scope.dnAllowed().test(m));
 
         if (memberDns.isEmpty()) {
             return new ReportData(List.of("DN", "Name", "Email", "User ID"), List.of());
@@ -290,7 +379,8 @@ public class OperationalReportService {
         return runLdapReport(dc, filter, scopeBaseDn);
     }
 
-    private ReportData runDeletedReport(UUID directoryId, Map<String, Object> params) {
+    private ReportData runDeletedReport(UUID directoryId, Map<String, Object> params,
+                                        ReportScope scope) {
         int lookbackDays = lookbackDays(params);
         OffsetDateTime from = OffsetDateTime.now().minusDays(lookbackDays);
         Object objectType = params.get("objectType");
@@ -317,6 +407,7 @@ public class OperationalReportService {
         List<String> columns = List.of("Entry", "Deleted By", "Deleted At", "Source");
         List<Map<String, String>> rows = new ArrayList<>();
         for (AuditEvent e : allDeletes) {
+            if (!scope.dnAllowed().test(e.getTargetDn())) continue;
             Map<String, String> row = new LinkedHashMap<>();
             row.put("Entry",      e.getTargetDn() != null ? e.getTargetDn() : "");
             row.put("Deleted By", e.getActorUsername() != null ? e.getActorUsername() : "");
@@ -326,6 +417,7 @@ public class OperationalReportService {
         }
         changelogDeletes.getContent().stream()
                 .filter(e -> e.getDetail() != null && isDeleteChange(e.getDetail()))
+                .filter(e -> scope.dnAllowed().test(e.getTargetDn()))
                 .forEach(e -> {
                     Map<String, String> row = new LinkedHashMap<>();
                     row.put("Entry",      e.getTargetDn() != null ? e.getTargetDn() : "");
@@ -344,7 +436,8 @@ public class OperationalReportService {
      * Scoped to {@code directoryId} (like {@code RECENTLY_DELETED}). Capped at
      * {@link #MAX_AUDIT_RESULTS} rows, newest first.
      */
-    private ReportData runAuditEntriesReport(UUID directoryId, Map<String, Object> params) {
+    private ReportData runAuditEntriesReport(UUID directoryId, Map<String, Object> params,
+                                             ReportScope scope) {
         OffsetDateTime from = OffsetDateTime.now().minusHours(lookbackHours(params));
         String actionFilter = auditActionFilter(params);
 
@@ -355,6 +448,8 @@ public class OperationalReportService {
         List<String> columns = List.of("When", "Actor", "Action", "Target", "Detail");
         List<Map<String, String>> rows = new ArrayList<>();
         for (AuditEvent e : events) {
+            // Same DN scoping the Audit Log page applies for admins.
+            if (!scope.dnAllowed().test(e.getTargetDn())) continue;
             Map<String, String> row = new LinkedHashMap<>();
             row.put("When",   e.getOccurredAt() != null ? e.getOccurredAt().toString() : "");
             row.put("Actor",  e.getActorUsername() != null ? e.getActorUsername() : "");
@@ -411,7 +506,8 @@ public class OperationalReportService {
                 .collect(java.util.stream.Collectors.joining("; "));
     }
 
-    private ReportData runMissingProfileGroupsReport(DirectoryConnection dc, UUID directoryId) {
+    private ReportData runMissingProfileGroupsReport(DirectoryConnection dc, UUID directoryId,
+                                                     ReportScope scope) {
         List<ProvisioningProfile> profiles =
                 profileRepo.findAllByDirectoryIdAndEnabledTrue(directoryId);
 
@@ -419,10 +515,13 @@ public class OperationalReportService {
         List<Map<String, String>> rows = new ArrayList<>();
 
         for (ProvisioningProfile profile : profiles) {
+            // Only profiles whose users the admin can read.
+            if (!scope.dnAllowed().test(profile.getTargetUserDn())) continue;
             try {
                 GroupChangePreview preview =
                         profileService.evaluateGroupChanges(directoryId, profile.getId());
                 for (GroupChangePreview.UserGroupChange change : preview.changes()) {
+                    if (!scope.dnAllowed().test(change.userDn())) continue;
                     for (GroupChangePreview.GroupChange add : change.groupsToAdd()) {
                         Map<String, String> row = new LinkedHashMap<>();
                         row.put("User", change.userDn());

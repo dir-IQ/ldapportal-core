@@ -170,7 +170,12 @@ Don't share the superadmin account. Create dedicated admin accounts:
 5. For ADMIN accounts, assign profiles with a base role:
    - **ADMIN** — can create, edit, delete users
    - **READ_ONLY** — can view users and run reports
-6. Fine-tune permissions per feature (e.g., allow bulk export but not bulk import)
+6. Fine-tune permissions per feature (e.g., allow bulk export but not bulk import).
+   The plain edit keys stop at the specific ones: editing a user cannot set
+   the password or the account-enable attribute without **Reset password** /
+   **Enable & disable**, and editing a group cannot change its members without
+   **Manage members**. Reports, including scheduled ones, read only the OUs
+   the admin holds, whatever scope the request asks for.
 7. For SUPERADMIN accounts, an owner can turn off **Owner (full access)** and
    pick an access tier per area on the **Permissions** tab:
    - **View** — open the area and read everything in it (list directory
