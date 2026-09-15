@@ -504,7 +504,7 @@ public class DirectoryConnectionService {
     }
 
     private static String baseDnKey(String dn, int displayOrder) {
-        return dn + " " + displayOrder;
+        return dn + " " + displayOrder;
     }
 
     private static boolean baseDnsUnchanged(List<String> currentKeys, List<BaseDnRequest> requested) {
