@@ -18,3 +18,39 @@ error during build:
 subprocess exited with status 1
 subprocess exited with status 1
 Error: building at STEP "RUN VITE_BASE_PATH="$VITE_BASE_PATH" npm run build": exit status 1
+
+
+What Directory Sync can and cannot do here
+
+A sync link is a one-way pair of directory connections, not of servers. Because East and West each expose c=us and c=admin as separate connections, you need one link per branch per direction. One-way East to West is two links. Full bidirectional is four links, and the docs warn that reverse links between the same pair need care (docs/directory-sync-operations.md §11).
+
+Two things I verified in the engine matter for IVIA:
+
+secDN will be dropped from mirrored secUser entries unless you override reference attributes. The default reference-attribute list includes secDN, and the resolver in RecomputeEngine.resolverFor only looks up target DNs in the membership index of the same link. A secUser in the c=admin link points at a demographic entry tracked by the c=us link, so the lookup fails and the value is silently removed from the projection. Set the c=admin sets' reference attributes explicitly to member,uniqueMember,owner so secDN passes through verbatim. That is correct for a mirror because the DN is identical on both sides.
+Passwords do not mirror by default. The default excluded list drops userPassword, plus the operational password-policy attributes. If West must accept the same credentials, set an explicit excluded list that omits userPassword, allow pre-encoded passwords in the OUD password policy on West, and give the bind account the privilege to write them. Otherwise expect CONSTRAINT_VIOLATION — pre-encoded passwords are not allowed rows.
+Configuration steps (East to West)
+Entitle the feature. Set LDAPPORTAL_ENTITLEMENTS_GRANT=DIRECTORY_SYNC on the backend, or carry it in the license. Confirm with the "Granting entitlement(s)" startup log line.
+Prepare OUD. Changelog capture reads the external changelog at cn=changelog, which exists on OUD only when replication is enabled on that instance. Your three-node clusters almost certainly already have it. Grant the bind DN used by the East c=us and c=admin connections read access to cn=changelog and to the root DSE attributes firstChangeNumber and lastChangeNumber. The poller reads both links' cursors from the same changelog and filters by set scope, so that is fine.
+Pre-create the container skeleton on West. Use applicability filters that select leaf objects only. Missing parent OUs would fail the ADD and sit as FAILED until the reconcile retries, so create ou=people,c=us, secAuthority=Default,c=admin, and the IVIA containers under it first.
+Create the links under Superadmin, then Directory Sync:
+Field	Link 1	Link 2
+Source	East c=us	East c=admin
+Target	West c=us	West c=admin
+Capture mode	CHANGELOG	CHANGELOG
+Changelog format	DSEE_CHANGELOG	DSEE_CHANGELOG
+Changelog base DN	cn=changelog	cn=changelog
+Create one set per link. Use your real IVIA DNs where I have guessed.
+Field	Demographic set	secAuthority set
+Identity key	entryUUID	entryUUID
+Source scope base DN	c=us (or ou=people,c=us)	secAuthority=Default,c=admin
+Scope	SUB	SUB
+Applicability filter	(objectClass=inetOrgPerson)	(|(objectClass=secUser)(objectClass=secGroup)(objectClass=secPolicyData))
+Target base DN	same as source scope	same as source scope
+Reference attributes	leave default	member,uniqueMember,owner
+Source anchor attribute	leave blank	leave blank
+Delete policy	REVIEW	REVIEW
+Reconcile cadence	3600	3600
+
+Leave the anchor blank for a same-DN mirror. Without an anchor the engine's ADD falls through to MODIFY on ENTRY_ALREADY_EXISTS, so pre-existing West entries converge in place. With an anchor configured, every occupied DN that lacks the anchor is quarantined for REVIEW, which for a full mirror means every entry.
+
+Enable and watch. The first reconcile does the bulk load. Use the link and set health rollups, then the inventory, to clear FAILED rows, which will mostly be schema or ACL problems on West. Switch delete policy to DELETE only once a reconcile cycle is clean.
