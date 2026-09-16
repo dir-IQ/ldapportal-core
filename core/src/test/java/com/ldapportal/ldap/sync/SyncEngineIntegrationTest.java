@@ -77,6 +77,8 @@ class SyncEngineIntegrationTest {
 
     private InMemoryDirectoryServer source;
     private InMemoryDirectoryServer target;
+    private InMemoryDirectoryServer source2;
+    private InMemoryDirectoryServer target2;
     private SyncLink link;
     private SyncSet peopleSet;
     private SyncSet groupsSet;
@@ -121,6 +123,8 @@ class SyncEngineIntegrationTest {
     void tearDown() {
         if (source != null) source.shutDown(true);
         if (target != null) target.shutDown(true);
+        if (source2 != null) source2.shutDown(true);
+        if (target2 != null) target2.shutDown(true);
     }
 
     // ── ADD / MODIFY (hash gate) / DELETE ───────────────────────────────────────
@@ -264,6 +268,59 @@ class SyncEngineIntegrationTest {
         engine.process(groupsSet.getId(), "cn=eng," + SRC_GROUPS);
         assertThat(membershipRepo.findAllBySyncSetId(groupsSet.getId()).get(0).getContentHash())
                 .isEqualTo(groupHashBefore);
+    }
+
+    // ── Cross-link references (IVIA secDN: c=admin secUser → c=us demographic) ──
+
+    @Test
+    void reference_resolvesAcrossLinks_andClosureSpansLinks() throws Exception {
+        // A second, independent link (its own source + target connections) whose
+        // entries reference DNs mirrored by the first link — the shape OUD forces
+        // when c=us and c=admin are separate top-level roots.
+        String src2Base = "dc=src2,dc=com";
+        String dst2Base = "dc=dst2,dc=com";
+        source2 = startServer(src2Base);
+        target2 = startServer(dst2Base);
+        source2.add(new Entry("ou=accounts," + src2Base,
+                new Attribute("objectClass", "top", "organizationalUnit"), new Attribute("ou", "accounts")));
+        target2.add(new Entry("ou=accounts," + dst2Base,
+                new Attribute("objectClass", "top", "organizationalUnit"), new Attribute("ou", "accounts")));
+        DirectoryConnection src2 = directoryRepo.save(directory("src2", source2.getListenPort(), src2Base));
+        DirectoryConnection dst2 = directoryRepo.save(directory("dst2", target2.getListenPort(), dst2Base));
+        SyncLink l2 = new SyncLink();
+        l2.setDisplayName("src2->dst2");
+        l2.setSourceDirId(src2.getId());
+        l2.setTargetDirId(dst2.getId());
+        SyncLink link2 = linkRepo.save(l2);
+        SyncSet accounts = syncSet("accounts", "ou=accounts," + src2Base, "ou=accounts," + dst2Base,
+                "(objectClass=inetOrgPerson)", "manager");
+        accounts.setLinkId(link2.getId());
+        SyncSet accountsSet = setRepo.save(accounts);
+
+        String daveSrc = "uid=dave,ou=accounts," + src2Base;
+        String daveDst = "uid=dave,ou=accounts," + dst2Base;
+        source2.add(new Entry(daveSrc,
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", "dave"), new Attribute("cn", "dave"), new Attribute("sn", "dave"),
+                new Attribute("manager", "uid=alice," + SRC_PEOPLE)));
+
+        // Referent not synced anywhere yet → the reference is dropped, not invented.
+        engine.process(accountsSet.getId(), daveSrc);
+        assertThat(target2.getEntry(daveDst)).isNotNull();
+        assertThat(target2.getEntry(daveDst).hasAttribute("manager")).isFalse();
+
+        // Alice lands via the *other* link: closure must re-enqueue dave in link 2.
+        requestRepo.deleteAll();
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        List<RecomputeRequest> enqueued = requestRepo.findAllBySyncSetId(accountsSet.getId());
+        assertThat(enqueued).extracting(RecomputeRequest::getRequestKey)
+                .anyMatch(k -> k.equalsIgnoreCase(daveSrc));
+
+        // Draining it resolves the reference through link 1's index.
+        engine.process(accountsSet.getId(), daveSrc);
+        assertThat(target2.getEntry(daveDst).getAttributeValue("manager"))
+                .isEqualTo("uid=alice," + DST_USERS);
     }
 
     // ── Verify: a correctly-synced set reports in-sync (references included) ─────

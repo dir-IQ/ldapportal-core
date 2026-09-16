@@ -26,8 +26,12 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
     /** Identity currently mapped to a (normalized) source DN within one set. */
     Optional<Membership> findFirstBySyncSetIdAndSourceDn(UUID syncSetId, String sourceDn);
 
-    /** Reference remapping: the membership for a referenced source DN across a link's sets. */
-    Optional<Membership> findFirstBySyncSetIdInAndSourceDn(List<UUID> syncSetIds, String sourceDn);
+    /**
+     * Reference remapping: every membership (any set, any link) for a referenced
+     * (normalized) source DN. {@link com.ldapportal.ldap.sync.MembershipReferenceResolvers}
+     * picks the same-link row when there is one and otherwise the cross-link consensus.
+     */
+    List<Membership> findAllBySourceDn(String sourceDn);
 
     /** Rows not stamped by the current reconcile epoch (never scanned, or seen in a prior generation). */
     @Query("select m from Membership m where m.syncSetId = :syncSetId "
