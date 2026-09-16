@@ -309,21 +309,44 @@ public class ProvisioningProfileService {
 
     @Transactional
     public ProfileResponse clone(UUID directoryId, UUID profileId, String newName) {
-        return clone(directoryId, profileId, newName, null);
+        return clone(directoryId, profileId, newName, null, null);
     }
 
     @Transactional
     public ProfileResponse clone(UUID directoryId, UUID profileId, String newName,
                                   AuthPrincipal principal) {
-        ProvisioningProfile source = requireProfileInDirectory(directoryId, profileId);
+        return clone(directoryId, profileId, newName, null, principal);
+    }
 
-        if (profileRepo.existsByDirectoryIdAndName(source.getDirectory().getId(), newName)) {
-            throw new ConflictException(
-                    "Profile [" + newName + "] already exists in this directory");
+    /**
+     * Clone {@code profileId} as {@code newName}. A null (or same-directory)
+     * {@code targetDirectoryId} clones alongside the source. A different
+     * directory creates the copy there instead: DN-valued settings (target
+     * OUs, group assignments, lifecycle move DN, approver group) are copied
+     * verbatim as a starting point for the admin to adjust, while
+     * additional-profile links are dropped because they point at profiles of
+     * the source directory. Either way the copy starts disabled.
+     */
+    @Transactional
+    public ProfileResponse clone(UUID directoryId, UUID profileId, String newName,
+                                  UUID targetDirectoryId, AuthPrincipal principal) {
+        ProvisioningProfile source = requireProfileInDirectory(directoryId, profileId);
+        DirectoryConnection sourceDir = source.getDirectory();
+        DirectoryConnection target = targetDirectoryId == null
+                || targetDirectoryId.equals(sourceDir.getId())
+                ? sourceDir
+                : requireDirectory(targetDirectoryId);
+        boolean crossDirectory = !target.getId().equals(sourceDir.getId());
+
+        if (profileRepo.existsByDirectoryIdAndName(target.getId(), newName)) {
+            throw new ConflictException(crossDirectory
+                    ? "Profile [" + newName + "] already exists in directory ["
+                            + target.getDisplayName() + "]"
+                    : "Profile [" + newName + "] already exists in this directory");
         }
 
         ProvisioningProfile copy = new ProvisioningProfile();
-        copy.setDirectory(source.getDirectory());
+        copy.setDirectory(target);
         copy.setName(newName);
         copy.setDescription(source.getDescription());
         copy.setThemeColor(source.getThemeColor());
@@ -347,7 +370,12 @@ public class ProvisioningProfileService {
         copy.setEmailPasswordToUser(source.isEmailPasswordToUser());
         copy.setAutoIncludeGroups(false); // clones don't auto-include
         copy.setExcludeAutoIncludes(source.isExcludeAutoIncludes());
-        copy.setAdditionalProfiles(new HashSet<>(source.getAdditionalProfiles()));
+        // Additional profiles are same-directory references; they have no
+        // meaning in another directory, so a cross-directory clone starts
+        // with none.
+        copy.setAdditionalProfiles(crossDirectory
+                ? new HashSet<>()
+                : new HashSet<>(source.getAdditionalProfiles()));
         copy = profileRepo.save(copy);
 
         // Clone attribute configs — every persistable column must be copied
@@ -400,9 +428,13 @@ public class ProvisioningProfileService {
         }
 
         if (principal != null) {
-            auditService.record(principal, directoryId, AuditAction.PROFILE_CLONE, null,
+            // Recorded against the directory the copy lives in; the source
+            // directory rides along in the detail so a cross-directory clone
+            // is traceable from either side.
+            auditService.record(principal, target.getId(), AuditAction.PROFILE_CLONE, null,
                     Map.of("profileId", copy.getId(), "name", copy.getName(),
-                            "sourceProfileId", source.getId(), "sourceName", source.getName()));
+                            "sourceProfileId", source.getId(), "sourceName", source.getName(),
+                            "sourceDirectoryId", sourceDir.getId()));
         }
         // Clone lifecycle policy (structural config — copying is the
         // "least surprising" default).
