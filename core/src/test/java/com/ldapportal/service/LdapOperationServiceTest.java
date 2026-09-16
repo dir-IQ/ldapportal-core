@@ -15,6 +15,7 @@ import com.ldapportal.dto.ldap.MembershipChangeRequest;
 import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.dto.ldap.MoveUserRequest;
 import com.ldapportal.dto.ldap.UpdateEntryRequest;
+import com.ldapportal.dto.ldap.UserSearchPage;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.PendingApproval;
 import com.ldapportal.entity.ProvisioningProfile;
@@ -45,6 +46,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.ArrayList;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -57,6 +59,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.mock;
@@ -536,6 +539,119 @@ class LdapOperationServiceTest {
 
         assertThat(result).hasSize(2);
         verify(userService).searchUsers(eq(dc), anyString(), any(), eq(2), any(String[].class));
+    }
+
+    // ── searchUsersPage: the Users page's truncation notice ───────────────────
+
+    private static final String USERS_OU = "ou=Users,dc=example,dc=com";
+
+    private static List<LdapUser> people(String base, int n) {
+        List<LdapUser> out = new ArrayList<>();
+        for (int i = 0; i < n; i++) out.add(new LdapUser("cn=p" + i + "," + base, Map.of()));
+        return out;
+    }
+
+    private DirectoryConnection singleOuDirectory() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        when(permissionService.resolveSearchBaseDns(any(), eq(dirId), any()))
+                .thenReturn(List.of(USERS_OU));
+        return dc;
+    }
+
+    @Test
+    void searchUsersPage_underLimit_isCompleteWithoutCounting() {
+        DirectoryConnection dc = singleOuDirectory();
+        // One entry beyond the page is requested so a full page can tell
+        // whether more matched.
+        when(userService.searchUsers(eq(dc), anyString(), eq(USERS_OU), eq(11), any(String[].class)))
+                .thenReturn(people(USERS_OU, 4));
+
+        UserSearchPage page = service.searchUsersPage(dirId, adminPrincipal(), null, null, 10, new String[0]);
+
+        assertThat(page.entries()).hasSize(4);
+        assertThat(page.truncated()).isFalse();
+        assertThat(page.total()).isEqualTo(4);
+        assertThat(page.totalIsLowerBound()).isFalse();
+        verify(userService, never()).countUsers(any(), anyString(), any(), anyLong());
+    }
+
+    @Test
+    void searchUsersPage_overLimit_truncatesToLimitAndCountsMatches() {
+        DirectoryConnection dc = singleOuDirectory();
+        when(userService.searchUsers(eq(dc), anyString(), eq(USERS_OU), eq(11), any(String[].class)))
+                .thenReturn(people(USERS_OU, 11));
+        when(userService.countUsers(eq(dc), anyString(), eq(USERS_OU), anyLong())).thenReturn(2345L);
+
+        UserSearchPage page = service.searchUsersPage(dirId, adminPrincipal(), "(cn=a*)", null, 10, new String[0]);
+
+        assertThat(page.entries()).hasSize(10);
+        assertThat(page.truncated()).isTrue();
+        assertThat(page.total()).isEqualTo(2345);
+        assertThat(page.totalIsLowerBound()).isFalse();
+        // The count uses the same filter the page was fetched with.
+        verify(userService).countUsers(eq(dc), eq("(cn=a*)"), eq(USERS_OU), anyLong());
+    }
+
+    @Test
+    void searchUsersPage_limitZero_asksForEverythingUpToTheCeiling() {
+        DirectoryConnection dc = singleOuDirectory();
+        int ceiling = LdapBrowseService.MAX_SEARCH_RESULTS;
+        when(userService.searchUsers(eq(dc), anyString(), eq(USERS_OU), eq(ceiling + 1), any(String[].class)))
+                .thenReturn(people(USERS_OU, 3));
+
+        UserSearchPage page = service.searchUsersPage(dirId, adminPrincipal(), null, null, 0, new String[0]);
+
+        assertThat(page.entries()).hasSize(3);
+        assertThat(page.truncated()).isFalse();
+        assertThat(page.total()).isEqualTo(3);
+    }
+
+    @Test
+    void searchUsersPage_countAtCeiling_isReportedAsLowerBound() {
+        DirectoryConnection dc = singleOuDirectory();
+        when(userService.searchUsers(eq(dc), anyString(), eq(USERS_OU), eq(11), any(String[].class)))
+                .thenReturn(people(USERS_OU, 11));
+        // The counter returns its cap when at least that many matched.
+        when(userService.countUsers(eq(dc), anyString(), eq(USERS_OU), anyLong()))
+                .thenAnswer(inv -> inv.getArgument(3));
+
+        UserSearchPage page = service.searchUsersPage(dirId, adminPrincipal(), null, null, 10, new String[0]);
+
+        assertThat(page.truncated()).isTrue();
+        assertThat(page.total()).isEqualTo(LdapBrowseService.MAX_SEARCH_RESULTS);
+        assertThat(page.totalIsLowerBound()).isTrue();
+    }
+
+    @Test
+    void searchUsersPage_severalOus_countsEachOutermostBaseOnce() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String ouA = "ou=A,dc=example,dc=com";
+        String ouB = "ou=B,dc=example,dc=com";
+        String inner = "ou=Inner,ou=A,dc=example,dc=com"; // under A: its entries are A's
+        when(permissionService.resolveSearchBaseDns(any(), eq(dirId), any()))
+                .thenReturn(List.of(ouA, ouB, inner));
+        // The first base alone fills the page (+1), so the fetch stops there.
+        when(userService.searchUsers(eq(dc), anyString(), eq(ouA), eq(11), any(String[].class)))
+                .thenReturn(people(ouA, 11));
+        when(userService.countUsers(eq(dc), anyString(), eq(ouA), anyLong())).thenReturn(30L);
+        when(userService.countUsers(eq(dc), anyString(), eq(ouB), anyLong())).thenReturn(12L);
+
+        UserSearchPage page = service.searchUsersPage(dirId, adminPrincipal(), null, null, 10, new String[0]);
+
+        assertThat(page.entries()).hasSize(10);
+        assertThat(page.truncated()).isTrue();
+        assertThat(page.total()).isEqualTo(42);
+        assertThat(page.totalIsLowerBound()).isFalse();
+        verify(userService, never()).countUsers(eq(dc), anyString(), eq(inner), anyLong());
+    }
+
+    @Test
+    void outermostBases_dropsBasesNestedUnderAnother() {
+        List<String> bases = List.of("ou=A,dc=x", "ou=Inner,OU=a,dc=x", "ou=B,dc=x", "ou=b,dc=x");
+        assertThat(LdapOperationService.outermostBases(bases))
+                .containsExactly("ou=A,dc=x", "ou=B,dc=x", "ou=b,dc=x");
     }
 
     // ── Batch membership changes ──────────────────────────────────────────────

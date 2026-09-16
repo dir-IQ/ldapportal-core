@@ -28,7 +28,11 @@ vi.mock('@/composables/useApi', () => ({
   downloadBlob: vi.fn(),
 }))
 vi.mock('@/api/users', () => ({
-  searchUsers: vi.fn().mockResolvedValue({ data: [{ dn: 'uid=jdoe,ou=people,dc=x', enabled: true, attributes: {} }] }),
+  searchUsers: vi.fn(),
+  searchUsersPage: vi.fn().mockResolvedValue({ data: {
+    entries: [{ dn: 'uid=jdoe,ou=people,dc=x', enabled: true, attributes: {} }],
+    truncated: false, total: 1, totalIsLowerBound: false,
+  } }),
   getUser: vi.fn(), createUser: vi.fn(), updateUser: vi.fn(), deleteUser: vi.fn(),
   enableUser: vi.fn(), disableUser: vi.fn(), moveUser: vi.fn(), resetPassword: vi.fn(),
   bulkUpdateAttributes: vi.fn(), getPasswordStatus: vi.fn(), applyMemberships: vi.fn(),
@@ -143,7 +147,7 @@ describe('UserListView feature gating', () => {
 
   it('requests memberOf and isMemberOf so the Groups column populates across directory types', async () => {
     await mountWith(ALL)
-    expect(usersApi.searchUsers).toHaveBeenCalledWith(
+    expect(usersApi.searchUsersPage).toHaveBeenCalledWith(
       'd1',
       expect.objectContaining({ attributes: '*,memberOf,isMemberOf' }),
     )
@@ -156,10 +160,10 @@ describe('UserListView feature gating', () => {
   // data, otherwise `row['givenName']` is undefined and the cell renders
   // blank even though the directory populated the attribute.
   it('keys curated camelCase columns by their lower-cased name so cells resolve', async () => {
-    vi.mocked(usersApi.searchUsers).mockResolvedValueOnce({ data: [{
+    vi.mocked(usersApi.searchUsersPage).mockResolvedValueOnce({ data: { entries: [{
       dn: 'uid=jdoe,ou=people,dc=x',
       attributes: { givenname: ['Alice'], displayname: ['Alice Anderson'], cn: ['Alice Anderson'] },
-    }] } as never)
+    }], truncated: false, total: 1, totalIsLowerBound: false } } as never)
     const wrapper = await mountWith(ALL)
     const cols = wrapper.findComponent({ name: 'ResultsTable' }).props('columns') as Array<{ key: string, label: string }>
     const given = cols.find(c => c.label === 'givenName')
@@ -176,10 +180,10 @@ describe('UserListView feature gating', () => {
   // IVIA enrichment columns are keyed `isva.*` by the backend (stable internal
   // id) but must display the marketing `ivia.` prefix in the table header.
   it('labels IVIA enrichment columns with the ivia. prefix while keeping the isva. key', async () => {
-    vi.mocked(usersApi.searchUsers).mockResolvedValueOnce({ data: [{
+    vi.mocked(usersApi.searchUsersPage).mockResolvedValueOnce({ data: { entries: [{
       dn: 'uid=jdoe,ou=people,dc=x',
       attributes: { cn: ['Alice Anderson'], 'isva.seclogin': ['alice.anderson'] },
-    }] } as never)
+    }], truncated: false, total: 1, totalIsLowerBound: false } } as never)
     const wrapper = await mountWith(ALL)
     const cols = wrapper.findComponent({ name: 'ResultsTable' }).props('columns') as Array<{ key: string, label: string }>
     const secLogin = cols.find(c => c.key === 'isva.seclogin')
@@ -196,13 +200,13 @@ describe('UserListView feature gating', () => {
   // discovered "extra" the user enables in the picker silently never appears.
   // Every column must therefore carry an explicit defaultWidth.
   it('gives every column an explicit defaultWidth so none collapse in the fixed-layout table', async () => {
-    vi.mocked(usersApi.searchUsers).mockResolvedValueOnce({ data: [{
+    vi.mocked(usersApi.searchUsersPage).mockResolvedValueOnce({ data: { entries: [{
       dn: 'uid=jdoe,ou=people,dc=x',
       attributes: {
         cn: ['Alice'], sn: ['Anderson'],
         objectclass: ['inetOrgPerson'], entryuuid: ['abc-123'], 'isva.seclogin': ['a.a'],
       },
-    }] } as never)
+    }], truncated: false, total: 1, totalIsLowerBound: false } } as never)
     const wrapper = await mountWith(ALL)
     const cols = wrapper.findComponent({ name: 'ResultsTable' })
       .props('columns') as Array<{ key: string, defaultWidth?: number }>
@@ -403,7 +407,7 @@ describe('UserListView edit resolves the profile that owns the entry', () => {
     const wrapper = mount(UserListView, { global: { stubs: editStubs } })
     await flushPromises()
     expect((wrapper.find('#ul-profile').element as HTMLSelectElement).value).toBe('p2')
-    expect(vi.mocked(usersApi.searchUsers).mock.calls.at(-1)?.[1])
+    expect(vi.mocked(usersApi.searchUsersPage).mock.calls.at(-1)?.[1])
       .toMatchObject({ baseDn: 'ou=contractors,dc=x' })
   })
 
@@ -431,5 +435,63 @@ describe('UserListView edit resolves the profile that owns the entry', () => {
     // The view passes `profileConfig ?? undefined`, so an unresolved profile
     // reaches UserForm as undefined and it renders its raw-attribute fallback.
     expect(wrapper.findComponent({ name: 'UserForm' }).props('userTemplateConfig')).toBeUndefined()
+  })
+})
+
+// ── Size limit and Load all ────────────────────────────────────────────────
+// Mirrors the superadmin Directory Search page: one 1000-entry page by
+// default; when it was cut short the notice under the table says how many
+// entries matched and offers Load all (the same search unbounded).
+describe('UserListView size limit and Load all', () => {
+  function entries(n: number) {
+    return Array.from({ length: n }, (_, i) => ({ dn: `uid=u${i},ou=people,dc=x`, attributes: { cn: [`u${i}`] } }))
+  }
+  const page = (n: number, truncated: boolean, total: number, totalIsLowerBound = false) =>
+    ({ data: { entries: entries(n), truncated, total, totalIsLowerBound } }) as never
+
+  it('requests a 1000-entry page and shows no notice when the page is complete', async () => {
+    vi.mocked(usersApi.searchUsersPage).mockResolvedValueOnce(page(3, false, 3))
+    const wrapper = await mountWith(ALL)
+
+    expect(usersApi.searchUsersPage).toHaveBeenLastCalledWith('d1', expect.objectContaining({ limit: 1000 }))
+    expect(wrapper.find('[data-testid="users-truncated"]').exists()).toBe(false)
+  })
+
+  it('tells the admin how many entries matched and offers Load All when the page was cut short', async () => {
+    vi.mocked(usersApi.searchUsersPage).mockResolvedValueOnce(page(1000, true, 2345))
+    const wrapper = await mountWith(ALL)
+
+    const notice = wrapper.find('[data-testid="users-truncated"]')
+    expect(notice.exists()).toBe(true)
+    expect(notice.text().replace(/\s+/g, ' ')).toContain('First 1,000 of 2,345 entries returned.')
+    expect(notice.text()).toContain('Load All')
+    expect(notice.text()).toContain('narrow the search filter')
+  })
+
+  it('Load All re-runs the same search unbounded and drops the notice once everything is loaded', async () => {
+    vi.mocked(usersApi.searchUsersPage)
+      .mockResolvedValueOnce(page(1000, true, 1500))
+      .mockResolvedValueOnce(page(1500, false, 1500))
+    const wrapper = await mountWith(ALL)
+
+    await wrapper.find('[data-testid="users-load-all"]').trigger('click')
+    await flushPromises()
+
+    expect(usersApi.searchUsersPage).toHaveBeenLastCalledWith('d1', expect.objectContaining({ limit: 0 }))
+    expect(wrapper.find('[data-testid="users-truncated"]').exists()).toBe(false)
+  })
+
+  it('reports a lower bound and no Load All when even the unbounded search hit the server ceiling', async () => {
+    vi.mocked(usersApi.searchUsersPage)
+      .mockResolvedValueOnce(page(1000, true, 5000, true))
+      .mockResolvedValueOnce(page(2000, true, 5000, true))
+    const wrapper = await mountWith(ALL)
+
+    await wrapper.find('[data-testid="users-load-all"]').trigger('click')
+    await flushPromises()
+
+    const notice = wrapper.find('[data-testid="users-truncated"]')
+    expect(notice.text().replace(/\s+/g, ' ')).toContain('First 2,000 of more than 5,000 entries returned.')
+    expect(wrapper.find('[data-testid="users-load-all"]').exists()).toBe(false)
   })
 })

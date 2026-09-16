@@ -6,6 +6,12 @@ const base = (dirId) => `/directories/${dirId}/users`
 export const searchUsers = (dirId, params) =>
   client.get(base(dirId), { params })
 
+// The Users page's search: a page of entries plus whether it was cut short
+// and how many entries matched in all. `limit` 0 asks for every match (the
+// page's "Load all"), capped server-side and reported as a lower bound.
+export const searchUsersPage = (dirId, params) =>
+  client.get(`${base(dirId)}/search`, { params })
+
 export const getUser = (dirId, dn) =>
   client.get(`${base(dirId)}/entry`, { params: { dn } })
 

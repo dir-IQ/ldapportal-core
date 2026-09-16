@@ -167,15 +167,34 @@
       </template>
     </ResultsTable>
 
-    <!-- Cap-hit banner. The directory has more entries matching the
-         current filter than the per-fetch limit; user narrows the
-         filter (or the visual builder above) to see what they're
-         looking for. The in-table pager handles pagination across
-         the loaded set. -->
-    <div v-if="capHit" class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-      Showing the first {{ limit }} matching users. The directory may have more —
-      narrow the filter (or use the visual builder above) to focus the result set.
-    </div>
+    <!-- Truncation notice: the page stopped at the size limit. "Load all"
+         re-runs the search unbounded (the server still caps at its own
+         ceiling, in which case the notice stays but without the action).
+         The in-table pager handles pagination across the loaded set. -->
+    <p
+      v-if="searchMeta?.truncated && users.length"
+      class="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+      role="status"
+      data-testid="users-truncated"
+    >
+      First {{ users.length.toLocaleString() }} of
+      {{ searchMeta.totalIsLowerBound ? 'more than ' : '' }}{{ searchMeta.total.toLocaleString() }}
+      entries returned.
+      <template v-if="!searchMeta.all">
+        Either
+        <button
+          type="button"
+          class="font-medium text-blue-700 hover:underline disabled:opacity-50"
+          :disabled="loadingAll"
+          @click="loadAll"
+          data-testid="users-load-all"
+        >{{ loadingAll ? 'Loading all…' : 'Load All' }}</button>
+        or narrow the search filter (or use the visual builder above).
+      </template>
+      <template v-else>
+        Narrow the search filter (or use the visual builder above) to see the rest.
+      </template>
+    </p>
 
     <!-- Profile picker modal (step 1 of create) -->
     <AppModal v-model="showTemplatePicker" title="Choose Profile" size="sm">
@@ -579,14 +598,30 @@ interface PlaybookStep { stepOrder: number, description?: string, reversible?: b
 interface PlaybookPreview { steps: PlaybookStep[] }
 interface PlaybookResult { id: string, status: 'SUCCESS' | 'FAILED' | 'PARTIAL', stepResults: string }
 
-// Tier-2 pagination model: server returns up to FETCH_LIMIT entries
-// in a single shot (the backend hard-caps at MAX_LIMIT=2000); the
-// table paginates client-side. When the cap is hit we surface a
-// banner asking the user to narrow the filter. No "Load more" — it
-// composed badly with the in-table pager (two layers of pagination
-// disagreeing about "Page 1 of 1" vs "of 4" depending on which had
-// just acted).
+// Tier-2 pagination model: the server returns one page of up to
+// FETCH_LIMIT entries and the table paginates client-side. When the page
+// was cut short the server also says how many entries matched in all, and
+// the notice under the table offers "Load all" (the same search unbounded,
+// capped at the server's own ceiling) or narrowing the filter. No "Load
+// more" — it composed badly with the in-table pager (two layers of
+// pagination disagreeing about "Page 1 of 1" vs "of 4" depending on which
+// had just acted).
 const FETCH_LIMIT = 1000
+
+/** What the users search endpoint says lies beyond the page it returned. */
+interface UserSearchPage {
+  entries?: Array<{ dn: string, attributes?: Record<string, string[] | string | null> }>
+  truncated?: boolean
+  total?: number
+  totalIsLowerBound?: boolean
+}
+interface SearchMeta {
+  truncated: boolean
+  total: number
+  totalIsLowerBound: boolean
+  /** The page was requested unbounded (Load all), so there is nothing more to load. */
+  all: boolean
+}
 
 const route  = useRoute()
 const notif  = useNotificationStore()
@@ -658,7 +693,8 @@ const dirId          = route.params.dirId as string
 const profilePicker  = useProfilePickerStore()
 const users          = ref<UserRow[]>([])
 const filterText     = ref('')
-const limit          = ref(FETCH_LIMIT)
+const searchMeta     = ref<SearchMeta | null>(null)
+const loadingAll     = ref(false)
 const selectedDns    = ref<Set<unknown>>(new Set())
 
 /**
@@ -925,7 +961,7 @@ const userFormRef = ref<{
 const recentSearchesRef = ref<{ record: (filter: string) => void } | null>(null)
 
 function search() {
-  limit.value = FETCH_LIMIT
+  searchMeta.value = null // a new filter starts back at one page
   recentSearchesRef.value?.record(filterText.value)
   load()
 }
@@ -937,12 +973,18 @@ function applyRecentSearch(filter: string) {
   search()
 }
 
-async function load() {
+/**
+ * Loads the current filter. `all` re-runs it unbounded (limit 0 — the
+ * server caps at its own ceiling and reports that), which is what the
+ * "Load all" action in the truncation notice does. Refreshes after an
+ * edit keep whichever mode the operator last chose.
+ */
+async function load(all: boolean = searchMeta.value?.all === true) {
   await call(async () => {
     const params = {
       filter: filterText.value || undefined,
       baseDn: profileData.value?.targetUserDn || undefined,
-      limit:  limit.value,
+      limit:  all ? 0 : FETCH_LIMIT,
       // Request all user attributes ('*') plus the reverse group-membership
       // attributes explicitly. The 'Groups' column reads these; naming them
       // brings them back even where they're operational — `memberOf`
@@ -951,9 +993,10 @@ async function load() {
       // yield an empty Groups cell.
       attributes: '*,memberOf,isMemberOf',
     }
-    const { data } = await usersApi.searchUsers(dirId, params)
-    const entries = Array.isArray(data) ? data : (data.entries || [])
-    users.value = entries.map((e: { dn: string, attributes?: Record<string, string[] | string | null> }) => {
+    const { data } = await usersApi.searchUsersPage(dirId, params)
+    const page = (data ?? {}) as UserSearchPage
+    const entries = Array.isArray(page.entries) ? page.entries : []
+    users.value = entries.map((e) => {
       // Flatten every returned attribute to a string-or-string[] cell
       // value so the dynamic columns from `cols` can read them as
       // `row[attr]`. Multi-valued attrs join with ", " — matches what
@@ -979,16 +1022,25 @@ async function load() {
       row.enabled = attrs.enabled
       return row as unknown as UserRow
     })
+    searchMeta.value = {
+      truncated: page.truncated === true,
+      total: page.total ?? users.value.length,
+      totalIsLowerBound: page.totalIsLowerBound === true,
+      all,
+    }
   })
 }
 
-// Cap-hit signal for the in-template banner. Equality is correct
-// here: the backend truncates at `limit` exactly when there are at
-// least that many matching entries, so users.length === limit
-// reliably means "more entries existed beyond the cap." Strict
-// `===` would also work; using `>=` is defensive against future
-// off-by-one drift.
-const capHit = computed(() => users.value.length >= limit.value)
+/** "Load all" from the truncation notice: the same search, unbounded. */
+async function loadAll() {
+  if (loadingAll.value) return
+  loadingAll.value = true
+  try {
+    await load(true)
+  } finally {
+    loadingAll.value = false
+  }
+}
 
 /**
  * Streams the current filter's full result set as CSV through the
@@ -1562,7 +1614,7 @@ async function loadProfiles() {
 function onProfileChange() {
   const p = allProfiles.value.find((p: ProfileLite) => p.id === selectedProfileId.value)
   profileData.value = p || null
-  limit.value = FETCH_LIMIT
+  searchMeta.value = null // a new scope starts back at one page
   load()
 }
 

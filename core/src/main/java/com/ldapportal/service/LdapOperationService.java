@@ -22,6 +22,7 @@ import com.ldapportal.dto.ldap.BulkAttributeUpdateRequest;
 import com.ldapportal.dto.ldap.BulkAttributeUpdateResult;
 import com.ldapportal.dto.ldap.CreateEntryRequest;
 import com.ldapportal.dto.ldap.LdapEntryResponse;
+import com.ldapportal.dto.ldap.UserSearchPage;
 import com.ldapportal.dto.ldap.MembershipChangeRequest;
 import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.dto.ldap.MoveUserRequest;
@@ -258,16 +259,74 @@ public class LdapOperationService {
                                                int limit, String[] attributes) {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
-        // Default to person entries (covers person, organizationalPerson, inetOrgPerson)
-        String effectiveFilter = (filter == null || filter.isBlank())
-                ? "(objectClass=person)" : filter;
-        // Resolve the LDAP search base(s). For admins picking "All"
-        // profiles (no explicit baseDn) this fans out across the
-        // union of their authorized OUs instead of returning every
-        // entry under the directory root.
         List<String> bases = permissionService.resolveSearchBaseDns(principal, directoryId, baseDn);
+        return fetchUsers(dc, effectiveUserFilter(filter), bases, limit, attributes);
+    }
+
+    /**
+     * Like {@link #searchUsers} but reports whether the page was cut short
+     * and, when it was, how many entries matched in all: the Users page's
+     * truncation notice. {@code limit} is the page size; {@code 0} asks for
+     * every match, capped at {@link LdapBrowseService#MAX_SEARCH_RESULTS}.
+     * The "were there more?" answer costs one entry beyond the page; the
+     * count runs only for a truncated page and fetches DNs only.
+     */
+    public UserSearchPage searchUsersPage(UUID directoryId, AuthPrincipal principal,
+                                          String filter, String baseDn,
+                                          int limit, String[] attributes) {
+        DirectoryConnection dc = loadDirectory(directoryId, principal);
+        permissionService.requireDirectoryAccess(principal, directoryId);
+        String effectiveFilter = effectiveUserFilter(filter);
+        List<String> bases = permissionService.resolveSearchBaseDns(principal, directoryId, baseDn);
+        int max = LdapBrowseService.MAX_SEARCH_RESULTS;
+        int effectiveLimit = limit <= 0 ? max : Math.min(limit, max);
+
+        List<LdapEntryResponse> fetched =
+                fetchUsers(dc, effectiveFilter, bases, effectiveLimit + 1, attributes);
+        if (fetched.size() <= effectiveLimit) {
+            return new UserSearchPage(fetched, false, fetched.size(), false);
+        }
+        List<LdapEntryResponse> page = List.copyOf(fetched.subList(0, effectiveLimit));
+
+        // Count the matches, DNs only, stopping at the ceiling. A base that
+        // lies under another authorized base is skipped: the ancestor's
+        // subtree already covers it, so counting both would double up.
+        long count = 0;
+        boolean lowerBound = false;
+        for (String base : outermostBases(bases)) {
+            long remaining = max - count;
+            if (remaining <= 0) {
+                lowerBound = true;
+                break;
+            }
+            long c = userService.countUsers(dc, effectiveFilter, base, remaining);
+            count += c;
+            if (c >= remaining) {
+                lowerBound = true;
+                break;
+            }
+        }
+        // The page itself proves at least effectiveLimit + 1 matches exist.
+        int total = (int) Math.max(count, effectiveLimit + 1L);
+        return new UserSearchPage(page, true, total, lowerBound);
+    }
+
+    /** Default to person entries (covers person, organizationalPerson, inetOrgPerson). */
+    private static String effectiveUserFilter(String filter) {
+        return (filter == null || filter.isBlank()) ? "(objectClass=person)" : filter;
+    }
+
+    /**
+     * Fetches up to {@code limit} users across the resolved search base(s).
+     * For admins picking "All" profiles (no explicit baseDn) this fans out
+     * across the union of their authorized OUs instead of returning every
+     * entry under the directory root, de-duplicating by DN.
+     */
+    private List<LdapEntryResponse> fetchUsers(DirectoryConnection dc, String filter,
+                                               List<String> bases, int limit,
+                                               String[] attributes) {
         if (bases.size() == 1) {
-            return userService.searchUsers(dc, effectiveFilter, bases.get(0), limit, attributes)
+            return userService.searchUsers(dc, filter, bases.get(0), limit, attributes)
                     .stream().map(LdapEntryResponse::from).toList();
         }
         List<LdapEntryResponse> merged = new ArrayList<>(limit);
@@ -275,7 +334,7 @@ public class LdapOperationService {
         for (String base : bases) {
             int remaining = limit - merged.size();
             if (remaining <= 0) break;
-            for (var u : userService.searchUsers(dc, effectiveFilter, base, remaining, attributes)) {
+            for (var u : userService.searchUsers(dc, filter, base, remaining, attributes)) {
                 if (seen.add(u.getDn().toLowerCase(Locale.ROOT))) {
                     merged.add(LdapEntryResponse.from(u));
                     if (merged.size() >= limit) break;
@@ -283,6 +342,24 @@ public class LdapOperationService {
             }
         }
         return merged;
+    }
+
+    /** Drops every base that lies under another base in the list. */
+    static List<String> outermostBases(List<String> bases) {
+        List<String> result = new ArrayList<>(bases.size());
+        for (String base : bases) {
+            if (base == null) {
+                result.add(null);
+                continue;
+            }
+            String b = base.toLowerCase(Locale.ROOT).trim();
+            boolean nested = bases.stream()
+                    .filter(other -> other != null)
+                    .map(other -> other.toLowerCase(Locale.ROOT).trim())
+                    .anyMatch(o -> !o.equals(b) && b.endsWith("," + o));
+            if (!nested) result.add(base);
+        }
+        return result;
     }
 
     public LdapEntryResponse getUser(UUID directoryId, AuthPrincipal principal,
