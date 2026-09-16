@@ -19,10 +19,16 @@ ARG VITE_BASE_PATH=/
 RUN VITE_BASE_PATH="$VITE_BASE_PATH" npm run build
 
 FROM nginx:alpine
+# Pull every Alpine package patch that landed after the upstream nginx
+# image's last rebuild, same as the backend images do. Clears image-scan
+# findings on a base-image lag (util-linux 2.42.3-r0 for CVE-2026-53612
+# et al., previously expat) without pinning packages one by one. The nginx
+# packages come from nginx.org and are not in the image's repo list, so
+# apk upgrade leaves them untouched.
+RUN apk upgrade --no-cache
 # Default BACKEND_APP suits docker-compose (the backend service is "app");
 # override it on Kubernetes/Fly. NGINX_ENVSUBST_FILTER restricts the stock
 # entrypoint's envsubst to just BACKEND_APP so nginx runtime vars survive.
-RUN apk add --no-cache --upgrade 'expat>=2.8.2-r0'
 ENV BACKEND_APP=app
 ENV NGINX_ENVSUBST_FILTER=BACKEND_APP
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
