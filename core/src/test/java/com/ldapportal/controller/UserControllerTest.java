@@ -12,6 +12,7 @@ import com.ldapportal.dto.ldap.MembershipChangeRequest.Op;
 import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.dto.ldap.MoveUserRequest;
 import com.ldapportal.dto.ldap.UpdateEntryRequest;
+import com.ldapportal.dto.ldap.UserSearchPage;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.service.ApprovalWorkflowService;
 import com.ldapportal.service.LdapOperationService;
@@ -34,6 +35,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willDoNothing;
 import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -86,6 +88,46 @@ class UserControllerTest extends BaseControllerTest {
                         .param("filter", "(cn=alice)")
                         .with(authentication(adminAuth())))
                 .andExpect(status().isOk());
+    }
+
+    // ── GET /search: page with truncation metadata ────────────────────────────
+
+    @Test
+    void searchUsersPage_returnsEntriesWithTruncationMetadata() throws Exception {
+        given(ldapService.searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(1000), any()))
+                .willReturn(new UserSearchPage(List.of(sampleEntry()), true, 2345, false));
+
+        mockMvc.perform(get(BASE_URL + "/search").with(authentication(adminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entries.length()").value(1))
+                .andExpect(jsonPath("$.entries[0].dn").value(ENTRY_DN))
+                .andExpect(jsonPath("$.truncated").value(true))
+                .andExpect(jsonPath("$.total").value(2345))
+                .andExpect(jsonPath("$.totalIsLowerBound").value(false));
+    }
+
+    @Test
+    void searchUsersPage_limitZero_asksForEveryMatch() throws Exception {
+        given(ldapService.searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(0), any()))
+                .willReturn(new UserSearchPage(List.of(), false, 0, false));
+
+        mockMvc.perform(get(BASE_URL + "/search").param("limit", "0")
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isOk());
+
+        verify(ldapService).searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(0), any());
+    }
+
+    @Test
+    void searchUsersPage_limitAboveCeiling_isClampedTo1000() throws Exception {
+        given(ldapService.searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(1000), any()))
+                .willReturn(new UserSearchPage(List.of(), false, 0, false));
+
+        mockMvc.perform(get(BASE_URL + "/search").param("limit", "5000")
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isOk());
+
+        verify(ldapService).searchUsersPage(eq(DIR_ID), any(), isNull(), isNull(), eq(1000), any());
     }
 
     @Test

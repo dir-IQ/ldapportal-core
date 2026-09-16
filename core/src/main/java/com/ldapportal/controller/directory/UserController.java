@@ -8,6 +8,7 @@ import com.ldapportal.dto.ldap.BulkAttributeUpdateRequest;
 import com.ldapportal.dto.ldap.BulkAttributeUpdateResult;
 import com.ldapportal.dto.ldap.CreateEntryRequest;
 import com.ldapportal.dto.ldap.LdapEntryResponse;
+import com.ldapportal.dto.ldap.UserSearchPage;
 import com.ldapportal.dto.ldap.MembershipChangeRequest;
 import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.dto.ldap.MoveUserRequest;
@@ -52,6 +53,8 @@ public class UserController {
 
     private static final int DEFAULT_LIMIT = 200;
     private static final int MAX_LIMIT      = 2000;
+    /** Page-size ceiling for {@link #searchPage}; {@code limit=0} asks for every match. */
+    private static final int PAGE_MAX_LIMIT = 1000;
 
     private final LdapOperationService service;
     private final ApprovalWorkflowService approvalService;
@@ -73,6 +76,29 @@ public class UserController {
         int safeLimit = Math.max(1, Math.min(limit, MAX_LIMIT));
         String[] attrArray = attributes.isBlank() ? new String[0] : attributes.split(",");
         return service.searchUsers(directoryId, principal, filter, baseDn, safeLimit, attrArray);
+    }
+
+    /**
+     * Like {@link #search} but returns a page: the entries plus whether the
+     * page was cut short and how many entries matched in all. {@code limit}
+     * defaults to 1000 and is capped there; {@code 0} asks for every match
+     * (the Users page's "Load all"), which the server caps at its own
+     * ceiling and reports as a lower bound. Additive alongside {@link #search},
+     * whose plain-array response stays as documented.
+     */
+    @GetMapping("/search")
+    @RequiresFeature(FeatureKey.USER_READ)
+    public UserSearchPage searchPage(
+            @DirectoryId @PathVariable UUID directoryId,
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @RequestParam(required = false) String filter,
+            @RequestParam(required = false) String baseDn,
+            @RequestParam(defaultValue = "1000") int limit,
+            @RequestParam(required = false, defaultValue = "") String attributes) {
+
+        int safeLimit = limit <= 0 ? 0 : Math.min(limit, PAGE_MAX_LIMIT);
+        String[] attrArray = attributes.isBlank() ? new String[0] : attributes.split(",");
+        return service.searchUsersPage(directoryId, principal, filter, baseDn, safeLimit, attrArray);
     }
 
     @PostMapping

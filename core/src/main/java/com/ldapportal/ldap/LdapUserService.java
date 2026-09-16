@@ -163,8 +163,17 @@ public class LdapUserService {
      * {@code max} means "at least {@code max}". See {@link LdapEntryCounter}.</p>
      */
     public long countUsers(DirectoryConnection dc, String baseDn, long max) {
+        return countUsers(dc, DirectoryObjectClassDefaults.userSearchFilter(dc), baseDn, max);
+    }
+
+    /**
+     * Like {@link #countUsers(DirectoryConnection, String, long)} but for an
+     * explicit filter: the Users page's truncation notice counts the matches
+     * of whatever filter the admin typed. Capped at {@code max}; a return
+     * value of {@code max} means "at least {@code max}".
+     */
+    public long countUsers(DirectoryConnection dc, String filter, String baseDn, long max) {
         String searchBase = baseDn != null ? baseDn : dc.getBaseDn();
-        String filter = DirectoryObjectClassDefaults.userSearchFilter(dc);
         int pageSize = Math.max(1, dc.getPagingSize());
         return connectionFactory.withConnection(dc,
                 conn -> LdapEntryCounter.count(conn, searchBase, filter, pageSize, max));

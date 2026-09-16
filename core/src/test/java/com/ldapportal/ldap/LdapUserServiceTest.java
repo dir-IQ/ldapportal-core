@@ -88,6 +88,35 @@ class LdapUserServiceTest {
         inMemoryServer.shutDown(true);
     }
 
+    // ── countUsers with an explicit filter ────────────────────────────────────
+
+    private void addPerson(String cn) throws Exception {
+        inMemoryServer.add(new Entry("cn=" + cn + "," + USERS_OU,
+                new Attribute("objectClass", "top", "person", "inetOrgPerson"),
+                new Attribute("cn", cn), new Attribute("sn", cn)));
+    }
+
+    @Test
+    void countUsers_explicitFilter_countsOnlyTheMatches() throws Exception {
+        addPerson("Alice");
+        addPerson("Anna");
+        addPerson("Bob");
+
+        assertThat(userService.countUsers(dc, "(cn=A*)", USERS_OU, 100)).isEqualTo(2);
+        assertThat(userService.countUsers(dc, "(objectClass=inetOrgPerson)", USERS_OU, 100)).isEqualTo(3);
+        assertThat(userService.countUsers(dc, "(cn=nobody)", USERS_OU, 100)).isZero();
+    }
+
+    @Test
+    void countUsers_explicitFilter_stopsAtTheCap() throws Exception {
+        addPerson("Alice");
+        addPerson("Anna");
+        addPerson("Bob");
+
+        // The cap is the "at least this many" answer, not an error.
+        assertThat(userService.countUsers(dc, "(objectClass=inetOrgPerson)", USERS_OU, 2)).isEqualTo(2);
+    }
+
     // ── searchUsers ───────────────────────────────────────────────────────────
 
     @Test
