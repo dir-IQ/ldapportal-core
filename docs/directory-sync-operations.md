@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture, reconcile, brownfield adoption; 2026-06-08).
+**Status:** Shipped (engine core, app-intercept, changelog capture, reconcile, brownfield adoption, cross-link reference resolution; 2026-09-16).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -136,7 +136,7 @@ directories must exist; `CHANGELOG` requires both `changelogFormat` and
 | **Source scope** | LDAP scope under the base: `SUB` (default), `ONE`, `BASE`. |
 | **Applicability filter** | RFC 4515 filter selecting which source entries belong, e.g. `(&(objectClass=inetOrgPerson)(employeeType=staff))`. Validated for syntax at save. |
 | **Target base DN** | Base DN under the target where matched entries are placed. |
-| **Reference attributes** (csv) | DN-valued attributes whose values are rewritten to target DNs and whose referrers are re-driven on change, e.g. `member,uniqueMember,manager`. |
+| **Reference attributes** (csv) | DN-valued attributes whose values are rewritten to target DNs and whose referrers are re-driven on change, e.g. `member,uniqueMember,manager`. Blank → `member,uniqueMember,manager,owner,secDN`. Values are resolved through the membership index of **every** link (the referrer's own link first), so a reference into a subtree mirrored by another link — an IVIA `secDN` under `c=admin` pointing at a `c=us` entry when OUD exposes each suffix as its own directory connection — still remaps. A referent no link has synced is dropped until it lands; one that different links mirror to *different* target DNs is ambiguous and dropped (logged). |
 | **Source anchor attribute** | Target attribute that stores the source identity, used to **adopt** pre-existing target entries (brownfield). Ambiguity → REVIEW. See §6. |
 | **Delete policy** | `DELETE` (remove target when an entry leaves membership) or `REVIEW` (quarantine for an operator instead of auto-deleting). |
 | **Reconcile cadence (seconds)** | How often this set is fully reconciled. Blank → global default (`3600`). |
@@ -198,7 +198,9 @@ The poller maintains a cursor, an HA poll-lease, and a **health** state
    loop back into the queue).
 6. **Commit** the index row: `APPLIED`, `FAILED` (+ reason), or `REVIEW`.
 7. **Closure fan-out** — if the target changed, re-enqueue referrers found by a
-   source reverse-query over `referenceAttributes`, hash-terminated.
+   source reverse-query over `referenceAttributes`, hash-terminated. The query
+   runs against the source of every enabled link (not just the changed one), so
+   a cross-link referrer re-projects as soon as its referent lands.
 
 **Fault isolation:** an apply failure marks *that identity* `FAILED` and never
 blocks any other identity (no head-of-line blocking). Optimistic/row-contention
@@ -384,6 +386,7 @@ behind (raise throughput or lower batch latency).
 | `recompute_request` backlog growing | Worker behind | Lower `worker.fixed-delay-ms`, scale instances, check DB. |
 | Wrong DN on target after a rename | (shouldn't happen) engine converges renames as MODDN | If stuck, **Recompute** by identity; reconcile re-derives. |
 | Member/manager points at stale DN | reference attr not declared | Add the attr to **Reference attributes**; recompute the group/referrer. |
+| Reference into another link's subtree missing on target (e.g. `secDN`) | referent not yet synced by any link, or mirrored to different target DNs by two links (see the `ambiguous` warning in logs) | Sync the referent (or disable the conflicting link); the closure fan-out or next reconcile re-projects the referrer. |
 
 ### Operator triggers cheat-sheet
 - **Recompute (row or key)** — re-run one identity/DN now; use after fixing a
@@ -465,6 +468,10 @@ ORDER BY ss.reconcile_last_run_at NULLS FIRST;
 - **Unidirectional.** A link is one-way; run a second link for the reverse
   direction only with care (the engine's own writes are uncaptured, but two
   app-intercept links between the same pair can interact).
+- **References resolve across links.** A DN reference is remapped through any
+  link's index, which assumes links that mirror the same source DN agree on its
+  target DN. When they don't, the value is dropped as ambiguous rather than
+  guessed.
 - **App-intercept sees only portal writes.** Out-of-band source changes need
   `CHANGELOG` mode or the reconcile floor.
 - **Identity must be stable and unique per scope.** A mutable/duplicate identity

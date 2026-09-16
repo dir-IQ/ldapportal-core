@@ -107,8 +107,10 @@
  *       under the two stream feeds.</li>
  *   <li><b>Closure</b> — {@link com.ldapportal.ldap.sync.ClosureResolver}, invoked
  *       by the engine after a change, finds source entries that <em>reference</em>
- *       the changed entry (group {@code member}, {@code manager}, …) and enqueues
- *       them, so a group re-projects when a member's target DN appears/moves.</li>
+ *       the changed entry (group {@code member}, {@code manager}, …) in the
+ *       source of every enabled link and enqueues them, so a group re-projects
+ *       when a member's target DN appears/moves — including a referrer synced by
+ *       a different link than its referent.</li>
  * </ol>
  *
  * All four converge on {@link com.ldapportal.ldap.sync.RecomputeEnqueuer}, so the
@@ -228,7 +230,9 @@
  * {@link com.ldapportal.ldap.sync.SyncContentHash} (change detection),
  * {@link com.ldapportal.ldap.sync.TargetEntryDiffer} (MODIFY mods),
  * {@link com.ldapportal.ldap.sync.SyncReferenceAttributes} +
- * {@link com.ldapportal.ldap.sync.ReferenceResolver} (DN reference remapping),
+ * {@link com.ldapportal.ldap.sync.ReferenceResolver} /
+ * {@link com.ldapportal.ldap.sync.MembershipReferenceResolvers} (DN reference
+ * remapping, resolved across links),
  * {@link com.ldapportal.ldap.sync.LdapResultInterpreter} (convergence semantics).
  *
  * <p><b>Helpers:</b>

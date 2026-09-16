@@ -71,6 +71,7 @@ public class RecomputeEngine {
     private final MembershipFunction membershipFunction;
     private final LdapConnectionFactory connectionFactory;
     private final ClosureResolver closureResolver;
+    private final MembershipReferenceResolvers referenceResolvers;
 
     /**
      * Recompute one key (a source DN or a normalized identity) for one sync set.
@@ -174,7 +175,7 @@ public class RecomputeEngine {
         Membership current = membershipRepo.findById(new MembershipId(set.getId(), identity)).orElse(null);
 
         MembershipDecision decision = entry != null
-                ? membershipFunction.evaluate(set, strategy, entry, resolverFor(link))
+                ? membershipFunction.evaluate(set, strategy, entry, referenceResolvers.forLink(link))
                 : MembershipDecision.out(identity);
 
         String changedSourceDn = entry != null
@@ -374,14 +375,6 @@ public class RecomputeEngine {
         m.setContentHash(new byte[0]);
         m.setState(MembershipState.PENDING);
         return m;
-    }
-
-    private ReferenceResolver resolverFor(SyncLink link) {
-        List<UUID> setIds = syncSetRepo.findAllByLinkId(link.getId()).stream()
-                .map(SyncSet::getId).toList();
-        return srcDn -> membershipRepo
-                .findFirstBySyncSetIdInAndSourceDn(setIds, SyncDnUtil.normalize(srcDn))
-                .map(Membership::getTargetDn);
     }
 
     // ── LDAP helpers (all reads/writes are uncaptured) ──────────────────────────
