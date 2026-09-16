@@ -30,7 +30,7 @@ import java.util.UUID;
  *   GET    /api/v1/directories/{dirId}/profiles/{profileId}              — get
  *   PUT    /api/v1/directories/{dirId}/profiles/{profileId}              — update
  *   DELETE /api/v1/directories/{dirId}/profiles/{profileId}              — delete
- *   POST   /api/v1/directories/{dirId}/profiles/{profileId}/clone                    — clone
+ *   POST   /api/v1/directories/{dirId}/profiles/{profileId}/clone                    — clone (body: name, optional targetDirectoryId)
  *   POST   /api/v1/directories/{dirId}/profiles/{profileId}/evaluate-group-changes   — preview group changes
  *   POST   /api/v1/directories/{dirId}/profiles/{profileId}/apply-group-changes      — apply group changes
  *
@@ -136,8 +136,19 @@ public class ProvisioningProfileController {
         if (newName == null || newName.isBlank()) {
             return ResponseEntity.badRequest().build();
         }
+        // Optional: clone into another directory. Absent/blank keeps the
+        // copy alongside the source.
+        String rawTarget = body.get("targetDirectoryId");
+        UUID targetDirectoryId = null;
+        if (rawTarget != null && !rawTarget.isBlank()) {
+            try {
+                targetDirectoryId = UUID.fromString(rawTarget.trim());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("targetDirectoryId must be a UUID");
+            }
+        }
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(service.clone(directoryId, profileId, newName, principal));
+                .body(service.clone(directoryId, profileId, newName, targetDirectoryId, principal));
     }
 
     /**

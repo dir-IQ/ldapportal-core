@@ -8,6 +8,7 @@ import com.ldapportal.service.ProvisioningProfileService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -17,11 +18,13 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -88,5 +91,44 @@ class ProvisioningProfileControllerTest extends BaseControllerTest {
         // The controller still calls requireProfileAccess; PermissionService
         // is responsible for short-circuiting superadmin, not the controller.
         verify(permissionService).requireProfileAccess(any(), eq(PROFILE_ID));
+    }
+
+    // ── clone ────────────────────────────────────────────────────────────────
+
+    static final UUID OTHER_DIR_ID = UUID.fromString("40000000-0000-0000-0000-000000000004");
+    static final String CLONE_URL  = GET_URL + "/clone";
+
+    @Test
+    void clone_withoutTargetDirectory_clonesAlongsideSource() throws Exception {
+        given(service.clone(eq(DIR_ID), eq(PROFILE_ID), eq("copy"), isNull(), any()))
+                .willReturn(stubResponse());
+
+        mockMvc.perform(post(CLONE_URL).with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"copy\"}"))
+                .andExpect(status().isCreated());
+
+        verify(service).clone(eq(DIR_ID), eq(PROFILE_ID), eq("copy"), isNull(), any());
+    }
+
+    @Test
+    void clone_withTargetDirectory_forwardsItToTheService() throws Exception {
+        given(service.clone(eq(DIR_ID), eq(PROFILE_ID), eq("copy"), eq(OTHER_DIR_ID), any()))
+                .willReturn(stubResponse());
+
+        mockMvc.perform(post(CLONE_URL).with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"copy\",\"targetDirectoryId\":\"" + OTHER_DIR_ID + "\"}"))
+                .andExpect(status().isCreated());
+
+        verify(service).clone(eq(DIR_ID), eq(PROFILE_ID), eq("copy"), eq(OTHER_DIR_ID), any());
+    }
+
+    @Test
+    void clone_withMalformedTargetDirectory_returns400() throws Exception {
+        mockMvc.perform(post(CLONE_URL).with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"copy\",\"targetDirectoryId\":\"not-a-uuid\"}"))
+                .andExpect(status().isBadRequest());
     }
 }

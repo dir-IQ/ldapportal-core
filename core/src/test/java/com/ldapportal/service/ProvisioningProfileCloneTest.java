@@ -10,6 +10,8 @@ import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.entity.enums.ApproverMode;
 import com.ldapportal.entity.enums.ExpiryAction;
 import com.ldapportal.entity.enums.InputType;
+import com.ldapportal.exception.ConflictException;
+import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.AccountRepository;
 import com.ldapportal.repository.AdminProfileRoleRepository;
 import com.ldapportal.repository.DirectoryConnectionRepository;
@@ -33,8 +35,11 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -99,13 +104,15 @@ class ProvisioningProfileCloneTest {
 
         given(profileRepo.findByIdAndDirectoryId(sourceId, directoryId))
                 .willReturn(Optional.of(source));
-        given(profileRepo.existsByDirectoryIdAndName(directoryId, "copy")).willReturn(false);
-        given(profileRepo.save(any(ProvisioningProfile.class)))
-                .willAnswer(inv -> inv.getArgument(0));
-        given(attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(sourceId))
-                .willReturn(List.of());
-        given(groupAssignmentRepo.findAllByProfileIdOrderByDisplayOrderAsc(sourceId))
-                .willReturn(List.of());
+        // Lenient: the cross-directory cases check the name in the target
+        // directory instead, and the refusal cases never reach save/copy.
+        lenient().when(profileRepo.existsByDirectoryIdAndName(directoryId, "copy")).thenReturn(false);
+        lenient().when(profileRepo.save(any(ProvisioningProfile.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+        lenient().when(attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(sourceId))
+                .thenReturn(List.of());
+        lenient().when(groupAssignmentRepo.findAllByProfileIdOrderByDisplayOrderAsc(sourceId))
+                .thenReturn(List.of());
         // toResponse() at the end re-reads configs/groups on the clone id —
         // which is null in this Mockito-only setup; the call still goes
         // through but returns empty lists by default.
@@ -250,5 +257,105 @@ class ProvisioningProfileCloneTest {
         // Copying would silently grant the source's approver list approve
         // power over the new (initially disabled) profile.
         verify(approverRepo, never()).save(any());
+    }
+
+    // ── Cross-directory clone ─────────────────────────────────────────────────
+
+    private DirectoryConnection otherDirectory() {
+        DirectoryConnection other = new DirectoryConnection();
+        other.setId(UUID.randomUUID());
+        other.setDisplayName("dir-2");
+        return other;
+    }
+
+    @Test
+    void clone_intoOtherDirectory_parentsCopyThereAndChecksNameThere() {
+        DirectoryConnection other = otherDirectory();
+        given(dirRepo.findById(other.getId())).willReturn(Optional.of(other));
+        given(profileRepo.existsByDirectoryIdAndName(other.getId(), "copy")).willReturn(false);
+        given(lifecycleRepo.findByProfileId(sourceId)).willReturn(Optional.empty());
+        given(approvalConfigRepo.findByProfileId(sourceId)).willReturn(Optional.empty());
+
+        ArgumentCaptor<ProvisioningProfile> captor =
+                ArgumentCaptor.forClass(ProvisioningProfile.class);
+
+        service.clone(directoryId, sourceId, "copy", other.getId(), null);
+
+        verify(profileRepo).save(captor.capture());
+        ProvisioningProfile copy = captor.getValue();
+        assertThat(copy.getDirectory()).isSameAs(other);
+        // Name uniqueness is checked in the target, not the source, directory.
+        verify(profileRepo, never()).existsByDirectoryIdAndName(eq(directoryId), any());
+        // DN-valued settings come across verbatim as a starting point.
+        assertThat(copy.getTargetUserDn()).isEqualTo("ou=people,dc=example,dc=com");
+        assertThat(copy.getTargetGroupDn()).isEqualTo("ou=groups,dc=example,dc=com");
+        assertThat(copy.isEnabled()).isFalse();
+    }
+
+    @Test
+    void clone_intoOtherDirectory_dropsAdditionalProfileLinks() {
+        ProvisioningProfile sibling = new ProvisioningProfile();
+        sibling.setId(UUID.randomUUID());
+        sibling.setDirectory(directory);
+        sibling.setName("sibling");
+        source.setAdditionalProfiles(new HashSet<>(List.of(sibling)));
+
+        DirectoryConnection other = otherDirectory();
+        given(dirRepo.findById(other.getId())).willReturn(Optional.of(other));
+        given(profileRepo.existsByDirectoryIdAndName(other.getId(), "copy")).willReturn(false);
+        given(lifecycleRepo.findByProfileId(sourceId)).willReturn(Optional.empty());
+        given(approvalConfigRepo.findByProfileId(sourceId)).willReturn(Optional.empty());
+
+        ArgumentCaptor<ProvisioningProfile> captor =
+                ArgumentCaptor.forClass(ProvisioningProfile.class);
+
+        service.clone(directoryId, sourceId, "copy", other.getId(), null);
+
+        verify(profileRepo).save(captor.capture());
+        assertThat(captor.getValue().getAdditionalProfiles()).isEmpty();
+    }
+
+    @Test
+    void clone_intoSameDirectoryExplicitly_keepsAdditionalProfileLinks() {
+        ProvisioningProfile sibling = new ProvisioningProfile();
+        sibling.setId(UUID.randomUUID());
+        sibling.setDirectory(directory);
+        sibling.setName("sibling");
+        source.setAdditionalProfiles(new HashSet<>(List.of(sibling)));
+        given(lifecycleRepo.findByProfileId(sourceId)).willReturn(Optional.empty());
+        given(approvalConfigRepo.findByProfileId(sourceId)).willReturn(Optional.empty());
+
+        ArgumentCaptor<ProvisioningProfile> captor =
+                ArgumentCaptor.forClass(ProvisioningProfile.class);
+
+        // Passing the source's own id is the same as passing null.
+        service.clone(directoryId, sourceId, "copy", directoryId, null);
+
+        verify(profileRepo).save(captor.capture());
+        assertThat(captor.getValue().getDirectory()).isSameAs(directory);
+        assertThat(captor.getValue().getAdditionalProfiles()).containsExactly(sibling);
+        verify(dirRepo, never()).findById(any());
+    }
+
+    @Test
+    void clone_intoOtherDirectory_refusesDuplicateNameThere() {
+        DirectoryConnection other = otherDirectory();
+        given(dirRepo.findById(other.getId())).willReturn(Optional.of(other));
+        given(profileRepo.existsByDirectoryIdAndName(other.getId(), "copy")).willReturn(true);
+
+        assertThatThrownBy(() -> service.clone(directoryId, sourceId, "copy", other.getId(), null))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("dir-2");
+        verify(profileRepo, never()).save(any(ProvisioningProfile.class));
+    }
+
+    @Test
+    void clone_intoUnknownDirectory_isNotFound() {
+        UUID missing = UUID.randomUUID();
+        given(dirRepo.findById(missing)).willReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.clone(directoryId, sourceId, "copy", missing, null))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verify(profileRepo, never()).save(any(ProvisioningProfile.class));
     }
 }
