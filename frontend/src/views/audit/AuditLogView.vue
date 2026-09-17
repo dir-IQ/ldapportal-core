@@ -79,7 +79,7 @@
     </div>
     <template v-else>
       <ResultsTable table-key="audit-log" :columns="cols" :rows="tableRows" row-key="id"
-        empty-text="No audit events found" empty-icon="clipboard" :auto-fit-first-view="true">
+        :loading="loading" empty-text="No audit events found" empty-icon="clipboard" :auto-fit-first-view="true">
         <template #toolbar>
           <button @click="doExportCsv" :disabled="!events.length" class="btn-secondary text-xs">Export CSV</button>
         </template>

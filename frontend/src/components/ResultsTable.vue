@@ -81,6 +81,12 @@ const props = withDefaults(defineProps<{
   pageSizes?: number[]
   /** Optional zebra-striping toggle. */
   striped?: boolean
+  /**
+   * True while the caller is waiting on the backend. With no rows yet this
+   * renders "Loading…" in place of the empty state, so an operator never
+   * reads "No <things> found" for a query that hasn't answered.
+   */
+  loading?: boolean
   /** Empty-state text. */
   emptyText?: string
   /** Empty-state icon (see EmptyState.vue: folder|users|search|shield|clipboard). */
@@ -101,6 +107,7 @@ const props = withDefaults(defineProps<{
   selectedKeys: () => new Set(),
   pageSizes: () => [25, 50, 100, 0],
   striped: true,
+  loading: false,
   emptyText: 'No results.',
   emptyIcon: 'folder',
   rowClickable: false,
@@ -481,8 +488,13 @@ watch(() => props.rows, () => { page.value = 0 })
       </div>
     </div>
 
+    <!-- Loading state: only while there are no rows to show yet. A refresh
+         over existing rows keeps them on screen until the response lands. -->
+    <div v-if="loading && rows.length === 0" role="status" class="px-4 py-8 text-center text-sm text-gray-500">
+      Loading…
+    </div>
     <!-- Empty state -->
-    <EmptyState v-if="rows.length === 0" :icon="emptyIcon" :title="emptyText" />
+    <EmptyState v-else-if="rows.length === 0" :icon="emptyIcon" :title="emptyText" />
     <EmptyState
       v-else-if="filteredRows.length === 0"
       icon="search"

@@ -112,6 +112,16 @@ describe('EditableResultsTable — read-only render (Task 4)', () => {
     expect(w.find('table').exists()).toBe(false)
   })
 
+  it('shows Loading… instead of the empty-state while loading with no rows', async () => {
+    const w = mount(EditableResultsTable, {
+      props: { tableKey: 'spec', columns, rows: [], loading: true, emptyText: 'Nothing here.' },
+    })
+    expect(w.text()).toContain('Loading…')
+    expect(w.text()).not.toContain('Nothing here.')
+    await w.setProps({ loading: false })
+    expect(w.text()).toContain('Nothing here.')
+  })
+
   it('emits row-click when a row is clicked and rowClickable is true', async () => {
     const w = mount(EditableResultsTable, {
       props: { tableKey: 'spec', columns, rows: [aliceRow], rowClickable: true },

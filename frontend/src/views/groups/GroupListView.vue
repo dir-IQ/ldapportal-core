@@ -59,6 +59,7 @@
       :columns="cols"
       :rows="groups"
       row-key="dn"
+      :loading="loading"
       empty-text="No groups found"
     >
       <template #toolbar>
