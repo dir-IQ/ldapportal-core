@@ -80,6 +80,31 @@ describe('ResultsTable.vue', () => {
     expect(w.find('tbody').exists()).toBe(false)
   })
 
+  it('shows Loading… instead of the empty state while loading with no rows', () => {
+    const w = mount(ResultsTable, {
+      props: { tableKey: 'loading-' + Math.random(), columns, rows: [], loading: true, emptyText: 'Nothing here.' },
+    })
+    expect(w.text()).toContain('Loading…')
+    expect(w.text()).not.toContain('Nothing here.')
+  })
+
+  it('reverts to the empty state once loading finishes with no rows', async () => {
+    const w = mount(ResultsTable, {
+      props: { tableKey: 'loaded-' + Math.random(), columns, rows: [], loading: true, emptyText: 'Nothing here.' },
+    })
+    await w.setProps({ loading: false })
+    expect(w.text()).toContain('Nothing here.')
+    expect(w.text()).not.toContain('Loading…')
+  })
+
+  it('keeps existing rows on screen while a refresh is loading', () => {
+    const w = mount(ResultsTable, {
+      props: { tableKey: 'refresh-' + Math.random(), columns, rows, loading: true },
+    })
+    expect(w.findAll('tbody tr').length).toBe(rows.length)
+    expect(w.text()).not.toContain('Loading…')
+  })
+
   it('sorts rows when a sortable header is clicked', async () => {
     const w = makeWrapper()
     // Find the Name header (second th since 'id' is first)

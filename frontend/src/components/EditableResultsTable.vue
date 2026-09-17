@@ -57,6 +57,8 @@ interface Props {
   rowKey?: string
   /** When true, clicking a row emits {@code row-click} (e.g. open detail). */
   rowClickable?: boolean
+  /** True while the caller awaits the backend; with no rows yet shows "Loading…" instead of the empty state. */
+  loading?: boolean
   /** Empty-state copy. */
   emptyText?: string
   /** Empty-state icon (see EmptyState.vue: folder|users|search|shield|clipboard). */
@@ -81,6 +83,7 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   rowKey: 'dn',
   rowClickable: false,
+  loading: false,
   emptyText: 'No results.',
   emptyIcon: 'folder',
   edit: false,
@@ -423,8 +426,11 @@ defineExpose({
       <slot name="toolbar" />
     </div>
 
-    <!-- Empty state. -->
-    <EmptyState v-if="rows.length === 0" :icon="emptyIcon" :title="emptyText" />
+    <!-- Loading state (no rows yet), then empty state. -->
+    <div v-if="loading && rows.length === 0" role="status" class="px-4 py-8 text-center text-sm text-gray-500">
+      Loading…
+    </div>
+    <EmptyState v-else-if="rows.length === 0" :icon="emptyIcon" :title="emptyText" />
 
 
     <!-- Table. Phase 1 ships without sort / filter / paginate /

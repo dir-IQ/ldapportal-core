@@ -70,6 +70,7 @@
       selectable
       auto-fit-first-view
       v-model:selectedKeys="selectedDns"
+      :loading="loading"
       empty-text="No users found"
     >
       <template #toolbar>
