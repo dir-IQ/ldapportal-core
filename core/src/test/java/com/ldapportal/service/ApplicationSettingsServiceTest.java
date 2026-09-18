@@ -68,6 +68,43 @@ class ApplicationSettingsServiceTest {
         // Approval master switches default ON (upgrade-safe).
         assertThat(dto.approvalsEnabled()).isTrue();
         assertThat(dto.selfRegistrationApprovalEnabled()).isTrue();
+        // Playbooks default ON (upgrade-safe).
+        assertThat(dto.playbooksEnabled()).isTrue();
+    }
+
+    // ── Playbooks toggle ─────────────────────────────────────────────────────
+
+    @Test
+    void playbooksGetter_defaultTrueWhenNoRow() {
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.empty());
+        assertThat(service.isPlaybooksEnabled()).isTrue();
+    }
+
+    @Test
+    void playbooksGetter_reflectsPersistedEntity() {
+        ApplicationSettings settings = existingSettings();
+        settings.setPlaybooksEnabled(false);
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.of(settings));
+
+        assertThat(service.isPlaybooksEnabled()).isFalse();
+        assertThat(service.get().playbooksEnabled()).isFalse();
+    }
+
+    @Test
+    void upsert_persistsPlaybooksToggle_andNullPreservesExisting() {
+        ApplicationSettings settings = existingSettings();
+        settings.setPlaybooksEnabled(false);
+        when(settingsRepo.findFirstBy()).thenReturn(Optional.of(settings));
+        when(settingsRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // null leaves the persisted false untouched (legacy client omitting the field).
+        ApplicationSettingsDto preserved = service.upsert(requestBuilder().build());
+        assertThat(preserved.playbooksEnabled()).isFalse();
+
+        // Explicit true is written through.
+        ApplicationSettingsDto enabled = service.upsert(requestBuilder().playbooksEnabled(true).build());
+        assertThat(enabled.playbooksEnabled()).isTrue();
+        assertThat(settings.isPlaybooksEnabled()).isTrue();
     }
 
     // ── Approval toggles ────────────────────────────────────────────────────────
@@ -406,7 +443,9 @@ class ApplicationSettingsServiceTest {
         Boolean setupCompleted = null;
         Boolean approvalsEnabled = null;
         Boolean selfRegistrationApprovalEnabled = null;
+        Boolean playbooksEnabled = null;
 
+        RequestBuilder playbooksEnabled(Boolean v) { this.playbooksEnabled = v; return this; }
         RequestBuilder approvalsEnabled(Boolean v) { this.approvalsEnabled = v; return this; }
         RequestBuilder selfRegistrationApprovalEnabled(Boolean v) { this.selfRegistrationApprovalEnabled = v; return this; }
         RequestBuilder appName(String v) { this.appName = v; return this; }
@@ -427,6 +466,7 @@ class ApplicationSettingsServiceTest {
             return new UpdateApplicationSettingsRequest(
                     appName, null, "#fff", null,
                     null,    // directorySearchInlineEditEnabled (preserve)
+                    playbooksEnabled,
                     approvalsEnabled, selfRegistrationApprovalEnabled,
                     sessionTimeoutMinutes,
                     smtpHost, smtpPort, smtpSenderAddress, smtpUsername, smtpPassword, true,

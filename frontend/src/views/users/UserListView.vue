@@ -647,7 +647,7 @@ const can = computed(() => ({
   bulkUpdate:    hasFeature('bulk.attribute_update'),
   manageMembers: hasFeature('group.manage_members'),
   exportCsv:     hasFeature('bulk.export'),
-  runPlaybook:   hasFeature('playbook.execute'),
+  runPlaybook:   hasFeature('playbook.execute') && auth.isPlaybooksEnabled,
 }))
 
 /**

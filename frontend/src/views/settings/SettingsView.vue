@@ -18,6 +18,7 @@ interface SettingsData {
   primaryColour?: string | null
   secondaryColour?: string | null
   directorySearchInlineEditEnabled?: boolean
+  playbooksEnabled?: boolean
   approvalsEnabled?: boolean
   selfRegistrationApprovalEnabled?: boolean
   sessionTimeoutMinutes?: number
@@ -66,6 +67,7 @@ interface SettingsForm {
   primaryColour: string
   secondaryColour: string
   directorySearchInlineEditEnabled: boolean
+  playbooksEnabled: boolean
   approvalsEnabled: boolean
   selfRegistrationApprovalEnabled: boolean
   sessionTimeoutMinutes: number
@@ -174,6 +176,7 @@ function defaultForm(): SettingsForm {
     primaryColour: DEFAULT_PRIMARY_COLOUR,
     secondaryColour: DEFAULT_SECONDARY_COLOUR,
     directorySearchInlineEditEnabled: true,
+    playbooksEnabled: true,
     approvalsEnabled: true,
     selfRegistrationApprovalEnabled: true,
     sessionTimeoutMinutes: 60,
@@ -232,6 +235,7 @@ async function loadSettings(): Promise<void> {
       primaryColour:          data.primaryColour ?? DEFAULT_PRIMARY_COLOUR,
       secondaryColour:        data.secondaryColour ?? DEFAULT_SECONDARY_COLOUR,
       directorySearchInlineEditEnabled: data.directorySearchInlineEditEnabled ?? true,
+      playbooksEnabled:               data.playbooksEnabled ?? true,
       approvalsEnabled:               data.approvalsEnabled ?? true,
       selfRegistrationApprovalEnabled: data.selfRegistrationApprovalEnabled ?? true,
       sessionTimeoutMinutes:  data.sessionTimeoutMinutes ?? 60,
@@ -298,6 +302,7 @@ async function doSave(): Promise<void> {
       primaryColour:         form.primaryColour  || null,
       secondaryColour:       form.secondaryColour || null,
       directorySearchInlineEditEnabled: form.directorySearchInlineEditEnabled,
+      playbooksEnabled: form.playbooksEnabled,
       approvalsEnabled: form.approvalsEnabled,
       selfRegistrationApprovalEnabled: form.selfRegistrationApprovalEnabled,
       sessionTimeoutMinutes: form.sessionTimeoutMinutes,

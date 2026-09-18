@@ -5,6 +5,7 @@ import { getPendingApprovalsCount } from '@/api/settings'
 
 interface EditsForm {
   directorySearchInlineEditEnabled: boolean
+  playbooksEnabled: boolean
   approvalsEnabled: boolean
   selfRegistrationApprovalEnabled: boolean
 }
@@ -28,7 +29,8 @@ onMounted(async () => {
     <div>
       <h2 class="text-base font-semibold text-gray-900 mb-1">User/Group Edits</h2>
       <p class="text-xs text-gray-500">
-        Controls the inline edit affordance on Directory Search results.
+        Controls the inline edit affordance on Directory Search results and
+        whether Lifecycle Playbooks are available.
       </p>
     </div>
 
@@ -50,6 +52,36 @@ onMounted(async () => {
         inputs (saves on row blur). When disabled the affordance is
         hidden; the per-entity edit flows under Users and Groups stay
         unaffected.
+      </p>
+    </div>
+
+    <div class="border-t border-gray-100 pt-5">
+      <h3 class="text-sm font-semibold text-gray-900 mb-1">Lifecycle playbooks</h3>
+      <div class="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id="playbooksEnabled"
+          v-model="form.playbooksEnabled"
+          class="rounded"
+        />
+        <label for="playbooksEnabled" class="text-sm text-gray-700">
+          Enable Lifecycle Playbooks
+        </label>
+      </div>
+      <p class="text-xs text-gray-500 mt-1">
+        When enabled, admins with the playbook permissions can define and run
+        onboarding / offboarding playbooks from the Playbooks page and the
+        "Run playbook" user action. When disabled the Playbooks pages, nav
+        links and user action are hidden and the playbook API refuses
+        requests. Existing playbook definitions and execution history are
+        kept and become available again when re-enabled.
+      </p>
+      <p
+        v-if="!form.playbooksEnabled"
+        class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5 mt-3"
+      >
+        Playbook execution requests already awaiting approval stay queued and
+        can still be approved from the Approvals view.
       </p>
     </div>
 

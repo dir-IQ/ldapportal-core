@@ -30,6 +30,8 @@ public record UpdateApplicationSettingsRequest(
         // frontend to omit it on legacy clients (V73 column default
         // takes effect on insert).
         Boolean directorySearchInlineEditEnabled,
+        // Lifecycle Playbooks master switch. Same null-preserves semantics.
+        Boolean playbooksEnabled,
 
         // Approval workflow — global master switches. Boolean wrappers: null
         // means "leave existing" so a legacy client omitting them is harmless

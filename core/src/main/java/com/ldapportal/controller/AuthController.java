@@ -381,10 +381,12 @@ public class AuthController {
         try {
             var settings = applicationSettingsService.getEntity();
             body.put("directorySearchInlineEditEnabled", settings.isDirectorySearchInlineEditEnabled());
+            body.put("playbooksEnabled", settings.isPlaybooksEnabled());
             body.put("approvalsEnabled", settings.isApprovalsEnabled());
             body.put("selfRegistrationApprovalEnabled", settings.isSelfRegistrationApprovalEnabled());
         } catch (Exception ignored) {
             body.put("directorySearchInlineEditEnabled", true);
+            body.put("playbooksEnabled", true);
             body.put("approvalsEnabled", true);
             body.put("selfRegistrationApprovalEnabled", true);
         }

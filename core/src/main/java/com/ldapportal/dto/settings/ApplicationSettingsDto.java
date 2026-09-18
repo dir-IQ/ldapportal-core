@@ -26,6 +26,7 @@ public record ApplicationSettingsDto(
 
         // User/Group edits
         boolean directorySearchInlineEditEnabled,
+        boolean playbooksEnabled,
 
         // Approval workflow — global master switches (override per-profile config)
         boolean approvalsEnabled,

@@ -289,5 +289,9 @@ Base DN:  dc=corp,dc=local
 
 - **Discovery Wizard** — If you have multiple OUs, use the Discovery Wizard from the Directories management page to auto-generate provisioning profiles from your directory structure.
 - **Lifecycle Playbooks** — Automate onboarding/offboarding sequences in the Playbooks section.
+  The feature can be switched off install-wide under **Settings → User/Group Edits →
+  Enable Lifecycle Playbooks**; when off, the Playbooks pages and the "Run playbook"
+  user action are hidden and the playbook API refuses requests, while existing
+  playbook definitions and execution history are kept for when it is re-enabled.
 - **Scheduled Reports** — Set up recurring reports with email or S3 delivery in the Reports section.
 - **Bulk Operations** — Import/export users via CSV in the Bulk Import/Export section.

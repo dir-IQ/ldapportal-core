@@ -158,7 +158,7 @@ class ConfigExportServiceTest {
     private UpdateApplicationSettingsRequest settingsRequest() {
         return new UpdateApplicationSettingsRequest(
                 "Acme Portal", null, null, null,
-                true, true, true,
+                true, true, true, true,
                 30,
                 "smtp.acme.example.com", 587, "noreply@acme.example.com", "relay-user",
                 null,                    // smtpPassword — exporter fills placeholder
