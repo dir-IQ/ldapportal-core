@@ -191,6 +191,58 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect(params.actions).toEqual(['USER_CREATE'])
   })
 
+  it('runs a Missing Data report with the branch DN and a parsed attribute list', async () => {
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.find('#rj-report-type').setValue('MISSING_DATA')
+    // Branch DN picker (stubbed) + attribute list + object-type narrowing.
+    expect(wrapper.find('#rj-attributes').exists()).toBe(true)
+    expect(wrapper.find('#rj-object-type').exists()).toBe(true)
+    await wrapper.find('#rj-attributes').setValue(' mail, sn,,Mail telephoneNumber ')
+    await wrapper.find('#rj-object-type').setValue('USER')
+
+    const runButton = wrapper.findAll('button').find(b => b.text() === 'Run Report')
+    await runButton!.trigger('click')
+    await flushPromises()
+
+    expect(reports.runOperationalReportData).toHaveBeenCalledTimes(1)
+    const body = (reports.runOperationalReportData as unknown as Mock).mock.calls[0][1]
+    expect(body.reportType).toBe('MISSING_DATA')
+    expect(body.reportParams.attributes).toEqual(['mail', 'sn', 'telephoneNumber'])
+    expect(body.reportParams.objectType).toBe('USER')
+    expect(body.reportParams).toHaveProperty('branchDn')
+  })
+
+  it('hides the attribute list for other report types', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('#rj-report-type').setValue('USERS_IN_BRANCH')
+    expect(wrapper.find('#rj-attributes').exists()).toBe(false)
+  })
+
+  it('persists the attribute list and object type for a scheduled Missing Data job', async () => {
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('MISSING_DATA')
+    expect(wrapper.find('#rj-job-attributes').exists()).toBe(true)
+    await wrapper.find('#rj-job-attributes').setValue('mail, manager')
+    await wrapper.find('#rj-job-object-type').setValue('USER')
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(reports.createReportJob).toHaveBeenCalled()
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params.attributes).toEqual(['mail', 'manager'])
+    expect(params.objectType).toBe('USER')
+  })
+
   it('triggers an immediate run via the Run now button', async () => {
     const reports = await import('@/api/reports')
     // reports.js is untyped JS; cast to the loose Mock surface so the

@@ -181,6 +181,113 @@ class OperationalReportServiceTest {
         verifyNoInteractions(userService);
     }
 
+    // ── MISSING_DATA ────────────────────────────────────────────────────────
+
+    private static final String BRANCH = "ou=people,dc=example,dc=com";
+
+    private static LdapUser entry(String rdn, Map<String, List<String>> attrs) {
+        return new LdapUser(rdn + "," + BRANCH, attrs);
+    }
+
+    @Test
+    void missingData_listsEntriesWithAbsentOrBlankAttributes_andSkipsPopulatedOnes() {
+        DirectoryConnection dc = ldapDir();
+        when(userService.searchUsers(eq(dc), eq("(objectClass=*)"), eq(BRANCH), anyInt(), any(String[].class)))
+                .thenReturn(List.of(
+                        // fully populated → not reported
+                        entry("uid=ok", Map.of("mail", List.of("ok@example.com"), "sn", List.of("Ok"),
+                                "objectclass", List.of("inetOrgPerson"))),
+                        // mail absent
+                        entry("uid=nomail", Map.of("sn", List.of("Nomail"),
+                                "objectclass", List.of("inetOrgPerson"))),
+                        // sn present but blank, mail multi-valued with one real value → only sn
+                        entry("uid=blanksn", Map.of("mail", List.of("", "x@example.com"), "sn", List.of("  "),
+                                "objectclass", List.of("inetOrgPerson"))),
+                        // both missing
+                        entry("uid=none", Map.of("objectclass", List.of("inetOrgPerson"))),
+                        // the branch entry itself is never reported
+                        new LdapUser(BRANCH, Map.of("objectclass", List.of("organizationalUnit")))));
+
+        ReportData data = service.run(dc, "MISSING_DATA",
+                Map.of("branchDn", BRANCH, "attributes", List.of("mail", "sn")), dirId, superadmin());
+
+        assertThat(data.columns()).containsExactly("DN", "Missing Attributes", "Object Class", "Email", "Last Name");
+        assertThat(data.rows()).extracting(r -> r.get("DN"))
+                .containsExactly("uid=nomail," + BRANCH, "uid=blanksn," + BRANCH, "uid=none," + BRANCH);
+        assertThat(data.rows().get(0).get("Missing Attributes")).isEqualTo("mail");
+        assertThat(data.rows().get(1).get("Missing Attributes")).isEqualTo("sn");
+        assertThat(data.rows().get(1).get("Email")).isEqualTo("|x@example.com");
+        assertThat(data.rows().get(2).get("Missing Attributes")).isEqualTo("mail, sn");
+        assertThat(data.rows().get(2).get("Object Class")).isEqualTo("inetOrgPerson");
+    }
+
+    @Test
+    void missingData_acceptsCommaSeparatedAttributes_andFetchesOnlyThosePlusObjectClass() {
+        DirectoryConnection dc = ldapDir();
+        when(userService.searchUsers(eq(dc), anyString(), eq(BRANCH), anyInt(), any(String[].class)))
+                .thenReturn(List.of());
+
+        service.run(dc, "MISSING_DATA",
+                Map.of("branchDn", BRANCH, "attributes", " mail, telephoneNumber ,,MAIL "), dirId, superadmin());
+
+        ArgumentCaptor<String[]> attrs = ArgumentCaptor.forClass(String[].class);
+        verify(userService).searchUsers(eq(dc), eq("(objectClass=*)"), eq(BRANCH), anyInt(), attrs.capture());
+        assertThat(attrs.getValue()).containsExactly("mail", "telephoneNumber", "objectClass");
+    }
+
+    @Test
+    void missingData_objectTypeUser_narrowsTheSearchFilter() {
+        DirectoryConnection dc = ldapDir();
+        when(userService.searchUsers(eq(dc), anyString(), eq(BRANCH), anyInt(), any(String[].class)))
+                .thenReturn(List.of());
+
+        service.run(dc, "MISSING_DATA",
+                Map.of("branchDn", BRANCH, "attributes", List.of("mail"), "objectType", "USER"),
+                dirId, superadmin());
+
+        verify(userService).searchUsers(eq(dc),
+                eq("(|(objectClass=inetOrgPerson)(&(objectClass=user)(!(objectClass=computer))))"),
+                eq(BRANCH), anyInt(), any(String[].class));
+    }
+
+    @Test
+    void missingData_requiresBranchAndAtLeastOneAttribute() {
+        assertThatThrownBy(() -> service.run(ldapDir(), "MISSING_DATA",
+                Map.of("attributes", List.of("mail")), dirId, superadmin()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("branchDn");
+        assertThatThrownBy(() -> service.run(ldapDir(), "MISSING_DATA",
+                Map.of("branchDn", BRANCH, "attributes", " , "), dirId, superadmin()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("attributes");
+        assertThatThrownBy(() -> service.run(ldapDir(), "MISSING_DATA",
+                Map.of("branchDn", BRANCH), dirId, superadmin()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("attributes");
+        verifyNoInteractions(userService);
+    }
+
+    @Test
+    void missingData_rejectsMalformedAttributeNames() {
+        assertThatThrownBy(() -> service.run(ldapDir(), "MISSING_DATA",
+                Map.of("branchDn", BRANCH, "attributes", List.of("mail", "sn)(cn=*")), dirId, superadmin()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("sn)(cn=*");
+        verifyNoInteractions(userService);
+    }
+
+    @Test
+    void missingData_admin_branchOutsideTheirOus_isRefused() {
+        AuthPrincipal alice = admin();
+        when(permissionService.resolveSearchBaseDns(alice, dirId, null)).thenReturn(List.of(PEOPLE));
+        when(permissionService.isDnWithinScope(alice, dirId, OTHER)).thenReturn(false);
+
+        assertThatThrownBy(() -> service.run(ldapDir(), "MISSING_DATA",
+                Map.of("branchDn", OTHER, "attributes", List.of("mail")), dirId, alice))
+                .isInstanceOf(AccessDeniedException.class);
+        verifyNoInteractions(userService);
+    }
+
     @Test
     void scope_admin_branchOutsideTheirOus_isRefused() {
         AuthPrincipal alice = admin();

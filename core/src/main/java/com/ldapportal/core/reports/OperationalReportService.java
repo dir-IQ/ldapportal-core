@@ -61,6 +61,9 @@ import java.util.function.Predicate;
  *                                    cn=changelog delete events.</li>
  *   <li><b>DISABLED_ACCOUNTS</b>   — disabled by AD UAC bit or directory-specific flags.</li>
  *   <li><b>MISSING_PROFILE_GROUPS</b> — gap analysis from provisioning profile evaluation.</li>
+ *   <li><b>MISSING_DATA</b>        — entries under a branch with any of a list of attributes
+ *                                    absent or blank; params {@code branchDn}, {@code attributes},
+ *                                    optional {@code objectType}.</li>
  * </ul>
  */
 @Service
@@ -187,6 +190,7 @@ public class OperationalReportService {
                 case DISABLED_ACCOUNTS      -> perBase(scope, base -> runDisabledAccountsReport(dc, base));
                 case MISSING_PROFILE_GROUPS -> runMissingProfileGroupsReport(dc, directoryId, scope);
                 case AUDIT_ENTRIES          -> runAuditEntriesReport(directoryId, safeParams, scope);
+                case MISSING_DATA           -> runMissingDataReport(dc, safeParams, scope);
             };
         }
 
@@ -537,6 +541,116 @@ public class OperationalReportService {
             }
         }
         return new ReportData(columns, rows);
+    }
+
+    /**
+     * Missing-data report: every entry under {@code branchDn} that has at least
+     * one of the requested {@code attributes} absent or blank. "Blank" means the
+     * attribute is present but none of its values contains non-whitespace text,
+     * so a multi-valued attribute counts as populated when any value is set.
+     *
+     * <p>Only the requested attributes (plus {@code objectClass}) are fetched
+     * from the directory; the branch entry itself is not reported. The optional
+     * {@code objectType} param ({@code USER} / {@code GROUP}) narrows the scan
+     * to that object class family, exactly like the recently-* reports; when
+     * absent every entry in the subtree is examined.</p>
+     */
+    private ReportData runMissingDataReport(DirectoryConnection dc, Map<String, Object> params,
+                                            ReportScope scope) {
+        String branchDn = requireString(params, "branchDn");
+        scope.requireInScope(branchDn);
+        List<String> attributes = requiredAttributes(params);
+
+        String filter = objectTypeFilter(params);
+        List<String> requested = new ArrayList<>(attributes);
+        requested.add("objectClass");
+        List<LdapUser> entries = userService.searchUsers(dc, filter, branchDn, MAX_LDAP_RESULTS,
+                requested.toArray(String[]::new));
+        if (entries.size() >= MAX_LDAP_RESULTS) {
+            log.warn("Missing-data report hit the {} result limit under {} — results may be truncated.",
+                    MAX_LDAP_RESULTS, branchDn);
+        }
+
+        List<String> columns = new ArrayList<>();
+        columns.add("DN");
+        columns.add("Missing Attributes");
+        columns.add("Object Class");
+        attributes.forEach(a -> columns.add(friendlyLdapColumn(a)));
+
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (LdapUser entry : entries) {
+            if (entry.getDn().equalsIgnoreCase(branchDn)) continue;
+            List<String> missing = attributes.stream()
+                    .filter(a -> isBlankAttribute(entry, a))
+                    .toList();
+            if (missing.isEmpty()) continue;
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("DN", entry.getDn());
+            row.put("Missing Attributes", String.join(", ", missing));
+            row.put("Object Class", String.join("|", entry.getValues("objectClass")));
+            for (String a : attributes) {
+                row.put(friendlyLdapColumn(a), String.join("|", entry.getValues(a)));
+            }
+            rows.add(row);
+        }
+        log.info("Missing-data report under {}: {} of {} entries missing one of {}",
+                branchDn, rows.size(), entries.size(), attributes);
+        return new ReportData(columns, rows);
+    }
+
+    /** Absent, or present with no value carrying non-whitespace text. */
+    static boolean isBlankAttribute(LdapUser entry, String attribute) {
+        return entry.getValues(attribute).stream().allMatch(v -> v == null || v.isBlank());
+    }
+
+    /**
+     * The {@code attributes} param: a list, or a comma-separated string, of LDAP
+     * attribute names. Trimmed, de-duplicated (case-insensitively, first spelling
+     * wins) and validated against the attribute-description grammar so nothing
+     * odd reaches the search request. At least one name is required.
+     */
+    static List<String> requiredAttributes(Map<String, Object> params) {
+        Object raw = params.get("attributes");
+        List<String> names = new ArrayList<>();
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o != null) names.add(o.toString());
+            }
+        } else if (raw != null) {
+            names.addAll(List.of(raw.toString().split(",")));
+        }
+        Set<String> seen = new java.util.HashSet<>();
+        List<String> attributes = new ArrayList<>();
+        for (String n : names) {
+            String name = n.trim();
+            if (name.isEmpty()) continue;
+            if (!ATTRIBUTE_NAME.matcher(name).matches()) {
+                throw new IllegalArgumentException("Invalid LDAP attribute name: " + name);
+            }
+            if (seen.add(name.toLowerCase())) attributes.add(name);
+        }
+        if (attributes.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Report parameter 'attributes' must list at least one attribute name");
+        }
+        return attributes;
+    }
+
+    /** RFC 4512 attribute description: a descriptor or OID, with optional ;options. */
+    private static final java.util.regex.Pattern ATTRIBUTE_NAME =
+            java.util.regex.Pattern.compile("[A-Za-z][A-Za-z0-9-]*(;[A-Za-z0-9-]+)*|[0-9]+(\\.[0-9]+)+");
+
+    /** Entry filter for the optional {@code objectType} param; all entries when absent. */
+    private static String objectTypeFilter(Map<String, Object> params) {
+        Object objectType = params.get("objectType");
+        if (objectType == null || objectType.toString().isBlank()) {
+            return "(objectClass=*)";
+        }
+        return switch (objectType.toString().trim().toUpperCase()) {
+            case "USER" -> "(|(objectClass=inetOrgPerson)(&(objectClass=user)(!(objectClass=computer))))";
+            case "GROUP" -> "(|(objectClass=groupOfNames)(objectClass=groupOfUniqueNames)(objectClass=posixGroup)(objectClass=group))";
+            default -> "(objectClass=*)";
+        };
     }
 
     // ── Shared helpers ────────────────────────────────────────────────────────

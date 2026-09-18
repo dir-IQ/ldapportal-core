@@ -42,6 +42,12 @@
           <DnPicker v-else-if="currentRunType?.param === 'branchDn'" v-model="runForm.paramValue" :directory-id="dirId" />
           <input v-else id="rj-param-value" v-model="runForm.paramValue" type="text" :placeholder="paramPlaceholder" class="input w-full" />
         </div>
+        <!-- Missing Data: the attributes every entry under the branch must carry. -->
+        <div v-if="needsAttributes">
+          <label for="rj-attributes" class="block text-sm font-medium text-gray-700 mb-1">Required Attributes</label>
+          <input id="rj-attributes" v-model="runForm.attributes" type="text" class="input w-full" placeholder="mail, telephoneNumber, manager" />
+          <p class="text-xs text-gray-400 mt-1">Comma-separated. Entries missing any of these, or with only blank values, are listed.</p>
+        </div>
         <div v-if="needsLookback">
           <label for="rj-lookback-days" class="block text-sm font-medium text-gray-700 mb-1">Lookback Days</label>
           <input id="rj-lookback-days" v-model.number="runForm.lookbackDays" type="number" min="1" class="input w-full" placeholder="30" />
@@ -300,6 +306,20 @@
               <DnPicker v-else-if="currentJobFormType?.param === 'branchDn'" v-model="jobForm.paramValue" :directory-id="dirId" />
               <FormField v-else :label="jobFormParamLabel" v-model="jobForm.paramValue" />
             </div>
+            <!-- Missing Data: the attributes every entry under the branch must carry. -->
+            <div v-if="jobFormNeedsAttributes">
+              <label for="rj-job-attributes" class="block text-sm font-medium text-gray-700 mb-1">Required Attributes</label>
+              <input id="rj-job-attributes" v-model="jobForm.attributes" type="text" class="input w-full" placeholder="mail, telephoneNumber, manager" required />
+              <p class="text-xs text-gray-400 mt-1">Comma-separated. Entries missing any of these, or with only blank values, are listed.</p>
+            </div>
+            <div v-if="jobFormNeedsObjectType">
+              <label for="rj-job-object-type" class="block text-sm font-medium text-gray-700 mb-1">Object Type</label>
+              <select id="rj-job-object-type" v-model="jobForm.objectType" class="input w-full">
+                <option value="">All</option>
+                <option value="USER">Users</option>
+                <option value="GROUP">Groups</option>
+              </select>
+            </div>
             <div v-if="jobFormNeedsLookback">
               <label for="rj-job-lookback-days" class="block text-sm font-medium text-gray-700 mb-1">Lookback Days</label>
               <input id="rj-job-lookback-days" v-model.number="jobForm.lookbackDays" type="number" min="1" placeholder="30"
@@ -418,6 +438,8 @@ interface ReportTypeDef {
   groupCount?: boolean
   /** Audit-entries report: lookback-hours + action multi-select filter. */
   auditFilters?: boolean
+  /** Missing-data report: comma-separated list of attributes every entry must carry. */
+  attributes?: boolean
 }
 
 interface DirectoryOption {
@@ -485,6 +507,7 @@ const reportTypes = computed<ReportTypeDef[]>(() => {
     { value: 'DISABLED_ACCOUNTS',    label: 'Disabled Accounts',      param: null, lookback: false },
     { value: 'MISSING_PROFILE_GROUPS', label: 'Missing Profile Groups', param: null, lookback: false },
     { value: 'AUDIT_ENTRIES',        label: 'Audit Entries',          param: null, lookback: false, auditFilters: true },
+    { value: 'MISSING_DATA',         label: 'Missing Data',           param: 'branchDn', paramLabel: 'Branch DN', paramPlaceholder: 'ou=people,dc=example,dc=com', lookback: false, attributes: true },
   ]
   if (auth.isIsvaIntegrationEnabled) {
     types.push({ value: 'ORPHANED_IVIA_ACCOUNTS', label: 'Orphaned IVIA Accounts', param: null, lookback: false })
@@ -549,6 +572,7 @@ const runForm = ref({
   reportType: 'RECENTLY_ADDED', paramValue: '', lookbackDays: 30, objectType: '',
   groupCountOp: '=', groupCountValue: 0,
   lookbackHours: 24, auditActions: [] as string[],
+  attributes: '',
   integrityChecks: ['BROKEN_MEMBER', 'ORPHANED_ENTRY', 'EMPTY_GROUP'] as string[],
 })
 const running = ref(false)
@@ -564,9 +588,26 @@ const paramPlaceholder = computed(() => currentRunType.value?.paramPlaceholder ?
 const needsLookback    = computed(() => !!currentRunType.value?.lookback)
 const needsGroupCount  = computed(() => !!currentRunType.value?.groupCount)
 const RECENTLY_TYPES = new Set(['RECENTLY_ADDED', 'RECENTLY_MODIFIED', 'RECENTLY_DELETED'])
-const needsObjectTypeFilter = computed(() => RECENTLY_TYPES.has(runForm.value.reportType))
+// Object-type narrowing (All / Users / Groups): the recently-* reports and
+// Missing Data, which otherwise scans every entry under the branch.
+const OBJECT_TYPE_REPORTS = new Set([...RECENTLY_TYPES, 'MISSING_DATA'])
+const needsObjectTypeFilter = computed(() => OBJECT_TYPE_REPORTS.has(runForm.value.reportType))
 const isIntegrityCheck = computed(() => runForm.value.reportType === 'INTEGRITY_CHECK')
 const needsAuditFilters = computed(() => !!currentRunType.value?.auditFilters)
+const needsAttributes = computed(() => !!currentRunType.value?.attributes)
+
+/** "mail, sn,,manager" → ['mail', 'sn', 'manager'] (trimmed, de-duplicated, order kept). */
+function splitAttributes(raw: string): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const part of raw.split(/[,\s]+/)) {
+    const name = part.trim()
+    if (!name || seen.has(name.toLowerCase())) continue
+    seen.add(name.toLowerCase())
+    out.push(name)
+  }
+  return out
+}
 
 // Action multi-select for the Audit Entries report — mirrors the Audit Log
 // page's picker (compact trigger + checkbox panel). Options come from the
@@ -635,6 +676,7 @@ function buildReportParams(): Record<string, unknown> {
     params.lookbackHours = runForm.value.lookbackHours || 24
     if (runForm.value.auditActions.length) params.actions = runForm.value.auditActions
   }
+  if (currentRunType.value?.attributes) params.attributes = splitAttributes(runForm.value.attributes)
   // Admin-view scoping: when an admin runs a report, scope unbounded
   // LDAP queries (recently-added, disabled-accounts, …) to the picked
   // profile's target OU so they only see entries inside the OUs they
@@ -749,6 +791,8 @@ interface JobForm {
   groupCountValue: number
   lookbackHours: number
   auditActions: string[]
+  attributes: string
+  objectType: string
   enabled: boolean
 }
 
@@ -786,6 +830,7 @@ function blankJobForm(): JobForm {
     s3KeyPrefix: '', paramValue: '', lookbackDays: 30,
     groupCountOp: '=', groupCountValue: 0,
     lookbackHours: 24, auditActions: [],
+    attributes: '', objectType: '',
     enabled: true,
   }
 }
@@ -799,6 +844,8 @@ const jobFormParamLabel      = computed(() => currentJobFormType.value?.paramLab
 const jobFormNeedsLookback   = computed(() => !!currentJobFormType.value?.lookback)
 const jobFormNeedsGroupCount = computed(() => !!currentJobFormType.value?.groupCount)
 const jobFormNeedsAudit      = computed(() => !!currentJobFormType.value?.auditFilters)
+const jobFormNeedsAttributes = computed(() => !!currentJobFormType.value?.attributes)
+const jobFormNeedsObjectType = computed(() => OBJECT_TYPE_REPORTS.has(jobForm.value.reportType))
 
 // Action multi-select for a scheduled Audit Entries job — same picker as the
 // runner above, but with its own open/ref state so the two menus don't fight.
@@ -838,6 +885,10 @@ function openEditJob(job: Job): void {
     groupCountValue: (job.reportParams?.groupCountValue as number) ?? 0,
     lookbackHours: (job.reportParams?.lookbackHours as number) ?? 24,
     auditActions: Array.isArray(job.reportParams?.actions) ? (job.reportParams!.actions as string[]) : [],
+    attributes: Array.isArray(job.reportParams?.attributes)
+      ? (job.reportParams!.attributes as string[]).join(', ')
+      : String(job.reportParams?.attributes ?? ''),
+    objectType: (job.reportParams?.objectType as string) ?? '',
     enabled: job.enabled,
   }
   showJobForm.value = true
@@ -860,6 +911,8 @@ function buildJobPayload(): Record<string, unknown> {
     params.lookbackHours = jobForm.value.lookbackHours || 24
     if (jobForm.value.auditActions.length) params.actions = jobForm.value.auditActions
   }
+  if (currentJobFormType.value?.attributes) params.attributes = splitAttributes(jobForm.value.attributes)
+  if (jobFormNeedsObjectType.value && jobForm.value.objectType) params.objectType = jobForm.value.objectType
   return {
     name: jobForm.value.name,
     reportType: jobForm.value.reportType,

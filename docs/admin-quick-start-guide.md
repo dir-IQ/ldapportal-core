@@ -138,6 +138,10 @@ For operational reports, go to **Reports** in the sidebar:
 - Users in Group, Users in Branch, Users with No Group
 - Recently Added / Modified / Deleted users
 - Disabled Accounts, Missing Profile Groups
+- Missing Data — pick a branch DN and a comma-separated list of attributes;
+  lists every entry under the branch that has any of those attributes absent or
+  blank, with a "Missing Attributes" column naming the gaps. Optionally narrow
+  to users or groups. Can also be scheduled.
 - All available in CSV and PDF format
 
 ---
