@@ -22,4 +22,5 @@ public enum OperationalReportType {
     DISABLED_ACCOUNTS,
     MISSING_PROFILE_GROUPS,
     AUDIT_ENTRIES,
+    MISSING_DATA,
 }
