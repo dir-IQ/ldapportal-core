@@ -87,6 +87,7 @@ const router = createRouter({
           path: 'directories/:dirId/playbooks',
           name: 'playbooks',
           component: () => import('@/views/playbooks/PlaybooksView.vue'),
+          meta: { requiresPlaybooks: true },
         },
 
         // Pending Approvals
@@ -248,7 +249,7 @@ const router = createRouter({
           path: 'superadmin/playbooks',
           name: 'superadminPlaybooks',
           component: () => import('@/views/playbooks/PlaybooksView.vue'),
-          meta: { requiresSuperadmin: true },
+          meta: { requiresSuperadmin: true, requiresPlaybooks: true },
         },
 
         // ── Commercial (ee) routes — empty in a community build ──────────
@@ -376,6 +377,10 @@ router.beforeEach(async (to) => {
     return { path: '/dashboard' }
   }
   if (to.meta.requiresHr && !auth.isHrEnabled) {
+    return { path: '/dashboard' }
+  }
+  // Lifecycle Playbooks master switch (Settings → User/Group Edits).
+  if (to.meta.requiresPlaybooks && !auth.isPlaybooksEnabled) {
     return { path: '/dashboard' }
   }
   if (to.meta.requiresHybridAccess) {

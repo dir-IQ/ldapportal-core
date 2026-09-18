@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
-const state = vi.hoisted(() => ({ features: [] as string[] }))
+const state = vi.hoisted(() => ({ features: [] as string[], playbooksEnabled: true }))
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { dirId: 'd1' } }) }))
 vi.mock('@/stores/notifications', () => ({
@@ -21,6 +21,7 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
     hasFeature: (v: string) => state.features.includes(v),
     isIsvaIntegrationEnabled: false,
+    get isPlaybooksEnabled() { return state.playbooksEnabled },
   }),
 }))
 vi.mock('@/composables/useApi', () => ({
@@ -94,7 +95,7 @@ const ALL = [
 ]
 
 describe('UserListView feature gating', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => { vi.clearAllMocks(); state.playbooksEnabled = true })
 
   it('shows all actions when the admin has every feature', async () => {
     // Move is now also gated on having ≥1 OTHER accessible profile to move
@@ -136,6 +137,15 @@ describe('UserListView feature gating', () => {
     expect(t).not.toContain('Run playbook')
     // Read-only action that isn't feature-gated stays available.
     expect(t).toContain('View history')
+  })
+
+  it('hides Run playbook when the Lifecycle Playbooks setting is off, even with the feature', async () => {
+    state.playbooksEnabled = false
+    const wrapper = await mountWith(ALL)
+    const t = texts(wrapper)
+    expect(t).not.toContain('Run playbook')
+    // Unrelated write actions stay visible.
+    expect(t).toContain('Edit')
   })
 
   it('shows export but not create for a read-only admin that can export', async () => {

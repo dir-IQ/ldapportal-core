@@ -17,12 +17,14 @@ import { defineComponent, h, ref } from 'vue'
 const state = vi.hoisted(() => ({
   mounts: [] as string[],   // dirId of every UsersPage mount, in order
   dirty: { value: false },  // what the UsersPage guard reports
+  playbooksEnabled: true,   // ApplicationSettings.playbooksEnabled as /auth/me reports it
 }))
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
     isSuperadmin: false, isComplianceEnabled: false, isAlertingEnabled: false,
     isHrEnabled: false, isDirectorySyncEnabled: false, isAnyApprovalEnabled: false,
+    get isPlaybooksEnabled() { return state.playbooksEnabled },
     username: 'admin', hasSuperadminPermission: () => false, hasFeature: () => true, logout: vi.fn(),
   }),
 }))
@@ -114,11 +116,41 @@ async function pick(wrapper: ReturnType<typeof mount>, id: string) {
   await flushPromises()
 }
 
+describe('AppLayout playbooks nav gating', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    state.mounts = []
+    state.dirty.value = false
+    state.playbooksEnabled = true
+    document.body.innerHTML = ''
+  })
+
+  function navLabels(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('a.nav-item').map(a => a.text().trim())
+  }
+
+  it('shows the Playbooks link when the Lifecycle Playbooks setting is on', async () => {
+    const wrapper = await mountOnUsers()
+    expect(navLabels(wrapper)).toContain('Playbooks')
+    wrapper.unmount()
+  })
+
+  it('hides the Playbooks link when the Lifecycle Playbooks setting is off', async () => {
+    state.playbooksEnabled = false
+    const wrapper = await mountOnUsers()
+    expect(navLabels(wrapper)).not.toContain('Playbooks')
+    // Neighbouring links are unaffected.
+    expect(navLabels(wrapper)).toContain('Users')
+    wrapper.unmount()
+  })
+})
+
 describe('AppLayout profile picker', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     state.mounts = []
     state.dirty.value = false
+    state.playbooksEnabled = true
     document.body.innerHTML = ''
   })
 

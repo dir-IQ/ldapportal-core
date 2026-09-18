@@ -47,6 +47,12 @@ export const useAuthStore = defineStore('auth', () => {
   const isDirectorySearchInlineEditEnabled = computed(
     () => principal.value?.directorySearchInlineEditEnabled !== false,
   )
+  // Global on/off switch for Lifecycle Playbooks (ApplicationSettings, not
+  // entitlement-gated). Default true so a client talking to a server that
+  // predates the field keeps showing the feature.
+  const isPlaybooksEnabled = computed(
+    () => principal.value?.playbooksEnabled !== false,
+  )
   // Global approval master switches (ApplicationSettings, not entitlement-
   // gated). Default true preserves prior behaviour for a client talking to a
   // server that predates these fields.
@@ -85,6 +91,7 @@ export const useAuthStore = defineStore('auth', () => {
       isvaIntegrationEnabled: data.isvaIntegrationEnabled === true,
       directorySyncEnabled: data.directorySyncEnabled === true,
       directorySearchInlineEditEnabled: data.directorySearchInlineEditEnabled !== false,
+      playbooksEnabled: data.playbooksEnabled !== false,
       approvalsEnabled: data.approvalsEnabled !== false,
       selfRegistrationApprovalEnabled: data.selfRegistrationApprovalEnabled !== false,
       // Effective system-scoped superadmin permissions (already owner-expanded
@@ -299,6 +306,7 @@ export const useAuthStore = defineStore('auth', () => {
     principal, isLoggedIn, isSuperadmin, isSelfService, username,
     themePreference, authType, hasFeature, isHrEnabled, isComplianceEnabled,
     isAlertingEnabled, isDirectorySyncEnabled, isIsvaIntegrationEnabled, isCommunityDistribution, isDirectorySearchInlineEditEnabled,
+    isPlaybooksEnabled,
     isApprovalsEnabled, isSelfRegistrationApprovalEnabled, isAnyApprovalEnabled,
     hasSuperadminPermission, isSuperadminOwner,
     setupPending, init, reinit, login, selfServiceLogin, logout,

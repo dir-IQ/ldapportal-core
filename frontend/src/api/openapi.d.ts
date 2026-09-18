@@ -3262,6 +3262,7 @@ export interface components {
             primaryColour?: string;
             secondaryColour?: string;
             directorySearchInlineEditEnabled?: boolean;
+            playbooksEnabled?: boolean;
             approvalsEnabled?: boolean;
             selfRegistrationApprovalEnabled?: boolean;
             /** Format: int32 */
@@ -3323,6 +3324,7 @@ export interface components {
             primaryColour?: string;
             secondaryColour?: string;
             directorySearchInlineEditEnabled?: boolean;
+            playbooksEnabled?: boolean;
             approvalsEnabled?: boolean;
             selfRegistrationApprovalEnabled?: boolean;
             /** Format: int32 */

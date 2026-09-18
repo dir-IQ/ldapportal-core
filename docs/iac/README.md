@@ -238,6 +238,10 @@ Load-bearing fields: `appName` (required), `sessionTimeoutMinutes` (≥1),
 `smtpUseTls`, `s3PresignedUrlTtlHours` (≥1), `enabledAuthTypes`
 (`LOCAL`/`LDAP`/`OIDC`/`WEBSEAL`); plus SMTP (`smtpHost`/`smtpPort`/…), S3, the
 LDAP and OIDC admin-auth providers, SIEM/webhook, WebSEAL headers, and branding.
+Feature switches — `directorySearchInlineEditEnabled`, `playbooksEnabled`,
+`approvalsEnabled`, `selfRegistrationApprovalEnabled` — are optional booleans;
+omit one to leave the stored value untouched (all default to `true` on a fresh
+install).
 The six credential fields — `smtpPassword`, `s3SecretKey`, `ldapAuthBindPassword`,
 `oidcClientSecret`, `siemAuthToken`, `webhookAuthHeader` — are **write-only**
 (send to set, omit to preserve, empty string to clear); read responses expose

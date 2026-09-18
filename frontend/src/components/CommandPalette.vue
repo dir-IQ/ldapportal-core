@@ -64,6 +64,7 @@ interface RouteMetaFlags {
   requiresAlerting?: boolean
   requiresHr?: boolean
   requiresApprovals?: boolean
+  requiresPlaybooks?: boolean
 }
 
 const router = useRouter()
@@ -155,6 +156,8 @@ const commands = computed<Command[]>(() => {
     // ...and the global approvals master switch (directory-scoped approvals
     // route only; the superadmin queue stays reachable to drain in-flight).
     if (meta.requiresApprovals && !auth.isAnyApprovalEnabled) continue
+    // ...and the Lifecycle Playbooks master switch.
+    if (meta.requiresPlaybooks && !auth.isPlaybooksEnabled) continue
 
     // For directory-scoped routes, substitute the current dirId
     if (path.includes(':dirId')) {

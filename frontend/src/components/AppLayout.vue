@@ -77,7 +77,7 @@
                 <span v-if="!collapsed">Approvals</span>
                 <span v-if="pendingCount > 0 && !collapsed" class="ml-auto bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">{{ pendingCount }}</span>
               </RouterLink>
-              <RouterLink :to="{ path: `/directories/${currentDirId}/playbooks` }" class="nav-item">
+              <RouterLink v-if="auth.isPlaybooksEnabled" :to="{ path: `/directories/${currentDirId}/playbooks` }" class="nav-item">
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12M4 8h12M4 12h8M4 16h6"/><path d="M15 12l2 2-2 2"/></svg>
                 <span v-if="!collapsed">Playbooks</span>
               </RouterLink>
@@ -188,7 +188,7 @@
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="2" width="14" height="16" rx="2"/><path d="M7 6h6M7 10h6M7 14h3"/><path d="M14 13l1.5 1.5 3-3"/></svg>
             <span v-if="!collapsed">Provisioning Profiles</span>
           </RouterLink>
-          <RouterLink to="/superadmin/playbooks" class="nav-item">
+          <RouterLink v-if="auth.isPlaybooksEnabled" to="/superadmin/playbooks" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12M4 8h12M4 12h8M4 16h6"/><path d="M15 12l2 2-2 2"/></svg>
             <span v-if="!collapsed">Lifecycle Playbooks</span>
           </RouterLink>

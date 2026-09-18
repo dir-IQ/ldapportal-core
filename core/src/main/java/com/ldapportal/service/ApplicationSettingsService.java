@@ -74,6 +74,12 @@ public class ApplicationSettingsService {
         return getEntity().isSelfRegistrationApprovalEnabled();
     }
 
+    /** Global on/off switch for the Lifecycle Playbooks feature. Defaults true. */
+    @Transactional(readOnly = true)
+    public boolean isPlaybooksEnabled() {
+        return getEntity().isPlaybooksEnabled();
+    }
+
     /**
      * Returns only the branding subset of the settings (public / unauthenticated).
      */
@@ -126,6 +132,7 @@ public class ApplicationSettingsService {
             UpdateApplicationSettingsRequest req = new UpdateApplicationSettingsRequest(
                     s.getAppName(), s.getLogoUrl(), s.getPrimaryColour(), s.getSecondaryColour(),
                     s.isDirectorySearchInlineEditEnabled(),
+                    s.isPlaybooksEnabled(),
                     s.isApprovalsEnabled(), s.isSelfRegistrationApprovalEnabled(),
                     s.getSessionTimeoutMinutes(),
                     s.getSmtpHost(), s.getSmtpPort(), s.getSmtpSenderAddress(), s.getSmtpUsername(),
@@ -184,6 +191,9 @@ public class ApplicationSettingsService {
         // server defaults when an older client posts without the field.
         if (req.directorySearchInlineEditEnabled() != null) {
             s.setDirectorySearchInlineEditEnabled(req.directorySearchInlineEditEnabled());
+        }
+        if (req.playbooksEnabled() != null) {
+            s.setPlaybooksEnabled(req.playbooksEnabled());
         }
         // Approval toggles — null means "leave existing" (preserves the column
         // default for legacy clients that omit the fields).
@@ -284,6 +294,7 @@ public class ApplicationSettingsService {
                 s.getPrimaryColour(),
                 s.getSecondaryColour(),
                 s.isDirectorySearchInlineEditEnabled(),
+                s.isPlaybooksEnabled(),
                 s.isApprovalsEnabled(),
                 s.isSelfRegistrationApprovalEnabled(),
                 s.getSessionTimeoutMinutes(),
@@ -346,6 +357,7 @@ public class ApplicationSettingsService {
                 null,
                 "LDAP Portal", null, null, null,
                 true,    // directorySearchInlineEditEnabled defaults true
+                true,    // playbooksEnabled defaults true
                 true,    // approvalsEnabled defaults true
                 true,    // selfRegistrationApprovalEnabled defaults true
                 60,

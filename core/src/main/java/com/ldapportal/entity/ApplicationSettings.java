@@ -86,6 +86,17 @@ public class ApplicationSettings {
     @Column(name = "directory_search_inline_edit_enabled", nullable = false)
     private boolean directorySearchInlineEditEnabled = true;
 
+    /**
+     * Global on/off switch for the Lifecycle Playbooks feature. When false
+     * the playbook nav links, views and the "Run playbook" user action are
+     * hidden and the {@code /playbooks} API rejects requests with 403.
+     * Playbook definitions and execution history are left untouched so the
+     * feature resumes where it left off when re-enabled. Defaults true so
+     * existing installs keep the behaviour they had at upgrade time.
+     */
+    @Column(name = "playbooks_enabled", nullable = false)
+    private boolean playbooksEnabled = true;
+
     // ── Session ───────────────────────────────────────────────────────────────
 
     @Column(name = "session_timeout_minutes", nullable = false)
