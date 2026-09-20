@@ -55,9 +55,13 @@ public class MembershipFunction {
                     return MembershipDecision.out(identity);
                 }
             } catch (LDAPException ex) {
-                log.warn("Sync set {}: invalid applicability filter [{}]: {}",
-                        set.getId(), filter, ex.getMessage());
-                return MembershipDecision.out(identity);
+                // A filter that cannot be evaluated is a fault, not an OUT: an OUT
+                // would delete every tracked target entry as each one is touched.
+                // Propagate so the request is retried (the worker releases its
+                // claim) and the reconcile records an incomplete plan.
+                throw new IllegalStateException("Sync set " + set.getId()
+                        + ": applicability filter [" + filter + "] cannot be evaluated: "
+                        + ex.getMessage(), ex);
             }
         }
 

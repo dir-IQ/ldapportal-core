@@ -9,6 +9,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.IdClass;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -28,7 +29,12 @@ import java.util.UUID;
  * rows arrives in a later phase. Lose the index → reconcile rebuilds it.
  */
 @Entity
-@Table(name = "sync_membership")
+@Table(name = "sync_membership",
+        // One target entry is owned by at most one identity per set. The engine
+        // retires stale rows before writing a row for a target DN, and the OUT
+        // path never deletes a target DN another live row still owns.
+        uniqueConstraints = @UniqueConstraint(name = "uq_sync_membership_target",
+                columnNames = {"sync_set_id", "target_dn"}))
 @IdClass(MembershipId.class)
 @Getter
 @Setter

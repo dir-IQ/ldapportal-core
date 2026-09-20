@@ -30,6 +30,15 @@ public interface ChangelogStrategy {
     /** Extract the target DN of the changed entry. */
     String extractTargetDn(SearchResultEntry entry);
 
+    /**
+     * For a rename/move record, the DN the entry ended up at (the record's
+     * {@link #extractTargetDn target DN} is the pre-move DN). Empty for any
+     * other change type, or when the format does not carry the new name.
+     */
+    default Optional<String> extractPostModifyDn(SearchResultEntry entry) {
+        return Optional.empty();
+    }
+
     /** Build the detail map for the {@link com.ldapportal.entity.AuditEvent}. */
     Map<String, Object> extractDetail(SearchResultEntry entry);
 

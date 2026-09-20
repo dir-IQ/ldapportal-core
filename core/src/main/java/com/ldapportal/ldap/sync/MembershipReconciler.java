@@ -4,7 +4,6 @@ package com.ldapportal.ldap.sync;
 import com.ldapportal.dto.sync.SyncReconcilePreview;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
-import com.ldapportal.entity.MembershipId;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.MembershipState;
@@ -102,14 +101,36 @@ public class MembershipReconciler {
         Guard guard = evaluateGuard(plan);
 
         long epoch = epochSequence.incrementAndGet();
+        int faults = 0;
         for (Planned p : plan.entries) {
-            engine.process(syncSetId, p.entry.getDN(), guard.tripped());
-            stampSeen(syncSetId, p.identity, epoch);
+            // Per-entry isolation: one entry whose recompute faults (a source read
+            // that throws, a contended index row) must not abort the run and skip
+            // the sweep for everyone else. It is still stamped as seen — it was
+            // enumerated, so it must not become a not-seen delete candidate.
+            try {
+                engine.process(syncSetId, p.entry.getDN(), guard.tripped());
+            } catch (Exception ex) {
+                faults++;
+                log.warn("Sync set {}: reconcile recompute of {} faulted ({}); continuing",
+                        syncSetId, p.entry.getDN(), ex.toString());
+            } finally {
+                stampSeen(syncSetId, p.identity, epoch);
+            }
         }
         if (plan.complete) {
             for (Membership row : membershipRepo.findNotSeen(syncSetId, epoch)) {
-                engine.process(syncSetId, row.getIdentity(), guard.tripped());
+                try {
+                    engine.process(syncSetId, row.getIdentity(), guard.tripped());
+                } catch (Exception ex) {
+                    faults++;
+                    log.warn("Sync set {}: reconcile sweep of identity {} faulted ({}); continuing",
+                            syncSetId, row.getIdentity(), ex.toString());
+                }
             }
+        }
+        if (faults > 0) {
+            log.warn("Sync set {}: reconcile finished with {} faulted recompute(s); they retry next run",
+                    syncSetId, faults);
         }
         if (guard.tripped()) {
             log.warn("Sync set {}: delete guard TRIPPED — {} planned deletes suppressed "
@@ -173,13 +194,15 @@ public class MembershipReconciler {
                 if (row == null || row.getState() != MembershipState.APPLIED) {
                     adds++;
                 }
-            } else if (row != null && row.getState() == MembershipState.APPLIED) {
+            } else if (row != null) {
+                // Any tracked state: the engine's OUT path deletes for FAILED and
+                // PENDING rows too, so the guard must count what it would do.
                 deletes.add(row); // enumerated but now out of scope
             }
         }
         if (complete) {
             for (Membership row : managed) {
-                if (row.getState() == MembershipState.APPLIED && !seen.contains(row.getIdentity())) {
+                if (!seen.contains(row.getIdentity())) {
                     deletes.add(row); // not seen this scan
                 }
             }
@@ -239,11 +262,19 @@ public class MembershipReconciler {
         return new Context(set, link, source, strategy);
     }
 
+    /**
+     * A targeted column update, not an entity save: the engine (worker thread, or
+     * another instance) may be writing the same versioned row concurrently, and an
+     * optimistic-lock failure here used to abort the whole reconcile.
+     */
     private void stampSeen(UUID syncSetId, String identity, long epoch) {
-        membershipRepo.findById(new MembershipId(syncSetId, identity)).ifPresent(m -> {
-            m.setLastScanEpoch(epoch);
-            membershipRepo.save(m);
-        });
+        try {
+            membershipRepo.stampScanEpoch(syncSetId, identity, epoch);
+        } catch (Exception ex) {
+            // Worst case the row looks not-seen and is re-read per identity before
+            // any delete, so a failed stamp can only cost work, never an entry.
+            log.debug("Sync set {}: could not stamp scan epoch on {}: {}", syncSetId, identity, ex.toString());
+        }
     }
 
     private List<SearchResultEntry> enumerateSource(Context ctx) {
@@ -251,13 +282,17 @@ public class MembershipReconciler {
                 ? ctx.set.getObjectScopeBaseDn() : ctx.source.getBaseDn();
         SearchScope scope = SyncScopes.searchScope(ctx.set);
         String idAttr = SyncIdentity.attribute(ctx.set, ctx.strategy);
+        int pageSize = ctx.source.getPagingSize();
         return connectionFactory.withConnectionUnreplicated(ctx.source, conn -> {
             // Fetch user attributes ("*") so membership can be evaluated for the
             // plan, plus the identity attribute explicitly (it may be operational,
-            // e.g. entryUUID, which "*" does not return).
+            // e.g. entryUUID, which "*" does not return). Paged, so a scope larger
+            // than the server's size limit is still enumerated completely — the
+            // not-seen sweep is gated on completeness, and an unpaged search that
+            // tripped the limit made every reconcile of a large scope a no-op.
             SearchRequest req = new SearchRequest(base, scope,
                     com.unboundid.ldap.sdk.Filter.createPresenceFilter("objectClass"), "*", idAttr);
-            return new ArrayList<>(conn.search(req).getSearchEntries());
+            return SyncPagedSearch.all(conn, req, pageSize);
         });
     }
 

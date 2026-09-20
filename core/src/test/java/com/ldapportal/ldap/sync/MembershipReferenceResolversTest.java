@@ -4,6 +4,7 @@ package com.ldapportal.ldap.sync;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
+import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.repository.MembershipRepository;
 import com.ldapportal.repository.SyncSetRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -102,12 +103,24 @@ class MembershipReferenceResolversTest {
         assertThat(resolvers.forLink(link).resolveTargetDn(SRC_DN)).contains("uid=alice,ou=people,c=us");
     }
 
+    @Test
+    void rowsNotApplied_areIgnored_soReferencesNeverPointAtAbsentTargets() {
+        Membership failed = row(ownSetId, "uid=alice,ou=users,c=us");
+        failed.setState(MembershipState.FAILED);
+        Membership review = row(otherSetId, "uid=alice,ou=people,c=us");
+        review.setState(MembershipState.REVIEW);
+        when(membershipRepo.findAllBySourceDn(SyncDnUtil.normalize(SRC_DN))).thenReturn(List.of(failed, review));
+
+        assertThat(resolvers.forLink(link).resolveTargetDn(SRC_DN)).isEmpty();
+    }
+
     private static Membership row(UUID setId, String targetDn) {
         Membership m = new Membership();
         m.setSyncSetId(setId);
         m.setIdentity(UUID.randomUUID().toString());
         m.setSourceDn(SyncDnUtil.normalize(SRC_DN));
         m.setTargetDn(targetDn);
+        m.setState(MembershipState.APPLIED);
         return m;
     }
 }

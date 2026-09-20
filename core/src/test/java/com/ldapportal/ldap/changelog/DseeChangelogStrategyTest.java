@@ -144,6 +144,38 @@ class DseeChangelogStrategyTest {
         assertThat(detail).containsEntry("newSuperior", "ou=people,dc=test");
     }
 
+    // ── extractPostModifyDn (the DN a rename/move landed at) ─────────────────
+
+    @Test
+    void extractPostModifyDn_modrdnWithNewSuperior_isNewRdnUnderNewSuperior() {
+        SearchResultEntry entry = entry(
+                new Attribute("changeType", "modrdn"),
+                new Attribute("targetDN", "uid=john,ou=staging,dc=test"),
+                new Attribute("newRDN", "uid=jane"),
+                new Attribute("newSuperior", "ou=people,dc=test"));
+
+        assertThat(strategy.extractPostModifyDn(entry)).contains("uid=jane,ou=people,dc=test");
+    }
+
+    @Test
+    void extractPostModifyDn_plainRename_keepsOldParent() {
+        SearchResultEntry entry = entry(
+                new Attribute("changeType", "modrdn"),
+                new Attribute("targetDN", "uid=john,ou=people,dc=test"),
+                new Attribute("newRDN", "uid=jane"));
+
+        assertThat(strategy.extractPostModifyDn(entry)).contains("uid=jane,ou=people,dc=test");
+    }
+
+    @Test
+    void extractPostModifyDn_emptyForNonRenameRecords() {
+        SearchResultEntry entry = entry(
+                new Attribute("changeType", "modify"),
+                new Attribute("targetDN", "uid=john,ou=people,dc=test"));
+
+        assertThat(strategy.extractPostModifyDn(entry)).isEmpty();
+    }
+
     // ── extractOccurredAt / timestamp parsing ────────────────────────────────
 
     @Test

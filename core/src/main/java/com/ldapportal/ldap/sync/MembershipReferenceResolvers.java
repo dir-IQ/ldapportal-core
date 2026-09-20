@@ -4,6 +4,7 @@ package com.ldapportal.ldap.sync;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
+import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.repository.MembershipRepository;
 import com.ldapportal.repository.SyncSetRepository;
 import lombok.RequiredArgsConstructor;
@@ -58,16 +59,20 @@ public class MembershipReferenceResolvers {
         if (rows.isEmpty()) {
             return Optional.empty();
         }
+        // Only an APPLIED row proves the target entry exists at its target DN. A
+        // FAILED / PENDING / REVIEW row would project a reference to an entry
+        // that may not be there (AD rejects such a MODIFY outright); the closure
+        // re-emits the referrer once the referent lands.
         // Same-link rows win: they are the referrer's own projection space.
         for (Membership m : rows) {
-            if (m.getTargetDn() != null && ownSets.contains(m.getSyncSetId())) {
+            if (isLive(m) && ownSets.contains(m.getSyncSetId())) {
                 return Optional.of(m.getTargetDn());
             }
         }
         // Cross-link: every other link must agree on the target DN.
         Map<String, String> distinct = new LinkedHashMap<>();
         for (Membership m : rows) {
-            if (m.getTargetDn() != null) {
+            if (isLive(m)) {
                 distinct.putIfAbsent(SyncDnUtil.normalize(m.getTargetDn()), m.getTargetDn());
             }
         }
@@ -79,5 +84,10 @@ public class MembershipReferenceResolvers {
                     + "dropping the value as ambiguous", srcDn, distinct.size());
         }
         return Optional.empty();
+    }
+
+    /** A row whose target entry is known to exist at its target DN. */
+    static boolean isLive(Membership m) {
+        return m.getTargetDn() != null && m.getState() == MembershipState.APPLIED;
     }
 }

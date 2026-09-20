@@ -120,9 +120,18 @@ public class SyncChangelogPoller {
                         continue;
                     }
                     long cn = Long.parseLong(id);
+                    // A rename/move record names the PRE-move DN; the post-move DN
+                    // is enqueued as well so a move INTO a set's scope is seen (the
+                    // old DN alone never passes that set's scope check), and a move
+                    // OUT of scope still reaches the set through the old DN.
+                    List<String> changedDns = strategy.extractPostModifyDn(e)
+                            .map(post -> List.of(dn, post))
+                            .orElse(List.of(dn));
                     for (SyncSet set : sets) {
-                        if (SyncScopes.inScope(set, dn)) {
-                            enqueuer.enqueue(set.getId(), dn, cn);
+                        for (String changed : changedDns) {
+                            if (SyncScopes.inScope(set, changed)) {
+                                enqueuer.enqueue(set.getId(), changed, cn);
+                            }
                         }
                     }
                     maxCn = Math.max(maxCn, cn);

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.changelog;
 
+import com.ldapportal.ldap.sync.SyncDnUtil;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResultEntry;
@@ -93,6 +94,22 @@ public class DseeChangelogStrategy implements ChangelogStrategy {
     @Override
     public String extractTargetDn(SearchResultEntry entry) {
         return entry.getAttributeValue("targetDN");
+    }
+
+    @Override
+    public Optional<String> extractPostModifyDn(SearchResultEntry entry) {
+        String type = entry.getAttributeValue("changeType");
+        String newRdn = entry.getAttributeValue("newRDN");
+        String oldDn = entry.getAttributeValue("targetDN");
+        if (type == null || newRdn == null || oldDn == null) {
+            return Optional.empty();
+        }
+        String t = type.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!t.equals("modrdn") && !t.equals("moddn")) {
+            return Optional.empty();
+        }
+        String newDn = SyncDnUtil.afterModifyDn(oldDn, newRdn, entry.getAttributeValue("newSuperior"));
+        return newDn.equals(oldDn) ? Optional.empty() : Optional.of(newDn);
     }
 
     @Override
