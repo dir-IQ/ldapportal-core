@@ -211,6 +211,21 @@ races retry up to 4 times.
 each in-scope identity, then sweeps index rows it didn't see and recomputes
 those (each re-read to confirm absence before any delete). The not-seen sweep
 **only runs after a complete enumeration** — a partial scan never mass-deletes.
+The enumeration is paged (the source directory's *paging size*), so a scope
+larger than the server's size limit still reconciles completely; one entry
+whose recompute faults is logged and skipped, never aborting the run.
+
+**Target ownership:** a target DN has exactly one owning index row per set
+(`sync_membership` is unique on `(sync_set_id, target_dn)`). When an identity
+leaves membership, the engine first checks whether another live row — in this
+or any set writing to the same target directory — still owns that target DN;
+if so it drops only the stale index row and leaves the entry alone. This is
+what keeps a source entry that was deleted and re-created at the same DN (a
+new `entryUUID`) from having its target deleted by the old identity's row.
+
+**Renames:** a failed target MODDN (e.g. the new parent OU does not exist yet)
+marks the row `FAILED` with the *old* target DN retained, so the retry is a
+rename again — never an ADD at the new DN that would orphan the old entry.
 
 ---
 

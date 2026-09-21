@@ -46,6 +46,28 @@ public interface RecomputeRequestRepository extends JpaRepository<RecomputeReque
             + "where r.syncSetId = :syncSetId and r.requestKey = :key and r.claimedAt is not null")
     void deleteIfClaimed(@Param("syncSetId") UUID syncSetId, @Param("key") String key);
 
+    /**
+     * Re-open an existing request for a key: null the claim so a worker mid-process
+     * cannot settle it (its delete-if-still-claimed misses) and the newer source
+     * state is reprocessed. A row-count update, never an entity write, so a row the
+     * worker deletes concurrently yields 0 instead of a stale-state exception.
+     * Returns 1 when a row existed, 0 when the caller must insert one.
+     */
+    @Transactional
+    @Modifying
+    @Query("update RecomputeRequest r set r.claimedAt = null "
+            + "where r.syncSetId = :syncSetId and r.requestKey = :key")
+    int reopen(@Param("syncSetId") UUID syncSetId, @Param("key") String key);
+
+    /** Keep the highest source cursor seen for a key (behind-cursor triggers leave it alone). */
+    @Transactional
+    @Modifying
+    @Query("update RecomputeRequest r set r.srcCursor = :cursor "
+            + "where r.syncSetId = :syncSetId and r.requestKey = :key "
+            + "and (r.srcCursor is null or r.srcCursor < :cursor)")
+    int bumpCursor(@Param("syncSetId") UUID syncSetId, @Param("key") String key,
+                   @Param("cursor") long cursor);
+
     /** Release a claim so the request is retried (on unexpected processing fault). */
     @Transactional
     @Modifying

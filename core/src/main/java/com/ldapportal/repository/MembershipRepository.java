@@ -7,8 +7,10 @@ import com.ldapportal.entity.enums.MembershipState;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -32,6 +34,39 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
      * picks the same-link row when there is one and otherwise the cross-link consensus.
      */
     List<Membership> findAllBySourceDn(String sourceDn);
+
+    /**
+     * Every row (any set, any state) whose target DN matches, case-insensitively.
+     * The engine's OUT path uses this to refuse deleting a target entry that
+     * another live identity still owns.
+     */
+    @Query("select m from Membership m where lower(m.targetDn) = lower(:targetDn)")
+    List<Membership> findAllByTargetDnIgnoreCase(@Param("targetDn") String targetDn);
+
+    /**
+     * Retire the other rows of one set that still claim {@code targetDn}: a
+     * target entry has exactly one owner per set, so when {@code identity} takes
+     * a target DN (ADD, adoption, or rename) any other row pointing there is
+     * stale index memory (its source entry was deleted, or re-created under a
+     * new identity at the same DN). Returns the number retired.
+     */
+    @Transactional
+    @Modifying
+    @Query("delete from Membership m where m.syncSetId = :syncSetId "
+            + "and lower(m.targetDn) = lower(:targetDn) and m.identity <> :identity")
+    int retireOtherOwners(@Param("syncSetId") UUID syncSetId, @Param("targetDn") String targetDn,
+                          @Param("identity") String identity);
+
+    /**
+     * Stamp the reconcile epoch on one row without touching its version, so the
+     * reconciler never contends with the engine's optimistic row writes.
+     */
+    @Transactional
+    @Modifying
+    @Query("update Membership m set m.lastScanEpoch = :epoch "
+            + "where m.syncSetId = :syncSetId and m.identity = :identity")
+    int stampScanEpoch(@Param("syncSetId") UUID syncSetId, @Param("identity") String identity,
+                       @Param("epoch") long epoch);
 
     /** Rows not stamped by the current reconcile epoch (never scanned, or seen in a prior generation). */
     @Query("select m from Membership m where m.syncSetId = :syncSetId "

@@ -555,6 +555,174 @@ class SyncEngineIntegrationTest {
 
     // ── helpers ──────────────────────────────────────────────────────────────────
 
+    // ── Regressions: a target entry the source still has is never deleted ───────
+
+    @Test
+    void deleteAndRecreateAtSameDn_coalescedTrigger_neverDeletesLiveTarget() throws Exception {
+        addPerson("alice", "staff", "alice@v1");
+        engine.process(peopleSet.getId(), dn("alice"));
+        String oldIdentity = membership("alice").getIdentity();
+
+        // Delete + re-create at the same DN (new entryUUID) before the engine sees
+        // either write — exactly what the coalescing queue produces.
+        source.delete(dn("alice"));
+        addPerson("alice", "staff", "alice@v2");
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        // The new identity took the target DN; the stale row was retired with it.
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("mail")).isEqualTo("alice@v2");
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).hasSize(1);
+        assertThat(membership("alice").getIdentity()).isNotEqualTo(oldIdentity);
+
+        // A later reconcile (the not-seen sweep) must leave the live entry alone.
+        reconciler.reconcile(peopleSet.getId());
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).hasSize(1);
+    }
+
+    @Test
+    void staleRowInAnotherSet_goingOut_dropsRowWithoutDeletingOwnedTarget() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        Membership live = membership("alice");
+
+        // A second set on the same link still remembers a (now absent) source entry
+        // whose target DN is the one alice's live row owns — e.g. an identity-key
+        // change or an old identity of the same DN.
+        SyncSet other = setRepo.save(syncSet("people-2", SRC_PEOPLE, DST_USERS,
+                "(&(objectClass=inetOrgPerson)(employeeType=staff))", null));
+        Membership stale = new Membership();
+        stale.setSyncSetId(other.getId());
+        stale.setIdentity("00000000-dead-beef-0000-000000000000");
+        stale.setSourceDn(SyncDnUtil.normalize(dn("ghost")));
+        stale.setTargetDn(live.getTargetDn().toUpperCase(java.util.Locale.ROOT));
+        stale.setContentHash(new byte[0]);
+        stale.setState(MembershipState.FAILED);
+        membershipRepo.save(stale);
+
+        // Ghost has no source entry → OUT. The target DN is owned by a live row, so
+        // the engine must drop the stale row and leave the entry untouched.
+        engine.process(other.getId(), stale.getIdentity());
+
+        assertThat(membershipRepo.findById(
+                new com.ldapportal.entity.MembershipId(other.getId(), stale.getIdentity()))).isEmpty();
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+        assertThat(membership("alice").getState()).isEqualTo(MembershipState.APPLIED);
+    }
+
+    @Test
+    void failedRename_keepsOldTargetDn_andRetriesAsRename_noOrphan() throws Exception {
+        addPerson("bob", "staff", "bob@src");
+        engine.process(peopleSet.getId(), dn("bob"));
+
+        // The source gains a sub-OU the target does not have yet; bob moves into it.
+        source.add(new Entry("ou=sub," + SRC_PEOPLE, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "sub")));
+        source.modifyDN(dn("bob"), "uid=bob", true, "ou=sub," + SRC_PEOPLE);
+        String newSrcDn = "uid=bob,ou=sub," + SRC_PEOPLE;
+        engine.process(peopleSet.getId(), newSrcDn);
+
+        // Rename failed (no parent on the target): FAILED, still remembering the OLD DN.
+        Membership m = membership("bob");
+        assertThat(m.getState()).isEqualTo(MembershipState.FAILED);
+        assertThat(m.getTargetDn()).isEqualToIgnoringCase("uid=bob," + DST_USERS);
+        assertThat(m.getFailReason()).contains("rename");
+        assertThat(target.getEntry("uid=bob," + DST_USERS)).isNotNull();
+
+        // Operator creates the OU; the retry converges as a rename, leaving no orphan.
+        target.add(new Entry("ou=sub," + DST_USERS, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "sub")));
+        engine.process(peopleSet.getId(), newSrcDn);
+
+        assertThat(membership("bob").getState()).isEqualTo(MembershipState.APPLIED);
+        assertThat(target.getEntry("uid=bob,ou=sub," + DST_USERS)).isNotNull();
+        assertThat(target.getEntry("uid=bob," + DST_USERS)).as("old target entry must be gone").isNull();
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).hasSize(1);
+    }
+
+    @Test
+    void unevaluableApplicabilityFilter_isAFault_notAScopeExit() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        // Syntactically valid, but the client-side matcher cannot evaluate an
+        // approximate-match filter. This must not become OUT → delete.
+        peopleSet.setApplicabilityFilter("(cn~=alice)");
+        peopleSet = setRepo.save(peopleSet);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> engine.process(peopleSet.getId(), dn("alice")))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+        assertThat(membership("alice").getState()).isEqualTo(MembershipState.APPLIED);
+    }
+
+    // ── Regressions: a source change is never dropped ───────────────────────────
+
+    @Test
+    void enqueue_afterWorkerSettledTheKey_insertsAFreshRequest() {
+        enqueuer.enqueue(peopleSet.getId(), dn("alice"), null);
+        assertThat(requestRepo.claim(peopleSet.getId(), dn("alice"), java.time.OffsetDateTime.now())).isEqualTo(1);
+        // Worker finishes and settles the request…
+        requestRepo.deleteIfClaimed(peopleSet.getId(), dn("alice"));
+        assertThat(requestRepo.findAllBySyncSetId(peopleSet.getId())).isEmpty();
+
+        // …and a re-trigger that races that settle must land as a new, unclaimed row.
+        enqueuer.enqueue(peopleSet.getId(), dn("alice"), 7L);
+
+        var rows = requestRepo.findAllBySyncSetId(peopleSet.getId());
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).getClaimedAt()).isNull();
+        assertThat(rows.get(0).getSrcCursor()).isEqualTo(7L);
+    }
+
+    @Test
+    void enqueue_onClaimedKey_reopensIt_andKeepsHighestCursor() {
+        enqueuer.enqueue(peopleSet.getId(), dn("alice"), 10L);
+        requestRepo.claim(peopleSet.getId(), dn("alice"), java.time.OffsetDateTime.now());
+
+        enqueuer.enqueue(peopleSet.getId(), dn("alice"), 3L);
+
+        var row = requestRepo.findAllBySyncSetId(peopleSet.getId()).get(0);
+        assertThat(row.getClaimedAt()).as("re-trigger must unclaim so the settle misses").isNull();
+        assertThat(row.getSrcCursor()).isEqualTo(10L);
+    }
+
+    @Test
+    void moveOutOfScope_triggeredByOldDn_deletesTarget() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        source.add(new Entry("ou=archive," + SRC_BASE, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "archive")));
+        source.modifyDN(dn("alice"), "uid=alice", true, "ou=archive," + SRC_BASE);
+
+        // The app intercept / changelog now emit the OLD DN for a move (see
+        // SyncCapturingLdapInterfaceTest); the engine converges it to a scope-exit.
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).isEmpty();
+    }
+
+    @Test
+    void reconcile_pagesThroughScopesLargerThanOnePage() throws Exception {
+        DirectoryConnection src = directoryRepo.findAll().stream()
+                .filter(d -> d.getSlug().equals("src")).findFirst().orElseThrow();
+        src.setPagingSize(2);
+        directoryRepo.save(src);
+        for (int i = 0; i < 7; i++) {
+            addPerson("u" + i, "staff", "u" + i + "@src");
+        }
+
+        int enumerated = reconciler.reconcile(peopleSet.getId());
+
+        // 7 people + the scope base OU itself (enumerated, evaluated OUT).
+        assertThat(enumerated).isEqualTo(8);
+        for (int i = 0; i < 7; i++) {
+            assertThat(target.getEntry("uid=u" + i + "," + DST_USERS)).isNotNull();
+        }
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).hasSize(7);
+    }
+
     private String sourceEntryUuid(String uid) throws Exception {
         return source.getEntry("uid=" + uid + "," + SRC_PEOPLE, "entryUUID").getAttributeValue("entryUUID");
     }

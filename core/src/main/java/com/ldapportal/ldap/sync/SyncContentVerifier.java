@@ -168,12 +168,14 @@ public class SyncContentVerifier {
                 ? ctx.set.getObjectScopeBaseDn() : ctx.source.getBaseDn();
         String idAttr = SyncIdentity.attribute(ctx.set, ctx.strategy);
         SearchScope scope = SyncScopes.searchScope(ctx.set);
+        int pageSize = ctx.source.getPagingSize();
         return connectionFactory.withConnectionUnreplicated(ctx.source, conn -> {
             // "*" for user attributes (so membership/projection can be evaluated)
             // plus the identity attribute explicitly (it may be operational).
+            // Paged: a scope above the server's size limit must still verify completely.
             SearchRequest req = new SearchRequest(base, scope,
                     Filter.createPresenceFilter("objectClass"), "*", idAttr);
-            return new ArrayList<>(conn.search(req).getSearchEntries());
+            return SyncPagedSearch.all(conn, req, pageSize);
         });
     }
 
@@ -181,9 +183,10 @@ public class SyncContentVerifier {
         String base = targetBase(ctx);
         SearchScope scope = SyncScopes.searchScope(ctx.set);
         Filter filter = applicabilityFilter(ctx.set);
+        int pageSize = ctx.target.getPagingSize();
         return connectionFactory.withConnectionUnreplicated(ctx.target, conn -> {
             SearchRequest req = new SearchRequest(base, scope, filter, "*");
-            return new ArrayList<>(conn.search(req).getSearchEntries());
+            return SyncPagedSearch.all(conn, req, pageSize);
         });
     }
 
@@ -227,7 +230,8 @@ public class SyncContentVerifier {
         Map<String, String> targetBySource = new HashMap<>();
         for (SyncSet s : syncSetRepo.findAllByLinkId(ctx.link.getId())) {
             for (Membership m : membershipRepo.findAllBySyncSetId(s.getId())) {
-                if (m.getSourceDn() != null && m.getTargetDn() != null) {
+                // Mirror the engine: only an APPLIED row's target DN is a valid reference.
+                if (m.getSourceDn() != null && MembershipReferenceResolvers.isLive(m)) {
                     targetBySource.putIfAbsent(SyncDnUtil.normalize(m.getSourceDn()), m.getTargetDn());
                 }
             }

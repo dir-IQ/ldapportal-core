@@ -3,6 +3,7 @@ package com.ldapportal.ldap.sync.identity;
 
 import com.ldapportal.entity.enums.DirectoryType;
 import com.unboundid.ldap.sdk.Entry;
+import com.unboundid.ldap.sdk.Filter;
 
 /**
  * Per-{@link DirectoryType} strategy for extracting a <em>stable, server-
@@ -15,10 +16,11 @@ import com.unboundid.ldap.sdk.Entry;
  * standard is a server-assigned immutable opaque id — {@code entryUUID}
  * (OpenLDAP / 389 / OUD / OpenDJ), AD {@code objectGUID}, Entra {@code id}.
  *
- * <p>Phase-0 SPI skeleton: this defines the seam and each family's identity
- * attribute. Full value normalization — notably AD's binary {@code objectGUID}
- * → canonical-string and config-time present/unique validation — lands with the
- * rich-identity phase (see the implementation plan's risk gates).
+ * <p>A strategy owns both directions of its identity: {@link #extract(Entry, String)}
+ * derives the normalized key from an entry, and {@link #identityFilter} builds
+ * the search that finds the entry again from that key. The two must agree —
+ * AD's binary {@code objectGUID} is decoded to a canonical GUID string and
+ * searched with a binary assertion value (see {@code ObjectGuidIdentityStrategy}).
  */
 public interface IdentityStrategy {
 
@@ -49,13 +51,27 @@ public interface IdentityStrategy {
      * identity attribute is {@code null}.
      */
     default String extract(Entry entry) {
-        if (entry == null) {
+        return extract(entry, identityAttribute());
+    }
+
+    /**
+     * Extract and normalize the identity carried in {@code attribute} (the
+     * strategy default or a per-set override). Strategies whose identity is
+     * binary (AD {@code objectGUID}) override this to read the raw bytes.
+     */
+    default String extract(Entry entry, String attribute) {
+        if (entry == null || attribute == null) {
             return null;
         }
-        String attr = identityAttribute();
-        if (attr == null) {
-            return null;
-        }
-        return normalize(entry.getAttributeValue(attr));
+        return normalize(entry.getAttributeValue(attribute));
+    }
+
+    /**
+     * The equality filter that finds the source entry carrying {@code identity}
+     * in {@code attribute}. Must match how {@link #extract(Entry, String)}
+     * derived the value, so a binary identity searches with a binary assertion.
+     */
+    default Filter identityFilter(String attribute, String identity) {
+        return Filter.createEqualityFilter(attribute, identity);
     }
 }

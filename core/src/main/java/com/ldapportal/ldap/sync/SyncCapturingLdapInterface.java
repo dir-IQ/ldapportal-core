@@ -135,25 +135,36 @@ public final class SyncCapturingLdapInterface implements FullLDAPInterface {
         LDAPResult r = delegate.delete(deleteRequest); capture(r, deleteRequest.getDN()); return r;
     }
 
+    // A rename/move is captured under BOTH DNs. Each sync set scopes the two
+    // independently: a move out of scope is only visible through the old DN
+    // (absent at source → OUT → target delete), a move into scope only through
+    // the new one, and a move within scope converges either way as a MODDN.
+    private void captureMove(LDAPResult r, String oldDn, String newDn) {
+        capture(r, oldDn);
+        if (!SyncDnUtil.normalize(newDn).equalsIgnoreCase(SyncDnUtil.normalize(oldDn))) {
+            capture(r, newDn);
+        }
+    }
+
     @Override public LDAPResult modifyDN(String dn, String newRDN, boolean deleteOldRDN) throws LDAPException {
         LDAPResult r = delegate.modifyDN(dn, newRDN, deleteOldRDN);
-        capture(r, SyncDnUtil.afterModifyDn(dn, newRDN, null));
+        captureMove(r, dn, SyncDnUtil.afterModifyDn(dn, newRDN, null));
         return r;
     }
     @Override public LDAPResult modifyDN(String dn, String newRDN, boolean deleteOldRDN, String newSuperiorDN)
             throws LDAPException {
         LDAPResult r = delegate.modifyDN(dn, newRDN, deleteOldRDN, newSuperiorDN);
-        capture(r, SyncDnUtil.afterModifyDn(dn, newRDN, newSuperiorDN));
+        captureMove(r, dn, SyncDnUtil.afterModifyDn(dn, newRDN, newSuperiorDN));
         return r;
     }
     @Override public LDAPResult modifyDN(ModifyDNRequest req) throws LDAPException {
         LDAPResult r = delegate.modifyDN(req);
-        capture(r, SyncDnUtil.afterModifyDn(req.getDN(), req.getNewRDN(), req.getNewSuperiorDN()));
+        captureMove(r, req.getDN(), SyncDnUtil.afterModifyDn(req.getDN(), req.getNewRDN(), req.getNewSuperiorDN()));
         return r;
     }
     @Override public LDAPResult modifyDN(ReadOnlyModifyDNRequest req) throws LDAPException {
         LDAPResult r = delegate.modifyDN(req);
-        capture(r, SyncDnUtil.afterModifyDn(req.getDN(), req.getNewRDN(), req.getNewSuperiorDN()));
+        captureMove(r, req.getDN(), SyncDnUtil.afterModifyDn(req.getDN(), req.getNewRDN(), req.getNewSuperiorDN()));
         return r;
     }
 

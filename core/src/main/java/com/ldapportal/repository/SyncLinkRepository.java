@@ -19,6 +19,9 @@ public interface SyncLinkRepository extends JpaRepository<SyncLink, UUID> {
 
     List<SyncLink> findAllBySourceDirIdAndEnabledTrue(UUID sourceDirId);
 
+    /** Every link (enabled or not) writing into a target directory — the set of index rows that can own its entries. */
+    List<SyncLink> findAllByTargetDirId(UUID targetDirId);
+
     /** Enabled links in CHANGELOG capture mode (the poller's work list). */
     @Query("select l.id from SyncLink l where l.enabled = true and l.captureMode = "
             + "com.ldapportal.entity.enums.SyncCaptureMode.CHANGELOG")

@@ -112,9 +112,12 @@ public class RecomputeEngine {
                 return;
             } catch (OptimisticLockingFailureException | DataIntegrityViolationException race) {
                 if (attempt >= MAX_OPTIMISTIC_RETRIES) {
-                    log.warn("Sync set {}: giving up recompute of [{}] after {} contended attempts",
-                            syncSetId, key, attempt);
-                    return;
+                    // Propagate rather than return: a normal return would let the
+                    // worker settle (delete) the request as done, silently dropping
+                    // the change until the next reconcile. Throwing releases the
+                    // claim so the request is retried on the next drain.
+                    throw new IllegalStateException("Sync set " + syncSetId + ": recompute of [" + key
+                            + "] still contended after " + attempt + " attempts", race);
                 }
                 log.debug("Sync set {}: recompute of [{}] contended (attempt {}); retrying",
                         syncSetId, key, attempt);
@@ -226,6 +229,19 @@ public class RecomputeEngine {
             if (current == null) {
                 return false; // (OUT, none) — no-op
             }
+            // Ownership check: never delete a target entry another live identity
+            // still owns. The classic case is a source entry deleted and re-created
+            // at the same DN (new entryUUID) whose two writes coalesced into one
+            // trigger — the new identity adopted the target entry, and this stale
+            // row must simply be forgotten, not acted on (nor held for review).
+            List<Membership> otherOwners = otherOwners(set, target, identity, current.getTargetDn());
+            if (!otherOwners.isEmpty()) {
+                log.info("Sync set {}: identity {} left membership but target {} is owned by {} other "
+                        + "identity row(s); dropping the stale index row without deleting",
+                        set.getId(), identity, current.getTargetDn(), otherOwners.size());
+                membershipRepo.deleteById(new MembershipId(set.getId(), identity));
+                return false;
+            }
             if (suppressDeletes || set.getDeletePolicy() == SyncDeletePolicy.REVIEW) {
                 // Quarantine the pending delete so it surfaces in the inventory for
                 // an operator decision, rather than deleting. suppressDeletes is the
@@ -296,9 +312,21 @@ public class RecomputeEngine {
         }
 
         // Placement moved under a stable identity → rename/move the target first.
+        // The outcome matters: if the rename fails and the entry is still at the
+        // old DN, stop here and keep the OLD target DN on the row. Falling through
+        // to an ADD at the new DN would leave the old entry orphaned with nothing
+        // in the index remembering it (the row would only ever name the new DN).
+        // A rename that "fails" because the old entry is already gone is fine —
+        // the ADD below recreates it, exactly as a crash-recovery replay would.
         if (current != null && current.getTargetDn() != null
                 && !targetDn.equalsIgnoreCase(current.getTargetDn())) {
-            targetModifyDn(target, current.getTargetDn(), targetDn);
+            String oldTargetDn = current.getTargetDn();
+            ApplyOutcome mv = targetModifyDn(target, oldTargetDn, targetDn);
+            if (!LdapResultInterpreter.success(mv.code()) && readTarget(target, oldTargetDn) != null) {
+                markFailed(set, identity, sourceDn, oldTargetDn, hash,
+                        describe("rename to " + targetDn, mv));
+                return false;
+            }
         }
 
         java.util.Set<String> protectedAttrs = SyncExcludedAttributes.effectiveFor(set);
@@ -331,9 +359,22 @@ public class RecomputeEngine {
     // supplied, and log. The state column drives the inventory UI and the next
     // recompute's branch (e.g. REVIEW re-runs brownfield correlation).
 
-    /** Insert-or-update the index row for {@code identity} in the given {@code state}. */
+    /**
+     * Insert-or-update the index row for {@code identity} in the given {@code state}.
+     *
+     * <p>A target DN has exactly one owner per set (enforced by the unique index on
+     * {@code (sync_set_id, target_dn)}), so before this identity is recorded at
+     * {@code targetDn} any other row of the set still naming that DN is retired:
+     * it is stale memory of a source entry that was deleted, or re-created under a
+     * new identity at the same DN, and the target entry now belongs to this one.
+     */
     private void upsert(SyncSet set, String identity, String sourceDn, String targetDn,
                         byte[] hash, MembershipState state, String failReason, Membership current) {
+        int retired = membershipRepo.retireOtherOwners(set.getId(), targetDn, identity);
+        if (retired > 0) {
+            log.info("Sync set {}: retired {} stale index row(s) that still named target {} now owned by {}",
+                    set.getId(), retired, targetDn, identity);
+        }
         Membership m = current != null ? current : new Membership();
         if (current == null) {
             m.setSyncSetId(set.getId());
@@ -363,6 +404,34 @@ public class RecomputeEngine {
                 : (current != null ? current.getContentHash() : new byte[0]);
         upsert(set, identity, sourceDn, targetDn, effectiveHash, MembershipState.REVIEW, reason, current);
         log.info("Sync set {}: identity {} quarantined for REVIEW — {}", set.getId(), identity, reason);
+    }
+
+    /**
+     * Index rows other than {@code identity} that still claim {@code targetDn} in
+     * any set writing into the same target directory. Non-empty means the target
+     * entry is (or is about to be) somebody else's, so an OUT for this identity
+     * must not delete it.
+     */
+    private List<Membership> otherOwners(SyncSet set, DirectoryConnection target,
+                                         String identity, String targetDn) {
+        if (targetDn == null) {
+            return List.of();
+        }
+        java.util.Set<UUID> setsOnTarget = new java.util.HashSet<>();
+        for (SyncLink l : syncLinkRepo.findAllByTargetDirId(target.getId())) {
+            for (SyncSet s : syncSetRepo.findAllByLinkId(l.getId())) {
+                setsOnTarget.add(s.getId());
+            }
+        }
+        setsOnTarget.add(set.getId());
+        List<Membership> owners = new java.util.ArrayList<>();
+        for (Membership m : membershipRepo.findAllByTargetDnIgnoreCase(targetDn)) {
+            boolean self = m.getSyncSetId().equals(set.getId()) && m.getIdentity().equals(identity);
+            if (!self && setsOnTarget.contains(m.getSyncSetId())) {
+                owners.add(m);
+            }
+        }
+        return owners;
     }
 
     /** A transient (unsaved) membership used to adopt an existing target entry. */
@@ -402,9 +471,9 @@ public class RecomputeEngine {
         }
         String base = set.getObjectScopeBaseDn() != null ? set.getObjectScopeBaseDn() : source.getBaseDn();
         SearchScope scope = SyncScopes.searchScope(set);
+        com.unboundid.ldap.sdk.Filter f = SyncIdentity.filter(set, strategy, identity);
         return connectionFactory.withConnectionUnreplicated(source, conn -> {
             try {
-                com.unboundid.ldap.sdk.Filter f = com.unboundid.ldap.sdk.Filter.createEqualityFilter(idAttr, identity);
                 SearchRequest req = new SearchRequest(base, scope, f, "*", idAttr);
                 List<SearchResultEntry> entries = conn.search(req).getSearchEntries();
                 return entries.isEmpty() ? null : entries.get(0);

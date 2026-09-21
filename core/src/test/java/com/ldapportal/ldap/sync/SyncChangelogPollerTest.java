@@ -144,6 +144,36 @@ class SyncChangelogPollerTest {
                 .noneMatch(m -> m.getState() == MembershipState.FAILED);
     }
 
+    @Test
+    void poll_modrdnRecord_enqueuesBothPreAndPostMoveDns() throws Exception {
+        // Start OUTSIDE the set's scope, then move INTO it. The changelog modrdn
+        // record names the pre-move DN, which the scope check rejects; without the
+        // post-move DN the entry would never sync until a reconcile.
+        source.add(new Entry("ou=staging," + SRC_BASE,
+                new Attribute("objectClass", "top", "organizationalUnit"), new Attribute("ou", "staging")));
+        source.add(new Entry("uid=carol,ou=staging," + SRC_BASE,
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", "carol"), new Attribute("cn", "carol"), new Attribute("sn", "carol")));
+        poller.pollOne(link.getId());
+        drain();
+        assertThat(target.getEntry("uid=carol," + DST_USERS)).isNull();
+
+        source.modifyDN("uid=carol,ou=staging," + SRC_BASE, "uid=carol", true, SRC_PEOPLE);
+        poller.pollOne(link.getId());
+
+        assertThat(requestRepo.findAllBySyncSetId(peopleSet.getId()))
+                .extracting(r -> r.getRequestKey())
+                .contains("uid=carol," + SRC_PEOPLE);
+        drain();
+        assertThat(target.getEntry("uid=carol," + DST_USERS)).isNotNull();
+
+        // And the reverse: a move OUT of scope reaches the set through the old DN.
+        source.modifyDN("uid=carol," + SRC_PEOPLE, "uid=carol", true, "ou=staging," + SRC_BASE);
+        poller.pollOne(link.getId());
+        drain();
+        assertThat(target.getEntry("uid=carol," + DST_USERS)).isNull();
+    }
+
     private void drain() {
         var batch = requestRepo.findAll();
         batch.forEach(r -> engine.process(r.getSyncSetId(), r.getRequestKey()));
