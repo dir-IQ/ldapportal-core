@@ -131,12 +131,6 @@ public class NotificationService {
     // ── Read ──────────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
-    public List<NotificationDto> getUnread(UUID accountId) {
-        return notificationRepo.findByAccountIdAndReadFalseOrderByCreatedAtDesc(accountId)
-                .stream().map(NotificationDto::from).toList();
-    }
-
-    @Transactional(readOnly = true)
     public Page<NotificationDto> getAll(UUID accountId, int page, int size) {
         return notificationRepo.findByAccountIdOrderByCreatedAtDesc(
                 accountId, PageRequest.of(page, size)).map(NotificationDto::from);

@@ -48,7 +48,7 @@ public class AuditDataSource {
     @Column(name = "trusted_certificate_pem", columnDefinition = "TEXT")
     private String trustedCertificatePem;
 
-    @Column(name = "bind_dn", nullable = false)
+    @Column(name = "bind_dn", nullable = false, length = 1000)
     private String bindDn;
 
     /** AES-256 encrypted bind password. */
@@ -56,7 +56,7 @@ public class AuditDataSource {
     private String bindPasswordEncrypted;
 
     /** Base DN for changelog reads, e.g. {@code cn=changelog}. */
-    @Column(name = "changelog_base_dn", nullable = false)
+    @Column(name = "changelog_base_dn", nullable = false, length = 1000)
     private String changelogBaseDn = "cn=changelog";
 
     /** Changelog format: DSEE ({@code cn=changelog}) or OpenLDAP accesslog. */
@@ -65,7 +65,7 @@ public class AuditDataSource {
     private ChangelogFormat changelogFormat = ChangelogFormat.DSEE_CHANGELOG;
 
     /** Optional: restrict changelog reads to entries under this targetDN subtree. */
-    @Column(name = "branch_filter_dn")
+    @Column(name = "branch_filter_dn", length = 1000)
     private String branchFilterDn;
 
     @Column(nullable = false)
