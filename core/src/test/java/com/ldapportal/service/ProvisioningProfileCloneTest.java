@@ -10,6 +10,7 @@ import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.entity.enums.ApproverMode;
 import com.ldapportal.entity.enums.ExpiryAction;
 import com.ldapportal.entity.enums.InputType;
+import com.ldapportal.entity.enums.PasswordDisposition;
 import com.ldapportal.exception.ConflictException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.AccountRepository;
@@ -144,6 +145,31 @@ class ProvisioningProfileCloneTest {
         ProvisioningProfile copy = captor.getValue();
         assertThat(copy.getTargetUserDn()).isEqualTo("ou=people,dc=example,dc=com");
         assertThat(copy.getTargetGroupDn()).isEqualTo("ou=groups,dc=example,dc=com");
+    }
+
+    @Test
+    void clone_copiesPasswordGenerationPolicyIncludingDisposition() {
+        given(lifecycleRepo.findByProfileId(sourceId)).willReturn(Optional.empty());
+        given(approvalConfigRepo.findByProfileId(sourceId)).willReturn(Optional.empty());
+        source.setPasswordLength(24);
+        source.setPasswordSpecial(false);
+        source.setEmailPasswordToUser(true);
+        // Non-default: a dropped disposition silently falls back to
+        // OPERATOR_ENTERED and re-exposes the password field on the copy.
+        source.setPasswordDisposition(PasswordDisposition.GENERATED_DISCARDED);
+
+        ArgumentCaptor<ProvisioningProfile> captor =
+                ArgumentCaptor.forClass(ProvisioningProfile.class);
+
+        service.clone(directoryId, sourceId, "copy");
+
+        verify(profileRepo).save(captor.capture());
+        ProvisioningProfile copy = captor.getValue();
+        assertThat(copy.getPasswordLength()).isEqualTo(24);
+        assertThat(copy.isPasswordSpecial()).isFalse();
+        assertThat(copy.isEmailPasswordToUser()).isTrue();
+        assertThat(copy.getPasswordDisposition())
+                .isEqualTo(PasswordDisposition.GENERATED_DISCARDED);
     }
 
     @Test

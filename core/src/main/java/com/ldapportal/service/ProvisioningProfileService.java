@@ -368,6 +368,7 @@ public class ProvisioningProfileService {
         copy.setPasswordSpecial(source.isPasswordSpecial());
         copy.setPasswordSpecialChars(source.getPasswordSpecialChars());
         copy.setEmailPasswordToUser(source.isEmailPasswordToUser());
+        copy.setPasswordDisposition(source.getPasswordDisposition());
         copy.setAutoIncludeGroups(false); // clones don't auto-include
         copy.setExcludeAutoIncludes(source.isExcludeAutoIncludes());
         // Additional profiles are same-directory references; they have no
