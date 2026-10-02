@@ -100,7 +100,7 @@
              the case-insensitivity rebuild restores the unfiltered property map).
              The 2.19.x line's only fix is 2.21.5. Drop this override when the
              Spring Boot BOM bumps past 2.21.5. -->
-        <jackson-bom.version>2.21.5</jackson-bom.version>
+        <jackson-bom.version>2.21.7</jackson-bom.version>
         <!-- Override Spring Boot BOM's commons-lang3 → 3.18.0 to clear
              CVE-2025-48924 (uncontrolled recursion: ClassUtils.getClass can
              throw StackOverflowError on very long inputs). Drop this override
