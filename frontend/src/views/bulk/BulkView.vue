@@ -420,7 +420,8 @@
             <!-- One field in this slot, driven by the DN Source picker above. -->
             <FormField v-if="dnSourceMode === 'rdn'" label="RDN Attribute"
                        v-model="templateForm.targetKeyAttribute" placeholder="uid" />
-            <FormField v-else label="DN column" v-model="templateForm.dnSourceColumn" placeholder="dn" />
+            <FormField v-else label="DN column" v-model="templateForm.dnSourceColumn" placeholder="dn"
+                       :error="dnColumnMissing ? 'Enter the CSV column that holds each entry\'s DN' : null" />
             <div>
               <label for="bulk-template-form-conflict-handling" class="block text-sm font-medium text-gray-700 mb-1">Conflict Handling</label>
               <select id="bulk-template-form-conflict-handling" v-model="templateForm.conflictHandling" class="input w-full">
@@ -751,8 +752,20 @@ const dnFromColumn = ref(false)
 // save/load logic (and the dnSourceColumn payload) stays unchanged.
 const dnSourceMode = computed<'rdn' | 'column'>({
   get: () => (dnFromColumn.value ? 'column' : 'rdn'),
-  set: (v) => { dnFromColumn.value = v === 'column' },
+  set: (v) => {
+    dnFromColumn.value = v === 'column'
+    // The DN column field shows "dn" as a placeholder; make it the real value
+    // so a template saved without typing still reads the DN from that column
+    // (a blank column is saved as null, i.e. "build DN from RDN").
+    if (dnFromColumn.value && !templateForm.value.dnSourceColumn.trim()) {
+      templateForm.value.dnSourceColumn = 'dn'
+    }
+  },
 })
+/** Column mode with no column name would silently save as "build from RDN". */
+const dnColumnMissing = computed(() =>
+  dnFromColumn.value && !templateForm.value.dnSourceColumn.trim()
+)
 
 // ObjectClass picker state
 const objectClasses       = ref<string[]>([])
@@ -839,6 +852,7 @@ const groupPreviewWarningCount = computed(() =>
 const canSaveTemplate = computed(() => {
   const f = templateForm.value
   if (!f.name || f.objectClasses.length === 0) return false
+  if (dnColumnMissing.value) return false
   return f.entries.filter(e => e._required).every(e => e.csvColumn && e.csvColumn.trim())
 })
 

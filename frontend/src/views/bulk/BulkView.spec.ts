@@ -42,7 +42,7 @@ vi.mock('@/api/csvTemplates', () => ({
   createContainer: vi.fn(),
 }))
 
-import { previewCsv, importCsv } from '@/api/csvTemplates'
+import { previewCsv, importCsv, listCsvTemplates, updateCsvTemplate } from '@/api/csvTemplates'
 // The view registers an unsaved-changes guard (and reads the sidebar
 // picker) through real Pinia stores; give every test a fresh instance.
 beforeEach(() => setActivePinia(createPinia()))
@@ -95,5 +95,68 @@ describe('BulkView — user import scoped to the active (sidebar) profile', () =
     await flushPromises()
     expect(importCsv).toHaveBeenCalledWith('d1', expect.any(File),
       expect.objectContaining({ profileId: 'p1' }))
+  })
+})
+
+// Real FormField + rendered modal slot so the template editor can be driven.
+const editorGlobal = {
+  stubs: {
+    PageContainer: { template: '<div><slot/></div>' },
+    AppModal: { template: '<div><slot/></div>' },
+    DnPicker: true, ConfirmDialog: true, BulkDeleteSection: true,
+  },
+}
+
+async function editTemplate(dnSourceColumn: string | null) {
+  vi.mocked(listCsvTemplates).mockResolvedValueOnce({ data: [
+    { id: 't1', name: 'Staff', targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
+      objectClass: 'inetOrgPerson', skipHeaderRow: true, dnSourceColumn, entries: [] },
+  ] } as never)
+  vi.mocked(updateCsvTemplate).mockResolvedValueOnce({ data: {} } as never)
+  const w = mount(BulkView, { global: editorGlobal })
+  await flushPromises()
+  await w.find('#bulk-import-template').setValue('t1')
+  await btnByText(w, 'Template').trigger('click')
+  await btnByText(w, 'Edit Template').trigger('click')
+  await flushPromises()
+  return w
+}
+
+const dnColumnInput = (w: ReturnType<typeof mount>) => w.find('input[placeholder="dn"]')
+
+describe('BulkView — template "Read DN from CSV column"', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('saves the column when switched on without typing (placeholder becomes the value)', async () => {
+    const w = await editTemplate(null)
+    await w.find('#bulk-template-dn-source').setValue('column')
+    expect((dnColumnInput(w).element as HTMLInputElement).value).toBe('dn')
+
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    // Regression: a blank column used to be sent as null — saved as
+    // "build DN from RDN", so the option looked like it never stuck.
+    expect(updateCsvTemplate).toHaveBeenCalledWith('d1', 't1',
+      expect.objectContaining({ dnSourceColumn: 'dn' }))
+  })
+
+  it('blocks save while column mode has no column name', async () => {
+    const w = await editTemplate(null)
+    await w.find('#bulk-template-dn-source').setValue('column')
+    await dnColumnInput(w).setValue('')
+
+    expect(btnByText(w, 'Save').attributes('disabled')).toBeDefined()
+    expect(w.text()).toContain("Enter the CSV column that holds each entry's DN")
+  })
+
+  it('reopens a template that reads the DN from a column and keeps it on save', async () => {
+    const w = await editTemplate('employeeDn')
+    expect((w.find('#bulk-template-dn-source').element as HTMLSelectElement).value).toBe('column')
+    expect((dnColumnInput(w).element as HTMLInputElement).value).toBe('employeeDn')
+
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(updateCsvTemplate).toHaveBeenCalledWith('d1', 't1',
+      expect.objectContaining({ dnSourceColumn: 'employeeDn' }))
   })
 })
