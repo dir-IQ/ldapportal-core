@@ -46,7 +46,7 @@ class BulkGroupControllerTest extends BaseControllerTest {
     void import_profileOnly_routesApprovalByProfileGroupTargetDn() throws Exception {
         // What the UI sends: the active profile, no parentDn.
         BulkImportRequest req = new BulkImportRequest(
-                null, UUID.randomUUID(), null, null, null, true, null, List.of());
+                null, UUID.randomUUID(), null, null, null, true, null, List.of(), null);
         given(ldapService.resolveBulkImportTargetDn(eq(DIR_ID), eq(req), eq(true)))
                 .willReturn("ou=groups,dc=example,dc=com");
         given(approvalService.checkAndSubmitForApproval(any(), any(), any(), any(), any()))

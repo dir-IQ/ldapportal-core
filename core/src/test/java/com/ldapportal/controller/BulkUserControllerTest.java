@@ -97,7 +97,7 @@ class BulkUserControllerTest extends BaseControllerTest {
 
     /** What the UI sends: the active profile, no parentDn. */
     private static BulkImportRequest profileOnlyImport(UUID profileId) {
-        return new BulkImportRequest(null, profileId, null, null, null, true, null, List.of());
+        return new BulkImportRequest(null, profileId, null, null, null, true, null, List.of(), null);
     }
 
     @Test

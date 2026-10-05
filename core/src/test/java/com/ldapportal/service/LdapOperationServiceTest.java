@@ -933,7 +933,7 @@ class LdapOperationServiceTest {
         LdapOperationService svc = serviceWithProfile(ps);
         // What the UI sends: profileId, no parentDn.
         BulkImportRequest req = new BulkImportRequest(
-                null, profileId, null, null, null, true, null, List.of());
+                null, profileId, null, null, null, true, null, List.of(), null);
 
         assertThat(svc.resolveBulkImportTargetDn(dirId, req, false)).isEqualTo("ou=eng,dc=example,dc=com");
         assertThat(svc.resolveBulkImportTargetDn(dirId, req, true)).isEqualTo("ou=eng-groups,dc=example,dc=com");
@@ -949,7 +949,7 @@ class LdapOperationServiceTest {
         ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
         when(ps.getEntityInDirectory(dirId, profileId)).thenReturn(profile);
         BulkImportRequest req = new BulkImportRequest(
-                null, profileId, null, null, null, true, null, List.of());
+                null, profileId, null, null, null, true, null, List.of(), null);
 
         org.assertj.core.api.Assertions.assertThatThrownBy(
                         () -> serviceWithProfile(ps).resolveBulkImportTargetDn(dirId, req, true))
@@ -960,10 +960,10 @@ class LdapOperationServiceTest {
     @Test
     void resolveBulkImportTargetDn_withoutProfile_usesParentDnOrRejects() {
         assertThat(service.resolveBulkImportTargetDn(dirId, new BulkImportRequest(
-                null, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of()), false))
+                null, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of(), null), false))
                 .isEqualTo("ou=people,dc=example,dc=com");
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.resolveBulkImportTargetDn(dirId,
-                        new BulkImportRequest(null, null, null, null, null, true, null, List.of()), false))
+                        new BulkImportRequest(null, null, null, null, null, true, null, List.of(), null), false))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
