@@ -86,14 +86,16 @@ public class BulkGroupController {
 
         rateLimiter.check(principal.username(), "bulk-group-import");
 
-        // Check approval — consistent with BulkUserController
+        // Check approval — consistent with BulkUserController (route by the resolved
+        // target container; request.parentDn() is null for profile-based imports).
+        String targetDn = service.resolveBulkImportTargetDn(directoryId, request, true);
         Map<String, Object> payload = Map.of(
                 "request", request,
                 "csvContent", java.util.Base64.getEncoder().encodeToString(file.getBytes()),
                 "memberAttribute", memberAttribute,
                 "objectClass", objectClass);
         Optional<PendingApproval> pendingApproval = approvalService.checkAndSubmitForApproval(
-                directoryId, request.parentDn(), principal,
+                directoryId, targetDn, principal,
                 ApprovalRequestType.BULK_IMPORT, payload);
         if (pendingApproval.isPresent()) {
             return ResponseEntity.status(HttpStatus.ACCEPTED)

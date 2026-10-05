@@ -9,6 +9,10 @@ import com.ldapportal.dto.csv.BulkDeletePreviewRow;
 import com.ldapportal.dto.csv.BulkDeleteRequest;
 import com.ldapportal.dto.csv.BulkDeleteResult;
 import com.ldapportal.dto.csv.BulkDeleteRowResult;
+import com.ldapportal.dto.csv.BulkImportRequest;
+import com.ldapportal.dto.csv.BulkImportResult;
+import com.ldapportal.entity.PendingApproval;
+import com.ldapportal.entity.enums.ApprovalRequestType;
 import com.ldapportal.service.ApprovalWorkflowService;
 import com.ldapportal.service.LdapOperationService;
 import org.junit.jupiter.api.Test;
@@ -19,6 +23,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -48,7 +53,7 @@ class BulkUserControllerTest extends BaseControllerTest {
         return new MockMultipartFile("file", "users.csv", "text/csv", csv.getBytes());
     }
 
-    private MockMultipartFile requestPart(BulkDeleteRequest req) throws Exception {
+    private MockMultipartFile requestPart(Object req) throws Exception {
         return new MockMultipartFile("request", "", "application/json",
                 objectMapper.writeValueAsBytes(req));
     }
@@ -86,5 +91,58 @@ class BulkUserControllerTest extends BaseControllerTest {
         // Unlike import/create, delete is never routed through the approval
         // workflow — a deliberate product decision.
         verify(approvalService, never()).checkAndSubmitForApproval(any(), any(), any(), any(), any());
+    }
+
+    // ── Import: approval routing ─────────────────────────────────────────────
+
+    /** What the UI sends: the active profile, no parentDn. */
+    private static BulkImportRequest profileOnlyImport(UUID profileId) {
+        return new BulkImportRequest(null, profileId, null, null, null, true, null, List.of());
+    }
+
+    @Test
+    void import_profileOnly_routesApprovalByProfileTargetDn() throws Exception {
+        UUID profileId = UUID.randomUUID();
+        BulkImportRequest req = profileOnlyImport(profileId);
+        given(ldapService.resolveBulkImportTargetDn(eq(DIR_ID), eq(req), eq(false)))
+                .willReturn("ou=eng,dc=example,dc=com");
+        given(approvalService.checkAndSubmitForApproval(any(), any(), any(), any(), any()))
+                .willReturn(Optional.empty());
+        given(ldapService.bulkImportUsers(eq(DIR_ID), any(), any(), any()))
+                .willReturn(new BulkImportResult(1, 1, 0, 0, 0, List.of()));
+
+        mockMvc.perform(multipart(BASE_URL + "/import")
+                        .file(filePart("uid\na\n"))
+                        .file(requestPart(req))
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.created").value(1));
+
+        // Regression: this used to pass request.parentDn() — null for a
+        // profile-based import — and NPE in profile resolution (500).
+        verify(approvalService).checkAndSubmitForApproval(eq(DIR_ID), eq("ou=eng,dc=example,dc=com"),
+                any(), eq(ApprovalRequestType.BULK_IMPORT), any());
+    }
+
+    @Test
+    void import_requiringApproval_returns202WithApprovalId() throws Exception {
+        UUID profileId = UUID.randomUUID();
+        BulkImportRequest req = profileOnlyImport(profileId);
+        given(ldapService.resolveBulkImportTargetDn(eq(DIR_ID), eq(req), eq(false)))
+                .willReturn("ou=eng,dc=example,dc=com");
+        PendingApproval pa = new PendingApproval();
+        UUID approvalId = UUID.randomUUID();
+        pa.setId(approvalId);
+        given(approvalService.checkAndSubmitForApproval(any(), any(), any(), any(), any()))
+                .willReturn(Optional.of(pa));
+
+        mockMvc.perform(multipart(BASE_URL + "/import")
+                        .file(filePart("uid\na\n"))
+                        .file(requestPart(req))
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.approvalId").value(approvalId.toString()));
+
+        verify(ldapService, never()).bulkImportUsers(any(), any(), any(), any());
     }
 }
