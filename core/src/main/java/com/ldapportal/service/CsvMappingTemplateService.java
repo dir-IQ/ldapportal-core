@@ -15,6 +15,7 @@ import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.CsvMappingTemplateEntryRepository;
 import com.ldapportal.repository.CsvMappingTemplateRepository;
 import com.ldapportal.repository.DirectoryConnectionRepository;
+import com.ldapportal.util.CsvUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -80,6 +81,7 @@ public class CsvMappingTemplateService {
         template.setErrorHandling(
                 req.errorHandling() != null ? req.errorHandling() : ImportErrorHandling.SKIP_ERRORS);
         template.setDnSourceColumn(blankToNull(req.dnSourceColumn()));
+        template.setFieldDelimiter(normalizeDelimiter(req.fieldDelimiter()));
         template = templateRepo.save(template);
 
         List<CsvMappingTemplateEntry> entries = saveEntries(template, req.entries());
@@ -117,6 +119,9 @@ public class CsvMappingTemplateService {
         }
         // Set unconditionally (blank → null) so the override can be cleared.
         template.setDnSourceColumn(blankToNull(req.dnSourceColumn()));
+        if (req.fieldDelimiter() != null) {
+            template.setFieldDelimiter(normalizeDelimiter(req.fieldDelimiter()));
+        }
         template = templateRepo.save(template);
 
         entryRepo.deleteAllByTemplateId(templateId);
@@ -195,9 +200,15 @@ public class CsvMappingTemplateService {
                 t.getErrorHandling(),
                 t.isSkipHeaderRow(),
                 t.getDnSourceColumn(),
+                t.getFieldDelimiter(),
                 entryDtos,
                 t.getCreatedAt(),
                 t.getUpdatedAt());
+    }
+
+    /** Validates a requested delimiter (400 on bad input); null/empty → comma. */
+    private static String normalizeDelimiter(String value) {
+        return String.valueOf(CsvUtils.toDelimiter(value));
     }
 
     private static String blankToNull(String s) {

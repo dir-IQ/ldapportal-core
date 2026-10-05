@@ -30,6 +30,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -168,7 +169,7 @@ class CsvMappingTemplateServiceTest {
                 new CsvColumnMappingDto("email", "mail", false));
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
                 "New Template", "inetOrgPerson", "uid", ConflictHandling.OVERWRITE,
-                ImportErrorHandling.ABORT_ON_ERROR, true, null, mappings);
+                ImportErrorHandling.ABORT_ON_ERROR, true, null, null, mappings);
 
         CsvMappingTemplateDto result = service.create(dirId, req, adminPrincipal);
 
@@ -191,7 +192,7 @@ class CsvMappingTemplateServiceTest {
         when(templateRepo.save(any())).thenReturn(saved);
 
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "T", null, null, null, null, null, null, List.of());
+                "T", null, null, null, null, null, null, null, List.of());
 
         service.create(dirId, req, adminPrincipal);
 
@@ -204,13 +205,63 @@ class CsvMappingTemplateServiceTest {
     }
 
     @Test
+    void create_persistsFieldDelimiter_andDefaultsToComma() {
+        DirectoryConnection dir = mockDirectory();
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dir));
+        when(templateRepo.existsByDirectoryIdAndName(eq(dirId), any())).thenReturn(false);
+        when(templateRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.create(dirId, new CreateCsvMappingTemplateRequest(
+                "Tabbed", null, null, null, null, null, null, "\t", List.of()), adminPrincipal);
+        service.create(dirId, new CreateCsvMappingTemplateRequest(
+                "Plain", null, null, null, null, null, null, null, List.of()), adminPrincipal);
+
+        ArgumentCaptor<CsvMappingTemplate> captor =
+                ArgumentCaptor.forClass(CsvMappingTemplate.class);
+        verify(templateRepo, times(2)).save(captor.capture());
+        assertThat(captor.getAllValues().get(0).getFieldDelimiter()).isEqualTo("\t");
+        assertThat(captor.getAllValues().get(1).getFieldDelimiter()).isEqualTo(",");
+    }
+
+    @Test
+    void create_invalidFieldDelimiter_isRejected() {
+        DirectoryConnection dir = mockDirectory();
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dir));
+        when(templateRepo.existsByDirectoryIdAndName(eq(dirId), any())).thenReturn(false);
+
+        for (String bad : List.of(";;", "\"", "\n")) {
+            CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
+                    "T", null, null, null, null, null, null, bad, List.of());
+            assertThatThrownBy(() -> service.create(dirId, req, adminPrincipal))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+        verify(templateRepo, never()).save(any());
+    }
+
+    @Test
+    void update_nullFieldDelimiter_keepsExistingValue() {
+        DirectoryConnection dir = mockDirectory();
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dir));
+        CsvMappingTemplate existing = mockTemplate(dir);
+        existing.setFieldDelimiter("|");
+        when(templateRepo.findById(templateId)).thenReturn(Optional.of(existing));
+        when(templateRepo.save(any())).thenReturn(existing);
+
+        CsvMappingTemplateDto result = service.update(dirId, templateId,
+                new CreateCsvMappingTemplateRequest(existing.getName(), null, null, null, null,
+                        null, null, null, List.of()), adminPrincipal);
+
+        assertThat(result.fieldDelimiter()).isEqualTo("|");
+    }
+
+    @Test
     void create_duplicateName_throwsConflict() {
         DirectoryConnection dir = mockDirectory();
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dir));
         when(templateRepo.existsByDirectoryIdAndName(dirId, "Existing")).thenReturn(true);
 
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "Existing", null, null, null, null, null, null, List.of());
+                "Existing", null, null, null, null, null, null, null, List.of());
 
         assertThatThrownBy(() -> service.create(dirId, req, adminPrincipal))
                 .isInstanceOf(ConflictException.class)
@@ -236,7 +287,7 @@ class CsvMappingTemplateServiceTest {
         when(entryRepo.save(any())).thenReturn(newEntry);
 
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "Renamed", "inetOrgPerson", "sAMAccountName", ConflictHandling.OVERWRITE, null, true, null,
+                "Renamed", "inetOrgPerson", "sAMAccountName", ConflictHandling.OVERWRITE, null, true, null, null,
                 List.of(new CsvColumnMappingDto("sn", "sn", false)));
 
         CsvMappingTemplateDto result = service.update(dirId, templateId, req, adminPrincipal);
@@ -254,7 +305,7 @@ class CsvMappingTemplateServiceTest {
         when(templateRepo.existsByDirectoryIdAndName(dirId, "Other")).thenReturn(true);
 
         CreateCsvMappingTemplateRequest req = new CreateCsvMappingTemplateRequest(
-                "Other", null, null, null, null, null, null, List.of());
+                "Other", null, null, null, null, null, null, null, List.of());
 
         assertThatThrownBy(() -> service.update(dirId, templateId, req, adminPrincipal))
                 .isInstanceOf(ConflictException.class);
