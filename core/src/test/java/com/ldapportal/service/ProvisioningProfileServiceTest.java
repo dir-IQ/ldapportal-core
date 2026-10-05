@@ -87,6 +87,31 @@ class ProvisioningProfileServiceTest {
         profile.setName("testers");
     }
 
+    // ── Profile resolution by DN ─────────────────────────────────────────────
+
+    @Test
+    void resolveProfileForDn_nullOrBlankDn_matchesNoProfile() {
+        // Regression: a null DN (bulk import routed by request.parentDn())
+        // threw NullPointerException here and surfaced as a 500.
+        assertThat(service.resolveProfileForDn(UUID.randomUUID(), null)).isEmpty();
+        assertThat(service.resolveProfileForDn(UUID.randomUUID(), " ")).isEmpty();
+    }
+
+    @Test
+    void resolveProfileForDn_skipsProfilesWithoutUserContainer() {
+        UUID dirId = UUID.randomUUID();
+        ProvisioningProfile noContainer = new ProvisioningProfile();
+        noContainer.setName("groups-only");
+        ProvisioningProfile people = new ProvisioningProfile();
+        people.setName("people");
+        people.setTargetUserDn("ou=people,dc=example,dc=com");
+        given(profileRepo.findAllByDirectoryIdAndEnabledTrue(dirId))
+                .willReturn(List.of(noContainer, people));
+
+        assertThat(service.resolveProfileForDn(dirId, "uid=a,ou=people,dc=example,dc=com"))
+                .contains(people);
+    }
+
     // ── Approval config coherence (#14) ──────────────────────────────────────
 
     @Test
