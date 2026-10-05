@@ -546,9 +546,9 @@ public class BulkUserService {
             }
         }
         // Fallback for a file with a single meaningful column (e.g. a bare list
-        // of DNs whose header doesn't match). CsvUtils appends a phantom
-        // trailing empty-named field to every row, so count only columns with a
-        // non-blank header; use the lone real one when there's exactly one.
+        // of DNs whose header doesn't match). Count only columns with a
+        // non-blank header (a trailing delimiter in the header row yields an
+        // empty-named column); use the lone real one when there's exactly one.
         List<String> realKeys = row.keySet().stream()
                 .filter(k -> k != null && !k.isBlank())
                 .toList();

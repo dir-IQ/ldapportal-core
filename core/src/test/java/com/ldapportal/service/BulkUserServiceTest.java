@@ -593,6 +593,19 @@ class BulkUserServiceTest {
     }
 
     @Test
+    void parseDeleteRows_noHeaderSingleColumn_usesThatColumn() throws IOException {
+        // Without a header row the lone column is synthesized as "Column 1";
+        // the single-column fallback must still pick it up.
+        String csvContent = "\"uid=a,ou=people,dc=example,dc=com\"\n"
+                + "\"uid=b,ou=people,dc=example,dc=com\"\n";
+
+        var rows = service.parseDeleteRows(csv(csvContent), "dn", false);
+
+        assertThat(rows).extracting(BulkUserService.RawDeleteRow::value).containsExactly(
+                "uid=a,ou=people,dc=example,dc=com", "uid=b,ou=people,dc=example,dc=com");
+    }
+
+    @Test
     void parseDeleteRows_namedColumnIsCaseInsensitive() throws IOException {
         String csvContent = "UID\njsmith\n";
         var rows = service.parseDeleteRows(csv(csvContent), "uid", true);

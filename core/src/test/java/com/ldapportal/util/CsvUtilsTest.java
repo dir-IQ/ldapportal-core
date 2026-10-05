@@ -22,8 +22,7 @@ class CsvUtilsTest {
     @Test
     void parse_defaultsToComma() throws IOException {
         List<Map<String, String>> rows = CsvUtils.parse(in("a,b\n1,2\n"), true);
-        assertThat(rows).hasSize(1);
-        assertThat(rows.get(0)).containsEntry("a", "1").containsEntry("b", "2");
+        assertThat(rows).containsExactly(Map.of("a", "1", "b", "2"));
     }
 
     @Test
@@ -40,18 +39,36 @@ class CsvUtilsTest {
     @Test
     void parse_tab_withoutHeaderRow() throws IOException {
         List<Map<String, String>> rows = CsvUtils.parse(in("x\ty\tz\n"), false, '\t');
-        assertThat(rows).hasSize(1);
-        assertThat(rows.get(0)).containsEntry("Column 1", "x").containsEntry("Column 2", "y")
-                .containsEntry("Column 3", "z");
+        assertThat(rows).containsExactly(Map.of("Column 1", "x", "Column 2", "y", "Column 3", "z"));
     }
 
     @Test
     void parse_quotedMultilineValue_withPipe() throws IOException {
         List<Map<String, String>> rows = CsvUtils.parse(
                 in("uid|description\njdoe|\"line one\nline|two\"\n"), true, '|');
-        assertThat(rows).hasSize(1);
-        assertThat(rows.get(0)).containsEntry("uid", "jdoe")
-                .containsEntry("description", "line one\nline|two");
+        assertThat(rows).containsExactly(Map.of("uid", "jdoe", "description", "line one\nline|two"));
+    }
+
+    @Test
+    void parseRow_hasNoPhantomTrailingField() {
+        // Regression: every row used to gain an extra empty last field.
+        assertThat(CsvUtils.parseRow("a,b")).containsExactly("a", "b");
+        assertThat(CsvUtils.parseRow("\"a\",\"b\"")).containsExactly("a", "b");
+        assertThat(CsvUtils.parseRow("a")).containsExactly("a");
+    }
+
+    @Test
+    void parseRow_keepsEmptyFieldsFromTrailingAndAdjacentDelimiters() {
+        assertThat(CsvUtils.parseRow("a,")).containsExactly("a", "");
+        assertThat(CsvUtils.parseRow("a,,b")).containsExactly("a", "", "b");
+        assertThat(CsvUtils.parseRow(",")).containsExactly("", "");
+        assertThat(CsvUtils.parseRow("\"a\",")).containsExactly("a", "");
+    }
+
+    @Test
+    void parse_withoutHeaderRow_synthesizesOnlyRealColumns() throws IOException {
+        List<Map<String, String>> rows = CsvUtils.parse(in("x,y\n"), false);
+        assertThat(rows).containsExactly(Map.of("Column 1", "x", "Column 2", "y"));
     }
 
     @Test

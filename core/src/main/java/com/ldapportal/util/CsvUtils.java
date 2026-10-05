@@ -307,12 +307,18 @@ public final class CsvUtils {
     static String[] parseRow(String line, char delimiter) {
         List<String> fields = new ArrayList<>();
         int i = 0;
+        // True at the start of the line and right after a delimiter: a field is
+        // owed even if the line ends here ("a," has two fields, "a" has one).
+        boolean fieldPending = true;
         while (i <= line.length()) {
             if (i == line.length()) {
-                // Trailing delimiter produced an empty last field
-                fields.add("");
+                if (fieldPending) {
+                    // Trailing delimiter produced an empty last field
+                    fields.add("");
+                }
                 break;
             }
+            fieldPending = false;
 
             if (line.charAt(i) == '"') {
                 // Quoted field
@@ -336,6 +342,7 @@ public final class CsvUtils {
                 fields.add(field.toString());
                 if (i < line.length() && line.charAt(i) == delimiter) {
                     i++; // skip delimiter
+                    fieldPending = true;
                 }
 
             } else {
@@ -347,6 +354,7 @@ public final class CsvUtils {
                 fields.add(line.substring(start, i));
                 if (i < line.length()) {
                     i++; // skip delimiter
+                    fieldPending = true;
                 }
             }
         }
