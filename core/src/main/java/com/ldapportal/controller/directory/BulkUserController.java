@@ -93,12 +93,15 @@ public class BulkUserController {
 
         rateLimiter.check(principal.username(), "bulk-import");
 
-        // Check if approval is required — handles both profiled and unprovisioned OUs
+        // Check if approval is required — handles both profiled and unprovisioned OUs.
+        // The UI sends a profileId and no parentDn, so route by the resolved target
+        // container rather than request.parentDn() (null for profile-based imports).
+        String targetDn = service.resolveBulkImportTargetDn(directoryId, request, false);
         Map<String, Object> payload = Map.of(
                 "request", request,
                 "csvContent", java.util.Base64.getEncoder().encodeToString(file.getBytes()));
         Optional<PendingApproval> pendingApproval = approvalService.checkAndSubmitForApproval(
-                directoryId, request.parentDn(), principal,
+                directoryId, targetDn, principal,
                 ApprovalRequestType.BULK_IMPORT, payload);
         if (pendingApproval.isPresent()) {
             return ResponseEntity.status(HttpStatus.ACCEPTED)

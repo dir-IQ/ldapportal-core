@@ -921,6 +921,53 @@ class LdapOperationServiceTest {
     }
 
     @Test
+    void resolveBulkImportTargetDn_profileSuppliesUserOrGroupContainer() {
+        UUID profileId = UUID.randomUUID();
+        ProvisioningProfile profile = new ProvisioningProfile();
+        profile.setId(profileId);
+        profile.setName("Engineers");
+        profile.setTargetUserDn("ou=eng,dc=example,dc=com");
+        profile.setTargetGroupDn("ou=eng-groups,dc=example,dc=com");
+        ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
+        when(ps.getEntityInDirectory(dirId, profileId)).thenReturn(profile);
+        LdapOperationService svc = serviceWithProfile(ps);
+        // What the UI sends: profileId, no parentDn.
+        BulkImportRequest req = new BulkImportRequest(
+                null, profileId, null, null, null, true, null, List.of(), null);
+
+        assertThat(svc.resolveBulkImportTargetDn(dirId, req, false)).isEqualTo("ou=eng,dc=example,dc=com");
+        assertThat(svc.resolveBulkImportTargetDn(dirId, req, true)).isEqualTo("ou=eng-groups,dc=example,dc=com");
+    }
+
+    @Test
+    void resolveBulkImportTargetDn_profileWithoutGroupContainer_isRejected() {
+        UUID profileId = UUID.randomUUID();
+        ProvisioningProfile profile = new ProvisioningProfile();
+        profile.setId(profileId);
+        profile.setName("Engineers");
+        profile.setTargetUserDn("ou=eng,dc=example,dc=com");
+        ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
+        when(ps.getEntityInDirectory(dirId, profileId)).thenReturn(profile);
+        BulkImportRequest req = new BulkImportRequest(
+                null, profileId, null, null, null, true, null, List.of(), null);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> serviceWithProfile(ps).resolveBulkImportTargetDn(dirId, req, true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no target group container");
+    }
+
+    @Test
+    void resolveBulkImportTargetDn_withoutProfile_usesParentDnOrRejects() {
+        assertThat(service.resolveBulkImportTargetDn(dirId, new BulkImportRequest(
+                null, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of(), null), false))
+                .isEqualTo("ou=people,dc=example,dc=com");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.resolveBulkImportTargetDn(dirId,
+                        new BulkImportRequest(null, null, null, null, null, true, null, List.of(), null), false))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void bulkImportUsers_withProfileId_importsIntoProfileTargetOu() throws Exception {
         AuthPrincipal admin = adminPrincipal();
         DirectoryConnection dc = enabledDir(true);

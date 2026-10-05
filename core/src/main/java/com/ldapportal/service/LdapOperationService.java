@@ -996,12 +996,28 @@ public class LdapOperationService {
     private String effectiveImportParentDn(BulkImportRequest req, ProvisioningProfile profile,
                                            boolean forGroups) {
         if (profile != null) {
-            return forGroups ? profile.getTargetGroupDn() : profile.getTargetUserDn();
+            String dn = forGroups ? profile.getTargetGroupDn() : profile.getTargetUserDn();
+            if (dn == null || dn.isBlank()) {
+                throw new IllegalArgumentException("Profile [" + profile.getName()
+                        + "] has no target " + (forGroups ? "group" : "user") + " container");
+            }
+            return dn;
         }
         if (req.parentDn() == null || req.parentDn().isBlank()) {
             throw new IllegalArgumentException("Either profileId or parentDn is required");
         }
         return req.parentDn();
+    }
+
+    /**
+     * The container a bulk import writes into: the chosen profile's target
+     * container, otherwise the request's {@code parentDn}. The bulk-import
+     * controllers route the import through approval with this DN before it
+     * runs; the import itself resolves the target the same way.
+     */
+    public String resolveBulkImportTargetDn(UUID directoryId, BulkImportRequest req,
+                                            boolean forGroups) {
+        return effectiveImportParentDn(req, resolveBulkImportProfile(directoryId, req), forGroups);
     }
 
     /**
