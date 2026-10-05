@@ -464,6 +464,22 @@ class BulkUserServiceTest {
         assertThat(result.rows().get(1).missingRequired()).contains("dn");
     }
 
+    @Test
+    void previewImport_semicolonDelimiter_splitsOnSemicolonNotComma() throws IOException {
+        // Semicolon-separated export: the DN keeps its commas unquoted, and the
+        // mapped "email" column still reaches the mail attribute.
+        String csvContent = "dn;email\n"
+                + "cn=Jane,ou=people,dc=example,dc=com;jane@example.com\n";
+
+        var result = service.previewImport(csv(csvContent), "ou=people,dc=example,dc=com",
+                "uid", List.of(new CsvColumnMappingDto("email", "mail", false)),
+                true, List.of(), "dn", ';');
+
+        assertThat(result.rows()).hasSize(1);
+        assertThat(result.rows().get(0).computedDn()).isEqualTo("cn=Jane,ou=people,dc=example,dc=com");
+        assertThat(result.rows().get(0).attributes()).containsEntry("mail", "jane@example.com");
+    }
+
     // ── Preview — required-attribute validation ──────────────────────────────
 
     @Test

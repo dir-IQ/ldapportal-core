@@ -154,12 +154,34 @@ public class BulkUserService {
                                       ProfileContext profileContext,
                                       List<String> requiredAttrs,
                                       ImportErrorHandling errorHandling) throws IOException {
+        return importCsv(dc, csvInput, parentDn, targetKeyAttr, conflictHandling, columnMappings,
+                objectClasses, skipHeaderRow, dnSourceColumn, profileContext,
+                requiredAttrs, errorHandling, CsvUtils.DEFAULT_DELIMITER);
+    }
+
+    /**
+     * Full import variant with an explicit field delimiter (comma, semicolon,
+     * tab, ...); every other overload delegates here with a comma.
+     */
+    public BulkImportResult importCsv(DirectoryConnection dc,
+                                      InputStream csvInput,
+                                      String parentDn,
+                                      String targetKeyAttr,
+                                      ConflictHandling conflictHandling,
+                                      List<CsvColumnMappingDto> columnMappings,
+                                      List<String> objectClasses,
+                                      boolean skipHeaderRow,
+                                      String dnSourceColumn,
+                                      ProfileContext profileContext,
+                                      List<String> requiredAttrs,
+                                      ImportErrorHandling errorHandling,
+                                      char fieldDelimiter) throws IOException {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
         }
 
         Map<String, String> colToAttr = resolveColumnMap(columnMappings);
-        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow);
+        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
 
         // ABORT_ON_ERROR: validate every row up front and, if any would error,
         // write nothing — the operator fixes the CSV and re-runs. The check
@@ -294,9 +316,22 @@ public class BulkUserService {
                                                   boolean skipHeaderRow,
                                                   List<String> requiredAttrs,
                                                   String dnSourceColumn) throws IOException {
+        return previewImport(csvInput, parentDn, targetKeyAttr, columnMappings,
+                skipHeaderRow, requiredAttrs, dnSourceColumn, CsvUtils.DEFAULT_DELIMITER);
+    }
+
+    /** Preview variant with an explicit field delimiter. */
+    public BulkImportPreviewResult previewImport(InputStream csvInput,
+                                                  String parentDn,
+                                                  String targetKeyAttr,
+                                                  List<CsvColumnMappingDto> columnMappings,
+                                                  boolean skipHeaderRow,
+                                                  List<String> requiredAttrs,
+                                                  String dnSourceColumn,
+                                                  char fieldDelimiter) throws IOException {
 
         Map<String, String> colToAttr = resolveColumnMap(columnMappings);
-        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow);
+        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
 
         // Pre-compute lowercase required-attribute set so per-row checks are
         // case-insensitive (LDAP attribute names are case-insensitive but
