@@ -206,3 +206,106 @@ describe('BulkView — template field delimiter', () => {
       expect.objectContaining({ fieldDelimiter: ';' }))
   })
 })
+
+// Real FormField + rendered modal slot so the template editor can be driven.
+const editorGlobal = {
+  stubs: {
+    PageContainer: { template: '<div><slot/></div>' },
+    AppModal: { template: '<div><slot/></div>' },
+    DnPicker: true, ConfirmDialog: true, BulkDeleteSection: true,
+  },
+}
+
+async function editTemplate(dnSourceColumn: string | null) {
+  vi.mocked(listCsvTemplates).mockResolvedValueOnce({ data: [
+    { id: 't1', name: 'Staff', targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
+      objectClass: 'inetOrgPerson', skipHeaderRow: true, dnSourceColumn, entries: [] },
+  ] } as never)
+  vi.mocked(updateCsvTemplate).mockResolvedValueOnce({ data: {} } as never)
+  const w = mount(BulkView, { global: editorGlobal })
+  await flushPromises()
+  await w.find('#bulk-import-template').setValue('t1')
+  await btnByText(w, 'Template').trigger('click')
+  await btnByText(w, 'Edit Template').trigger('click')
+  await flushPromises()
+  return w
+}
+
+const dnColumnInput = (w: ReturnType<typeof mount>) => w.find('input[placeholder="dn"]')
+
+describe('BulkView — template "Read DN from CSV column"', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('saves the column when switched on without typing (placeholder becomes the value)', async () => {
+    const w = await editTemplate(null)
+    await w.find('#bulk-template-dn-source').setValue('column')
+    expect((dnColumnInput(w).element as HTMLInputElement).value).toBe('dn')
+
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    // Regression: a blank column used to be sent as null — saved as
+    // "build DN from RDN", so the option looked like it never stuck.
+    expect(updateCsvTemplate).toHaveBeenCalledWith('d1', 't1',
+      expect.objectContaining({ dnSourceColumn: 'dn' }))
+  })
+
+  it('marks the DN column field required in column mode', async () => {
+    const w = await editTemplate(null)
+    await w.find('#bulk-template-dn-source').setValue('column')
+    expect(dnColumnInput(w).attributes('required')).toBeDefined()
+  })
+
+  it('blocks save while column mode has no column name', async () => {
+    const w = await editTemplate(null)
+    await w.find('#bulk-template-dn-source').setValue('column')
+    await dnColumnInput(w).setValue('')
+
+    expect(btnByText(w, 'Save').attributes('disabled')).toBeDefined()
+    expect(w.text()).toContain("Enter the CSV column that holds each entry's DN")
+  })
+
+  it('reopens a template that reads the DN from a column and keeps it on save', async () => {
+    const w = await editTemplate('employeeDn')
+    expect((w.find('#bulk-template-dn-source').element as HTMLSelectElement).value).toBe('column')
+    expect((dnColumnInput(w).element as HTMLInputElement).value).toBe('employeeDn')
+
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(updateCsvTemplate).toHaveBeenCalledWith('d1', 't1',
+      expect.objectContaining({ dnSourceColumn: 'employeeDn' }))
+  })
+})
+
+describe('BulkView — selected template summary', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  async function selectTemplate(dnSourceColumn: string | null) {
+    vi.mocked(listCsvTemplates).mockResolvedValueOnce({ data: [
+      { id: 't1', name: 'Staff', targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
+        objectClass: 'inetOrgPerson', skipHeaderRow: true, dnSourceColumn,
+        entries: [
+          { csvColumn: 'user', ldapAttribute: 'uid', ignored: false },
+          { csvColumn: 'email', ldapAttribute: 'mail', ignored: false },
+        ] },
+    ] } as never)
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    await w.find('#bulk-import-template').setValue('t1')
+    return w
+  }
+
+  it('shows the DN column instead of the RDN attribute when the DN is read from a column', async () => {
+    const w = await selectTemplate('employeeDn')
+    expect(w.find('#bulk-template-rdn-attribute').exists()).toBe(false)
+    expect((w.find('#bulk-template-dn-column').element as HTMLInputElement).value).toBe('employeeDn')
+    // uid isn't the key any more, so it's listed with the other mapped attributes.
+    expect((w.find('#bulk-template-other-attributes').element as HTMLInputElement).value).toBe('uid, mail')
+  })
+
+  it('shows the RDN attribute when the DN is built from it', async () => {
+    const w = await selectTemplate(null)
+    expect(w.find('#bulk-template-dn-column').exists()).toBe(false)
+    expect((w.find('#bulk-template-rdn-attribute').element as HTMLInputElement).value).toBe('uid')
+    expect((w.find('#bulk-template-other-attributes').element as HTMLInputElement).value).toBe('mail')
+  })
+})
