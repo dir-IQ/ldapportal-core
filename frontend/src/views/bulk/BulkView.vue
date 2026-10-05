@@ -106,7 +106,7 @@
         </div>
 
         <!-- Template-driven read-only fields. 12-col grid:
-             Object Class (3) + RDN Attribute (2) + Other Attributes (4)
+             Object Class (3) + RDN Attribute / DN Column (2) + Other Attributes (4)
              + Conflict Handling (3) = 12. -->
         <div v-if="selectedTemplate" class="grid grid-cols-12 gap-2">
           <div class="col-span-3">
@@ -119,7 +119,13 @@
               </span>
             </div>
           </div>
-          <div class="col-span-2">
+          <!-- A template that reads each DN from a CSV column doesn't use the
+               RDN attribute to build DNs, so show that column instead. -->
+          <div v-if="selectedTemplate.dnSourceColumn" class="col-span-2">
+            <label for="bulk-template-dn-column" class="block text-sm font-medium text-gray-700 mb-1">DN Column</label>
+            <input id="bulk-template-dn-column" :value="selectedTemplate.dnSourceColumn" disabled class="input w-full bg-gray-50 text-gray-500" />
+          </div>
+          <div v-else class="col-span-2">
             <label for="bulk-template-rdn-attribute" class="block text-sm font-medium text-gray-700 mb-1">RDN Attribute</label>
             <input id="bulk-template-rdn-attribute" :value="selectedTemplate.targetKeyAttribute" disabled class="input w-full bg-gray-50 text-gray-500" />
           </div>
@@ -420,7 +426,7 @@
             <!-- One field in this slot, driven by the DN Source picker above. -->
             <FormField v-if="dnSourceMode === 'rdn'" label="RDN Attribute"
                        v-model="templateForm.targetKeyAttribute" placeholder="uid" />
-            <FormField v-else label="DN column" v-model="templateForm.dnSourceColumn" placeholder="dn"
+            <FormField v-else label="DN column" v-model="templateForm.dnSourceColumn" placeholder="dn" required
                        :error="dnColumnMissing ? 'Enter the CSV column that holds each entry\'s DN' : null" />
             <div>
               <label for="bulk-template-form-conflict-handling" class="block text-sm font-medium text-gray-700 mb-1">Conflict Handling</label>
@@ -801,12 +807,14 @@ const selectedTemplate = computed(() => {
  * Comma-joined list of the template's mapped LDAP attributes minus the
  * RDN/key attribute (which already has its own field). The backend only
  * persists entries with a non-blank csvColumn, so the list is exactly
- * what the import will populate per row, in declaration order.
+ * what the import will populate per row, in declaration order. When the
+ * DN comes from a CSV column, the RDN attribute has no field of its own,
+ * so it's listed here like any other mapped attribute.
  */
 const otherTemplateAttrs = computed(() => {
   const t = selectedTemplate.value
   if (!t) return ''
-  const rdn = (t.targetKeyAttribute || '').toLowerCase()
+  const rdn = t.dnSourceColumn ? '' : (t.targetKeyAttribute || '').toLowerCase()
   return (t.entries || [])
     .filter(e => e.ldapAttribute && e.ldapAttribute.toLowerCase() !== rdn)
     .map(e => e.ldapAttribute)
