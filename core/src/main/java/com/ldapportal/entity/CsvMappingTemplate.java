@@ -64,6 +64,13 @@ public class CsvMappingTemplate {
     @Column(name = "dn_source_column")
     private String dnSourceColumn;
 
+    /**
+     * Single character separating fields in the CSV (comma by default). Quoting
+     * still uses double quotes, so the delimiter can't be {@code "}, CR or LF.
+     */
+    @Column(name = "field_delimiter", nullable = false, length = 1)
+    private String fieldDelimiter = ",";
+
     /** Whether to treat the first row of the CSV as column headers (true) or data (false). */
     @Column(name = "skip_header_row", nullable = false)
     private boolean skipHeaderRow = true;

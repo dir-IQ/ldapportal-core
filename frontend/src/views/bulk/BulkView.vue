@@ -135,6 +135,10 @@
           </div>
         </div>
 
+        <p v-if="selectedTemplate && (selectedTemplate.fieldDelimiter ?? ',') !== ','" class="text-xs text-gray-600 -mt-1">
+          Fields are separated by
+          <span class="font-mono text-gray-800">{{ delimiterLabel(selectedTemplate.fieldDelimiter) }}</span>.
+        </p>
         <p v-if="selectedTemplate && selectedTemplate.dnSourceColumn" class="text-xs text-gray-600 -mt-1">
           DN is read from CSV column
           <span class="font-mono text-gray-800">{{ selectedTemplate.dnSourceColumn }}</span>
@@ -436,6 +440,23 @@
                 <option value="ABORT_ON_ERROR">Block import until errors are resolved</option>
               </select>
             </div>
+            <div class="flex gap-2 items-end">
+              <div class="flex-1">
+                <label for="bulk-template-field-delimiter" class="block text-sm font-medium text-gray-700 mb-1">Field Delimiter</label>
+                <select id="bulk-template-field-delimiter" v-model="delimiterPreset" class="input w-full">
+                  <option v-for="o in DELIMITER_PRESETS" :key="o.value" :value="o.value">{{ o.label }}</option>
+                  <option value="other">Other…</option>
+                </select>
+              </div>
+              <div v-if="delimiterPreset === 'other'" class="w-24">
+                <label for="bulk-template-field-delimiter-other" class="block text-sm font-medium text-gray-700 mb-1">Character</label>
+                <input id="bulk-template-field-delimiter-other" v-model="customDelimiter" maxlength="1"
+                       class="input w-full font-mono text-center" :class="{ 'border-red-300': !customDelimiterValid }" />
+              </div>
+            </div>
+            <p v-if="delimiterPreset === 'other' && !customDelimiterValid" class="text-xs text-red-600 -mt-1">
+              Enter one character other than a double quote.
+            </p>
             <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
               <input type="checkbox" v-model="templateForm.skipHeaderRow" class="rounded text-blue-600" />
               CSV first row is header (skip on import)
@@ -487,6 +508,10 @@
           <div class="flex items-center justify-between mb-2 shrink-0">
             <label class="text-sm font-medium text-gray-700">Column Mappings</label>
             <span v-if="loadingOcAttrs" class="text-xs text-gray-500">Loading attributes…</span>
+            <button v-else-if="lastRemovedEntry" type="button" @click="undoRemoveTemplateEntry" class="btn-sm"
+                    :title="`Restore the ${lastRemovedEntry.entry.ldapAttribute} mapping`">
+              Undo remove ({{ lastRemovedEntry.entry.ldapAttribute }})
+            </button>
           </div>
           <div v-if="templateForm.entries.length === 0 && !loadingOcAttrs" class="text-sm text-gray-500 text-center py-3">
             Select an object class to populate attribute mappings.
@@ -566,6 +591,8 @@ interface CsvTemplate {
   skipHeaderRow?: boolean
   // When set, the DN is read from this CSV column instead of RDN + parent DN.
   dnSourceColumn?: string | null
+  // Single character separating CSV fields; ',' when absent.
+  fieldDelimiter?: string
   entries?: TemplateEntry[]
 }
 interface ExportForm { filter: string, baseDn: string, attributes: string }
@@ -590,8 +617,11 @@ interface TemplateForm {
   skipHeaderRow: boolean
   // CSV column holding the full DN; '' means construct from RDN + parent DN.
   dnSourceColumn: string
+  fieldDelimiter: string
   entries: TemplateEntry[]
 }
+/** A mapping row removed from the template form, kept so it can be restored. */
+interface RemovedEntry { entry: TemplateEntry, index: number }
 interface PreviewRow {
   rowNumber: number
   computedDn?: string
@@ -740,7 +770,7 @@ const templateSaving      = ref(false)
 const deleteTemplateTarget = ref<CsvTemplate | null>(null)
 const templateForm = ref<TemplateForm>({
   name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
-  errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', entries: []
+  errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', fieldDelimiter: ',', entries: []
 })
 // Whether the template reads the DN from a CSV column (vs constructing it from
 // the RDN attribute + parent DN). Kept separate so toggling off preserves the
@@ -753,6 +783,47 @@ const dnSourceMode = computed<'rdn' | 'column'>({
   get: () => (dnFromColumn.value ? 'column' : 'rdn'),
   set: (v) => { dnFromColumn.value = v === 'column' },
 })
+
+// Field delimiter picker: common separators as presets, 'other' reveals a
+// one-character input. templateForm.fieldDelimiter stays the saved value.
+const DELIMITER_PRESETS = [
+  { value: ',', label: 'Comma (,)' },
+  { value: ';', label: 'Semicolon (;)' },
+  { value: '\t', label: 'Tab' },
+  { value: '|', label: 'Pipe (|)' },
+] as const
+const delimiterPresetValue = ref<string>(',')
+const customDelimiter = ref('')
+const delimiterPreset = computed<string>({
+  get: () => delimiterPresetValue.value,
+  set: (v) => {
+    delimiterPresetValue.value = v
+    templateForm.value.fieldDelimiter = v === 'other' ? customDelimiter.value : v
+  },
+})
+watch(customDelimiter, (v) => {
+  if (delimiterPresetValue.value === 'other') templateForm.value.fieldDelimiter = v
+})
+/** The backend rejects anything but a single non-quote, non-newline character. */
+const customDelimiterValid = computed(() =>
+  customDelimiter.value.length === 1 && !/["\r\n]/.test(customDelimiter.value)
+)
+
+function syncDelimiterPicker(d: string) {
+  const isPreset = DELIMITER_PRESETS.some(o => o.value === d)
+  delimiterPresetValue.value = isPreset ? d : 'other'
+  customDelimiter.value = isPreset ? '' : d
+}
+
+function delimiterLabel(d?: string) {
+  const preset = DELIMITER_PRESETS.find(o => o.value === (d ?? ','))
+  return preset ? preset.label : `"${d}"`
+}
+
+// Mapping rows removed in this editing session, most recent last, so
+// "Undo remove" can restore them one at a time in reverse order.
+const removedEntries = ref<RemovedEntry[]>([])
+const lastRemovedEntry = computed(() => removedEntries.value[removedEntries.value.length - 1] ?? null)
 
 // ObjectClass picker state
 const objectClasses       = ref<string[]>([])
@@ -839,6 +910,7 @@ const groupPreviewWarningCount = computed(() =>
 const canSaveTemplate = computed(() => {
   const f = templateForm.value
   if (!f.name || f.objectClasses.length === 0) return false
+  if (delimiterPreset.value === 'other' && !customDelimiterValid.value) return false
   return f.entries.filter(e => e._required).every(e => e.csvColumn && e.csvColumn.trim())
 })
 
@@ -885,9 +957,11 @@ function openCreateTemplate() {
   availableOcHighlight.value = null
   templateForm.value = {
     name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
-    errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', entries: []
+    errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', fieldDelimiter: ',', entries: []
   }
   dnFromColumn.value = false
+  syncDelimiterPicker(',')
+  removedEntries.value = []
   showTemplateModal.value = true
 }
 
@@ -903,9 +977,12 @@ function openEditTemplate(t: CsvTemplate) {
     errorHandling: t.errorHandling ?? 'SKIP_ERRORS',
     skipHeaderRow: t.skipHeaderRow !== false,
     dnSourceColumn: t.dnSourceColumn ?? '',
+    fieldDelimiter: t.fieldDelimiter || ',',
     entries: (t.entries ?? []).map(e => ({ ...e, _required: false })),
   }
   dnFromColumn.value = !!t.dnSourceColumn
+  syncDelimiterPicker(templateForm.value.fieldDelimiter)
+  removedEntries.value = []
   showTemplateModal.value = true
 }
 
@@ -913,6 +990,7 @@ async function onObjectClassChange() {
   const ocs = templateForm.value.objectClasses
   if (ocs.length === 0) {
     templateForm.value.entries = []
+    removedEntries.value = []
     return
   }
   loadingOcAttrs.value = true
@@ -933,6 +1011,9 @@ async function onObjectClassChange() {
       entries.push({ csvColumn: existingMap[attr] || '', ldapAttribute: attr, ignored: false, _required: false })
     }
     templateForm.value.entries = entries
+    // The rebuild re-lists every attribute of the chosen classes, so earlier
+    // removals are already back and their positions no longer apply.
+    removedEntries.value = []
   } catch (e) {
     notif.error('Failed to load objectClass attributes: ' + errMsg(e))
   } finally {
@@ -940,7 +1021,18 @@ async function onObjectClassChange() {
   }
 }
 
-function removeTemplateEntry(i: number) { templateForm.value.entries.splice(i, 1) }
+function removeTemplateEntry(i: number) {
+  const [entry] = templateForm.value.entries.splice(i, 1)
+  if (entry) removedEntries.value.push({ entry, index: i })
+}
+
+/** Puts the most recently removed mapping back where it was. */
+function undoRemoveTemplateEntry() {
+  const last = removedEntries.value.pop()
+  if (!last) return
+  const entries = templateForm.value.entries
+  entries.splice(Math.min(last.index, entries.length), 0, last.entry)
+}
 
 async function saveTemplate() {
   templateSaving.value = true
@@ -955,6 +1047,7 @@ async function saveTemplate() {
       dnSourceColumn: dnFromColumn.value
         ? (templateForm.value.dnSourceColumn.trim() || null)
         : null,
+      fieldDelimiter: templateForm.value.fieldDelimiter || ',',
       entries: templateForm.value.entries
         .filter(e => e.csvColumn && e.csvColumn.trim())
         .map(e => ({ csvColumn: e.csvColumn, ldapAttribute: e.ldapAttribute, ignored: false })),
@@ -1013,6 +1106,7 @@ function buildImportRequest() {
     targetKeyAttribute: t.targetKeyAttribute,
     conflictHandling: t.conflictHandling,
     skipHeaderRow: t.skipHeaderRow !== false,
+    fieldDelimiter: t.fieldDelimiter || ',',
     // Without this the backend gets an empty mapping and falls through
     // to "CSV header IS the attribute name" passthrough — which means
     // a column named `username` mapped to `uid` never reaches the

@@ -464,6 +464,22 @@ class BulkUserServiceTest {
         assertThat(result.rows().get(1).missingRequired()).contains("dn");
     }
 
+    @Test
+    void previewImport_semicolonDelimiter_splitsOnSemicolonNotComma() throws IOException {
+        // Semicolon-separated export: the DN keeps its commas unquoted, and the
+        // mapped "email" column still reaches the mail attribute.
+        String csvContent = "dn;email\n"
+                + "cn=Jane,ou=people,dc=example,dc=com;jane@example.com\n";
+
+        var result = service.previewImport(csv(csvContent), "ou=people,dc=example,dc=com",
+                "uid", List.of(new CsvColumnMappingDto("email", "mail", false)),
+                true, List.of(), "dn", ';');
+
+        assertThat(result.rows()).hasSize(1);
+        assertThat(result.rows().get(0).computedDn()).isEqualTo("cn=Jane,ou=people,dc=example,dc=com");
+        assertThat(result.rows().get(0).attributes()).containsEntry("mail", "jane@example.com");
+    }
+
     // ── Preview — required-attribute validation ──────────────────────────────
 
     @Test
@@ -574,6 +590,19 @@ class BulkUserServiceTest {
         assertThat(rows.get(0).rowNumber()).isEqualTo(1);
         assertThat(rows.get(0).value()).isEqualTo("uid=a,ou=people,dc=example,dc=com");
         assertThat(rows.get(1).value()).isEqualTo("uid=b,ou=people,dc=example,dc=com");
+    }
+
+    @Test
+    void parseDeleteRows_noHeaderSingleColumn_usesThatColumn() throws IOException {
+        // Without a header row the lone column is synthesized as "Column 1";
+        // the single-column fallback must still pick it up.
+        String csvContent = "\"uid=a,ou=people,dc=example,dc=com\"\n"
+                + "\"uid=b,ou=people,dc=example,dc=com\"\n";
+
+        var rows = service.parseDeleteRows(csv(csvContent), "dn", false);
+
+        assertThat(rows).extracting(BulkUserService.RawDeleteRow::value).containsExactly(
+                "uid=a,ou=people,dc=example,dc=com", "uid=b,ou=people,dc=example,dc=com");
     }
 
     @Test
