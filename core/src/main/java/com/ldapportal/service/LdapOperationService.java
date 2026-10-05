@@ -51,6 +51,7 @@ import com.ldapportal.ldap.LdapSchemaService.ObjectClassAttributes;
 import com.ldapportal.ldap.LdapSchemaService.SchemaListItem;
 import com.ldapportal.ldap.LdapUserService;
 import com.ldapportal.repository.DirectoryConnectionRepository;
+import com.ldapportal.util.CsvUtils;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
@@ -1073,8 +1074,11 @@ public class LdapOperationService {
                     .toList();
         }
 
+        char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
+
         return bulkUserService.previewImport(
-                csvInput, parentDn, targetKeyAttr, mappings, skipHeader, requiredAttrs, dnSourceColumn);
+                csvInput, parentDn, targetKeyAttr, mappings, skipHeader, requiredAttrs, dnSourceColumn,
+                delimiter);
     }
 
     /**
@@ -1168,10 +1172,12 @@ public class LdapOperationService {
                     .toList();
         }
 
+        char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
+
         BulkImportResult result = bulkUserService.importCsv(
                 dc, csvInput, parentDn, targetKeyAttr, conflictHandling, mappings,
                 objectClasses, skipHeader, dnSourceColumn, profileContext,
-                requiredAttrs, errorHandling);
+                requiredAttrs, errorHandling, delimiter);
 
         // Fold the created DNs into the detail so the audit trail names exactly
         // which users were added — symmetric with bulkDelete's deletedDns.
@@ -1487,8 +1493,10 @@ public class LdapOperationService {
                 .filter(a -> !a.equalsIgnoreCase("cn"))
                 .toList();
 
+        char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
+
         return bulkGroupService.previewImport(
-                csvInput, parentDn, mappings, skipHeader, requiredAttrs, memberAttribute);
+                csvInput, parentDn, mappings, skipHeader, requiredAttrs, memberAttribute, delimiter);
     }
 
     public BulkImportResult bulkImportGroups(UUID directoryId, AuthPrincipal principal,
@@ -1535,9 +1543,11 @@ public class LdapOperationService {
         String effectiveMemberAttr = (memberAttribute != null && !memberAttribute.isBlank())
                 ? memberAttribute : "member";
 
+        char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
+
         BulkImportResult result = bulkGroupService.importCsv(
                 dc, csvInput, parentDn, conflictHandling, mappings,
-                objectClasses, effectiveMemberAttr, skipHeader);
+                objectClasses, effectiveMemberAttr, skipHeader, delimiter);
 
         auditService.record(principal, directoryId, AuditAction.GROUP_BULK_IMPORT, parentDn,
                 Map.of("operation", "bulkGroupImport",
@@ -1572,6 +1582,20 @@ public class LdapOperationService {
             return template.isSkipHeaderRow();
         }
         return true; // default: first row is headers
+    }
+
+    /** Request delimiter wins, then the template's, then comma. Invalid values → 400. */
+    private char resolveFieldDelimiter(String requestValue, UUID templateId,
+                                       UUID directoryId, AuthPrincipal principal) {
+        if (requestValue != null && !requestValue.isEmpty()) {
+            return CsvUtils.toDelimiter(requestValue);
+        }
+        if (templateId != null) {
+            CsvMappingTemplate template =
+                    csvTemplateService.loadTemplate(templateId, directoryId, principal);
+            return CsvUtils.toDelimiter(template.getFieldDelimiter());
+        }
+        return CsvUtils.DEFAULT_DELIMITER;
     }
 
     private DirectoryConnection loadDirectory(UUID directoryId, AuthPrincipal principal) {
