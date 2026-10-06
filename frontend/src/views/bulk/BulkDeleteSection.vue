@@ -15,13 +15,16 @@
     </p>
 
     <div class="space-y-3">
-      <!-- Resolution controls + CSV file. The target profile comes from the
-           sidebar picker, shown read-only here. -->
+      <!-- Resolution controls + CSV file on one row. The target profile comes
+           from the sidebar picker, shown read-only here. 12-col grid:
+             Full DN:   profile (3) + match by (2) + CSV column (3) + CSV file (4)
+             Attribute: profile (3) + match by (2) + attribute (2) + CSV column (2) + CSV file (3)
+           Narrow screens wrap: profile full width, then fields two per row. -->
       <div class="grid grid-cols-12 gap-2 items-start">
-        <ActiveProfileField class="col-span-3"
+        <ActiveProfileField class="col-span-12 sm:col-span-3"
           :name="activeProfile?.name" :color="activeProfile?.themeColor" :dn="activeProfile?.targetUserDn" />
 
-        <div class="col-span-3">
+        <div class="col-span-6 sm:col-span-2">
           <label for="bd-mode" class="block text-sm font-medium text-gray-700 mb-1">Match users by</label>
           <select id="bd-mode" v-model="mode" class="input w-full" @change="resetResults">
             <option value="dn">Full DN</option>
@@ -29,38 +32,42 @@
           </select>
         </div>
 
-        <div v-if="mode === 'key'" class="col-span-2">
+        <div v-if="mode === 'key'" class="col-span-6 sm:col-span-2">
           <label for="bd-keyattr" class="block text-sm font-medium text-gray-700 mb-1">
             Attribute <span class="text-red-500">*</span>
           </label>
           <input id="bd-keyattr" v-model="keyAttribute" class="input w-full" placeholder="uid" @input="resetResults" />
         </div>
 
-        <div :class="mode === 'key' ? 'col-span-4' : 'col-span-6'">
-          <label for="bd-valuecol" class="block text-sm font-medium text-gray-700 mb-1">CSV column</label>
-          <input id="bd-valuecol" v-model="valueColumn" class="input w-full"
-                 :placeholder="mode === 'key' ? (keyAttribute || 'uid') : 'dn'" @input="resetResults" />
+        <div :class="mode === 'key' ? 'col-span-6 sm:col-span-2' : 'col-span-6 sm:col-span-3'">
+          <label for="bd-valuecol" class="block text-sm font-medium text-gray-700 mb-1">
+            CSV column <span class="text-red-500">*</span>
+          </label>
+          <input id="bd-valuecol" v-model="valueColumn" class="input w-full" required
+                 :class="{ 'border-red-300': valueColumnMissing }"
+                 :aria-invalid="valueColumnMissing ? 'true' : undefined"
+                 :placeholder="defaultValueColumn" @input="onValueColumnInput" />
+          <p v-if="valueColumnMissing" class="mt-1 text-xs text-red-500">
+            Enter the CSV column that holds each user's {{ mode === 'key' ? (keyAttribute.trim() || 'attribute') : 'DN' }}.
+          </p>
         </div>
 
-      </div>
-
-      <!-- CSV file + header toggle, left-aligned together. max-w keeps the
-           field from stretching across to the right edge. -->
-      <div class="max-w-lg">
-        <label class="block text-sm font-medium text-gray-700 mb-1">CSV File <span class="text-red-500">*</span></label>
-        <label class="csv-file-picker input flex items-center gap-2 w-full cursor-pointer !py-0 !pr-1 hover:border-gray-400 transition-colors bg-white">
-          <span class="flex-1 truncate text-sm" :class="file ? 'text-gray-900 font-medium' : 'text-gray-500'">
-            {{ file?.name || 'No file chosen' }}
-          </span>
-          <span class="px-3 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100 whitespace-nowrap">
-            Choose File
-          </span>
-          <input type="file" accept=".csv,text/csv" @change="onFileChange" aria-label="CSV File" class="sr-only" />
-        </label>
-        <label for="bd-skip-header" class="flex items-center gap-2 cursor-pointer mt-2">
-          <input id="bd-skip-header" type="checkbox" v-model="skipHeaderRow" @change="resetResults" class="rounded border-gray-300" />
-          <span class="text-sm text-gray-700">First row in file is a header</span>
-        </label>
+        <div :class="mode === 'key' ? 'col-span-6 sm:col-span-3' : 'col-span-12 sm:col-span-4'">
+          <label class="block text-sm font-medium text-gray-700 mb-1">CSV File <span class="text-red-500">*</span></label>
+          <label class="csv-file-picker input flex items-center gap-2 w-full cursor-pointer !py-0 !pr-1 hover:border-gray-400 transition-colors bg-white">
+            <span class="flex-1 truncate text-sm" :class="file ? 'text-gray-900 font-medium' : 'text-gray-500'">
+              {{ file?.name || 'No file chosen' }}
+            </span>
+            <span class="px-3 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100 whitespace-nowrap">
+              Choose File
+            </span>
+            <input type="file" accept=".csv,text/csv" @change="onFileChange" aria-label="CSV File" class="sr-only" />
+          </label>
+          <label for="bd-skip-header" class="flex items-center gap-2 cursor-pointer mt-2">
+            <input id="bd-skip-header" type="checkbox" v-model="skipHeaderRow" @change="resetResults" class="rounded border-gray-300" />
+            <span class="text-sm text-gray-700">First row in file is a header</span>
+          </label>
+        </div>
       </div>
 
       <!-- Preview (dry run) -->
@@ -144,7 +151,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { previewBulkDelete, bulkDelete } from '@/api/csvTemplates'
 import ActiveProfileField from './ActiveProfileField.vue'
@@ -171,7 +178,11 @@ function errMsg(e: unknown): string {
 const activeProfile = computed<ProfileLite | null>(() => props.activeProfile ?? null)
 const mode          = ref<'dn' | 'key'>('dn')
 const keyAttribute  = ref('uid')
-const valueColumn   = ref('')
+// The CSV column holding each row's DN (or match-attribute value). It's a real
+// value, not just a placeholder: until the operator edits it, it follows the
+// mode ("dn") / the match attribute, so what's shown is what the backend uses.
+const valueColumn   = ref('dn')
+const valueColumnEdited = ref(false)
 const skipHeaderRow = ref(true)
 const file          = ref<File | null>(null)
 
@@ -181,8 +192,23 @@ const previewResult = ref<PreviewResult | null>(null)
 const deleteResult  = ref<DeleteResult | null>(null)
 const confirmText   = ref('')
 
+const defaultValueColumn = computed(() =>
+  mode.value === 'key' ? (keyAttribute.value.trim() || 'uid') : 'dn')
+
+watch(defaultValueColumn, (col) => {
+  if (!valueColumnEdited.value) valueColumn.value = col
+})
+
+/** Blank column: block Preview rather than silently falling back server-side. */
+const valueColumnMissing = computed(() => !valueColumn.value.trim())
+
+function onValueColumnInput() {
+  valueColumnEdited.value = true
+  resetResults()
+}
+
 const canPreview = computed(() =>
-  !!file.value && !!activeProfile.value
+  !!file.value && !!activeProfile.value && !valueColumnMissing.value
   && (mode.value === 'dn' || !!keyAttribute.value.trim()),
 )
 
