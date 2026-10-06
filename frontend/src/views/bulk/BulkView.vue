@@ -235,6 +235,18 @@
             Row {{ r.rowNumber }}: {{ r.message }}
           </li>
         </ul>
+        <!-- Skipped rows are expected outcomes (existing entries left as-is per
+             the template's conflict handling), so they read as info, not errors. -->
+        <div v-if="rowsWithStatus(importResult, 'SKIPPED').length" class="mt-3" data-testid="user-import-skipped">
+          <p class="text-xs font-medium text-gray-700 mb-1">
+            Skipped ({{ rowsWithStatus(importResult, 'SKIPPED').length }}) — left unchanged per the template's conflict handling
+          </p>
+          <ul class="space-y-1 max-h-48 overflow-y-auto">
+            <li v-for="r in rowsWithStatus(importResult, 'SKIPPED')" :key="r.rowNumber" class="text-gray-600 text-xs">
+              <span aria-hidden="true">ⓘ</span> Row {{ r.rowNumber }}<span v-if="r.dn" class="font-mono"> ({{ r.dn }})</span>: {{ r.message }}
+            </li>
+          </ul>
+        </div>
       </div>
     </section>
 
@@ -379,6 +391,18 @@
             Row {{ r.rowNumber }}: {{ r.message }}
           </li>
         </ul>
+        <!-- Skipped rows are expected outcomes (existing entries left as-is per
+             the template's conflict handling), so they read as info, not errors. -->
+        <div v-if="rowsWithStatus(groupImportResult, 'SKIPPED').length" class="mt-3" data-testid="group-import-skipped">
+          <p class="text-xs font-medium text-gray-700 mb-1">
+            Skipped ({{ rowsWithStatus(groupImportResult, 'SKIPPED').length }}) — left unchanged per the template's conflict handling
+          </p>
+          <ul class="space-y-1 max-h-48 overflow-y-auto">
+            <li v-for="r in rowsWithStatus(groupImportResult, 'SKIPPED')" :key="r.rowNumber" class="text-gray-600 text-xs">
+              <span aria-hidden="true">ⓘ</span> Row {{ r.rowNumber }}<span v-if="r.dn" class="font-mono"> ({{ r.dn }})</span>: {{ r.message }}
+            </li>
+          </ul>
+        </div>
       </div>
     </section>
 
@@ -936,6 +960,11 @@ const canSaveTemplate = computed(() => {
   return f.entries.filter(e => e._required).every(e => e.csvColumn && e.csvColumn.trim())
 })
 
+/** Result rows with the given status (e.g. SKIPPED), or none. */
+function rowsWithStatus(result: ImportResult | null, status: string): ImportRowResult[] {
+  return (result?.rows || []).filter(r => r.status === status)
+}
+
 function conflictLabel(val: string) {
   const map: Record<string, string> = { SKIP: 'Skip existing', OVERWRITE: 'Overwrite existing', PROMPT: 'Prompt (treat as skip)' }
   return map[val] || val
@@ -1219,7 +1248,7 @@ async function doConfirmImport() {
     } else {
       importResult.value = data
       previewResult.value = null
-      notif.success(`Import done: ${data.created} created, ${data.errors} errors`)
+      notif.success(`Import done: ${data.created} created, ${data.updated} updated, ${data.skipped} skipped, ${data.errors} errors`)
     }
   } catch (e) {
     notif.error(errMsg(e))
@@ -1317,7 +1346,7 @@ async function doGroupConfirmImport() {
     )
     groupImportResult.value = resp.data
     groupPreviewResult.value = null
-    notif.success(`Import done: ${resp.data.created} created, ${resp.data.errors} errors`)
+    notif.success(`Import done: ${resp.data.created} created, ${resp.data.updated} updated, ${resp.data.skipped} skipped, ${resp.data.errors} errors`)
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
