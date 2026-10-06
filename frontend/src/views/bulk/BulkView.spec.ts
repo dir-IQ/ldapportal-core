@@ -43,6 +43,7 @@ vi.mock('@/api/csvTemplates', () => ({
 }))
 
 import { previewCsv, importCsv, listCsvTemplates, updateCsvTemplate } from '@/api/csvTemplates'
+import { getObjectClassesBulk, listObjectClasses } from '@/api/schema'
 // The view registers an unsaved-changes guard (and reads the sidebar
 // picker) through real Pinia stores; give every test a fresh instance.
 beforeEach(() => setActivePinia(createPinia()))
@@ -125,8 +126,9 @@ async function openEditTemplate(template: object = editableTemplate) {
   return w
 }
 
+/** Attribute names in the right-hand mapping stack, top to bottom (empty slots skipped). */
 function mappedAttrs(w: ReturnType<typeof mount>) {
-  return w.findAll('input[aria-label^="LDAP attribute "]').map(i => (i.element as HTMLInputElement).value)
+  return w.findAll('[data-side="out"][data-attr]').map(c => c.attributes('data-attr'))
 }
 
 describe('BulkView — template column mappings undo', () => {
@@ -346,5 +348,169 @@ describe('BulkView — import result', () => {
     const errors = w.findAll('li.text-red-600')
     expect(errors).toHaveLength(1)
     expect(errors[0].text()).toContain('Row 2')
+  })
+})
+
+// ── Sample input file + reorderable mapping stacks ───────────────────────────
+
+const stackInputs = (w: ReturnType<typeof mount>) =>
+  w.findAll('.stack-chip[data-side="in"]').map(c => {
+    const field = c.find('input')
+    return field.exists() ? (field.element as HTMLInputElement).value : c.text().replace('⋮⋮', '').trim()
+  })
+const rowStatuses = (w: ReturnType<typeof mount>) =>
+  w.findAll('[data-status]').map(r => r.attributes('data-status'))
+
+async function chooseSample(w: ReturnType<typeof mount>, content: string, name = 'sample.csv') {
+  const input = w.find('input[type="file"][aria-label="Sample Input File"]')
+  const file = new File([content], name, { type: 'text/csv' })
+  Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+  await input.trigger('change')
+  await flushPromises()
+}
+
+const schema = { data: { required: ['cn', 'sn'], optional: ['mail', 'uid'] } }
+
+describe('BulkView — template sample input file', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('reads the sample header into the input stack, keeping saved pairings', async () => {
+    vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
+    const w = await openEditTemplate()
+    // Saved mappings line up with the schema's attributes (required first).
+    expect(mappedAttrs(w)).toEqual(['cn', 'sn', 'mail', 'uid'])
+    expect(stackInputs(w)).toEqual(['name', 'surname', 'email', ''])
+
+    await chooseSample(w, 'email,name,surname,login,CostCenter\nx,y,z,q,1\n', 'hr.csv')
+    expect(w.text()).toContain('hr.csv')
+    expect(w.find('[data-testid="sample-columns"]').text()).toContain('5 columns')
+    // Pairings whose column still exists stay; new columns go below as ignored
+    // rather than silently pairing with the empty uid row.
+    expect(stackInputs(w)).toEqual(['name', 'surname', 'email', 'no input column', 'login', 'CostCenter'])
+    expect(rowStatuses(w)).toEqual(['mapped', 'mapped', 'mapped', 'unmapped', 'ignored', 'ignored'])
+  })
+
+  it('saves input columns without an attribute as ignored entries', async () => {
+    vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
+    vi.mocked(updateCsvTemplate).mockResolvedValueOnce({ data: {} } as never)
+    const w = await openEditTemplate()
+    await chooseSample(w, 'name,surname,email,CostCenter\n')
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(updateCsvTemplate).toHaveBeenCalledWith('d1', 't1', expect.objectContaining({
+      entries: [
+        { csvColumn: 'name', ldapAttribute: 'cn', ignored: false },
+        { csvColumn: 'surname', ldapAttribute: 'sn', ignored: false },
+        { csvColumn: 'email', ldapAttribute: 'mail', ignored: false },
+        { csvColumn: 'CostCenter', ldapAttribute: null, ignored: true },
+      ],
+    }))
+  })
+
+  it('restores saved ignored columns when editing without a sample file', async () => {
+    const w = await openEditTemplate({
+      ...editableTemplate,
+      entries: [...editableTemplate.entries, { csvColumn: 'CostCenter', ldapAttribute: null, ignored: true }],
+    })
+    expect(stackInputs(w)).toEqual(['email', 'surname', 'name', 'CostCenter'])
+    expect(rowStatuses(w)).toEqual(['mapped', 'mapped', 'mapped', 'ignored'])
+  })
+
+  it('blocks save while a required attribute has no input column', async () => {
+    vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(
+      { data: { required: ['cn', 'sn', 'uid'], optional: ['mail'] } } as never)
+    const w = await openEditTemplate()
+    expect(rowStatuses(w)).toContain('missing')
+    expect(btnByText(w, 'Save').attributes('disabled')).toBeDefined()
+    await w.find('input[aria-label="CSV column for row 3"]').setValue('login')
+    expect(btnByText(w, 'Save').attributes('disabled')).toBeUndefined()
+  })
+
+  it("re-reads the sample when the template's delimiter changes", async () => {
+    const w = await openEditTemplate()
+    await chooseSample(w, 'name;surname;email\n')
+    expect(w.find('[data-testid="sample-columns"]').text()).toContain('1 columns')
+    await w.find('#bulk-template-field-delimiter').setValue(';')
+    await flushPromises()
+    expect(w.find('[data-testid="sample-columns"]').text()).toContain('3 columns')
+  })
+
+  it('auto-matches inputs to attributes by name and alias', async () => {
+    vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
+    const w = await openEditTemplate({ ...editableTemplate, entries: [] })
+    await chooseSample(w, 'Email,UserName,LastName,FullName\n')
+    expect(stackInputs(w)).toEqual(['Email', 'UserName', 'LastName', 'FullName'])
+    await btnByText(w, 'Auto-match by name').trigger('click')
+    expect(mappedAttrs(w)).toEqual(['cn', 'sn', 'mail', 'uid'])
+    expect(stackInputs(w)).toEqual(['FullName', 'LastName', 'Email', 'UserName'])
+  })
+
+  it('leaves an empty slot when an attribute is removed so rows below keep their pairing', async () => {
+    const w = await openEditTemplate()
+    await w.findAll('button[aria-label="Remove mapping"]')[0].trigger('click') // mail
+    expect(stackInputs(w)).toEqual(['email', 'surname', 'name'])
+    expect(rowStatuses(w)).toEqual(['ignored', 'mapped', 'mapped'])
+  })
+
+  it('sends ignored columns with the import request so they are not passed through', async () => {
+    vi.mocked(listCsvTemplates).mockResolvedValueOnce({ data: [{
+      ...editableTemplate,
+      entries: [{ csvColumn: 'email', ldapAttribute: 'mail', ignored: false },
+        { csvColumn: 'CostCenter', ldapAttribute: null, ignored: true }],
+    }] } as never)
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    await w.find('#bulk-import-template').setValue('t1')
+    await attachUserFile(w)
+    await btnByText(w, 'Preview Import').trigger('click')
+    await flushPromises()
+    expect(previewCsv).toHaveBeenCalledWith('d1', expect.any(File), expect.objectContaining({
+      columnMappings: [
+        { csvColumn: 'email', ldapAttribute: 'mail', ignored: false },
+        { csvColumn: 'CostCenter', ldapAttribute: null, ignored: true },
+      ],
+    }))
+  })
+})
+
+describe('BulkView — object class type-to-find', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('jumps to the first available class starting with the typed letters and adds it on Enter', async () => {
+    vi.mocked(listObjectClasses).mockResolvedValueOnce({ data: [
+      'account', 'groupOfNames', 'inetLocalMailRecipient', 'inetOrgPerson', 'person',
+    ] } as never)
+    const w = mount(BulkView, { global: modalGlobal, attachTo: document.body })
+    await flushPromises()
+    await btnByText(w, 'Template').trigger('click')
+    await btnByText(w, 'Add Template').trigger('click')
+
+    const list = w.find('[role="listbox"][aria-label="Available object classes"]')
+    for (const k of 'inet') await list.trigger('keydown', { key: k })
+    expect(list.find('[aria-selected="true"]').text()).toBe('inetLocalMailRecipient')
+    expect(list.attributes('aria-activedescendant')).toBe('oc-av-inetLocalMailRecipient')
+    expect(w.text()).toContain('“inet”')
+
+    await list.trigger('keydown', { key: 'o' })
+    expect(list.find('[aria-selected="true"]').text()).toBe('inetOrgPerson')
+
+    await list.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    const selected = w.find('[role="listbox"][aria-label="Selected object classes"]')
+    expect(selected.text()).toContain('inetOrgPerson')
+    expect(getObjectClassesBulk).toHaveBeenCalledWith('d1', ['inetOrgPerson'])
+    w.unmount()
+  })
+
+  it('flags a prefix that matches nothing', async () => {
+    vi.mocked(listObjectClasses).mockResolvedValueOnce({ data: ['account', 'person'] } as never)
+    const w = mount(BulkView, { global: modalGlobal })
+    await flushPromises()
+    await btnByText(w, 'Template').trigger('click')
+    await btnByText(w, 'Add Template').trigger('click')
+    const list = w.find('[role="listbox"][aria-label="Available object classes"]')
+    await list.trigger('keydown', { key: 'z' })
+    expect(w.text()).toContain('“z” no match')
+    expect(list.find('[aria-selected="true"]').exists()).toBe(false)
   })
 })
