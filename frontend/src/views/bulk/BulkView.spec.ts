@@ -255,6 +255,14 @@ describe('BulkView — template "Read DN from CSV column"', () => {
     expect(dnColumnInput(w).attributes('required')).toBeDefined()
   })
 
+  it('shows the red required star on the DN column label in column mode', async () => {
+    const w = await editTemplate(null)
+    await w.find('#bulk-template-dn-source').setValue('column')
+    const label = w.find(`label[for="${dnColumnInput(w).attributes('id')}"]`)
+    expect(label.text()).toBe('DN column *')
+    expect(label.find('span.text-red-500').text()).toBe('*')
+  })
+
   it('blocks save while column mode has no column name', async () => {
     const w = await editTemplate(null)
     await w.find('#bulk-template-dn-source').setValue('column')
@@ -307,5 +315,36 @@ describe('BulkView — selected template summary', () => {
     expect(w.find('#bulk-template-dn-column').exists()).toBe(false)
     expect((w.find('#bulk-template-rdn-attribute').element as HTMLInputElement).value).toBe('uid')
     expect((w.find('#bulk-template-other-attributes').element as HTMLInputElement).value).toBe('mail')
+  })
+})
+
+describe('BulkView — import result', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('lists skipped rows as information, separate from errors', async () => {
+    vi.mocked(importCsv).mockResolvedValueOnce({ status: 200, data: {
+      totalRows: 2, created: 0, updated: 0, skipped: 1, errors: 1, rows: [
+        { rowNumber: 1, dn: 'uid=a,ou=eng,dc=x', status: 'SKIPPED',
+          message: 'Already exists — skipped (template conflict handling: Skip existing)' },
+        { rowNumber: 2, dn: 'uid=b,ou=eng,dc=x', status: 'ERROR', message: 'Object class violation' },
+      ] } } as never)
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    await w.find('#bulk-import-template').setValue('t1')
+    await attachUserFile(w)
+    await btnByText(w, 'Preview Import').trigger('click')
+    await flushPromises()
+    await w.find('input[aria-label="Type the profile name to confirm"]').setValue('Engineers')
+    await btnByText(w, 'Perform Import').trigger('click')
+    await flushPromises()
+
+    const skipped = w.find('[data-testid="user-import-skipped"]')
+    expect(skipped.text()).toContain('Skipped (1)')
+    expect(skipped.text()).toContain('Row 1 (uid=a,ou=eng,dc=x): Already exists — skipped')
+    // Informational styling — not the red error treatment.
+    expect(skipped.find('li').classes()).not.toContain('text-red-600')
+    const errors = w.findAll('li.text-red-600')
+    expect(errors).toHaveLength(1)
+    expect(errors[0].text()).toContain('Row 2')
   })
 })

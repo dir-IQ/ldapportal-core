@@ -102,9 +102,56 @@ class BulkUserServiceTest {
         ArgumentCaptor<Map<String, List<String>>> attrsCaptor = ArgumentCaptor.forClass(Map.class);
         verify(userService).createUser(eq(dc),
                 eq("uid=jsmith,ou=people,dc=example,dc=com"),
-                attrsCaptor.capture());
+                attrsCaptor.capture(), any());
         assertThat(attrsCaptor.getValue()).containsKey("cn");
         assertThat(attrsCaptor.getValue().get("mail")).containsExactly("jsmith@example.com");
+    }
+
+    @Test
+    void importCsv_skipsExistingEntry_whenServerWordsTheDuplicateItsOwnWay() throws IOException {
+        // What the provisioning-plan executor really throws: the server's own
+        // LDAPException (result code 68) wrapped with step context. Its message
+        // says "an entry with that name already exists" — neither the result-code
+        // name nor "(68)" — so detection must use the result code.
+        String dn = "uid=existing,ou=people,dc=example,dc=com";
+        com.unboundid.ldap.sdk.LDAPException serverError = new com.unboundid.ldap.sdk.LDAPException(
+                ResultCode.ENTRY_ALREADY_EXISTS,
+                "The entry " + dn + " cannot be added because an entry with that name already exists");
+        doThrow(new LdapOperationException("Provisioning plan aborted: step 1 of 2 (ADD on " + dn
+                        + ") — " + serverError.getMessage(), serverError))
+                .when(userService).createUser(eq(dc), anyString(), any(), any());
+
+        BulkImportResult result = service.importCsv(
+                dc, csv("uid,cn\nexisting,Existing User\n"),
+                "ou=people,dc=example,dc=com", "uid", ConflictHandling.SKIP,
+                List.of(), List.of(), true);
+
+        assertThat(result.errors()).isZero();
+        assertThat(result.skipped()).isEqualTo(1);
+        assertThat(result.rows().get(0).status()).isEqualTo(BulkImportRowResult.Status.SKIPPED);
+        assertThat(result.rows().get(0).message())
+                .isEqualTo("Already exists — skipped (template conflict handling: Skip existing)");
+    }
+
+    @Test
+    void importCsv_passesProfileIdToCreate() throws IOException {
+        UUID profileId = UUID.randomUUID();
+        var context = new BulkUserService.ProfileContext(dc.getId(), profileId, null);
+
+        service.importCsv(dc, csv("uid,cn\njdoe,Jane Doe\n"),
+                "ou=people,dc=example,dc=com", "uid", ConflictHandling.SKIP,
+                List.of(), List.of(), true, null, context);
+
+        // Profile-aware create: interceptors (e.g. IVIA) see the profile, as on manual create.
+        verify(userService).createUser(eq(dc), eq("uid=jdoe,ou=people,dc=example,dc=com"), any(), eq(profileId));
+    }
+
+    @Test
+    void isEntryAlreadyExists_ignoresOtherFailures() {
+        var other = new com.unboundid.ldap.sdk.LDAPException(ResultCode.CONSTRAINT_VIOLATION, "duplicate principalName");
+        assertThat(BulkUserService.isEntryAlreadyExists(
+                new LdapOperationException("Provisioning plan compensation attempted: " + other.getMessage(), other)))
+                .isFalse();
     }
 
     @Test
@@ -112,7 +159,7 @@ class BulkUserServiceTest {
         String csvContent = "uid,cn\nexisting,Existing User\n";
         // createUser throws ENTRY_ALREADY_EXISTS → triggers conflict handling
         doThrow(entryAlreadyExists("uid=existing,ou=people,dc=example,dc=com"))
-                .when(userService).createUser(eq(dc), anyString(), any());
+                .when(userService).createUser(eq(dc), anyString(), any(), any());
 
         BulkImportResult result = service.importCsv(
                 dc, csv(csvContent),
@@ -132,7 +179,7 @@ class BulkUserServiceTest {
         String csvContent = "uid,cn,mail\nexisting,Updated Name,new@example.com\n";
         // createUser throws ENTRY_ALREADY_EXISTS → triggers OVERWRITE path
         doThrow(entryAlreadyExists("uid=existing,ou=people,dc=example,dc=com"))
-                .when(userService).createUser(eq(dc), anyString(), any());
+                .when(userService).createUser(eq(dc), anyString(), any(), any());
 
         BulkImportResult result = service.importCsv(
                 dc, csv(csvContent),
@@ -163,7 +210,7 @@ class BulkUserServiceTest {
                 List.of("sn"), ImportErrorHandling.ABORT_ON_ERROR);
 
         // The whole import is blocked — nothing is written to the directory.
-        verify(userService, never()).createUser(any(), anyString(), any());
+        verify(userService, never()).createUser(any(), anyString(), any(), any());
         verify(userService, never()).updateUser(any(), anyString(), any());
         assertThat(result.created()).isZero();
         assertThat(result.totalRows()).isEqualTo(2);
@@ -186,7 +233,7 @@ class BulkUserServiceTest {
                 null, null,
                 List.of("sn"), ImportErrorHandling.ABORT_ON_ERROR);
 
-        verify(userService).createUser(eq(dc), eq("uid=alice,ou=people,dc=example,dc=com"), any());
+        verify(userService).createUser(eq(dc), eq("uid=alice,ou=people,dc=example,dc=com"), any(), any());
         assertThat(result.created()).isEqualTo(1);
         assertThat(result.errors()).isZero();
     }
@@ -206,7 +253,7 @@ class BulkUserServiceTest {
         assertThat(result.errors()).isEqualTo(1);
         assertThat(result.rows().get(0).status()).isEqualTo(BulkImportRowResult.Status.ERROR);
         assertThat(result.rows().get(0).message()).contains("uid");
-        verify(userService, never()).createUser(any(), anyString(), any());
+        verify(userService, never()).createUser(any(), anyString(), any(), any());
     }
 
     @Test
@@ -215,12 +262,12 @@ class BulkUserServiceTest {
 
         // new1, new2 → createUser succeeds; exist → ENTRY_ALREADY_EXISTS
         doNothing().when(userService).createUser(eq(dc),
-                eq("uid=new1,ou=p,dc=example,dc=com"), any());
+                eq("uid=new1,ou=p,dc=example,dc=com"), any(), any());
         doNothing().when(userService).createUser(eq(dc),
-                eq("uid=new2,ou=p,dc=example,dc=com"), any());
+                eq("uid=new2,ou=p,dc=example,dc=com"), any(), any());
         doThrow(entryAlreadyExists("uid=exist,ou=p,dc=example,dc=com"))
                 .when(userService).createUser(eq(dc),
-                        eq("uid=exist,ou=p,dc=example,dc=com"), any());
+                        eq("uid=exist,ou=p,dc=example,dc=com"), any(), any());
 
         BulkImportResult result = service.importCsv(
                 dc, csv(csvContent),
@@ -252,7 +299,7 @@ class BulkUserServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, List<String>>> captor = ArgumentCaptor.forClass(Map.class);
         verify(userService).createUser(eq(dc),
-                eq("uid=jsmith,ou=people,dc=example,dc=com"), captor.capture());
+                eq("uid=jsmith,ou=people,dc=example,dc=com"), captor.capture(), any());
         assertThat(captor.getValue()).containsKey("cn");
         assertThat(captor.getValue().get("cn")).containsExactly("John Smith");
     }
@@ -272,7 +319,7 @@ class BulkUserServiceTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, List<String>>> captor = ArgumentCaptor.forClass(Map.class);
-        verify(userService).createUser(any(), anyString(), captor.capture());
+        verify(userService).createUser(any(), anyString(), captor.capture(), any());
         assertThat(captor.getValue()).doesNotContainKey("password");
         assertThat(captor.getValue()).containsKey("cn");
     }
@@ -367,7 +414,7 @@ class BulkUserServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, List<String>>> attrs = ArgumentCaptor.forClass(Map.class);
         verify(userService).createUser(eq(dc),
-                eq("cn=John Doe,ou=people,dc=example,dc=com"), attrs.capture());
+                eq("cn=John Doe,ou=people,dc=example,dc=com"), attrs.capture(), any());
         // The DN column is not written as an attribute; real attributes still are.
         assertThat(attrs.getValue()).doesNotContainKey("dn");
         assertThat(attrs.getValue().get("mail")).containsExactly("jd@example.com");
@@ -386,7 +433,7 @@ class BulkUserServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, List<String>>> attrs = ArgumentCaptor.forClass(Map.class);
         verify(userService).createUser(eq(dc),
-                eq("cn=Jane,ou=people,dc=example,dc=com"), attrs.capture());
+                eq("cn=Jane,ou=people,dc=example,dc=com"), attrs.capture(), any());
         assertThat(attrs.getValue().get("cn")).containsExactly("Jane");
     }
 
@@ -399,7 +446,7 @@ class BulkUserServiceTest {
 
         assertThat(result.errors()).isEqualTo(1);
         assertThat(result.rows().get(0).message()).contains("not within");
-        verify(userService, never()).createUser(any(), anyString(), any());
+        verify(userService, never()).createUser(any(), anyString(), any(), any());
     }
 
     @Test
@@ -411,7 +458,7 @@ class BulkUserServiceTest {
 
         assertThat(result.errors()).isEqualTo(1);
         assertThat(result.rows().get(0).message()).contains("Invalid DN");
-        verify(userService, never()).createUser(any(), anyString(), any());
+        verify(userService, never()).createUser(any(), anyString(), any(), any());
     }
 
     @Test
@@ -423,7 +470,7 @@ class BulkUserServiceTest {
 
         assertThat(result.errors()).isEqualTo(1);
         assertThat(result.rows().get(0).message()).contains("Missing DN value");
-        verify(userService, never()).createUser(any(), anyString(), any());
+        verify(userService, never()).createUser(any(), anyString(), any(), any());
     }
 
     @Test
@@ -431,7 +478,7 @@ class BulkUserServiceTest {
         String csvContent = "dn,cn,mail\n"
                 + "\"cn=John,ou=people,dc=example,dc=com\",John,new@example.com\n";
         doThrow(entryAlreadyExists("cn=John,ou=people,dc=example,dc=com"))
-                .when(userService).createUser(eq(dc), anyString(), any());
+                .when(userService).createUser(eq(dc), anyString(), any(), any());
 
         BulkImportResult result = importWithDnColumn(
                 csvContent, "ou=people,dc=example,dc=com", ConflictHandling.OVERWRITE, "dn");
