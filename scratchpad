@@ -54,3 +54,85 @@ Reconcile cadence	3600	3600
 Leave the anchor blank for a same-DN mirror. Without an anchor the engine's ADD falls through to MODIFY on ENTRY_ALREADY_EXISTS, so pre-existing West entries converge in place. With an anchor configured, every occupied DN that lacks the anchor is quarantined for REVIEW, which for a full mirror means every entry.
 
 Enable and watch. The first reconcile does the bulk load. Use the link and set health rollups, then the inventory, to clear FAILED rows, which will mostly be schema or ACL problems on West. Switch delete policy to DELETE only once a reconcile cycle is clean.
+
+
+
+
+
+
+Here are the steps again for EKS. They follow the repo's EKS runbook (docs/deployment-eks-gitlab-ecr.md) with two changes: you reuse your existing secrets instead of generating new ones, and you load your data into RDS before the backend starts for the first time.
+
+Why the order matters
+
+On first start the backend runs Flyway against an empty database and creates the bootstrap superadmin. If you restore your dump after that, it clashes with the tables and rows the app just created. Load your data into RDS first, then deploy (runbook §7).
+
+1. Follow the runbook up to §6, with these changes
+
+§3 RDS: choose PostgreSQL 16.x, since local runs 16.13. The database ldapportal and master user ldapportal the runbook creates are exactly what you need, and the database starts empty. The security group has to allow port 5432 from the EKS nodes.
+
+§4 Secrets Manager: don't generate a new ENCRYPTION_KEY as the runbook shows. Store your current one, otherwise none of the stored directory bind passwords and other secrets can be decrypted. Do the same for JWT_SECRET if you want existing sessions to keep working.
+
+# from the machine with your current .env; tr strips CR/LF (see the runbook's CRLF warning)
+aws secretsmanager create-secret --name ldapportal/encryption-key \
+  --secret-string "$(grep '^ENCRYPTION_KEY=' .env | cut -d= -f2- | tr -d '\r\n')" --region $REGION
+aws secretsmanager create-secret --name ldapportal/jwt-secret \
+  --secret-string "$(grep '^JWT_SECRET=' .env | cut -d= -f2- | tr -d '\r\n')" --region $REGION
+# db-password = the RDS master password, as in the runbook.
+# bootstrap-superadmin-password is still required, but unused: your restored superadmin already exists.
+
+§5–6 images and overlay: keep the community-plus-isva image, which the runbook already uses and which matches the local compose default. Set DB_URL in configmap-patch.yaml to your RDS endpoint with ?sslmode=require.
+
+2. Dump the local database
+docker compose stop app      # stop the local app so nothing writes during the dump
+docker exec ldap-portal-db pg_dump -U ldapportal -d ldapportal -Fc -f /tmp/ldapportal.dump
+docker cp ldap-portal-db:/tmp/ldapportal.dump ./ldapportal.dump
+
+From here on, treat the local instance as read-only. Anything changed in it after the dump won't be migrated.
+
+3. Restore into RDS from inside the cluster
+
+RDS is private, but your EKS nodes can reach it. Run a temporary Postgres pod in the cluster and restore from there:
+
+kubectl apply -f deploy/aws/eks/namespace.yaml
+
+kubectl -n ldapportal run pg-restore --image=postgres:16.13-alpine --restart=Never \
+  --command -- sleep 3600
+kubectl -n ldapportal wait --for=condition=Ready pod/pg-restore
+kubectl -n ldapportal cp ./ldapportal.dump pg-restore:/tmp/ldapportal.dump
+
+kubectl -n ldapportal exec -it pg-restore -- sh -c \
+  'PGPASSWORD="<RDS_MASTER_PASSWORD>" pg_restore -h <RDS_ENDPOINT> -U ldapportal -d ldapportal \
+     --no-owner --no-acl --exit-on-error /tmp/ldapportal.dump'
+
+# quick sanity check: the Flyway history should list your applied migrations
+kubectl -n ldapportal exec -it pg-restore -- sh -c \
+  'PGPASSWORD="<RDS_MASTER_PASSWORD>" psql "host=<RDS_ENDPOINT> user=ldapportal dbname=ldapportal sslmode=require" \
+     -c "select count(*), max(installed_on) from flyway_schema_history"'
+
+kubectl -n ldapportal delete pod pg-restore
+4. Deploy (runbook §7)
+kubectl apply -k deploy/aws/eks-overlays/prod
+kubectl -n ldapportal rollout status deploy/ldapportal-backend
+kubectl -n ldapportal logs deploy/ldapportal-backend | grep -i flyway
+
+Flyway should report that the schema is up to date. If the image is newer than your local build, it will apply only the new migrations. A validation failure almost always means the edition doesn't match.
+
+5. Check it worked
+Login: after DNS (runbook §8), sign in with your existing admin and superadmin credentials. The runbook's "log in with BOOTSTRAP_SUPERADMIN_PASSWORD" step doesn't apply, because your restored superadmin already exists.
+Encryption key: open a directory and click Test connection. A success confirms ENCRYPTION_KEY is correct.
+Row counts: compare a few counts (admins, audit events) against the local database.
+Sessions: browser sessions from the local instance won't carry over, because the hostname changes and the cookie is tied to it. Everyone logs in again.
+If you already deployed to EKS before restoring
+Stop the backend:
+kubectl -n ldapportal scale deploy/ldapportal-backend --replicas=0
+
+The HPA doesn't scale up a deployment that's at 0 replicas.
+
+Reset the database from the pg-restore pod with DROP SCHEMA public CASCADE; CREATE SCHEMA public;.
+Do the restore in step 3.
+Bring the backend back:
+kubectl -n ldapportal scale deploy/ldapportal-backend --replicas=2
+Afterwards
+Keep the local pgdata volume and ldapportal.dump until you're confident in the new setup. Delete the dump file once you're done, because it holds encrypted secrets and audit history.
+Turn on RDS automated backups (7 days or more) and deletion protection.
+Run make export-config with BASE_URL=https://<HOSTNAME> to get a readable config snapshot of the new install.
