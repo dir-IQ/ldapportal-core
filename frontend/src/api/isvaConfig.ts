@@ -121,6 +121,17 @@ export const probeIsvaConfig = (
 ): Promise<AxiosResponse<ProbeResult>> =>
   client.post(`${base(directoryId)}/probe`, {});
 
+// Which directories have an ISVA config, and whether it's enabled — one
+// call for the Directory Connections list. A directory absent from the
+// list has no config. Superadmin + entitlement gated (403 otherwise).
+export interface IsvaConfigStatusDto {
+  directoryId: string;
+  enabled: boolean;
+}
+
+export const listIsvaConfigStatuses = (): Promise<AxiosResponse<IsvaConfigStatusDto[]>> =>
+  client.get('/isva/config-status');
+
 // Global, deployment-static UI options (env-driven, can't change without a
 // restart) — fetch once and memoise so opening directory config pages doesn't
 // re-request. A failed fetch clears the cache so the next open retries.
