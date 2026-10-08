@@ -1,7 +1,7 @@
 # Deploying LDAPPortal to AWS EKS (community-plus-ISVA) from internal GitLab
 
 - **Date:** 2026-06-11
-- **Status:** Not started (reference runbook, 2026-06-11).
+- **Status:** Not started (reference runbook; §13 migration path added, 2026-10-08).
 - **Audience:** A customer running an internal GitLab fork who will build the
   **community-plus-isva** edition, push images to **AWS ECR**, deploy to **AWS
   EKS**, and source runtime secrets from **AWS Secrets Manager**.
@@ -112,6 +112,9 @@ Create (or reuse) a PostgreSQL instance reachable from the EKS node subnets:
 
 Record the endpoint; you'll put it in the ConfigMap (`DB_URL`) and the master
 password into Secrets Manager (§4).
+
+> **Migrating an existing install?** Read §13 before §4 and §7 — you must reuse
+> your current `ENCRYPTION_KEY` and restore the data before the first deploy.
 
 ---
 
@@ -504,3 +507,131 @@ kubectl delete -k deploy/aws/eks-overlays/prod
 # RDS, ECR repos, Secrets Manager entries and IAM roles are managed outside the
 # manifests — remove them separately if decommissioning.
 ```
+
+---
+
+## 13. Migrating an existing install (local Postgres → RDS)
+
+Use this when you already run LDAPPortal against a local / compose Postgres and
+want to move it — data intact — onto this EKS + RDS stack. It is the §1–§10
+runbook with two changes: **reuse your existing secrets** instead of generating
+new ones, and **restore the data into RDS before the backend's first start**.
+
+> Use a physical `pg_dump` / `pg_restore`, not the YAML config exporter
+> (`make export-config`, [`docs/iac/README.md`](iac/README.md) §10). The
+> exporter omits the audit log, superadmins, profile-scoped roles and history,
+> and emits secrets as placeholders; a dump carries every row verbatim.
+
+### 13.1 Why order matters
+
+On first start against an empty database the backend runs Flyway and creates
+the bootstrap superadmin. Restoring a dump on top of that collides with the
+freshly created schema and rows. **Restore into RDS first, then run §7.** (If
+you already deployed, see §13.6.)
+
+### 13.2 Preconditions
+
+- **Same `ENCRYPTION_KEY`.** Directory bind passwords, Entra client secrets,
+  SMTP/S3 credentials etc. are stored encrypted with it. A different key
+  restores the rows fine but nothing can be decrypted. Keep `JWT_SECRET` too if
+  you don't want to force re-login (sessions are host-bound anyway, see §13.7).
+- **Same edition.** The dump carries each module's Flyway history rows. A
+  `community-plus-isva` source (the compose default) must run on the
+  `community-plus-isva` image this guide deploys; a community-only image fails
+  schema validation at startup.
+- **Same Postgres major.** Local compose runs `postgres:16.13-alpine`; create
+  RDS as PostgreSQL **16.x** (§3).
+
+### 13.3 Changes to §3–§6
+
+- **§3 RDS:** as written — DB `ldapportal`, master user `ldapportal`, engine
+  16.x, SG allowing 5432 from the node group. The new database is empty, which
+  is what the restore needs.
+- **§4 Secrets Manager:** do **not** generate `encryption-key` / `jwt-secret`;
+  store your current values (the `tr` strips CR/LF — same trap as noted in §4):
+
+  ```bash
+  # run where your current .env lives
+  aws secretsmanager create-secret --name ldapportal/encryption-key \
+    --secret-string "$(grep '^ENCRYPTION_KEY=' .env | cut -d= -f2- | tr -d '\r\n')" --region $REGION
+  aws secretsmanager create-secret --name ldapportal/jwt-secret \
+    --secret-string "$(grep '^JWT_SECRET=' .env | cut -d= -f2- | tr -d '\r\n')" --region $REGION
+  ```
+
+  `ldapportal/db-password` is the RDS master password as in §4.
+  `ldapportal/bootstrap-superadmin-password` is still required (no default) but
+  goes unused: your restored superadmin already exists.
+- **§5–§6:** unchanged — the `community-plus-isva` image and `DB_URL` pointing
+  at the RDS endpoint with `?sslmode=require`.
+
+### 13.4 Dump the source database
+
+```bash
+docker compose stop app      # freeze writes; leave the db container running
+docker exec ldap-portal-db pg_dump -U ldapportal -d ldapportal -Fc -f /tmp/ldapportal.dump
+docker cp ldap-portal-db:/tmp/ldapportal.dump ./ldapportal.dump
+```
+
+Treat the source instance as read-only from here on; later changes won't be
+migrated.
+
+### 13.5 Restore into RDS from inside the cluster
+
+RDS sits in private subnets but is reachable from the nodes, so restore from a
+throwaway pod. The schema uses no Postgres extensions, so nothing extra is
+needed on RDS.
+
+```bash
+kubectl apply -f deploy/aws/eks/namespace.yaml
+
+kubectl -n ldapportal run pg-restore --image=postgres:16.13-alpine --restart=Never \
+  --command -- sleep 3600
+kubectl -n ldapportal wait --for=condition=Ready pod/pg-restore
+kubectl -n ldapportal cp ./ldapportal.dump pg-restore:/tmp/ldapportal.dump
+
+# --no-owner/--no-acl: objects become owned by the RDS user; local role grants are dropped
+kubectl -n ldapportal exec -it pg-restore -- sh -c \
+  'PGPASSWORD="<RDS_MASTER_PASSWORD>" pg_restore -h <RDS_ENDPOINT> -U ldapportal -d ldapportal \
+     --no-owner --no-acl --exit-on-error /tmp/ldapportal.dump'
+
+# sanity check: Flyway history came across
+kubectl -n ldapportal exec -it pg-restore -- sh -c \
+  'PGPASSWORD="<RDS_MASTER_PASSWORD>" psql "host=<RDS_ENDPOINT> user=ldapportal dbname=ldapportal sslmode=require" \
+     -c "select count(*), max(installed_on) from flyway_schema_history"'
+
+kubectl -n ldapportal delete pod pg-restore
+```
+
+Then continue with §7 (deploy) and §8 (DNS). Flyway should report the schema is
+up to date, or apply only migrations newer than your source build; a validation
+failure almost always means an edition mismatch (§13.2):
+
+```bash
+kubectl -n ldapportal logs deploy/ldapportal-backend | grep -i flyway
+```
+
+### 13.6 If you already deployed before restoring
+
+```bash
+# HPA does not scale a Deployment up from 0 replicas
+kubectl -n ldapportal scale deploy/ldapportal-backend --replicas=0
+```
+
+From the `pg-restore` pod, reset the schema
+(`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`), run the restore in
+§13.5, then `kubectl -n ldapportal scale deploy/ldapportal-backend --replicas=2`.
+
+### 13.7 Verify and clean up
+
+- Log in with your **existing** admin / superadmin credentials — the §8
+  "log in with `BOOTSTRAP_SUPERADMIN_PASSWORD`" step does not apply.
+- Open a directory → **Test connection**. Success proves `ENCRYPTION_KEY` is
+  correct (the stored bind password decrypted).
+- Spot-check row counts (admins, audit events) against the source.
+- Users must sign in again: the session cookie is bound to the old host.
+- Keep the source `pgdata` volume and `ldapportal.dump` as a rollback path
+  until you're confident; then delete the dump — it contains encrypted
+  credentials and audit history.
+- Enable RDS automated backups (≥ 7 days) and deletion protection.
+- Take a reviewable config snapshot of the new install:
+  `BASE_URL=https://<HOSTNAME> LDAP_PAT=… make export-config`.
