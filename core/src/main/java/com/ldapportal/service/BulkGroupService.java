@@ -75,9 +75,23 @@ public class BulkGroupService {
                                        List<String> objectClasses,
                                        String memberAttribute,
                                        boolean skipHeaderRow) throws IOException {
+        return importCsv(dc, csvInput, parentDn, conflictHandling, columnMappings,
+                objectClasses, memberAttribute, skipHeaderRow, CsvUtils.DEFAULT_DELIMITER);
+    }
+
+    /** Import variant with an explicit field delimiter (comma, semicolon, tab, ...). */
+    public BulkImportResult importCsv(DirectoryConnection dc,
+                                       InputStream csvInput,
+                                       String parentDn,
+                                       ConflictHandling conflictHandling,
+                                       List<CsvColumnMappingDto> columnMappings,
+                                       List<String> objectClasses,
+                                       String memberAttribute,
+                                       boolean skipHeaderRow,
+                                       char fieldDelimiter) throws IOException {
 
         Map<String, String> colToAttr = resolveColumnMap(columnMappings);
-        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow);
+        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
 
         List<BulkImportRowResult> rowResults = new ArrayList<>();
         int rowNum = 0;
@@ -122,9 +136,21 @@ public class BulkGroupService {
                                                   boolean skipHeaderRow,
                                                   List<String> requiredAttrs,
                                                   String memberAttr) throws IOException {
+        return previewImport(csvInput, parentDn, columnMappings, skipHeaderRow,
+                requiredAttrs, memberAttr, CsvUtils.DEFAULT_DELIMITER);
+    }
+
+    /** Preview variant with an explicit field delimiter. */
+    public BulkImportPreviewResult previewImport(InputStream csvInput,
+                                                  String parentDn,
+                                                  List<CsvColumnMappingDto> columnMappings,
+                                                  boolean skipHeaderRow,
+                                                  List<String> requiredAttrs,
+                                                  String memberAttr,
+                                                  char fieldDelimiter) throws IOException {
 
         Map<String, String> colToAttr = resolveColumnMap(columnMappings);
-        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow);
+        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
 
         List<String> required = requiredAttrs == null ? List.of() : requiredAttrs;
         java.util.Locale ROOT = java.util.Locale.ROOT;

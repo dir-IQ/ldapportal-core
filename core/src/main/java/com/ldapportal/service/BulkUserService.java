@@ -154,12 +154,34 @@ public class BulkUserService {
                                       ProfileContext profileContext,
                                       List<String> requiredAttrs,
                                       ImportErrorHandling errorHandling) throws IOException {
+        return importCsv(dc, csvInput, parentDn, targetKeyAttr, conflictHandling, columnMappings,
+                objectClasses, skipHeaderRow, dnSourceColumn, profileContext,
+                requiredAttrs, errorHandling, CsvUtils.DEFAULT_DELIMITER);
+    }
+
+    /**
+     * Full import variant with an explicit field delimiter (comma, semicolon,
+     * tab, ...); every other overload delegates here with a comma.
+     */
+    public BulkImportResult importCsv(DirectoryConnection dc,
+                                      InputStream csvInput,
+                                      String parentDn,
+                                      String targetKeyAttr,
+                                      ConflictHandling conflictHandling,
+                                      List<CsvColumnMappingDto> columnMappings,
+                                      List<String> objectClasses,
+                                      boolean skipHeaderRow,
+                                      String dnSourceColumn,
+                                      ProfileContext profileContext,
+                                      List<String> requiredAttrs,
+                                      ImportErrorHandling errorHandling,
+                                      char fieldDelimiter) throws IOException {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
         }
 
         Map<String, String> colToAttr = resolveColumnMap(columnMappings);
-        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow);
+        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
 
         // ABORT_ON_ERROR: validate every row up front and, if any would error,
         // write nothing — the operator fixes the CSV and re-runs. The check
@@ -294,9 +316,22 @@ public class BulkUserService {
                                                   boolean skipHeaderRow,
                                                   List<String> requiredAttrs,
                                                   String dnSourceColumn) throws IOException {
+        return previewImport(csvInput, parentDn, targetKeyAttr, columnMappings,
+                skipHeaderRow, requiredAttrs, dnSourceColumn, CsvUtils.DEFAULT_DELIMITER);
+    }
+
+    /** Preview variant with an explicit field delimiter. */
+    public BulkImportPreviewResult previewImport(InputStream csvInput,
+                                                  String parentDn,
+                                                  String targetKeyAttr,
+                                                  List<CsvColumnMappingDto> columnMappings,
+                                                  boolean skipHeaderRow,
+                                                  List<String> requiredAttrs,
+                                                  String dnSourceColumn,
+                                                  char fieldDelimiter) throws IOException {
 
         Map<String, String> colToAttr = resolveColumnMap(columnMappings);
-        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow);
+        List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
 
         // Pre-compute lowercase required-attribute set so per-row checks are
         // case-insensitive (LDAP attribute names are case-insensitive but
@@ -511,9 +546,9 @@ public class BulkUserService {
             }
         }
         // Fallback for a file with a single meaningful column (e.g. a bare list
-        // of DNs whose header doesn't match). CsvUtils appends a phantom
-        // trailing empty-named field to every row, so count only columns with a
-        // non-blank header; use the lone real one when there's exactly one.
+        // of DNs whose header doesn't match). Count only columns with a
+        // non-blank header (a trailing delimiter in the header row yields an
+        // empty-named column); use the lone real one when there's exactly one.
         List<String> realKeys = row.keySet().stream()
                 .filter(k -> k != null && !k.isBlank())
                 .toList();
@@ -627,7 +662,11 @@ public class BulkUserService {
             // result code inline.  This avoids a separate getUser() existence check per row
             // (which would double the number of LDAP round-trips for large imports).
             try {
-                userService.createUser(dc, dn, attrMap);
+                // Pass the profile so provisioning interceptors make the same
+                // per-profile decisions as a manual create (e.g. an IVIA-exempt
+                // profile gets a plain ADD with no secUser).
+                userService.createUser(dc, dn, attrMap,
+                        profileContext != null ? profileContext.profileId() : null);
                 // Group assignments after a successful create, mirroring
                 // the manual create path. Skipped on UPDATE / SKIP / ERROR
                 // because the user existed already (and may not belong to
@@ -635,8 +674,7 @@ public class BulkUserService {
                 applyProfileGroups(dn, profileContext);
                 return BulkImportRowResult.created(rowNum, dn);
             } catch (LdapOperationException ex) {
-                if (!ex.getMessage().contains(ResultCode.ENTRY_ALREADY_EXISTS.getName())
-                        && !ex.getMessage().contains(String.valueOf(ResultCode.ENTRY_ALREADY_EXISTS.intValue()))) {
+                if (!isEntryAlreadyExists(ex)) {
                     throw ex; // not a duplicate — propagate
                 }
                 // Entry exists — apply conflict strategy
@@ -654,13 +692,42 @@ public class BulkUserService {
                     return BulkImportRowResult.updated(rowNum, dn);
                 } else {
                     // SKIP or PROMPT — no action taken
-                    return BulkImportRowResult.skipped(rowNum, dn, "Entry already exists");
+                    return BulkImportRowResult.skipped(rowNum, dn, skippedExistingMessage(conflictHandling));
                 }
             }
         } catch (Exception ex) {
             log.warn("Row {} failed [dn={}]: {}", rowNum, dn, ex.getMessage());
             return BulkImportRowResult.error(rowNum, dn, ex.getMessage());
         }
+    }
+
+    /**
+     * True when the create failed because the entry is already there. Checks
+     * the LDAP result code anywhere in the cause chain: the provisioning plan
+     * executor rethrows the server's own LDAPException, whose message is the
+     * server's wording (e.g. "...because an entry with that name already
+     * exists") rather than the result-code name. Falls back to the message for
+     * wrappers that carry only text.
+     */
+    static boolean isEntryAlreadyExists(Throwable ex) {
+        for (Throwable t = ex; t != null; t = t.getCause()) {
+            if (t instanceof LDAPException le
+                    && le.getResultCode() == ResultCode.ENTRY_ALREADY_EXISTS) {
+                return true;
+            }
+            if (t.getCause() == t) break;
+        }
+        String msg = ex.getMessage();
+        return msg != null
+                && (msg.contains(ResultCode.ENTRY_ALREADY_EXISTS.getName())
+                    || msg.contains("(" + ResultCode.ENTRY_ALREADY_EXISTS.intValue() + ")"));
+    }
+
+    /** Row message for an existing entry left untouched by the template's conflict handling. */
+    static String skippedExistingMessage(ConflictHandling conflictHandling) {
+        String setting = conflictHandling == ConflictHandling.PROMPT
+                ? "Prompt (treat as skip)" : "Skip existing";
+        return "Already exists — skipped (template conflict handling: " + setting + ")";
     }
 
     private void applyProfileGroups(String userDn, ProfileContext context) {

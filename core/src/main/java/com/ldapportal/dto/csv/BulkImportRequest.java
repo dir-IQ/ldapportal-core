@@ -54,5 +54,10 @@ public record BulkImportRequest(
          */
         String dnSourceColumn,
         /** Ad-hoc column mappings. When non-empty these override any template entries. */
-        @Valid List<CsvColumnMappingDto> columnMappings) {
+        @Valid List<CsvColumnMappingDto> columnMappings,
+        /**
+         * Optional override of the template's field delimiter (single character).
+         * Null falls back to the template's delimiter, then to comma.
+         */
+        String fieldDelimiter) {
 }

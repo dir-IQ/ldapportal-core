@@ -91,4 +91,52 @@ describe('BulkDeleteSection', () => {
     expect(previewBulkDelete).toHaveBeenCalledWith('d1', expect.any(File),
       expect.objectContaining({ keyAttribute: 'uid', baseDn: 'ou=eng,dc=x' }))
   })
+
+  it('fills the CSV column with a real value that follows the mode until edited', async () => {
+    const w = mountSection()
+    const col = () => (w.find('#bd-valuecol').element as HTMLInputElement).value
+    expect(col()).toBe('dn')
+
+    await w.find('#bd-mode').setValue('key')
+    expect(col()).toBe('uid')
+    await w.find('#bd-keyattr').setValue('employeeNumber')
+    expect(col()).toBe('employeeNumber')
+
+    // Once the operator types their own column, mode/attribute changes leave it alone.
+    await w.find('#bd-valuecol').setValue('emp_no')
+    await w.find('#bd-keyattr').setValue('uid')
+    expect(col()).toBe('emp_no')
+  })
+
+  it('requires the CSV column: blank blocks Preview with a message', async () => {
+    const w = mountSection()
+    await attachFile(w)
+    expect(w.find('label[for="bd-valuecol"]').text()).toBe('CSV column *')
+    expect(w.find('#bd-valuecol').attributes('required')).toBeDefined()
+
+    // Regression: a blank column used to preview anyway (backend silently used "dn").
+    await w.find('#bd-valuecol').setValue('')
+    expect(btnByText(w, 'Preview').attributes('disabled')).toBeDefined()
+    expect(w.text()).toContain("Enter the CSV column that holds each user's DN.")
+
+    await w.find('#bd-valuecol').setValue('dn')
+    expect(btnByText(w, 'Preview').attributes('disabled')).toBeUndefined()
+  })
+
+  it('sends the shown CSV column with the preview', async () => {
+    vi.mocked(previewBulkDelete).mockResolvedValue({ data: { totalRows: 0, rows: [] } } as never)
+    const w = mountSection()
+    await attachFile(w)
+    await btnByText(w, 'Preview').trigger('click')
+    await flushPromises()
+    expect(previewBulkDelete).toHaveBeenCalledWith('d1', expect.any(File),
+      expect.objectContaining({ valueColumn: 'dn' }))
+  })
+
+  it('puts the CSV file picker on the same row as the CSV column', async () => {
+    const w = mountSection()
+    const row = w.find('#bd-valuecol').element.closest('.grid')!
+    expect(row.querySelector('input[type="file"][aria-label="CSV File"]')).not.toBeNull()
+    expect(row.querySelector('#bd-skip-header')).not.toBeNull()
+  })
 })
