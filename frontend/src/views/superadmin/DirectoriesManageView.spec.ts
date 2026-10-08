@@ -15,7 +15,10 @@ import { mount, flushPromises } from '@vue/test-utils'
 const api = vi.hoisted(() => ({
   listDirectoryConnections: vi.fn(),
   getDirectoryStatus: vi.fn(),
+  listIsvaConfigStatuses: vi.fn(),
 }))
+
+const authState = vi.hoisted(() => ({ isvaEnabled: false }))
 
 vi.mock('@/api/directories', () => ({
   listDirectoryConnections: api.listDirectoryConnections,
@@ -29,12 +32,14 @@ vi.mock('@/api/directories', () => ({
 
 vi.mock('@/api/entra', () => ({ testEntraConnection: vi.fn() }))
 
+vi.mock('@/api/isvaConfig', () => ({ listIsvaConfigStatuses: api.listIsvaConfigStatuses }))
+
 vi.mock('@/stores/notifications', () => ({
   useNotificationStore: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }),
 }))
 
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ isIsvaIntegrationEnabled: false, isDirectorySyncEnabled: false, isHrEnabled: false,
+  useAuthStore: () => ({ isIsvaIntegrationEnabled: authState.isvaEnabled, isDirectorySyncEnabled: false, isHrEnabled: false,
     hasSuperadminPermission: () => true }),
 }))
 
@@ -43,7 +48,12 @@ import DirectoriesManageView from './DirectoriesManageView.vue'
 const stubs = {
   PageContainer: { template: '<div><slot /></div>' },
   AppModal: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' },
-  ActionMenu: { props: ['items'], template: '<div><slot name="primary" /></div>' },
+  // Surfaces each visible item's indicator label so tests can assert on it.
+  ActionMenu: {
+    props: ['items'],
+    template: `<div><slot name="primary" /><span v-for="i in items.filter((x) => !x.hidden && x.indicator)"
+      :key="i.label" class="indicator">{{ i.indicator.label }}</span></div>`,
+  },
   ConfirmDialog: { template: '<div />' },
   EmptyState: { template: '<div />' },
   FormField: { template: '<input />' },
@@ -55,6 +65,7 @@ function dir(id: string, enabled: boolean) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  authState.isvaEnabled = false
   api.listDirectoryConnections.mockResolvedValue({ data: [dir('up', true), dir('down', true), dir('off', false)] })
   api.getDirectoryStatus.mockImplementation((id: string) =>
     Promise.resolve({ data: id === 'up'
@@ -135,5 +146,43 @@ describe('DirectoriesManageView status column', () => {
     const names = wrapper.findAll('tbody tr td:first-child').map((c) => c.text().trim())
     // Case-insensitive: "apple" sorts before "Mango" before "Zebra".
     expect(names).toEqual(['apple', 'Mango', 'Zebra'])
+  })
+})
+
+describe('DirectoriesManageView IVIA integration indicator', () => {
+  function indicators(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('tbody tr').map((r) => r.find('.indicator').exists() ? r.find('.indicator').text() : null)
+  }
+
+  it('marks each row enabled / configured-but-disabled / not configured', async () => {
+    authState.isvaEnabled = true
+    api.listIsvaConfigStatuses.mockResolvedValue({
+      data: [{ directoryId: 'up', enabled: true }, { directoryId: 'off', enabled: false }],
+    })
+    const wrapper = mount(DirectoriesManageView, { global: { stubs } })
+    await flushPromises()
+
+    // Rows sort by display name: Dir down, Dir off, Dir up.
+    expect(indicators(wrapper)).toEqual([
+      'IVIA not configured',
+      'IVIA configured but disabled',
+      'IVIA enabled',
+    ])
+    expect(api.listIsvaConfigStatuses).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not call the addon endpoint when the IVIA entitlement is off', async () => {
+    const wrapper = mount(DirectoriesManageView, { global: { stubs } })
+    await flushPromises()
+    expect(api.listIsvaConfigStatuses).not.toHaveBeenCalled()
+    expect(indicators(wrapper)).toEqual([null, null, null])
+  })
+
+  it('shows no indicator (rather than "not configured") when the lookup fails', async () => {
+    authState.isvaEnabled = true
+    api.listIsvaConfigStatuses.mockRejectedValue(new Error('403'))
+    const wrapper = mount(DirectoriesManageView, { global: { stubs } })
+    await flushPromises()
+    expect(indicators(wrapper)).toEqual([null, null, null])
   })
 })
