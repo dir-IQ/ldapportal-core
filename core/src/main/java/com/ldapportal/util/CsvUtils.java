@@ -37,6 +37,33 @@ public final class CsvUtils {
 
     private CsvUtils() {}
 
+    /** Field delimiter used when none is configured. */
+    public static final char DEFAULT_DELIMITER = ',';
+
+    /**
+     * Resolves a configured field delimiter to the character the parser uses.
+     * Null or empty means {@link #DEFAULT_DELIMITER}. Anything else must be a
+     * single character other than the quote character, CR or LF — those would
+     * make quoted fields and row boundaries ambiguous.
+     *
+     * @throws IllegalArgumentException when the value isn't a usable delimiter
+     */
+    public static char toDelimiter(String value) {
+        if (value == null || value.isEmpty()) {
+            return DEFAULT_DELIMITER;
+        }
+        if (value.length() != 1) {
+            throw new IllegalArgumentException(
+                    "Field delimiter must be a single character");
+        }
+        char c = value.charAt(0);
+        if (c == '"' || c == '\r' || c == '\n') {
+            throw new IllegalArgumentException(
+                    "Field delimiter cannot be a double quote or a line break");
+        }
+        return c;
+    }
+
     // ── Parse ─────────────────────────────────────────────────────────────────
 
     /**
@@ -110,6 +137,17 @@ public final class CsvUtils {
      */
     public static List<Map<String, String>> parse(InputStream input, boolean hasHeaderRow)
             throws IOException {
+        return parse(input, hasHeaderRow, DEFAULT_DELIMITER);
+    }
+
+    /**
+     * Parses a UTF-8 delimited stream, optionally treating the first row as headers.
+     *
+     * @param hasHeaderRow see {@link #parse(InputStream, boolean)}
+     * @param delimiter    character separating fields (see {@link #toDelimiter})
+     */
+    public static List<Map<String, String>> parse(InputStream input, boolean hasHeaderRow,
+                                                  char delimiter) throws IOException {
         BufferedReader reader = new BufferedReader(
                 new InputStreamReader(input, StandardCharsets.UTF_8));
 
@@ -139,13 +177,13 @@ public final class CsvUtils {
                     String logicalRow = logical.toString();
                     logical.setLength(0);
                     if (!logicalRow.isBlank()) {
-                        rawRows.add(parseRow(logicalRow));
+                        rawRows.add(parseRow(logicalRow, delimiter));
                     }
                 }
             }
         }
         if (logical.length() > 0) {
-            rawRows.add(parseRow(logical.toString()));
+            rawRows.add(parseRow(logical.toString(), delimiter));
         }
 
         return assembleRowMaps(rawRows, hasHeaderRow);
@@ -259,14 +297,28 @@ public final class CsvUtils {
      * Handles quoted fields with embedded commas and doubled double-quotes.
      */
     static String[] parseRow(String line) {
+        return parseRow(line, DEFAULT_DELIMITER);
+    }
+
+    /**
+     * Parses a single delimited line into an array of field values. Quoted
+     * fields may contain the delimiter; doubled double-quotes are unescaped.
+     */
+    static String[] parseRow(String line, char delimiter) {
         List<String> fields = new ArrayList<>();
         int i = 0;
+        // True at the start of the line and right after a delimiter: a field is
+        // owed even if the line ends here ("a," has two fields, "a" has one).
+        boolean fieldPending = true;
         while (i <= line.length()) {
             if (i == line.length()) {
-                // Trailing comma produced an empty last field
-                fields.add("");
+                if (fieldPending) {
+                    // Trailing delimiter produced an empty last field
+                    fields.add("");
+                }
                 break;
             }
+            fieldPending = false;
 
             if (line.charAt(i) == '"') {
                 // Quoted field
@@ -288,19 +340,21 @@ public final class CsvUtils {
                     }
                 }
                 fields.add(field.toString());
-                if (i < line.length() && line.charAt(i) == ',') {
+                if (i < line.length() && line.charAt(i) == delimiter) {
                     i++; // skip delimiter
+                    fieldPending = true;
                 }
 
             } else {
-                // Unquoted field — read until next comma or end
+                // Unquoted field — read until next delimiter or end
                 int start = i;
-                while (i < line.length() && line.charAt(i) != ',') {
+                while (i < line.length() && line.charAt(i) != delimiter) {
                     i++;
                 }
                 fields.add(line.substring(start, i));
                 if (i < line.length()) {
-                    i++; // skip comma
+                    i++; // skip delimiter
+                    fieldPending = true;
                 }
             }
         }

@@ -608,12 +608,18 @@ public class ProvisioningProfileService {
 
     @Transactional(readOnly = true)
     public Optional<ProvisioningProfile> resolveProfileForDn(UUID directoryId, String dn) {
+        // No DN matches no profile. Callers on the approval path then fall back
+        // to directory-level approval (the stricter outcome) instead of a 500.
+        if (dn == null || dn.isBlank()) {
+            return Optional.empty();
+        }
         List<ProvisioningProfile> profiles =
                 profileRepo.findAllByDirectoryIdAndEnabledTrue(directoryId);
         String dnLower = dn.toLowerCase();
 
         // Find profiles whose target OU is a suffix of the DN; most specific match wins
         return profiles.stream()
+                .filter(p -> p.getTargetUserDn() != null)
                 .filter(p -> dnLower.endsWith(p.getTargetUserDn().toLowerCase()))
                 .max(Comparator.comparingInt(p -> p.getTargetUserDn().length()));
     }
