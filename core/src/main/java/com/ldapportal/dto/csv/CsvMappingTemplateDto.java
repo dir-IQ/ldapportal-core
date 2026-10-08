@@ -23,6 +23,8 @@ public record CsvMappingTemplateDto(
         boolean skipHeaderRow,
         /** When set, the DN is read from this CSV column instead of constructed from RDN + parent DN. */
         String dnSourceColumn,
+        /** Single character separating CSV fields (comma by default). */
+        String fieldDelimiter,
         List<CsvColumnMappingDto> entries,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt) {

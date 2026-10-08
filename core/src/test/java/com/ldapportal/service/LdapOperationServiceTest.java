@@ -58,6 +58,7 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyChar;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.inOrder;
@@ -898,10 +899,10 @@ class LdapOperationServiceTest {
                 List.of(BulkImportRowResult.created(1, createdDn),
                         BulkImportRowResult.error(2, null, "Missing value for key attribute 'uid'")));
         when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any())).thenReturn(importResult);
+                anyBoolean(), any(), any(), any(), any(), anyChar())).thenReturn(importResult);
 
         BulkImportRequest req = new BulkImportRequest(
-                null, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of());
+                null, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of(), null);
         var result = service.bulkImportUsers(dirId, adminPrincipal(),
                 new java.io.ByteArrayInputStream(new byte[0]), req);
 
@@ -920,6 +921,53 @@ class LdapOperationServiceTest {
     }
 
     @Test
+    void resolveBulkImportTargetDn_profileSuppliesUserOrGroupContainer() {
+        UUID profileId = UUID.randomUUID();
+        ProvisioningProfile profile = new ProvisioningProfile();
+        profile.setId(profileId);
+        profile.setName("Engineers");
+        profile.setTargetUserDn("ou=eng,dc=example,dc=com");
+        profile.setTargetGroupDn("ou=eng-groups,dc=example,dc=com");
+        ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
+        when(ps.getEntityInDirectory(dirId, profileId)).thenReturn(profile);
+        LdapOperationService svc = serviceWithProfile(ps);
+        // What the UI sends: profileId, no parentDn.
+        BulkImportRequest req = new BulkImportRequest(
+                null, profileId, null, null, null, true, null, List.of(), null);
+
+        assertThat(svc.resolveBulkImportTargetDn(dirId, req, false)).isEqualTo("ou=eng,dc=example,dc=com");
+        assertThat(svc.resolveBulkImportTargetDn(dirId, req, true)).isEqualTo("ou=eng-groups,dc=example,dc=com");
+    }
+
+    @Test
+    void resolveBulkImportTargetDn_profileWithoutGroupContainer_isRejected() {
+        UUID profileId = UUID.randomUUID();
+        ProvisioningProfile profile = new ProvisioningProfile();
+        profile.setId(profileId);
+        profile.setName("Engineers");
+        profile.setTargetUserDn("ou=eng,dc=example,dc=com");
+        ProvisioningProfileService ps = mock(ProvisioningProfileService.class);
+        when(ps.getEntityInDirectory(dirId, profileId)).thenReturn(profile);
+        BulkImportRequest req = new BulkImportRequest(
+                null, profileId, null, null, null, true, null, List.of(), null);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> serviceWithProfile(ps).resolveBulkImportTargetDn(dirId, req, true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no target group container");
+    }
+
+    @Test
+    void resolveBulkImportTargetDn_withoutProfile_usesParentDnOrRejects() {
+        assertThat(service.resolveBulkImportTargetDn(dirId, new BulkImportRequest(
+                null, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of(), null), false))
+                .isEqualTo("ou=people,dc=example,dc=com");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.resolveBulkImportTargetDn(dirId,
+                        new BulkImportRequest(null, null, null, null, null, true, null, List.of(), null), false))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void bulkImportUsers_withProfileId_importsIntoProfileTargetOu() throws Exception {
         AuthPrincipal admin = adminPrincipal();
         DirectoryConnection dc = enabledDir(true);
@@ -935,14 +983,14 @@ class LdapOperationServiceTest {
         when(ps.getEntityInDirectory(dirId, profileId)).thenReturn(profile);
 
         when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any()))
+                anyBoolean(), any(), any(), any(), any(), anyChar()))
                 .thenReturn(new BulkImportResult(1, 1, 0, 0, 0,
                         List.of(BulkImportRowResult.created(1, "uid=a,ou=eng,dc=example,dc=com"))));
 
         LdapOperationService svc = serviceWithProfile(ps);
         // profileId set, parentDn null — the profile supplies the target OU.
         BulkImportRequest req = new BulkImportRequest(
-                null, profileId, null, null, null, true, null, List.of());
+                null, profileId, null, null, null, true, null, List.of(), null);
 
         var captor = ArgumentCaptor.forClass(BulkUserService.ProfileContext.class);
         svc.bulkImportUsers(dirId, admin, new java.io.ByteArrayInputStream(new byte[0]), req);
@@ -952,10 +1000,66 @@ class LdapOperationServiceTest {
         verify(permissionService).requireDnWithinScope(admin, dirId, "ou=eng,dc=example,dc=com");
         verify(bulkUserService).importCsv(eq(dc), any(), eq("ou=eng,dc=example,dc=com"),
                 eq("uid"), any(), any(), eq(List.of("inetOrgPerson")),
-                anyBoolean(), any(), captor.capture(), any(), any());
+                anyBoolean(), any(), captor.capture(), any(), any(), eq(','));
         // The chosen profile is used directly — never resolved from the DN.
         verify(ps, never()).resolveProfileForDn(any(), any());
         assertThat(captor.getValue().profileId()).isEqualTo(profileId);
+    }
+
+    @Test
+    void bulkImportUsers_usesTemplateFieldDelimiter() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        UUID templateId = UUID.randomUUID();
+        com.ldapportal.entity.CsvMappingTemplate template = new com.ldapportal.entity.CsvMappingTemplate();
+        template.setFieldDelimiter(";");
+        when(csvTemplateService.loadTemplate(eq(templateId), eq(dirId), any())).thenReturn(template);
+        when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), anyChar()))
+                .thenReturn(new BulkImportResult(0, 0, 0, 0, 0, List.of()));
+
+        BulkImportRequest req = new BulkImportRequest(
+                templateId, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of(), null);
+        service.bulkImportUsers(dirId, adminPrincipal(),
+                new java.io.ByteArrayInputStream(new byte[0]), req);
+
+        verify(bulkUserService).importCsv(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), eq(';'));
+    }
+
+    @Test
+    void bulkImportUsers_requestFieldDelimiterOverridesTemplate() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        UUID templateId = UUID.randomUUID();
+        com.ldapportal.entity.CsvMappingTemplate template = new com.ldapportal.entity.CsvMappingTemplate();
+        template.setFieldDelimiter(";");
+        when(csvTemplateService.loadTemplate(eq(templateId), eq(dirId), any())).thenReturn(template);
+        when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), anyChar()))
+                .thenReturn(new BulkImportResult(0, 0, 0, 0, 0, List.of()));
+
+        BulkImportRequest req = new BulkImportRequest(
+                templateId, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of(), "\t");
+        service.bulkImportUsers(dirId, adminPrincipal(),
+                new java.io.ByteArrayInputStream(new byte[0]), req);
+
+        verify(bulkUserService).importCsv(any(), any(), any(), any(), any(), any(), any(),
+                anyBoolean(), any(), any(), any(), any(), eq('\t'));
+    }
+
+    @Test
+    void previewBulkImport_invalidFieldDelimiter_isRejected() throws Exception {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        BulkImportRequest req = new BulkImportRequest(
+                null, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of(), "\"");
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.previewBulkImport(dirId,
+                        adminPrincipal(), new java.io.ByteArrayInputStream(new byte[0]), req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("delimiter");
     }
 
     @Test

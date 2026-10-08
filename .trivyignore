@@ -1,0 +1,22 @@
+# Trivy ignore list for the backend image scan (.github/workflows/trivy-scan.yml).
+#
+# Every entry needs: why it isn't exploitable here, what would let us drop it,
+# and an `exp:` date so it stops suppressing the finding automatically and has
+# to be re-justified.
+
+# CVE-2026-47884 — spring-webmvc 6.2.19 (from Spring Boot 3.5.16): RCE via
+# improper path limitation in XsltView. Not reachable: the app configures no
+# XSLT views (no XsltView / XsltViewResolver anywhere in core or addons), and
+# its REST controllers render JSON/CSV/PDF, not server-side views. The only
+# fixed release is Spring Framework 7.0.9 (Spring Boot 4, a major upgrade); no
+# 6.2.x fix exists yet. Drop this entry when a 6.2.x patch ships (bump via the
+# Spring Boot BOM or a spring-framework.version override) or on moving to Boot 4.
+CVE-2026-47884 exp:2027-01-06
+
+# CVE-2026-47890 — spring-webmvc 6.2.19 (from Spring Boot 3.5.16): SSE stream
+# corruption when emitting rendered views. Not reachable: the app has no SSE /
+# ResponseBodyEmitter / StreamingResponseBody endpoints, renders no server-side
+# views, and doesn't use WebFlux. The only fixed release is Spring Framework
+# 7.0.9 (Spring Boot 4); no 6.2.x fix exists yet. Drop this entry when a 6.2.x
+# patch ships or on moving to Boot 4.
+CVE-2026-47890 exp:2027-01-06

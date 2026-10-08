@@ -153,6 +153,8 @@ jobs:
           # Java fat JAR analysis takes time; the default 5m timeout
           # was tripping locally, so give it 15 like our manual runs.
           timeout: 15m
+          # Accepted, justified exceptions — each with an expiry date.
+          trivyignores: .trivyignore
 
       # Always upload the report so failures are debuggable from the
       # Actions UI without re-running. Retention 14 days for trend visibility.
