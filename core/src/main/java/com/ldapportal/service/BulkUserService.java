@@ -662,7 +662,11 @@ public class BulkUserService {
             // result code inline.  This avoids a separate getUser() existence check per row
             // (which would double the number of LDAP round-trips for large imports).
             try {
-                userService.createUser(dc, dn, attrMap);
+                // Pass the profile so provisioning interceptors make the same
+                // per-profile decisions as a manual create (e.g. an IVIA-exempt
+                // profile gets a plain ADD with no secUser).
+                userService.createUser(dc, dn, attrMap,
+                        profileContext != null ? profileContext.profileId() : null);
                 // Group assignments after a successful create, mirroring
                 // the manual create path. Skipped on UPDATE / SKIP / ERROR
                 // because the user existed already (and may not belong to
@@ -670,8 +674,7 @@ public class BulkUserService {
                 applyProfileGroups(dn, profileContext);
                 return BulkImportRowResult.created(rowNum, dn);
             } catch (LdapOperationException ex) {
-                if (!ex.getMessage().contains(ResultCode.ENTRY_ALREADY_EXISTS.getName())
-                        && !ex.getMessage().contains(String.valueOf(ResultCode.ENTRY_ALREADY_EXISTS.intValue()))) {
+                if (!isEntryAlreadyExists(ex)) {
                     throw ex; // not a duplicate — propagate
                 }
                 // Entry exists — apply conflict strategy
@@ -689,13 +692,42 @@ public class BulkUserService {
                     return BulkImportRowResult.updated(rowNum, dn);
                 } else {
                     // SKIP or PROMPT — no action taken
-                    return BulkImportRowResult.skipped(rowNum, dn, "Entry already exists");
+                    return BulkImportRowResult.skipped(rowNum, dn, skippedExistingMessage(conflictHandling));
                 }
             }
         } catch (Exception ex) {
             log.warn("Row {} failed [dn={}]: {}", rowNum, dn, ex.getMessage());
             return BulkImportRowResult.error(rowNum, dn, ex.getMessage());
         }
+    }
+
+    /**
+     * True when the create failed because the entry is already there. Checks
+     * the LDAP result code anywhere in the cause chain: the provisioning plan
+     * executor rethrows the server's own LDAPException, whose message is the
+     * server's wording (e.g. "...because an entry with that name already
+     * exists") rather than the result-code name. Falls back to the message for
+     * wrappers that carry only text.
+     */
+    static boolean isEntryAlreadyExists(Throwable ex) {
+        for (Throwable t = ex; t != null; t = t.getCause()) {
+            if (t instanceof LDAPException le
+                    && le.getResultCode() == ResultCode.ENTRY_ALREADY_EXISTS) {
+                return true;
+            }
+            if (t.getCause() == t) break;
+        }
+        String msg = ex.getMessage();
+        return msg != null
+                && (msg.contains(ResultCode.ENTRY_ALREADY_EXISTS.getName())
+                    || msg.contains("(" + ResultCode.ENTRY_ALREADY_EXISTS.intValue() + ")"));
+    }
+
+    /** Row message for an existing entry left untouched by the template's conflict handling. */
+    static String skippedExistingMessage(ConflictHandling conflictHandling) {
+        String setting = conflictHandling == ConflictHandling.PROMPT
+                ? "Prompt (treat as skip)" : "Skip existing";
+        return "Already exists — skipped (template conflict handling: " + setting + ")";
     }
 
     private void applyProfileGroups(String userDn, ProfileContext context) {

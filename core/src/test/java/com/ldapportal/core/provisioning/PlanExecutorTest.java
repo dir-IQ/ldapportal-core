@@ -161,6 +161,25 @@ class PlanExecutorTest {
     }
 
     @Test
+    void abort_onExistingEntry_keepsEntryAlreadyExistsResultCodeAsCause() throws Exception {
+        // Callers (bulk import's "skip existing") classify a duplicate by the
+        // LDAP result code on the cause: the server's own message doesn't
+        // reliably contain the result-code name.
+        inMemoryServer.add(new Entry("uid=dup," + USERS_OU,
+                new Attribute("objectClass", "inetOrgPerson"),
+                new Attribute("cn", "Dup"), new Attribute("sn", "Dup")));
+
+        UserCreatePlan plan = UserCreatePlan.singleStep(AddStep.of("uid=dup," + USERS_OU, attrs("dup")));
+
+        assertThatThrownBy(() -> executor.execute(dc, plan))
+                .isInstanceOf(LdapOperationException.class)
+                .cause()
+                .isInstanceOfSatisfying(com.unboundid.ldap.sdk.LDAPException.class, le ->
+                        assertThat(le.getResultCode())
+                                .isEqualTo(com.unboundid.ldap.sdk.ResultCode.ENTRY_ALREADY_EXISTS));
+    }
+
+    @Test
     void abort_earlierSucceededStepStays_partialState() throws Exception {
         // Step 1 succeeds, step 2 fails. ABORT bubbles the exception
         // BUT the step-1 write stays applied — partial state is the
