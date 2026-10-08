@@ -34,5 +34,10 @@ public record CreateCsvMappingTemplateRequest(
          * Blank/null keeps the default construct-from-RDN behaviour.
          */
         String dnSourceColumn,
+        /**
+         * Single character separating CSV fields. Null/empty keeps the default
+         * comma; {@code "}, CR and LF are rejected.
+         */
+        String fieldDelimiter,
         @NotNull @Valid List<CsvColumnMappingDto> entries) {
 }

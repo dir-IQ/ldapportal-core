@@ -106,7 +106,7 @@
         </div>
 
         <!-- Template-driven read-only fields. 12-col grid:
-             Object Class (3) + RDN Attribute (2) + Other Attributes (4)
+             Object Class (3) + RDN Attribute / DN Column (2) + Other Attributes (4)
              + Conflict Handling (3) = 12. -->
         <div v-if="selectedTemplate" class="grid grid-cols-12 gap-2">
           <div class="col-span-3">
@@ -119,7 +119,13 @@
               </span>
             </div>
           </div>
-          <div class="col-span-2">
+          <!-- A template that reads each DN from a CSV column doesn't use the
+               RDN attribute to build DNs, so show that column instead. -->
+          <div v-if="selectedTemplate.dnSourceColumn" class="col-span-2">
+            <label for="bulk-template-dn-column" class="block text-sm font-medium text-gray-700 mb-1">DN Column</label>
+            <input id="bulk-template-dn-column" :value="selectedTemplate.dnSourceColumn" disabled class="input w-full bg-gray-50 text-gray-500" />
+          </div>
+          <div v-else class="col-span-2">
             <label for="bulk-template-rdn-attribute" class="block text-sm font-medium text-gray-700 mb-1">RDN Attribute</label>
             <input id="bulk-template-rdn-attribute" :value="selectedTemplate.targetKeyAttribute" disabled class="input w-full bg-gray-50 text-gray-500" />
           </div>
@@ -135,6 +141,10 @@
           </div>
         </div>
 
+        <p v-if="selectedTemplate && (selectedTemplate.fieldDelimiter ?? ',') !== ','" class="text-xs text-gray-600 -mt-1">
+          Fields are separated by
+          <span class="font-mono text-gray-800">{{ delimiterLabel(selectedTemplate.fieldDelimiter) }}</span>.
+        </p>
         <p v-if="selectedTemplate && selectedTemplate.dnSourceColumn" class="text-xs text-gray-600 -mt-1">
           DN is read from CSV column
           <span class="font-mono text-gray-800">{{ selectedTemplate.dnSourceColumn }}</span>
@@ -225,6 +235,18 @@
             Row {{ r.rowNumber }}: {{ r.message }}
           </li>
         </ul>
+        <!-- Skipped rows are expected outcomes (existing entries left as-is per
+             the template's conflict handling), so they read as info, not errors. -->
+        <div v-if="rowsWithStatus(importResult, 'SKIPPED').length" class="mt-3" data-testid="user-import-skipped">
+          <p class="text-xs font-medium text-gray-700 mb-1">
+            Skipped ({{ rowsWithStatus(importResult, 'SKIPPED').length }}) — left unchanged per the template's conflict handling
+          </p>
+          <ul class="space-y-1 max-h-48 overflow-y-auto">
+            <li v-for="r in rowsWithStatus(importResult, 'SKIPPED')" :key="r.rowNumber" class="text-gray-600 text-xs">
+              <span aria-hidden="true">ⓘ</span> Row {{ r.rowNumber }}<span v-if="r.dn" class="font-mono"> ({{ r.dn }})</span>: {{ r.message }}
+            </li>
+          </ul>
+        </div>
       </div>
     </section>
 
@@ -369,6 +391,18 @@
             Row {{ r.rowNumber }}: {{ r.message }}
           </li>
         </ul>
+        <!-- Skipped rows are expected outcomes (existing entries left as-is per
+             the template's conflict handling), so they read as info, not errors. -->
+        <div v-if="rowsWithStatus(groupImportResult, 'SKIPPED').length" class="mt-3" data-testid="group-import-skipped">
+          <p class="text-xs font-medium text-gray-700 mb-1">
+            Skipped ({{ rowsWithStatus(groupImportResult, 'SKIPPED').length }}) — left unchanged per the template's conflict handling
+          </p>
+          <ul class="space-y-1 max-h-48 overflow-y-auto">
+            <li v-for="r in rowsWithStatus(groupImportResult, 'SKIPPED')" :key="r.rowNumber" class="text-gray-600 text-xs">
+              <span aria-hidden="true">ⓘ</span> Row {{ r.rowNumber }}<span v-if="r.dn" class="font-mono"> ({{ r.dn }})</span>: {{ r.message }}
+            </li>
+          </ul>
+        </div>
       </div>
     </section>
 
@@ -405,9 +439,13 @@
     <AppModal v-model="showTemplateModal" :title="editTemplate ? 'Edit Template' : 'New Template'" size="xl">
       <form @submit.prevent="saveTemplate" class="space-y-2 flex flex-col min-h-0 flex-1">
         <!-- Two-col grid: scalar fields on the left; the Object Class dual-list
-             picker on the right. Lists use a fixed height (h-72) sized to about
-             the left column so the panel reads balanced without dead space. -->
-        <div class="grid grid-cols-2 gap-2 items-start shrink-0">
+             picker and the Sample Input File on the right. Rows stretch, and the
+             lists take whatever height is left in the right column, which keeps
+             the sample's two-row column list bottom-aligned with the header
+             checkbox on the left. basis-0 matters: Tailwind's flex-1 alone is a
+             0% basis, which an indefinite height treats as content size, so
+             long lists would set the row height instead. -->
+        <div class="grid grid-cols-2 gap-2 shrink-0">
           <div class="space-y-2">
             <FormField label="Template Name" v-model="templateForm.name" required />
             <div>
@@ -420,7 +458,8 @@
             <!-- One field in this slot, driven by the DN Source picker above. -->
             <FormField v-if="dnSourceMode === 'rdn'" label="RDN Attribute"
                        v-model="templateForm.targetKeyAttribute" placeholder="uid" />
-            <FormField v-else label="DN column" v-model="templateForm.dnSourceColumn" placeholder="dn" />
+            <FormField v-else label="DN column" v-model="templateForm.dnSourceColumn" placeholder="dn" required
+                       :error="dnColumnMissing ? 'Enter the CSV column that holds each entry\'s DN' : null" />
             <div>
               <label for="bulk-template-form-conflict-handling" class="block text-sm font-medium text-gray-700 mb-1">Conflict Handling</label>
               <select id="bulk-template-form-conflict-handling" v-model="templateForm.conflictHandling" class="input w-full">
@@ -436,73 +475,138 @@
                 <option value="ABORT_ON_ERROR">Block import until errors are resolved</option>
               </select>
             </div>
+            <div class="flex gap-2 items-end">
+              <div class="flex-1">
+                <label for="bulk-template-field-delimiter" class="block text-sm font-medium text-gray-700 mb-1">Field Delimiter</label>
+                <select id="bulk-template-field-delimiter" v-model="delimiterPreset" class="input w-full">
+                  <option v-for="o in DELIMITER_PRESETS" :key="o.value" :value="o.value">{{ o.label }}</option>
+                  <option value="other">Other…</option>
+                </select>
+              </div>
+              <div v-if="delimiterPreset === 'other'" class="w-24">
+                <label for="bulk-template-field-delimiter-other" class="block text-sm font-medium text-gray-700 mb-1">Character</label>
+                <input id="bulk-template-field-delimiter-other" v-model="customDelimiter" maxlength="1"
+                       class="input w-full font-mono text-center" :class="{ 'border-red-300': !customDelimiterValid }" />
+              </div>
+            </div>
+            <p v-if="delimiterPreset === 'other' && !customDelimiterValid" class="text-xs text-red-600 -mt-1">
+              Enter one character other than a double quote.
+            </p>
             <label class="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
               <input type="checkbox" v-model="templateForm.skipHeaderRow" class="rounded text-blue-600" />
               CSV first row is header (skip on import)
             </label>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Object Class <span class="text-red-500">*</span></label>
-            <div class="flex items-stretch gap-0">
-              <!-- Selected list. h-72 sizes the lists to roughly the left
-                   column's height so the panel has no large dead space; they
-                   scroll internally (the Available list has many classes). -->
-              <div class="flex-1 min-w-0">
-                <div class="text-xs text-gray-500 mb-1">Selected</div>
-                <div class="border border-gray-300 rounded-l-lg h-72 overflow-y-auto">
-                  <div v-for="oc in templateForm.objectClasses" :key="oc"
-                    @click="selectedOcHighlight = oc"
-                    class="px-2 py-1 text-sm cursor-pointer truncate"
-                    :class="selectedOcHighlight === oc ? 'bg-blue-100 text-blue-800' : 'hover:bg-gray-50'">
-                    {{ oc }}
+          <div class="flex flex-col gap-2 min-w-0">
+            <div class="flex flex-col flex-1 basis-0 min-h-0">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Object Class <span class="text-red-500">*</span></label>
+              <div class="flex items-stretch gap-0 flex-1 basis-0 min-h-0">
+                <!-- Both lists are keyboard listboxes with type-to-find: focus
+                     one and type ("inet") to jump to the first class starting
+                     with those letters; Up/Down move, Enter moves it across. -->
+                <div class="flex-1 min-w-0 flex flex-col">
+                  <div class="flex items-center justify-between gap-1 text-xs text-gray-500 mb-1 min-h-[18px]">
+                    <span>Selected</span>
+                    <span v-if="selectedTypeahead.typed.value" class="font-mono px-1 rounded"
+                          :class="selectedTypeaheadMiss ? 'bg-red-50 text-red-700 dark:bg-red-900/40 dark:text-red-200' : 'bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200'">
+                      “{{ selectedTypeahead.typed.value }}”<template v-if="selectedTypeaheadMiss"> no match</template>
+                    </span>
                   </div>
-                  <p v-if="templateForm.objectClasses.length === 0" class="text-xs text-gray-500 text-center py-4">None</p>
+                  <div ref="selectedOcList" role="listbox" tabindex="0" aria-label="Selected object classes"
+                       :aria-activedescendant="selectedOcHighlight ? `oc-sel-${selectedOcHighlight}` : undefined"
+                       class="border border-gray-300 rounded-l-lg flex-1 basis-0 min-h-40 overflow-y-auto focus-visible:outline-2 focus-visible:outline-blue-500"
+                       @keydown="onOcListKey($event, 'selected')">
+                    <div v-for="oc in templateForm.objectClasses" :key="oc" :id="`oc-sel-${oc}`" role="option"
+                      :aria-selected="selectedOcHighlight === oc" :data-oc="oc"
+                      @click="selectedOcHighlight = oc" @dblclick="selectedOcHighlight = oc; removeObjectClass()"
+                      class="px-2 py-1 text-sm cursor-pointer truncate"
+                      :class="selectedOcHighlight === oc ? 'bg-blue-100 text-blue-800' : 'hover:bg-gray-50'">
+                      {{ oc }}
+                    </div>
+                    <p v-if="templateForm.objectClasses.length === 0" class="text-xs text-gray-500 text-center py-4">None</p>
+                  </div>
+                </div>
+                <!-- Add / Remove buttons -->
+                <div class="flex flex-col items-center justify-center gap-1 px-2">
+                  <button type="button" @click="addObjectClass" :disabled="!availableOcHighlight" aria-label="Add object class"
+                    class="w-8 h-8 flex items-center justify-center rounded border border-gray-300 text-sm hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">◀</button>
+                  <button type="button" @click="removeObjectClass" :disabled="!selectedOcHighlight" aria-label="Remove object class"
+                    class="w-8 h-8 flex items-center justify-center rounded border border-gray-300 text-sm hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">▶</button>
+                </div>
+                <!-- Available list -->
+                <div class="flex-1 min-w-0 flex flex-col">
+                  <div class="flex items-center justify-between gap-1 text-xs text-gray-500 mb-1 min-h-[18px]">
+                    <span>Available</span>
+                    <span v-if="availableTypeahead.typed.value" class="font-mono px-1 rounded"
+                          :class="availableTypeaheadMiss ? 'bg-red-50 text-red-700 dark:bg-red-900/40 dark:text-red-200' : 'bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200'">
+                      “{{ availableTypeahead.typed.value }}”<template v-if="availableTypeaheadMiss"> no match</template>
+                    </span>
+                  </div>
+                  <div ref="availableOcList" role="listbox" tabindex="0" aria-label="Available object classes"
+                       :aria-activedescendant="availableOcHighlight ? `oc-av-${availableOcHighlight}` : undefined"
+                       class="border border-gray-300 rounded-r-lg flex-1 basis-0 min-h-40 overflow-y-auto focus-visible:outline-2 focus-visible:outline-blue-500"
+                       @keydown="onOcListKey($event, 'available')">
+                    <div v-for="oc in availableObjectClasses" :key="oc" :id="`oc-av-${oc}`" role="option"
+                      :aria-selected="availableOcHighlight === oc" :data-oc="oc"
+                      @click="availableOcHighlight = oc" @dblclick="availableOcHighlight = oc; addObjectClass()"
+                      class="px-2 py-1 text-sm cursor-pointer truncate"
+                      :class="availableOcHighlight === oc ? 'bg-blue-100 text-blue-800' : 'hover:bg-gray-50'">
+                      {{ oc }}
+                    </div>
+                    <p v-if="availableObjectClasses.length === 0" class="text-xs text-gray-500 text-center py-4">None</p>
+                  </div>
                 </div>
               </div>
-              <!-- Add / Remove buttons -->
-              <div class="flex flex-col items-center justify-center gap-1 px-2">
-                <button type="button" @click="addObjectClass" :disabled="!availableOcHighlight"
-                  class="w-8 h-8 flex items-center justify-center rounded border border-gray-300 text-sm hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">◀</button>
-                <button type="button" @click="removeObjectClass" :disabled="!selectedOcHighlight"
-                  class="w-8 h-8 flex items-center justify-center rounded border border-gray-300 text-sm hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed">▶</button>
-              </div>
-              <!-- Available list -->
-              <div class="flex-1 min-w-0">
-                <div class="text-xs text-gray-500 mb-1">Available</div>
-                <div class="border border-gray-300 rounded-r-lg h-72 overflow-y-auto">
-                  <div v-for="oc in availableObjectClasses" :key="oc"
-                    @click="availableOcHighlight = oc"
-                    class="px-2 py-1 text-sm cursor-pointer truncate"
-                    :class="availableOcHighlight === oc ? 'bg-blue-100 text-blue-800' : 'hover:bg-gray-50'">
-                    {{ oc }}
-                  </div>
-                  <p v-if="availableObjectClasses.length === 0" class="text-xs text-gray-500 text-center py-4">None</p>
-                </div>
+            </div>
+            <!-- Sample Input File: same picker shape as the main CSV File field.
+                 Only the first record is read, in the browser, to list the input
+                 columns; the file is never uploaded or saved. -->
+            <div class="shrink-0">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Sample Input File</label>
+              <label class="csv-file-picker input flex items-center gap-2 w-full cursor-pointer !py-0 !pr-1 hover:border-gray-400 transition-colors bg-white">
+                <span class="flex-1 truncate text-sm"
+                      :class="sampleFileName ? 'text-gray-900 font-medium' : 'text-gray-500'">
+                  {{ sampleFileName || 'No file chosen' }}
+                </span>
+                <button v-if="sampleFileName" type="button" @click.prevent.stop="clearSampleFile"
+                        aria-label="Clear sample file" class="text-gray-400 hover:text-gray-600 text-base leading-none px-1">&times;</button>
+                <span class="px-3 py-1 rounded-md bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100 whitespace-nowrap">
+                  Choose File
+                </span>
+                <input type="file" accept=".csv,.txt,text/csv,text/plain" @change="onSampleFileChange" aria-label="Sample Input File" class="sr-only" />
+              </label>
+              <p class="text-xs text-gray-500 mt-1">Optional. Only the header row is read; the file is not uploaded.</p>
+              <!-- Fixed two-row height (scrolls past that) so the layout above
+                   doesn't shift when a file is chosen. -->
+              <div class="flex flex-wrap content-start gap-1 mt-1 h-12 overflow-y-auto" data-testid="sample-columns">
+                <template v-if="sampleColumns.length">
+                  <span class="text-xs text-gray-500 mr-1">{{ sampleColumns.length }} columns:</span>
+                  <code v-for="(c, ci) in sampleColumns" :key="ci"
+                        class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">{{ c }}</code>
+                </template>
+                <span v-else class="text-xs italic text-gray-400">{{ sampleHint }}</span>
               </div>
             </div>
           </div>
         </div>
 
-        <div class="flex flex-col min-h-0 flex-1">
-          <div class="flex items-center justify-between mb-2 shrink-0">
-            <label class="text-sm font-medium text-gray-700">Column Mappings</label>
+        <TemplateColumnMappings v-model:stacks="templateForm.mapping"
+          :editable-inputs="!sampleFileName" :from-sample="!!sampleFileName" :samples="sampleValues"
+          :dn-column="dnFromColumn ? templateForm.dnSourceColumn : null"
+          @remove="removeTemplateEntry">
+          <template #actions>
             <span v-if="loadingOcAttrs" class="text-xs text-gray-500">Loading attributes…</span>
-          </div>
-          <div v-if="templateForm.entries.length === 0 && !loadingOcAttrs" class="text-sm text-gray-500 text-center py-3">
-            Select an object class to populate attribute mappings.
-          </div>
-          <div v-else class="space-y-2 min-h-0 flex-1 overflow-y-auto pr-2">
-            <div v-for="(e, i) in templateForm.entries" :key="i" class="flex gap-2 items-center">
-              <input v-model="e.csvColumn" placeholder="CSV column" :aria-label="`CSV column for ${e.ldapAttribute}`" class="input flex-1 text-xs" :class="{ 'border-red-300': e._required && !e.csvColumn }" />
-              <span class="text-gray-500">→</span>
-              <input :value="e.ldapAttribute" disabled :aria-label="`LDAP attribute ${e.ldapAttribute}`" class="input flex-1 text-xs bg-gray-50 text-gray-500" />
-              <div class="w-8 flex-shrink-0 flex justify-center">
-                <span v-if="e._required" class="text-red-500 text-sm font-bold">*</span>
-                <button v-else type="button" @click="removeTemplateEntry(i)" aria-label="Remove mapping" class="text-red-400 hover:text-red-600 text-lg leading-none">&times;</button>
-              </div>
-            </div>
-          </div>
-        </div>
+            <button type="button" class="btn-sm" @click="autoMatchMapping" :disabled="!hasAnyInput"
+                    title="Line up input columns with attributes of the same (or a common alias) name">
+              Auto-match by name
+            </button>
+            <button v-if="!sampleFileName" type="button" class="btn-sm" @click="addInputColumn">+ Add input column</button>
+            <button v-if="lastRemovedEntry" type="button" @click="undoRemoveTemplateEntry" class="btn-sm"
+                    :title="`Restore the ${lastRemovedEntry.attr.name} mapping`">
+              Undo remove ({{ lastRemovedEntry.attr.name }})
+            </button>
+          </template>
+        </TemplateColumnMappings>
 
         <div class="flex justify-end gap-2 pt-2 shrink-0">
           <button type="button" @click="showTemplateModal = false" class="btn-neutral">Cancel</button>
@@ -524,7 +628,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
@@ -548,12 +652,18 @@ import DnPicker from '@/components/DnPicker.vue'
 import AppModal from '@/components/AppModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import BulkDeleteSection from './BulkDeleteSection.vue'
+import TemplateColumnMappings from './TemplateColumnMappings.vue'
+import {
+  applySampleColumns, autoMatch, entriesToStacks, padStacks, parseSampleHeader, rebuildAttrs, stacksToEntries,
+  type MappingAttr, type MappingStacks,
+} from './templateMapping'
+import { useListTypeahead } from '@/composables/useListTypeahead'
 
 interface TemplateEntry {
   csvColumn: string
-  ldapAttribute: string
+  // null for an ignored column (present in the CSV, discarded on import).
+  ldapAttribute: string | null
   ignored: boolean
-  _required?: boolean
 }
 interface CsvTemplate {
   id: string
@@ -566,6 +676,8 @@ interface CsvTemplate {
   skipHeaderRow?: boolean
   // When set, the DN is read from this CSV column instead of RDN + parent DN.
   dnSourceColumn?: string | null
+  // Single character separating CSV fields; ',' when absent.
+  fieldDelimiter?: string
   entries?: TemplateEntry[]
 }
 interface ExportForm { filter: string, baseDn: string, attributes: string }
@@ -590,8 +702,12 @@ interface TemplateForm {
   skipHeaderRow: boolean
   // CSV column holding the full DN; '' means construct from RDN + parent DN.
   dnSourceColumn: string
-  entries: TemplateEntry[]
+  fieldDelimiter: string
+  // Input-column and attribute stacks; row N of one maps to row N of the other.
+  mapping: MappingStacks
 }
+/** An attribute removed from the mapping stack, kept so it can be restored. */
+interface RemovedEntry { attr: MappingAttr, index: number }
 interface PreviewRow {
   rowNumber: number
   computedDn?: string
@@ -740,7 +856,8 @@ const templateSaving      = ref(false)
 const deleteTemplateTarget = ref<CsvTemplate | null>(null)
 const templateForm = ref<TemplateForm>({
   name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
-  errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', entries: []
+  errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', fieldDelimiter: ',',
+  mapping: { inputs: [], attrs: [] },
 })
 // Whether the template reads the DN from a CSV column (vs constructing it from
 // the RDN attribute + parent DN). Kept separate so toggling off preserves the
@@ -751,8 +868,130 @@ const dnFromColumn = ref(false)
 // save/load logic (and the dnSourceColumn payload) stays unchanged.
 const dnSourceMode = computed<'rdn' | 'column'>({
   get: () => (dnFromColumn.value ? 'column' : 'rdn'),
-  set: (v) => { dnFromColumn.value = v === 'column' },
+  set: (v) => {
+    dnFromColumn.value = v === 'column'
+    // The DN column field shows "dn" as a placeholder; make it the real value
+    // so a template saved without typing still reads the DN from that column
+    // (a blank column is saved as null, i.e. "build DN from RDN").
+    if (dnFromColumn.value && !templateForm.value.dnSourceColumn.trim()) {
+      templateForm.value.dnSourceColumn = 'dn'
+    }
+  },
 })
+/** Column mode with no column name would silently save as "build from RDN". */
+const dnColumnMissing = computed(() =>
+  dnFromColumn.value && !templateForm.value.dnSourceColumn.trim()
+)
+
+// Field delimiter picker: common separators as presets, 'other' reveals a
+// one-character input. templateForm.fieldDelimiter stays the saved value.
+const DELIMITER_PRESETS = [
+  { value: ',', label: 'Comma (,)' },
+  { value: ';', label: 'Semicolon (;)' },
+  { value: '\t', label: 'Tab' },
+  { value: '|', label: 'Pipe (|)' },
+] as const
+const delimiterPresetValue = ref<string>(',')
+const customDelimiter = ref('')
+const delimiterPreset = computed<string>({
+  get: () => delimiterPresetValue.value,
+  set: (v) => {
+    delimiterPresetValue.value = v
+    templateForm.value.fieldDelimiter = v === 'other' ? customDelimiter.value : v
+  },
+})
+watch(customDelimiter, (v) => {
+  if (delimiterPresetValue.value === 'other') templateForm.value.fieldDelimiter = v
+})
+/** The backend rejects anything but a single non-quote, non-newline character. */
+const customDelimiterValid = computed(() =>
+  customDelimiter.value.length === 1 && !/["\r\n]/.test(customDelimiter.value)
+)
+
+function syncDelimiterPicker(d: string) {
+  const isPreset = DELIMITER_PRESETS.some(o => o.value === d)
+  delimiterPresetValue.value = isPreset ? d : 'other'
+  customDelimiter.value = isPreset ? '' : d
+}
+
+function delimiterLabel(d?: string) {
+  const preset = DELIMITER_PRESETS.find(o => o.value === (d ?? ','))
+  return preset ? preset.label : `"${d}"`
+}
+
+// Sample input file: only its first record is read (client-side) to list the
+// template's input columns. Re-parsed when the delimiter or header setting
+// changes so the column names always follow the template's own CSV settings.
+const SAMPLE_READ_BYTES = 64 * 1024
+const sampleFileName = ref<string | null>(null)
+const sampleText     = ref<string | null>(null)
+const sampleColumns  = ref<string[]>([])
+// First-row values by column name, when the sample has no header row.
+const sampleValues   = ref<Record<string, string> | null>(null)
+const sampleHint = computed(() => editTemplate.value && !sampleFileName.value
+  ? 'Choose a sample file to refresh the input columns from a new export.'
+  : 'Detected column names appear here.')
+
+function applySample() {
+  if (sampleText.value == null) return
+  const { columns, samples } = parseSampleHeader(
+    sampleText.value, templateForm.value.fieldDelimiter || ',', templateForm.value.skipHeaderRow)
+  sampleColumns.value = columns
+  sampleValues.value = samples ? Object.fromEntries(columns.map((c, i) => [c, samples[i]])) : null
+  applySampleColumns(templateForm.value.mapping, columns)
+}
+
+async function onSampleFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // allow re-picking the same file after edits
+  if (!file) return
+  try {
+    const text = await file.slice(0, SAMPLE_READ_BYTES).text()
+    const { columns } = parseSampleHeader(text, templateForm.value.fieldDelimiter || ',', templateForm.value.skipHeaderRow)
+    if (columns.length === 0) {
+      notif.error(`No columns found in ${file.name}. Check that the first line holds the column names.`)
+      return
+    }
+    sampleFileName.value = file.name
+    sampleText.value = text
+    applySample()
+  } catch (err) {
+    notif.error(`Couldn't read ${file.name}: ${errMsg(err)}`)
+  }
+}
+
+function clearSampleFile() {
+  sampleFileName.value = null
+  sampleText.value = null
+  sampleColumns.value = []
+  sampleValues.value = null
+}
+
+watch(() => [templateForm.value.fieldDelimiter, templateForm.value.skipHeaderRow], () => {
+  if (sampleFileName.value) applySample()
+})
+
+const hasAnyInput = computed(() => templateForm.value.mapping.inputs.some(v => v != null && v.trim() !== ''))
+
+function autoMatchMapping() {
+  const m = templateForm.value.mapping
+  m.inputs = autoMatch(m)
+  padStacks(m)
+}
+
+function addInputColumn() {
+  const m = templateForm.value.mapping
+  const free = m.inputs.findIndex(v => v == null)
+  if (free >= 0) { m.inputs[free] = ''; return }
+  m.inputs.push('')
+  m.attrs.push(null)
+}
+
+// Attributes removed in this editing session, most recent last, so
+// "Undo remove" can restore them one at a time in reverse order.
+const removedEntries = ref<RemovedEntry[]>([])
+const lastRemovedEntry = computed(() => removedEntries.value[removedEntries.value.length - 1] ?? null)
 
 // ObjectClass picker state
 const objectClasses       = ref<string[]>([])
@@ -763,6 +1002,50 @@ const availableOcHighlight = ref<string | null>(null)
 const availableObjectClasses = computed(() =>
   objectClasses.value.filter(oc => !templateForm.value.objectClasses.includes(oc))
 )
+
+// Type-to-find on both object-class lists.
+const selectedOcList  = ref<HTMLElement | null>(null)
+const availableOcList = ref<HTMLElement | null>(null)
+const selectedTypeahead  = useListTypeahead()
+const availableTypeahead = useListTypeahead()
+const selectedTypeaheadMiss = computed(() => !!selectedTypeahead.typed.value
+  && !templateForm.value.objectClasses.some(oc => oc.toLowerCase().startsWith(selectedTypeahead.typed.value)))
+const availableTypeaheadMiss = computed(() => !!availableTypeahead.typed.value
+  && !availableObjectClasses.value.some(oc => oc.toLowerCase().startsWith(availableTypeahead.typed.value)))
+
+function scrollOcIntoView(list: HTMLElement | null, oc: string | null) {
+  if (!list || !oc) return
+  nextTick(() => {
+    const el = Array.from(list.querySelectorAll<HTMLElement>('[data-oc]')).find(n => n.dataset.oc === oc)
+    el?.scrollIntoView?.({ block: 'nearest' })
+  })
+}
+
+function onOcListKey(e: KeyboardEvent, which: 'selected' | 'available') {
+  const isSel = which === 'selected'
+  const items = isSel ? templateForm.value.objectClasses : availableObjectClasses.value
+  const hl = isSel ? selectedOcHighlight : availableOcHighlight
+  const list = isSel ? selectedOcList.value : availableOcList.value
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    if (!items.length) return
+    const i = hl.value ? items.indexOf(hl.value) : -1
+    const next = e.key === 'ArrowDown' ? Math.min(items.length - 1, i + 1) : Math.max(0, i - 1)
+    hl.value = items[next]
+    scrollOcIntoView(list, hl.value)
+    return
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    if (isSel) removeObjectClass(); else addObjectClass()
+    return
+  }
+  const hit = (isSel ? selectedTypeahead : availableTypeahead).handleKey(e, items)
+  if (hit) {
+    hl.value = hit
+    scrollOcIntoView(list, hit)
+  }
+}
 
 function addObjectClass() {
   if (!availableOcHighlight.value) return
@@ -788,12 +1071,14 @@ const selectedTemplate = computed(() => {
  * Comma-joined list of the template's mapped LDAP attributes minus the
  * RDN/key attribute (which already has its own field). The backend only
  * persists entries with a non-blank csvColumn, so the list is exactly
- * what the import will populate per row, in declaration order.
+ * what the import will populate per row, in declaration order. When the
+ * DN comes from a CSV column, the RDN attribute has no field of its own,
+ * so it's listed here like any other mapped attribute.
  */
 const otherTemplateAttrs = computed(() => {
   const t = selectedTemplate.value
   if (!t) return ''
-  const rdn = (t.targetKeyAttribute || '').toLowerCase()
+  const rdn = t.dnSourceColumn ? '' : (t.targetKeyAttribute || '').toLowerCase()
   return (t.entries || [])
     .filter(e => e.ldapAttribute && e.ldapAttribute.toLowerCase() !== rdn)
     .map(e => e.ldapAttribute)
@@ -839,8 +1124,16 @@ const groupPreviewWarningCount = computed(() =>
 const canSaveTemplate = computed(() => {
   const f = templateForm.value
   if (!f.name || f.objectClasses.length === 0) return false
-  return f.entries.filter(e => e._required).every(e => e.csvColumn && e.csvColumn.trim())
+  if (dnColumnMissing.value) return false
+  if (delimiterPreset.value === 'other' && !customDelimiterValid.value) return false
+  const { inputs, attrs } = f.mapping
+  return attrs.every((a, i) => !a?.required || !!inputs[i]?.trim())
 })
+
+/** Result rows with the given status (e.g. SKIPPED), or none. */
+function rowsWithStatus(result: ImportResult | null, status: string): ImportRowResult[] {
+  return (result?.rows || []).filter(r => r.status === status)
+}
 
 function conflictLabel(val: string) {
   const map: Record<string, string> = { SKIP: 'Skip existing', OVERWRITE: 'Overwrite existing', PROMPT: 'Prompt (treat as skip)' }
@@ -883,11 +1176,15 @@ function openCreateTemplate() {
   editTemplate.value = null
   selectedOcHighlight.value = null
   availableOcHighlight.value = null
+  clearSampleFile()
   templateForm.value = {
     name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
-    errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', entries: []
+    errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', fieldDelimiter: ',',
+    mapping: { inputs: [], attrs: [] },
   }
   dnFromColumn.value = false
+  syncDelimiterPicker(',')
+  removedEntries.value = []
   showTemplateModal.value = true
 }
 
@@ -895,6 +1192,7 @@ function openEditTemplate(t: CsvTemplate) {
   editTemplate.value = t
   selectedOcHighlight.value = null
   availableOcHighlight.value = null
+  clearSampleFile()
   templateForm.value = {
     name: t.name,
     objectClasses: t.objectClass ? t.objectClass.split(',') : [],
@@ -903,36 +1201,52 @@ function openEditTemplate(t: CsvTemplate) {
     errorHandling: t.errorHandling ?? 'SKIP_ERRORS',
     skipHeaderRow: t.skipHeaderRow !== false,
     dnSourceColumn: t.dnSourceColumn ?? '',
-    entries: (t.entries ?? []).map(e => ({ ...e, _required: false })),
+    fieldDelimiter: t.fieldDelimiter || ',',
+    mapping: entriesToStacks(t.entries ?? []),
   }
   dnFromColumn.value = !!t.dnSourceColumn
+  syncDelimiterPicker(templateForm.value.fieldDelimiter)
+  removedEntries.value = []
   showTemplateModal.value = true
+  // Fill in the classes' other attributes (and required markers) around the
+  // saved mappings; attributes saved but no longer in the schema are kept.
+  if (templateForm.value.objectClasses.length) loadObjectClassAttrs(true)
 }
 
-async function onObjectClassChange() {
+function onObjectClassChange() {
+  return loadObjectClassAttrs(false)
+}
+
+/**
+ * Rebuilds the attribute stack from the selected object classes (required
+ * first, then optional), carrying each attribute's input column across.
+ * `keepUnknown` keeps attributes already in the stack that the schema no
+ * longer lists — used when opening a saved template.
+ */
+async function loadObjectClassAttrs(keepUnknown: boolean) {
   const ocs = templateForm.value.objectClasses
+  const form = templateForm.value
   if (ocs.length === 0) {
-    templateForm.value.entries = []
+    form.mapping = rebuildAttrs(form.mapping, [], false)
+    removedEntries.value = []
     return
   }
   loadingOcAttrs.value = true
   try {
     const { data } = await getObjectClassesBulk(dirId, ocs)
-    // Preserve existing csvColumn values where the ldapAttribute still exists
-    const existingMap: Record<string, string> = {}
-    for (const e of templateForm.value.entries) {
-      if (e.csvColumn) existingMap[e.ldapAttribute] = e.csvColumn
-    }
-    const entries: TemplateEntry[] = []
+    // The modal may have been reopened for another template meanwhile.
+    if (templateForm.value !== form) return
+    const schema: MappingAttr[] = []
     for (const attr of (data.required || [])) {
-      if (attr.toLowerCase() === 'objectclass') continue
-      entries.push({ csvColumn: existingMap[attr] || '', ldapAttribute: attr, ignored: false, _required: true })
+      if (attr.toLowerCase() !== 'objectclass') schema.push({ name: attr, required: true })
     }
     for (const attr of (data.optional || [])) {
-      if (attr.toLowerCase() === 'objectclass') continue
-      entries.push({ csvColumn: existingMap[attr] || '', ldapAttribute: attr, ignored: false, _required: false })
+      if (attr.toLowerCase() !== 'objectclass') schema.push({ name: attr, required: false })
     }
-    templateForm.value.entries = entries
+    form.mapping = rebuildAttrs(form.mapping, schema, keepUnknown)
+    // The rebuild re-lists every attribute of the chosen classes, so earlier
+    // removals are already back and their positions no longer apply.
+    removedEntries.value = []
   } catch (e) {
     notif.error('Failed to load objectClass attributes: ' + errMsg(e))
   } finally {
@@ -940,7 +1254,29 @@ async function onObjectClassChange() {
   }
 }
 
-function removeTemplateEntry(i: number) { templateForm.value.entries.splice(i, 1) }
+/** Removing an attribute leaves an empty slot so the rows below keep their pairings. */
+function removeTemplateEntry(i: number) {
+  const attr = templateForm.value.mapping.attrs[i]
+  if (!attr || attr.required) return
+  templateForm.value.mapping.attrs[i] = null
+  removedEntries.value.push({ attr, index: i })
+}
+
+/** Puts the most recently removed attribute back in its row. */
+function undoRemoveTemplateEntry() {
+  const last = removedEntries.value.pop()
+  if (!last) return
+  const { inputs, attrs } = templateForm.value.mapping
+  if (last.index < attrs.length && attrs[last.index] == null) {
+    attrs[last.index] = last.attr
+  } else {
+    // Its slot was reused: open a new row there instead.
+    const at = Math.min(last.index, attrs.length)
+    attrs.splice(at, 0, last.attr)
+    inputs.splice(at, 0, null)
+  }
+  padStacks(templateForm.value.mapping)
+}
 
 async function saveTemplate() {
   templateSaving.value = true
@@ -955,9 +1291,10 @@ async function saveTemplate() {
       dnSourceColumn: dnFromColumn.value
         ? (templateForm.value.dnSourceColumn.trim() || null)
         : null,
-      entries: templateForm.value.entries
-        .filter(e => e.csvColumn && e.csvColumn.trim())
-        .map(e => ({ csvColumn: e.csvColumn, ldapAttribute: e.ldapAttribute, ignored: false })),
+      fieldDelimiter: templateForm.value.fieldDelimiter || ',',
+      // Inputs without an attribute are saved as ignored, so the import
+      // discards them instead of passing them through as same-named attributes.
+      entries: stacksToEntries(templateForm.value.mapping),
     }
     if (editTemplate.value) {
       await updateCsvTemplate(dirId, editTemplate.value.id, payload)
@@ -1013,20 +1350,22 @@ function buildImportRequest() {
     targetKeyAttribute: t.targetKeyAttribute,
     conflictHandling: t.conflictHandling,
     skipHeaderRow: t.skipHeaderRow !== false,
+    fieldDelimiter: t.fieldDelimiter || ',',
     // Without this the backend gets an empty mapping and falls through
     // to "CSV header IS the attribute name" passthrough — which means
     // a column named `username` mapped to `uid` never reaches the
     // attribute map as `uid`, and the RDN-presence check fails on
     // every row with "missing rdn attribute". Send the same shape as
     // saveTemplate's mappings: only the entries the operator filled in
-    // (non-blank csvColumn) get sent; the rest are unmapped and the
-    // backend's passthrough still handles them.
+    // (non-blank csvColumn) get sent, ignored columns included so the
+    // backend discards them; columns the template doesn't list are
+    // unmapped and the backend's passthrough still handles them.
     columnMappings: (t.entries || [])
       .filter(e => e.csvColumn && e.csvColumn.trim())
       .map(e => ({
         csvColumn: e.csvColumn,
-        ldapAttribute: e.ldapAttribute,
-        ignored: false,
+        ldapAttribute: e.ignored ? null : e.ldapAttribute,
+        ignored: !!e.ignored,
       })),
   }
 }
@@ -1103,7 +1442,7 @@ async function doConfirmImport() {
     } else {
       importResult.value = data
       previewResult.value = null
-      notif.success(`Import done: ${data.created} created, ${data.errors} errors`)
+      notif.success(`Import done: ${data.created} created, ${data.updated} updated, ${data.skipped} skipped, ${data.errors} errors`)
     }
   } catch (e) {
     notif.error(errMsg(e))
@@ -1201,7 +1540,7 @@ async function doGroupConfirmImport() {
     )
     groupImportResult.value = resp.data
     groupPreviewResult.value = null
-    notif.success(`Import done: ${resp.data.created} created, ${resp.data.errors} errors`)
+    notif.success(`Import done: ${resp.data.created} created, ${resp.data.updated} updated, ${resp.data.skipped} skipped, ${resp.data.errors} errors`)
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
