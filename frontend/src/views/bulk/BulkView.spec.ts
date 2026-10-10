@@ -514,3 +514,33 @@ describe('BulkView — object class type-to-find', () => {
     expect(list.find('[aria-selected="true"]').exists()).toBe(false)
   })
 })
+
+describe('BulkView — columns the template does not map', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('lists them in the preview as not imported', async () => {
+    vi.mocked(previewCsv).mockResolvedValueOnce({ data: {
+      totalRows: 1, rows: [{ rowNumber: 1, computedDn: 'uid=a,ou=eng,dc=x', attributes: {} }],
+      unmappedColumns: ['CostCenter', 'Dept'],
+    } } as never)
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    await w.find('#bulk-import-template').setValue('t1')
+    await attachUserFile(w)
+    await btnByText(w, 'Preview Import').trigger('click')
+    await flushPromises()
+    const note = w.find('[data-testid="unmapped-columns"]')
+    expect(note.text()).toContain('aren’t in the template and won’t be imported')
+    expect(note.text()).toContain('CostCenter, Dept')
+  })
+
+  it('shows nothing when every column is in the template', async () => {
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    await w.find('#bulk-import-template').setValue('t1')
+    await attachUserFile(w)
+    await btnByText(w, 'Preview Import').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="unmapped-columns"]').exists()).toBe(false)
+  })
+})

@@ -161,7 +161,7 @@ public class BulkUserService {
 
     /**
      * Full import variant with an explicit field delimiter (comma, semicolon,
-     * tab, ...); every other overload delegates here with a comma.
+     * tab, ...). Unmapped columns pass through as same-named attributes.
      */
     public BulkImportResult importCsv(DirectoryConnection dc,
                                       InputStream csvInput,
@@ -176,11 +176,38 @@ public class BulkUserService {
                                       List<String> requiredAttrs,
                                       ImportErrorHandling errorHandling,
                                       char fieldDelimiter) throws IOException {
+        return importCsv(dc, csvInput, parentDn, targetKeyAttr, conflictHandling, columnMappings,
+                objectClasses, skipHeaderRow, dnSourceColumn, profileContext,
+                requiredAttrs, errorHandling, fieldDelimiter, true);
+    }
+
+    /**
+     * Full import variant; every other overload delegates here.
+     *
+     * @param passthroughUnmapped {@code true} writes a column the mappings don't
+     *                            mention to the attribute named by its header
+     *                            (template-less imports); {@code false} drops it
+     *                            (template-driven imports). See {@link CsvColumnMap}.
+     */
+    public BulkImportResult importCsv(DirectoryConnection dc,
+                                      InputStream csvInput,
+                                      String parentDn,
+                                      String targetKeyAttr,
+                                      ConflictHandling conflictHandling,
+                                      List<CsvColumnMappingDto> columnMappings,
+                                      List<String> objectClasses,
+                                      boolean skipHeaderRow,
+                                      String dnSourceColumn,
+                                      ProfileContext profileContext,
+                                      List<String> requiredAttrs,
+                                      ImportErrorHandling errorHandling,
+                                      char fieldDelimiter,
+                                      boolean passthroughUnmapped) throws IOException {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
         }
 
-        Map<String, String> colToAttr = resolveColumnMap(columnMappings);
+        CsvColumnMap colToAttr = CsvColumnMap.of(columnMappings, passthroughUnmapped);
         List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
 
         // ABORT_ON_ERROR: validate every row up front and, if any would error,
@@ -227,7 +254,7 @@ public class BulkUserService {
      * and preview so the three agree on what counts as an error.
      */
     private List<BulkImportRowResult> validateRows(List<Map<String, String>> rows,
-                                                   Map<String, String> colToAttr,
+                                                   CsvColumnMap colToAttr,
                                                    String targetKeyAttr,
                                                    String parentDn,
                                                    String dnSourceColumn,
@@ -244,13 +271,8 @@ public class BulkUserService {
                 String rawVal = cell.getValue();
                 if (rawVal == null || rawVal.isBlank()) continue;
                 if (dnFromColumn && csvCol.equalsIgnoreCase(dnSourceColumn)) continue;
-                String ldapAttr;
-                if (colToAttr.containsKey(csvCol)) {
-                    ldapAttr = colToAttr.get(csvCol);
-                    if (ldapAttr == null) continue;
-                } else {
-                    ldapAttr = csvCol;
-                }
+                String ldapAttr = colToAttr.attributeFor(csvCol);
+                if (ldapAttr == null) continue; // ignored, or unmapped under a template
                 attrs.put(ldapAttr, rawVal);
             }
 
@@ -320,7 +342,7 @@ public class BulkUserService {
                 skipHeaderRow, requiredAttrs, dnSourceColumn, CsvUtils.DEFAULT_DELIMITER);
     }
 
-    /** Preview variant with an explicit field delimiter. */
+    /** Preview variant with an explicit field delimiter; unmapped columns pass through. */
     public BulkImportPreviewResult previewImport(InputStream csvInput,
                                                   String parentDn,
                                                   String targetKeyAttr,
@@ -329,8 +351,26 @@ public class BulkUserService {
                                                   List<String> requiredAttrs,
                                                   String dnSourceColumn,
                                                   char fieldDelimiter) throws IOException {
+        return previewImport(csvInput, parentDn, targetKeyAttr, columnMappings, skipHeaderRow,
+                requiredAttrs, dnSourceColumn, fieldDelimiter, true);
+    }
 
-        Map<String, String> colToAttr = resolveColumnMap(columnMappings);
+    /**
+     * Full preview variant. With {@code passthroughUnmapped = false} the columns
+     * the mappings don't mention are left out of every row and listed in
+     * {@link BulkImportPreviewResult#unmappedColumns()}.
+     */
+    public BulkImportPreviewResult previewImport(InputStream csvInput,
+                                                  String parentDn,
+                                                  String targetKeyAttr,
+                                                  List<CsvColumnMappingDto> columnMappings,
+                                                  boolean skipHeaderRow,
+                                                  List<String> requiredAttrs,
+                                                  String dnSourceColumn,
+                                                  char fieldDelimiter,
+                                                  boolean passthroughUnmapped) throws IOException {
+
+        CsvColumnMap colToAttr = CsvColumnMap.of(columnMappings, passthroughUnmapped);
         List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
 
         // Pre-compute lowercase required-attribute set so per-row checks are
@@ -355,13 +395,8 @@ public class BulkUserService {
                 // The DN-source column carries the DN, not an attribute value.
                 if (dnFromColumn && csvCol.equalsIgnoreCase(dnSourceColumn)) continue;
 
-                String ldapAttr;
-                if (colToAttr.containsKey(csvCol)) {
-                    ldapAttr = colToAttr.get(csvCol);
-                    if (ldapAttr == null) continue;
-                } else {
-                    ldapAttr = csvCol;
-                }
+                String ldapAttr = colToAttr.attributeFor(csvCol);
+                if (ldapAttr == null) continue; // ignored, or unmapped under a template
                 attrs.put(ldapAttr, rawVal);
             }
 
@@ -400,7 +435,11 @@ public class BulkUserService {
             previewRows.add(new BulkImportPreviewRow(rowNum, dn, attrs, missing));
         }
 
-        return new BulkImportPreviewResult(rowNum, previewRows);
+        boolean dnFromCol = dnSourceColumn != null && !dnSourceColumn.isBlank();
+        List<String> unmapped = colToAttr.unmappedColumns(rows).stream()
+                .filter(c -> !(dnFromCol && c.equalsIgnoreCase(dnSourceColumn)))
+                .toList();
+        return new BulkImportPreviewResult(rowNum, previewRows, unmapped);
     }
 
     /** Backwards-compatible overload (no schema validation). */
@@ -581,7 +620,7 @@ public class BulkUserService {
      */
     private BulkImportRowResult processRow(DirectoryConnection dc,
                                            Map<String, String> row,
-                                           Map<String, String> colToAttr,
+                                           CsvColumnMap colToAttr,
                                            String targetKeyAttr,
                                            String parentDn,
                                            ConflictHandling conflictHandling,
@@ -606,14 +645,10 @@ public class BulkUserService {
             // The DN-source column carries the DN, not an attribute value.
             if (dnFromColumn && csvCol.equalsIgnoreCase(dnSourceColumn)) continue;
 
-            // colToAttr: null value = explicitly ignored; absent key = passthrough
-            String ldapAttr;
-            if (colToAttr.containsKey(csvCol)) {
-                ldapAttr = colToAttr.get(csvCol);
-                if (ldapAttr == null) continue; // ignored column
-            } else {
-                ldapAttr = csvCol; // passthrough: header IS the attribute name
-            }
+            // null = ignored column, or a column the template doesn't mention;
+            // without a template the header itself is the attribute name.
+            String ldapAttr = colToAttr.attributeFor(csvCol);
+            if (ldapAttr == null) continue;
 
             attrMap.put(ldapAttr, List.of(rawVal));
         }
@@ -756,27 +791,6 @@ public class BulkUserService {
             java.util.UUID directoryId,
             java.util.UUID profileId,
             com.ldapportal.auth.AuthPrincipal principal) {}
-
-    /**
-     * Builds a lookup map from CSV column name to LDAP attribute name.
-     * A {@code null} value in the returned map signals "ignore this column".
-     * Columns absent from the map are handled as passthrough.
-     */
-    private Map<String, String> resolveColumnMap(List<CsvColumnMappingDto> mappings) {
-        if (mappings == null || mappings.isEmpty()) {
-            return Map.of();
-        }
-        Map<String, String> result = new LinkedHashMap<>();
-        for (CsvColumnMappingDto m : mappings) {
-            if (m.ignored()) {
-                result.put(m.csvColumn(), null);
-            } else {
-                result.put(m.csvColumn(),
-                        m.ldapAttribute() != null ? m.ldapAttribute() : m.csvColumn());
-            }
-        }
-        return result;
-    }
 
     /**
      * Constructs the full DN for a new entry.

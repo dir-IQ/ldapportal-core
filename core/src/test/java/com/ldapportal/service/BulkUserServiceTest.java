@@ -324,6 +324,76 @@ class BulkUserServiceTest {
         assertThat(captor.getValue()).containsKey("cn");
     }
 
+    // ── Unmapped columns: template vs template-less ──────────────────────────
+
+    private static final List<CsvColumnMappingDto> TEMPLATE_MAPPINGS = List.of(
+            new CsvColumnMappingDto("uid", "uid", false),
+            new CsvColumnMappingDto("name", "cn", false),
+            new CsvColumnMappingDto("surname", "sn", false));
+
+    @Test
+    void importCsv_underTemplate_dropsColumnsTheTemplateDoesNotMention() throws IOException {
+        String csvContent = "uid,name,surname,CostCenter,mail\njsmith,John Smith,Smith,CC1,j@x\n";
+
+        service.importCsv(dc, csv(csvContent), "ou=people,dc=example,dc=com", "uid",
+                ConflictHandling.SKIP, TEMPLATE_MAPPINGS, List.of(), true, null, null,
+                List.of(), ImportErrorHandling.SKIP_ERRORS, ',', false);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(any(), anyString(), captor.capture(), any());
+        assertThat(captor.getValue()).containsKeys("uid", "cn", "sn")
+                .doesNotContainKeys("CostCenter", "mail");
+    }
+
+    @Test
+    void importCsv_withoutTemplate_stillPassesUnmappedColumnsThrough() throws IOException {
+        String csvContent = "uid,name,surname,mail\njsmith,John Smith,Smith,j@x\n";
+
+        service.importCsv(dc, csv(csvContent), "ou=people,dc=example,dc=com", "uid",
+                ConflictHandling.SKIP, TEMPLATE_MAPPINGS, List.of(), true, null, null,
+                List.of(), ImportErrorHandling.SKIP_ERRORS, ',', true);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(any(), anyString(), captor.capture(), any());
+        assertThat(captor.getValue()).containsEntry("mail", List.of("j@x"));
+    }
+
+    @Test
+    void importCsv_underTemplate_matchesHeadersIgnoringCase() throws IOException {
+        String csvContent = "UID,Name,Surname\njsmith,John Smith,Smith\n";
+
+        service.importCsv(dc, csv(csvContent), "ou=people,dc=example,dc=com", "uid",
+                ConflictHandling.SKIP, TEMPLATE_MAPPINGS, List.of(), true, null, null,
+                List.of(), ImportErrorHandling.SKIP_ERRORS, ',', false);
+
+        verify(userService).createUser(eq(dc), eq("uid=jsmith,ou=people,dc=example,dc=com"),
+                argThat(m -> m.containsKey("cn") && m.containsKey("sn")), any());
+    }
+
+    @Test
+    void previewImport_underTemplate_listsAndOmitsUnmappedColumns() throws IOException {
+        String csvContent = "dn,uid,name,surname,CostCenter,mail\n"
+                + "\"uid=jsmith,ou=people,dc=example,dc=com\",jsmith,John,Smith,CC1,j@x\n";
+
+        var result = service.previewImport(csv(csvContent), "ou=people,dc=example,dc=com", "uid",
+                TEMPLATE_MAPPINGS, true, List.of(), "dn", ',', false);
+
+        // The DN column carries the DN, so it isn't reported as unmapped.
+        assertThat(result.unmappedColumns()).containsExactly("CostCenter", "mail");
+        assertThat(result.rows().get(0).attributes()).doesNotContainKeys("CostCenter", "mail");
+    }
+
+    @Test
+    void previewImport_withoutTemplate_reportsNoUnmappedColumns() throws IOException {
+        var result = service.previewImport(csv("uid,mail\njsmith,j@x\n"), "ou=people,dc=example,dc=com",
+                "uid", List.of(), true, List.of(), null, ',', true);
+
+        assertThat(result.unmappedColumns()).isEmpty();
+        assertThat(result.rows().get(0).attributes()).containsEntry("mail", "j@x");
+    }
+
     // ── Export ────────────────────────────────────────────────────────────────
 
     @Test

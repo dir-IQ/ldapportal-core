@@ -1092,9 +1092,13 @@ public class LdapOperationService {
 
         char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
 
+        // A template is the contract for the file: columns it doesn't mention are
+        // dropped (and reported in the preview). Only template-less imports use
+        // each header as an attribute name.
+        boolean passthroughUnmapped = req.templateId() == null;
         return bulkUserService.previewImport(
                 csvInput, parentDn, targetKeyAttr, mappings, skipHeader, requiredAttrs, dnSourceColumn,
-                delimiter);
+                delimiter, passthroughUnmapped);
     }
 
     /**
@@ -1190,10 +1194,12 @@ public class LdapOperationService {
 
         char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
 
+        // Same rule as the preview: under a template, unmapped columns are dropped.
+        boolean passthroughUnmapped = req.templateId() == null;
         BulkImportResult result = bulkUserService.importCsv(
                 dc, csvInput, parentDn, targetKeyAttr, conflictHandling, mappings,
                 objectClasses, skipHeader, dnSourceColumn, profileContext,
-                requiredAttrs, errorHandling, delimiter);
+                requiredAttrs, errorHandling, delimiter, passthroughUnmapped);
 
         // Fold the created DNs into the detail so the audit trail names exactly
         // which users were added — symmetric with bulkDelete's deletedDns.
@@ -1511,8 +1517,10 @@ public class LdapOperationService {
 
         char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
 
+        // Under a template, columns it doesn't mention are dropped (see bulkImportUsers).
         return bulkGroupService.previewImport(
-                csvInput, parentDn, mappings, skipHeader, requiredAttrs, memberAttribute, delimiter);
+                csvInput, parentDn, mappings, skipHeader, requiredAttrs, memberAttribute, delimiter,
+                req.templateId() == null);
     }
 
     public BulkImportResult bulkImportGroups(UUID directoryId, AuthPrincipal principal,
@@ -1563,7 +1571,8 @@ public class LdapOperationService {
 
         BulkImportResult result = bulkGroupService.importCsv(
                 dc, csvInput, parentDn, conflictHandling, mappings,
-                objectClasses, effectiveMemberAttr, skipHeader, delimiter);
+                objectClasses, effectiveMemberAttr, skipHeader, delimiter,
+                req.templateId() == null);
 
         auditService.record(principal, directoryId, AuditAction.GROUP_BULK_IMPORT, parentDn,
                 Map.of("operation", "bulkGroupImport",
