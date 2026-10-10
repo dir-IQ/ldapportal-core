@@ -163,6 +163,7 @@
         ]">
           <template #primary="{ disabled }">
             <button v-if="can.edit" @click="openEdit(row as unknown as UserRow)" :disabled="disabled" class="btn-secondary btn-compact">Edit</button>
+            <button v-else-if="can.read" @click="openView(row as unknown as UserRow)" :disabled="disabled" class="btn-secondary btn-compact">View</button>
           </template>
         </ActionMenu>
       </template>
@@ -428,6 +429,18 @@
       </template>
     </AppModal>
 
+    <!-- View-only details (admins with user.read but not user.edit) -->
+    <AppModal v-model="showView" title="User Details" size="lg">
+      <div v-if="viewTarget" class="mb-3">
+        <p class="text-[13px] font-mono text-gray-500 break-all">{{ viewTarget.dn }}</p>
+      </div>
+      <p v-if="viewLoading" class="py-4 text-center text-gray-500 text-sm">Loading…</p>
+      <UserAttributesView v-else :attributes="viewAttributes" />
+      <template #footer>
+        <button @click="showView = false" class="btn-neutral">Close</button>
+      </template>
+    </AppModal>
+
     <!-- Activity Timeline modal -->
     <AppModal v-model="showTimeline" title="Activity History" size="lg">
       <div v-if="timelineTarget" class="mb-3">
@@ -522,6 +535,7 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import UserForm from './UserForm.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import EntryTimeline from '@/components/EntryTimeline.vue'
+import UserAttributesView from '@/components/users/UserAttributesView.vue'
 import PasswordPolicyStatus from '@/components/PasswordPolicyStatus.vue'
 import GroupChips from '@/components/GroupChips.vue'
 import { rdnValue } from '@/composables/useEntryClassification'
@@ -638,6 +652,7 @@ const { loading, call } = useApi()
 // action the caller can actually perform.
 const { hasFeature } = usePermissions()
 const can = computed(() => ({
+  read:          hasFeature('user.read'),
   create:        hasFeature('user.create'),
   edit:          hasFeature('user.edit'),
   delete:        hasFeature('user.delete'),
@@ -1103,6 +1118,29 @@ async function selectProfileAndCreate(p: ProfileLite) {
   }
   form.value = f
   showModal.value = true
+}
+
+// View-only details: the full entry, no form. Falls back to the search-row
+// attributes if the entry fetch fails, like openEdit does.
+const showView       = ref(false)
+const viewTarget     = ref<UserRow | null>(null)
+const viewAttributes = ref<Record<string, string[] | string | null>>({})
+const viewLoading    = ref(false)
+
+async function openView(row: UserRow) {
+  viewTarget.value = row
+  viewAttributes.value = row._raw?.attributes || {}
+  showView.value = true
+  viewLoading.value = true
+  try {
+    const { data } = await usersApi.getUser(dirId, row.dn)
+    if (data?.attributes) viewAttributes.value = data.attributes
+  } catch (e) {
+    const err = e as { response?: { data?: { detail?: string } }, message?: string }
+    notif.error(err.response?.data?.detail || err.message || 'Failed to load user')
+  } finally {
+    viewLoading.value = false
+  }
 }
 
 async function openEdit(row: UserRow) {

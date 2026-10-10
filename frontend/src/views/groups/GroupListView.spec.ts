@@ -4,7 +4,8 @@
  * backend enforces @RequiresFeature on every GroupController endpoint; the
  * UI should only show the verbs the admin's effective feature set (from
  * /auth/me) grants. These tests pin that: a read-only feature set hides
- * New Group / Export / Edit / Members / Delete, and a full set shows them.
+ * New Group / Export / Edit / Delete and gets a view-only Members drawer,
+ * and a full set shows them all.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -77,14 +78,62 @@ describe('GroupListView feature gating', () => {
     expect(t).not.toContain('+ New Group')
     expect(t.join(' ')).not.toContain('Export CSV')
     expect(t).not.toContain('Edit')
-    expect(t).not.toContain('Members')
     expect(t).not.toContain('Delete')
+    // Members stays reachable — the drawer is view-only (below).
+    expect(t).toContain('Members')
+  })
+
+  it('hides Members without group.read or group.manage_members', async () => {
+    const t = await mountWith([])
+    expect(t).not.toContain('Members')
   })
 
   it('shows export but not create for a read-only admin that can export', async () => {
     const t = await mountWith(['group.read', 'bulk.export'])
     expect(t).not.toContain('+ New Group')
     expect(t.join(' ')).toContain('Export CSV')
+  })
+})
+
+// The Members drawer lists the row's loaded members for anyone with
+// group.read; the add / remove controls need group.manage_members.
+describe('GroupListView members drawer', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  const drawerStubs = {
+    ...stubs,
+    AppModal: { props: ['modelValue'], template: '<div v-if="modelValue" data-testid="modal"><slot /></div>' },
+    ActionMenu: {
+      props: ['items'],
+      template: `<div><button v-for="it in items.filter(i => !i.hidden)" :key="it.label"
+                   :data-action="it.label" @click="it.onClick()">{{ it.label }}</button></div>`,
+    },
+  }
+
+  async function openDrawer(features: string[]) {
+    state.features = features
+    const wrapper = mount(GroupListView, { global: { stubs: drawerStubs } })
+    await flushPromises()
+    await wrapper.find('[data-action="Members"]').trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  it('is view-only for a read-only admin', async () => {
+    const wrapper = await openDrawer(['group.read'])
+    expect(wrapper.text()).toContain('uid=a,dc=x')
+    const t = wrapper.findAll('button').map(b => b.text())
+    expect(t).not.toContain('Add Members')
+    expect(t).not.toContain('Bulk Remove')
+    expect(t).not.toContain('Remove')
+  })
+
+  it('offers add and remove with group.manage_members', async () => {
+    const wrapper = await openDrawer(['group.read', 'group.manage_members'])
+    const t = wrapper.findAll('button').map(b => b.text())
+    expect(t).toContain('Add Members')
+    expect(t).toContain('Bulk Remove')
+    expect(t).toContain('Remove')
   })
 })
 

@@ -87,10 +87,11 @@
       <!-- Member count. The list search returns every attribute, so the
            count comes straight from the row's resolved member values — no
            per-row round-trip. Clicking it opens the Members drawer (same
-           as the action button) when the admin may manage members. -->
+           as the action button) when the admin may view groups; the drawer
+           is view-only without group.manage_members. -->
       <template #cell-_memberCount="{ value, row }">
         <button
-          v-if="can.manageMembers"
+          v-if="can.viewMembers"
           type="button"
           class="tabular-nums text-blue-600 hover:underline"
           :aria-label="`View ${value} members of ${(row as unknown as GroupRow).cn || (row as unknown as GroupRow).dn}`"
@@ -100,7 +101,7 @@
       </template>
       <template #cell-actions="{ row }">
         <ActionMenu :items="[
-          { label: 'Members', onClick: () => openMembers(row as unknown as GroupRow), hidden: !can.manageMembers },
+          { label: 'Members', onClick: () => openMembers(row as unknown as GroupRow), hidden: !can.viewMembers },
           { label: 'Delete',  onClick: () => confirmDelete(row as unknown as GroupRow), danger: true, hidden: !can.createDelete },
         ]">
           <template #primary>
@@ -184,13 +185,15 @@
           aria-label="Filter members"
           class="input flex-1"
         />
-        <button @click="toggleBulk('add')" class="btn-secondary" :aria-pressed="bulkMode === 'add'">Add Members</button>
-        <button @click="toggleBulk('remove')" class="btn-danger-soft" :aria-pressed="bulkMode === 'remove'">Bulk Remove</button>
+        <template v-if="can.manageMembers">
+          <button @click="toggleBulk('add')" class="btn-secondary" :aria-pressed="bulkMode === 'add'">Add Members</button>
+          <button @click="toggleBulk('remove')" class="btn-danger-soft" :aria-pressed="bulkMode === 'remove'">Bulk Remove</button>
+        </template>
       </div>
       <!-- One panel serves both verbs: the textarea, DN-shape warning and
            per-line result list are identical; only the label, submit
            button and result wording change with bulkMode. -->
-      <div v-if="bulkMode" class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+      <div v-if="bulkMode && can.manageMembers" class="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
         <label for="gl-bulk-members" class="block text-xs font-medium text-gray-600 mb-1">
           {{ bulkMode === 'add' ? 'Add members' : 'Remove members' }} (one DN per line)
         </label>
@@ -221,7 +224,7 @@
       <ul class="divide-y divide-gray-100 min-h-0 overflow-y-auto pr-3">
         <li v-for="dn in filteredMembers" :key="dn" class="flex items-center justify-between gap-4 py-2 text-sm">
           <span class="text-xs text-gray-700 truncate" :title="dn">{{ dn }}</span>
-          <button @click="removeMember(dn)" class="text-red-500 hover:text-red-700 text-xs shrink-0">Remove</button>
+          <button v-if="can.manageMembers" @click="removeMember(dn)" class="text-red-500 hover:text-red-700 text-xs shrink-0">Remove</button>
         </li>
         <li v-if="!members.length" class="py-4 text-center text-gray-500 text-sm">No members</li>
         <li v-else-if="!filteredMembers.length" class="py-4 text-center text-gray-500 text-sm">No members match the filter</li>
@@ -320,6 +323,9 @@ const can = computed(() => ({
   createDelete:  hasFeature('group.create_delete'),
   edit:          hasFeature('group.edit'),
   manageMembers: hasFeature('group.manage_members'),
+  // The drawer reads the row's already-loaded members, so group.read is
+  // enough to open it; its add/remove controls need manageMembers.
+  viewMembers:   hasFeature('group.read') || hasFeature('group.manage_members'),
   exportCsv:     hasFeature('bulk.export'),
 }))
 

@@ -87,7 +87,7 @@ const router = createRouter({
           path: 'directories/:dirId/playbooks',
           name: 'playbooks',
           component: () => import('@/views/playbooks/PlaybooksView.vue'),
-          meta: { requiresPlaybooks: true },
+          meta: { requiresPlaybooks: true, requiresFeature: 'playbook.manage' },
         },
 
         // Pending Approvals
@@ -97,7 +97,7 @@ const router = createRouter({
           // Hidden from the command palette when approvals are globally
           // disabled. The superadmin approvals route (below) is intentionally
           // left ungated so in-flight requests can still be drained.
-          meta: { requiresApprovals: true },
+          meta: { requiresApprovals: true, requiresFeature: 'approval.manage' },
           component: () => import('@/views/approvals/PendingApprovalsView.vue'),
         },
 
@@ -382,6 +382,11 @@ router.beforeEach(async (to) => {
   // Lifecycle Playbooks master switch (Settings → User/Group Edits).
   if (to.meta.requiresPlaybooks && !auth.isPlaybooksEnabled) {
     return { path: '/dashboard' }
+  }
+  // Directory-scoped feature key (from /auth/me) the page needs to load at
+  // all — e.g. READ_ONLY admins lack playbook.manage and approval.manage.
+  if (to.meta.requiresFeature && !auth.hasFeature(to.meta.requiresFeature)) {
+    return { path: await resolveHomePath(auth) }
   }
   if (to.meta.requiresHybridAccess) {
     if (!auth.isSuperadmin && !auth.hasFeature('HYBRID')) {

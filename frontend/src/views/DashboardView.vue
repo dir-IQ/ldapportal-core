@@ -152,8 +152,11 @@ const approvalsConfigured = computed(() => !!data.value?.approvalsConfigured)
 const showApprovalsUI = computed(() =>
   // Globally gated: when both approval master switches are off, the approval
   // widgets are hidden entirely. Otherwise the existing "configured or has
-  // residual pending" rule applies.
-  auth.isAnyApprovalEnabled && (approvalsConfigured.value || (metrics.value?.pendingApprovals ?? 0) > 0)
+  // residual pending" rule applies. Directory admins also need
+  // approval.manage (READ_ONLY admins lack it) — the tiles link to a queue
+  // they couldn't open; superadmins land on the superadmin queue instead.
+  (isSuperadmin.value || auth.hasFeature('approval.manage'))
+    && auth.isAnyApprovalEnabled && (approvalsConfigured.value || (metrics.value?.pendingApprovals ?? 0) > 0)
 )
 const recentActivity = computed(() => data.value?.recentActivity || [])
 const actions = computed(() => data.value?.actions || [])

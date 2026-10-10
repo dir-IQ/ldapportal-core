@@ -77,7 +77,7 @@
                 <span v-if="!collapsed">Approvals</span>
                 <span v-if="pendingCount > 0 && !collapsed" class="ml-auto bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">{{ pendingCount }}</span>
               </RouterLink>
-              <RouterLink v-if="auth.isPlaybooksEnabled" :to="{ path: `/directories/${currentDirId}/playbooks` }" class="nav-item">
+              <RouterLink v-if="showPlaybooksNav" :to="{ path: `/directories/${currentDirId}/playbooks` }" class="nav-item">
                 <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12M4 8h12M4 12h8M4 16h6"/><path d="M15 12l2 2-2 2"/></svg>
                 <span v-if="!collapsed">Playbooks</span>
               </RouterLink>
@@ -402,6 +402,7 @@ const pendingCount   = ref(0)
  * directory-scoped link.
  */
 const approvalsConfigured = ref(false)
+const canManageApprovals = computed(() => hasFeature('approval.manage'))
 const activeReviewCount = ref(0)
 const alertCount     = ref(0)
 const collapsed      = ref(false)
@@ -562,8 +563,10 @@ watch(currentDirId, (newDirId) => {
 // Load pending approval count + "is the workflow configured?" for the
 // current directory. Endpoint returns both in one call so we don't pay a
 // second round trip just to decide whether to render the link.
-watch(currentDirId, async (newDirId) => {
-  if (!newDirId) {
+// Skipped without approval.manage (e.g. READ_ONLY admins) — the endpoint
+// would 403 and the link stays hidden anyway.
+watch([currentDirId, canManageApprovals], async ([newDirId, canManage]) => {
+  if (!newDirId || !canManage) {
     pendingCount.value = 0
     approvalsConfigured.value = false
     return
@@ -589,7 +592,14 @@ watch(currentDirId, async (newDirId) => {
 // The superadmin Approvals entry stays reachable regardless, so in-flight
 // requests can always be drained.
 const showApprovalsNav = computed(() =>
-  auth.isAnyApprovalEnabled && (approvalsConfigured.value || pendingCount.value > 0)
+  canManageApprovals.value
+    && auth.isAnyApprovalEnabled && (approvalsConfigured.value || pendingCount.value > 0)
+)
+
+// The directory Playbooks page lists playbooks, which needs playbook.manage;
+// without it (e.g. READ_ONLY admins) the page would only 403.
+const showPlaybooksNav = computed(() =>
+  auth.isPlaybooksEnabled && hasFeature('playbook.manage')
 )
 
 // Load active review count for badge. Skip the call entirely when the
