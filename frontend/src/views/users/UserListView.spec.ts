@@ -5,7 +5,8 @@
  * UI should only show the verbs the admin's effective feature set (from
  * /auth/me) actually grants. These tests pin that: a read-only feature set
  * hides Create / Export / Edit / Delete / Move / Reset / Disable / Run
- * playbook, and a full set shows them.
+ * playbook (offering a view-only View instead of Edit), and a full set
+ * shows them.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -59,7 +60,7 @@ const stubs = {
   LdapFilterBuilder: true,
   RecentSearches: true,
   AppModal: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' },
-  FormField: true, ConfirmDialog: true, UserForm: true, CopyButton: true,
+  FormField: true, ConfirmDialog: true, UserForm: true, CopyButton: true, UserAttributesView: true,
   EntryTimeline: true, PasswordPolicyStatus: true, GroupChips: true,
   // Render the toolbar slot and the per-row actions slot so gating is visible.
   ResultsTable: {
@@ -113,6 +114,8 @@ describe('UserListView feature gating', () => {
     expect(t).toContain('Move')
     expect(t).toContain('Reset password')
     expect(t).toContain('Run playbook')
+    // Edit supersedes the view-only button.
+    expect(t).not.toContain('View')
   })
 
   it('hides Move when the directory exposes no other provisioning profile', async () => {
@@ -137,6 +140,28 @@ describe('UserListView feature gating', () => {
     expect(t).not.toContain('Run playbook')
     // Read-only action that isn't feature-gated stays available.
     expect(t).toContain('View history')
+    // ...and user.read gets a view-only details button in place of Edit.
+    expect(t).toContain('View')
+  })
+
+  it('opens a view-only details dialog with the full entry for a read-only admin', async () => {
+    vi.mocked(usersApi.getUser).mockResolvedValueOnce({
+      data: { dn: 'uid=jdoe,ou=people,dc=x', attributes: { uid: ['jdoe'], mail: ['jdoe@x'] } },
+    } as never)
+    const wrapper = await mountWith(['user.read'])
+    await wrapper.findAll('button').find(b => b.text() === 'View')!.trigger('click')
+    await flushPromises()
+    expect(usersApi.getUser).toHaveBeenCalledWith('d1', 'uid=jdoe,ou=people,dc=x')
+    const view = wrapper.findComponent({ name: 'UserAttributesView' })
+    expect(view.exists()).toBe(true)
+    expect(view.props('attributes')).toEqual({ uid: ['jdoe'], mail: ['jdoe@x'] })
+    // Never the edit form.
+    expect(wrapper.findComponent({ name: 'UserForm' }).exists()).toBe(false)
+  })
+
+  it('offers no View button without user.read', async () => {
+    const wrapper = await mountWith([])
+    expect(texts(wrapper)).not.toContain('View')
   })
 
   it('hides Run playbook when the Lifecycle Playbooks setting is off, even with the feature', async () => {

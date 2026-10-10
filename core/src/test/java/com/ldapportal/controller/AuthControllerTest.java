@@ -148,6 +148,25 @@ class AuthControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void me_readOnlyAdmin_getsReadDefaultsButNotApprovals() throws Exception {
+        AuthPrincipal principal = new AuthPrincipal(PrincipalType.ADMIN, ACCOUNT_ID, "bob");
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                principal, null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
+        given(entitlementService.exposed(com.ldapportal.entity.enums.FeatureKey.class))
+                .willReturn(List.of(com.ldapportal.entity.enums.FeatureKey.USER_READ,
+                                    com.ldapportal.entity.enums.FeatureKey.BULK_EXPORT,
+                                    com.ldapportal.entity.enums.FeatureKey.APPROVAL_MANAGE,
+                                    com.ldapportal.entity.enums.FeatureKey.PLAYBOOK_EXECUTE));
+        given(featurePermRepo.findAllByAdminAccountId(ACCOUNT_ID)).willReturn(List.of());
+        given(adminProfileRoleRepository.existsByAdminAccountIdAndBaseRole(
+                ACCOUNT_ID, com.ldapportal.entity.enums.BaseRole.ADMIN)).willReturn(false);
+
+        mockMvc.perform(get("/api/v1/auth/me").with(authentication(auth)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.features", org.hamcrest.Matchers.containsInAnyOrder("user.read", "bulk.export")));
+    }
+
+    @Test
     void me_unauthenticated_returns401() throws Exception {
         mockMvc.perform(get("/api/v1/auth/me"))
                 .andExpect(status().isUnauthorized());

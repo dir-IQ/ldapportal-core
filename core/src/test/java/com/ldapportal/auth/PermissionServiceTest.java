@@ -67,7 +67,7 @@ class PermissionServiceTest {
         permissionService.requireFeature(superadmin(), dirId, FeatureKey.USER_READ);
         permissionService.requireFeature(superadmin(), dirId, FeatureKey.DIRECTORY_BROWSE);
         permissionService.requireFeature(superadmin(), dirId, FeatureKey.BULK_EXPORT);
-        permissionService.requireFeature(superadmin(), dirId, FeatureKey.APPROVAL_MANAGE);
+        permissionService.requireFeature(superadmin(), dirId, FeatureKey.REPORTS_RUN);
         verifyNoInteractions(profileRoleRepo, featurePermissionRepo, superadminPermissionRepo);
     }
 
@@ -100,6 +100,9 @@ class PermissionServiceTest {
                 .isInstanceOf(AccessDeniedException.class)
                 .hasMessageContaining("manage_directory_data");
         assertThatThrownBy(() -> permissionService.requireFeature(p, dirId, FeatureKey.PLAYBOOK_EXECUTE))
+                .isInstanceOf(AccessDeniedException.class);
+        // Approving applies a directory change, so it is a write too.
+        assertThatThrownBy(() -> permissionService.requireFeature(p, dirId, FeatureKey.APPROVAL_MANAGE))
                 .isInstanceOf(AccessDeniedException.class);
         // Scoping never applies to a superadmin, even a read-only one.
         verifyNoInteractions(profileRoleRepo, featurePermissionRepo);
@@ -176,6 +179,36 @@ class PermissionServiceTest {
                 .thenReturn(List.of(roleFor(BaseRole.READ_ONLY)));
 
         permissionService.requireFeature(admin(), dirId, FeatureKey.BULK_EXPORT);
+    }
+
+    @Test
+    void readOnlyDefaults_coverViewSurfaces_butNotApprovalsOrPlaybooks() {
+        assertThat(PermissionService.READONLY_DEFAULT_FEATURES).containsExactlyInAnyOrder(
+                FeatureKey.BULK_EXPORT, FeatureKey.REPORTS_RUN, FeatureKey.DIRECTORY_BROWSE,
+                FeatureKey.SCHEMA_READ, FeatureKey.USER_READ, FeatureKey.GROUP_READ);
+    }
+
+    @Test
+    void requireFeature_readOnlyRole_approvalManage_denied() {
+        when(profileRoleRepo.existsByAdminAccountIdAndProfileDirectoryId(adminId, dirId)).thenReturn(true);
+        when(featurePermissionRepo.findAdminWideOverride(adminId, FeatureKey.APPROVAL_MANAGE))
+                .thenReturn(Optional.empty());
+        when(profileRoleRepo.findAllByAdminAccountIdAndProfileDirectoryId(adminId, dirId))
+                .thenReturn(List.of(roleFor(BaseRole.READ_ONLY)));
+
+        assertThatThrownBy(() -> permissionService.requireFeature(admin(), dirId, FeatureKey.APPROVAL_MANAGE))
+                .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void requireFeature_readOnlyRole_approvalManageOverride_granted() {
+        when(profileRoleRepo.existsByAdminAccountIdAndProfileDirectoryId(adminId, dirId)).thenReturn(true);
+        when(featurePermissionRepo.findAdminWideOverride(adminId, FeatureKey.APPROVAL_MANAGE))
+                .thenReturn(Optional.of(featureOverride(true)));
+        when(profileRoleRepo.findAllByAdminAccountIdAndProfileDirectoryId(adminId, dirId))
+                .thenReturn(List.of(roleFor(BaseRole.READ_ONLY)));
+
+        permissionService.requireFeature(admin(), dirId, FeatureKey.APPROVAL_MANAGE);
     }
 
     @Test
