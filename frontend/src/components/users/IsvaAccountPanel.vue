@@ -38,11 +38,15 @@ const props = withDefaults(defineProps<{
    * UserForm.
    */
   iviaConfigEnabled?: boolean | null
+  /** View-only: show the account status but none of the action buttons
+   *  (an admin without the user write features they need). */
+  readOnly?: boolean
 }>(), {
   // Vue auto-defaults boolean-typed props to `false` when not passed;
   // we need `null` to disambiguate "host didn't compute" from "host
   // computed false" so the load function knows when to self-fetch.
   iviaConfigEnabled: null,
+  readOnly: false,
 })
 
 const emit = defineEmits<{
@@ -491,7 +495,7 @@ function formatDate(s: string | null): string {
       </div>
 
       <!-- Actions -->
-      <div class="flex flex-wrap items-center gap-2 pt-1">
+      <div v-if="!readOnly" class="flex flex-wrap items-center gap-2 pt-1">
         <button v-if="status.orphaned" @click="doVerb('grant')" :disabled="acting || !canGrant" class="btn-primary">
           Grant {{ IVIA_ABBR }} account
         </button>
@@ -521,7 +525,7 @@ function formatDate(s: string | null): string {
            so only the relevant mode's behaviour is described. Note this keys
            off the topology, not status.linked (which is "this account has a
            secUser", a different axis). -->
-      <p v-if="canForceReset" class="text-xs text-gray-500">
+      <p v-if="canForceReset && !readOnly" class="text-xs text-gray-500">
         Force-reset writes <code>secPwdValid=FALSE</code>.
         <template v-if="status?.topology === 'LINKED'">
           The {{ IVIA_ABBR }} bind path is invalidated.

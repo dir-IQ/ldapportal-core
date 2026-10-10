@@ -180,6 +180,21 @@ describe('action visibility', () => {
     expect(buttons.some((t) => t === 'Suspend')).toBe(false)
   })
 
+  it('read-only: status shown, every action hidden', async () => {
+    hoisted.getStatus.mockResolvedValue({ data: statusPresent({ acctValid: true }) })
+    const w = mount(IsvaAccountPanel, {
+      props: { dirId: DIR, dn: DN, readOnly: true },
+      global: { stubs: { Teleport: true, AppModal: true, FormField: true } },
+    })
+    await flushPromises()
+    expect(w.text()).toContain('Linked')
+    const buttons = w.findAll('button').map((b) => b.text().trim())
+    for (const verb of ['Suspend', 'Restore', 'Renew', 'Force credential reset', 'Revoke (soft)', 'Revoke (hard)']) {
+      expect(buttons).not.toContain(verb)
+    }
+    expect(w.text()).not.toContain('Force-reset writes')
+  })
+
   it('linked + active: Suspend visible, Restore hidden', async () => {
     hoisted.getStatus.mockResolvedValue({ data: statusPresent({ acctValid: true }) })
     const w = mountPanel()
