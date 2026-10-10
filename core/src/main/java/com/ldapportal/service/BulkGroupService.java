@@ -89,8 +89,27 @@ public class BulkGroupService {
                                        String memberAttribute,
                                        boolean skipHeaderRow,
                                        char fieldDelimiter) throws IOException {
+        return importCsv(dc, csvInput, parentDn, conflictHandling, columnMappings,
+                objectClasses, memberAttribute, skipHeaderRow, fieldDelimiter, true);
+    }
 
-        Map<String, String> colToAttr = resolveColumnMap(columnMappings);
+    /**
+     * Full import variant. {@code passthroughUnmapped = false} (template-driven
+     * imports) drops columns the mappings don't mention instead of writing them
+     * to a same-named attribute. See {@link CsvColumnMap}.
+     */
+    public BulkImportResult importCsv(DirectoryConnection dc,
+                                       InputStream csvInput,
+                                       String parentDn,
+                                       ConflictHandling conflictHandling,
+                                       List<CsvColumnMappingDto> columnMappings,
+                                       List<String> objectClasses,
+                                       String memberAttribute,
+                                       boolean skipHeaderRow,
+                                       char fieldDelimiter,
+                                       boolean passthroughUnmapped) throws IOException {
+
+        CsvColumnMap colToAttr = CsvColumnMap.of(columnMappings, passthroughUnmapped);
         List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
 
         List<BulkImportRowResult> rowResults = new ArrayList<>();
@@ -140,7 +159,7 @@ public class BulkGroupService {
                 requiredAttrs, memberAttr, CsvUtils.DEFAULT_DELIMITER);
     }
 
-    /** Preview variant with an explicit field delimiter. */
+    /** Preview variant with an explicit field delimiter; unmapped columns pass through. */
     public BulkImportPreviewResult previewImport(InputStream csvInput,
                                                   String parentDn,
                                                   List<CsvColumnMappingDto> columnMappings,
@@ -148,8 +167,25 @@ public class BulkGroupService {
                                                   List<String> requiredAttrs,
                                                   String memberAttr,
                                                   char fieldDelimiter) throws IOException {
+        return previewImport(csvInput, parentDn, columnMappings, skipHeaderRow,
+                requiredAttrs, memberAttr, fieldDelimiter, true);
+    }
 
-        Map<String, String> colToAttr = resolveColumnMap(columnMappings);
+    /**
+     * Full preview variant. With {@code passthroughUnmapped = false} the columns
+     * the mappings don't mention are left out and listed in
+     * {@link BulkImportPreviewResult#unmappedColumns()}.
+     */
+    public BulkImportPreviewResult previewImport(InputStream csvInput,
+                                                  String parentDn,
+                                                  List<CsvColumnMappingDto> columnMappings,
+                                                  boolean skipHeaderRow,
+                                                  List<String> requiredAttrs,
+                                                  String memberAttr,
+                                                  char fieldDelimiter,
+                                                  boolean passthroughUnmapped) throws IOException {
+
+        CsvColumnMap colToAttr = CsvColumnMap.of(columnMappings, passthroughUnmapped);
         List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
 
         List<String> required = requiredAttrs == null ? List.of() : requiredAttrs;
@@ -172,13 +208,8 @@ public class BulkGroupService {
                 String rawVal = cell.getValue();
                 if (rawVal == null || rawVal.isBlank()) continue;
 
-                String ldapAttr;
-                if (colToAttr.containsKey(csvCol)) {
-                    ldapAttr = colToAttr.get(csvCol);
-                    if (ldapAttr == null) continue;
-                } else {
-                    ldapAttr = csvCol;
-                }
+                String ldapAttr = colToAttr.attributeFor(csvCol);
+                if (ldapAttr == null) continue; // ignored, or unmapped under a template
                 attrs.put(ldapAttr, rawVal);
                 presentLower.add(ldapAttr.toLowerCase(ROOT));
                 // The 'members' column gets translated to the chosen
@@ -210,7 +241,7 @@ public class BulkGroupService {
             previewRows.add(new BulkImportPreviewRow(rowNum, dn, attrs, missing));
         }
 
-        return new BulkImportPreviewResult(rowNum, previewRows);
+        return new BulkImportPreviewResult(rowNum, previewRows, colToAttr.unmappedColumns(rows));
     }
 
     /** Backwards-compatible overload (no schema validation). */
@@ -288,7 +319,7 @@ public class BulkGroupService {
 
     private BulkImportRowResult processRow(DirectoryConnection dc,
                                            Map<String, String> row,
-                                           Map<String, String> colToAttr,
+                                           CsvColumnMap colToAttr,
                                            String parentDn,
                                            ConflictHandling conflictHandling,
                                            List<String> objectClasses,
@@ -308,13 +339,10 @@ public class BulkGroupService {
             String rawVal  = cell.getValue();
             if (rawVal == null || rawVal.isBlank()) continue;
 
-            String ldapAttr;
-            if (colToAttr.containsKey(csvCol)) {
-                ldapAttr = colToAttr.get(csvCol);
-                if (ldapAttr == null) continue; // ignored column
-            } else {
-                ldapAttr = csvCol;
-            }
+            // null = ignored column, or a column the template doesn't mention;
+            // without a template the header itself is the attribute name.
+            String ldapAttr = colToAttr.attributeFor(csvCol);
+            if (ldapAttr == null) continue;
 
             // Collect members from the configured member attribute or "members" alias
             if ("members".equalsIgnoreCase(ldapAttr)
@@ -404,22 +432,6 @@ public class BulkGroupService {
             log.warn("Row {} failed [dn={}]: {}", rowNum, dn, ex.getMessage());
             return BulkImportRowResult.error(rowNum, dn, ex.getMessage());
         }
-    }
-
-    private Map<String, String> resolveColumnMap(List<CsvColumnMappingDto> mappings) {
-        if (mappings == null || mappings.isEmpty()) {
-            return Map.of();
-        }
-        Map<String, String> result = new LinkedHashMap<>();
-        for (CsvColumnMappingDto m : mappings) {
-            if (m.ignored()) {
-                result.put(m.csvColumn(), null);
-            } else {
-                result.put(m.csvColumn(),
-                        m.ldapAttribute() != null ? m.ldapAttribute() : m.csvColumn());
-            }
-        }
-        return result;
     }
 
     private String buildDn(String rdnAttr, String rdnValue, String parentDn) {

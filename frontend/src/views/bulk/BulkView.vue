@@ -160,6 +160,16 @@
       <div v-if="previewResult" class="mt-4">
         <div class="p-4 rounded-lg bg-blue-50 border border-blue-200 text-sm mb-3">
           <p class="font-medium text-blue-800 mb-2">Preview: {{ previewResult.totalRows }} rows to import</p>
+          <!-- Columns the template doesn't mention are never written (no
+               passthrough under a template); name them so nothing is dropped
+               silently. Informational, not an error. -->
+          <p v-if="previewResult.unmappedColumns?.length" data-testid="unmapped-columns"
+             class="text-xs text-gray-700 bg-white/70 border border-gray-200 rounded px-2 py-1 mb-2">
+            {{ previewResult.unmappedColumns.length === 1 ? 'This column isn’t' : 'These columns aren’t' }}
+            in the template and won’t be imported:
+            <span class="font-mono">{{ previewResult.unmappedColumns.join(', ') }}</span>.
+            Add {{ previewResult.unmappedColumns.length === 1 ? 'it' : 'them' }} to the template to import the values.
+          </p>
           <!-- Summary banner: surface schema validation issues (rows missing
                required attribute values) up-front so the user doesn't have
                to scan the table to spot them. The import isn't blocked —
@@ -714,7 +724,12 @@ interface PreviewRow {
   attributes?: Record<string, string>
   missingRequired?: string[]
 }
-interface PreviewResult { totalRows: number, rows: PreviewRow[] }
+interface PreviewResult {
+  totalRows: number
+  rows: PreviewRow[]
+  // Columns the template doesn't mention; a template-driven import skips them.
+  unmappedColumns?: string[]
+}
 interface ImportRowResult { rowNumber: number, dn?: string, status: string, message?: string }
 interface ImportResult {
   totalRows: number

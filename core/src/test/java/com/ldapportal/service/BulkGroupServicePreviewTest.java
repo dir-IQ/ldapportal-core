@@ -106,4 +106,27 @@ class BulkGroupServicePreviewTest {
         assertThat(result.rows().get(0).computedDn()).isNull();
         assertThat(result.rows().get(0).missingRequired()).contains("cn");
     }
+
+    @Test
+    void underTemplate_unmappedColumnsAreOmittedAndListed() throws IOException {
+        var mappings = List.of(
+                new com.ldapportal.dto.csv.CsvColumnMappingDto("name", "cn", false),
+                new com.ldapportal.dto.csv.CsvColumnMappingDto("members", "members", false));
+        BulkImportPreviewResult result = service.previewImport(
+                csv("name,members,Owner\neng,uid=a|uid=b,uid=boss\n"),
+                "ou=groups,dc=example,dc=com", mappings, true, List.of(), "member", ',', false);
+
+        assertThat(result.unmappedColumns()).containsExactly("Owner");
+        assertThat(result.rows().get(0).attributes()).containsKey("cn").doesNotContainKey("Owner");
+    }
+
+    @Test
+    void withoutTemplate_headersPassThrough() throws IOException {
+        BulkImportPreviewResult result = service.previewImport(
+                csv("cn,description\neng,Engineers\n"),
+                "ou=groups,dc=example,dc=com", List.of(), true, List.of(), "member", ',', true);
+
+        assertThat(result.unmappedColumns()).isEmpty();
+        assertThat(result.rows().get(0).attributes()).containsEntry("description", "Engineers");
+    }
 }

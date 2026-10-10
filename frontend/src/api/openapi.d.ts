@@ -4099,6 +4099,7 @@ export interface components {
             /** Format: int32 */
             totalRows?: number;
             rows?: components["schemas"]["BulkImportPreviewRow"][];
+            unmappedColumns?: string[];
         };
         BulkImportPreviewRow: {
             /** Format: int32 */
