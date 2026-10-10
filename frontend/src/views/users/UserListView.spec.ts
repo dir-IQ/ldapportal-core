@@ -60,7 +60,7 @@ const stubs = {
   LdapFilterBuilder: true,
   RecentSearches: true,
   AppModal: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' },
-  FormField: true, ConfirmDialog: true, UserForm: true, CopyButton: true, UserAttributesView: true,
+  FormField: true, ConfirmDialog: true, UserForm: true, CopyButton: true,
   EntryTimeline: true, PasswordPolicyStatus: true, GroupChips: true,
   // Render the toolbar slot and the per-row actions slot so gating is visible.
   ResultsTable: {
@@ -144,19 +144,34 @@ describe('UserListView feature gating', () => {
     expect(t).toContain('View')
   })
 
-  it('opens a view-only details dialog with the full entry for a read-only admin', async () => {
+  it('opens the edit dialog view-only (no Save) for a read-only admin', async () => {
     vi.mocked(usersApi.getUser).mockResolvedValueOnce({
       data: { dn: 'uid=jdoe,ou=people,dc=x', attributes: { uid: ['jdoe'], mail: ['jdoe@x'] } },
     } as never)
-    const wrapper = await mountWith(['user.read'])
+    state.features = ['user.read']
+    // Render the title and footer slots so the dialog chrome is assertable.
+    const wrapper = mount(UserListView, { global: { stubs: {
+      ...stubs,
+      AppModal: {
+        props: ['modelValue', 'dirty'],
+        template: '<div v-if="modelValue" data-testid="modal"><slot name="title" /><slot /><slot name="footer" :close="() => {}" /></div>',
+      },
+    } } })
+    await flushPromises()
     await wrapper.findAll('button').find(b => b.text() === 'View')!.trigger('click')
     await flushPromises()
     expect(usersApi.getUser).toHaveBeenCalledWith('d1', 'uid=jdoe,ou=people,dc=x')
-    const view = wrapper.findComponent({ name: 'UserAttributesView' })
-    expect(view.exists()).toBe(true)
-    expect(view.props('attributes')).toEqual({ uid: ['jdoe'], mail: ['jdoe@x'] })
-    // Never the edit form.
-    expect(wrapper.findComponent({ name: 'UserForm' }).exists()).toBe(false)
+    const form = wrapper.findComponent({ name: 'UserForm' })
+    expect(form.exists()).toBe(true)
+    expect(form.props('readOnly')).toBe(true)
+    expect(form.props('isEdit')).toBe(true)
+    const modal = wrapper.find('[data-testid="modal"]')
+    expect(modal.text()).toContain('User Details')
+    const footer = modal.findAll('button').map(b => b.text())
+    expect(footer).toContain('Close')
+    expect(footer).not.toContain('Save')
+    // Viewing never registers unsaved work.
+    expect(useUnsavedChangesStore().dirtyPage()).toBeNull()
   })
 
   it('offers no View button without user.read', async () => {

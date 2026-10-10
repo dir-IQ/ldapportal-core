@@ -223,16 +223,16 @@
     <!-- Create/Edit modal (step 2 of create, or edit) -->
     <AppModal v-model="showModal" size="xl" :dirty="modalDirty">
       <template #title>
-        <span class="whitespace-nowrap">{{ editingDn ? 'Edit User' : 'New User' }}</span>
+        <span class="whitespace-nowrap">{{ viewOnly ? 'User Details' : editingDn ? 'Edit User' : 'New User' }}</span>
         <ProfilePill v-if="profileConfig?.name" class="flex-1 min-w-0"
                      :name="profileConfig.name" :color="profileConfig.themeColor" />
       </template>
-      <UserForm ref="userFormRef" :data="form" :is-edit="!!editingDn" :user-template-config="profileConfig ?? undefined" :dir-id="dirId" :profile-id="selectedProfileId" @update="(v: UserFormState) => form = v" />
+      <UserForm ref="userFormRef" :data="form" :is-edit="!!editingDn" :read-only="viewOnly" :user-template-config="profileConfig ?? undefined" :dir-id="dirId" :profile-id="selectedProfileId" @update="(v: UserFormState) => form = v" />
       <template #footer="{ close }">
         <!-- Cancel routes through the AppModal close guard so unsaved values
              get the same discard confirmation as the × button and Escape. -->
-        <button @click="close()" class="btn-neutral">Cancel</button>
-        <button @click="save" :disabled="saving" class="btn-primary">{{ saving ? 'Saving…' : 'Save' }}</button>
+        <button @click="close()" class="btn-neutral">{{ viewOnly ? 'Close' : 'Cancel' }}</button>
+        <button v-if="!viewOnly" @click="save" :disabled="saving" class="btn-primary">{{ saving ? 'Saving…' : 'Save' }}</button>
       </template>
     </AppModal>
 
@@ -429,18 +429,6 @@
       </template>
     </AppModal>
 
-    <!-- View-only details (admins with user.read but not user.edit) -->
-    <AppModal v-model="showView" title="User Details" size="lg">
-      <div v-if="viewTarget" class="mb-3">
-        <p class="text-[13px] font-mono text-gray-500 break-all">{{ viewTarget.dn }}</p>
-      </div>
-      <p v-if="viewLoading" class="py-4 text-center text-gray-500 text-sm">Loading…</p>
-      <UserAttributesView v-else :attributes="viewAttributes" />
-      <template #footer>
-        <button @click="showView = false" class="btn-neutral">Close</button>
-      </template>
-    </AppModal>
-
     <!-- Activity Timeline modal -->
     <AppModal v-model="showTimeline" title="Activity History" size="lg">
       <div v-if="timelineTarget" class="mb-3">
@@ -535,7 +523,6 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import UserForm from './UserForm.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import EntryTimeline from '@/components/EntryTimeline.vue'
-import UserAttributesView from '@/components/users/UserAttributesView.vue'
 import PasswordPolicyStatus from '@/components/PasswordPolicyStatus.vue'
 import GroupChips from '@/components/GroupChips.vue'
 import { rdnValue } from '@/composables/useEntryClassification'
@@ -725,6 +712,9 @@ const showModal      = ref(false)
 const showMove       = ref(false)
 const showDelete     = ref(false)
 const editingDn      = ref<string | null>(null)
+// The edit dialog opened view-only (see openView); reset whenever it closes
+// so the create and edit flows never inherit it.
+const viewOnly       = ref(false)
 // Snapshot of the attribute values as loaded into the edit form, in the same
 // joined-string shape the form holds. save() diffs against it so only
 // actually-changed attributes ship as modifications.
@@ -747,13 +737,14 @@ function dirtyComparable(state: UserFormState): string {
 }
 const formSnapshot = ref('')
 watch(showModal, (open) => {
+  if (!open) viewOnly.value = false
   formSnapshot.value = ''
   if (open) {
     nextTick(() => { formSnapshot.value = dirtyComparable(form.value) })
   }
 })
 const modalDirty = computed(() =>
-  showModal.value && formSnapshot.value !== '' && (
+  showModal.value && !viewOnly.value && formSnapshot.value !== '' && (
     dirtyComparable(form.value) !== formSnapshot.value
     || !!userFormRef.value?.hasPendingMembershipChanges
   ))
@@ -1120,30 +1111,14 @@ async function selectProfileAndCreate(p: ProfileLite) {
   showModal.value = true
 }
 
-// View-only details: the full entry, no form. Falls back to the search-row
-// attributes if the entry fetch fails, like openEdit does.
-const showView       = ref(false)
-const viewTarget     = ref<UserRow | null>(null)
-const viewAttributes = ref<Record<string, string[] | string | null>>({})
-const viewLoading    = ref(false)
-
-async function openView(row: UserRow) {
-  viewTarget.value = row
-  viewAttributes.value = row._raw?.attributes || {}
-  showView.value = true
-  viewLoading.value = true
-  try {
-    const { data } = await usersApi.getUser(dirId, row.dn)
-    if (data?.attributes) viewAttributes.value = data.attributes
-  } catch (e) {
-    const err = e as { response?: { data?: { detail?: string } }, message?: string }
-    notif.error(err.response?.data?.detail || err.message || 'Failed to load user')
-  } finally {
-    viewLoading.value = false
-  }
+// View-only details (user.read without user.edit): the edit dialog with
+// every field disabled and no Save — same layout, groups and IVIA status.
+function openView(row: UserRow) {
+  return openEdit(row, true)
 }
 
-async function openEdit(row: UserRow) {
+async function openEdit(row: UserRow, readOnly = false) {
+  viewOnly.value = readOnly
   editingDn.value = row.dn
   // Fetch full entry from LDAP to get all attributes (search results may be incomplete)
   let attrs: Record<string, string[] | string | null> = row._raw?.attributes || {}
@@ -1661,7 +1636,7 @@ function onProfileChange() {
 // dialog is open — the create/edit form, bulk update, bulk membership, move,
 // password reset or playbook run — since whatever was typed there is lost.
 useUnsavedChangesGuard('Users', () =>
-  showModal.value || showBulkUpdate.value || showBulkMembership.value
+  (showModal.value && !viewOnly.value) || showBulkUpdate.value || showBulkMembership.value
   || showMove.value || showResetPassword.value || showPlaybookModal.value)
 
 onMounted(async () => {
