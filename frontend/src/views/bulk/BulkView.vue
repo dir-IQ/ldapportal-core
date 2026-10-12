@@ -20,12 +20,15 @@
 
     <!-- Tabs -->
     <div class="flex border-b border-gray-200 mb-0">
-      <button @click="activeTab = 'import'"
+      <!-- Each tab shows only when the admin holds its feature (a read-only
+           admin, for instance, gets Export only); the backend enforces the
+           same features, so a hidden tab is never a capability lost. -->
+      <button v-if="canBulkImport" @click="activeTab = 'import'"
         class="px-5 py-2.5 text-sm font-medium -mb-px"
         :class="activeTab === 'import' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-700'">
         Import
       </button>
-      <button @click="activeTab = 'export'"
+      <button v-if="canBulkExport" @click="activeTab = 'export'"
         class="px-5 py-2.5 text-sm font-medium -mb-px"
         :class="activeTab === 'export' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-700'">
         Export
@@ -39,8 +42,14 @@
       </button>
     </div>
 
+    <p v-if="availableTabs.length === 0" data-testid="bulk-no-access"
+       class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6 text-sm text-gray-600">
+      You don’t have permission for bulk {{ entityType === 'users' ? 'user' : 'group' }} operations
+      in this directory. Ask a superadmin to grant bulk import, export or delete.
+    </p>
+
     <!-- Import tab — Users -->
-    <section v-if="activeTab === 'import' && entityType === 'users'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
+    <section v-if="activeTab === 'import' && canBulkImport && entityType === 'users'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
       <h2 class="text-lg font-semibold mb-3">Import Users from CSV</h2>
       <div class="space-y-2">
         <!-- 12-column grid: Active profile (4) + Template wrapper (4) + CSV File (4).
@@ -59,7 +68,9 @@
                 <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
               </select>
             </div>
-            <div class="relative" ref="menuRef">
+            <!-- Creating, editing and deleting templates is its own feature
+                 (csv.template_manage), separate from running an import. -->
+            <div v-if="canManageTemplates" class="relative" ref="menuRef">
               <button @click="showTemplateMenu = !showTemplateMenu" class="btn-primary whitespace-nowrap flex items-center gap-1">
                 Template <span class="text-xs">&#9660;</span>
               </button>
@@ -261,7 +272,7 @@
     </section>
 
     <!-- Export tab — Users -->
-    <section v-if="activeTab === 'export' && entityType === 'users'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
+    <section v-if="activeTab === 'export' && canBulkExport && entityType === 'users'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
       <h2 class="text-lg font-semibold mb-3">Export Users to CSV</h2>
       <div class="space-y-2">
         <!-- 12-column grid: LDAP Filter (4) + Base DN (4) + Attributes (4). -->
@@ -287,7 +298,7 @@
     />
 
     <!-- Import tab — Groups -->
-    <section v-if="activeTab === 'import' && entityType === 'groups'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
+    <section v-if="activeTab === 'import' && canBulkImport && entityType === 'groups'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
       <h2 class="text-lg font-semibold mb-3">Import Groups from CSV</h2>
       <div class="space-y-2">
         <!-- 12-column grid: Parent DN (3) + Object Class (3)
@@ -417,7 +428,7 @@
     </section>
 
     <!-- Export tab — Groups -->
-    <section v-if="activeTab === 'export' && entityType === 'groups'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
+    <section v-if="activeTab === 'export' && canBulkExport && entityType === 'groups'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
       <h2 class="text-lg font-semibold mb-3">Export Groups to CSV</h2>
       <div class="space-y-2">
         <!-- 12-column grid:
@@ -810,13 +821,29 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
 // to its default "browse from directory base DN" behaviour).
 const auth = useAuthStore()
 
-// Bulk delete is users-only and gated on the bulk.delete feature. When the
-// admin switches to Groups while on the Delete tab, fall back to Import so
-// the panel never renders blank.
-const canBulkDelete = computed(() => auth.hasFeature('bulk.delete'))
-watch(entityType, v => {
-  if (v === 'groups' && activeTab.value === 'delete') activeTab.value = 'import'
+// Each tab is gated on the feature its endpoints require, so the page only
+// offers what the backend will allow (a read-only admin gets Export only).
+// Bulk delete is users-only. Template create/edit/delete is a separate
+// feature from running an import.
+const canBulkImport      = computed(() => auth.hasFeature('bulk.import'))
+const canBulkExport      = computed(() => auth.hasFeature('bulk.export'))
+const canBulkDelete      = computed(() => auth.hasFeature('bulk.delete'))
+const canManageTemplates = computed(() => auth.hasFeature('csv.template_manage'))
+
+type BulkTab = 'import' | 'export' | 'delete'
+const availableTabs = computed<BulkTab[]>(() => {
+  const tabs: BulkTab[] = []
+  if (canBulkImport.value) tabs.push('import')
+  if (canBulkExport.value) tabs.push('export')
+  if (canBulkDelete.value && entityType.value === 'users') tabs.push('delete')
+  return tabs
 })
+// Keep the active tab on one the admin can use: the page opens on Import by
+// default, and Delete disappears when switching to Groups. Falls back to the
+// first available tab so the panel never renders blank.
+watch(availableTabs, tabs => {
+  if (tabs.length && !tabs.includes(activeTab.value)) activeTab.value = tabs[0]
+}, { immediate: true })
 
 // Admin bulk operations are scoped by the sidebar profile picker — there is no
 // separate target selector on these forms. We read the picked profile from the
@@ -1178,8 +1205,10 @@ async function loadObjectClasses() {
 }
 
 onMounted(() => {
-  loadTemplates()
-  loadObjectClasses()
+  // Both calls back features the admin may not hold; skipping them avoids
+  // 403s for panels that aren't shown. Object classes feed the template editor.
+  if (canBulkImport.value || canManageTemplates.value) loadTemplates()
+  if (canManageTemplates.value) loadObjectClasses()
 })
 
 function onTemplateSelected() {
