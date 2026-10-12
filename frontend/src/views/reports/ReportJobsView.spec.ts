@@ -15,6 +15,8 @@ const hoisted = vi.hoisted(() => ({
   isComplianceEnabled: false,
   isIsvaIntegrationEnabled: false,
   isSuperadmin: false,
+  selectedProfile: null as { targetUserDn?: string | null } | null,
+  profiles: [] as { directoryId?: string, targetUserDn?: string | null }[],
 }))
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { dirId: 'dir-1' } }) }))
@@ -46,7 +48,7 @@ vi.mock('@/stores/notifications', () => ({
   useNotificationStore: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }),
 }))
 vi.mock('@/stores/profilePicker', () => ({
-  useProfilePickerStore: () => ({ selectedProfile: null }),
+  useProfilePickerStore: () => ({ selectedProfile: hoisted.selectedProfile, profiles: hoisted.profiles }),
 }))
 
 // The view registers an unsaved-changes guard (and reads the sidebar
@@ -54,6 +56,7 @@ vi.mock('@/stores/profilePicker', () => ({
 beforeEach(() => setActivePinia(createPinia()))
 
 import ReportJobsView from './ReportJobsView.vue'
+import DnPicker from '@/components/DnPicker.vue'
 
 // Render AppModal's default slot so the schedule form (with the format/delivery
 // selects and the recipient row) is in the DOM for option-gating assertions.
@@ -87,6 +90,8 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     hoisted.isComplianceEnabled = false
     hoisted.isIsvaIntegrationEnabled = false
     hoisted.isSuperadmin = false
+    hoisted.selectedProfile = null
+    hoisted.profiles = []
   })
 
   it('shows the Scheduled Jobs button when the REPORTS_SCHEDULE feature is granted', async () => {
@@ -213,6 +218,46 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect(body.reportParams.attributes).toEqual(['mail', 'sn', 'telephoneNumber'])
     expect(body.reportParams.objectType).toBe('USER')
     expect(body.reportParams).toHaveProperty('branchDn')
+  })
+
+  it.each(['USERS_IN_BRANCH', 'MISSING_DATA'])(
+    'browses the %s branch picker from the admin\'s profile OU, not the superadmin endpoint',
+    async (type) => {
+      hoisted.selectedProfile = { targetUserDn: 'ou=people,dc=example,dc=com' }
+      const wrapper = mountView()
+      await flushPromises()
+      await wrapper.find('#rj-report-type').setValue(type)
+
+      const picker = wrapper.findComponent(DnPicker)
+      expect(picker.props('superadmin')).toBe(false)
+      expect(picker.props('authorizedRoots')).toEqual(['ou=people,dc=example,dc=com'])
+    },
+  )
+
+  it('falls back to every profile OU in the directory when no profile is picked', async () => {
+    hoisted.profiles = [
+      { directoryId: 'dir-1', targetUserDn: 'ou=people,dc=example,dc=com' },
+      { directoryId: 'dir-1', targetUserDn: 'OU=People,dc=example,dc=com' },
+      { directoryId: 'dir-1', targetUserDn: 'ou=staff,dc=example,dc=com' },
+      { directoryId: 'dir-2', targetUserDn: 'ou=other,dc=example,dc=com' },
+    ]
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('#rj-report-type').setValue('USERS_IN_BRANCH')
+
+    expect(wrapper.findComponent(DnPicker).props('authorizedRoots'))
+      .toEqual(['ou=people,dc=example,dc=com', 'ou=staff,dc=example,dc=com'])
+  })
+
+  it('lets a superadmin browse the whole tree for the branch picker', async () => {
+    hoisted.isSuperadmin = true
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('#rj-report-type').setValue('MISSING_DATA')
+
+    const picker = wrapper.findComponent(DnPicker)
+    expect(picker.props('superadmin')).toBe(true)
+    expect(picker.props('authorizedRoots')).toEqual([])
   })
 
   it('hides the attribute list for other report types', async () => {
