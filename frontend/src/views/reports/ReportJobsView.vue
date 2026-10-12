@@ -39,7 +39,8 @@
         <div v-if="needsParam">
           <label for="rj-param-value" class="block text-sm font-medium text-gray-700 mb-1">{{ paramLabel }}</label>
           <DnPicker v-if="currentRunType?.param === 'groupDn'" v-model="runForm.paramValue" :directory-id="dirId" scope="group" />
-          <DnPicker v-else-if="currentRunType?.param === 'branchDn'" v-model="runForm.paramValue" :directory-id="dirId" />
+          <DnPicker v-else-if="currentRunType?.param === 'branchDn'" v-model="runForm.paramValue" :directory-id="dirId"
+                     :superadmin="auth.isSuperadmin" :authorized-roots="branchPickerRoots" />
           <input v-else id="rj-param-value" v-model="runForm.paramValue" type="text" :placeholder="paramPlaceholder" class="input w-full" />
         </div>
         <!-- Missing Data: the attributes every entry under the branch must carry. -->
@@ -303,7 +304,8 @@
             <div v-if="jobFormNeedsParam">
               <label class="block text-sm font-medium text-gray-700 mb-1">{{ jobFormParamLabel }}</label>
               <DnPicker v-if="currentJobFormType?.param === 'groupDn'" v-model="jobForm.paramValue" :directory-id="dirId" scope="group" />
-              <DnPicker v-else-if="currentJobFormType?.param === 'branchDn'" v-model="jobForm.paramValue" :directory-id="dirId" />
+              <DnPicker v-else-if="currentJobFormType?.param === 'branchDn'" v-model="jobForm.paramValue" :directory-id="dirId"
+                     :superadmin="auth.isSuperadmin" :authorized-roots="branchPickerRoots" />
               <FormField v-else :label="jobFormParamLabel" v-model="jobForm.paramValue" />
             </div>
             <!-- Missing Data: the attributes every entry under the branch must carry. -->
@@ -491,6 +493,26 @@ const loadingDirs = ref(false)
 const selectedDir = ref('')
 
 const dirId = computed(() => routeDirId || selectedDir.value)
+
+// Roots for the Branch DN picker (Users in Branch, Missing Data). The picker
+// defaults to the superadmin-only browse endpoint, which rejects admins, so an
+// admin browses through the directory-scoped endpoint starting from the OUs
+// they hold: the picked profile's target OU, else every profile's in this
+// directory. Superadmins browse the whole tree from the base DN.
+const branchPickerRoots = computed<string[]>(() => {
+  if (auth.isSuperadmin) return []
+  const picked = profilePicker.selectedProfile?.targetUserDn
+  if (picked) return [picked]
+  const seen = new Set<string>()
+  const roots: string[] = []
+  for (const p of profilePicker.profiles ?? []) {
+    const dn = p.targetUserDn?.trim()
+    if (!dn || (p.directoryId && p.directoryId !== dirId.value) || seen.has(dn.toLowerCase())) continue
+    seen.add(dn.toLowerCase())
+    roots.push(dn)
+  }
+  return roots
+})
 
 // Report types. INTEGRITY_CHECK is a frontend-only pseudo-type (handled via a
 // separate endpoint). ORPHANED_IVIA_ACCOUNTS is contributed by the IVIA addon
