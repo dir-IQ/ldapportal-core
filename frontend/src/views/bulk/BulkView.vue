@@ -37,6 +37,13 @@
         :class="activeTab === 'delete' ? 'border-b-2 border-red-600 text-red-600' : 'text-gray-500 hover:text-red-600'">
         Delete
       </button>
+      <!-- Memberships pair users with groups, so the tab shows under both
+           entity types. Needs bulk.import + group.manage_members. -->
+      <button v-if="canBulkMembership" @click="activeTab = 'memberships'"
+        class="px-5 py-2.5 text-sm font-medium -mb-px"
+        :class="activeTab === 'memberships' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-700'">
+        Group Memberships
+      </button>
     </div>
 
     <!-- Import tab — Users -->
@@ -285,6 +292,9 @@
       :dir-id="dirId"
       :active-profile="activeProfile"
     />
+
+    <!-- Group Memberships tab (users and groups alike) -->
+    <BulkMembershipSection v-if="activeTab === 'memberships' && canBulkMembership" :dir-id="dirId" />
 
     <!-- Import tab — Groups -->
     <section v-if="activeTab === 'import' && entityType === 'groups'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
@@ -662,6 +672,7 @@ import DnPicker from '@/components/DnPicker.vue'
 import AppModal from '@/components/AppModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import BulkDeleteSection from './BulkDeleteSection.vue'
+import BulkMembershipSection from './BulkMembershipSection.vue'
 import TemplateColumnMappings from './TemplateColumnMappings.vue'
 import {
   applySampleColumns, autoMatch, entriesToStacks, padStacks, parseSampleHeader, rebuildAttrs, stacksToEntries,
@@ -754,7 +765,7 @@ const confirm = useConfirm()
 const dirId = route.params.dirId as string
 
 const entityType    = ref<'users' | 'groups'>('users')
-const activeTab     = ref<'import' | 'export' | 'delete'>('import')
+const activeTab     = ref<'import' | 'export' | 'delete' | 'memberships'>('import')
 const importing     = ref(false)
 const previewing    = ref(false)
 const exporting     = ref(false)
@@ -814,6 +825,9 @@ const auth = useAuthStore()
 // admin switches to Groups while on the Delete tab, fall back to Import so
 // the panel never renders blank.
 const canBulkDelete = computed(() => auth.hasFeature('bulk.delete'))
+// Bulk membership needs both features, matching the backend gate.
+const canBulkMembership = computed(() =>
+  auth.hasFeature('bulk.import') && auth.hasFeature('group.manage_members'))
 watch(entityType, v => {
   if (v === 'groups' && activeTab.value === 'delete') activeTab.value = 'import'
 })

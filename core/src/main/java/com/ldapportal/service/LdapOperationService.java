@@ -865,6 +865,20 @@ public class LdapOperationService {
     public MembershipChangeResult applyMembershipChanges(
             UUID directoryId, AuthPrincipal principal,
             String memberDn, List<MembershipChangeRequest.Change> changes) {
+        return applyMembershipChanges(directoryId, principal, memberDn, null, changes);
+    }
+
+    /**
+     * {@link #applyMembershipChanges(UUID, AuthPrincipal, String, List)} with
+     * the member's uid as well, for callers that resolved it (bulk
+     * membership). Changes targeting a {@code memberUid} (posixGroup) group
+     * write {@code memberUid} instead of the DN; every other attribute still
+     * takes the DN. A {@code null} uid keeps the DN for every change.
+     */
+    public MembershipChangeResult applyMembershipChanges(
+            UUID directoryId, AuthPrincipal principal,
+            String memberDn, String memberUid,
+            List<MembershipChangeRequest.Change> changes) {
 
         loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, memberDn);
@@ -884,17 +898,19 @@ public class LdapOperationService {
         ApprovalWorkflowService approvalService = approvalServiceProvider.getIfAvailable();
         List<MembershipChangeResult.Item> items = new ArrayList<>(ordered.size());
         for (MembershipChangeRequest.Change c : ordered) {
-            items.add(applyMembershipChange(directoryId, principal, memberDn, c, approvalService));
+            String memberValue = memberUid != null && "memberUid".equalsIgnoreCase(c.memberAttribute())
+                    ? memberUid : memberDn;
+            items.add(applyMembershipChange(directoryId, principal, memberValue, c, approvalService));
         }
         return MembershipChangeResult.of(items);
     }
 
     private MembershipChangeResult.Item applyMembershipChange(
-            UUID directoryId, AuthPrincipal principal, String memberDn,
+            UUID directoryId, AuthPrincipal principal, String memberValue,
             MembershipChangeRequest.Change c, ApprovalWorkflowService approvalService) {
         try {
             if (c.op() == MembershipChangeRequest.Op.REMOVE) {
-                removeGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberDn);
+                removeGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberValue);
                 return MembershipChangeResult.Item.applied(c);
             }
 
@@ -906,13 +922,13 @@ public class LdapOperationService {
                         directoryId, c.groupDn(), principal, ApprovalRequestType.GROUP_MEMBER_ADD,
                         Map.of("groupDn", c.groupDn(),
                                 "memberAttribute", c.memberAttribute(),
-                                "memberValue", memberDn));
+                                "memberValue", memberValue));
                 if (pending.isPresent()) {
                     return MembershipChangeResult.Item.queued(c, pending.get().getId());
                 }
             }
 
-            addGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberDn);
+            addGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberValue);
             return MembershipChangeResult.Item.applied(c);
 
         } catch (ProvisioningRefusedException e) {

@@ -7,8 +7,9 @@ vi.mock('vue-router', () => ({ useRoute: () => ({ params: { dirId: 'd1' } }) }))
 vi.mock('@/stores/notifications', () => ({
   useNotificationStore: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }),
 }))
+const authState = vi.hoisted(() => ({ features: [] as string[] }))
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ hasFeature: () => false, isSuperadmin: false }),
+  useAuthStore: () => ({ hasFeature: (k: string) => authState.features.includes(k), isSuperadmin: false }),
 }))
 // The active profile comes from the sidebar picker store.
 vi.mock('@/stores/profilePicker', () => ({
@@ -54,6 +55,7 @@ const global = {
   stubs: {
     PageContainer: { template: '<div><slot/></div>' },
     DnPicker: true, AppModal: true, FormField: true, ConfirmDialog: true, BulkDeleteSection: true,
+    BulkMembershipSection: true,
   },
 }
 
@@ -542,5 +544,36 @@ describe('BulkView — columns the template does not map', () => {
     await btnByText(w, 'Preview Import').trigger('click')
     await flushPromises()
     expect(w.find('[data-testid="unmapped-columns"]').exists()).toBe(false)
+  })
+})
+
+describe('BulkView — Group Memberships tab', () => {
+  beforeEach(() => { authState.features = [] })
+
+  it('needs both bulk.import and group.manage_members', async () => {
+    authState.features = ['bulk.import']
+    let w = mount(BulkView, { global })
+    await flushPromises()
+    expect(w.text()).not.toContain('Group Memberships')
+
+    authState.features = ['group.manage_members']
+    w = mount(BulkView, { global })
+    await flushPromises()
+    expect(w.text()).not.toContain('Group Memberships')
+
+    authState.features = ['bulk.import', 'group.manage_members']
+    w = mount(BulkView, { global })
+    await flushPromises()
+    await btnByText(w, 'Group Memberships').trigger('click')
+    expect(w.findComponent({ name: 'BulkMembershipSection' }).props('dirId')).toBe('d1')
+  })
+
+  it('shows under the Groups entity type too', async () => {
+    authState.features = ['bulk.import', 'group.manage_members']
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    await btnByText(w, 'Groups').trigger('click')
+    await btnByText(w, 'Group Memberships').trigger('click')
+    expect(w.findComponent({ name: 'BulkMembershipSection' }).exists()).toBe(true)
   })
 })

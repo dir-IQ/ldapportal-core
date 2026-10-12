@@ -299,3 +299,9 @@ Base DN:  dc=corp,dc=local
   playbook definitions and execution history are kept for when it is re-enabled.
 - **Scheduled Reports** — Set up recurring reports with email or S3 delivery in the Reports section.
 - **Bulk Operations** — Import/export users via CSV in the Bulk Import/Export section.
+  The **Group Memberships** tab adds users to (or removes them from) many groups from
+  one CSV with `user` (uid or quoted DN), `groups` (cn or DN; separate several with `;`)
+  and an optional `op` column (`ADD` by default, or `REMOVE`). Preview shows what each
+  user-group pair will do before anything is written; adds to groups that require
+  approval are queued. Needs both the **bulk.import** and **group.manage_members**
+  permissions; at most 2,000 user-group pairs per file.
