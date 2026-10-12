@@ -7,8 +7,12 @@ vi.mock('vue-router', () => ({ useRoute: () => ({ params: { dirId: 'd1' } }) }))
 vi.mock('@/stores/notifications', () => ({
   useNotificationStore: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }),
 }))
+// Features the mocked admin holds; tests narrow it (e.g. to a read-only
+// admin's export-only set) and the beforeEach below restores the default.
+const DEFAULT_FEATURES = ['bulk.import', 'bulk.export', 'csv.template_manage']
+const grantedFeatures = vi.hoisted(() => new Set<string>())
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ hasFeature: () => false, isSuperadmin: false }),
+  useAuthStore: () => ({ hasFeature: (f: string) => grantedFeatures.has(f), isSuperadmin: false }),
 }))
 // The active profile comes from the sidebar picker store.
 vi.mock('@/stores/profilePicker', () => ({
@@ -46,7 +50,11 @@ import { previewCsv, importCsv, listCsvTemplates, updateCsvTemplate } from '@/ap
 import { getObjectClassesBulk, listObjectClasses } from '@/api/schema'
 // The view registers an unsaved-changes guard (and reads the sidebar
 // picker) through real Pinia stores; give every test a fresh instance.
-beforeEach(() => setActivePinia(createPinia()))
+beforeEach(() => {
+  setActivePinia(createPinia())
+  grantedFeatures.clear()
+  DEFAULT_FEATURES.forEach(f => grantedFeatures.add(f))
+})
 
 import BulkView from './BulkView.vue'
 
@@ -542,5 +550,64 @@ describe('BulkView — columns the template does not map', () => {
     await btnByText(w, 'Preview Import').trigger('click')
     await flushPromises()
     expect(w.find('[data-testid="unmapped-columns"]').exists()).toBe(false)
+  })
+})
+
+describe('BulkView — tabs follow the admin\'s bulk features', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  const tabLabels = (w: ReturnType<typeof mount>) =>
+    w.findAll('button').map(b => b.text()).filter(t => ['Import', 'Export', 'Delete'].includes(t))
+
+  it('shows a read-only admin only the Export tab and opens on it', async () => {
+    grantedFeatures.clear()
+    grantedFeatures.add('bulk.export')
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    expect(tabLabels(w)).toEqual(['Export'])
+    expect(w.text()).toContain('Export Users to CSV')
+    expect(w.text()).not.toContain('Import Users from CSV')
+    // Template and schema lists back features this admin lacks: not requested.
+    expect(listCsvTemplates).not.toHaveBeenCalled()
+    expect(listObjectClasses).not.toHaveBeenCalled()
+  })
+
+  it('hides the Template menu without template permission but keeps the import', async () => {
+    grantedFeatures.delete('csv.template_manage')
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    expect(w.text()).toContain('Import Users from CSV')
+    expect(w.findAll('button').some(b => b.text().startsWith('Template'))).toBe(false)
+    expect(listObjectClasses).not.toHaveBeenCalled()
+  })
+
+  it('shows every tab to a full admin, Delete for users only', async () => {
+    grantedFeatures.add('bulk.delete')
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    expect(tabLabels(w)).toEqual(['Import', 'Export', 'Delete'])
+    await btnByText(w, 'Groups').trigger('click')
+    expect(tabLabels(w)).toEqual(['Import', 'Export'])
+  })
+
+  it('moves off Delete when switching to groups', async () => {
+    grantedFeatures.clear()
+    grantedFeatures.add('bulk.delete')
+    grantedFeatures.add('bulk.export')
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    expect(tabLabels(w)).toEqual(['Export', 'Delete'])
+    await btnByText(w, 'Delete').trigger('click')
+    await btnByText(w, 'Groups').trigger('click')
+    expect(w.text()).toContain('Export Groups')
+  })
+
+  it('explains when no bulk operation is available', async () => {
+    grantedFeatures.clear()
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    expect(tabLabels(w)).toEqual([])
+    expect(w.find('[data-testid="bulk-no-access"]').text())
+      .toContain('You don’t have permission for bulk user operations')
   })
 })
