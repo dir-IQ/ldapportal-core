@@ -38,7 +38,8 @@
         </div>
         <div v-if="needsParam">
           <label for="rj-param-value" class="block text-sm font-medium text-gray-700 mb-1">{{ paramLabel }}</label>
-          <DnPicker v-if="currentRunType?.param === 'groupDn'" v-model="runForm.paramValue" :directory-id="dirId" scope="group" />
+          <DnPicker v-if="currentRunType?.param === 'groupDn'" v-model="runForm.paramValue" :directory-id="dirId" scope="group"
+                     :base-dn="groupPickerBaseDn" />
           <DnPicker v-else-if="currentRunType?.param === 'branchDn'" v-model="runForm.paramValue" :directory-id="dirId"
                      :superadmin="auth.isSuperadmin" :authorized-roots="branchPickerRoots" />
           <input v-else id="rj-param-value" v-model="runForm.paramValue" type="text" :placeholder="paramPlaceholder" class="input w-full" />
@@ -303,7 +304,8 @@
             </div>
             <div v-if="jobFormNeedsParam">
               <label class="block text-sm font-medium text-gray-700 mb-1">{{ jobFormParamLabel }}</label>
-              <DnPicker v-if="currentJobFormType?.param === 'groupDn'" v-model="jobForm.paramValue" :directory-id="dirId" scope="group" />
+              <DnPicker v-if="currentJobFormType?.param === 'groupDn'" v-model="jobForm.paramValue" :directory-id="dirId" scope="group"
+                     :base-dn="groupPickerBaseDn" />
               <DnPicker v-else-if="currentJobFormType?.param === 'branchDn'" v-model="jobForm.paramValue" :directory-id="dirId"
                      :superadmin="auth.isSuperadmin" :authorized-roots="branchPickerRoots" />
               <FormField v-else :label="jobFormParamLabel" v-model="jobForm.paramValue" />
@@ -513,6 +515,13 @@ const branchPickerRoots = computed<string[]>(() => {
   }
   return roots
 })
+
+// Base DN for the Group DN picker (Users in Group). The group search is
+// already clamped server-side to every OU the admin holds; narrow the tree to
+// the picked profile's target group OU so it matches the branch picker.
+const groupPickerBaseDn = computed<string>(() =>
+  auth.isSuperadmin ? '' : (profilePicker.selectedProfile?.targetGroupDn?.trim() || ''),
+)
 
 // Report types. INTEGRITY_CHECK is a frontend-only pseudo-type (handled via a
 // separate endpoint). ORPHANED_IVIA_ACCOUNTS is contributed by the IVIA addon

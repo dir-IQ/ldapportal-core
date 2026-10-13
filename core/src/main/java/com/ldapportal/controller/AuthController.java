@@ -765,6 +765,10 @@ public class AuthController {
                     m.put("name", p.getName());
                     m.put("directoryId", p.getDirectory().getId());
                     m.put("directoryType", p.getDirectory().getDirectoryType().name());
+                    // The admin views scope their pickers and reports to the
+                    // picked profile's containers, so they need to see them.
+                    m.put("targetUserDn", p.getTargetUserDn());
+                    m.put("targetGroupDn", p.getTargetGroupDn());
                     return m;
                 })
                 .toList();
