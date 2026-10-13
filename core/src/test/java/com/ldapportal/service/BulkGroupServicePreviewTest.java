@@ -2,6 +2,7 @@
 package com.ldapportal.service;
 
 import com.ldapportal.dto.csv.BulkImportPreviewResult;
+import com.ldapportal.dto.csv.CsvColumnMappingDto;
 import com.ldapportal.ldap.LdapGroupService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -128,5 +129,51 @@ class BulkGroupServicePreviewTest {
 
         assertThat(result.unmappedColumns()).isEmpty();
         assertThat(result.rows().get(0).attributes()).containsEntry("description", "Engineers");
+    }
+
+    @Test
+    void previewImport_ignoresTheExportedDnColumn() throws IOException {
+        String csv = "dn,cn,member\n\"cn=eng,ou=groups,dc=example,dc=com\",eng,uid=alice\n";
+
+        BulkImportPreviewResult result = service.previewImport(
+                csv(csv), "ou=groups,dc=example,dc=com", List.of(), true,
+                List.of("member"), "member");
+
+        assertThat(result.rows().get(0).attributes()).doesNotContainKey("dn");
+        assertThat(result.rows().get(0).computedDn()).isEqualTo("cn=eng,ou=groups,dc=example,dc=com");
+        assertThat(result.rows().get(0).missingRequired()).isEmpty();
+    }
+
+    @Test
+    void previewImport_memberOperation_showsValueFlagsInvalidAndSkipsMustsForDelete() throws IOException {
+        String csv = "cn,members,member-operation\n"
+                   + "eng,uid=alice,Add\n"
+                   + "sales,,delete\n"
+                   + "ops,uid=bob,replace\n";
+
+        BulkImportPreviewResult result = service.previewImport(
+                csv(csv), "ou=groups,dc=example,dc=com", List.of(), true,
+                List.of("member"), "member");
+
+        assertThat(result.rows().get(0).attributes()).containsEntry("member-operation", "add");
+        assertThat(result.rows().get(0).missingRequired()).isEmpty();
+        // A delete row never creates the group, so groupOfNames' MUST member doesn't apply.
+        assertThat(result.rows().get(1).attributes()).containsEntry("member-operation", "delete");
+        assertThat(result.rows().get(1).missingRequired()).isEmpty();
+        assertThat(result.rows().get(2).missingRequired()).containsExactly("member-operation");
+    }
+
+    @Test
+    void previewImport_templateMode_doesNotReportMemberOperationAsUnmapped() throws IOException {
+        String csv = "cn,members,member-operation,extra\neng,uid=alice,add,x\n";
+
+        BulkImportPreviewResult result = service.previewImport(
+                csv(csv), "ou=groups,dc=example,dc=com",
+                List.of(new CsvColumnMappingDto("cn", "cn", false),
+                        new CsvColumnMappingDto("members", "members", false)),
+                true, List.of(), "member", ',', false);
+
+        assertThat(result.unmappedColumns()).containsExactly("extra");
+        assertThat(result.rows().get(0).attributes()).containsEntry("member-operation", "add");
     }
 }

@@ -340,8 +340,9 @@
           </div>
         </div>
         <p class="text-xs text-gray-500">
-          CSV columns: <code>cn</code> (required), <code>description</code>, <code>owner</code>, <code>members</code> (pipe-separated DNs).
-          First row must be a header row.
+          CSV columns: <code>cn</code> (required), <code>description</code>, <code>owner</code>, <code>members</code> (pipe-separated DNs),
+          <code>member-operation</code> (<code>add</code>, the default, or <code>delete</code> to remove the listed members from an existing group).
+          A <code>dn</code> column, as written by export, is ignored. First row must be a header row.
         </p>
         <button @click="doGroupPreview" :disabled="!canGroupImport || groupPreviewing" class="btn-primary">
           {{ groupPreviewing ? 'Loading preview…' : 'Preview Import' }}

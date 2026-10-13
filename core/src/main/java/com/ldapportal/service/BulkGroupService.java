@@ -12,6 +12,7 @@ import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.ldap.model.LdapGroup;
 import com.ldapportal.util.CsvUtils;
+import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
 import com.unboundid.ldap.sdk.RDN;
@@ -45,11 +46,26 @@ import java.util.Set;
  *
  * <p>The {@code members} column (if present) is treated specially: pipe-separated
  * values are added to the configured member attribute after the group is created.</p>
+ *
+ * <p>Two more columns are reserved and never written as attributes:
+ * <ul>
+ *   <li>{@code dn} — the group DN is always {@code cn=<cn>,<parentDn>}, so the
+ *       column an export writes is ignored and an exported file re-imports as-is.</li>
+ *   <li>{@value #MEMBER_OPERATION_COLUMN} — {@code add} (the default when the
+ *       column is absent or blank) creates the group or merges the row's members
+ *       into it; {@code delete} removes the row's members from an existing group
+ *       and changes nothing else.</li>
+ * </ul>
  */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class BulkGroupService {
+
+    /** Reserved column choosing what a row does with its members. */
+    static final String MEMBER_OPERATION_COLUMN = "member-operation";
+
+    private enum MemberOperation { ADD, DELETE }
 
     private final LdapGroupService groupService;
 
@@ -197,6 +213,13 @@ public class BulkGroupService {
 
         for (Map<String, String> row : rows) {
             rowNum++;
+            MemberOperation op = null;
+            String rawOp = memberOperationValue(row);
+            try {
+                op = parseMemberOperation(rawOp);
+            } catch (IllegalArgumentException ignored) {
+                // reported below as an issue on the row
+            }
             Map<String, String> attrs = new LinkedHashMap<>();
             // Track which LDAP attributes the row supplies for the required-
             // attr check. Diverges from the displayed `attrs` map so that the
@@ -207,9 +230,11 @@ public class BulkGroupService {
                 String csvCol = cell.getKey();
                 String rawVal = cell.getValue();
                 if (rawVal == null || rawVal.isBlank()) continue;
+                if (isMemberOperationColumn(csvCol)) continue;
 
                 String ldapAttr = colToAttr.attributeFor(csvCol);
                 if (ldapAttr == null) continue; // ignored, or unmapped under a template
+                if (isDnAttribute(ldapAttr)) continue; // the DN is built from cn
                 attrs.put(ldapAttr, rawVal);
                 presentLower.add(ldapAttr.toLowerCase(ROOT));
                 // The 'members' column gets translated to the chosen
@@ -234,14 +259,26 @@ public class BulkGroupService {
             if (dn == null) {
                 missing.add("cn");
             }
-            required.stream()
-                    .filter(a -> !presentLower.contains(a.toLowerCase(ROOT)))
-                    .forEach(missing::add);
+            if (op == null) {
+                missing.add(MEMBER_OPERATION_COLUMN);
+            } else {
+                if (rawOp != null) attrs.put(MEMBER_OPERATION_COLUMN, op.name().toLowerCase(ROOT));
+                // A delete row never creates the group, so the object class's
+                // MUSTs don't apply to it.
+                if (op == MemberOperation.ADD) {
+                    required.stream()
+                            .filter(a -> !presentLower.contains(a.toLowerCase(ROOT)))
+                            .forEach(missing::add);
+                }
+            }
 
             previewRows.add(new BulkImportPreviewRow(rowNum, dn, attrs, missing));
         }
 
-        return new BulkImportPreviewResult(rowNum, previewRows, colToAttr.unmappedColumns(rows));
+        List<String> unmapped = colToAttr.unmappedColumns(rows).stream()
+                .filter(c -> !isMemberOperationColumn(c))
+                .toList();
+        return new BulkImportPreviewResult(rowNum, previewRows, unmapped);
     }
 
     /** Backwards-compatible overload (no schema validation). */
@@ -331,6 +368,13 @@ public class BulkGroupService {
             attrMap.put("objectClass", objectClasses);
         }
 
+        MemberOperation operation;
+        try {
+            operation = parseMemberOperation(memberOperationValue(row));
+        } catch (IllegalArgumentException ex) {
+            return BulkImportRowResult.error(rowNum, null, ex.getMessage());
+        }
+
         // Track members separately (pipe-separated in CSV)
         List<String> members = new ArrayList<>();
 
@@ -338,11 +382,15 @@ public class BulkGroupService {
             String csvCol  = cell.getKey();
             String rawVal  = cell.getValue();
             if (rawVal == null || rawVal.isBlank()) continue;
+            if (isMemberOperationColumn(csvCol)) continue;
 
             // null = ignored column, or a column the template doesn't mention;
             // without a template the header itself is the attribute name.
             String ldapAttr = colToAttr.attributeFor(csvCol);
             if (ldapAttr == null) continue;
+            // The DN is built from cn + parentDn; an exported dn column must not
+            // be sent as an attribute (the add would fail on every row).
+            if (isDnAttribute(ldapAttr)) continue;
 
             // Collect members from the configured member attribute or "members" alias
             if ("members".equalsIgnoreCase(ldapAttr)
@@ -361,6 +409,10 @@ public class BulkGroupService {
         }
         String cnValue = cnValues.get(0);
         String dn = buildDn("cn", cnValue, parentDn);
+
+        if (operation == MemberOperation.DELETE) {
+            return deleteMembers(dc, dn, members, memberAttribute, rowNum);
+        }
 
         try {
             try {
@@ -432,6 +484,93 @@ public class BulkGroupService {
             log.warn("Row {} failed [dn={}]: {}", rowNum, dn, ex.getMessage());
             return BulkImportRowResult.error(rowNum, dn, ex.getMessage());
         }
+    }
+
+    /**
+     * Removes {@code members} from the existing group at {@code dn}. Values that
+     * aren't members are skipped; the row is UPDATED when at least one member was
+     * removed, SKIPPED when none were present, and an ERROR when the group doesn't
+     * exist or a removal is rejected (e.g. the schema forbids removing the last
+     * member of a groupOfNames).
+     */
+    private BulkImportRowResult deleteMembers(DirectoryConnection dc, String dn,
+                                              List<String> members, String memberAttribute,
+                                              int rowNum) {
+        if (members.isEmpty()) {
+            return BulkImportRowResult.error(rowNum, dn,
+                    "member-operation 'delete' needs at least one member to remove");
+        }
+        int removed = 0;
+        int notMembers = 0;
+        List<String> failures = new ArrayList<>();
+        for (String member : members) {
+            try {
+                groupService.removeMember(dc, dn, memberAttribute, member);
+                removed++;
+            } catch (Exception e) {
+                ResultCode code = resultCode(e);
+                if (ResultCode.NO_SUCH_OBJECT.equals(code)) {
+                    return BulkImportRowResult.error(rowNum, dn, "Group does not exist");
+                }
+                if (ResultCode.NO_SUCH_ATTRIBUTE.equals(code)) {
+                    notMembers++;
+                    continue;
+                }
+                log.warn("Row {} — failed to remove member {} from {}: {}", rowNum, member, dn, e.getMessage());
+                failures.add(member + ": " + e.getMessage());
+            }
+        }
+        if (!failures.isEmpty()) {
+            return new BulkImportRowResult(rowNum, dn, BulkImportRowResult.Status.ERROR,
+                    "Removed " + removed + " of " + members.size() + " member(s); failed: "
+                            + String.join("; ", failures));
+        }
+        if (removed == 0) {
+            return BulkImportRowResult.skipped(rowNum, dn, "Members not present in group");
+        }
+        return new BulkImportRowResult(rowNum, dn, BulkImportRowResult.Status.UPDATED,
+                notMembers > 0
+                        ? "Removed " + removed + " member(s); " + notMembers + " not present"
+                        : "Removed " + removed + " member(s)");
+    }
+
+    /** The row's raw member-operation value, or null when the column is absent. */
+    private static String memberOperationValue(Map<String, String> row) {
+        for (Map.Entry<String, String> cell : row.entrySet()) {
+            if (isMemberOperationColumn(cell.getKey())) return cell.getValue();
+        }
+        return null;
+    }
+
+    private static MemberOperation parseMemberOperation(String raw) {
+        if (raw == null || raw.isBlank()) return MemberOperation.ADD;
+        return switch (raw.trim().toLowerCase(Locale.ROOT)) {
+            case "add"    -> MemberOperation.ADD;
+            case "delete" -> MemberOperation.DELETE;
+            default -> throw new IllegalArgumentException(
+                    "Invalid member-operation '" + raw.trim() + "': expected 'add' or 'delete'");
+        };
+    }
+
+    private static boolean isMemberOperationColumn(String csvColumn) {
+        return csvColumn != null && MEMBER_OPERATION_COLUMN.equalsIgnoreCase(csvColumn.trim());
+    }
+
+    private static boolean isDnAttribute(String ldapAttr) {
+        return "dn".equalsIgnoreCase(ldapAttr.trim());
+    }
+
+    /** The LDAP result code behind a failed operation, when there is one. */
+    private static ResultCode resultCode(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof LDAPException le) return le.getResultCode();
+        }
+        String msg = e.getMessage();
+        if (msg != null) {
+            if (msg.contains(ResultCode.NO_SUCH_OBJECT.getName())) return ResultCode.NO_SUCH_OBJECT;
+            if (msg.contains(ResultCode.NO_SUCH_ATTRIBUTE.getName())) return ResultCode.NO_SUCH_ATTRIBUTE;
+        }
+        return null;
     }
 
     private String buildDn(String rdnAttr, String rdnValue, String parentDn) {
