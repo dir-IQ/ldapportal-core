@@ -43,7 +43,7 @@ public class AdminDashboardService {
     private final PendingApprovalRepository approvalRepo;
     private final AuditQueryService auditQueryService;
     private final PermissionService permissionService;
-    private final ProfileApprovalConfigRepository approvalConfigRepo;
+    private final ApprovalUsageService approvalUsageService;
     private final AdminProfileRoleRepository profileRoleRepo;
     private final GovernanceDashboardProvider governance;
     private final ScopeCountService scopeCountService;
@@ -130,11 +130,11 @@ public class AdminDashboardService {
         // ── Approval aging ───────────────────────────────────────────────────
         ApprovalAgingDto approvalAging = computeApprovalAging(authorizedDirIds, now);
 
-        // ── Approval feature configured in any authorized directory? ─────────
+        // ── Approval workflow in use in any authorized directory? ────────────
         // Scoped to the admin's authorized set so an admin doesn't see
         // approval UI just because a directory they can't access uses it.
-        boolean approvalsConfigured = approvalConfigRepo
-                .existsByRequireApprovalTrueAndProfile_Directory_IdIn(authorizedDirIds);
+        // Pairs each global master switch with its per-profile configuration.
+        boolean approvalsConfigured = approvalUsageService.isInUse(authorizedDirIds);
 
         // ── Per-profile stats ────────────────────────────────────────────────
         // One row per AdminProfileRole the caller holds. User counts are LDAP
