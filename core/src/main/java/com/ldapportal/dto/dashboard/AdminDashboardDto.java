@@ -23,8 +23,8 @@ public record AdminDashboardDto(
 
         // ── Approval aging ──────────────────────────────────────────────────
         ApprovalAgingDto approvalAging,
-        /** True when any profile in the admin's authorized directories
-         *  has {@code requireApproval = true}. See UnifiedDashboardDto. */
+        /** True when an approval workflow is in use in the admin's
+         *  authorized directories. See UnifiedDashboardDto. */
         boolean approvalsConfigured,
 
         // ── Active campaign progress ────────────────────────────────────────

@@ -7,7 +7,7 @@ import com.ldapportal.auth.RequiresFeature;
 import com.ldapportal.dto.approval.ApprovalRejectRequest;
 import com.ldapportal.dto.approval.PendingApprovalResponse;
 import com.ldapportal.entity.enums.FeatureKey;
-import com.ldapportal.repository.ProfileApprovalConfigRepository;
+import com.ldapportal.service.ApprovalUsageService;
 import com.ldapportal.service.ApprovalWorkflowService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -25,7 +25,7 @@ import java.util.UUID;
 public class ApprovalController {
 
     private final ApprovalWorkflowService service;
-    private final ProfileApprovalConfigRepository approvalConfigRepo;
+    private final ApprovalUsageService approvalUsageService;
 
     @GetMapping
     @RequiresFeature(FeatureKey.APPROVAL_MANAGE)
@@ -74,8 +74,8 @@ public class ApprovalController {
     }
 
     /**
-     * Pending approval count + "is any profile in this directory configured
-     * to use approvals?". The sidebar uses the pair to decide whether to
+     * Pending approval count + "is the approval workflow in use in this
+     * directory?" (see {@link ApprovalUsageService}). The sidebar uses the pair to decide whether to
      * render the Approvals nav link: hide it when the directory neither
      * uses approvals nor has a residual pending queue.
      *
@@ -89,8 +89,7 @@ public class ApprovalController {
             @DirectoryId @PathVariable UUID directoryId,
             @AuthenticationPrincipal AuthPrincipal principal) {
         long pending = service.countPending(directoryId);
-        boolean configured = approvalConfigRepo
-                .existsByRequireApprovalTrueAndProfile_Directory_Id(directoryId);
+        boolean configured = approvalUsageService.isInUse(directoryId);
         return Map.of("pending", pending, "configured", configured);
     }
 }
