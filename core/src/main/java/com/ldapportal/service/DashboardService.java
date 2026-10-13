@@ -38,7 +38,7 @@ public class DashboardService {
     private final DirectoryConnectionRepository dirRepo;
     private final PendingApprovalRepository approvalRepo;
     private final AuditQueryService auditQueryService;
-    private final ProfileApprovalConfigRepository approvalConfigRepo;
+    private final ApprovalUsageService approvalUsageService;
     private final GovernanceDashboardProvider governance;
     private final com.ldapportal.core.dashboard.ReportJobHealthProvider reportJobHealthProvider;
     private final ScopeCountService scopeCountService;
@@ -156,11 +156,12 @@ public class DashboardService {
         // ── Approval aging buckets ───────────────────────────────────────────
         ApprovalAgingDto approvalAging = computeApprovalAging(now);
 
-        // ── Approval feature configured anywhere? ────────────────────────────
+        // ── Approval workflow in use anywhere? ───────────────────────────────
         // Drives frontend gating of approval-related UI. Independent of the
         // current pending-queue depth — an env with approvals enabled but
         // a quiet queue still shows "0 pending" as an "inbox clear" signal.
-        boolean approvalsConfigured = approvalConfigRepo.existsByRequireApprovalTrue();
+        // Pairs each global master switch with its per-profile configuration.
+        boolean approvalsConfigured = approvalUsageService.isInUse();
 
         // ── Users not reviewed in 90 days ────────────────────────────────────
         long usersNotReviewedIn90Days = computeUsersNotReviewedIn90Days(dirs, dirCounts, now);

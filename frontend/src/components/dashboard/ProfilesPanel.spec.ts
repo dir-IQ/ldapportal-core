@@ -87,3 +87,27 @@ describe('ProfilesPanel scope column', () => {
     expect(text).not.toContain('ou=Groups')
   })
 })
+
+describe('ProfilesPanel Pending column', () => {
+  it('renders the Pending column by default', () => {
+    const w = mountWith([{ ...base, pendingApprovals: 3 }])
+    expect(w.findAll('th').map(th => th.text())).toContain('Pending')
+    expect(w.find('tbody tr').findAll('td')).toHaveLength(5)
+    expect(w.text()).toContain('3')
+  })
+
+  it('hides the Pending header and cells when showPending is false', () => {
+    const w = mount(ProfilesPanel, {
+      props: { profiles: [{ ...base, pendingApprovals: 3 }], showPending: false },
+    })
+    expect(w.findAll('th').map(th => th.text())).not.toContain('Pending')
+    expect(w.find('tbody tr').findAll('td')).toHaveLength(4)
+  })
+
+  it('spans the empty-state row across the visible columns', () => {
+    const shown = mountWith([])
+    expect(shown.find('tbody td').attributes('colspan')).toBe('5')
+    const hidden = mount(ProfilesPanel, { props: { profiles: [], showPending: false } })
+    expect(hidden.find('tbody td').attributes('colspan')).toBe('4')
+  })
+})
