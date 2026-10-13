@@ -15,7 +15,7 @@ const hoisted = vi.hoisted(() => ({
   isComplianceEnabled: false,
   isIsvaIntegrationEnabled: false,
   isSuperadmin: false,
-  selectedProfile: null as { targetUserDn?: string | null } | null,
+  selectedProfile: null as { targetUserDn?: string | null, targetGroupDn?: string | null } | null,
   profiles: [] as { directoryId?: string, targetUserDn?: string | null }[],
 }))
 
@@ -258,6 +258,27 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     const picker = wrapper.findComponent(DnPicker)
     expect(picker.props('superadmin')).toBe(true)
     expect(picker.props('authorizedRoots')).toEqual([])
+  })
+
+  it('scopes the admin\'s group picker to the picked profile\'s target group OU', async () => {
+    hoisted.selectedProfile = { targetUserDn: 'ou=people,dc=example,dc=com', targetGroupDn: 'ou=groups,dc=example,dc=com' }
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('#rj-report-type').setValue('USERS_IN_GROUP')
+
+    const picker = wrapper.findComponent(DnPicker)
+    expect(picker.props('scope')).toBe('group')
+    expect(picker.props('baseDn')).toBe('ou=groups,dc=example,dc=com')
+  })
+
+  it('leaves the group picker unscoped for a superadmin', async () => {
+    hoisted.isSuperadmin = true
+    hoisted.selectedProfile = { targetGroupDn: 'ou=groups,dc=example,dc=com' }
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('#rj-report-type').setValue('USERS_IN_GROUP')
+
+    expect(wrapper.findComponent(DnPicker).props('baseDn')).toBe('')
   })
 
   it('hides the attribute list for other report types', async () => {

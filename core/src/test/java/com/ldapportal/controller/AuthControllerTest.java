@@ -456,4 +456,30 @@ class AuthControllerTest extends BaseControllerTest {
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isUnauthorized());
     }
+
+    @Test
+    void myProfiles_admin_includesTargetContainers() throws Exception {
+        AuthPrincipal principal = new AuthPrincipal(PrincipalType.ADMIN, ACCOUNT_ID, "bob");
+        UsernamePasswordAuthenticationToken auth = new UsernamePasswordAuthenticationToken(
+                principal, null, List.of(new SimpleGrantedAuthority("ROLE_ADMIN")));
+
+        DirectoryConnection dc = new DirectoryConnection();
+        dc.setId(UUID.randomUUID());
+        dc.setDirectoryType(com.ldapportal.entity.enums.DirectoryType.OPENLDAP);
+        com.ldapportal.entity.ProvisioningProfile profile = new com.ldapportal.entity.ProvisioningProfile();
+        profile.setId(UUID.randomUUID());
+        profile.setName("Staff");
+        profile.setDirectory(dc);
+        profile.setTargetUserDn("ou=people,dc=example,dc=com");
+        profile.setTargetGroupDn("ou=groups,dc=example,dc=com");
+        com.ldapportal.entity.AdminProfileRole role = new com.ldapportal.entity.AdminProfileRole();
+        role.setProfile(profile);
+        given(adminProfileRoleRepository.findAllByAdminAccountId(ACCOUNT_ID)).willReturn(List.of(role));
+
+        mockMvc.perform(get("/api/v1/auth/me/profiles").with(authentication(auth)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].name").value("Staff"))
+                .andExpect(jsonPath("$[0].targetUserDn").value("ou=people,dc=example,dc=com"))
+                .andExpect(jsonPath("$[0].targetGroupDn").value("ou=groups,dc=example,dc=com"));
+    }
 }
