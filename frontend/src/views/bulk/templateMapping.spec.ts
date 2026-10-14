@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from 'vitest'
 import {
-  applySampleColumns, autoMatch, entriesToStacks, moveItem, padStacks, parseSampleHeader,
-  readFirstRecord, rebuildAttrs, rowStatus, stacksToEntries, type MappingAttr, type MappingStacks,
+  applySampleColumns, canonicalAttr, checkMappings, dnLikeColumns, entriesToRows, parseSampleHeader,
+  readFirstRecord, repeatedColumns, rowStatus, rowsToEntries, sameColumn, suggestAttributes,
+  type CheckOptions, type MappingRow, type SchemaAttr,
 } from './templateMapping'
 
-const req = (name: string): MappingAttr => ({ name, required: true })
-const opt = (name: string): MappingAttr => ({ name, required: false })
+const req = (name: string): SchemaAttr => ({ name, required: true })
+const opt = (name: string): SchemaAttr => ({ name, required: false })
+const row = (column: string, attribute = ''): MappingRow => ({ column, attribute })
+const schema = [req('cn'), req('sn'), opt('mail'), opt('uid'), opt('givenName')]
+const opts = (o: Partial<CheckOptions> = {}): CheckOptions =>
+  ({ schema, dnColumn: null, rdnAttribute: null, ...o })
 
 describe('readFirstRecord', () => {
   it('splits the first line on the delimiter and trims cells', () => {
@@ -40,102 +45,172 @@ describe('parseSampleHeader', () => {
   })
 })
 
-describe('padStacks / moveItem', () => {
-  it('pads the shorter stack and trims rows empty on both sides', () => {
-    const s: MappingStacks = { inputs: ['a', null, null], attrs: [opt('x')] }
-    expect(padStacks(s)).toEqual({ inputs: ['a'], attrs: [opt('x')] })
-    const t: MappingStacks = { inputs: ['a', 'b'], attrs: [opt('x')] }
-    expect(padStacks(t).attrs).toEqual([opt('x'), null])
-  })
-
-  it('moves an item within one array and ignores out-of-range moves', () => {
-    const a = ['a', 'b', 'c']
-    expect(moveItem(a, 0, 1)).toBe(true)
-    expect(a).toEqual(['b', 'a', 'c'])
-    expect(moveItem(a, 0, -1)).toBe(false)
-    expect(moveItem(a, 2, 3)).toBe(false)
-    expect(a).toEqual(['b', 'a', 'c'])
+describe('sameColumn', () => {
+  it('ignores case, surrounding space and a byte-order mark, like the importer', () => {
+    expect(sameColumn('Email', 'email')).toBe(true)
+    expect(sameColumn('﻿dn', ' DN ')).toBe(true)
+    expect(sameColumn('mail', 'email')).toBe(false)
+    expect(sameColumn('', '')).toBe(false)
+    expect(sameColumn('dn', null)).toBe(false)
   })
 })
 
 describe('rowStatus', () => {
   it('classifies each row', () => {
-    expect(rowStatus('a', opt('x'))).toBe('mapped')
-    expect(rowStatus('a', null)).toBe('ignored')
-    expect(rowStatus('', req('x'))).toBe('missing')
-    expect(rowStatus(null, opt('x'))).toBe('unmapped')
-    expect(rowStatus('  ', null)).toBe('blank')
-  })
-})
-
-describe('autoMatch', () => {
-  it('lines up exact (case-insensitive) and alias matches, leftovers fill free rows below', () => {
-    const s: MappingStacks = {
-      inputs: ['CostCenter', 'Email', 'UID', 'FirstName', 'LastName'],
-      attrs: [req('uid'), req('sn'), opt('givenName'), opt('mail'), opt('title')],
-    }
-    expect(autoMatch(s)).toEqual(['UID', 'LastName', 'FirstName', 'Email', null, 'CostCenter'])
-  })
-
-  it('puts a second column matching an already-taken attribute into a free row', () => {
-    const s: MappingStacks = { inputs: ['mail', 'Email'], attrs: [opt('mail'), null] }
-    expect(autoMatch(s)).toEqual(['mail', 'Email'])
+    expect(rowStatus(row('Email', 'mail'), null)).toBe('mapped')
+    expect(rowStatus(row('Notes'), null)).toBe('ignored')
+    expect(rowStatus(row('', 'mail'), null)).toBe('incomplete')
+    expect(rowStatus(row(''), null)).toBe('blank')
+    expect(rowStatus(row('DN', 'cn'), 'dn')).toBe('dn')
   })
 })
 
 describe('applySampleColumns', () => {
-  it('fills a fresh template in file order', () => {
-    const s: MappingStacks = { inputs: [null, null], attrs: [req('uid'), opt('mail')] }
-    expect(applySampleColumns(s, ['login', 'email', 'dept']).inputs).toEqual(['login', 'email', 'dept'])
-    expect(s.attrs).toEqual([req('uid'), opt('mail'), null])
+  it('lists the file columns in order with blank attributes for a new template', () => {
+    expect(applySampleColumns([], ['dn', 'uid', 'Email'])).toEqual([row('dn'), row('uid'), row('Email')])
   })
 
-  it('keeps pairings whose column still exists and puts new columns below as ignored', () => {
-    const s: MappingStacks = { inputs: ['old', 'email', null], attrs: [req('uid'), opt('mail'), opt('cn')] }
-    expect(applySampleColumns(s, ['login', 'email', 'name']).inputs).toEqual([null, 'email', null, 'login', 'name'])
-    expect(s.attrs).toEqual([req('uid'), opt('mail'), opt('cn'), null, null])
+  it("carries each column's attribute across by name, ignoring case and order", () => {
+    const before = [row('email', 'mail'), row('Login', 'uid')]
+    expect(applySampleColumns(before, ['LOGIN', 'Email', 'Dept'])).toEqual([
+      row('LOGIN', 'uid'), row('Email', 'mail'), row('Dept'),
+    ])
   })
 
-  it('fills attribute-less rows before appending when pairings survive', () => {
-    const s: MappingStacks = { inputs: ['email', null], attrs: [opt('mail'), null] }
-    expect(applySampleColumns(s, ['email', 'dept']).inputs).toEqual(['email', 'dept'])
+  it('keeps mapped columns the file lacks at the bottom, flagged; drops unmapped ones', () => {
+    const before = [row('email', 'mail'), row('CostCenter', 'departmentNumber'), row('Notes')]
+    expect(applySampleColumns(before, ['email', 'uid'])).toEqual([
+      row('email', 'mail'), row('uid'),
+      { column: 'CostCenter', attribute: 'departmentNumber', notInSample: true },
+    ])
+  })
+
+  it('gives a repeated file column one row', () => {
+    expect(applySampleColumns([row('mail', 'mail')], ['mail', 'MAIL', 'uid'])).toEqual([row('mail', 'mail'), row('uid')])
+  })
+
+  it('re-applying the same columns is stable and clears the flag once the column is back', () => {
+    const once = applySampleColumns([row('x', 'cn')], ['uid'])
+    expect(applySampleColumns(once, ['uid'])).toEqual(once)
+    expect(applySampleColumns(once, ['uid', 'x'])).toEqual([row('uid'), row('x', 'cn')])
   })
 })
 
-describe('rebuildAttrs', () => {
-  it('carries inputs across by attribute name and drops attributes the schema lost', () => {
-    const s: MappingStacks = { inputs: ['e', 'u', 'x', 'loose'], attrs: [opt('mail'), req('uid'), opt('gone'), null] }
-    const out = rebuildAttrs(s, [req('uid'), opt('mail'), opt('cn')])
-    expect(out.attrs).toEqual([req('uid'), opt('mail'), opt('cn'), null, null])
-    expect(out.inputs).toEqual(['u', 'e', null, 'loose', 'x'])
+describe('checkMappings', () => {
+  it('passes when every required attribute is mapped', () => {
+    const c = checkMappings([row('a', 'cn'), row('b', 'sn'), row('c')], opts())
+    expect(c.missingRequired).toEqual([])
+    expect(c.blocking).toBe(false)
+    expect(c.rows.every(r => r.errors.length === 0 && r.warnings.length === 0)).toBe(true)
   })
 
-  it('keeps attributes missing from the schema when asked (opening a saved template)', () => {
-    const s: MappingStacks = { inputs: ['e', 'x'], attrs: [opt('mail'), opt('extra')] }
-    const out = rebuildAttrs(s, [req('uid'), opt('mail')], true)
-    expect(out.attrs).toEqual([req('uid'), opt('mail'), opt('extra')])
-    expect(out.inputs).toEqual([null, 'e', 'x'])
+  it('lists missing required attributes, case-insensitively, and blocks', () => {
+    const c = checkMappings([row('a', 'CN')], opts())
+    expect(c.missingRequired).toEqual(['sn'])
+    expect(c.blocking).toBe(true)
+  })
+
+  it('requires the RDN attribute when the DN is built from it', () => {
+    const c = checkMappings([row('a', 'cn'), row('b', 'sn')], opts({ rdnAttribute: 'uid' }))
+    expect(c.missingRequired).toEqual(['uid'])
+    // Already required by the schema: not listed twice.
+    expect(checkMappings([row('b', 'sn')], opts({ rdnAttribute: 'cn' })).missingRequired).toEqual(['cn'])
+  })
+
+  it('does not count the DN column, ignored or incomplete rows as mapping an attribute', () => {
+    const rows = [row('dn', 'cn'), row('x'), row('', 'sn')]
+    const c = checkMappings(rows, opts({ dnColumn: 'DN' }))
+    expect(c.missingRequired).toEqual(['cn', 'sn'])
+    expect(c.rows[0].warnings[0]).toMatch(/DN column/)
+    expect(c.rows[0].errors).toEqual([])
+    expect(c.rows[2].errors).toEqual(['Enter the CSV column for this attribute'])
+  })
+
+  it('rejects attributes the template sets itself', () => {
+    const c = checkMappings([row('a', 'cn'), row('b', 'sn'), row('oc', 'objectClass'), row('d', 'DN')], opts())
+    expect(c.rows[2].errors[0]).toMatch(/objectClass is set by the template/)
+    expect(c.rows[3].errors[0]).toMatch(/DN is set by the template/)
+    expect(c.blocking).toBe(true)
+  })
+
+  it('warns, without blocking, on unknown, duplicate and not-in-sample attributes', () => {
+    const rows: MappingRow[] = [
+      row('a', 'cn'), row('b', 'sn'), row('c', 'emplyeeType'),
+      row('d', 'mail'), row('e', 'MAIL'), { column: 'f', attribute: 'uid', notInSample: true },
+    ]
+    const c = checkMappings(rows, opts())
+    expect(c.blocking).toBe(false)
+    expect(c.rows[2].warnings).toEqual(['Not in the selected object classes'])
+    expect(c.rows[3].warnings).toEqual(['Another column also maps to mail'])
+    expect(c.rows[4].warnings).toEqual(['Another column also maps to MAIL'])
+    expect(c.rows[5].warnings).toEqual(['Not in the sample file'])
+  })
+
+  it('skips schema checks while the schema is unknown', () => {
+    const c = checkMappings([row('c', 'anything')], opts({ schema: null }))
+    expect(c.missingRequired).toEqual([])
+    expect(c.rows[0].warnings).toEqual([])
+  })
+
+  it('flags columns the sample file repeats', () => {
+    const c = checkMappings([row('a', 'cn'), row('b', 'sn'), row('Mail')], opts({ repeatedColumns: ['mail'] }))
+    expect(c.rows[2].warnings).toEqual(['The sample file has this column more than once'])
   })
 })
 
-describe('stacksToEntries / entriesToStacks', () => {
-  it('saves mapped rows, and inputs without an attribute as ignored', () => {
-    const s: MappingStacks = { inputs: ['login', '', 'CostCenter', null], attrs: [req('uid'), opt('mail'), null, opt('cn')] }
-    expect(stacksToEntries(s)).toEqual([
-      { csvColumn: 'login', ldapAttribute: 'uid', ignored: false },
-      { csvColumn: 'CostCenter', ldapAttribute: null, ignored: true },
+describe('canonicalAttr', () => {
+  it("uses the schema's spelling of a known attribute and trims the rest", () => {
+    expect(canonicalAttr(' givenname ', schema)).toBe('givenName')
+    expect(canonicalAttr(' custom ', schema)).toBe('custom')
+    expect(canonicalAttr('mail', null)).toBe('mail')
+  })
+})
+
+describe('suggestAttributes', () => {
+  it('fills blank rows by exact name and alias, never overwriting or reusing an attribute', () => {
+    const rows = [row('Email'), row('MAIL'), row('Surname'), row('Login', 'cn'), row('UserName'), row('dn'), row('Notes')]
+    const { rows: out, filled } = suggestAttributes(rows, schema, 'dn')
+    expect(out.map(r => r.attribute)).toEqual(['mail', '', 'sn', 'cn', 'uid', '', ''])
+    expect(filled).toBe(3)
+  })
+
+  it('only suggests attributes of the schema', () => {
+    expect(suggestAttributes([row('phone')], schema, null).filled).toBe(0)
+  })
+})
+
+describe('rowsToEntries / entriesToRows', () => {
+  it('saves rows in order; blank attributes become ignored entries', () => {
+    expect(rowsToEntries([row(' Email ', ' mail '), row('Notes'), row(''), row('', 'cn')], null)).toEqual([
+      { csvColumn: 'Email', ldapAttribute: 'mail', ignored: false },
+      { csvColumn: 'Notes', ldapAttribute: null, ignored: true },
     ])
   })
 
-  it('restores ignored entries below the mapped ones', () => {
-    const s = entriesToStacks([
-      { csvColumn: 'CostCenter', ldapAttribute: null, ignored: true },
-      { csvColumn: 'login', ldapAttribute: 'uid', ignored: false },
+  it('leaves out the DN column and repeated columns', () => {
+    expect(rowsToEntries([row('DN', 'cn'), row('mail', 'mail'), row('Mail', 'cn')], 'dn')).toEqual([
+      { csvColumn: 'mail', ldapAttribute: 'mail', ignored: false },
     ])
-    expect(s).toEqual({ inputs: ['login', 'CostCenter'], attrs: [opt('uid'), null] })
-    expect(stacksToEntries(s)).toEqual([
-      { csvColumn: 'login', ldapAttribute: 'uid', ignored: false },
+  })
+
+  it('round-trips saved entries, dropping an old ignored DN entry', () => {
+    const entries = [
+      { csvColumn: 'dn', ldapAttribute: null, ignored: true },
+      { csvColumn: 'email', ldapAttribute: 'mail', ignored: false },
       { csvColumn: 'CostCenter', ldapAttribute: null, ignored: true },
-    ])
+    ]
+    const rows = entriesToRows(entries, 'dn')
+    expect(rows).toEqual([row('email', 'mail'), row('CostCenter')])
+    expect(rowsToEntries(rows, 'dn')).toEqual(entries.slice(1))
+  })
+})
+
+describe('dnLikeColumns / repeatedColumns', () => {
+  it('finds columns that look like they hold a DN', () => {
+    expect(dnLikeColumns(['DistinguishedName', 'user_dn', 'DN', 'dnsName', 'mail'])).toEqual(['DistinguishedName', 'user_dn', 'DN'])
+  })
+
+  it('lists repeated column names once', () => {
+    expect(repeatedColumns(['a', 'B', 'A', 'b', 'a', 'c'])).toEqual(['A', 'b'])
   })
 })
