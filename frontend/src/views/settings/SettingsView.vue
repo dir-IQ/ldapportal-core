@@ -6,7 +6,7 @@ import { useNotificationStore } from '@/stores/notifications'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
-import { getSettings, updateSettings, testSiem } from '@/api/settings'
+import { getSettings, updateSettings, testSiem, testSmtp } from '@/api/settings'
 import { DEFAULT_PRIMARY_COLOUR, DEFAULT_SECONDARY_COLOUR } from '@/stores/settings'
 import SettingsSidebar from './SettingsSidebar.vue'
 import { findSection, DEFAULT_SECTION_ID } from './sectionsRegistry'
@@ -118,6 +118,11 @@ interface SiemTestResult {
   message: string
 }
 
+interface SmtpTestResult {
+  ok: boolean
+  message: string
+}
+
 const route  = useRoute()
 const router = useRouter()
 const notif  = useNotificationStore()
@@ -135,6 +140,8 @@ const settings        = ref<SettingsData | null>(null)  // raw server response (
 const savedSnapshot   = ref<string | null>(null)        // JSON-stringified baseline for dirty tracking
 const testingSiem     = ref<boolean>(false)
 const siemTestResult  = ref<SiemTestResult | null>(null)
+const testingSmtp     = ref<boolean>(false)
+const smtpTestResult  = ref<SmtpTestResult | null>(null)
 
 const form = reactive<SettingsForm>(defaultForm())
 const sidebarRef = ref<InstanceType<typeof SettingsSidebar> | null>(null)
@@ -162,6 +169,15 @@ function selectSection(id: string): void {
 const isDirty = computed<boolean>(() => {
   if (!savedSnapshot.value) return false
   return JSON.stringify(form) !== savedSnapshot.value
+})
+
+// Unsaved edits in the active section only — the SMTP test uses the saved
+// settings, so it is blocked while SMTP fields differ from the snapshot.
+const sectionDirty = computed<boolean>(() => {
+  const saved = savedForm.value
+  const fields = (activeSection.value?.fields ?? []) as (keyof SettingsForm)[]
+  if (!saved) return false
+  return fields.some((f) => JSON.stringify(form[f]) !== JSON.stringify(saved[f]))
 })
 
 function snapshot(): void {
@@ -294,6 +310,13 @@ async function doSave(): Promise<void> {
     notif.error('At least one authentication method must be enabled.')
     return
   }
+  // SMTP is optional, but once any of it is filled in the host and sender
+  // address are required — without them every email is silently skipped.
+  const smtpInUse = !!(form.smtpHost || form.smtpSenderAddress || form.smtpUsername || form.smtpPassword?.trim())
+  if (smtpInUse && (!form.smtpHost.trim() || !form.smtpSenderAddress.trim())) {
+    notif.error('SMTP host and sender address are required to send email (or clear all SMTP fields to disable it).')
+    return
+  }
   saving.value = true
   try {
     await updateSettings({
@@ -384,6 +407,24 @@ async function doTestSiem(): Promise<void> {
   }
 }
 
+// Pre-fills the SMTP test recipient. The auth store is untyped JS, so narrow here.
+const principalEmail = computed<string | null>(() =>
+  (auth.principal as { email?: string | null } | null)?.email ?? null)
+
+async function doTestSmtp(recipient: string): Promise<void> {
+  testingSmtp.value = true
+  smtpTestResult.value = null
+  try {
+    const { data } = await testSmtp(recipient)
+    smtpTestResult.value = data as SmtpTestResult
+  } catch (e) {
+    const err = e as { response?: { data?: { detail?: string } }, message?: string }
+    smtpTestResult.value = { ok: false, message: err.response?.data?.detail || err.message || '' }
+  } finally {
+    testingSmtp.value = false
+  }
+}
+
 // ── Unsaved-changes guards ─────────────────────────────────────────────────
 // vue-router awaits a Promise<boolean | false> returned from the
 // guard, so the await here is well-supported without additional
@@ -469,9 +510,11 @@ watch(activeId, (id: string) => {
             :is="activeSection?.component"
             :form="form"
             :settings="settings"
-            :testing="testingSiem"
-            :test-result="siemTestResult"
-            @test="doTestSiem"
+            v-bind="activeSection?.id === 'smtp'
+              ? { testing: testingSmtp, testResult: smtpTestResult, dirty: sectionDirty,
+                  defaultRecipient: principalEmail }
+              : { testing: testingSiem, testResult: siemTestResult }"
+            @test="activeSection?.id === 'smtp' ? doTestSmtp($event) : doTestSiem()"
           />
         </form>
       </div>
