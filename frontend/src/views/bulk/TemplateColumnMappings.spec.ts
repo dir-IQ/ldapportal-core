@@ -2,13 +2,23 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import TemplateColumnMappings from './TemplateColumnMappings.vue'
-import type { MappingStacks } from './templateMapping'
+import { checkMappings, type MappingRow, type SchemaAttr } from './templateMapping'
 
-function make(stacks: MappingStacks, props: Record<string, unknown> = {}) {
+const schema: SchemaAttr[] = [
+  { name: 'cn', required: true }, { name: 'sn', required: true },
+  { name: 'mail', required: false }, { name: 'givenName', required: false },
+]
+
+function make(rows: MappingRow[], props: Record<string, unknown> = {}) {
+  const dnColumn = (props.dnColumn as string | null) ?? null
+  const check = (r: MappingRow[]) => checkMappings(r, { schema, dnColumn, rdnAttribute: null })
   const w = mount(TemplateColumnMappings, {
     props: {
-      stacks,
-      'onUpdate:stacks': (v: MappingStacks) => w.setProps({ stacks: v }),
+      rows,
+      schema,
+      schemaState: 'loaded' as const,
+      check: check(rows),
+      'onUpdate:rows': (v: MappingRow[]) => w.setProps({ rows: v, check: check(v) }),
       ...props,
     },
     attachTo: document.body,
@@ -16,94 +26,101 @@ function make(stacks: MappingStacks, props: Record<string, unknown> = {}) {
   return w
 }
 
-const inputs = (w: ReturnType<typeof make>) =>
-  w.findAll('.stack-chip[data-side="in"]').map(c => c.text().replace('⋮⋮', '').trim())
-const attrs = (w: ReturnType<typeof make>) =>
-  w.findAll('.stack-chip[data-side="out"]').map(c => c.attributes('data-attr') ?? null)
 const statuses = (w: ReturnType<typeof make>) =>
   w.findAll('[data-status]').map(r => r.attributes('data-status'))
-
-function sample(): MappingStacks {
-  return {
-    inputs: ['Email', 'Login', 'CostCenter'],
-    attrs: [{ name: 'uid', required: true }, { name: 'mail', required: false }, null],
-  }
-}
+const columns = (w: ReturnType<typeof make>) =>
+  w.findAll('[data-column]').map(r => r.attributes('data-column'))
+const attrInput = (w: ReturnType<typeof make>, label: string) =>
+  w.find(`input[aria-label="LDAP attribute for ${label}"]`)
 
 describe('TemplateColumnMappings', () => {
   it('shows the empty-state copy with no rows', () => {
-    const w = make({ inputs: [], attrs: [] })
-    expect(w.text()).toContain('Select an object class to populate attribute mappings.')
+    const w = make([])
+    expect(w.text()).toContain('Choose a sample file, or add input columns')
   })
 
-  it('pairs rows by position and labels each row state', () => {
-    const w = make({ inputs: ['Login', null, 'CostCenter'], attrs: [{ name: 'uid', required: true }, { name: 'cn', required: true }, null] })
-    expect(statuses(w)).toEqual(['mapped', 'missing', 'ignored'])
-    expect(w.text()).toContain('1 mapped')
-    expect(w.text()).toContain('1 required missing')
-    expect(w.text()).toContain('1 input ignored')
-    expect(w.text()).toContain('needs input')
+  it('is a plain list: no drag handles or move buttons', () => {
+    const w = make([{ column: 'Email', attribute: 'mail' }, { column: 'Login', attribute: '' }])
+    expect(w.find('[draggable="true"]').exists()).toBe(false)
+    expect(w.find('button[aria-label^="Move"]').exists()).toBe(false)
   })
 
-  it('moves an input with the ▲▼ buttons without touching the attribute stack', async () => {
-    const stacks = sample()
-    const w = make(stacks)
-    await w.find('button[aria-label="Move input Login up"]').trigger('click')
-    expect(inputs(w)).toEqual(['Login', 'Email', 'CostCenter'])
-    expect(attrs(w)).toEqual(['uid', 'mail', null])
+  it('labels each row and counts mapped and ignored columns', () => {
+    const w = make([
+      { column: 'First', attribute: 'cn' }, { column: 'Last', attribute: 'sn' }, { column: 'Notes', attribute: '' },
+    ])
     expect(statuses(w)).toEqual(['mapped', 'mapped', 'ignored'])
-    // First row can't move up, last row can't move down.
-    expect(w.find('button[aria-label="Move input Login up"]').attributes('disabled')).toBeDefined()
-    expect(w.find('button[aria-label="Move input CostCenter down"]').attributes('disabled')).toBeDefined()
+    expect(w.text()).toContain('2 mapped')
+    expect(w.text()).toContain('1 ignored')
   })
 
-  it('moves an attribute (or an empty slot) with Alt+arrow keys', async () => {
-    const w = make(sample())
-    await w.find('.stack-chip[data-side="out"][data-index="2"]').trigger('keydown', { key: 'ArrowUp', altKey: true })
-    expect(attrs(w)).toEqual(['uid', null, 'mail'])
-    // Without Alt the key does nothing.
-    await w.find('.stack-chip[data-side="out"][data-index="0"]').trigger('keydown', { key: 'ArrowDown' })
-    expect(attrs(w)).toEqual(['uid', null, 'mail'])
+  it('lists required attributes nobody has mapped', () => {
+    const w = make([{ column: 'First', attribute: 'cn' }])
+    expect(w.text()).toContain('1 required attribute not mapped')
+    expect(w.find('[data-testid="missing-required"]').text()).toContain('sn')
   })
 
-  it('reorders by drag and drop within one stack only', async () => {
-    const w = make(sample())
-    const from = w.find('.stack-chip[data-side="in"][data-index="2"]')
-    await from.trigger('dragstart', { dataTransfer: { setData: () => {}, effectAllowed: '' } })
-    // Dropping on the other stack is ignored.
-    await w.find('.stack-chip[data-side="out"][data-index="0"]').trigger('drop')
-    expect(inputs(w)).toEqual(['Email', 'Login', 'CostCenter'])
-    await w.find('.stack-chip[data-side="in"][data-index="0"]').trigger('drop')
-    expect(inputs(w)).toEqual(['CostCenter', 'Email', 'Login'])
+  it('writes the typed attribute back and uses the schema spelling on blur', async () => {
+    const w = make([{ column: 'First', attribute: '' }])
+    const input = attrInput(w, 'First')
+    await input.setValue('givenname')
+    expect(w.props('rows')[0].attribute).toBe('givenname')
+    await input.trigger('blur')
+    expect(w.props('rows')[0].attribute).toBe('givenName')
   })
 
-  it('emits remove for optional attributes only', async () => {
-    const w = make(sample())
-    const removes = w.findAll('button[aria-label="Remove mapping"]')
-    expect(removes).toHaveLength(1) // mail; uid is required
-    await removes[0].trigger('click')
-    expect(w.emitted('remove')).toEqual([[1]])
+  it('suggests schema attributes as the operator types, required ones marked', async () => {
+    const w = make([{ column: 'Last', attribute: '' }])
+    const input = attrInput(w, 'Last')
+    await input.trigger('focus')
+    await input.setValue('s')
+    const options = w.findAll('[role="option"]')
+    expect(options.map(o => o.attributes('data-attr'))).toEqual(['sn'])
+    expect(options[0].text()).toContain('required')
+    await input.trigger('keydown', { key: 'ArrowDown' })
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(w.props('rows')[0].attribute).toBe('sn')
   })
 
-  it('renders editable inputs when no sample file is loaded', async () => {
-    const stacks = sample()
-    const w = make(stacks, { editableInputs: true })
-    const field = w.find('input[aria-label="CSV column for row 3"]')
-    await field.setValue('Dept')
-    expect(w.props('stacks').inputs[2]).toBe('Dept')
+  it('hides the DN column when the columns come from a sample file', () => {
+    const w = make([{ column: 'dn', attribute: '' }, { column: 'uid', attribute: 'cn' }],
+      { fromSample: true, dnColumn: 'DN' })
+    expect(columns(w)).toEqual(['uid'])
+    expect(w.text()).toContain("isn't listed")
   })
 
-  it('labels the DN source column instead of calling it ignored', () => {
-    const w = make({ inputs: ['dn', 'Login'], attrs: [null, { name: 'uid', required: true }] }, { dnColumn: 'DN' })
-    expect(w.text()).toContain('DN column')
-    expect(w.text()).not.toContain('input ignored')
+  it("says when a mapped column became the DN column and won't be saved", () => {
+    const w = make([{ column: 'uid', attribute: 'uid' }, { column: 'mail', attribute: 'cn' }],
+      { fromSample: true, dnColumn: 'uid' })
+    expect(columns(w)).toEqual(['mail'])
+    expect(w.find('[data-testid="dn-mapping-dropped"]').text())
+      .toMatch(/uid\s+is now the DN column, so its mapping to\s+uid\s+won't be saved/)
+  })
+
+  it('flags a typed column that is the DN column', () => {
+    const w = make([{ column: 'dn', attribute: '' }], { editableColumns: true, dnColumn: 'dn' })
+    expect(statuses(w)).toEqual(['dn'])
+    expect(w.text()).toContain("This is the DN column; it isn't mapped")
+  })
+
+  it('renders editable column names, and a remove button, without a sample file', async () => {
+    const w = make([{ column: 'Dept', attribute: '' }], { editableColumns: true })
+    await w.find('input[aria-label="CSV column for row 1"]').setValue('Department')
+    expect(w.props('rows')[0].column).toBe('Department')
+    await w.find('button[aria-label="Remove Department"]').trigger('click')
+    expect(w.emitted('remove')).toEqual([[0]])
+  })
+
+  it('offers remove only for kept columns the sample file lacks', () => {
+    const w = make([
+      { column: 'uid', attribute: 'cn' }, { column: 'Old', attribute: 'sn', notInSample: true },
+    ], { fromSample: true })
+    expect(w.findAll('button[aria-label^="Remove"]').map(b => b.attributes('aria-label'))).toEqual(['Remove Old'])
+    expect(w.text()).toContain('Not in the sample file')
   })
 
   it('shows first-row values as hints when the sample has no header row', () => {
-    const w = make({ inputs: ['Column 2', 'Column 1'], attrs: [] }, { samples: { 'Column 1': 'alice', 'Column 2': 'a@x' } })
-    // Hints follow the column by name, so they stay right after a reorder.
-    const chips = w.findAll('.stack-chip[data-side="in"]')
-    expect(chips[0].text()).toMatch(/Column 2\s+e\.g\. a@x/)
-    expect(chips[1].text()).toMatch(/Column 1\s+e\.g\. alice/)
+    const w = make([{ column: 'Column 1', attribute: '' }], { samples: { 'Column 1': 'alice' } })
+    expect(w.find('[data-column="Column 1"]').text()).toMatch(/Column 1\s+e\.g\. alice/)
   })
 })

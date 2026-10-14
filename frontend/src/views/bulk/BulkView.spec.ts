@@ -142,8 +142,9 @@ const modalGlobal = {
   stubs: { ...global.stubs, AppModal: { template: '<div><slot/></div>' } },
 }
 
+// RDN attribute cn is one of the mapped attributes, so the form can be saved.
 const editableTemplate = {
-  id: 't1', name: 'Staff', targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
+  id: 't1', name: 'Staff', targetKeyAttribute: 'cn', conflictHandling: 'SKIP',
   objectClass: 'inetOrgPerson', skipHeaderRow: true, dnSourceColumn: '',
   fieldDelimiter: ',',
   entries: [
@@ -164,30 +165,39 @@ async function openEditTemplate(template: object = editableTemplate) {
   return w
 }
 
-/** Attribute names in the right-hand mapping stack, top to bottom (empty slots skipped). */
-function mappedAttrs(w: ReturnType<typeof mount>) {
-  return w.findAll('[data-side="out"][data-attr]').map(c => c.attributes('data-attr'))
+/** Typed attribute per visible mapping row, keyed by column. */
+function rowMap(w: ReturnType<typeof mount>) {
+  return w.findAll('[data-column]').map(r => {
+    const attr = r.find('input[role="combobox"]').element as HTMLInputElement
+    return [r.attributes('data-column'), attr.value]
+  })
 }
 
-describe('BulkView — template column mappings undo', () => {
+describe('BulkView — template column mappings', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('restores removed mappings in reverse order at their original positions', async () => {
+  it('does not fill the list from the object classes', async () => {
+    vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(
+      { data: { required: ['cn', 'sn'], optional: ['mail', 'uid', 'givenName'] } } as never)
+    const w = await openEditTemplate({ ...editableTemplate, entries: [] })
+    expect(w.findAll('[data-column]')).toHaveLength(0)
+    expect(w.text()).toContain('Choose a sample file, or add input columns')
+  })
+
+  it('opens saved mappings exactly as saved', async () => {
+    vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(
+      { data: { required: ['cn', 'sn'], optional: ['mail', 'uid'] } } as never)
     const w = await openEditTemplate()
-    expect(mappedAttrs(w)).toEqual(['mail', 'sn', 'cn'])
-    expect(w.text()).not.toContain('Undo remove')
+    expect(rowMap(w)).toEqual([['email', 'mail'], ['surname', 'sn'], ['name', 'cn']])
+  })
 
-    const removeButtons = () => w.findAll('button[aria-label="Remove mapping"]')
-    await removeButtons()[1].trigger('click') // sn
-    await removeButtons()[0].trigger('click') // mail
-    expect(mappedAttrs(w)).toEqual(['cn'])
-
-    // Most recent removal comes back first.
-    await btnByText(w, 'Undo remove (mail)').trigger('click')
-    expect(mappedAttrs(w)).toEqual(['mail', 'cn'])
-    await btnByText(w, 'Undo remove (sn)').trigger('click')
-    expect(mappedAttrs(w)).toEqual(['mail', 'sn', 'cn'])
-    expect(w.text()).not.toContain('Undo remove')
+  it('adds and removes typed input columns', async () => {
+    const w = await openEditTemplate({ ...editableTemplate, entries: [] })
+    await btnByText(w, '+ Add input column').trigger('click')
+    await w.find('input[aria-label="CSV column for row 1"]').setValue('login')
+    expect(rowMap(w)).toEqual([['login', '']])
+    await w.find('button[aria-label="Remove login"]').trigger('click')
+    expect(w.findAll('[data-column]')).toHaveLength(0)
   })
 })
 
@@ -389,13 +399,8 @@ describe('BulkView — import result', () => {
   })
 })
 
-// ── Sample input file + reorderable mapping stacks ───────────────────────────
+// ── Sample input file + typed mappings ───────────────────────────────────────
 
-const stackInputs = (w: ReturnType<typeof mount>) =>
-  w.findAll('.stack-chip[data-side="in"]').map(c => {
-    const field = c.find('input')
-    return field.exists() ? (field.element as HTMLInputElement).value : c.text().replace('⋮⋮', '').trim()
-  })
 const rowStatuses = (w: ReturnType<typeof mount>) =>
   w.findAll('[data-status]').map(r => r.attributes('data-status'))
 
@@ -409,26 +414,38 @@ async function chooseSample(w: ReturnType<typeof mount>, content: string, name =
 
 const schema = { data: { required: ['cn', 'sn'], optional: ['mail', 'uid'] } }
 
+async function typeAttr(w: ReturnType<typeof mount>, column: string, value: string) {
+  const input = w.find(`input[aria-label="LDAP attribute for ${column}"]`)
+  await input.setValue(value)
+  await input.trigger('blur')
+}
+
 describe('BulkView — template sample input file', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('reads the sample header into the input stack, keeping saved pairings', async () => {
+  it('lists the sample columns, keeping saved mappings by name (ignoring case)', async () => {
     vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
     const w = await openEditTemplate()
-    // Saved mappings line up with the schema's attributes (required first).
-    expect(mappedAttrs(w)).toEqual(['cn', 'sn', 'mail', 'uid'])
-    expect(stackInputs(w)).toEqual(['name', 'surname', 'email', ''])
-
-    await chooseSample(w, 'email,name,surname,login,CostCenter\nx,y,z,q,1\n', 'hr.csv')
+    await chooseSample(w, 'login,EMAIL,name,surname,CostCenter\nx,y,z,q,1\n', 'hr.csv')
     expect(w.text()).toContain('hr.csv')
     expect(w.find('[data-testid="sample-columns"]').text()).toContain('5 columns')
-    // Pairings whose column still exists stay; new columns go below as ignored
-    // rather than silently pairing with the empty uid row.
-    expect(stackInputs(w)).toEqual(['name', 'surname', 'email', 'no input column', 'login', 'CostCenter'])
-    expect(rowStatuses(w)).toEqual(['mapped', 'mapped', 'mapped', 'unmapped', 'ignored', 'ignored'])
+    expect(rowMap(w)).toEqual([
+      ['login', ''], ['EMAIL', 'mail'], ['name', 'cn'], ['surname', 'sn'], ['CostCenter', ''],
+    ])
+    expect(rowStatuses(w)).toEqual(['ignored', 'mapped', 'mapped', 'mapped', 'ignored'])
   })
 
-  it('saves input columns without an attribute as ignored entries', async () => {
+  it('keeps a mapped column the sample lacks, flagged, with a remove button', async () => {
+    vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
+    const w = await openEditTemplate()
+    await chooseSample(w, 'name,surname\n')
+    expect(rowMap(w)).toEqual([['name', 'cn'], ['surname', 'sn'], ['email', 'mail']])
+    expect(w.text()).toContain('Not in the sample file')
+    await w.find('button[aria-label="Remove email"]').trigger('click')
+    expect(rowMap(w)).toEqual([['name', 'cn'], ['surname', 'sn']])
+  })
+
+  it('saves columns without an attribute as ignored entries', async () => {
     vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
     vi.mocked(updateCsvTemplate).mockResolvedValueOnce({ data: {} } as never)
     const w = await openEditTemplate()
@@ -450,17 +467,45 @@ describe('BulkView — template sample input file', () => {
       ...editableTemplate,
       entries: [...editableTemplate.entries, { csvColumn: 'CostCenter', ldapAttribute: null, ignored: true }],
     })
-    expect(stackInputs(w)).toEqual(['email', 'surname', 'name', 'CostCenter'])
+    expect(rowMap(w).map(r => r[0])).toEqual(['email', 'surname', 'name', 'CostCenter'])
     expect(rowStatuses(w)).toEqual(['mapped', 'mapped', 'mapped', 'ignored'])
   })
 
-  it('blocks save while a required attribute has no input column', async () => {
+  it('blocks save while a required attribute is not mapped', async () => {
     vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(
-      { data: { required: ['cn', 'sn', 'uid'], optional: ['mail'] } } as never)
-    const w = await openEditTemplate()
-    expect(rowStatuses(w)).toContain('missing')
+      { data: { required: ['cn', 'sn', 'mail'], optional: [] } } as never)
+    const w = await openEditTemplate({ ...editableTemplate, entries: editableTemplate.entries.slice(1) })
+    await chooseSample(w, 'surname,name,email\n')
+    expect(w.find('[data-testid="missing-required"]').text()).toContain('mail')
     expect(btnByText(w, 'Save').attributes('disabled')).toBeDefined()
-    await w.find('input[aria-label="CSV column for row 3"]').setValue('login')
+    await typeAttr(w, 'email', 'mail')
+    expect(w.find('[data-testid="missing-required"]').exists()).toBe(false)
+    expect(btnByText(w, 'Save').attributes('disabled')).toBeUndefined()
+  })
+
+  it('requires the RDN attribute when the DN is built from it', async () => {
+    vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
+    const w = await openEditTemplate({ ...editableTemplate, targetKeyAttribute: 'uid' })
+    expect(w.find('[data-testid="missing-required"]').text()).toContain('uid')
+    expect(btnByText(w, 'Save').attributes('disabled')).toBeDefined()
+  })
+
+  it('blocks save while the object-class attributes are loading', async () => {
+    let resolve!: (v: unknown) => void
+    vi.mocked(getObjectClassesBulk).mockReturnValueOnce(new Promise(r => { resolve = r }) as never)
+    const w = await openEditTemplate()
+    expect(btnByText(w, 'Save').attributes('disabled')).toBeDefined()
+    resolve(schema)
+    await flushPromises()
+    expect(btnByText(w, 'Save').attributes('disabled')).toBeUndefined()
+  })
+
+  it('warns, without blocking, when an attribute is not in the selected classes', async () => {
+    vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
+    const w = await openEditTemplate()
+    await chooseSample(w, 'name,surname,email,EmpType\n')
+    await typeAttr(w, 'EmpType', 'emplyeeType')
+    expect(w.text()).toContain('Not in the selected object classes')
     expect(btnByText(w, 'Save').attributes('disabled')).toBeUndefined()
   })
 
@@ -473,21 +518,46 @@ describe('BulkView — template sample input file', () => {
     expect(w.find('[data-testid="sample-columns"]').text()).toContain('3 columns')
   })
 
-  it('auto-matches inputs to attributes by name and alias', async () => {
+  it('suggests attributes by name and alias only when asked', async () => {
     vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
     const w = await openEditTemplate({ ...editableTemplate, entries: [] })
-    await chooseSample(w, 'Email,UserName,LastName,FullName\n')
-    expect(stackInputs(w)).toEqual(['Email', 'UserName', 'LastName', 'FullName'])
-    await btnByText(w, 'Auto-match by name').trigger('click')
-    expect(mappedAttrs(w)).toEqual(['cn', 'sn', 'mail', 'uid'])
-    expect(stackInputs(w)).toEqual(['FullName', 'LastName', 'Email', 'UserName'])
+    await chooseSample(w, 'Email,UserName,LastName,FullName,Notes\n')
+    expect(rowMap(w).every(r => r[1] === '')).toBe(true)
+    await btnByText(w, 'Suggest by name').trigger('click')
+    expect(rowMap(w)).toEqual([
+      ['Email', 'mail'], ['UserName', 'uid'], ['LastName', 'sn'], ['FullName', 'cn'], ['Notes', ''],
+    ])
   })
 
-  it('leaves an empty slot when an attribute is removed so rows below keep their pairing', async () => {
-    const w = await openEditTemplate()
-    await w.findAll('button[aria-label="Remove mapping"]')[0].trigger('click') // mail
-    expect(stackInputs(w)).toEqual(['email', 'surname', 'name'])
-    expect(rowStatuses(w)).toEqual(['ignored', 'mapped', 'mapped'])
+  it('hides the DN column from the list, marks it in the sample columns and does not save it', async () => {
+    vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
+    vi.mocked(updateCsvTemplate).mockResolvedValueOnce({ data: {} } as never)
+    const w = await openEditTemplate({
+      ...editableTemplate, dnSourceColumn: 'dn',
+      // Older editors saved the DN column as an ignored entry.
+      entries: [{ csvColumn: 'dn', ldapAttribute: null, ignored: true }, ...editableTemplate.entries],
+    })
+    expect(rowMap(w).map(r => r[0])).toEqual(['email', 'surname', 'name'])
+    await chooseSample(w, 'DN,name,surname,email\n')
+    expect(w.find('[data-testid="sample-dn-column"]').text()).toContain('DN')
+    expect(rowMap(w).map(r => r[0])).toEqual(['name', 'surname', 'email'])
+    expect(w.find('[data-testid="sample-dn-missing"]').exists()).toBe(false)
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    const saved = vi.mocked(updateCsvTemplate).mock.calls[0][2] as { entries: { csvColumn: string }[] }
+    expect(saved.entries.map(e => e.csvColumn)).toEqual(['name', 'surname', 'email'])
+  })
+
+  it('warns when the sample has no DN column and offers DN-like columns', async () => {
+    vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
+    const w = await openEditTemplate({ ...editableTemplate, dnSourceColumn: 'dn' })
+    await chooseSample(w, 'DistinguishedName,name,surname\n')
+    const warning = w.find('[data-testid="sample-dn-missing"]')
+    expect(warning.text()).toContain('The sample file has no dn column')
+    expect(rowMap(w).map(r => r[0])).toContain('DistinguishedName')
+    await warning.find('button').trigger('click')
+    expect(w.find('[data-testid="sample-dn-missing"]').exists()).toBe(false)
+    expect(rowMap(w).map(r => r[0])).not.toContain('DistinguishedName')
   })
 
   it('sends ignored columns with the import request so they are not passed through', async () => {

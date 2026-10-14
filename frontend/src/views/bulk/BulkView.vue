@@ -649,30 +649,37 @@
               <div class="flex flex-wrap content-start gap-1 mt-1 h-12 overflow-y-auto" data-testid="sample-columns">
                 <template v-if="sampleColumns.length">
                   <span class="text-xs text-gray-500 mr-1">{{ sampleColumns.length }} columns:</span>
-                  <code v-for="(c, ci) in sampleColumns" :key="ci"
-                        class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">{{ c }}</code>
+                  <template v-for="(c, ci) in sampleColumns" :key="ci">
+                    <code v-if="isSampleDnColumn(c)" data-testid="sample-dn-column"
+                          class="font-mono text-[11px] bg-blue-50 border border-blue-300 text-blue-800 rounded px-1.5 py-0.5"
+                          title="Each entry's DN is read from this column, so it isn't listed under Column Mappings">{{ c }}<span class="font-sans"> · DN column</span></code>
+                    <code v-else class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">{{ c }}</code>
+                  </template>
                 </template>
                 <span v-else class="text-xs italic text-gray-400">{{ sampleHint }}</span>
               </div>
+              <p v-if="sampleMissingDnColumn" data-testid="sample-dn-missing"
+                 class="text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded-md px-2 py-1.5 mt-1">
+                The sample file has no <span class="font-mono">{{ effectiveDnColumn }}</span> column, so imports with
+                this template would find no DN for each entry. Change the DN column<template v-if="sampleDnCandidates.length">, or use
+                  <template v-for="(c, ci) in sampleDnCandidates" :key="c"><button type="button"
+                    class="font-mono text-blue-700 underline hover:text-blue-900" @click="useSampleDnColumn(c)">{{ c }}</button><template v-if="ci < sampleDnCandidates.length - 1">, </template></template></template>.
+              </p>
             </div>
           </div>
         </div>
 
-        <TemplateColumnMappings v-model:stacks="templateForm.mapping"
-          :editable-inputs="!sampleFileName" :from-sample="!!sampleFileName" :samples="sampleValues"
-          :dn-column="dnFromColumn ? templateForm.dnSourceColumn : null"
-          @remove="removeTemplateEntry">
+        <TemplateColumnMappings v-model:rows="templateForm.rows"
+          :editable-columns="!sampleFileName" :from-sample="!!sampleFileName" :samples="sampleValues"
+          :dn-column="effectiveDnColumn" :schema="ocSchema" :schema-state="ocSchemaState"
+          :check="mappingCheck" @remove="removeTemplateRow">
           <template #actions>
-            <span v-if="loadingOcAttrs" class="text-xs text-gray-500">Loading attributes…</span>
-            <button type="button" class="btn-sm" @click="autoMatchMapping" :disabled="!hasAnyInput"
-                    title="Line up input columns with attributes of the same (or a common alias) name">
-              Auto-match by name
+            <span v-if="ocSchemaState === 'loading'" class="text-xs text-gray-500">Loading attributes…</span>
+            <button type="button" class="btn-sm" @click="suggestByName" :disabled="!canSuggest"
+                    title="Fill blank attributes where the column name matches an attribute (or a common alias) of the selected object classes">
+              Suggest by name
             </button>
             <button v-if="!sampleFileName" type="button" class="btn-sm" @click="addInputColumn">+ Add input column</button>
-            <button v-if="lastRemovedEntry" type="button" @click="undoRemoveTemplateEntry" class="btn-sm"
-                    :title="`Restore the ${lastRemovedEntry.attr.name} mapping`">
-              Undo remove ({{ lastRemovedEntry.attr.name }})
-            </button>
           </template>
         </TemplateColumnMappings>
 
@@ -722,8 +729,8 @@ import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import BulkDeleteSection from './BulkDeleteSection.vue'
 import TemplateColumnMappings from './TemplateColumnMappings.vue'
 import {
-  applySampleColumns, autoMatch, entriesToStacks, padStacks, parseSampleHeader, rebuildAttrs, stacksToEntries,
-  type MappingAttr, type MappingStacks,
+  applySampleColumns, checkMappings, dnLikeColumns, entriesToRows, parseSampleHeader, repeatedColumns,
+  rowsToEntries, sameColumn, suggestAttributes, type MappingRow, type SchemaAttr,
 } from './templateMapping'
 import { useListTypeahead } from '@/composables/useListTypeahead'
 
@@ -771,11 +778,9 @@ interface TemplateForm {
   // CSV column holding the full DN; '' means construct from RDN + parent DN.
   dnSourceColumn: string
   fieldDelimiter: string
-  // Input-column and attribute stacks; row N of one maps to row N of the other.
-  mapping: MappingStacks
+  // One row per CSV input column, with the LDAP attribute typed for it.
+  rows: MappingRow[]
 }
-/** An attribute removed from the mapping stack, kept so it can be restored. */
-interface RemovedEntry { attr: MappingAttr, index: number }
 /** One member change on a group-import row (see GroupMemberChange.java). */
 interface GroupMemberChange {
   member: string
@@ -968,7 +973,7 @@ const deleteTemplateTarget = ref<CsvTemplate | null>(null)
 const templateForm = ref<TemplateForm>({
   name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
   errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', fieldDelimiter: ',',
-  mapping: { inputs: [], attrs: [] },
+  rows: [],
 })
 // Whether the template reads the DN from a CSV column (vs constructing it from
 // the RDN attribute + parent DN). Kept separate so toggling off preserves the
@@ -1049,7 +1054,7 @@ function applySample() {
     sampleText.value, templateForm.value.fieldDelimiter || ',', templateForm.value.skipHeaderRow)
   sampleColumns.value = columns
   sampleValues.value = samples ? Object.fromEntries(columns.map((c, i) => [c, samples[i]])) : null
-  applySampleColumns(templateForm.value.mapping, columns)
+  templateForm.value.rows = applySampleColumns(templateForm.value.rows, columns)
 }
 
 async function onSampleFileChange(e: Event) {
@@ -1083,30 +1088,58 @@ watch(() => [templateForm.value.fieldDelimiter, templateForm.value.skipHeaderRow
   if (sampleFileName.value) applySample()
 })
 
-const hasAnyInput = computed(() => templateForm.value.mapping.inputs.some(v => v != null && v.trim() !== ''))
+// The template's DN column when it reads DNs from a column, and its RDN
+// attribute when it builds them; exactly one of the two is set.
+const effectiveDnColumn = computed(() =>
+  dnFromColumn.value ? (templateForm.value.dnSourceColumn.trim() || null) : null)
+const effectiveRdnAttribute = computed(() =>
+  dnFromColumn.value ? null : (templateForm.value.targetKeyAttribute.trim() || null))
 
-function autoMatchMapping() {
-  const m = templateForm.value.mapping
-  m.inputs = autoMatch(m)
-  padStacks(m)
+// Sample columns whose name repeats, and whether the sample has the DN column.
+const sampleRepeated = computed(() => repeatedColumns(sampleColumns.value))
+const sampleMissingDnColumn = computed(() => !!sampleFileName.value && !!effectiveDnColumn.value
+  && !sampleColumns.value.some(c => sameColumn(c, effectiveDnColumn.value)))
+const sampleDnCandidates = computed(() => dnLikeColumns(sampleColumns.value))
+
+function isSampleDnColumn(c: string): boolean {
+  return sameColumn(c, effectiveDnColumn.value)
+}
+
+function useSampleDnColumn(c: string) {
+  templateForm.value.dnSourceColumn = c
+}
+
+const mappingCheck = computed(() => checkMappings(templateForm.value.rows, {
+  schema: ocSchemaState.value === 'loaded' ? ocSchema.value : null,
+  dnColumn: effectiveDnColumn.value,
+  rdnAttribute: effectiveRdnAttribute.value,
+  repeatedColumns: sampleFileName.value ? sampleRepeated.value : [],
+}))
+
+const canSuggest = computed(() => ocSchema.value.length > 0
+  && templateForm.value.rows.some(r => r.column.trim() && !r.attribute.trim()))
+
+/** Fills blank attributes whose column name matches an attribute or a common alias. */
+function suggestByName() {
+  const { rows, filled } = suggestAttributes(templateForm.value.rows, ocSchema.value, effectiveDnColumn.value)
+  templateForm.value.rows = rows
+  if (filled === 0) notif.info('No column names matched an attribute of the selected object classes.')
 }
 
 function addInputColumn() {
-  const m = templateForm.value.mapping
-  const free = m.inputs.findIndex(v => v == null)
-  if (free >= 0) { m.inputs[free] = ''; return }
-  m.inputs.push('')
-  m.attrs.push(null)
+  templateForm.value.rows.push({ column: '', attribute: '' })
 }
 
-// Attributes removed in this editing session, most recent last, so
-// "Undo remove" can restore them one at a time in reverse order.
-const removedEntries = ref<RemovedEntry[]>([])
-const lastRemovedEntry = computed(() => removedEntries.value[removedEntries.value.length - 1] ?? null)
+function removeTemplateRow(i: number) {
+  templateForm.value.rows.splice(i, 1)
+}
 
 // ObjectClass picker state
 const objectClasses       = ref<string[]>([])
-const loadingOcAttrs      = ref(false)
+// Attributes of the selected object classes. They feed suggestions and the
+// required-attribute check; they never add rows.
+const ocSchema            = ref<SchemaAttr[]>([])
+const ocSchemaState       = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 const selectedOcHighlight = ref<string | null>(null)
 const availableOcHighlight = ref<string | null>(null)
 
@@ -1293,8 +1326,9 @@ const canSaveTemplate = computed(() => {
   if (!f.name || f.objectClasses.length === 0) return false
   if (dnColumnMissing.value) return false
   if (delimiterPreset.value === 'other' && !customDelimiterValid.value) return false
-  const { inputs, attrs } = f.mapping
-  return attrs.every((a, i) => !a?.required || !!inputs[i]?.trim())
+  // Required attributes can't be checked until the schema has loaded.
+  if (ocSchemaState.value === 'loading') return false
+  return !mappingCheck.value.blocking
 })
 
 /** Result rows with the given status (e.g. SKIPPED), or none. */
@@ -1349,11 +1383,12 @@ function openCreateTemplate() {
   templateForm.value = {
     name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
     errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', fieldDelimiter: ',',
-    mapping: { inputs: [], attrs: [] },
+    rows: [],
   }
   dnFromColumn.value = false
   syncDelimiterPicker(',')
-  removedEntries.value = []
+  ocSchema.value = []
+  ocSchemaState.value = 'idle'
   showTemplateModal.value = true
 }
 
@@ -1371,80 +1406,55 @@ function openEditTemplate(t: CsvTemplate) {
     skipHeaderRow: t.skipHeaderRow !== false,
     dnSourceColumn: t.dnSourceColumn ?? '',
     fieldDelimiter: t.fieldDelimiter || ',',
-    mapping: entriesToStacks(t.entries ?? []),
+    rows: entriesToRows(t.entries ?? [], t.dnSourceColumn || null),
   }
   dnFromColumn.value = !!t.dnSourceColumn
   syncDelimiterPicker(templateForm.value.fieldDelimiter)
-  removedEntries.value = []
+  ocSchema.value = []
+  ocSchemaState.value = 'idle'
   showTemplateModal.value = true
-  // Fill in the classes' other attributes (and required markers) around the
-  // saved mappings; attributes saved but no longer in the schema are kept.
-  if (templateForm.value.objectClasses.length) loadObjectClassAttrs(true)
+  // Load the classes' attributes for suggestions and checks; the saved rows
+  // stay exactly as they are.
+  if (templateForm.value.objectClasses.length) loadObjectClassAttrs()
 }
 
 function onObjectClassChange() {
-  return loadObjectClassAttrs(false)
+  return loadObjectClassAttrs()
 }
 
 /**
- * Rebuilds the attribute stack from the selected object classes (required
- * first, then optional), carrying each attribute's input column across.
- * `keepUnknown` keeps attributes already in the stack that the schema no
- * longer lists — used when opening a saved template.
+ * Loads the attributes of the selected object classes (required first, then
+ * optional). Typed mappings are left alone: one whose attribute the classes
+ * no longer have just gets a warning.
  */
-async function loadObjectClassAttrs(keepUnknown: boolean) {
-  const ocs = templateForm.value.objectClasses
+async function loadObjectClassAttrs() {
+  const ocs = [...templateForm.value.objectClasses]
   const form = templateForm.value
   if (ocs.length === 0) {
-    form.mapping = rebuildAttrs(form.mapping, [], false)
-    removedEntries.value = []
+    ocSchema.value = []
+    ocSchemaState.value = 'idle'
     return
   }
-  loadingOcAttrs.value = true
+  ocSchemaState.value = 'loading'
   try {
     const { data } = await getObjectClassesBulk(dirId, ocs)
-    // The modal may have been reopened for another template meanwhile.
-    if (templateForm.value !== form) return
-    const schema: MappingAttr[] = []
+    // The modal may have been reopened, or the classes changed, meanwhile.
+    if (templateForm.value !== form || form.objectClasses.join(',') !== ocs.join(',')) return
+    const schema: SchemaAttr[] = []
     for (const attr of (data.required || [])) {
       if (attr.toLowerCase() !== 'objectclass') schema.push({ name: attr, required: true })
     }
     for (const attr of (data.optional || [])) {
       if (attr.toLowerCase() !== 'objectclass') schema.push({ name: attr, required: false })
     }
-    form.mapping = rebuildAttrs(form.mapping, schema, keepUnknown)
-    // The rebuild re-lists every attribute of the chosen classes, so earlier
-    // removals are already back and their positions no longer apply.
-    removedEntries.value = []
+    ocSchema.value = schema
+    ocSchemaState.value = 'loaded'
   } catch (e) {
+    if (templateForm.value !== form || form.objectClasses.join(',') !== ocs.join(',')) return
+    ocSchema.value = []
+    ocSchemaState.value = 'error'
     notif.error('Failed to load objectClass attributes: ' + errMsg(e))
-  } finally {
-    loadingOcAttrs.value = false
   }
-}
-
-/** Removing an attribute leaves an empty slot so the rows below keep their pairings. */
-function removeTemplateEntry(i: number) {
-  const attr = templateForm.value.mapping.attrs[i]
-  if (!attr || attr.required) return
-  templateForm.value.mapping.attrs[i] = null
-  removedEntries.value.push({ attr, index: i })
-}
-
-/** Puts the most recently removed attribute back in its row. */
-function undoRemoveTemplateEntry() {
-  const last = removedEntries.value.pop()
-  if (!last) return
-  const { inputs, attrs } = templateForm.value.mapping
-  if (last.index < attrs.length && attrs[last.index] == null) {
-    attrs[last.index] = last.attr
-  } else {
-    // Its slot was reused: open a new row there instead.
-    const at = Math.min(last.index, attrs.length)
-    attrs.splice(at, 0, last.attr)
-    inputs.splice(at, 0, null)
-  }
-  padStacks(templateForm.value.mapping)
 }
 
 async function saveTemplate() {
@@ -1463,7 +1473,7 @@ async function saveTemplate() {
       fieldDelimiter: templateForm.value.fieldDelimiter || ',',
       // Inputs without an attribute are saved as ignored, so the import
       // discards them instead of passing them through as same-named attributes.
-      entries: stacksToEntries(templateForm.value.mapping),
+      entries: rowsToEntries(templateForm.value.rows, effectiveDnColumn.value),
     }
     if (editTemplate.value) {
       await updateCsvTemplate(dirId, editTemplate.value.id, payload)
