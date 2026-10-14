@@ -9,7 +9,7 @@ vi.mock('@/stores/notifications', () => ({
 }))
 // Features the mocked admin holds; tests narrow it (e.g. to a read-only
 // admin's export-only set) and the beforeEach below restores the default.
-const DEFAULT_FEATURES = ['bulk.import', 'bulk.export', 'csv.template_manage']
+const DEFAULT_FEATURES = ['bulk.import', 'bulk.export', 'csv_template.manage']
 const grantedFeatures = vi.hoisted(() => new Set<string>())
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({ hasFeature: (f: string) => grantedFeatures.has(f), isSuperadmin: false }),
@@ -57,6 +57,7 @@ beforeEach(() => {
 })
 
 import BulkView from './BulkView.vue'
+import { FEATURE_PERMISSION_LABELS } from '@/constants/featurePermissions'
 
 const global = {
   stubs: {
@@ -596,7 +597,7 @@ describe('BulkView — tabs follow the admin\'s bulk features', () => {
   })
 
   it('hides the Template menu without template permission but keeps the import', async () => {
-    grantedFeatures.delete('csv.template_manage')
+    grantedFeatures.delete('csv_template.manage')
     const w = mount(BulkView, { global })
     await flushPromises()
     expect(w.text()).toContain('Import Users from CSV')
@@ -733,5 +734,17 @@ describe('BulkView — group import member changes', () => {
     expect(errors).toContain('Row 1: 1 queued for approval; 1 blocked by separation of duties')
     expect(errors).toContain('bob — blocked by separation of duties: SoD violation')
     expect(errors).not.toContain('alice —')
+  })
+})
+
+describe('BulkView — feature keys', () => {
+  // The view gates its tabs and the Template menu on feature keys from
+  // /auth/me. A misspelt key (csv.template_manage instead of
+  // csv_template.manage) silently hid the Template menu for everyone while
+  // these specs, granting the same misspelling, still passed.
+  it('only grants real backend feature keys in these specs', () => {
+    for (const key of [...DEFAULT_FEATURES, 'bulk.delete', 'group.manage_members']) {
+      expect(FEATURE_PERMISSION_LABELS, key).toHaveProperty([key])
+    }
   })
 })
