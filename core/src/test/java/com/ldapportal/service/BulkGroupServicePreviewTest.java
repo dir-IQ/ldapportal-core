@@ -55,7 +55,7 @@ class BulkGroupServicePreviewTest {
     private BulkImportPreviewResult preview(String csv, List<CsvColumnMappingDto> mappings, List<String> required,
                                             String memberAttr, boolean passthrough) throws IOException {
         return service.previewImport(new ByteArrayInputStream(csv.getBytes(StandardCharsets.UTF_8)), PARENT,
-                mappings, true, required, memberAttr, ',', passthrough, dir);
+                mappings, true, required, memberAttr, List.of("groupOfNames"), ',', passthrough, dir);
     }
 
     private static List<Outcome> outcomes(BulkImportPreviewRow row) {
@@ -64,7 +64,7 @@ class BulkGroupServicePreviewTest {
 
     @Test
     void newGroup_isACreate_withEveryMemberPlannedAsAnAdd() throws IOException {
-        BulkImportPreviewResult result = preview("cn,members\neng,\"alice|" + BOB + "\"\n", List.of("member"), "member");
+        BulkImportPreviewResult result = preview("cn,members,member-operation\neng,\"alice|" + BOB + "\",add\n", List.of("member"), "member");
 
         BulkImportPreviewRow row = result.rows().get(0);
         assertThat(row.groupAction()).isEqualTo(GroupAction.CREATE);
@@ -79,7 +79,7 @@ class BulkGroupServicePreviewTest {
     void existingGroup_isAnUpdate_withNoOpsAndProblemsShown() throws IOException {
         dir.group(ENG, "member", ALICE).problem("ghost", Outcome.AMBIGUOUS);
 
-        BulkImportPreviewRow row = preview("cn,members\neng,alice|bob|ghost\n", List.of("member"), "member")
+        BulkImportPreviewRow row = preview("cn,members,member-operation\neng,alice|bob|ghost,add\n", List.of("member"), "member")
                 .rows().get(0);
 
         assertThat(row.groupAction()).isEqualTo(GroupAction.UPDATE);
@@ -93,7 +93,7 @@ class BulkGroupServicePreviewTest {
         dir.group(ENG, "member", ALICE).attr(ENG, "description", "Old desc").attr(ENG, "owner", BOB);
 
         BulkImportPreviewResult result = preview(
-                "cn,description,owner\neng,New desc,\nnewgroup,Fresh,\n", List.of(), "member");
+                "cn,description,owner,members,member-operation\neng,New desc,,,\nnewgroup,Fresh,,alice,add\n", List.of(), "member");
 
         // owner is blank, so it's left alone; description changes.
         assertThat(result.rows().get(0).attributeChanges())
@@ -129,7 +129,7 @@ class BulkGroupServicePreviewTest {
     void entryThatIsNotAGroup_explainsWhyTheRowCantRun() throws IOException {
         dir.nonGroup(ENG);
 
-        BulkImportPreviewRow row = preview("cn,members\neng,alice\n", List.of(), "member").rows().get(0);
+        BulkImportPreviewRow row = preview("cn,members,member-operation\neng,alice,add\n", List.of(), "member").rows().get(0);
 
         assertThat(row.message()).isEqualTo("The entry at " + ENG + " is not a group");
     }
@@ -146,18 +146,34 @@ class BulkGroupServicePreviewTest {
     }
 
     @Test
-    void createRow_withoutAnyResolvableMember_isMissingTheMemberMust() throws IOException {
+    void newGroupOfNames_withoutAResolvableMember_isFlaggedAndCantRun() throws IOException {
         dir.problem("ghost", Outcome.MEMBER_NOT_FOUND);
 
-        BulkImportPreviewResult result = preview("cn,members\neng,ghost\nsolo,\n", List.of("member"), "member");
+        BulkImportPreviewResult result = preview(
+                "cn,members,member-operation\neng,ghost,add\nsolo,,\n", List.of("member"), "member");
 
-        assertThat(result.rows().get(0).missingRequired()).containsExactly("member");
-        assertThat(result.rows().get(1).missingRequired()).containsExactly("member");
+        for (BulkImportPreviewRow row : result.rows()) {
+            assertThat(row.missingRequired()).containsExactly("member");
+            assertThat(row.message()).isEqualTo("A new groupOfNames group needs at least one member");
+            assertThat(row.groupAction()).isNull();
+        }
+        assertThat(outcomes(result.rows().get(0))).containsExactly(Outcome.MEMBER_NOT_FOUND);
+    }
+
+    @Test
+    void membersWithoutMemberOperation_isFlagged() throws IOException {
+        dir.group(ENG, "member", ALICE);
+
+        BulkImportPreviewRow row = preview("cn,members\neng,bob\n", List.of(), "member").rows().get(0);
+
+        assertThat(row.missingRequired()).containsExactly("member-operation");
+        assertThat(row.message())
+                .isEqualTo("member-operation is required when members are listed: use 'add' or 'delete'");
     }
 
     @Test
     void uniqueMemberObjectClass_isSatisfiedByTheMembersColumn() throws IOException {
-        BulkImportPreviewRow row = preview("cn,members\neng,alice\n", List.of("uniqueMember"), "uniqueMember")
+        BulkImportPreviewRow row = preview("cn,members,member-operation\neng,alice,add\n", List.of("uniqueMember"), "uniqueMember")
                 .rows().get(0);
 
         assertThat(row.missingRequired()).isEmpty();
@@ -165,7 +181,7 @@ class BulkGroupServicePreviewTest {
 
     @Test
     void missingCn_isFlagged() throws IOException {
-        BulkImportPreviewRow row = preview("cn,members\n,alice\n", List.of("member"), "member").rows().get(0);
+        BulkImportPreviewRow row = preview("cn,members,member-operation\n,alice,add\n", List.of("member"), "member").rows().get(0);
 
         assertThat(row.computedDn()).isNull();
         assertThat(row.missingRequired()).contains("cn");
@@ -183,7 +199,7 @@ class BulkGroupServicePreviewTest {
 
     @Test
     void exportedDnColumn_isIgnored() throws IOException {
-        BulkImportPreviewRow row = preview("dn,cn,member\n\"" + ENG + "\",eng,alice\n", List.of("member"), "member")
+        BulkImportPreviewRow row = preview("dn,cn,member,member-operation\n\"" + ENG + "\",eng,alice,add\n", List.of("member"), "member")
                 .rows().get(0);
 
         assertThat(row.attributes()).doesNotContainKey("dn");

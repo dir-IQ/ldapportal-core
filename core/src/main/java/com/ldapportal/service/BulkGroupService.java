@@ -52,10 +52,14 @@ import java.util.Set;
  *   <li>{@code members} (or a column mapped to the member attribute) — members
  *       separated by {@code |}, each a uid (looked up within the caller's
  *       scope) or a full DN.</li>
- *   <li>{@value #MEMBER_OPERATION_COLUMN} — {@code add} (the default when the
- *       column is absent or blank) creates the group or adds the row's members
- *       to it; {@code delete} removes the row's members from an existing group
- *       and changes nothing else.</li>
+ *   <li>{@code members} may be empty. When it isn't,
+ *       {@value #MEMBER_OPERATION_COLUMN} is required: {@code add} adds the
+ *       row's members (to the group it creates, or to the existing one);
+ *       {@code delete} removes them from an existing group (a delete on a
+ *       group that doesn't exist is an error).</li>
+ *   <li>A row whose group doesn't exist creates it. A new {@code groupOfNames}
+ *       / {@code groupOfUniqueNames} needs at least one member to add; without
+ *       one the row is an error and nothing is created.</li>
  *   <li>{@code dn} — ignored, so a file written by export re-imports as-is.</li>
  *   <li>anything else ({@code description}, {@code owner}, …) — an attribute
  *       (see {@link CsvColumnMap}). A new group is created with it; on an
@@ -163,6 +167,8 @@ public class BulkGroupService {
      *                      Empty list = no validation.
      * @param memberAttr    the member attribute a new group is created with, so
      *                      a row's members count as supplying it
+     * @param objectClasses object classes a new group is created with (decides
+     *                      whether it must have a member)
      */
     public BulkImportPreviewResult previewImport(InputStream csvInput,
                                                   String parentDn,
@@ -170,13 +176,14 @@ public class BulkGroupService {
                                                   boolean skipHeaderRow,
                                                   List<String> requiredAttrs,
                                                   String memberAttr,
+                                                  List<String> objectClasses,
                                                   char fieldDelimiter,
                                                   boolean passthroughUnmapped,
                                                   GroupImportMembers members) throws IOException {
 
         CsvColumnMap colToAttr = CsvColumnMap.of(columnMappings, passthroughUnmapped);
         List<Map<String, String>> rows = parse(csvInput, skipHeaderRow, fieldDelimiter);
-        List<RowPlan> plans = plan(rows, colToAttr, parentDn, List.of(), memberAttr, members);
+        List<RowPlan> plans = plan(rows, colToAttr, parentDn, objectClasses, memberAttr, members);
 
         List<String> required = requiredAttrs == null ? List.of() : requiredAttrs;
         List<BulkImportPreviewRow> previewRows = new ArrayList<>(plans.size());
@@ -186,8 +193,9 @@ public class BulkGroupService {
             // the same way as schema MUSTs: amber highlight + Issues column.
             if (p.dn == null) missing.add("cn");
             if (p.operation == null) missing.add(MEMBER_OPERATION_COLUMN);
+            if (p.needsMember) missing.add(p.memberAttribute);
             // Only a row that creates the group needs the object class's MUSTs.
-            if (p.action == GroupAction.CREATE) {
+            if (p.error == null && p.action == GroupAction.CREATE) {
                 Set<String> present = new HashSet<>();
                 p.attrs.keySet().forEach(a -> present.add(a.toLowerCase(Locale.ROOT)));
                 if (p.changes.stream().anyMatch(c -> c.outcome == Outcome.WILL_ADD)) {
@@ -227,6 +235,7 @@ public class BulkGroupService {
                                GroupImportMembers members) {
         String newGroupMemberAttr = memberAttribute == null || memberAttribute.isBlank()
                 ? "member" : memberAttribute;
+        String needsMemberClass = memberRequiringClass(objectClasses);
         // Adding or removing members needs group.manage_members as well as
         // bulk.import; refuse the whole file up front rather than row by row.
         if (hasMemberValues(rows, colToAttr, memberAttribute)) {
@@ -284,6 +293,11 @@ public class BulkGroupService {
             p.operation = parseMemberOperation(rawOp);
             if (p.operation == null) {
                 p.error = "Invalid member-operation '" + rawOp.trim() + "': expected 'add' or 'delete'";
+                continue;
+            }
+            if (!memberValues.isEmpty() && (rawOp == null || rawOp.isBlank())) {
+                p.operation = null;
+                p.error = "member-operation is required when members are listed: use 'add' or 'delete'";
                 continue;
             }
             if (rawOp != null && !rawOp.isBlank()) {
@@ -347,6 +361,16 @@ public class BulkGroupService {
                 }
             }
 
+            // groupOfNames / groupOfUniqueNames can't exist without a member, so
+            // a row that would create one empty fails here rather than at the
+            // add, and isn't recorded as created (a later row may create it).
+            if (p.action == GroupAction.CREATE && needsMemberClass != null
+                    && p.changes.stream().noneMatch(c -> c.outcome == Outcome.WILL_ADD)) {
+                p.error = "A new " + needsMemberClass + " group needs at least one member";
+                p.needsMember = true;
+                continue;
+            }
+
             if (p.action == GroupAction.CREATE) {
                 Set<String> dns = new HashSet<>();
                 Set<String> uids = new HashSet<>();
@@ -362,6 +386,16 @@ public class BulkGroupService {
 
         markDuplicatesAndConflicts(plans);
         return plans;
+    }
+
+    /** The first of the object classes that requires a member, or null when none does. */
+    private static String memberRequiringClass(List<String> objectClasses) {
+        if (objectClasses == null) return null;
+        for (String oc : objectClasses) {
+            String t = oc.trim();
+            if (t.equalsIgnoreCase("groupOfNames") || t.equalsIgnoreCase("groupOfUniqueNames")) return t;
+        }
+        return null;
     }
 
     /** Whether any row lists members, i.e. the file asks for member changes. */
@@ -416,7 +450,8 @@ public class BulkGroupService {
 
     private BulkImportRowResult execute(DirectoryConnection dc, RowPlan p, GroupImportMembers members) {
         if (p.error != null) {
-            return BulkImportRowResult.error(p.rowNumber, p.dn, p.error);
+            return new BulkImportRowResult(p.rowNumber, p.dn, BulkImportRowResult.Status.ERROR,
+                    p.error, p.changeRows());
         }
         try {
             if (p.action == GroupAction.CREATE) {
@@ -593,7 +628,10 @@ public class BulkGroupService {
         return cleaned;
     }
 
-    /** ADD for an absent or blank value, null for anything but add / delete. */
+    /**
+     * ADD for an absent or blank value (only allowed on a row without members),
+     * null for anything but add / delete.
+     */
     private static Op parseMemberOperation(String raw) {
         if (raw == null || raw.isBlank()) return Op.ADD;
         return switch (raw.trim().toLowerCase(Locale.ROOT)) {
@@ -662,6 +700,8 @@ public class BulkGroupService {
         String memberAttribute;
         /** Why the row can't run at all. */
         String error;
+        /** The row would create a group whose object class requires a member, with none to add. */
+        boolean needsMember;
 
         RowPlan(int rowNumber) {
             this.rowNumber = rowNumber;

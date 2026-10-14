@@ -1537,7 +1537,8 @@ public class LdapOperationService {
         // The preview resolves members and looks groups up exactly as the import
         // will, so it can say what each member change will do.
         return bulkGroupService.previewImport(
-                csvInput, parentDn, mappings, skipHeader, requiredAttrs, memberAttribute, delimiter,
+                csvInput, parentDn, mappings, skipHeader, requiredAttrs, memberAttribute,
+                List.of(oc.split(",")), delimiter,
                 req.templateId() == null, groupImportMembers(dc, directoryId, principal));
     }
 

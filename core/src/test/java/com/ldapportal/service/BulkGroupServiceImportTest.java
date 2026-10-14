@@ -70,8 +70,12 @@ class BulkGroupServiceImportTest {
     }
 
     private BulkImportResult run(String csv, String memberAttr) throws IOException {
+        return run(csv, memberAttr, List.of("groupOfNames"));
+    }
+
+    private BulkImportResult run(String csv, String memberAttr, List<String> objectClasses) throws IOException {
         return service.importCsv(dc, new ByteArrayInputStream(csv.getBytes(StandardCharsets.UTF_8)), PARENT,
-                List.of(), List.of("groupOfNames"), memberAttr, true, ',', true, dir);
+                List.of(), objectClasses, memberAttr, true, ',', true, dir);
     }
 
     private static List<Outcome> outcomes(BulkImportRowResult row) {
@@ -89,7 +93,7 @@ class BulkGroupServiceImportTest {
 
     @Test
     void newGroup_isCreatedWithAllResolvedMembers_uidsAndDnsAlike() throws IOException {
-        BulkImportResult result = run("cn,description,members\nengineering,Eng team,\"alice|" + BOB + "\"\n");
+        BulkImportResult result = run("cn,description,members,member-operation\nengineering,Eng team,\"alice|" + BOB + "\",add\n");
 
         Map<String, List<String>> attrs = createdAttrs(ENG);
         assertThat(attrs).containsEntry("member", List.of(ALICE, BOB))
@@ -107,7 +111,7 @@ class BulkGroupServiceImportTest {
     void newGroup_withAnUnresolvableMember_isCreatedWithTheRestAndReportsTheProblem() throws IOException {
         dir.problem("ghost", Outcome.MEMBER_NOT_FOUND);
 
-        BulkImportResult result = run("cn,members\nengineering,alice|ghost\n");
+        BulkImportResult result = run("cn,members,member-operation\nengineering,alice|ghost,add\n");
 
         assertThat(createdAttrs(ENG)).containsEntry("member", List.of(ALICE));
         BulkImportRowResult row = result.rows().get(0);
@@ -118,14 +122,14 @@ class BulkGroupServiceImportTest {
 
     @Test
     void newPosixGroup_getsUidsInMemberUid() throws IOException {
-        run("cn,members\nengineering,\"alice|" + BOB + "\"\n", "memberUid");
+        run("cn,members,member-operation\nengineering,\"alice|" + BOB + "\",add\n", "memberUid");
 
         assertThat(createdAttrs(ENG)).containsEntry("memberUid", List.of("alice", "bob"));
     }
 
     @Test
     void laterRowForAGroupAnEarlierRowCreates_updatesIt() throws IOException {
-        BulkImportResult result = run("cn,members\nengineering,alice\nengineering,bob\n");
+        BulkImportResult result = run("cn,members,member-operation\nengineering,alice,add\nengineering,bob,add\n");
 
         verify(groupService).createGroup(eq(dc), eq(ENG), any());
         assertThat(dir.writes).containsExactly(
@@ -140,7 +144,7 @@ class BulkGroupServiceImportTest {
     void existingGroup_addsOnlyMissingMembers_throughTheGovernedPath() throws IOException {
         dir.group(ENG, "member", ALICE);
 
-        BulkImportResult result = run("cn,members\nengineering,alice|bob\n");
+        BulkImportResult result = run("cn,members,member-operation\nengineering,alice|bob,add\n");
 
         verify(groupService, never()).createGroup(any(), anyString(), any());
         assertThat(dir.writes).containsExactly(
@@ -155,7 +159,7 @@ class BulkGroupServiceImportTest {
     void existingGroup_writesToTheAttributeTheGroupUses() throws IOException {
         dir.group(ENG, "uniqueMember", ALICE);
 
-        run("cn,members\nengineering,bob\n");
+        run("cn,members,member-operation\nengineering,bob,add\n");
 
         assertThat(dir.writes).extracting(FakeGroupImportMembers.Write::memberAttribute)
                 .containsExactly("uniqueMember");
@@ -177,7 +181,7 @@ class BulkGroupServiceImportTest {
     void existingGroup_providedOwnerAndDescription_replaceTheCurrentValues() throws IOException {
         dir.group(ENG, "member", ALICE).attr(ENG, "description", "Old desc");
 
-        BulkImportResult result = run("cn,description,owner,members\nengineering,New desc,\"" + CAROL + "\",bob\n");
+        BulkImportResult result = run("cn,description,owner,members,member-operation\nengineering,New desc,\"" + CAROL + "\",bob,add\n");
 
         List<Modification> mods = updateMods();
         assertThat(mods).extracting(Modification::getAttributeName).containsExactly("description", "owner");
@@ -194,7 +198,7 @@ class BulkGroupServiceImportTest {
         dir.group(ENG, "member", ALICE).attr(ENG, "description", "Eng team").attr(ENG, "owner", CAROL);
 
         // description blank, owner column absent: neither is touched.
-        BulkImportResult result = run("cn,description,members\nengineering,,bob\n");
+        BulkImportResult result = run("cn,description,members,member-operation\nengineering,,bob,add\n");
 
         verify(groupService, never()).updateGroup(any(), anyString(), any());
         assertThat(result.rows().get(0).message()).isEqualTo("1 added");
@@ -225,7 +229,7 @@ class BulkGroupServiceImportTest {
             default -> MembershipChangeResult.Status.REFUSED;
         };
 
-        BulkImportResult result = run("cn,members\nengineering,alice|bob|carol\n");
+        BulkImportResult result = run("cn,members,member-operation\nengineering,alice|bob|carol,add\n");
 
         BulkImportRowResult row = result.rows().get(0);
         assertThat(outcomes(row)).containsExactly(
@@ -241,7 +245,7 @@ class BulkGroupServiceImportTest {
         dir.group(ENG, "member", ALICE);
         dir.outcome = w -> MembershipChangeResult.Status.QUEUED_FOR_APPROVAL;
 
-        BulkImportResult result = run("cn,members\nengineering,bob\n");
+        BulkImportResult result = run("cn,members,member-operation\nengineering,bob,add\n");
 
         assertThat(result.rows().get(0).status()).isEqualTo(Status.UPDATED);
     }
@@ -308,7 +312,7 @@ class BulkGroupServiceImportTest {
     void sameMembershipTwice_secondIsADuplicate() throws IOException {
         dir.group(ENG, "member", ALICE);
 
-        BulkImportResult result = run("cn,members\nengineering,bob\nengineering,bob\n");
+        BulkImportResult result = run("cn,members,member-operation\nengineering,bob,add\nengineering,bob,add\n");
 
         assertThat(dir.writes).hasSize(1);
         assertThat(outcomes(result.rows().get(1))).containsExactly(Outcome.DUPLICATE);
@@ -336,7 +340,7 @@ class BulkGroupServiceImportTest {
         String nested = "cn=nested,ou=groups,dc=example,dc=com";
         dir.group(ENG, "memberUid", "zed").entry(nested);
 
-        BulkImportResult result = run("cn,members\nengineering,\"" + nested + "\"\n");
+        BulkImportResult result = run("cn,members,member-operation\nengineering,\"" + nested + "\",add\n");
 
         assertThat(dir.writes).isEmpty();
         assertThat(outcomes(result.rows().get(0))).containsExactly(Outcome.INVALID);
@@ -346,18 +350,76 @@ class BulkGroupServiceImportTest {
 
     @Test
     void tooManyMemberChanges_rejectsTheWholeFile() {
-        StringBuilder csv = new StringBuilder("cn,members\n");
+        StringBuilder csv = new StringBuilder("cn,members,member-operation\n");
         StringBuilder members = new StringBuilder();
         for (int i = 0; i <= BulkGroupService.MAX_MEMBER_CHANGES; i++) {
             if (i > 0) members.append('|');
             members.append("u").append(i);
         }
-        csv.append("engineering,").append(members).append('\n');
+        csv.append("engineering,").append(members).append(",add\n");
 
         assertThatThrownBy(() -> run(csv.toString()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("split the file");
         verify(groupService, never()).createGroup(any(), anyString(), any());
+    }
+
+    // ── Row rules ─────────────────────────────────────────────────────────────
+
+    @Test
+    void membersWithoutMemberOperation_isAnErrorAndNothingIsWritten() throws IOException {
+        dir.group(ENG, "member", ALICE);
+
+        BulkImportResult result = run("cn,members\nengineering,bob\nsales,carol\n");
+
+        assertThat(dir.writes).isEmpty();
+        verify(groupService, never()).createGroup(any(), anyString(), any());
+        assertThat(result.errors()).isEqualTo(2);
+        assertThat(result.rows().get(0).message())
+                .isEqualTo("member-operation is required when members are listed: use 'add' or 'delete'");
+    }
+
+    @Test
+    void emptyMembers_needNoMemberOperation_andUpdateAttributesOnly() throws IOException {
+        dir.group(ENG, "member", ALICE).attr(ENG, "description", "Old");
+
+        BulkImportResult result = run("cn,description,members,member-operation\nengineering,New,,\n");
+
+        assertThat(dir.writes).isEmpty();
+        verify(groupService).updateGroup(eq(dc), eq(ENG), any());
+        assertThat(result.rows().get(0).message()).isEqualTo("Updated description");
+    }
+
+    @Test
+    void newGroupOfNames_withoutMembers_isAnErrorAndIsNotCreated() throws IOException {
+        dir.problem("ghost", Outcome.MEMBER_NOT_FOUND);
+
+        BulkImportResult result = run("cn,description,members,member-operation\n"
+                + "engineering,Eng team,,\nsales,,ghost,add\n");
+
+        verify(groupService, never()).createGroup(any(), anyString(), any());
+        assertThat(result.errors()).isEqualTo(2);
+        assertThat(result.rows().get(0).message()).isEqualTo("A new groupOfNames group needs at least one member");
+        // The unresolvable member is still reported on the row.
+        assertThat(outcomes(result.rows().get(1))).containsExactly(Outcome.MEMBER_NOT_FOUND);
+    }
+
+    @Test
+    void newPosixGroup_withoutMembers_isCreated() throws IOException {
+        BulkImportResult result = run("cn,description\nengineering,Eng team\n", "memberUid", List.of("posixGroup"));
+
+        assertThat(createdAttrs(ENG)).doesNotContainKey("memberUid");
+        assertThat(result.created()).isEqualTo(1);
+    }
+
+    @Test
+    void emptyRowForANewGroup_doesNotStopALaterRowCreatingIt() throws IOException {
+        BulkImportResult result = run("cn,members,member-operation\nengineering,,\nengineering,alice,add\n");
+
+        assertThat(result.rows().get(0).status()).isEqualTo(Status.ERROR);
+        verify(groupService).createGroup(eq(dc), eq(ENG), any());
+        assertThat(result.rows().get(1).status()).isEqualTo(Status.CREATED);
+        assertThat(dir.writes).isEmpty();
     }
 
     // ── Permission ────────────────────────────────────────────────────────────
@@ -367,7 +429,7 @@ class BulkGroupServiceImportTest {
         dir.mayManageMembers = false;
 
         // Row 1 has no members, but nothing in the file runs once row 2 asks for one.
-        assertThatThrownBy(() -> run("cn,description,members\nsales,Sales,\nengineering,,alice\n"))
+        assertThatThrownBy(() -> run("cn,description,members,member-operation\nsales,Sales,,\nengineering,,alice,add\n"))
                 .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
         verify(groupService, never()).createGroup(any(), anyString(), any());
         assertThat(dir.writes).isEmpty();
@@ -376,18 +438,19 @@ class BulkGroupServiceImportTest {
     @Test
     void fileWithoutMembers_doesNotNeedManageMembers() throws IOException {
         dir.mayManageMembers = false;
+        dir.group(ENG, "member", ALICE);
 
         BulkImportResult result = run("cn,description,members\nengineering,Eng team,\n");
 
         assertThat(dir.memberChangeChecks).isZero();
-        assertThat(result.created()).isEqualTo(1);
+        assertThat(result.updated()).isEqualTo(1);
     }
 
     // ── Columns ───────────────────────────────────────────────────────────────
 
     @Test
     void exportedDnColumn_isIgnoredNotWrittenAsAttribute() throws IOException {
-        BulkImportResult result = run("dn,cn,description,member\n\"" + ENG + "\",engineering,Eng team,alice\n");
+        BulkImportResult result = run("dn,cn,description,member,member-operation\n\"" + ENG + "\",engineering,Eng team,alice,add\n");
 
         assertThat(createdAttrs(ENG)).doesNotContainKey("dn")
                 .containsEntry("description", List.of("Eng team"))
@@ -397,7 +460,7 @@ class BulkGroupServiceImportTest {
 
     @Test
     void excelByteOrderMark_onTheFirstHeader_isIgnored() throws IOException {
-        BulkImportResult result = run("﻿cn,members\nengineering,alice\n");
+        BulkImportResult result = run("\uFEFFcn,members,member-operation\nengineering,alice,add\n");
 
         verify(groupService).createGroup(eq(dc), eq(ENG), any());
         assertThat(result.created()).isEqualTo(1);

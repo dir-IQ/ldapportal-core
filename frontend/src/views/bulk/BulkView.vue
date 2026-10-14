@@ -335,8 +335,9 @@
         </div>
         <p class="text-xs text-gray-500">
           CSV columns: <code>cn</code> (required), <code>description</code>, <code>owner</code>,
-          <code>members</code> (pipe-separated; each a uid or a full DN),
-          <code>member-operation</code> (<code>add</code>, the default, or <code>delete</code> to remove the listed members from an existing group).
+          <code>members</code> (optional; pipe-separated, each a uid or a full DN),
+          <code>member-operation</code> (required when <code>members</code> is filled in: <code>add</code>, or <code>delete</code> to remove the listed members from an existing group).
+          A group that doesn't exist is created; a new <code>groupOfNames</code> or <code>groupOfUniqueNames</code> needs at least one member.
           A <code>dn</code> column, as written by export, is ignored. First row must be a header row.
           On an existing group, a <code>description</code>, <code>owner</code> or other attribute you provide replaces
           the current value; a blank or missing one leaves it unchanged.

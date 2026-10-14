@@ -300,9 +300,12 @@ Base DN:  dc=corp,dc=local
 - **Scheduled Reports** — Set up recurring reports with email or S3 delivery in the Reports section.
 - **Bulk Operations** — Import/export users via CSV in the Bulk Import/Export section.
   **Group import** creates groups and adds or removes their members from one CSV:
-  `cn`, optional attributes, `members` (separated by `|`; each a uid or a full DN) and
-  an optional `member-operation` column (`add` by default, or `delete` to remove the
-  listed members from an existing group). A `dn` column, as written by group export, is
+  `cn`, optional attributes, optional `members` (separated by `|`; each a uid or a full
+  DN) and `member-operation`, which is required whenever `members` is filled in (`add`, or
+  `delete` to remove the listed members from an existing group). Each row names its own
+  group; a group that doesn't exist is created (a new `groupOfNames` or
+  `groupOfUniqueNames` needs at least one member), while a `delete` for a missing group is
+  an error. A `dn` column, as written by group export, is
   ignored, so an exported file can be edited and re-imported. There is no conflict-handling
   setting: on an existing group, a `description`, `owner` or other attribute the row provides
   replaces the current value, and a blank or missing one leaves it unchanged. Preview shows whether each
