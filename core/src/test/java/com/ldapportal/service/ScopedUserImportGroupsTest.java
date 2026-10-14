@@ -65,8 +65,9 @@ class ScopedUserImportGroupsTest {
                 });
     }
 
+    /** A search result: LdapGroupService hands back lower-cased attribute names. */
     private static LdapGroup group(String dn, String... objectClasses) {
-        return new LdapGroup(dn, Map.of("objectClass", List.of(objectClasses)));
+        return new LdapGroup(dn, Map.of("objectclass", List.of(objectClasses)));
     }
 
     private void groupsUnder(String base, LdapGroup... found) {
