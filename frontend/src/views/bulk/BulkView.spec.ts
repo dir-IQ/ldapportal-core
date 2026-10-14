@@ -108,6 +108,29 @@ describe('BulkView — user import scoped to the active (sidebar) profile', () =
   })
 })
 
+describe('BulkView — user import preview issues', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('shows why a DN could not be resolved instead of just "missing"', async () => {
+    vi.mocked(previewCsv).mockResolvedValueOnce({ data: {
+      totalRows: 1,
+      rows: [{ rowNumber: 1, computedDn: null, attributes: {}, missingRequired: ['dn'],
+        message: "DN 'cn=Jane,ou=contractors,dc=x' is not within the import container 'ou=eng,dc=x'" }],
+    } } as never)
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    await w.find('#bulk-import-template').setValue('t1')
+    await attachUserFile(w)
+
+    await btnByText(w, 'Preview Import').trigger('click')
+    await flushPromises()
+
+    const issues = w.find('[data-testid="user-preview-issues"]').text()
+    expect(issues).toContain('is not within the import container')
+    expect(issues).not.toContain('missing: dn')
+  })
+})
+
 // Renders the template modal's slot so its form can be driven.
 const modalGlobal = {
   stubs: { ...global.stubs, AppModal: { template: '<div><slot/></div>' } },

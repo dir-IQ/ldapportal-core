@@ -270,7 +270,7 @@ public class BulkUserService {
                 String csvCol = cell.getKey();
                 String rawVal = cell.getValue();
                 if (rawVal == null || rawVal.isBlank()) continue;
-                if (dnFromColumn && csvCol.equalsIgnoreCase(dnSourceColumn)) continue;
+                if (dnFromColumn && isColumn(csvCol, dnSourceColumn)) continue;
                 String ldapAttr = colToAttr.attributeFor(csvCol);
                 if (ldapAttr == null) continue; // ignored, or unmapped under a template
                 attrs.put(ldapAttr, rawVal);
@@ -393,7 +393,7 @@ public class BulkUserService {
                 String rawVal = cell.getValue();
                 if (rawVal == null || rawVal.isBlank()) continue;
                 // The DN-source column carries the DN, not an attribute value.
-                if (dnFromColumn && csvCol.equalsIgnoreCase(dnSourceColumn)) continue;
+                if (dnFromColumn && isColumn(csvCol, dnSourceColumn)) continue;
 
                 String ldapAttr = colToAttr.attributeFor(csvCol);
                 if (ldapAttr == null) continue; // ignored, or unmapped under a template
@@ -402,6 +402,10 @@ public class BulkUserService {
 
             List<String> missing = new ArrayList<>();
             String dn;
+            // Why the DN couldn't be resolved (no value, not a DN, outside the
+            // import container, column not in the file); shown on the row so
+            // "missing dn" never hides the real reason.
+            String dnProblem = null;
             try {
                 dn = resolveDn(row, dnSourceColumn, targetKeyAttr, attrs.get(targetKeyAttr), parentDn);
                 // An explicit DN supplies the RDN attribute(s); reflect them in the
@@ -412,6 +416,7 @@ public class BulkUserService {
                 }
             } catch (IllegalArgumentException ex) {
                 dn = null;
+                dnProblem = ex.getMessage();
             }
 
             // Compare attrs (case-insensitive) against the required set.
@@ -432,12 +437,13 @@ public class BulkUserService {
                     .filter(a -> !present.contains(a.toLowerCase(java.util.Locale.ROOT)))
                     .forEach(missing::add);
 
-            previewRows.add(new BulkImportPreviewRow(rowNum, dn, attrs, missing));
+            previewRows.add(new BulkImportPreviewRow(rowNum, dn, attrs, missing,
+                    null, dnProblem, List.of(), List.of()));
         }
 
         boolean dnFromCol = dnSourceColumn != null && !dnSourceColumn.isBlank();
         List<String> unmapped = colToAttr.unmappedColumns(rows).stream()
-                .filter(c -> !(dnFromCol && c.equalsIgnoreCase(dnSourceColumn)))
+                .filter(c -> !(dnFromCol && isColumn(c, dnSourceColumn)))
                 .toList();
         return new BulkImportPreviewResult(rowNum, previewRows, unmapped);
     }
@@ -643,7 +649,7 @@ public class BulkUserService {
             String rawVal  = cell.getValue();
             if (rawVal == null || rawVal.isBlank()) continue;
             // The DN-source column carries the DN, not an attribute value.
-            if (dnFromColumn && csvCol.equalsIgnoreCase(dnSourceColumn)) continue;
+            if (dnFromColumn && isColumn(csvCol, dnSourceColumn)) continue;
 
             // null = ignored column, or a column the template doesn't mention;
             // without a template the header itself is the attribute name.
@@ -813,6 +819,16 @@ public class BulkUserService {
      *
      * @throws IllegalArgumentException with a row-friendly message on any failure
      */
+    /**
+     * Whether CSV header {@code header} is the column named {@code column}:
+     * case-insensitive, ignoring surrounding spaces and a byte-order mark, the
+     * same way template entries match headers.
+     */
+    static boolean isColumn(String header, String column) {
+        if (header == null || column == null) return false;
+        return header.replace("\uFEFF", "").trim().equalsIgnoreCase(column.replace("\uFEFF", "").trim());
+    }
+
     private String resolveDn(Map<String, String> row, String dnSourceColumn,
                              String keyAttr, String keyValue, String parentDn) {
         if (dnSourceColumn == null || dnSourceColumn.isBlank()) {
@@ -821,7 +837,15 @@ public class BulkUserService {
             }
             return buildDn(keyAttr, keyValue, parentDn);
         }
-        String raw = row.get(dnSourceColumn);
+        String header = row.keySet().stream()
+                .filter(h -> isColumn(h, dnSourceColumn))
+                .findFirst().orElse(null);
+        if (header == null) {
+            throw new IllegalArgumentException("The file has no '" + dnSourceColumn
+                    + "' column (the template reads the DN from it); columns are: "
+                    + String.join(", ", row.keySet()));
+        }
+        String raw = row.get(header);
         if (raw == null || raw.isBlank()) {
             throw new IllegalArgumentException("Missing DN value in column '" + dnSourceColumn + "'");
         }
