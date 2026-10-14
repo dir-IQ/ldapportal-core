@@ -69,7 +69,7 @@
               </select>
             </div>
             <!-- Creating, editing and deleting templates is its own feature
-                 (csv.template_manage), separate from running an import. -->
+                 (csv_template.manage), separate from running an import. -->
             <div v-if="canManageTemplates" class="relative" ref="menuRef">
               <button @click="showTemplateMenu = !showTemplateMenu" class="btn-primary whitespace-nowrap flex items-center gap-1">
                 Template <span class="text-xs">&#9660;</span>
@@ -892,7 +892,7 @@ const auth = useAuthStore()
 const canBulkImport      = computed(() => auth.hasFeature('bulk.import'))
 const canBulkExport      = computed(() => auth.hasFeature('bulk.export'))
 const canBulkDelete      = computed(() => auth.hasFeature('bulk.delete'))
-const canManageTemplates = computed(() => auth.hasFeature('csv.template_manage'))
+const canManageTemplates = computed(() => auth.hasFeature('csv_template.manage'))
 // Group import files that list members also need group.manage_members (enforced server-side).
 const canManageGroupMembers = computed(() => auth.hasFeature('group.manage_members'))
 
