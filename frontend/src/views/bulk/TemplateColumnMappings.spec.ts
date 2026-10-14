@@ -74,9 +74,10 @@ describe('TemplateColumnMappings', () => {
     const input = attrInput(w, 'Last')
     await input.trigger('focus')
     await input.setValue('s')
-    const options = w.findAll('[role="option"]')
-    expect(options.map(o => o.attributes('data-attr'))).toEqual(['sn'])
-    expect(options[0].text()).toContain('required')
+    // The list is teleported out of the component, so read it from the document.
+    const options = Array.from(document.querySelectorAll('[role="option"]'))
+    expect(options.map(o => o.getAttribute('data-attr'))).toEqual(['sn'])
+    expect(options[0].textContent).toContain('required')
     await input.trigger('keydown', { key: 'ArrowDown' })
     await input.trigger('keydown', { key: 'Enter' })
     expect(w.props('rows')[0].attribute).toBe('sn')
