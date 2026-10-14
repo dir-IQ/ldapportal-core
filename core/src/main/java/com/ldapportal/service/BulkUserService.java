@@ -6,6 +6,10 @@ import com.ldapportal.dto.csv.BulkImportPreviewRow;
 import com.ldapportal.dto.csv.BulkImportResult;
 import com.ldapportal.dto.csv.BulkImportRowResult;
 import com.ldapportal.dto.csv.CsvColumnMappingDto;
+import com.ldapportal.dto.csv.GroupMemberChange;
+import com.ldapportal.dto.csv.GroupMemberChange.Outcome;
+import com.ldapportal.dto.ldap.MembershipChangeRequest;
+import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.ConflictHandling;
 import com.ldapportal.entity.enums.DirectoryType;
@@ -33,6 +37,7 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
@@ -203,6 +208,31 @@ public class BulkUserService {
                                       ImportErrorHandling errorHandling,
                                       char fieldDelimiter,
                                       boolean passthroughUnmapped) throws IOException {
+        return importCsv(dc, csvInput, parentDn, targetKeyAttr, conflictHandling, columnMappings,
+                objectClasses, skipHeaderRow, dnSourceColumn, profileContext, requiredAttrs,
+                errorHandling, fieldDelimiter, passthroughUnmapped, null);
+    }
+
+    /**
+     * Full import variant. {@code groups} resolves and writes the group
+     * memberships a row lists (see {@link #planGroupChanges}); {@code null}
+     * refuses every listed group.
+     */
+    public BulkImportResult importCsv(DirectoryConnection dc,
+                                      InputStream csvInput,
+                                      String parentDn,
+                                      String targetKeyAttr,
+                                      ConflictHandling conflictHandling,
+                                      List<CsvColumnMappingDto> columnMappings,
+                                      List<String> objectClasses,
+                                      boolean skipHeaderRow,
+                                      String dnSourceColumn,
+                                      ProfileContext profileContext,
+                                      List<String> requiredAttrs,
+                                      ImportErrorHandling errorHandling,
+                                      char fieldDelimiter,
+                                      boolean passthroughUnmapped,
+                                      UserImportGroups groups) throws IOException {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
         }
@@ -231,8 +261,9 @@ public class BulkUserService {
 
         for (Map<String, String> row : rows) {
             rowNum++;
-            rowResults.add(processRow(dc, row, colToAttr, targetKeyAttr,
-                    parentDn, conflictHandling, objectClasses, dnSourceColumn, rowNum, profileContext));
+            BulkImportRowResult result = processRow(dc, row, colToAttr, targetKeyAttr,
+                    parentDn, conflictHandling, objectClasses, dnSourceColumn, rowNum, profileContext);
+            rowResults.add(withGroupChanges(result, row, colToAttr, dnSourceColumn, groups));
         }
 
         long created = countByStatus(rowResults, BulkImportRowResult.Status.CREATED);
@@ -360,6 +391,26 @@ public class BulkUserService {
                                                   String dnSourceColumn,
                                                   char fieldDelimiter,
                                                   boolean passthroughUnmapped) throws IOException {
+        return previewImport(csvInput, parentDn, targetKeyAttr, columnMappings, skipHeaderRow,
+                requiredAttrs, dnSourceColumn, fieldDelimiter, passthroughUnmapped, null);
+    }
+
+    /**
+     * Preview variant that also plans each row's group memberships with
+     * {@code groups}: every listed group is resolved (a {@code cn} must match
+     * exactly one group in scope), but current memberships aren't looked up,
+     * so a resolvable group shows as "will be added".
+     */
+    public BulkImportPreviewResult previewImport(InputStream csvInput,
+                                                  String parentDn,
+                                                  String targetKeyAttr,
+                                                  List<CsvColumnMappingDto> columnMappings,
+                                                  boolean skipHeaderRow,
+                                                  List<String> requiredAttrs,
+                                                  String dnSourceColumn,
+                                                  char fieldDelimiter,
+                                                  boolean passthroughUnmapped,
+                                                  UserImportGroups groups) throws IOException {
 
         CsvColumnMap colToAttr = CsvColumnMap.of(columnMappings, passthroughUnmapped);
         List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
@@ -417,8 +468,10 @@ public class BulkUserService {
                     .filter(a -> !present.contains(a.toLowerCase(java.util.Locale.ROOT)))
                     .forEach(missing::add);
 
+            List<GroupMemberChange> groupChanges = planGroupChanges(
+                    collectGroups(row, colToAttr), firstOrNull(valuesFor(attrs, "uid")), groups);
             previewRows.add(new BulkImportPreviewRow(rowNum, dn, previewValues(attrs), missing,
-                    null, dnProblem, List.of(), List.of()));
+                    null, dnProblem, groupChanges, List.of()));
         }
 
         boolean dnFromCol = dnSourceColumn != null && !dnSourceColumn.isBlank();
@@ -896,6 +949,7 @@ public class BulkUserService {
             if (rawVal == null || rawVal.isBlank()) continue;
             // The DN-source column carries the DN, not an attribute value.
             if (dnFromColumn && isColumn(csvCol, dnSourceColumn)) continue;
+            if (colToAttr.isGroupMemberships(csvCol)) continue; // memberships, not an attribute
             String ldapAttr = colToAttr.attributeFor(csvCol);
             if (ldapAttr == null) continue; // ignored, or unmapped under a template
 
@@ -926,6 +980,136 @@ public class BulkUserService {
         Map<String, String> out = new LinkedHashMap<>();
         attrs.forEach((k, v) -> out.put(k, String.join(" | ", v)));
         return out;
+    }
+
+    // ── Group memberships ─────────────────────────────────────────────────────
+
+    /**
+     * The groups a row lists in its group-memberships column, split like any
+     * multi-valued cell; a value repeated (ignoring case) is kept once.
+     */
+    static List<String> collectGroups(Map<String, String> row, CsvColumnMap colToAttr) {
+        List<String> out = new ArrayList<>();
+        for (Map.Entry<String, String> cell : row.entrySet()) {
+            if (!colToAttr.isGroupMemberships(cell.getKey())) continue;
+            for (String v : CsvUtils.splitMultiValue(cell.getValue())) {
+                if (out.stream().noneMatch(o -> o.equalsIgnoreCase(v))) out.add(v);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * One planned add per listed group: WILL_ADD when it can be written, else
+     * why not (no permission, not found, ambiguous, outside scope, not a group,
+     * listed twice, or a memberUid group for a user without a uid). Problems
+     * never fail the row: the user is still imported and the change is
+     * reported. Current memberships aren't looked up.
+     */
+    static List<GroupMemberChange> planGroupChanges(List<String> values, String userUid,
+                                                    UserImportGroups groups) {
+        if (values.isEmpty()) return List.of();
+        List<GroupMemberChange> out = new ArrayList<>(values.size());
+        Set<String> seenDns = new HashSet<>();
+        boolean permitted = groups != null && groups.mayManageMembers();
+        for (String value : values) {
+            if (!permitted) {
+                out.add(change(value, null, Outcome.REFUSED,
+                        "You don't have permission to manage group members"));
+                continue;
+            }
+            UserImportGroups.Target t = groups.resolve(value);
+            if (t.problem() != null) {
+                out.add(change(value, null, t.problem(), t.note()));
+            } else if (!seenDns.add(GroupImportMembers.normalizeDn(t.dn()))) {
+                out.add(change(value, t.dn(), Outcome.DUPLICATE, "This group is listed more than once"));
+            } else if ("memberUid".equalsIgnoreCase(t.memberAttribute()) && (userUid == null || userUid.isBlank())) {
+                out.add(change(value, t.dn(), Outcome.INVALID, "Group uses memberUid but this user has no uid"));
+            } else {
+                out.add(change(value, t.dn(), Outcome.WILL_ADD, null));
+            }
+        }
+        return out;
+    }
+
+    private static GroupMemberChange change(String value, String groupDn, Outcome outcome, String message) {
+        return new GroupMemberChange(value, groupDn, MembershipChangeRequest.Op.ADD, outcome, message, null);
+    }
+
+    /**
+     * Adds a created or overwritten user to the groups its row lists, through
+     * the governed membership path, and attaches the per-group outcomes to the
+     * row result. A row skipped as already existing leaves the user's groups
+     * as they are, and says so; an error row writes nothing.
+     */
+    private BulkImportRowResult withGroupChanges(BulkImportRowResult result, Map<String, String> row,
+                                                 CsvColumnMap colToAttr, String dnSourceColumn,
+                                                 UserImportGroups groups) {
+        List<String> values = collectGroups(row, colToAttr);
+        if (values.isEmpty()) return result;
+        if (result.status() == BulkImportRowResult.Status.SKIPPED) {
+            String msg = result.message() == null ? "Groups not changed" : result.message() + "; groups not changed";
+            return new BulkImportRowResult(result.rowNumber(), result.dn(), result.status(), msg);
+        }
+        if (result.status() == BulkImportRowResult.Status.ERROR) return result;
+
+        String uid = userUid(result.dn(), collectAttributes(row, colToAttr, dnSourceColumn));
+        List<GroupMemberChange> planned = planGroupChanges(values, uid, groups);
+        List<MembershipChangeRequest.Change> changes = new ArrayList<>();
+        Map<String, String> attrByDn = new LinkedHashMap<>();
+        for (GroupMemberChange c : planned) {
+            if (c.outcome() != Outcome.WILL_ADD) continue;
+            UserImportGroups.Target t = groups.resolve(c.member());
+            changes.add(new MembershipChangeRequest.Change(t.dn(), t.memberAttribute(), MembershipChangeRequest.Op.ADD));
+            attrByDn.put(GroupImportMembers.normalizeDn(t.dn()), t.memberAttribute());
+        }
+
+        Map<String, MembershipChangeResult.Item> byDn = new HashMap<>();
+        String failure = null;
+        if (!changes.isEmpty()) {
+            try {
+                for (MembershipChangeResult.Item it : groups.add(result.dn(), uid, changes).items()) {
+                    byDn.put(GroupImportMembers.normalizeDn(it.groupDn()), it);
+                }
+            } catch (RuntimeException e) {
+                log.warn("Bulk import: group memberships failed for {}: {}", result.dn(), e.getMessage());
+                failure = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            }
+        }
+
+        List<GroupMemberChange> outcomes = new ArrayList<>(planned.size());
+        for (GroupMemberChange c : planned) {
+            if (c.outcome() != Outcome.WILL_ADD) {
+                outcomes.add(c);
+                continue;
+            }
+            MembershipChangeResult.Item it = byDn.get(GroupImportMembers.normalizeDn(c.memberDn()));
+            if (it == null) {
+                outcomes.add(c.withOutcome(Outcome.ERROR, failure != null ? failure : "Not applied", null));
+                continue;
+            }
+            outcomes.add(switch (it.status()) {
+                case APPLIED -> c.withOutcome(Outcome.APPLIED, null, null);
+                case QUEUED_FOR_APPROVAL -> c.withOutcome(Outcome.QUEUED_FOR_APPROVAL, null, it.approvalId());
+                case REFUSED -> c.withOutcome(Outcome.REFUSED, it.message(), null);
+                case BLOCKED -> c.withOutcome(Outcome.BLOCKED, it.message(), null);
+                case ERROR -> c.withOutcome(Outcome.ERROR, it.message(), null);
+            });
+        }
+        return new BulkImportRowResult(result.rowNumber(), result.dn(), result.status(), result.message(), outcomes);
+    }
+
+    /** The user's uid: from the row, else from a {@code uid=} RDN. */
+    private static String userUid(String dn, Map<String, List<String>> attrs) {
+        String uid = firstOrNull(valuesFor(attrs, "uid"));
+        if (uid != null) return uid;
+        RDN rdn = dn == null ? null : leftmostRdn(dn);
+        if (rdn == null) return null;
+        String[] names = rdn.getAttributeNames();
+        for (int i = 0; i < names.length; i++) {
+            if ("uid".equalsIgnoreCase(names[i])) return rdn.getAttributeValues()[i];
+        }
+        return null;
     }
 
     private static String firstOrNull(List<String> values) {

@@ -34,6 +34,15 @@ import java.util.Set;
  */
 final class CsvColumnMap {
 
+    /**
+     * Mapping target for a column of groups to add the user to (user imports).
+     * Not a valid LDAP attribute name, so it can't collide with one.
+     */
+    static final String GROUP_MEMBERSHIPS = "@groups";
+
+    /** Header that means group memberships when there are no mappings for it. */
+    static final String GROUPS_COLUMN = "groups";
+
     /** csvColumn → ldapAttribute; a {@code null} value means "ignored". */
     private final Map<String, String> exact;
     private final Map<String, String> byLowerName;
@@ -81,6 +90,18 @@ final class CsvColumnMap {
         String lower = csvColumn.toLowerCase(Locale.ROOT);
         if (knownLower.contains(lower)) return byLowerName.get(lower);
         return passthroughUnmapped ? csvColumn : null;
+    }
+
+    /**
+     * Whether this column holds the user's group memberships rather than an
+     * attribute: mapped to {@link #GROUP_MEMBERSHIPS}, or, without mappings for
+     * it in passthrough mode, a column headed {@code groups}.
+     */
+    boolean isGroupMemberships(String csvColumn) {
+        if (!isKnown(csvColumn)) {
+            return passthroughUnmapped && GROUPS_COLUMN.equalsIgnoreCase(csvColumn.trim());
+        }
+        return GROUP_MEMBERSHIPS.equals(attributeFor(csvColumn));
     }
 
     /**

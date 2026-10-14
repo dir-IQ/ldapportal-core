@@ -77,4 +77,17 @@ describe('AttributeAutocomplete', () => {
     expect(shown()).toEqual([])
     expect(outer).not.toHaveBeenCalled()
   })
+
+  it('matches a special target by the start of a word in its label only', async () => {
+    const opts: SchemaAttr[] = [
+      { name: '@groups', required: false, label: 'Group memberships', hint: 'Adds the user to groups' },
+      ...attrs('sn', 'mail'),
+    ]
+    const wr = make(opts)
+    await type(wr, 'memb')
+    expect(shown()).toEqual(['@groups'])
+    expect(document.querySelector('[role="option"]')!.textContent).toContain('Adds the user to groups')
+    await type(wr, 's')
+    expect(shown()).toEqual(['sn'])
+  })
 })

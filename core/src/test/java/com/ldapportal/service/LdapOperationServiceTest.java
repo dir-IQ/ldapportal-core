@@ -914,7 +914,7 @@ class LdapOperationServiceTest {
                 List.of(BulkImportRowResult.created(1, createdDn),
                         BulkImportRowResult.error(2, null, "Missing value for key attribute 'uid'")));
         when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean())).thenReturn(importResult);
+                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean(), any())).thenReturn(importResult);
 
         BulkImportRequest req = new BulkImportRequest(
                 null, null, "ou=people,dc=example,dc=com", null, null, true, null, List.of(), null);
@@ -998,7 +998,7 @@ class LdapOperationServiceTest {
         when(ps.getEntityInDirectory(dirId, profileId)).thenReturn(profile);
 
         when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean()))
+                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean(), any()))
                 .thenReturn(new BulkImportResult(1, 1, 0, 0, 0,
                         List.of(BulkImportRowResult.created(1, "uid=a,ou=eng,dc=example,dc=com"))));
 
@@ -1015,7 +1015,7 @@ class LdapOperationServiceTest {
         verify(permissionService).requireDnWithinScope(admin, dirId, "ou=eng,dc=example,dc=com");
         verify(bulkUserService).importCsv(eq(dc), any(), eq("ou=eng,dc=example,dc=com"),
                 eq("uid"), any(), any(), eq(List.of("inetOrgPerson")),
-                anyBoolean(), any(), captor.capture(), any(), any(), eq(','), anyBoolean());
+                anyBoolean(), any(), captor.capture(), any(), any(), eq(','), anyBoolean(), any());
         // The chosen profile is used directly — never resolved from the DN.
         verify(ps, never()).resolveProfileForDn(any(), any());
         assertThat(captor.getValue().profileId()).isEqualTo(profileId);
@@ -1029,7 +1029,7 @@ class LdapOperationServiceTest {
         when(csvTemplateService.loadTemplate(eq(templateId), eq(dirId), any()))
                 .thenReturn(new com.ldapportal.entity.CsvMappingTemplate());
         when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean()))
+                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean(), any()))
                 .thenReturn(new BulkImportResult(0, 0, 0, 0, 0, List.of()));
 
         BulkImportRequest req = new BulkImportRequest(
@@ -1037,7 +1037,7 @@ class LdapOperationServiceTest {
         service.bulkImportUsers(dirId, adminPrincipal(), new java.io.ByteArrayInputStream(new byte[0]), req);
 
         verify(bulkUserService).importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), anyChar(), eq(false));
+                anyBoolean(), any(), any(), any(), any(), anyChar(), eq(false), any());
     }
 
     @Test
@@ -1045,7 +1045,7 @@ class LdapOperationServiceTest {
         DirectoryConnection dc = enabledDir(true);
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
         when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean()))
+                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean(), any()))
                 .thenReturn(new BulkImportResult(0, 0, 0, 0, 0, List.of()));
 
         BulkImportRequest req = new BulkImportRequest(
@@ -1053,7 +1053,7 @@ class LdapOperationServiceTest {
         service.bulkImportUsers(dirId, adminPrincipal(), new java.io.ByteArrayInputStream(new byte[0]), req);
 
         verify(bulkUserService).importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), anyChar(), eq(true));
+                anyBoolean(), any(), any(), any(), any(), anyChar(), eq(true), any());
     }
 
     @Test
@@ -1065,7 +1065,7 @@ class LdapOperationServiceTest {
         template.setFieldDelimiter(";");
         when(csvTemplateService.loadTemplate(eq(templateId), eq(dirId), any())).thenReturn(template);
         when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean()))
+                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean(), any()))
                 .thenReturn(new BulkImportResult(0, 0, 0, 0, 0, List.of()));
 
         BulkImportRequest req = new BulkImportRequest(
@@ -1074,7 +1074,7 @@ class LdapOperationServiceTest {
                 new java.io.ByteArrayInputStream(new byte[0]), req);
 
         verify(bulkUserService).importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), eq(';'), anyBoolean());
+                anyBoolean(), any(), any(), any(), any(), eq(';'), anyBoolean(), any());
     }
 
     @Test
@@ -1086,7 +1086,7 @@ class LdapOperationServiceTest {
         template.setFieldDelimiter(";");
         when(csvTemplateService.loadTemplate(eq(templateId), eq(dirId), any())).thenReturn(template);
         when(bulkUserService.importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean()))
+                anyBoolean(), any(), any(), any(), any(), anyChar(), anyBoolean(), any()))
                 .thenReturn(new BulkImportResult(0, 0, 0, 0, 0, List.of()));
 
         BulkImportRequest req = new BulkImportRequest(
@@ -1095,7 +1095,7 @@ class LdapOperationServiceTest {
                 new java.io.ByteArrayInputStream(new byte[0]), req);
 
         verify(bulkUserService).importCsv(any(), any(), any(), any(), any(), any(), any(),
-                anyBoolean(), any(), any(), any(), any(), eq('\t'), anyBoolean());
+                anyBoolean(), any(), any(), any(), any(), eq('\t'), anyBoolean(), any());
     }
 
     @Test

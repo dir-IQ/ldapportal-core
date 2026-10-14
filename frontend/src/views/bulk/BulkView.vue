@@ -115,12 +115,28 @@
             </label>
           </div>
         </div>
-        <p class="text-xs text-gray-500" data-testid="user-import-multivalue-hint">
-          For a multi-valued attribute, separate the values in one cell with <code>|</code>
-          (write <code>\|</code> for a literal pipe), e.g.
-          <code>"cn=Group A,ou=Groups,dc=example,dc=com|cn=Group B,ou=Groups,dc=example,dc=com"</code>.
-          Quote cells that contain the field delimiter.
-        </p>
+        <FileFormatHelp title="User import file format">
+          <ul class="list-disc pl-4 space-y-1.5" data-testid="user-import-format">
+            <li>Columns follow the selected template's mappings; columns the template doesn't mention aren't imported.</li>
+            <li>For a multi-valued attribute, separate the values in one cell with <code>|</code>
+              (write <code>\|</code> for a literal pipe).</li>
+            <li><code>groups</code> (or the column the template maps to group memberships) is optional: groups to add
+              the user to, separated by <code>|</code>. Each group is a <code>cn</code>, which must match exactly one
+              group you can manage, or a full DN.</li>
+            <li>Groups are only added, never removed. They apply to new users and to users updated by
+              “Overwrite existing”; users skipped as already existing are left as they are. A group that can't be
+              added is reported, and the user is still imported.</li>
+            <li class="font-medium text-gray-900">Wrap any cell that contains DNs in double quotes. The commas inside
+              a DN otherwise split the cell into separate columns.</li>
+            <li data-testid="user-import-governance-note">Adding users to groups needs the Manage group members permission
+              and follows the same approval{{ auth.isCommunityDistribution ? '' : ' and separation-of-duties' }} rules as
+              editing groups by hand.</li>
+          </ul>
+          <p class="font-medium text-gray-900 mt-3 mb-1">Example</p>
+          <pre class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre overflow-x-auto">uid,cn,sn,mail,groups
+jsmith,John Smith,Smith,jsmith@example.com,"admins|cn=Support,ou=Groups,dc=example,dc=com"
+adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
+        </FileFormatHelp>
 
         <!-- Template-driven read-only fields. 12-col grid:
              Object Class (3) + RDN Attribute / DN Column (2) + Other Attributes (4)
@@ -201,6 +217,12 @@
             {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row is' : 'rows are' }}
             missing required attributes — they will fail at import.
           </p>
+          <p v-if="userPreviewGroupProblemCount" data-testid="user-preview-group-problems"
+             class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
+            {{ userPreviewGroupProblemCount }} group {{ userPreviewGroupProblemCount === 1 ? 'change' : 'changes' }}
+            can't be applied (no permission, not found, ambiguous or outside your scope) and will be reported as errors.
+            The users themselves still import.
+          </p>
           <ExpandablePreview title="Import preview">
             <table class="w-full text-xs">
               <thead class="bg-blue-100 sticky top-0">
@@ -209,6 +231,7 @@
                   <th class="px-2 py-1 text-left font-medium text-blue-700">DN</th>
                   <th v-for="attr in userPreviewAttrCols" :key="attr"
                       class="px-2 py-1 text-left font-medium text-blue-700 whitespace-nowrap">{{ attr }}</th>
+                  <th v-if="userPreviewHasGroups" class="px-2 py-1 text-left font-medium text-blue-700">Groups</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Issues</th>
                 </tr>
               </thead>
@@ -219,6 +242,14 @@
                   <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td v-for="attr in userPreviewAttrCols" :key="attr"
                       class="px-2 py-1 font-mono text-[13px] text-gray-700 break-all">{{ row.attributes?.[attr] ?? '' }}</td>
+                  <td v-if="userPreviewHasGroups" class="px-2 py-1 pr-4 align-top" data-testid="user-preview-groups">
+                    <ul v-if="row.memberChanges?.length" class="space-y-1">
+                      <li v-for="(c, ci) in row.memberChanges" :key="ci" :title="c.memberDn || c.member">
+                        <span class="block font-mono text-gray-800 break-all">{{ c.member }}</span>
+                        <span class="block" :class="memberOutcomeClass(c.outcome)">{{ memberOutcomeLabel(c) }}</span>
+                      </li>
+                    </ul>
+                  </td>
                   <td class="px-2 py-1 text-amber-700" data-testid="user-preview-issues">
                     <!-- A DN that couldn't be resolved says why (outside the
                          container, not a DN, column not in the file). -->
@@ -260,9 +291,26 @@
           <div class="text-center"><p class="text-2xl font-bold text-yellow-600">{{ importResult.skipped }}</p><p class="text-xs text-gray-500">Skipped</p></div>
           <div class="text-center"><p class="text-2xl font-bold text-red-600">{{ importResult.errors }}</p><p class="text-xs text-gray-500">Errors</p></div>
         </div>
+        <p v-if="userImportQueuedCount" data-testid="user-import-groups-queued"
+           class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
+          {{ userImportQueuedCount }} group {{ userImportQueuedCount === 1 ? 'membership is' : 'memberships are' }}
+          waiting for approval and will apply once approved.
+        </p>
         <ul v-if="importResult.rows?.filter(r => r.status === 'ERROR').length" class="space-y-1">
           <li v-for="r in importResult.rows.filter(r => r.status === 'ERROR')" :key="r.rowNumber" class="text-red-600 text-xs">
             Row {{ r.rowNumber }}: {{ r.message }}
+          </li>
+        </ul>
+        <!-- Users that imported but couldn't be added to some of their groups. -->
+        <ul v-if="userImportGroupFailures.length" class="space-y-1 mt-2" data-testid="user-import-group-failures">
+          <li v-for="r in userImportGroupFailures" :key="r.rowNumber" class="text-red-600 text-xs">
+            Row {{ r.rowNumber }}<span v-if="r.dn" class="font-mono"> ({{ r.dn }})</span>: imported, but not added to
+            {{ failedMemberChanges(r).length === 1 ? 'a group' : `${failedMemberChanges(r).length} groups` }}
+            <ul class="ml-4 mt-0.5 space-y-0.5">
+              <li v-for="(c, ci) in failedMemberChanges(r)" :key="ci">
+                <span class="font-mono">{{ c.member }}</span>: {{ memberOutcomeLabel(c) }}
+              </li>
+            </ul>
           </li>
         </ul>
         <!-- Skipped rows are expected outcomes (existing entries left as-is per
@@ -678,6 +726,9 @@ engineering,,"uid=old,ou=People,dc=example,dc=com",delete</pre>
                     <code v-if="isSampleDnColumn(c)" data-testid="sample-dn-column"
                           class="font-mono text-[11px] bg-blue-50 border border-blue-300 text-blue-800 rounded px-1.5 py-0.5"
                           title="Each entry's DN is read from this column, so it isn't listed under Column Mappings">{{ c }}<span class="font-sans"> · DN column</span></code>
+                    <code v-else-if="isSampleGroupsColumn(c)" data-testid="sample-groups-column"
+                          class="font-mono text-[11px] bg-violet-50 border border-violet-300 text-violet-800 rounded px-1.5 py-0.5"
+                          title="Each user is added to the groups listed in this column">{{ c }}<span class="font-sans"> · group memberships</span></code>
                     <code v-else class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">{{ c }}</code>
                   </template>
                 </template>
@@ -756,7 +807,7 @@ import TemplateColumnMappings from './TemplateColumnMappings.vue'
 import FileFormatHelp from './FileFormatHelp.vue'
 import {
   applySampleColumns, checkMappings, dnLikeColumns, entriesToRows, parseSampleHeader, repeatedColumns,
-  rowsToEntries, sameColumn, suggestAttributes, type MappingRow, type SchemaAttr,
+  isGroupMemberships, rowsToEntries, sameColumn, suggestAttributes, type MappingRow, type SchemaAttr,
 } from './templateMapping'
 import { useListTypeahead } from '@/composables/useListTypeahead'
 
@@ -1131,6 +1182,10 @@ function isSampleDnColumn(c: string): boolean {
   return sameColumn(c, effectiveDnColumn.value)
 }
 
+function isSampleGroupsColumn(c: string): boolean {
+  return templateForm.value.rows.some(r => isGroupMemberships(r.attribute) && sameColumn(r.column, c))
+}
+
 function useSampleDnColumn(c: string) {
   templateForm.value.dnSourceColumn = c
 }
@@ -1251,7 +1306,7 @@ const otherTemplateAttrs = computed(() => {
   const rdn = t.dnSourceColumn ? '' : (t.targetKeyAttribute || '').toLowerCase()
   return (t.entries || [])
     .filter(e => e.ldapAttribute && e.ldapAttribute.toLowerCase() !== rdn)
-    .map(e => e.ldapAttribute)
+    .map(e => isGroupMemberships(e.ldapAttribute) ? `${e.csvColumn} (group memberships)` : e.ldapAttribute)
     .join(', ')
 })
 
@@ -1285,6 +1340,27 @@ const userPreviewAttrCols = computed<string[]>(() => {
   }
   return cols
 })
+
+/** Whether any preview row lists groups, which adds a Groups column. */
+const userPreviewHasGroups = computed(() =>
+  (previewResult.value?.rows || []).some(r => r.memberChanges?.length))
+
+/** Group changes in the user preview that can't be applied. */
+const userPreviewGroupProblemCount = computed(() =>
+  (previewResult.value?.rows || [])
+    .flatMap(r => r.memberChanges || [])
+    .filter(c => FAILED_MEMBER_OUTCOMES.has(c.outcome)).length
+)
+
+/** Imported (or updated) users with at least one group that couldn't be added. */
+const userImportGroupFailures = computed(() =>
+  (importResult.value?.rows || []).filter(r => r.status !== 'ERROR' && failedMemberChanges(r).length))
+
+const userImportQueuedCount = computed(() =>
+  (importResult.value?.rows || [])
+    .flatMap(r => r.memberChanges || [])
+    .filter(c => c.outcome === 'QUEUED_FOR_APPROVAL').length
+)
 
 /** Same idea, for the group import preview. */
 const groupPreviewWarningCount = computed(() =>

@@ -124,4 +124,27 @@ describe('TemplateColumnMappings', () => {
     const w = make([{ column: 'Column 1', attribute: '' }], { samples: { 'Column 1': 'alice' } })
     expect(w.find('[data-column="Column 1"]').text()).toMatch(/Column 1\s+e\.g\. alice/)
   })
+
+  it('shows a group memberships row as a chip that can be cleared', async () => {
+    const w = make([{ column: 'groups', attribute: '@groups' }], { fromSample: true })
+    const chip = w.find('[data-testid="group-memberships-chip"]')
+    expect(chip.text()).toContain('Group memberships')
+    expect(statuses(w)).toEqual(['groups'])
+    expect(w.text()).toContain('adds the user to the listed groups')
+    expect(w.text()).toContain('group memberships')
+    await chip.find('button[aria-label="Map groups to an attribute instead"]').trigger('click')
+    expect(w.props('rows')[0].attribute).toBe('')
+  })
+
+  it('offers group memberships first in the suggestions', async () => {
+    const w = make([{ column: 'Teams', attribute: '' }])
+    const input = attrInput(w, 'Teams')
+    await input.trigger('focus')
+    const first = document.querySelector('[role="option"]')!
+    expect(first.getAttribute('data-attr')).toBe('@groups')
+    expect(first.textContent).toContain('Group memberships')
+    await input.trigger('keydown', { key: 'ArrowDown' })
+    await input.trigger('keydown', { key: 'Enter' })
+    expect(w.props('rows')[0].attribute).toBe('@groups')
+  })
 })

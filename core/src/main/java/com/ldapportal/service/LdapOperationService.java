@@ -1114,7 +1114,7 @@ public class LdapOperationService {
         boolean passthroughUnmapped = req.templateId() == null;
         return bulkUserService.previewImport(
                 csvInput, parentDn, targetKeyAttr, mappings, skipHeader, requiredAttrs, dnSourceColumn,
-                delimiter, passthroughUnmapped);
+                delimiter, passthroughUnmapped, userImportGroups(dc, directoryId, principal));
     }
 
     /**
@@ -1215,7 +1215,8 @@ public class LdapOperationService {
         BulkImportResult result = bulkUserService.importCsv(
                 dc, csvInput, parentDn, targetKeyAttr, conflictHandling, mappings,
                 objectClasses, skipHeader, dnSourceColumn, profileContext,
-                requiredAttrs, errorHandling, delimiter, passthroughUnmapped);
+                requiredAttrs, errorHandling, delimiter, passthroughUnmapped,
+                userImportGroups(dc, directoryId, principal));
 
         // Fold the created DNs into the detail so the audit trail names exactly
         // which users were added — symmetric with bulkDelete's deletedDns.
@@ -1257,6 +1258,8 @@ public class LdapOperationService {
         if (effectiveAttrs.isEmpty() && templateId != null) {
             csvTemplateService.loadEntries(templateId).stream()
                     .filter(e -> !e.isIgnored() && e.getLdapAttribute() != null)
+                    // Group memberships are written to groups, not read back as an attribute.
+                    .filter(e -> !CsvColumnMap.GROUP_MEMBERSHIPS.equals(e.getLdapAttribute()))
                     .map(CsvMappingTemplateEntry::getLdapAttribute)
                     .forEach(effectiveAttrs::add);
         }
@@ -1637,6 +1640,18 @@ public class LdapOperationService {
                                                   AuthPrincipal principal) {
         return new ScopedGroupImportMembers(dc, directoryId, principal, permissionService,
                 userService, groupService,
+                (memberDn, memberUid, changes) ->
+                        applyMembershipChanges(directoryId, principal, memberDn, memberUid, changes));
+    }
+
+    /**
+     * Group resolution and governed member writes for the group memberships a
+     * user import lists, run by {@code principal}: each add goes through
+     * {@link #applyMembershipChanges(UUID, AuthPrincipal, String, String, List)}.
+     */
+    private UserImportGroups userImportGroups(DirectoryConnection dc, UUID directoryId,
+                                              AuthPrincipal principal) {
+        return new ScopedUserImportGroups(dc, directoryId, principal, permissionService, groupService,
                 (memberDn, memberUid, changes) ->
                         applyMembershipChanges(directoryId, principal, memberDn, memberUid, changes));
     }
