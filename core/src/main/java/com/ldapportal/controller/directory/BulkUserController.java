@@ -163,6 +163,9 @@ public class BulkUserController {
      *                   when empty and {@code templateId} is set, the template's
      *                   attribute list is used; otherwise all attributes are returned
      * @param templateId optional saved template to derive the attribute list from
+     * @param includeGroups add a {@code groups} column listing each user's groups
+     *                   (also added when {@code groups} is among the attributes,
+     *                   or the template maps a column to group memberships)
      */
     @GetMapping(value = "/export", produces = "text/csv")
     @RequiresFeature(FeatureKey.BULK_EXPORT)
@@ -172,7 +175,8 @@ public class BulkUserController {
             @RequestParam(required = false) String filter,
             @RequestParam(required = false) String baseDn,
             @RequestParam(required = false, defaultValue = "") String attributes,
-            @RequestParam(required = false) UUID templateId) throws IOException {
+            @RequestParam(required = false) UUID templateId,
+            @RequestParam(required = false, defaultValue = "false") boolean includeGroups) throws IOException {
 
         rateLimiter.check(principal.username(), "bulk-export");
         List<String> attrList = attributes.isBlank()
@@ -180,7 +184,7 @@ public class BulkUserController {
                 : Arrays.stream(attributes.split(",")).map(String::trim).toList();
 
         byte[] csv = service.bulkExportUsers(
-                directoryId, principal, filter, baseDn, attrList, templateId);
+                directoryId, principal, filter, baseDn, attrList, templateId, includeGroups);
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"users.csv\"")

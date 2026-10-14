@@ -52,7 +52,7 @@ vi.mock('@/api/csvTemplates', () => ({
   createContainer: vi.fn(),
 }))
 
-import { previewCsv, importCsv, listCsvTemplates, updateCsvTemplate, previewGroupCsv, importGroupCsv } from '@/api/csvTemplates'
+import { previewCsv, importCsv, exportCsv, listCsvTemplates, updateCsvTemplate, previewGroupCsv, importGroupCsv } from '@/api/csvTemplates'
 import { getObjectClassesBulk, listObjectClasses } from '@/api/schema'
 // The view registers an unsaved-changes guard (and reads the sidebar
 // picker) through real Pinia stores; give every test a fresh instance.
@@ -964,5 +964,25 @@ describe('BulkView — user import group memberships', () => {
     expect(panel).toContain('Groups are only added, never removed')
     expect(panel).toContain('Wrap any cell that contains DNs in double quotes')
     expect(w.find('[data-testid="user-import-governance-note"]').text()).toContain('separation-of-duties')
+  })
+})
+
+describe('BulkView — user export groups column', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('asks for the groups column only when the box is ticked', async () => {
+    vi.mocked(exportCsv).mockResolvedValue({ data: new Blob(['x']) } as never)
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    await btnByText(w, 'Export').trigger('click')
+
+    await btnByText(w, 'Download CSV').trigger('click')
+    await flushPromises()
+    expect(vi.mocked(exportCsv).mock.calls[0][1]).toMatchObject({ includeGroups: undefined })
+
+    await w.find('[data-testid="export-include-groups"]').setValue(true)
+    await btnByText(w, 'Download CSV').trigger('click')
+    await flushPromises()
+    expect(vi.mocked(exportCsv).mock.calls[1][1]).toMatchObject({ includeGroups: true, attributes: 'cn,mail,uid' })
   })
 })

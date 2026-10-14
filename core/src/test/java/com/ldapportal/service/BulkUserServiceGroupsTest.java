@@ -284,4 +284,31 @@ class BulkUserServiceGroupsTest {
         assertThat(outcomes(row.memberChanges())).containsExactly(Outcome.ERROR, Outcome.MEMBER_NOT_FOUND);
         assertThat(row.memberChanges().get(0).message()).isEqualTo("directory unavailable");
     }
+
+    // ── Export ────────────────────────────────────────────────────────────────
+
+    @Test
+    void export_withAGroupIndex_addsAGroupsColumnLast_andFetchesUidForMemberUidGroups() throws IOException {
+        var index = com.ldapportal.ldap.UserGroupIndex.of(List.of(
+                new com.ldapportal.ldap.model.LdapGroup(ADMINS, Map.of("cn", List.of("admins"),
+                        "member", List.of("uid=jsmith," + PARENT))),
+                new com.ldapportal.ldap.model.LdapGroup(SUPPORT, Map.of("cn", List.of("Support"),
+                        "uniquemember", List.of("uid=jsmith," + PARENT))),
+                new com.ldapportal.ldap.model.LdapGroup(POSIX, Map.of("cn", List.of("devs"),
+                        "memberuid", List.of("jsmith")))));
+        var user = new com.ldapportal.ldap.model.LdapUser("uid=jsmith," + PARENT,
+                Map.of("mail", List.of("j@x"), "uid", List.of("jsmith")));
+        org.mockito.Mockito.doAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            java.util.function.Consumer<com.ldapportal.ldap.model.LdapUser> c = inv.getArgument(3);
+            c.accept(user);
+            return null;
+        }).when(userService).processUsers(eq(dc), anyString(), eq(PARENT), any(), eq("mail"), eq("uid"));
+
+        byte[] csv = service.exportCsvFromBases(dc, null, List.of(PARENT), List.of("mail"), index);
+
+        String out = new String(csv, StandardCharsets.UTF_8);
+        assertThat(out).startsWith("\"dn\",\"mail\",\"groups\"\r\n");
+        assertThat(out).contains("\"j@x\",\"admins|Support|devs\"");
+    }
 }
