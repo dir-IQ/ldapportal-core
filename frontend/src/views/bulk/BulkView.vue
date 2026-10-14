@@ -341,7 +341,9 @@
           A <code>dn</code> column, as written by export, is ignored. First row must be a header row.
           On an existing group, a <code>description</code>, <code>owner</code> or other attribute you provide replaces
           the current value; a blank or missing one leaves it unchanged.
-          Member changes on existing groups follow the same approval and separation-of-duties rules as editing them by hand.
+          <span data-testid="group-import-governance-note">
+            Member changes on existing groups follow the same approval{{ auth.isCommunityDistribution ? '' : ' and separation-of-duties' }} rules as editing them by hand.
+          </span>
         </p>
         <p v-if="!canManageGroupMembers" data-testid="group-import-no-member-permission"
            class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
