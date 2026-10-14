@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -146,7 +147,9 @@ class BulkGroupServiceImportTest {
 
     @Test
     void importCsv_memberOperationDelete_skipsValuesThatAreNotMembers() throws IOException {
-        doThrow(ldapFailure(ResultCode.NO_SUCH_ATTRIBUTE))
+        // Only uid=bob is stubbed; lenient so the unstubbed uid=alice call
+        // isn't flagged by strict stubs as an argument mismatch.
+        lenient().doThrow(ldapFailure(ResultCode.NO_SUCH_ATTRIBUTE))
                 .when(groupService).removeMember(dc, GROUP_DN, "member", "uid=bob");
         String content = "cn,members,member-operation\nengineering,uid=alice|uid=bob,DELETE\n";
 
@@ -190,7 +193,9 @@ class BulkGroupServiceImportTest {
     @Test
     void importCsv_memberOperationDelete_rejectedRemoval_isAnErrorNamingTheMember() throws IOException {
         // e.g. removing the last member of a groupOfNames
-        doThrow(ldapFailure(ResultCode.OBJECT_CLASS_VIOLATION))
+        // Only uid=bob is stubbed; lenient so the unstubbed uid=alice call
+        // isn't flagged by strict stubs as an argument mismatch.
+        lenient().doThrow(ldapFailure(ResultCode.OBJECT_CLASS_VIOLATION))
                 .when(groupService).removeMember(dc, GROUP_DN, "member", "uid=bob");
         String content = "cn,members,member-operation\nengineering,uid=alice|uid=bob,delete\n";
 
