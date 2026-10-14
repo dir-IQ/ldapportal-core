@@ -213,8 +213,11 @@
                   <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td v-for="attr in userPreviewAttrCols" :key="attr"
                       class="px-2 py-1 font-mono text-[13px] text-gray-700 break-all">{{ row.attributes?.[attr] ?? '' }}</td>
-                  <td class="px-2 py-1 text-amber-700">
-                    <span v-if="row.missingRequired?.length"
+                  <td class="px-2 py-1 text-amber-700" data-testid="user-preview-issues">
+                    <!-- A DN that couldn't be resolved says why (outside the
+                         container, not a DN, column not in the file). -->
+                    <span v-if="row.message">{{ row.message }}</span>
+                    <span v-else-if="row.missingRequired?.length"
                           :title="`Missing required: ${row.missingRequired.join(', ')}`">
                       missing: {{ row.missingRequired.join(', ') }}
                     </span>

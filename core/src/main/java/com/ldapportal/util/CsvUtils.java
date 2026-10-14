@@ -198,7 +198,12 @@ public final class CsvUtils {
         String[] headers;
         int dataStart;
         if (hasHeaderRow) {
-            headers = rawRows.get(0);
+            headers = rawRows.get(0).clone();
+            // Excel's "CSV UTF-8" starts the file with a byte-order mark, which
+            // would otherwise become part of the first header's name.
+            if (headers.length > 0 && headers[0] != null && headers[0].startsWith("\uFEFF")) {
+                headers[0] = headers[0].substring(1);
+            }
             dataStart = 1;
         } else {
             int maxCols = rawRows.stream().mapToInt(r -> r.length).max().orElse(0);

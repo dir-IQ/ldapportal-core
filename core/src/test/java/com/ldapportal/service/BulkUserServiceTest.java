@@ -772,4 +772,64 @@ class BulkUserServiceTest {
         // The service requests at most 2 — enough for the caller to flag AMBIGUOUS.
         assertThat(dns).hasSize(2);
     }
+
+    // ── DN column lookup ──────────────────────────────────────────────────────
+
+    @Test
+    void previewImport_dnColumn_matchesHeaderCaseInsensitivelyAndIgnoresSpaces() throws IOException {
+        // Template reads the DN from "dn"; the file's header is " DN ".
+        String csvContent = " DN ,mail\n\"cn=Jane,ou=people,dc=example,dc=com\",jane@example.com\n";
+
+        var result = service.previewImport(csv(csvContent), "ou=people,dc=example,dc=com",
+                "uid", List.of(), true, List.of(), "dn");
+
+        assertThat(result.rows().get(0).computedDn()).isEqualTo("cn=Jane,ou=people,dc=example,dc=com");
+        assertThat(result.rows().get(0).missingRequired()).isEmpty();
+        assertThat(result.rows().get(0).attributes()).doesNotContainKey(" DN ");
+    }
+
+    @Test
+    void previewImport_dnColumn_firstColumnBehindAnExcelByteOrderMark_resolves() throws IOException {
+        String csvContent = "\uFEFFdn,mail\n\"cn=Jane,ou=people,dc=example,dc=com\",jane@example.com\n";
+
+        var result = service.previewImport(csv(csvContent), "ou=people,dc=example,dc=com",
+                "uid", List.of(), true, List.of(), "dn");
+
+        assertThat(result.rows().get(0).computedDn()).isEqualTo("cn=Jane,ou=people,dc=example,dc=com");
+    }
+
+    @Test
+    void previewImport_dnOutsideTheImportContainer_saysSoInsteadOfJustMissing() throws IOException {
+        String csvContent = "dn,mail\n\"cn=Jane,ou=contractors,dc=example,dc=com\",jane@example.com\n";
+
+        var result = service.previewImport(csv(csvContent), "ou=people,dc=example,dc=com",
+                "uid", List.of(), true, List.of(), "dn");
+
+        assertThat(result.rows().get(0).computedDn()).isNull();
+        assertThat(result.rows().get(0).missingRequired()).contains("dn");
+        assertThat(result.rows().get(0).message())
+                .isEqualTo("DN 'cn=Jane,ou=contractors,dc=example,dc=com' is not within the import container "
+                        + "'ou=people,dc=example,dc=com'");
+    }
+
+    @Test
+    void previewImport_dnColumnNotInTheFile_namesTheColumnsThatAre() throws IOException {
+        var result = service.previewImport(csv("userdn,mail\n\"cn=Jane,ou=people,dc=example,dc=com\",j@x\n"),
+                "ou=people,dc=example,dc=com", "uid", List.of(), true, List.of(), "dn");
+
+        assertThat(result.rows().get(0).message())
+                .isEqualTo("The file has no 'dn' column (the template reads the DN from it); columns are: userdn, mail");
+    }
+
+    @Test
+    void importCsv_dnColumn_matchesHeaderCaseInsensitively() throws IOException {
+        BulkImportResult result = importWithDnColumn("DN,mail\n\"cn=Jane,ou=people,dc=example,dc=com\",j@x\n",
+                "ou=people,dc=example,dc=com", ConflictHandling.SKIP, "dn");
+
+        assertThat(result.created()).isEqualTo(1);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> attrs = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(eq(dc), eq("cn=Jane,ou=people,dc=example,dc=com"), attrs.capture(), any());
+        assertThat(attrs.getValue()).doesNotContainKey("DN");
+    }
 }

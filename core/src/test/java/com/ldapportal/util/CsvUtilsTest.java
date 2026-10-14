@@ -87,4 +87,15 @@ class CsvUtilsTest {
                     .isInstanceOf(IllegalArgumentException.class);
         }
     }
+
+    @Test
+    void parse_dropsExcelByteOrderMarkFromTheFirstHeader() throws IOException {
+        String content = "\uFEFFdn,mail\n\"cn=Jane,ou=people,dc=example,dc=com\",jane@example.com\n";
+
+        List<Map<String, String>> rows = CsvUtils.parse(
+                new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8)), true, ',');
+
+        assertThat(rows.get(0)).containsOnlyKeys("dn", "mail")
+                .containsEntry("dn", "cn=Jane,ou=people,dc=example,dc=com");
+    }
 }
