@@ -7,6 +7,7 @@
         <template v-if="visible.length">
           <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-700">{{ counts.mapped }} mapped</span>
           <span v-if="counts.ignored" class="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">{{ counts.ignored }} ignored</span>
+          <span v-if="counts.groups" class="px-2 py-0.5 rounded-full text-xs font-medium bg-violet-50 text-violet-800">group memberships</span>
         </template>
         <span v-if="check.missingRequired.length" class="px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700">
           {{ check.missingRequired.length }} required {{ check.missingRequired.length === 1 ? 'attribute' : 'attributes' }} not mapped
@@ -45,10 +46,20 @@
             </span>
           </div>
 
-          <span class="text-center" :class="statusOf(v.index) === 'mapped' ? 'text-blue-600' : 'text-gray-300'" aria-hidden="true">→</span>
+          <span class="text-center" :class="arrowClass(v.index)" aria-hidden="true">→</span>
 
           <div class="px-2 min-w-0">
-            <AttributeAutocomplete :model-value="v.row.attribute" :options="suggestions"
+            <!-- Group memberships aren't an attribute: show the target as a
+                 chip that can be cleared to type an attribute instead. -->
+            <div v-if="statusOf(v.index) === 'groups'" class="flex items-center gap-1" data-testid="group-memberships-chip">
+              <span class="flex-1 min-w-0 truncate rounded-md border border-violet-300 bg-violet-50 px-2 py-1 text-xs font-medium text-violet-800">
+                Group memberships <span class="font-normal text-violet-700">· add only</span>
+              </span>
+              <button type="button" class="text-gray-400 hover:text-gray-600 text-base leading-none px-1"
+                      :aria-label="`Map ${columnLabel(v.row, n)} to an attribute instead`"
+                      @click="setAttribute(v.index, '')">&times;</button>
+            </div>
+            <AttributeAutocomplete v-else :model-value="v.row.attribute" :options="suggestions"
                                    :label="`LDAP attribute for ${columnLabel(v.row, n)}`"
                                    :invalid="(check.rows[v.index]?.errors.length ?? 0) > 0"
                                    :placeholder="v.row.column.trim() ? 'blank = ignore this column' : 'LDAP attribute'"
@@ -84,7 +95,7 @@
     </p>
     <p class="text-xs text-gray-500 mt-1 shrink-0">
       Type the LDAP attribute each input column maps to<template v-if="suggestions.length">; suggestions come from the selected object classes</template>.
-      Leave it blank to ignore the column.
+      Leave it blank to ignore the column. Choose “Group memberships” for a column listing groups to add each user to.
       <template v-if="dnColumn && fromSample"> The DN column (<span class="font-mono">{{ dnColumn }}</span>) is used for each entry's DN and isn't listed.</template>
     </p>
   </div>
@@ -94,7 +105,7 @@
 import { computed } from 'vue'
 import AttributeAutocomplete from './AttributeAutocomplete.vue'
 import {
-  canonicalAttr, isDnRow, isReservedAttr, rowStatus,
+  canonicalAttr, GROUP_MEMBERSHIPS_OPTION, isDnRow, isReservedAttr, rowStatus,
   type MappingCheck, type MappingRow, type RowStatus, type SchemaAttr,
 } from './templateMapping'
 
@@ -127,10 +138,13 @@ const hiddenDnMappings = computed(() => props.fromSample
   ? rows.value.filter(r => isDnRow(r, props.dnColumn) && r.attribute.trim())
   : [])
 
-/** Suggestions: required attributes first, then the rest, as the schema lists them. */
+/**
+ * Suggestions: group memberships first (a special target, not an attribute),
+ * then required attributes, then the rest, as the schema lists them.
+ */
 const suggestions = computed<SchemaAttr[]>(() => {
   const s = (props.schema ?? []).filter(a => !isReservedAttr(a.name))
-  return [...s.filter(a => a.required), ...s.filter(a => !a.required)]
+  return [GROUP_MEMBERSHIPS_OPTION, ...s.filter(a => a.required), ...s.filter(a => !a.required)]
 })
 
 function statusOf(i: number): RowStatus {
@@ -138,10 +152,10 @@ function statusOf(i: number): RowStatus {
 }
 
 const counts = computed(() => {
-  const c = { mapped: 0, ignored: 0 }
+  const c = { mapped: 0, ignored: 0, groups: 0 }
   for (const v of visible.value) {
     const s = statusOf(v.index)
-    if (s === 'mapped' || s === 'ignored') c[s]++
+    if (s === 'mapped' || s === 'ignored' || s === 'groups') c[s]++
   }
   return c
 })
@@ -162,6 +176,7 @@ function rowClass(i: number): string {
 function statusLabel(i: number): string {
   switch (statusOf(i)) {
     case 'mapped': return 'mapped'
+    case 'groups': return 'adds the user to the listed groups'
     case 'ignored': return 'ignored'
     case 'incomplete': return 'needs a column'
     case 'dn': return 'DN column'
@@ -171,8 +186,17 @@ function statusLabel(i: number): string {
 function statusClass(i: number): string {
   switch (statusOf(i)) {
     case 'mapped': return 'text-blue-600'
+    case 'groups': return 'text-violet-800'
     case 'incomplete': return 'text-red-700 font-medium'
     default: return 'text-gray-500'
+  }
+}
+
+function arrowClass(i: number): string {
+  switch (statusOf(i)) {
+    case 'mapped': return 'text-blue-600'
+    case 'groups': return 'text-violet-600'
+    default: return 'text-gray-300'
   }
 }
 

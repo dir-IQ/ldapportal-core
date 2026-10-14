@@ -18,6 +18,10 @@ import java.util.Map;
  * delete against a group that doesn't exist) and {@code memberChanges} (the
  * planned outcome of every member change on the row) and {@code attributeChanges}
  * (the attributes an existing group will get new values for).</p>
+ *
+ * <p>User imports use {@code memberChanges} for the groups a row adds the user
+ * to: {@code member} is the group as written in the file, {@code memberDn}
+ * the group it resolved to.</p>
  */
 public record BulkImportPreviewRow(
         int rowNumber,

@@ -9,10 +9,36 @@
  * its specs share one source of truth.
  */
 
-/** An attribute of the selected object classes. */
+/** An attribute of the selected object classes (or a special mapping target). */
 export interface SchemaAttr {
   name: string
   required: boolean
+  /** Shown instead of `name` in suggestions, for special targets. */
+  label?: string
+  /** One-line explanation under the label. */
+  hint?: string
+}
+
+/**
+ * Mapping target for a column of groups to add each user to. Not an LDAP
+ * attribute: the importer writes these memberships to the groups (matches
+ * the backend's CsvColumnMap.GROUP_MEMBERSHIPS).
+ */
+export const GROUP_MEMBERSHIPS = '@groups'
+
+/** Column name that maps to group memberships without being asked. */
+export const GROUPS_COLUMN = 'groups'
+
+/** The suggestion entry for group memberships, listed above the schema's attributes. */
+export const GROUP_MEMBERSHIPS_OPTION: SchemaAttr = {
+  name: GROUP_MEMBERSHIPS,
+  required: false,
+  label: 'Group memberships',
+  hint: 'Adds the user to groups, by cn or DN',
+}
+
+export function isGroupMemberships(attribute: string | null | undefined): boolean {
+  return (attribute ?? '').trim() === GROUP_MEMBERSHIPS
 }
 
 export interface MappingRow {
@@ -32,11 +58,12 @@ export interface SavedEntry {
 }
 
 /**
- * mapped: column + attribute. ignored: column, no attribute. incomplete:
- * attribute with no column (can't be saved). dn: the template's DN column,
- * which is never mapped. blank: nothing typed yet.
+ * mapped: column + attribute. groups: column holding group memberships.
+ * ignored: column, no attribute. incomplete: attribute with no column (can't
+ * be saved). dn: the template's DN column, which is never mapped. blank:
+ * nothing typed yet.
  */
-export type RowStatus = 'mapped' | 'ignored' | 'incomplete' | 'dn' | 'blank'
+export type RowStatus = 'mapped' | 'groups' | 'ignored' | 'incomplete' | 'dn' | 'blank'
 
 export interface SampleHeader {
   /** Input column names, in file order. */
@@ -115,6 +142,7 @@ export function rowStatus(row: MappingRow, dnColumn: string | null | undefined):
   const hasCol = row.column.trim() !== ''
   const hasAttr = row.attribute.trim() !== ''
   if (hasCol && isDnRow(row, dnColumn)) return 'dn'
+  if (hasCol && isGroupMemberships(row.attribute)) return 'groups'
   if (hasCol && hasAttr) return 'mapped'
   if (hasCol) return 'ignored'
   if (hasAttr) return 'incomplete'
@@ -128,15 +156,23 @@ export function rowStatus(row: MappingRow, dnColumn: string | null | undefined):
  * `notInSample`, so a mapping is never dropped just because a sample export
  * left a column out; unmapped ones are dropped. Repeated column names in the
  * file give one row. The DN column stays in the rows; the editor hides it.
+ * A new column named `groups` holds group memberships, unless another
+ * column already does.
  */
 export function applySampleColumns(rows: MappingRow[], columns: string[]): MappingRow[] {
   const used = new Set<MappingRow>()
   const out: MappingRow[] = []
+  let groupsTaken = rows.some(r => isGroupMemberships(r.attribute))
   for (const col of columns) {
     if (col.trim() === '' || out.some(r => sameColumn(r.column, col))) continue
     const prev = rows.find(r => !used.has(r) && sameColumn(r.column, col))
     if (prev) used.add(prev)
-    out.push({ column: col, attribute: prev?.attribute ?? '' })
+    let attribute = prev?.attribute ?? ''
+    if (!prev && !groupsTaken && sameColumn(col, GROUPS_COLUMN)) {
+      attribute = GROUP_MEMBERSHIPS
+      groupsTaken = true
+    }
+    out.push({ column: col, attribute })
   }
   for (const r of rows) {
     if (used.has(r) || r.column.trim() === '' || r.attribute.trim() === '') continue
@@ -184,6 +220,13 @@ export function checkMappings(rows: MappingRow[], opts: CheckOptions): MappingCh
       result[i].warnings.push(r.attribute.trim()
         ? `This is the DN column, so its mapping to ${attr} isn't saved`
         : "This is the DN column; it isn't mapped")
+      return
+    }
+    if (status === 'groups') {
+      if (rows.some((o, j) => j < i && rowStatus(o, opts.dnColumn) === 'groups')) {
+        result[i].errors.push('Only one column can hold group memberships')
+      }
+      if (r.notInSample) result[i].warnings.push('Not in the sample file')
       return
     }
     if (status === 'incomplete') result[i].errors.push('Enter the CSV column for this attribute')
@@ -249,9 +292,9 @@ function norm(s: string): string {
 /**
  * Fills blank attributes from the column name: an attribute of the same name
  * (ignoring case and punctuation), else a common alias (Email → mail,
- * FirstName → givenName). Only schema attributes are suggested, never one
- * already mapped, and rows with an attribute are left alone. Returns new rows
- * and how many were filled.
+ * FirstName → givenName). A column named `groups` gets group memberships.
+ * Only schema attributes are suggested, never one already mapped, and rows
+ * with an attribute are left alone. Returns new rows and how many were filled.
  */
 export function suggestAttributes(rows: MappingRow[], schema: SchemaAttr[], dnColumn: string | null):
   { rows: MappingRow[], filled: number } {
@@ -262,7 +305,9 @@ export function suggestAttributes(rows: MappingRow[], schema: SchemaAttr[], dnCo
   const out = rows.map(r => {
     if (r.attribute.trim() || !r.column.trim() || isDnRow(r, dnColumn)) return r
     const key = norm(r.column)
-    const hit = byNorm.get(key) ?? (ALIASES[key] ? byNorm.get(norm(ALIASES[key])) : undefined)
+    // A column named "groups" holds group memberships.
+    const hit = key === GROUPS_COLUMN ? GROUP_MEMBERSHIPS
+      : byNorm.get(key) ?? (ALIASES[key] ? byNorm.get(norm(ALIASES[key])) : undefined)
     if (!hit || taken.has(hit.toLowerCase())) return r
     taken.add(hit.toLowerCase())
     filled++

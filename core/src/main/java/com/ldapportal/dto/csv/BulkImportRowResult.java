@@ -5,6 +5,10 @@ import java.util.List;
 
 /**
  * Outcome for a single CSV data row during a bulk import.
+ *
+ * <p>{@code memberChanges} holds a group row's member changes, or the groups a
+ * user row added the user to ({@code member} = the group as written in the
+ * file, {@code memberDn} = the group it resolved to).</p>
  */
 public record BulkImportRowResult(
         int rowNumber,
@@ -13,7 +17,7 @@ public record BulkImportRowResult(
         String message,
         List<GroupMemberChange> memberChanges) {
 
-    /** Rows without member detail (user imports, and group rows that never got that far). */
+    /** Rows without member detail. */
     public BulkImportRowResult(int rowNumber, String dn, Status status, String message) {
         this(rowNumber, dn, status, message, List.of());
     }

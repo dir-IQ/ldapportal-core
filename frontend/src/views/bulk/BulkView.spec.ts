@@ -548,6 +548,19 @@ describe('BulkView — template sample input file', () => {
     expect(saved.entries.map(e => e.csvColumn)).toEqual(['name', 'surname', 'email'])
   })
 
+  it('maps a sample column named groups to group memberships and saves it as @groups', async () => {
+    vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
+    vi.mocked(updateCsvTemplate).mockResolvedValueOnce({ data: {} } as never)
+    const w = await openEditTemplate()
+    await chooseSample(w, 'name,surname,email,groups\n')
+    expect(w.find('[data-testid="sample-groups-column"]').text()).toContain('groups')
+    expect(w.find('[data-testid="group-memberships-chip"]').exists()).toBe(true)
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    const saved = vi.mocked(updateCsvTemplate).mock.calls[0][2] as { entries: object[] }
+    expect(saved.entries).toContainEqual({ csvColumn: 'groups', ldapAttribute: '@groups', ignored: false })
+  })
+
   it('warns when the sample has no DN column and offers DN-like columns', async () => {
     vi.mocked(getObjectClassesBulk).mockResolvedValueOnce(schema as never)
     const w = await openEditTemplate({ ...editableTemplate, dnSourceColumn: 'dn' })
@@ -871,5 +884,85 @@ describe('BulkView — feature keys', () => {
     for (const key of [...DEFAULT_FEATURES, 'bulk.delete', 'group.manage_members']) {
       expect(FEATURE_PERMISSION_LABELS, key).toHaveProperty([key])
     }
+  })
+})
+
+describe('BulkView — user import group memberships', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  async function previewWith(rows: object[]) {
+    vi.mocked(previewCsv).mockResolvedValueOnce({ data: { totalRows: rows.length, rows } } as never)
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    await w.find('#bulk-import-template').setValue('t1')
+    await attachUserFile(w)
+    await btnByText(w, 'Preview Import').trigger('click')
+    await flushPromises()
+    return w
+  }
+
+  it('previews each listed group with its outcome, and counts the ones that cannot be applied', async () => {
+    const w = await previewWith([
+      { rowNumber: 1, computedDn: 'uid=jsmith,ou=eng,dc=x', attributes: { cn: 'John' }, missingRequired: [],
+        memberChanges: [
+          { member: 'admins', memberDn: 'cn=admins,ou=g,dc=x', op: 'ADD', outcome: 'WILL_ADD' },
+          { member: 'engineering', memberDn: null, op: 'ADD', outcome: 'AMBIGUOUS',
+            message: "More than one group has cn=engineering; use the group's DN" },
+        ] },
+      { rowNumber: 2, computedDn: 'uid=adoe,ou=eng,dc=x', attributes: { cn: 'Ann' }, missingRequired: [], memberChanges: [] },
+    ])
+
+    const cells = w.findAll('[data-testid="user-preview-groups"]')
+    expect(cells).toHaveLength(2)
+    expect(cells[0].findAll('li').map(li => li.findAll('span').map(s => s.text()))).toEqual([
+      ['admins', 'Will be added'],
+      ['engineering', "Ambiguous — More than one group has cn=engineering; use the group's DN"],
+    ])
+    expect(w.find('[data-testid="user-preview-group-problems"]').text())
+      .toContain('1 group change can\'t be applied')
+    // A group problem isn't a missing-attribute warning.
+    expect(w.text()).not.toContain('missing required attributes')
+  })
+
+  it('has no Groups column when no row lists groups', async () => {
+    const w = await previewWith([
+      { rowNumber: 1, computedDn: 'uid=jsmith,ou=eng,dc=x', attributes: { cn: 'John' }, missingRequired: [] },
+    ])
+    expect(w.find('[data-testid="user-preview-groups"]').exists()).toBe(false)
+  })
+
+  it('reports imported users whose groups could not all be added, and queued memberships', async () => {
+    vi.mocked(importCsv).mockResolvedValueOnce({ status: 200, data: {
+      totalRows: 2, created: 2, updated: 0, skipped: 0, errors: 0, rows: [
+        { rowNumber: 1, dn: 'uid=jsmith,ou=eng,dc=x', status: 'CREATED', memberChanges: [
+          { member: 'admins', memberDn: 'cn=admins,ou=g,dc=x', op: 'ADD', outcome: 'APPLIED' },
+          { member: 'ghost', memberDn: null, op: 'ADD', outcome: 'MEMBER_NOT_FOUND', message: 'No group with cn=ghost' },
+        ] },
+        { rowNumber: 2, dn: 'uid=adoe,ou=eng,dc=x', status: 'CREATED', memberChanges: [
+          { member: 'vpn', memberDn: 'cn=vpn,ou=g,dc=x', op: 'ADD', outcome: 'QUEUED_FOR_APPROVAL', approvalId: 'a1' },
+        ] },
+      ] } } as never)
+    const w = await previewWith([])
+    await w.find('input[aria-label="Type the profile name to confirm"]').setValue('Engineers')
+    await btnByText(w, 'Perform Import').trigger('click')
+    await flushPromises()
+
+    const failures = w.find('[data-testid="user-import-group-failures"]').text()
+    expect(failures).toContain('Row 1 (uid=jsmith,ou=eng,dc=x): imported, but not added to a group')
+    expect(failures).toContain('ghost: Not found — No group with cn=ghost')
+    expect(failures).not.toContain('admins')
+    expect(w.find('[data-testid="user-import-groups-queued"]').text())
+      .toContain('1 group membership is waiting for approval')
+  })
+
+  it('explains the groups column in the input file format panel', async () => {
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    await btnByText(w, 'Input file format').trigger('click')
+    const panel = w.find('[data-testid="file-format-help"]').text()
+    expect(panel).toContain('groups to add the user to')
+    expect(panel).toContain('Groups are only added, never removed')
+    expect(panel).toContain('Wrap any cell that contains DNs in double quotes')
+    expect(w.find('[data-testid="user-import-governance-note"]').text()).toContain('separation-of-duties')
   })
 })

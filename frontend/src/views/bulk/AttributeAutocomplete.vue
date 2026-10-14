@@ -16,10 +16,15 @@
           class="fixed z-50 max-h-56 overflow-y-auto rounded-lg border border-gray-300 bg-white py-1 shadow-lg text-xs">
         <li v-for="(o, i) in matches" :id="`${listId}-${i}`" :key="o.name" role="option"
             :aria-selected="i === active ? 'true' : 'false'" :data-attr="o.name"
-            class="flex items-center justify-between gap-2 px-2.5 py-1 font-mono cursor-pointer"
-            :class="i === active ? 'bg-blue-50 text-blue-800' : 'text-gray-900 hover:bg-gray-50'"
+            class="flex items-center justify-between gap-2 px-2.5 py-1 cursor-pointer"
+            :class="[i === active ? 'bg-blue-50 text-blue-800' : 'text-gray-900 hover:bg-gray-50',
+                     o.label ? 'border-b border-violet-100' : 'font-mono']"
             @mousedown.prevent="pick(o.name)">
-          <span class="truncate">{{ o.name }}</span>
+          <span v-if="o.label" class="min-w-0">
+            <span class="block font-medium text-violet-800">{{ o.label }}</span>
+            <span v-if="o.hint" class="block text-[11px] text-violet-700">{{ o.hint }}</span>
+          </span>
+          <span v-else class="truncate">{{ o.name }}</span>
           <span v-if="o.required" class="font-sans text-[11px] font-semibold text-red-700">required</span>
         </li>
       </ul>
@@ -71,9 +76,12 @@ const matches = computed<SchemaAttr[]>(() => {
   const contains: SchemaAttr[] = []
   for (const o of props.options) {
     const n = o.name.toLowerCase()
-    if (n === q) exact.push(o)
-    else if (!q || n.startsWith(q)) starts.push(o)
-    else if (n.includes(q)) contains.push(o)
+    // A special target also matches the start of a word in its label
+    // ("group", "memb" find group memberships), never the middle of one.
+    const labelHit = !!o.label && o.label.toLowerCase().split(/\s+/).some(w => w.startsWith(q))
+    if (n === q || o.label?.toLowerCase() === q) exact.push(o)
+    else if (!q || n.startsWith(q) || labelHit) starts.push(o)
+    else if (!o.label && n.includes(q)) contains.push(o)
   }
   return [...exact, ...starts, ...contains]
 })

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from 'vitest'
 import {
-  applySampleColumns, canonicalAttr, checkMappings, dnLikeColumns, entriesToRows, parseSampleHeader,
+  applySampleColumns, canonicalAttr, checkMappings, dnLikeColumns, entriesToRows, GROUP_MEMBERSHIPS, parseSampleHeader,
   readFirstRecord, repeatedColumns, rowStatus, rowsToEntries, sameColumn, suggestAttributes,
   type CheckOptions, type MappingRow, type SchemaAttr,
 } from './templateMapping'
@@ -212,5 +212,36 @@ describe('dnLikeColumns / repeatedColumns', () => {
 
   it('lists repeated column names once', () => {
     expect(repeatedColumns(['a', 'B', 'A', 'b', 'a', 'c'])).toEqual(['A', 'b'])
+  })
+})
+
+describe('group memberships', () => {
+  it('maps a new sample column named groups to group memberships, once', () => {
+    expect(applySampleColumns([], ['uid', 'Groups'])).toEqual([row('uid'), row('Groups', GROUP_MEMBERSHIPS)])
+    // Another column already holds memberships: groups stays an ordinary column.
+    const taken = [row('Teams', GROUP_MEMBERSHIPS)]
+    expect(applySampleColumns(taken, ['Teams', 'groups'])).toEqual([row('Teams', GROUP_MEMBERSHIPS), row('groups')])
+    // A saved mapping for the column wins.
+    expect(applySampleColumns([row('groups', 'description')], ['groups'])).toEqual([row('groups', 'description')])
+  })
+
+  it('has its own row status and is not an attribute for the checks', () => {
+    expect(rowStatus(row('groups', GROUP_MEMBERSHIPS), null)).toBe('groups')
+    const c = checkMappings([row('a', 'cn'), row('b', 'sn'), row('groups', GROUP_MEMBERSHIPS)], opts())
+    expect(c.rows[2]).toEqual({ errors: [], warnings: [] })
+    expect(c.blocking).toBe(false)
+  })
+
+  it('allows only one group memberships column', () => {
+    const c = checkMappings([row('a', 'cn'), row('b', 'sn'), row('g1', GROUP_MEMBERSHIPS), row('g2', GROUP_MEMBERSHIPS)], opts())
+    expect(c.rows[2].errors).toEqual([])
+    expect(c.rows[3].errors).toEqual(['Only one column can hold group memberships'])
+    expect(c.blocking).toBe(true)
+  })
+
+  it('is suggested for a column named groups, and saved as @groups', () => {
+    const { rows: out } = suggestAttributes([row('groups'), row('Email')], schema, null)
+    expect(out.map(r => r.attribute)).toEqual([GROUP_MEMBERSHIPS, 'mail'])
+    expect(rowsToEntries(out, null)[0]).toEqual({ csvColumn: 'groups', ldapAttribute: '@groups', ignored: false })
   })
 })
