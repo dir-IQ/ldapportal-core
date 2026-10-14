@@ -133,7 +133,7 @@ describe('BulkView — user import preview issues', () => {
 
     const issues = w.find('[data-testid="user-preview-issues"]').text()
     expect(issues).toContain('is not within the import container')
-    expect(issues).not.toContain('missing: dn')
+    expect(issues).not.toContain('Missing: dn')
   })
 })
 
@@ -726,14 +726,45 @@ describe('BulkView — group import member changes', () => {
     return w
   }
 
+  async function openFormatHelp(w: ReturnType<typeof mount>) {
+    await btnByText(w, 'Input file format').trigger('click')
+  }
+
+  it('keeps the file format help in a panel that stays open until closed', async () => {
+    const w = await openGroupImport()
+    const link = btnByText(w, 'Input file format')
+    expect(w.find('[data-testid="file-format-help"]').exists()).toBe(false)
+    expect(link.attributes('aria-expanded')).toBe('false')
+
+    await link.trigger('click')
+    const panel = w.find('[data-testid="file-format-help"]')
+    expect(panel.exists()).toBe(true)
+    expect(link.attributes('aria-expanded')).toBe('true')
+    expect(panel.text()).toContain('Wrap a members cell that contains DNs in double quotes')
+    expect(panel.find('pre').text()).toContain('"uid=jsmith,ou=People,dc=example,dc=com|uid=adoe,ou=People,dc=example,dc=com"')
+    expect(panel.findAll('li').length).toBeGreaterThan(5)
+
+    // Hovering away or clicking elsewhere doesn't close it; × and Escape do.
+    await w.find('[data-testid="file-format-help"] h3').trigger('mouseleave')
+    expect(w.find('[data-testid="file-format-help"]').exists()).toBe(true)
+    await w.find('[data-testid="file-format-help"] button[aria-label="Close"]').trigger('click')
+    expect(w.find('[data-testid="file-format-help"]').exists()).toBe(false)
+
+    await link.trigger('click')
+    await w.find('[data-testid="file-format-help"]').trigger('keydown', { key: 'Escape' })
+    expect(w.find('[data-testid="file-format-help"]').exists()).toBe(false)
+  })
+
   it('mentions separation of duties in the hint only outside the community edition', async () => {
     edition.community = false
     const w = await openGroupImport()
+    await openFormatHelp(w)
     expect(w.find('[data-testid="group-import-governance-note"]').text())
       .toContain('same approval and separation-of-duties rules')
 
     edition.community = true
     const w2 = await openGroupImport()
+    await openFormatHelp(w2)
     const note = w2.find('[data-testid="group-import-governance-note"]').text()
     expect(note).toContain('same approval rules as editing them by hand')
     expect(note).not.toContain('separation-of-duties')
@@ -769,10 +800,14 @@ describe('BulkView — group import member changes', () => {
 
     const actions = w.findAll('[data-testid="group-preview-action"]').map(c => c.text())
     expect(actions).toEqual(['Update', '—'])
-    const members = w.findAll('[data-testid="group-preview-members"]')[0].text()
-    expect(members).toContain('alice')
-    expect(members).toContain('will be added')
-    expect(members).toContain('not found: No user with uid=ghost')
+    const membersCell = w.findAll('[data-testid="group-preview-members"]')[0]
+    const items = membersCell.findAll('li').map(li => li.findAll('span').map(s => s.text()))
+    // The value from the file, then its outcome on its own line; no +/− marker.
+    expect(items).toEqual([
+      ['alice', 'Will be added'],
+      ['ghost', 'Not found — No user with uid=ghost'],
+    ])
+    expect(membersCell.text()).not.toContain('+')
     expect(w.text()).toContain('Group does not exist')
     expect(w.find('[data-testid="group-preview-member-problems"]').text()).toContain('1 member change')
   })
@@ -822,8 +857,8 @@ describe('BulkView — group import member changes', () => {
     expect(w.find('[data-testid="group-import-queued"]').text()).toContain('1 member addition is waiting for approval')
     const errors = w.find('[data-testid="group-import-errors"]').text()
     expect(errors).toContain('Row 1: 1 queued for approval; 1 blocked by separation of duties')
-    expect(errors).toContain('bob — blocked by separation of duties: SoD violation')
-    expect(errors).not.toContain('alice —')
+    expect(errors).toContain('bob: Blocked by separation of duties — SoD violation')
+    expect(errors).not.toContain('alice:')
   })
 })
 
