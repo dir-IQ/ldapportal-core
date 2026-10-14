@@ -11,8 +11,14 @@ vi.mock('@/stores/notifications', () => ({
 // admin's export-only set) and the beforeEach below restores the default.
 const DEFAULT_FEATURES = ['bulk.import', 'bulk.export', 'csv_template.manage']
 const grantedFeatures = vi.hoisted(() => new Set<string>())
+// Which build is "running"; the group-import hint drops SoD on community.
+const edition = vi.hoisted(() => ({ community: false }))
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ hasFeature: (f: string) => grantedFeatures.has(f), isSuperadmin: false }),
+  useAuthStore: () => ({
+    hasFeature: (f: string) => grantedFeatures.has(f),
+    isSuperadmin: false,
+    get isCommunityDistribution() { return edition.community },
+  }),
 }))
 // The active profile comes from the sidebar picker store.
 vi.mock('@/stores/profilePicker', () => ({
@@ -649,6 +655,20 @@ describe('BulkView — group import member changes', () => {
     await input.trigger('change')
     return w
   }
+
+  it('mentions separation of duties in the hint only outside the community edition', async () => {
+    edition.community = false
+    const w = await openGroupImport()
+    expect(w.find('[data-testid="group-import-governance-note"]').text())
+      .toContain('same approval and separation-of-duties rules')
+
+    edition.community = true
+    const w2 = await openGroupImport()
+    const note = w2.find('[data-testid="group-import-governance-note"]').text()
+    expect(note).toContain('same approval rules as editing them by hand')
+    expect(note).not.toContain('separation-of-duties')
+    edition.community = false
+  })
 
   it('warns admins without group.manage_members that files with members will be refused', async () => {
     const w = await openGroupImport()
