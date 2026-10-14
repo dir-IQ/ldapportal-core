@@ -89,7 +89,9 @@ public class BulkGroupController {
         // Check approval — consistent with BulkUserController (route by the resolved
         // target container; request.parentDn() is null for profile-based imports).
         String targetDn = service.resolveBulkImportTargetDn(directoryId, request, true);
+        // "entity" tells the approval replay this is a group import, not a user one.
         Map<String, Object> payload = Map.of(
+                "entity", "groups",
                 "request", request,
                 "csvContent", java.util.Base64.getEncoder().encodeToString(file.getBytes()),
                 "memberAttribute", memberAttribute,

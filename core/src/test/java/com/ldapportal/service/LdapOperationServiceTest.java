@@ -688,6 +688,21 @@ class LdapOperationServiceTest {
     }
 
     @Test
+    void applyMembershipChanges_withUid_writesUidToMemberUidGroupsOnly() {
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+
+        MembershipChangeResult result = service.applyMembershipChanges(
+                dirId, adminPrincipal(), MEMBER_DN, "jdoe", List.of(
+                        add(GROUP_A),
+                        new MembershipChangeRequest.Change(GROUP_B, "memberUid", MembershipChangeRequest.Op.ADD)));
+
+        assertThat(result.applied()).isEqualTo(2);
+        verify(groupService).addMember(eq(dc), eq(GROUP_A), eq("member"), eq(MEMBER_DN), isNull());
+        verify(groupService).addMember(eq(dc), eq(GROUP_B), eq("memberUid"), eq("jdoe"), isNull());
+    }
+
+    @Test
     void applyMembershipChanges_queuesAddWhenApprovalRequired() {
         DirectoryConnection dc = enabledDir(true);
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));

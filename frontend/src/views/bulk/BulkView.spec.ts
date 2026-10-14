@@ -46,7 +46,7 @@ vi.mock('@/api/csvTemplates', () => ({
   createContainer: vi.fn(),
 }))
 
-import { previewCsv, importCsv, listCsvTemplates, updateCsvTemplate } from '@/api/csvTemplates'
+import { previewCsv, importCsv, listCsvTemplates, updateCsvTemplate, previewGroupCsv, importGroupCsv } from '@/api/csvTemplates'
 import { getObjectClassesBulk, listObjectClasses } from '@/api/schema'
 // The view registers an unsaved-changes guard (and reads the sidebar
 // picker) through real Pinia stores; give every test a fresh instance.
@@ -609,5 +609,74 @@ describe('BulkView — tabs follow the admin\'s bulk features', () => {
     expect(tabLabels(w)).toEqual([])
     expect(w.find('[data-testid="bulk-no-access"]').text())
       .toContain('You don’t have permission for bulk user operations')
+  })
+})
+
+describe('BulkView — group import member changes', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  async function openGroupImport() {
+    const w = mount(BulkView, { global })
+    await flushPromises()
+    await btnByText(w, 'Groups').trigger('click')
+    const input = w.find('input[type="file"][aria-label="CSV File"]')
+    const file = new File(['cn,members\neng,alice\n'], 'g.csv', { type: 'text/csv' })
+    Object.defineProperty(input.element, 'files', { value: [file], configurable: true })
+    await input.trigger('change')
+    return w
+  }
+
+  it('previews what each row does and the planned outcome of every member change', async () => {
+    vi.mocked(previewGroupCsv).mockResolvedValue({ data: {
+      totalRows: 2,
+      rows: [
+        { rowNumber: 1, computedDn: 'cn=eng,ou=g,dc=x', attributes: {}, missingRequired: [],
+          groupAction: 'UPDATE', message: null, memberChanges: [
+            { member: 'alice', memberDn: 'uid=alice,dc=x', op: 'ADD', outcome: 'WILL_ADD' },
+            { member: 'ghost', memberDn: null, op: 'ADD', outcome: 'MEMBER_NOT_FOUND', message: 'No user with uid=ghost' },
+          ] },
+        { rowNumber: 2, computedDn: 'cn=ops,ou=g,dc=x', attributes: {}, missingRequired: [],
+          groupAction: null, message: 'Group does not exist', memberChanges: [] },
+      ],
+    } } as never)
+    const w = await openGroupImport()
+
+    await btnByText(w, 'Preview Import').trigger('click')
+    await flushPromises()
+
+    const actions = w.findAll('[data-testid="group-preview-action"]').map(c => c.text())
+    expect(actions).toEqual(['Update', '—'])
+    const members = w.findAll('[data-testid="group-preview-members"]')[0].text()
+    expect(members).toContain('alice')
+    expect(members).toContain('will be added')
+    expect(members).toContain('not found: No user with uid=ghost')
+    expect(w.text()).toContain('Group does not exist')
+    expect(w.find('[data-testid="group-preview-member-problems"]').text()).toContain('1 member change')
+  })
+
+  it('reports queued approvals and failed member changes after import', async () => {
+    vi.mocked(previewGroupCsv).mockResolvedValue({ data: { totalRows: 1, rows: [] } } as never)
+    vi.mocked(importGroupCsv).mockResolvedValue({ status: 200, data: {
+      totalRows: 1, created: 0, updated: 0, skipped: 0, errors: 1,
+      rows: [{ rowNumber: 1, dn: 'cn=eng,ou=g,dc=x', status: 'ERROR',
+        message: '1 queued for approval; 1 blocked by separation of duties',
+        memberChanges: [
+          { member: 'alice', op: 'ADD', outcome: 'QUEUED_FOR_APPROVAL', approvalId: 'a1' },
+          { member: 'bob', op: 'ADD', outcome: 'BLOCKED', message: 'SoD violation' },
+        ] }],
+    } } as never)
+    const w = await openGroupImport()
+    await btnByText(w, 'Preview Import').trigger('click')
+    await flushPromises()
+    await w.find('input[aria-label="Type the profile name to confirm"]').setValue('Engineers')
+
+    await btnByText(w, 'Perform Import').trigger('click')
+    await flushPromises()
+
+    expect(w.find('[data-testid="group-import-queued"]').text()).toContain('1 member addition is waiting for approval')
+    const errors = w.find('[data-testid="group-import-errors"]').text()
+    expect(errors).toContain('Row 1: 1 queued for approval; 1 blocked by separation of duties')
+    expect(errors).toContain('bob — blocked by separation of duties: SoD violation')
+    expect(errors).not.toContain('alice —')
   })
 })

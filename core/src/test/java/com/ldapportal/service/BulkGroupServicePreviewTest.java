@@ -2,7 +2,11 @@
 package com.ldapportal.service;
 
 import com.ldapportal.dto.csv.BulkImportPreviewResult;
+import com.ldapportal.dto.csv.BulkImportPreviewRow;
+import com.ldapportal.dto.csv.BulkImportPreviewRow.GroupAction;
 import com.ldapportal.dto.csv.CsvColumnMappingDto;
+import com.ldapportal.dto.csv.GroupMemberChange;
+import com.ldapportal.dto.csv.GroupMemberChange.Outcome;
 import com.ldapportal.ldap.LdapGroupService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,15 +16,17 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
- * Focused tests for {@link BulkGroupService#previewImport} required-attribute
- * validation. The full import path is covered elsewhere.
+ * {@link BulkGroupService#previewImport}: the same plan the import carries
+ * out, with nothing written — what each row does to its group, the planned
+ * outcome of every member change, and required-attribute checks for rows
+ * that create a group.
  */
 @ExtendWith(MockitoExtension.class)
 class BulkGroupServicePreviewTest {
@@ -28,152 +34,166 @@ class BulkGroupServicePreviewTest {
     @Mock private LdapGroupService groupService;
 
     private BulkGroupService service;
+    private FakeGroupImportMembers dir;
+
+    private static final String PARENT = "ou=groups,dc=example,dc=com";
+    private static final String ENG = "cn=eng," + PARENT;
+    private static final String ALICE = "uid=alice,ou=people,dc=example,dc=com";
+    private static final String BOB = "uid=bob,ou=people,dc=example,dc=com";
 
     @BeforeEach
     void setUp() {
         service = new BulkGroupService(groupService);
+        dir = new FakeGroupImportMembers().user("alice", ALICE).user("bob", BOB);
     }
 
-    private InputStream csv(String content) {
-        return new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8));
+    private BulkImportPreviewResult preview(String csv, List<String> required, String memberAttr) throws IOException {
+        return preview(csv, List.of(), required, memberAttr, true);
+    }
+
+    private BulkImportPreviewResult preview(String csv, List<CsvColumnMappingDto> mappings, List<String> required,
+                                            String memberAttr, boolean passthrough) throws IOException {
+        return service.previewImport(new ByteArrayInputStream(csv.getBytes(StandardCharsets.UTF_8)), PARENT,
+                mappings, true, required, memberAttr, ',', passthrough, dir);
+    }
+
+    private static List<Outcome> outcomes(BulkImportPreviewRow row) {
+        return row.memberChanges().stream().map(GroupMemberChange::outcome).toList();
     }
 
     @Test
-    void previewImport_membersColumnSatisfiesMemberAttrRequirement() throws IOException {
-        // groupOfNames requires: cn + member. The CSV uses 'members' as the
-        // column header (the bulk-group import's convention). Preview should
-        // recognise that 'members' supplies the chosen memberAttr ('member')
-        // — i.e. row 1 has members → not flagged; row 2 has no members → flagged.
-        String csv = "cn,description,owner,members\n"
-                   + "engineering,Eng team,owner1,uid=alice|uid=bob\n"
-                   + "lonely,Solo group,owner2,\n";
+    void newGroup_isACreate_withEveryMemberPlannedAsAnAdd() throws IOException {
+        BulkImportPreviewResult result = preview("cn,members\neng,\"alice|" + BOB + "\"\n", List.of("member"), "member");
 
-        BulkImportPreviewResult result = service.previewImport(
-                csv(csv),
-                "ou=groups,dc=example,dc=com",
-                List.of(),  // passthrough column mappings
-                true,
-                List.of("member"),
-                "member");
+        BulkImportPreviewRow row = result.rows().get(0);
+        assertThat(row.groupAction()).isEqualTo(GroupAction.CREATE);
+        assertThat(outcomes(row)).containsExactly(Outcome.WILL_ADD, Outcome.WILL_ADD);
+        assertThat(row.memberChanges().get(0).memberDn()).isEqualTo(ALICE);
+        assertThat(row.missingRequired()).isEmpty();
+        verifyNoInteractions(groupService); // nothing written
+        assertThat(dir.writes).isEmpty();
+    }
 
-        assertThat(result.totalRows()).isEqualTo(2);
-        assertThat(result.rows().get(0).missingRequired()).isEmpty();
+    @Test
+    void existingGroup_isAnUpdate_withNoOpsAndProblemsShown() throws IOException {
+        dir.group(ENG, "member", ALICE).problem("ghost", Outcome.AMBIGUOUS);
+
+        BulkImportPreviewRow row = preview("cn,members\neng,alice|bob|ghost\n", List.of("member"), "member")
+                .rows().get(0);
+
+        assertThat(row.groupAction()).isEqualTo(GroupAction.UPDATE);
+        assertThat(outcomes(row)).containsExactly(Outcome.ALREADY_MEMBER, Outcome.WILL_ADD, Outcome.AMBIGUOUS);
+        // Updating an existing group doesn't need the object class's MUSTs.
+        assertThat(row.missingRequired()).isEmpty();
+    }
+
+    @Test
+    void delete_plansRemovalsForCurrentMembersOnly() throws IOException {
+        dir.group(ENG, "member", ALICE);
+
+        BulkImportPreviewRow row = preview("cn,members,member-operation\neng,alice|bob,delete\n",
+                List.of("member"), "member").rows().get(0);
+
+        assertThat(row.groupAction()).isEqualTo(GroupAction.UPDATE);
+        assertThat(outcomes(row)).containsExactly(Outcome.WILL_REMOVE, Outcome.NOT_A_MEMBER);
+        assertThat(row.attributes()).containsEntry("member-operation", "delete");
+        assertThat(row.missingRequired()).isEmpty();
+    }
+
+    @Test
+    void delete_onAMissingGroup_explainsWhyTheRowCantRun() throws IOException {
+        BulkImportPreviewRow row = preview("cn,members,member-operation\neng,alice,delete\n",
+                List.of("member"), "member").rows().get(0);
+
+        assertThat(row.groupAction()).isNull();
+        assertThat(row.message()).isEqualTo("Group does not exist");
+    }
+
+    @Test
+    void entryThatIsNotAGroup_explainsWhyTheRowCantRun() throws IOException {
+        dir.nonGroup(ENG);
+
+        BulkImportPreviewRow row = preview("cn,members\neng,alice\n", List.of(), "member").rows().get(0);
+
+        assertThat(row.message()).isEqualTo("The entry at " + ENG + " is not a group");
+    }
+
+    @Test
+    void conflictingRows_areFlaggedInvalid() throws IOException {
+        dir.group(ENG, "member", ALICE);
+
+        BulkImportPreviewResult result = preview(
+                "cn,members,member-operation\neng,bob,add\neng,bob,delete\n", List.of(), "member");
+
+        assertThat(outcomes(result.rows().get(0))).containsExactly(Outcome.INVALID);
+        assertThat(outcomes(result.rows().get(1))).containsExactly(Outcome.INVALID);
+    }
+
+    @Test
+    void createRow_withoutAnyResolvableMember_isMissingTheMemberMust() throws IOException {
+        dir.problem("ghost", Outcome.MEMBER_NOT_FOUND);
+
+        BulkImportPreviewResult result = preview("cn,members\neng,ghost\nsolo,\n", List.of("member"), "member");
+
+        assertThat(result.rows().get(0).missingRequired()).containsExactly("member");
         assertThat(result.rows().get(1).missingRequired()).containsExactly("member");
     }
 
     @Test
-    void previewImport_uniqueMemberObjectClass_alsoSatisfiedByMembersColumn() throws IOException {
-        // groupOfUniqueNames requires uniqueMember. The CSV's 'members' column
-        // gets translated to whatever memberAttr the caller specifies, so
-        // populating 'members' should satisfy uniqueMember too.
-        String csv = "cn,members\nteam-x,uid=alice\n";
+    void uniqueMemberObjectClass_isSatisfiedByTheMembersColumn() throws IOException {
+        BulkImportPreviewRow row = preview("cn,members\neng,alice\n", List.of("uniqueMember"), "uniqueMember")
+                .rows().get(0);
 
-        BulkImportPreviewResult result = service.previewImport(
-                csv(csv),
-                "ou=groups,dc=example,dc=com",
-                List.of(), true,
-                List.of("uniqueMember"),
-                "uniqueMember");
-
-        assertThat(result.rows().get(0).missingRequired()).isEmpty();
+        assertThat(row.missingRequired()).isEmpty();
     }
 
     @Test
-    void previewImport_legacyOverload_skipsValidation() throws IOException {
-        // The 4-arg overload is the unchanged backwards-compat path.
-        String csv = "cn\nteam-x\n";
+    void missingCn_isFlagged() throws IOException {
+        BulkImportPreviewRow row = preview("cn,members\n,alice\n", List.of("member"), "member").rows().get(0);
 
-        BulkImportPreviewResult result = service.previewImport(
-                csv(csv),
-                "ou=groups,dc=example,dc=com",
-                List.of(), true);
-
-        assertThat(result.rows().get(0).missingRequired()).isEmpty();
+        assertThat(row.computedDn()).isNull();
+        assertThat(row.missingRequired()).contains("cn");
     }
 
     @Test
-    void previewImport_missingCn_flaggedAsMissingRequired() throws IOException {
-        // Row missing cn — the group RDN. Same treatment as missing schema
-        // MUSTs so the row gets highlighted + counted at preview time.
-        String csv = "cn,members\n,uid=alice|uid=bob\n";
+    void invalidMemberOperation_isFlaggedButTheDnIsStillShown() throws IOException {
+        BulkImportPreviewRow row = preview("cn,members,member-operation\neng,alice,replace\n", List.of(), "member")
+                .rows().get(0);
 
-        BulkImportPreviewResult result = service.previewImport(
-                csv(csv),
-                "ou=groups,dc=example,dc=com",
-                List.of(), true,
-                List.of("member"),
-                "member");
-
-        assertThat(result.rows().get(0).computedDn()).isNull();
-        assertThat(result.rows().get(0).missingRequired()).contains("cn");
+        assertThat(row.computedDn()).isEqualTo(ENG);
+        assertThat(row.missingRequired()).containsExactly("member-operation");
+        assertThat(row.message()).isEqualTo("Invalid member-operation 'replace': expected 'add' or 'delete'");
     }
 
     @Test
-    void underTemplate_unmappedColumnsAreOmittedAndListed() throws IOException {
+    void exportedDnColumn_isIgnored() throws IOException {
+        BulkImportPreviewRow row = preview("dn,cn,member\n\"" + ENG + "\",eng,alice\n", List.of("member"), "member")
+                .rows().get(0);
+
+        assertThat(row.attributes()).doesNotContainKey("dn");
+        assertThat(row.computedDn()).isEqualTo(ENG);
+        assertThat(row.missingRequired()).isEmpty();
+    }
+
+    @Test
+    void underTemplate_unmappedColumnsAreListed_butNotMemberOperation() throws IOException {
         var mappings = List.of(
-                new com.ldapportal.dto.csv.CsvColumnMappingDto("name", "cn", false),
-                new com.ldapportal.dto.csv.CsvColumnMappingDto("members", "members", false));
-        BulkImportPreviewResult result = service.previewImport(
-                csv("name,members,Owner\neng,uid=a|uid=b,uid=boss\n"),
-                "ou=groups,dc=example,dc=com", mappings, true, List.of(), "member", ',', false);
+                new CsvColumnMappingDto("name", "cn", false),
+                new CsvColumnMappingDto("members", "members", false));
+
+        BulkImportPreviewResult result = preview("name,members,member-operation,Owner\neng,alice,add,uid=boss\n",
+                mappings, List.of(), "member", false);
 
         assertThat(result.unmappedColumns()).containsExactly("Owner");
-        assertThat(result.rows().get(0).attributes()).containsKey("cn").doesNotContainKey("Owner");
+        assertThat(result.rows().get(0).attributes()).containsKey("cn").doesNotContainKey("Owner")
+                .containsEntry("member-operation", "add");
     }
 
     @Test
     void withoutTemplate_headersPassThrough() throws IOException {
-        BulkImportPreviewResult result = service.previewImport(
-                csv("cn,description\neng,Engineers\n"),
-                "ou=groups,dc=example,dc=com", List.of(), true, List.of(), "member", ',', true);
+        BulkImportPreviewResult result = preview("cn,description\neng,Engineers\n", List.of(), "member");
 
         assertThat(result.unmappedColumns()).isEmpty();
         assertThat(result.rows().get(0).attributes()).containsEntry("description", "Engineers");
-    }
-
-    @Test
-    void previewImport_ignoresTheExportedDnColumn() throws IOException {
-        String csv = "dn,cn,member\n\"cn=eng,ou=groups,dc=example,dc=com\",eng,uid=alice\n";
-
-        BulkImportPreviewResult result = service.previewImport(
-                csv(csv), "ou=groups,dc=example,dc=com", List.of(), true,
-                List.of("member"), "member");
-
-        assertThat(result.rows().get(0).attributes()).doesNotContainKey("dn");
-        assertThat(result.rows().get(0).computedDn()).isEqualTo("cn=eng,ou=groups,dc=example,dc=com");
-        assertThat(result.rows().get(0).missingRequired()).isEmpty();
-    }
-
-    @Test
-    void previewImport_memberOperation_showsValueFlagsInvalidAndSkipsMustsForDelete() throws IOException {
-        String csv = "cn,members,member-operation\n"
-                   + "eng,uid=alice,Add\n"
-                   + "sales,,delete\n"
-                   + "ops,uid=bob,replace\n";
-
-        BulkImportPreviewResult result = service.previewImport(
-                csv(csv), "ou=groups,dc=example,dc=com", List.of(), true,
-                List.of("member"), "member");
-
-        assertThat(result.rows().get(0).attributes()).containsEntry("member-operation", "add");
-        assertThat(result.rows().get(0).missingRequired()).isEmpty();
-        // A delete row never creates the group, so groupOfNames' MUST member doesn't apply.
-        assertThat(result.rows().get(1).attributes()).containsEntry("member-operation", "delete");
-        assertThat(result.rows().get(1).missingRequired()).isEmpty();
-        assertThat(result.rows().get(2).missingRequired()).containsExactly("member-operation");
-    }
-
-    @Test
-    void previewImport_templateMode_doesNotReportMemberOperationAsUnmapped() throws IOException {
-        String csv = "cn,members,member-operation,extra\neng,uid=alice,add,x\n";
-
-        BulkImportPreviewResult result = service.previewImport(
-                csv(csv), "ou=groups,dc=example,dc=com",
-                List.of(new CsvColumnMappingDto("cn", "cn", false),
-                        new CsvColumnMappingDto("members", "members", false)),
-                true, List.of(), "member", ',', false);
-
-        assertThat(result.unmappedColumns()).containsExactly("extra");
-        assertThat(result.rows().get(0).attributes()).containsEntry("member-operation", "add");
     }
 }

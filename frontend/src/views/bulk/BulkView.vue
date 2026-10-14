@@ -340,9 +340,11 @@
           </div>
         </div>
         <p class="text-xs text-gray-500">
-          CSV columns: <code>cn</code> (required), <code>description</code>, <code>owner</code>, <code>members</code> (pipe-separated DNs),
+          CSV columns: <code>cn</code> (required), <code>description</code>, <code>owner</code>,
+          <code>members</code> (pipe-separated; each a uid or a full DN),
           <code>member-operation</code> (<code>add</code>, the default, or <code>delete</code> to remove the listed members from an existing group).
           A <code>dn</code> column, as written by export, is ignored. First row must be a header row.
+          Member changes on existing groups follow the same approval and separation-of-duties rules as editing them by hand.
         </p>
         <button @click="doGroupPreview" :disabled="!canGroupImport || groupPreviewing" class="btn-primary">
           {{ groupPreviewing ? 'Loading preview…' : 'Preview Import' }}
@@ -355,7 +357,12 @@
           <p class="font-medium text-blue-800 mb-2">Preview: {{ groupPreviewResult.totalRows }} groups to import</p>
           <p v-if="groupPreviewWarningCount" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
             {{ groupPreviewWarningCount }} {{ groupPreviewWarningCount === 1 ? 'row is' : 'rows are' }}
-            missing required attributes — they will fail at import.
+            missing required attributes or can't run — they will fail at import.
+          </p>
+          <p v-if="groupPreviewMemberProblemCount" data-testid="group-preview-member-problems"
+             class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
+            {{ groupPreviewMemberProblemCount }} member {{ groupPreviewMemberProblemCount === 1 ? 'change' : 'changes' }}
+            can't be applied (not found, ambiguous, out of scope or contradictory) and will be reported as errors.
           </p>
           <ExpandablePreview title="Group import preview">
             <table class="w-full text-xs">
@@ -363,18 +370,31 @@
                 <tr>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">#</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">DN</th>
+                  <th class="px-2 py-1 text-left font-medium text-blue-700">Action</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Attributes</th>
+                  <th class="px-2 py-1 text-left font-medium text-blue-700">Members</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Issues</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-blue-100">
                 <tr v-for="(row, idx) in groupPreviewResult.rows" :key="row.rowNumber"
-                    :class="row.missingRequired?.length ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
+                    :class="row.missingRequired?.length || row.message ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
                   <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
+                  <td class="px-2 py-1 text-gray-700" data-testid="group-preview-action">{{ groupActionLabel(row.groupAction) }}</td>
                   <td class="px-2 py-1 text-gray-600">{{ formatAttrs(row.attributes) }}</td>
+                  <td class="px-2 py-1" data-testid="group-preview-members">
+                    <ul v-if="row.memberChanges?.length" class="space-y-0.5">
+                      <li v-for="(c, ci) in row.memberChanges" :key="ci" :title="c.memberDn || c.member">
+                        <span aria-hidden="true">{{ c.op === 'REMOVE' ? '−' : '+' }}</span>
+                        <span class="font-mono text-gray-800">{{ c.member }}</span>
+                        <span :class="memberOutcomeClass(c.outcome)"> {{ memberOutcomeLabel(c) }}</span>
+                      </li>
+                    </ul>
+                  </td>
                   <td class="px-2 py-1 text-amber-700">
-                    <span v-if="row.missingRequired?.length"
+                    <span v-if="row.message">{{ row.message }}</span>
+                    <span v-else-if="row.missingRequired?.length"
                           :title="`Missing required: ${row.missingRequired.join(', ')}`">
                       missing: {{ row.missingRequired.join(', ') }}
                     </span>
@@ -408,16 +428,25 @@
           <div class="text-center"><p class="text-2xl font-bold text-yellow-600">{{ groupImportResult.skipped }}</p><p class="text-xs text-gray-500">Skipped</p></div>
           <div class="text-center"><p class="text-2xl font-bold text-red-600">{{ groupImportResult.errors }}</p><p class="text-xs text-gray-500">Errors</p></div>
         </div>
-        <ul v-if="groupImportResult.rows?.filter(r => r.status === 'ERROR').length" class="space-y-1">
+        <p v-if="groupImportQueuedCount" data-testid="group-import-queued" class="text-xs text-amber-700 mb-2">
+          {{ groupImportQueuedCount }} member {{ groupImportQueuedCount === 1 ? 'addition is' : 'additions are' }}
+          waiting for approval and will apply once approved.
+        </p>
+        <ul v-if="groupImportResult.rows?.filter(r => r.status === 'ERROR').length" class="space-y-1" data-testid="group-import-errors">
           <li v-for="r in groupImportResult.rows.filter(r => r.status === 'ERROR')" :key="r.rowNumber" class="text-red-600 text-xs">
             Row {{ r.rowNumber }}: {{ r.message }}
+            <ul v-if="failedMemberChanges(r).length" class="ml-4 mt-0.5 space-y-0.5">
+              <li v-for="(c, ci) in failedMemberChanges(r)" :key="ci">
+                <span class="font-mono">{{ c.member }}</span> — {{ memberOutcomeLabel(c) }}
+              </li>
+            </ul>
           </li>
         </ul>
         <!-- Skipped rows are expected outcomes (existing entries left as-is per
              the template's conflict handling), so they read as info, not errors. -->
         <div v-if="rowsWithStatus(groupImportResult, 'SKIPPED').length" class="mt-3" data-testid="group-import-skipped">
           <p class="text-xs font-medium text-gray-700 mb-1">
-            Skipped ({{ rowsWithStatus(groupImportResult, 'SKIPPED').length }}) — left unchanged per the template's conflict handling
+            Skipped ({{ rowsWithStatus(groupImportResult, 'SKIPPED').length }}) — nothing needed changing
           </p>
           <ul class="space-y-1 max-h-48 overflow-y-auto">
             <li v-for="r in rowsWithStatus(groupImportResult, 'SKIPPED')" :key="r.rowNumber" class="text-gray-600 text-xs">
@@ -730,11 +759,24 @@ interface TemplateForm {
 }
 /** An attribute removed from the mapping stack, kept so it can be restored. */
 interface RemovedEntry { attr: MappingAttr, index: number }
+/** One member change on a group-import row (see GroupMemberChange.java). */
+interface GroupMemberChange {
+  member: string
+  memberDn?: string | null
+  op: 'ADD' | 'REMOVE'
+  outcome: string
+  message?: string | null
+  approvalId?: string | null
+}
 interface PreviewRow {
   rowNumber: number
   computedDn?: string
   attributes?: Record<string, string>
   missingRequired?: string[]
+  // Group imports only: what the row does, why it can't run, and its member changes.
+  groupAction?: 'CREATE' | 'UPDATE' | null
+  message?: string | null
+  memberChanges?: GroupMemberChange[]
 }
 interface PreviewResult {
   totalRows: number
@@ -742,7 +784,13 @@ interface PreviewResult {
   // Columns the template doesn't mention; a template-driven import skips them.
   unmappedColumns?: string[]
 }
-interface ImportRowResult { rowNumber: number, dn?: string, status: string, message?: string }
+interface ImportRowResult {
+  rowNumber: number
+  dn?: string
+  status: string
+  message?: string
+  memberChanges?: GroupMemberChange[]
+}
 interface ImportResult {
   totalRows: number
   created: number
@@ -1161,7 +1209,63 @@ const userPreviewAttrCols = computed<string[]>(() => {
 
 /** Same idea, for the group import preview. */
 const groupPreviewWarningCount = computed(() =>
-  (groupPreviewResult.value?.rows || []).filter(r => r.missingRequired?.length).length
+  (groupPreviewResult.value?.rows || []).filter(r => r.missingRequired?.length || r.message).length
+)
+
+// Member-change outcomes that mean the change won't be (or wasn't) made.
+const FAILED_MEMBER_OUTCOMES = new Set([
+  'REFUSED', 'BLOCKED', 'ERROR', 'MEMBER_NOT_FOUND', 'AMBIGUOUS', 'OUT_OF_SCOPE', 'INVALID',
+])
+const MEMBER_OUTCOME_LABELS: Record<string, string> = {
+  WILL_ADD: 'will be added',
+  WILL_REMOVE: 'will be removed',
+  APPLIED: 'done',
+  QUEUED_FOR_APPROVAL: 'queued for approval',
+  REFUSED: 'refused',
+  BLOCKED: 'blocked by separation of duties',
+  ERROR: 'failed',
+  ALREADY_MEMBER: 'already a member',
+  NOT_A_MEMBER: 'not a member',
+  DUPLICATE: 'repeated in the file',
+  MEMBER_NOT_FOUND: 'not found',
+  AMBIGUOUS: 'ambiguous',
+  OUT_OF_SCOPE: 'outside your scope',
+  INVALID: 'invalid',
+}
+
+function memberOutcomeLabel(c: GroupMemberChange): string {
+  const label = MEMBER_OUTCOME_LABELS[c.outcome] || c.outcome
+  // A no-op's message just repeats its label; problems carry the useful detail.
+  return c.message && FAILED_MEMBER_OUTCOMES.has(c.outcome) ? `${label}: ${c.message}` : label
+}
+
+function memberOutcomeClass(outcome: string): string {
+  if (FAILED_MEMBER_OUTCOMES.has(outcome)) return 'text-red-600'
+  if (outcome === 'QUEUED_FOR_APPROVAL') return 'text-amber-700'
+  if (outcome === 'WILL_ADD' || outcome === 'WILL_REMOVE' || outcome === 'APPLIED') return 'text-green-700'
+  return 'text-gray-500'
+}
+
+function groupActionLabel(action?: string | null): string {
+  if (action === 'CREATE') return 'Create'
+  if (action === 'UPDATE') return 'Update'
+  return '—'
+}
+
+function failedMemberChanges(r: ImportRowResult): GroupMemberChange[] {
+  return (r.memberChanges || []).filter(c => FAILED_MEMBER_OUTCOMES.has(c.outcome))
+}
+
+const groupPreviewMemberProblemCount = computed(() =>
+  (groupPreviewResult.value?.rows || [])
+    .flatMap(r => r.memberChanges || [])
+    .filter(c => FAILED_MEMBER_OUTCOMES.has(c.outcome)).length
+)
+
+const groupImportQueuedCount = computed(() =>
+  (groupImportResult.value?.rows || [])
+    .flatMap(r => r.memberChanges || [])
+    .filter(c => c.outcome === 'QUEUED_FOR_APPROVAL').length
 )
 
 const canSaveTemplate = computed(() => {

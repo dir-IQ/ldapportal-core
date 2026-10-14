@@ -299,3 +299,13 @@ Base DN:  dc=corp,dc=local
   playbook definitions and execution history are kept for when it is re-enabled.
 - **Scheduled Reports** — Set up recurring reports with email or S3 delivery in the Reports section.
 - **Bulk Operations** — Import/export users via CSV in the Bulk Import/Export section.
+  **Group import** creates groups and adds or removes their members from one CSV:
+  `cn`, optional attributes, `members` (separated by `|`; each a uid or a full DN) and
+  an optional `member-operation` column (`add` by default, or `delete` to remove the
+  listed members from an existing group). A `dn` column, as written by group export, is
+  ignored, so an exported file can be edited and re-imported. Preview shows whether each
+  row creates or updates its group and what every member change will do (will add,
+  already a member, not found, out of scope…) before anything is written. Member changes
+  on existing groups follow the same approval, separation-of-duties and audit rules as
+  editing a group by hand, so an add to a group that requires approval is queued; a new
+  group gets its members in the create itself. At most 2,000 member changes per file.

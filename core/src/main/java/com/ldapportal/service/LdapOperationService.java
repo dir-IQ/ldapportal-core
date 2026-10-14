@@ -865,6 +865,20 @@ public class LdapOperationService {
     public MembershipChangeResult applyMembershipChanges(
             UUID directoryId, AuthPrincipal principal,
             String memberDn, List<MembershipChangeRequest.Change> changes) {
+        return applyMembershipChanges(directoryId, principal, memberDn, null, changes);
+    }
+
+    /**
+     * {@link #applyMembershipChanges(UUID, AuthPrincipal, String, List)} with
+     * the member's uid as well, for callers that resolved it (bulk group
+     * import). Changes targeting a {@code memberUid} (posixGroup) group write
+     * {@code memberUid} instead of the DN; every other attribute still takes
+     * the DN. A {@code null} uid keeps the DN for every change.
+     */
+    public MembershipChangeResult applyMembershipChanges(
+            UUID directoryId, AuthPrincipal principal,
+            String memberDn, String memberUid,
+            List<MembershipChangeRequest.Change> changes) {
 
         loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, memberDn);
@@ -884,17 +898,19 @@ public class LdapOperationService {
         ApprovalWorkflowService approvalService = approvalServiceProvider.getIfAvailable();
         List<MembershipChangeResult.Item> items = new ArrayList<>(ordered.size());
         for (MembershipChangeRequest.Change c : ordered) {
-            items.add(applyMembershipChange(directoryId, principal, memberDn, c, approvalService));
+            String memberValue = memberUid != null && "memberUid".equalsIgnoreCase(c.memberAttribute())
+                    ? memberUid : memberDn;
+            items.add(applyMembershipChange(directoryId, principal, memberValue, c, approvalService));
         }
         return MembershipChangeResult.of(items);
     }
 
     private MembershipChangeResult.Item applyMembershipChange(
-            UUID directoryId, AuthPrincipal principal, String memberDn,
+            UUID directoryId, AuthPrincipal principal, String memberValue,
             MembershipChangeRequest.Change c, ApprovalWorkflowService approvalService) {
         try {
             if (c.op() == MembershipChangeRequest.Op.REMOVE) {
-                removeGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberDn);
+                removeGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberValue);
                 return MembershipChangeResult.Item.applied(c);
             }
 
@@ -906,13 +922,13 @@ public class LdapOperationService {
                         directoryId, c.groupDn(), principal, ApprovalRequestType.GROUP_MEMBER_ADD,
                         Map.of("groupDn", c.groupDn(),
                                 "memberAttribute", c.memberAttribute(),
-                                "memberValue", memberDn));
+                                "memberValue", memberValue));
                 if (pending.isPresent()) {
                     return MembershipChangeResult.Item.queued(c, pending.get().getId());
                 }
             }
 
-            addGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberDn);
+            addGroupMember(directoryId, principal, c.groupDn(), c.memberAttribute(), memberValue);
             return MembershipChangeResult.Item.applied(c);
 
         } catch (ProvisioningRefusedException e) {
@@ -1518,9 +1534,11 @@ public class LdapOperationService {
         char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
 
         // Under a template, columns it doesn't mention are dropped (see bulkImportUsers).
+        // The preview resolves members and looks groups up exactly as the import
+        // will, so it can say what each member change will do.
         return bulkGroupService.previewImport(
                 csvInput, parentDn, mappings, skipHeader, requiredAttrs, memberAttribute, delimiter,
-                req.templateId() == null);
+                req.templateId() == null, groupImportMembers(dc, directoryId, principal));
     }
 
     public BulkImportResult bulkImportGroups(UUID directoryId, AuthPrincipal principal,
@@ -1572,7 +1590,7 @@ public class LdapOperationService {
         BulkImportResult result = bulkGroupService.importCsv(
                 dc, csvInput, parentDn, conflictHandling, mappings,
                 objectClasses, effectiveMemberAttr, skipHeader, delimiter,
-                req.templateId() == null);
+                req.templateId() == null, groupImportMembers(dc, directoryId, principal));
 
         auditService.record(principal, directoryId, AuditAction.GROUP_BULK_IMPORT, parentDn,
                 Map.of("operation", "bulkGroupImport",
@@ -1581,6 +1599,19 @@ public class LdapOperationService {
                        "skipped",   result.skipped(),
                        "errors",    result.errors()));
         return result;
+    }
+
+    /**
+     * Member resolution and governed member writes for a group import run by
+     * {@code principal}: member changes on existing groups go through
+     * {@link #applyMembershipChanges(UUID, AuthPrincipal, String, String, List)}.
+     */
+    private GroupImportMembers groupImportMembers(DirectoryConnection dc, UUID directoryId,
+                                                  AuthPrincipal principal) {
+        return new ScopedGroupImportMembers(dc, directoryId, principal, permissionService,
+                userService, groupService,
+                (memberDn, memberUid, changes) ->
+                        applyMembershipChanges(directoryId, principal, memberDn, memberUid, changes));
     }
 
     public byte[] bulkExportGroups(UUID directoryId, AuthPrincipal principal,

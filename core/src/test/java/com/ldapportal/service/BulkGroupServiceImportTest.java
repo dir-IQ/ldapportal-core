@@ -3,12 +3,14 @@ package com.ldapportal.service;
 
 import com.ldapportal.dto.csv.BulkImportResult;
 import com.ldapportal.dto.csv.BulkImportRowResult;
+import com.ldapportal.dto.csv.BulkImportRowResult.Status;
+import com.ldapportal.dto.csv.GroupMemberChange;
+import com.ldapportal.dto.csv.GroupMemberChange.Outcome;
+import com.ldapportal.dto.ldap.MembershipChangeRequest.Op;
+import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.ConflictHandling;
-import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdapGroupService;
-import com.unboundid.ldap.sdk.LDAPException;
-import com.unboundid.ldap.sdk.ResultCode;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,25 +20,24 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /**
- * Tests for {@link BulkGroupService#importCsv} handling of a group that already
- * exists (matched by cn + parent DN): the row is treated as a bulk member-add,
- * merging the CSV's members into the existing group rather than skipping.
+ * {@link BulkGroupService#importCsv}: groups are created with all their
+ * resolved members; changes to existing groups go through the governed path
+ * ({@link GroupImportMembers#apply}) one at a time; the plan (resolution,
+ * no-ops, duplicates, conflicts) is fixed before anything is written.
  */
 @ExtendWith(MockitoExtension.class)
 class BulkGroupServiceImportTest {
@@ -45,8 +46,13 @@ class BulkGroupServiceImportTest {
 
     private BulkGroupService service;
     private DirectoryConnection dc;
+    private FakeGroupImportMembers dir;
 
-    private static final String GROUP_DN = "cn=engineering,ou=groups,dc=example,dc=com";
+    private static final String PARENT = "ou=groups,dc=example,dc=com";
+    private static final String ENG = "cn=engineering," + PARENT;
+    private static final String ALICE = "uid=alice,ou=people,dc=example,dc=com";
+    private static final String BOB = "uid=bob,ou=people,dc=example,dc=com";
+    private static final String CAROL = "uid=carol,ou=people,dc=example,dc=com";
 
     @BeforeEach
     void setUp() {
@@ -54,204 +60,299 @@ class BulkGroupServiceImportTest {
         dc = new DirectoryConnection();
         dc.setId(UUID.randomUUID());
         dc.setBaseDn("dc=example,dc=com");
+        dir = new FakeGroupImportMembers()
+                .user("alice", ALICE).user("bob", BOB).user("carol", CAROL);
     }
 
-    private InputStream csv(String content) {
-        return new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8));
+    private BulkImportResult run(String csv) throws IOException {
+        return run(csv, ConflictHandling.SKIP, "member");
     }
 
-    private LdapOperationException entryAlreadyExists() {
-        return new LdapOperationException(
-                "createGroup failed: " + ResultCode.ENTRY_ALREADY_EXISTS.getName());
+    private BulkImportResult run(String csv, ConflictHandling conflict, String memberAttr) throws IOException {
+        return service.importCsv(dc, new ByteArrayInputStream(csv.getBytes(StandardCharsets.UTF_8)), PARENT,
+                conflict, List.of(), List.of("groupOfNames"), memberAttr, true, ',', true, dir);
     }
 
-    @Test
-    void importCsv_existingGroup_mergesMembers_evenWithSkipConflictHandling() throws IOException {
-        // The group already exists, so the create fails with ENTRY_ALREADY_EXISTS.
-        doThrow(entryAlreadyExists()).when(groupService).createGroup(any(), anyString(), any());
-        String content = "cn,members\nengineering,uid=alice|uid=bob\n";
-
-        BulkImportResult result = service.importCsv(
-                dc, csv(content), "ou=groups,dc=example,dc=com",
-                ConflictHandling.SKIP, List.of(), List.of("groupOfNames"), "member", true);
-
-        // Both members are added to the existing group even though conflict
-        // handling is SKIP — the old behaviour would have skipped the row.
-        verify(groupService).addMember(dc, GROUP_DN, "member", "uid=alice");
-        verify(groupService).addMember(dc, GROUP_DN, "member", "uid=bob");
-        verify(groupService, never()).updateGroup(any(), anyString(), any());
-        assertThat(result.updated()).isEqualTo(1);
-        assertThat(result.skipped()).isZero();
-        assertThat(result.rows().get(0).status()).isEqualTo(BulkImportRowResult.Status.UPDATED);
+    private static List<Outcome> outcomes(BulkImportRowResult row) {
+        return row.memberChanges().stream().map(GroupMemberChange::outcome).toList();
     }
-
-    @Test
-    void importCsv_existingGroup_noMembers_skips() throws IOException {
-        doThrow(entryAlreadyExists()).when(groupService).createGroup(any(), anyString(), any());
-        String content = "cn,description\nengineering,Eng team\n";
-
-        BulkImportResult result = service.importCsv(
-                dc, csv(content), "ou=groups,dc=example,dc=com",
-                ConflictHandling.SKIP, List.of(), List.of("groupOfNames"), "member", true);
-
-        // Nothing to merge and not OVERWRITE → the existing group is untouched.
-        verify(groupService, never()).addMember(any(), anyString(), anyString(), anyString());
-        assertThat(result.skipped()).isEqualTo(1);
-        assertThat(result.updated()).isZero();
-        assertThat(result.rows().get(0).status()).isEqualTo(BulkImportRowResult.Status.SKIPPED);
-    }
-
-    // ── dn column ─────────────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
-    @Test
-    void importCsv_exportedDnColumn_isIgnoredNotWrittenAsAttribute() throws IOException {
-        // Group export writes a dn column; re-importing it as-is used to send
-        // "dn" as an attribute and fail the add.
-        String content = "dn,cn,description,member\n"
-                + "\"cn=engineering,ou=groups,dc=example,dc=com\",engineering,Eng team,uid=alice\n";
-
-        BulkImportResult result = service.importCsv(
-                dc, csv(content), "ou=groups,dc=example,dc=com",
-                ConflictHandling.SKIP, List.of(), List.of("groupOfNames"), "member", true);
-
+    private Map<String, List<String>> createdAttrs(String dn) {
         ArgumentCaptor<Map<String, List<String>>> attrs = ArgumentCaptor.forClass(Map.class);
-        verify(groupService).createGroup(eq(dc), eq(GROUP_DN), attrs.capture());
-        assertThat(attrs.getValue()).doesNotContainKey("dn")
+        verify(groupService).createGroup(eq(dc), eq(dn), attrs.capture());
+        return attrs.getValue();
+    }
+
+    // ── New groups ────────────────────────────────────────────────────────────
+
+    @Test
+    void newGroup_isCreatedWithAllResolvedMembers_uidsAndDnsAlike() throws IOException {
+        BulkImportResult result = run("cn,description,members\nengineering,Eng team,\"alice|" + BOB + "\"\n");
+
+        Map<String, List<String>> attrs = createdAttrs(ENG);
+        assertThat(attrs).containsEntry("member", List.of(ALICE, BOB))
                 .containsEntry("description", List.of("Eng team"))
-                .containsEntry("member", List.of("uid=alice"));
+                .containsEntry("objectClass", List.of("groupOfNames"));
+        assertThat(dir.writes).isEmpty(); // members went in the create, not the governed path
+        BulkImportRowResult row = result.rows().get(0);
+        assertThat(row.status()).isEqualTo(Status.CREATED);
+        assertThat(outcomes(row)).containsExactly(Outcome.APPLIED, Outcome.APPLIED);
+        assertThat(row.memberChanges().get(0).memberDn()).isEqualTo(ALICE);
+        assertThat(row.message()).isEqualTo("Group created; 2 added");
+    }
+
+    @Test
+    void newGroup_withAnUnresolvableMember_isCreatedWithTheRestAndReportsTheProblem() throws IOException {
+        dir.problem("ghost", Outcome.MEMBER_NOT_FOUND);
+
+        BulkImportResult result = run("cn,members\nengineering,alice|ghost\n");
+
+        assertThat(createdAttrs(ENG)).containsEntry("member", List.of(ALICE));
+        BulkImportRowResult row = result.rows().get(0);
+        assertThat(row.status()).isEqualTo(Status.ERROR);
+        assertThat(outcomes(row)).containsExactly(Outcome.APPLIED, Outcome.MEMBER_NOT_FOUND);
+        assertThat(row.message()).isEqualTo("Group created; 1 added; 1 not found");
+    }
+
+    @Test
+    void newPosixGroup_getsUidsInMemberUid() throws IOException {
+        run("cn,members\nengineering,\"alice|" + BOB + "\"\n", ConflictHandling.SKIP, "memberUid");
+
+        assertThat(createdAttrs(ENG)).containsEntry("memberUid", List.of("alice", "bob"));
+    }
+
+    @Test
+    void laterRowForAGroupAnEarlierRowCreates_updatesIt() throws IOException {
+        BulkImportResult result = run("cn,members\nengineering,alice\nengineering,bob\n");
+
+        verify(groupService).createGroup(eq(dc), eq(ENG), any());
+        assertThat(dir.writes).containsExactly(
+                new FakeGroupImportMembers.Write(BOB, "bob", ENG, "member", Op.ADD));
         assertThat(result.created()).isEqualTo(1);
-    }
-
-    // ── member-operation ──────────────────────────────────────────────────────
-
-    private LdapOperationException ldapFailure(ResultCode code) {
-        return new LdapOperationException("LDAP operation failed: " + code.getName(),
-                new LDAPException(code, code.getName()));
-    }
-
-    @Test
-    void importCsv_memberOperationDelete_removesMembersWithoutCreating() throws IOException {
-        String content = "cn,members,member-operation\nengineering,uid=alice|uid=bob,delete\n";
-
-        BulkImportResult result = service.importCsv(
-                dc, csv(content), "ou=groups,dc=example,dc=com",
-                ConflictHandling.SKIP, List.of(), List.of("groupOfNames"), "member", true);
-
-        verify(groupService, never()).createGroup(any(), anyString(), any());
-        verify(groupService).removeMember(dc, GROUP_DN, "member", "uid=alice");
-        verify(groupService).removeMember(dc, GROUP_DN, "member", "uid=bob");
         assertThat(result.updated()).isEqualTo(1);
-        assertThat(result.rows().get(0).message()).isEqualTo("Removed 2 member(s)");
     }
 
-    @Test
-    void importCsv_memberOperationDelete_skipsValuesThatAreNotMembers() throws IOException {
-        // Only uid=bob is stubbed; lenient so the unstubbed uid=alice call
-        // isn't flagged by strict stubs as an argument mismatch.
-        lenient().doThrow(ldapFailure(ResultCode.NO_SUCH_ATTRIBUTE))
-                .when(groupService).removeMember(dc, GROUP_DN, "member", "uid=bob");
-        String content = "cn,members,member-operation\nengineering,uid=alice|uid=bob,DELETE\n";
-
-        BulkImportResult result = service.importCsv(
-                dc, csv(content), "ou=groups,dc=example,dc=com",
-                ConflictHandling.SKIP, List.of(), List.of("groupOfNames"), "member", true);
-
-        assertThat(result.rows().get(0).status()).isEqualTo(BulkImportRowResult.Status.UPDATED);
-        assertThat(result.rows().get(0).message()).isEqualTo("Removed 1 member(s); 1 not present");
-    }
+    // ── Existing groups: governed member writes ───────────────────────────────
 
     @Test
-    void importCsv_memberOperationDelete_noneAreMembers_skips() throws IOException {
-        doThrow(ldapFailure(ResultCode.NO_SUCH_ATTRIBUTE))
-                .when(groupService).removeMember(any(), anyString(), anyString(), anyString());
-        String content = "cn,members,member-operation\nengineering,uid=alice,delete\n";
+    void existingGroup_addsOnlyMissingMembers_throughTheGovernedPath() throws IOException {
+        dir.group(ENG, "member", ALICE);
 
-        BulkImportResult result = service.importCsv(
-                dc, csv(content), "ou=groups,dc=example,dc=com",
-                ConflictHandling.SKIP, List.of(), List.of("groupOfNames"), "member", true);
-
-        assertThat(result.skipped()).isEqualTo(1);
-        assertThat(result.rows().get(0).message()).isEqualTo("Members not present in group");
-    }
-
-    @Test
-    void importCsv_memberOperationDelete_missingGroup_isAnError() throws IOException {
-        doThrow(ldapFailure(ResultCode.NO_SUCH_OBJECT))
-                .when(groupService).removeMember(any(), anyString(), anyString(), anyString());
-        String content = "cn,members,member-operation\nengineering,uid=alice,delete\n";
-
-        BulkImportResult result = service.importCsv(
-                dc, csv(content), "ou=groups,dc=example,dc=com",
-                ConflictHandling.SKIP, List.of(), List.of("groupOfNames"), "member", true);
+        BulkImportResult result = run("cn,members\nengineering,alice|bob\n");
 
         verify(groupService, never()).createGroup(any(), anyString(), any());
-        assertThat(result.errors()).isEqualTo(1);
+        assertThat(dir.writes).containsExactly(
+                new FakeGroupImportMembers.Write(BOB, "bob", ENG, "member", Op.ADD));
+        BulkImportRowResult row = result.rows().get(0);
+        assertThat(row.status()).isEqualTo(Status.UPDATED);
+        assertThat(outcomes(row)).containsExactly(Outcome.ALREADY_MEMBER, Outcome.APPLIED);
+        assertThat(row.message()).isEqualTo("1 added; 1 already a member");
+    }
+
+    @Test
+    void existingGroup_writesToTheAttributeTheGroupUses() throws IOException {
+        dir.group(ENG, "uniqueMember", ALICE);
+
+        run("cn,members\nengineering,bob\n");
+
+        assertThat(dir.writes).extracting(FakeGroupImportMembers.Write::memberAttribute)
+                .containsExactly("uniqueMember");
+    }
+
+    @Test
+    void existingGroup_noMembersToAdd_isSkipped() throws IOException {
+        dir.group(ENG, "member", ALICE);
+
+        BulkImportResult result = run("cn,description\nengineering,Eng team\n");
+
+        assertThat(dir.writes).isEmpty();
+        verify(groupService, never()).updateGroup(any(), anyString(), any());
+        assertThat(result.rows().get(0).status()).isEqualTo(Status.SKIPPED);
+        assertThat(result.rows().get(0).message()).isEqualTo("Group already exists (no members to add)");
+    }
+
+    @Test
+    void existingGroup_overwriteReplacesOtherAttributes_andStillAddsMembers() throws IOException {
+        dir.group(ENG, "member", ALICE);
+
+        BulkImportResult result = run("cn,description,members\nengineering,New desc,bob\n",
+                ConflictHandling.OVERWRITE, "member");
+
+        verify(groupService).updateGroup(eq(dc), eq(ENG), any());
+        assertThat(dir.writes).hasSize(1);
+        assertThat(result.rows().get(0).status()).isEqualTo(Status.UPDATED);
+        assertThat(result.rows().get(0).message()).isEqualTo("Attributes replaced; 1 added");
+    }
+
+    @Test
+    void governedOutcomes_areReportedPerMember() throws IOException {
+        dir.group(ENG, "member", "uid=zed,ou=people,dc=example,dc=com");
+        dir.outcome = w -> switch (w.memberUid()) {
+            case "alice" -> MembershipChangeResult.Status.QUEUED_FOR_APPROVAL;
+            case "bob" -> MembershipChangeResult.Status.BLOCKED;
+            default -> MembershipChangeResult.Status.REFUSED;
+        };
+
+        BulkImportResult result = run("cn,members\nengineering,alice|bob|carol\n");
+
+        BulkImportRowResult row = result.rows().get(0);
+        assertThat(outcomes(row)).containsExactly(
+                Outcome.QUEUED_FOR_APPROVAL, Outcome.BLOCKED, Outcome.REFUSED);
+        assertThat(row.memberChanges().get(0).approvalId()).isEqualTo(FakeGroupImportMembers.APPROVAL_ID);
+        assertThat(row.memberChanges().get(1).message()).isEqualTo("SoD violation");
+        assertThat(row.status()).isEqualTo(Status.ERROR);
+        assertThat(row.message()).isEqualTo("1 queued for approval; 1 refused; 1 blocked by separation of duties");
+    }
+
+    @Test
+    void queuedOnly_countsAsUpdated() throws IOException {
+        dir.group(ENG, "member", ALICE);
+        dir.outcome = w -> MembershipChangeResult.Status.QUEUED_FOR_APPROVAL;
+
+        BulkImportResult result = run("cn,members\nengineering,bob\n");
+
+        assertThat(result.rows().get(0).status()).isEqualTo(Status.UPDATED);
+    }
+
+    // ── member-operation: delete ──────────────────────────────────────────────
+
+    @Test
+    void delete_removesOnlyCurrentMembers_throughTheGovernedPath() throws IOException {
+        dir.group(ENG, "member", ALICE, BOB);
+
+        BulkImportResult result = run("cn,members,member-operation\nengineering,alice|carol,DELETE\n");
+
+        verify(groupService, never()).createGroup(any(), anyString(), any());
+        assertThat(dir.writes).containsExactly(
+                new FakeGroupImportMembers.Write(ALICE, "alice", ENG, "member", Op.REMOVE));
+        BulkImportRowResult row = result.rows().get(0);
+        assertThat(row.status()).isEqualTo(Status.UPDATED);
+        assertThat(outcomes(row)).containsExactly(Outcome.APPLIED, Outcome.NOT_A_MEMBER);
+        assertThat(row.message()).isEqualTo("1 removed; 1 not a member");
+    }
+
+    @Test
+    void delete_noneAreMembers_isSkipped() throws IOException {
+        dir.group(ENG, "member", ALICE);
+
+        BulkImportResult result = run("cn,members,member-operation\nengineering,bob,delete\n");
+
+        assertThat(dir.writes).isEmpty();
+        assertThat(result.rows().get(0).status()).isEqualTo(Status.SKIPPED);
+    }
+
+    @Test
+    void delete_onAMissingGroup_isAnErrorAndNeverCreates() throws IOException {
+        BulkImportResult result = run("cn,members,member-operation\nengineering,alice,delete\n");
+
+        verify(groupService, never()).createGroup(any(), anyString(), any());
+        assertThat(result.rows().get(0).status()).isEqualTo(Status.ERROR);
         assertThat(result.rows().get(0).message()).isEqualTo("Group does not exist");
     }
 
     @Test
-    void importCsv_memberOperationDelete_rejectedRemoval_isAnErrorNamingTheMember() throws IOException {
-        // e.g. removing the last member of a groupOfNames
-        // Only uid=bob is stubbed; lenient so the unstubbed uid=alice call
-        // isn't flagged by strict stubs as an argument mismatch.
-        lenient().doThrow(ldapFailure(ResultCode.OBJECT_CLASS_VIOLATION))
-                .when(groupService).removeMember(dc, GROUP_DN, "member", "uid=bob");
-        String content = "cn,members,member-operation\nengineering,uid=alice|uid=bob,delete\n";
+    void delete_ignoresOverwrite() throws IOException {
+        dir.group(ENG, "member", ALICE, BOB);
 
-        BulkImportResult result = service.importCsv(
-                dc, csv(content), "ou=groups,dc=example,dc=com",
-                ConflictHandling.SKIP, List.of(), List.of("groupOfNames"), "member", true);
+        run("cn,description,members,member-operation\nengineering,New desc,alice,delete\n",
+                ConflictHandling.OVERWRITE, "member");
 
-        assertThat(result.rows().get(0).status()).isEqualTo(BulkImportRowResult.Status.ERROR);
-        assertThat(result.rows().get(0).message()).startsWith("Removed 1 of 2 member(s); failed: uid=bob:");
+        verify(groupService, never()).updateGroup(any(), anyString(), any());
     }
 
     @Test
-    void importCsv_memberOperationDelete_withoutMembers_isAnError() throws IOException {
-        String content = "cn,members,member-operation\nengineering,,delete\n";
-
-        BulkImportResult result = service.importCsv(
-                dc, csv(content), "ou=groups,dc=example,dc=com",
-                ConflictHandling.SKIP, List.of(), List.of("groupOfNames"), "member", true);
-
-        verify(groupService, never()).removeMember(any(), anyString(), anyString(), anyString());
-        assertThat(result.errors()).isEqualTo(1);
-    }
-
-    @Test
-    void importCsv_invalidMemberOperation_isAnError() throws IOException {
-        String content = "cn,members,member-operation\nengineering,uid=alice,replace\n";
-
-        BulkImportResult result = service.importCsv(
-                dc, csv(content), "ou=groups,dc=example,dc=com",
-                ConflictHandling.SKIP, List.of(), List.of("groupOfNames"), "member", true);
+    void invalidMemberOperation_isAnError() throws IOException {
+        BulkImportResult result = run("cn,members,member-operation\nengineering,alice,replace\n");
 
         verify(groupService, never()).createGroup(any(), anyString(), any());
-        assertThat(result.errors()).isEqualTo(1);
+        assertThat(result.rows().get(0).status()).isEqualTo(Status.ERROR);
         assertThat(result.rows().get(0).message())
                 .isEqualTo("Invalid member-operation 'replace': expected 'add' or 'delete'");
     }
 
-    @SuppressWarnings("unchecked")
+    // ── Plan checks across the file ───────────────────────────────────────────
+
     @Test
-    void importCsv_mixedOperations_eachRowFollowsItsOwnValue() throws IOException {
-        String content = "cn,members,member-operation\n"
-                + "engineering,uid=alice,add\n"
-                + "sales,uid=bob,delete\n"
-                + "support,uid=carol,\n";
+    void sameMembershipTwice_secondIsADuplicate() throws IOException {
+        dir.group(ENG, "member", ALICE);
 
-        BulkImportResult result = service.importCsv(
-                dc, csv(content), "ou=groups,dc=example,dc=com",
-                ConflictHandling.SKIP, List.of(), List.of("groupOfNames"), "member", true);
+        BulkImportResult result = run("cn,members\nengineering,bob\nengineering,bob\n");
 
-        ArgumentCaptor<Map<String, List<String>>> attrs = ArgumentCaptor.forClass(Map.class);
-        verify(groupService).createGroup(eq(dc), eq(GROUP_DN), attrs.capture());
-        assertThat(attrs.getValue()).doesNotContainKey("member-operation");
-        verify(groupService).removeMember(dc, "cn=sales,ou=groups,dc=example,dc=com", "member", "uid=bob");
-        // A blank value means add.
-        verify(groupService).createGroup(eq(dc), eq("cn=support,ou=groups,dc=example,dc=com"), any());
-        assertThat(result.created()).isEqualTo(2);
-        assertThat(result.updated()).isEqualTo(1);
+        assertThat(dir.writes).hasSize(1);
+        assertThat(outcomes(result.rows().get(1))).containsExactly(Outcome.DUPLICATE);
+        assertThat(result.rows().get(1).memberChanges().get(0).message()).isEqualTo("Repeats row 1");
+        assertThat(result.rows().get(1).status()).isEqualTo(Status.SKIPPED);
+    }
+
+    @Test
+    void addAndRemoveOfTheSameMembership_neitherRuns() throws IOException {
+        dir.group(ENG, "member", ALICE);
+
+        BulkImportResult result = run("cn,members,member-operation\nengineering,bob,add\nengineering,alice|bob,delete\n");
+
+        // Only alice's removal is uncontested.
+        assertThat(dir.writes).containsExactly(
+                new FakeGroupImportMembers.Write(ALICE, "alice", ENG, "member", Op.REMOVE));
+        assertThat(outcomes(result.rows().get(0))).containsExactly(Outcome.INVALID);
+        assertThat(outcomes(result.rows().get(1))).containsExactly(Outcome.APPLIED, Outcome.INVALID);
+        assertThat(result.rows().get(0).memberChanges().get(0).message())
+                .isEqualTo("The file both adds and removes this membership");
+    }
+
+    @Test
+    void memberUidGroup_withAMemberThatHasNoUid_isInvalid() throws IOException {
+        String nested = "cn=nested,ou=groups,dc=example,dc=com";
+        dir.group(ENG, "memberUid", "zed").entry(nested);
+
+        BulkImportResult result = run("cn,members\nengineering,\"" + nested + "\"\n");
+
+        assertThat(dir.writes).isEmpty();
+        assertThat(outcomes(result.rows().get(0))).containsExactly(Outcome.INVALID);
+        assertThat(result.rows().get(0).memberChanges().get(0).message())
+                .isEqualTo("Group uses memberUid but this member has no uid");
+    }
+
+    @Test
+    void tooManyMemberChanges_rejectsTheWholeFile() {
+        StringBuilder csv = new StringBuilder("cn,members\n");
+        StringBuilder members = new StringBuilder();
+        for (int i = 0; i <= BulkGroupService.MAX_MEMBER_CHANGES; i++) {
+            if (i > 0) members.append('|');
+            members.append("u").append(i);
+        }
+        csv.append("engineering,").append(members).append('\n');
+
+        assertThatThrownBy(() -> run(csv.toString()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("split the file");
+        verify(groupService, never()).createGroup(any(), anyString(), any());
+    }
+
+    // ── Columns ───────────────────────────────────────────────────────────────
+
+    @Test
+    void exportedDnColumn_isIgnoredNotWrittenAsAttribute() throws IOException {
+        BulkImportResult result = run("dn,cn,description,member\n\"" + ENG + "\",engineering,Eng team,alice\n");
+
+        assertThat(createdAttrs(ENG)).doesNotContainKey("dn")
+                .containsEntry("description", List.of("Eng team"))
+                .containsEntry("member", List.of(ALICE));
+        assertThat(result.created()).isEqualTo(1);
+    }
+
+    @Test
+    void excelByteOrderMark_onTheFirstHeader_isIgnored() throws IOException {
+        BulkImportResult result = run("﻿cn,members\nengineering,alice\n");
+
+        verify(groupService).createGroup(eq(dc), eq(ENG), any());
+        assertThat(result.created()).isEqualTo(1);
+    }
+
+    @Test
+    void memberOperationColumn_isNeverWrittenAsAnAttribute() throws IOException {
+        run("cn,members,member-operation\nengineering,alice,add\n");
+
+        assertThat(createdAttrs(ENG)).doesNotContainKey("member-operation");
     }
 }
