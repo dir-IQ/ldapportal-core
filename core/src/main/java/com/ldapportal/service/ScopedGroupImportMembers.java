@@ -8,6 +8,7 @@ import com.ldapportal.dto.ldap.MembershipChangeRequest;
 import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.DirectoryObjectClassDefaults;
+import com.ldapportal.entity.enums.FeatureKey;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.ldap.LdapUserService;
@@ -67,6 +68,11 @@ final class ScopedGroupImportMembers implements GroupImportMembers {
         this.userService = userService;
         this.groupService = groupService;
         this.writer = writer;
+    }
+
+    @Override
+    public void requireMemberChanges() {
+        permissionService.requireFeature(principal, directoryId, FeatureKey.GROUP_MANAGE_MEMBERS);
     }
 
     @Override

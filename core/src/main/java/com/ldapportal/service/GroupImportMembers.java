@@ -23,6 +23,13 @@ import java.util.Set;
  */
 interface GroupImportMembers {
 
+    /**
+     * Called once, before any member value is resolved, when the file asks for
+     * member changes; throws when the caller may not manage group members
+     * ({@code group.manage_members}), so the whole request is refused.
+     */
+    void requireMemberChanges();
+
     /** Resolves a {@code members} value — a uid or a full DN — within the caller's scope. */
     Member resolveMember(String value);
 

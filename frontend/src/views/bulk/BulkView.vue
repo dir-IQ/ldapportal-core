@@ -346,6 +346,10 @@
           A <code>dn</code> column, as written by export, is ignored. First row must be a header row.
           Member changes on existing groups follow the same approval and separation-of-duties rules as editing them by hand.
         </p>
+        <p v-if="!canManageGroupMembers" data-testid="group-import-no-member-permission"
+           class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+          You don’t have permission to manage group members, so a file that lists any members will be refused.
+        </p>
         <button @click="doGroupPreview" :disabled="!canGroupImport || groupPreviewing" class="btn-primary">
           {{ groupPreviewing ? 'Loading preview…' : 'Preview Import' }}
         </button>
@@ -878,6 +882,8 @@ const canBulkImport      = computed(() => auth.hasFeature('bulk.import'))
 const canBulkExport      = computed(() => auth.hasFeature('bulk.export'))
 const canBulkDelete      = computed(() => auth.hasFeature('bulk.delete'))
 const canManageTemplates = computed(() => auth.hasFeature('csv.template_manage'))
+// Group import files that list members also need group.manage_members (enforced server-side).
+const canManageGroupMembers = computed(() => auth.hasFeature('group.manage_members'))
 
 type BulkTab = 'import' | 'export' | 'delete'
 const availableTabs = computed<BulkTab[]>(() => {

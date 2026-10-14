@@ -626,6 +626,15 @@ describe('BulkView — group import member changes', () => {
     return w
   }
 
+  it('warns admins without group.manage_members that files with members will be refused', async () => {
+    const w = await openGroupImport()
+    expect(w.find('[data-testid="group-import-no-member-permission"]').exists()).toBe(true)
+
+    grantedFeatures.add('group.manage_members')
+    const w2 = await openGroupImport()
+    expect(w2.find('[data-testid="group-import-no-member-permission"]').exists()).toBe(false)
+  })
+
   it('previews what each row does and the planned outcome of every member change', async () => {
     vi.mocked(previewGroupCsv).mockResolvedValue({ data: {
       totalRows: 2,

@@ -190,6 +190,15 @@ class BulkGroupServicePreviewTest {
     }
 
     @Test
+    void preview_withMembers_withoutManageMembers_isRefused() {
+        dir.mayManageMembers = false;
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> preview("cn,members\neng,alice\n", List.of(), "member"))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+    }
+
+    @Test
     void withoutTemplate_headersPassThrough() throws IOException {
         BulkImportPreviewResult result = preview("cn,description\neng,Engineers\n", List.of(), "member");
 

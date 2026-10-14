@@ -146,6 +146,14 @@ class ScopedGroupImportMembersTest {
     }
 
     @Test
+    void requireMemberChanges_checksGroupManageMembers() {
+        members.requireMemberChanges();
+
+        verify(permissionService).requireFeature(admin, dirId,
+                com.ldapportal.entity.enums.FeatureKey.GROUP_MANAGE_MEMBERS);
+    }
+
+    @Test
     void apply_handsOneChangeToTheGovernedWriter_withTheUid() {
         MembershipChangeResult.Item item = members.apply(Member.of(ALICE, "alice"),
                 "cn=g,ou=groups,dc=example,dc=com", "memberUid", MembershipChangeRequest.Op.ADD);

@@ -28,6 +28,9 @@ final class FakeGroupImportMembers implements GroupImportMembers {
     private final Map<String, Member> members = new HashMap<>();
     private final Map<String, ExistingGroup> groups = new HashMap<>();
     final List<Write> writes = new ArrayList<>();
+    /** Set to refuse member changes, as a caller without group.manage_members would be. */
+    boolean mayManageMembers = true;
+    int memberChangeChecks;
     /** Decides each governed write's outcome; applied by default. */
     Function<Write, MembershipChangeResult.Status> outcome = w -> MembershipChangeResult.Status.APPLIED;
 
@@ -69,6 +72,14 @@ final class FakeGroupImportMembers implements GroupImportMembers {
         groups.put(GroupImportMembers.normalizeDn(dn),
                 new ExistingGroup(dn, false, "member", Set.of(), Set.of()));
         return this;
+    }
+
+    @Override
+    public void requireMemberChanges() {
+        memberChangeChecks++;
+        if (!mayManageMembers) {
+            throw new org.springframework.security.access.AccessDeniedException("group.manage_members required");
+        }
     }
 
     @Override

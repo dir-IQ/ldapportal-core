@@ -309,3 +309,6 @@ Base DN:  dc=corp,dc=local
   on existing groups follow the same approval, separation-of-duties and audit rules as
   editing a group by hand, so an add to a group that requires approval is queued; a new
   group gets its members in the create itself. At most 2,000 member changes per file.
+  Needs **bulk.import**; a file that lists any members also needs **group.manage_members**
+  (checked for the requester before a file is queued for approval, and for the approver
+  when it runs).

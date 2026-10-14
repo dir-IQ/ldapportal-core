@@ -329,6 +329,29 @@ class BulkGroupServiceImportTest {
         verify(groupService, never()).createGroup(any(), anyString(), any());
     }
 
+    // ── Permission ────────────────────────────────────────────────────────────
+
+    @Test
+    void memberChanges_withoutManageMembers_refuseTheWholeFileBeforeAnyWrite() {
+        dir.mayManageMembers = false;
+
+        // Row 1 has no members, but nothing in the file runs once row 2 asks for one.
+        assertThatThrownBy(() -> run("cn,description,members\nsales,Sales,\nengineering,,alice\n"))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        verify(groupService, never()).createGroup(any(), anyString(), any());
+        assertThat(dir.writes).isEmpty();
+    }
+
+    @Test
+    void fileWithoutMembers_doesNotNeedManageMembers() throws IOException {
+        dir.mayManageMembers = false;
+
+        BulkImportResult result = run("cn,description,members\nengineering,Eng team,\n");
+
+        assertThat(dir.memberChangeChecks).isZero();
+        assertThat(result.created()).isEqualTo(1);
+    }
+
     // ── Columns ───────────────────────────────────────────────────────────────
 
     @Test

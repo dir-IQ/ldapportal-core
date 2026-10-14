@@ -81,6 +81,9 @@ import java.util.Set;
  *       ({@code member} / {@code uniqueMember} / {@code memberUid}, the latter
  *       taking the uid); a new group uses the import's member attribute.</li>
  * </ul>
+ * <p>A file that lists any members also needs {@code group.manage_members}
+ * (checked once, before anything is resolved or written).</p>
+ *
  * <p>Conflict handling only decides whether an existing group's other
  * attributes are replaced ({@code OVERWRITE}); members are always added or
  * removed per {@value #MEMBER_OPERATION_COLUMN}.</p>
@@ -202,6 +205,18 @@ public class BulkGroupService {
         return new BulkImportPreviewResult(plans.size(), previewRows, unmapped);
     }
 
+    /**
+     * Whether the file lists any members, i.e. would add or remove members.
+     * Lets the caller check {@code group.manage_members} before queueing a
+     * file for approval, without resolving anything.
+     */
+    public boolean listsMembers(InputStream csvInput, List<CsvColumnMappingDto> columnMappings,
+                                boolean skipHeaderRow, char fieldDelimiter,
+                                boolean passthroughUnmapped, String memberAttribute) throws IOException {
+        return hasMemberValues(parse(csvInput, skipHeaderRow, fieldDelimiter),
+                CsvColumnMap.of(columnMappings, passthroughUnmapped), memberAttribute);
+    }
+
     // ── Planning (shared by preview and import) ──────────────────────────────
 
     private List<RowPlan> plan(List<Map<String, String>> rows, CsvColumnMap colToAttr, String parentDn,
@@ -209,6 +224,11 @@ public class BulkGroupService {
                                GroupImportMembers members) {
         String newGroupMemberAttr = memberAttribute == null || memberAttribute.isBlank()
                 ? "member" : memberAttribute;
+        // Adding or removing members needs group.manage_members as well as
+        // bulk.import; refuse the whole file up front rather than row by row.
+        if (hasMemberValues(rows, colToAttr, memberAttribute)) {
+            members.requireMemberChanges();
+        }
         // Groups by normalized DN: what's in the directory, plus groups an
         // earlier row of this file creates (so later rows update them).
         Map<String, Optional<ExistingGroup>> groups = new HashMap<>();
@@ -327,6 +347,23 @@ public class BulkGroupService {
 
         markDuplicatesAndConflicts(plans);
         return plans;
+    }
+
+    /** Whether any row lists members, i.e. the file asks for member changes. */
+    private static boolean hasMemberValues(List<Map<String, String>> rows, CsvColumnMap colToAttr,
+                                           String memberAttribute) {
+        for (Map<String, String> row : rows) {
+            for (Map.Entry<String, String> cell : row.entrySet()) {
+                if (cell.getValue() == null || cell.getValue().isBlank()
+                        || isMemberOperationColumn(cell.getKey())) continue;
+                String attr = colToAttr.attributeFor(cell.getKey());
+                if (attr != null && ("members".equalsIgnoreCase(attr)
+                        || (memberAttribute != null && attr.equalsIgnoreCase(memberAttribute)))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

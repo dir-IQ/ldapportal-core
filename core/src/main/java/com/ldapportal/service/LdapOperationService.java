@@ -1602,6 +1602,33 @@ public class LdapOperationService {
     }
 
     /**
+     * Refuses (403) a group-import file that lists members when the caller
+     * lacks {@code group.manage_members}. The controller calls this before a
+     * file is queued for approval, so the requester is checked, not only the
+     * approver when the approved file is replayed.
+     */
+    public void requireGroupImportMemberPermission(UUID directoryId, AuthPrincipal principal,
+                                                   byte[] csv, BulkImportRequest req,
+                                                   String memberAttribute) throws IOException {
+        List<CsvColumnMappingDto> mappings = req.columnMappings() != null
+                ? new ArrayList<>(req.columnMappings()) : new ArrayList<>();
+        if (req.templateId() != null && mappings.isEmpty()) {
+            mappings = csvTemplateService.loadEntries(req.templateId()).stream()
+                    .map(e -> new CsvColumnMappingDto(
+                            e.getCsvColumnName(), e.getLdapAttribute(), e.isIgnored()))
+                    .toList();
+        }
+        boolean skipHeader = resolveSkipHeaderRow(req.skipHeaderRow(), req.templateId(), directoryId, principal);
+        char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
+        String effectiveMemberAttr = (memberAttribute != null && !memberAttribute.isBlank())
+                ? memberAttribute : "member";
+        if (bulkGroupService.listsMembers(new java.io.ByteArrayInputStream(csv), mappings,
+                skipHeader, delimiter, req.templateId() == null, effectiveMemberAttr)) {
+            permissionService.requireFeature(principal, directoryId, FeatureKey.GROUP_MANAGE_MEMBERS);
+        }
+    }
+
+    /**
      * Member resolution and governed member writes for a group import run by
      * {@code principal}: member changes on existing groups go through
      * {@link #applyMembershipChanges(UUID, AuthPrincipal, String, String, List)}.
