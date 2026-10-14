@@ -141,8 +141,8 @@ describe('checkMappings', () => {
     const c = checkMappings(rows, opts())
     expect(c.blocking).toBe(false)
     expect(c.rows[2].warnings).toEqual(['Not in the selected object classes'])
-    expect(c.rows[3].warnings).toEqual(['Another column also maps to mail'])
-    expect(c.rows[4].warnings).toEqual(['Another column also maps to MAIL'])
+    expect(c.rows[3].warnings).toEqual(['Another column also maps to mail; their values are added together'])
+    expect(c.rows[4].warnings).toEqual(['Another column also maps to MAIL; their values are added together'])
     expect(c.rows[5].warnings).toEqual(['Not in the sample file'])
   })
 

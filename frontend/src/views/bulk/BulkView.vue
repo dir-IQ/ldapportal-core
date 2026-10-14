@@ -115,6 +115,12 @@
             </label>
           </div>
         </div>
+        <p class="text-xs text-gray-500" data-testid="user-import-multivalue-hint">
+          For a multi-valued attribute, separate the values in one cell with <code>|</code>
+          (write <code>\|</code> for a literal pipe), e.g.
+          <code>"cn=Group A,ou=Groups,dc=example,dc=com|cn=Group B,ou=Groups,dc=example,dc=com"</code>.
+          Quote cells that contain the field delimiter.
+        </p>
 
         <!-- Template-driven read-only fields. 12-col grid:
              Object Class (3) + RDN Attribute / DN Column (2) + Other Attributes (4)

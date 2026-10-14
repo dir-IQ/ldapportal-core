@@ -324,6 +324,85 @@ class BulkUserServiceTest {
         assertThat(captor.getValue()).containsKey("cn");
     }
 
+    // ── Import — multi-valued attributes ───────────────────────────────────────
+
+    @Test
+    void importCsv_pipeSeparatedCell_givesSeveralValues_quotedDnsKeepTheirCommas() throws IOException {
+        String csvContent = "uid,seeAlso\n"
+                + "jsmith,\"cn=Group A,ou=Groups,dc=example,dc=com|cn=Group B,ou=Groups,dc=example,dc=com\"\n";
+
+        service.importCsv(dc, csv(csvContent),
+                "ou=people,dc=example,dc=com", "uid", ConflictHandling.SKIP, List.of(), List.of(), true);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(eq(dc),
+                eq("uid=jsmith,ou=people,dc=example,dc=com"), captor.capture(), any());
+        assertThat(captor.getValue().get("seeAlso")).containsExactly(
+                "cn=Group A,ou=Groups,dc=example,dc=com", "cn=Group B,ou=Groups,dc=example,dc=com");
+        assertThat(captor.getValue().get("uid")).containsExactly("jsmith");
+    }
+
+    @Test
+    void importCsv_escapedPipe_isALiteralPipe() throws IOException {
+        service.importCsv(dc, csv("uid,description\njsmith,a\\|b|c\n"),
+                "ou=people,dc=example,dc=com", "uid", ConflictHandling.SKIP, List.of(), List.of(), true);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(any(), anyString(), captor.capture(), any());
+        assertThat(captor.getValue().get("description")).containsExactly("a|b", "c");
+    }
+
+    @Test
+    void importCsv_columnsMappedToTheSameAttribute_addTheirValues() throws IOException {
+        String csvContent = "login,mail1,mail2\njsmith,j@x.com,john@x.com|j@x.com\n";
+        List<CsvColumnMappingDto> mappings = List.of(
+                new CsvColumnMappingDto("login", "uid", false),
+                new CsvColumnMappingDto("mail1", "mail", false),
+                new CsvColumnMappingDto("mail2", "MAIL", false));
+
+        service.importCsv(dc, csv(csvContent),
+                "ou=people,dc=example,dc=com", "uid", ConflictHandling.SKIP, mappings, List.of(), true);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(any(), anyString(), captor.capture(), any());
+        // Names compared ignoring case; the repeated value is kept once.
+        assertThat(captor.getValue()).doesNotContainKey("MAIL");
+        assertThat(captor.getValue().get("mail")).containsExactly("j@x.com", "john@x.com");
+    }
+
+    @Test
+    void importCsv_overwrite_replacesWithEveryValue() throws IOException {
+        doThrow(entryAlreadyExists("uid=existing,ou=people,dc=example,dc=com"))
+                .when(userService).createUser(eq(dc), anyString(), any(), any());
+
+        service.importCsv(dc, csv("uid,seeAlso\nexisting,\"cn=A,dc=x|cn=B,dc=x\"\n"),
+                "ou=people,dc=example,dc=com", "uid", ConflictHandling.OVERWRITE, List.of(), List.of(), true);
+
+        verify(userService).updateUser(eq(dc), eq("uid=existing,ou=people,dc=example,dc=com"),
+                argThat(mods -> mods.stream().anyMatch(m -> m.getAttributeName().equals("seeAlso")
+                        && List.of(m.getValues()).equals(List.of("cn=A,dc=x", "cn=B,dc=x")))));
+    }
+
+    @Test
+    void importCsv_rdnFromTheFirstValue() throws IOException {
+        service.importCsv(dc, csv("uid,cn\njsmith|john,John\n"),
+                "ou=people,dc=example,dc=com", "uid", ConflictHandling.SKIP, List.of(), List.of(), true);
+
+        verify(userService).createUser(eq(dc), eq("uid=jsmith,ou=people,dc=example,dc=com"), any(), any());
+    }
+
+    @Test
+    void previewImport_showsEachValueOfAMultiValuedCell() throws IOException {
+        var result = service.previewImport(csv("uid,seeAlso\njsmith,\"cn=A,dc=x|cn=B,dc=x\"\n"),
+                "ou=people,dc=example,dc=com", "uid", List.of(), true, List.of(), null, ',', true);
+
+        assertThat(result.rows().get(0).attributes()).containsEntry("seeAlso", "cn=A,dc=x | cn=B,dc=x");
+        assertThat(result.rows().get(0).computedDn()).isEqualTo("uid=jsmith,ou=people,dc=example,dc=com");
+    }
+
     // ── Unmapped columns: template vs template-less ──────────────────────────
 
     private static final List<CsvColumnMappingDto> TEMPLATE_MAPPINGS = List.of(
@@ -436,6 +515,23 @@ class BulkUserServiceTest {
 
         String output = new String(csv, StandardCharsets.UTF_8);
         assertThat(output).contains("cn=admins,dc=example,dc=com|cn=users,dc=example,dc=com");
+    }
+
+    @Test
+    void exportCsv_pipeInsideAValue_isEscapedSoItReimportsAsOneValue() throws IOException {
+        LdapUser user = ldapUser("uid=jsmith,ou=people,dc=example,dc=com",
+                Map.of("description", List.of("a|b", "c")));
+
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Consumer<LdapUser> consumer = invocation.getArgument(3);
+            consumer.accept(user);
+            return null;
+        }).when(userService).processUsers(eq(dc), anyString(), isNull(), any(), eq("description"));
+
+        byte[] csv = service.exportCsv(dc, null, null, List.of("description"));
+
+        assertThat(new String(csv, StandardCharsets.UTF_8)).contains("\"a\\|b|c\"");
     }
 
     @Test
