@@ -5,6 +5,7 @@ import com.ldapportal.dto.csv.BulkImportPreviewResult;
 import com.ldapportal.dto.csv.BulkImportPreviewRow;
 import com.ldapportal.dto.csv.BulkImportPreviewRow.GroupAction;
 import com.ldapportal.dto.csv.CsvColumnMappingDto;
+import com.ldapportal.dto.csv.GroupAttributeChange;
 import com.ldapportal.dto.csv.GroupMemberChange;
 import com.ldapportal.dto.csv.GroupMemberChange.Outcome;
 import com.ldapportal.ldap.LdapGroupService;
@@ -85,6 +86,21 @@ class BulkGroupServicePreviewTest {
         assertThat(outcomes(row)).containsExactly(Outcome.ALREADY_MEMBER, Outcome.WILL_ADD, Outcome.AMBIGUOUS);
         // Updating an existing group doesn't need the object class's MUSTs.
         assertThat(row.missingRequired()).isEmpty();
+    }
+
+    @Test
+    void existingGroup_listsOnlyTheProvidedAttributesThatChange() throws IOException {
+        dir.group(ENG, "member", ALICE).attr(ENG, "description", "Old desc").attr(ENG, "owner", BOB);
+
+        BulkImportPreviewResult result = preview(
+                "cn,description,owner\neng,New desc,\nnewgroup,Fresh,\n", List.of(), "member");
+
+        // owner is blank, so it's left alone; description changes.
+        assertThat(result.rows().get(0).attributeChanges())
+                .containsExactly(new GroupAttributeChange("description", "Old desc", "New desc"));
+        // A group the file creates has nothing to compare against.
+        assertThat(result.rows().get(1).groupAction()).isEqualTo(GroupAction.CREATE);
+        assertThat(result.rows().get(1).attributeChanges()).isEmpty();
     }
 
     @Test

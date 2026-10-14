@@ -7,12 +7,12 @@ import com.ldapportal.dto.csv.BulkImportPreviewRow.GroupAction;
 import com.ldapportal.dto.csv.BulkImportResult;
 import com.ldapportal.dto.csv.BulkImportRowResult;
 import com.ldapportal.dto.csv.CsvColumnMappingDto;
+import com.ldapportal.dto.csv.GroupAttributeChange;
 import com.ldapportal.dto.csv.GroupMemberChange;
 import com.ldapportal.dto.csv.GroupMemberChange.Outcome;
 import com.ldapportal.dto.ldap.MembershipChangeRequest.Op;
 import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.entity.DirectoryConnection;
-import com.ldapportal.entity.enums.ConflictHandling;
 import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.ldap.model.LdapGroup;
 import com.ldapportal.service.GroupImportMembers.ExistingGroup;
@@ -57,7 +57,10 @@ import java.util.Set;
  *       to it; {@code delete} removes the row's members from an existing group
  *       and changes nothing else.</li>
  *   <li>{@code dn} — ignored, so a file written by export re-imports as-is.</li>
- *   <li>anything else — written as an attribute (see {@link CsvColumnMap}).</li>
+ *   <li>anything else ({@code description}, {@code owner}, …) — an attribute
+ *       (see {@link CsvColumnMap}). A new group is created with it; on an
+ *       existing group a provided value replaces the current one, and a blank
+ *       or absent value leaves the attribute as it is.</li>
  * </ul>
  *
  * <h3>Preview and import share one plan</h3>
@@ -84,9 +87,10 @@ import java.util.Set;
  * <p>A file that lists any members also needs {@code group.manage_members}
  * (checked once, before anything is resolved or written).</p>
  *
- * <p>Conflict handling only decides whether an existing group's other
- * attributes are replaced ({@code OVERWRITE}); members are always added or
- * removed per {@value #MEMBER_OPERATION_COLUMN}.</p>
+ * <p>There is no conflict-handling setting: an existing group is always
+ * updated with the attributes a row provides (only those that differ are
+ * written), and its members are added or removed per
+ * {@value #MEMBER_OPERATION_COLUMN}.</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -109,7 +113,6 @@ public class BulkGroupService {
      * @param dc                  target directory connection
      * @param csvInput            raw CSV byte stream (UTF-8)
      * @param parentDn            container new groups are created in
-     * @param conflictHandling    {@code OVERWRITE} replaces an existing group's other attributes
      * @param columnMappings      CSV column → LDAP attribute mappings
      * @param objectClasses       objectClass values for new groups
      * @param memberAttribute     member attribute for new groups (member, uniqueMember, memberUid)
@@ -122,7 +125,6 @@ public class BulkGroupService {
     public BulkImportResult importCsv(DirectoryConnection dc,
                                        InputStream csvInput,
                                        String parentDn,
-                                       ConflictHandling conflictHandling,
                                        List<CsvColumnMappingDto> columnMappings,
                                        List<String> objectClasses,
                                        String memberAttribute,
@@ -137,7 +139,7 @@ public class BulkGroupService {
 
         List<BulkImportRowResult> rowResults = new ArrayList<>(plans.size());
         for (RowPlan p : plans) {
-            rowResults.add(execute(dc, p, conflictHandling, members));
+            rowResults.add(execute(dc, p, members));
         }
 
         long created = countByStatus(rowResults, BulkImportRowResult.Status.CREATED);
@@ -196,7 +198,8 @@ public class BulkGroupService {
                         .forEach(missing::add);
             }
             previewRows.add(new BulkImportPreviewRow(p.rowNumber, p.dn, p.displayAttrs, missing,
-                    p.error == null ? p.action : null, p.error, p.changeRows()));
+                    p.error == null ? p.action : null, p.error, p.changeRows(),
+                    p.error == null ? p.attrUpdates : List.of()));
         }
 
         List<String> unmapped = colToAttr.unmappedColumns(rows).stream()
@@ -304,6 +307,18 @@ public class BulkGroupService {
                 continue;
             }
             p.action = group == null ? GroupAction.CREATE : GroupAction.UPDATE;
+            if (group != null) {
+                // Provided attributes replace the group's current values; only
+                // the ones that differ are written. Blank cells never got here.
+                p.attrs.forEach((attr, values) -> {
+                    if (attr.equalsIgnoreCase("cn") || attr.equalsIgnoreCase("objectClass")) return;
+                    List<String> current = group.valuesOf(attr);
+                    if (!current.equals(values)) {
+                        p.attrUpdates.add(new GroupAttributeChange(attr,
+                                current.isEmpty() ? null : String.join("|", current), values.get(0)));
+                    }
+                });
+            }
             p.memberAttribute = group == null ? newGroupMemberAttr : group.memberAttribute();
             boolean uidMembers = "memberUid".equalsIgnoreCase(p.memberAttribute);
 
@@ -341,7 +356,7 @@ public class BulkGroupService {
                     if (c.member.uid() != null) uids.add(c.member.uid().toLowerCase(Locale.ROOT));
                 }
                 groups.put(GroupImportMembers.normalizeDn(p.dn),
-                        Optional.of(ExistingGroup.created(p.dn, p.memberAttribute, dns, uids)));
+                        Optional.of(ExistingGroup.created(p.dn, p.memberAttribute, dns, uids, p.attrs)));
             }
         }
 
@@ -399,8 +414,7 @@ public class BulkGroupService {
 
     // ── Execution ─────────────────────────────────────────────────────────────
 
-    private BulkImportRowResult execute(DirectoryConnection dc, RowPlan p,
-                                        ConflictHandling conflictHandling, GroupImportMembers members) {
+    private BulkImportRowResult execute(DirectoryConnection dc, RowPlan p, GroupImportMembers members) {
         if (p.error != null) {
             return BulkImportRowResult.error(p.rowNumber, p.dn, p.error);
         }
@@ -408,25 +422,21 @@ public class BulkGroupService {
             if (p.action == GroupAction.CREATE) {
                 return create(dc, p);
             }
-            boolean replacedAttrs = false;
-            if (p.operation == Op.ADD && conflictHandling == ConflictHandling.OVERWRITE) {
-                List<Modification> mods = p.attrs.entrySet().stream()
-                        .filter(e -> !e.getKey().equalsIgnoreCase("cn")
-                                && !e.getKey().equalsIgnoreCase("objectClass"))
-                        .map(e -> new Modification(ModificationType.REPLACE, e.getKey(),
-                                e.getValue().toArray(new String[0])))
+            String updated = null;
+            if (!p.attrUpdates.isEmpty()) {
+                List<Modification> mods = p.attrUpdates.stream()
+                        .map(a -> new Modification(ModificationType.REPLACE, a.attribute(), a.newValue()))
                         .toList();
-                if (!mods.isEmpty()) {
-                    groupService.updateGroup(dc, p.dn, mods);
-                    replacedAttrs = true;
-                }
+                groupService.updateGroup(dc, p.dn, mods);
+                updated = "Updated " + String.join(", ",
+                        p.attrUpdates.stream().map(GroupAttributeChange::attribute).toList());
             }
             for (PlannedChange c : p.changes) {
                 if (!c.outcome.planned()) continue;
                 MembershipChangeResult.Item item = members.apply(c.member, p.dn, p.memberAttribute, c.op);
                 c.record(item);
             }
-            return result(p, replacedAttrs ? "Attributes replaced" : null, false);
+            return result(p, updated, false);
         } catch (Exception ex) {
             log.warn("Row {} failed [dn={}]: {}", p.rowNumber, p.dn, ex.getMessage());
             for (PlannedChange c : p.changes) {
@@ -639,11 +649,13 @@ public class BulkGroupService {
 
     private static final class RowPlan {
         final int rowNumber;
-        /** Attributes written on create (and replaced on OVERWRITE); members excluded. */
+        /** Attributes the row provides (written on create, compared on update); members excluded. */
         final Map<String, List<String>> attrs = new LinkedHashMap<>();
         /** What the preview shows for the row, members included. */
         final Map<String, String> displayAttrs = new LinkedHashMap<>();
         final List<PlannedChange> changes = new ArrayList<>();
+        /** Attributes of an existing group the row gives a new value. */
+        final List<GroupAttributeChange> attrUpdates = new ArrayList<>();
         String dn;
         Op operation = Op.ADD;
         GroupAction action;

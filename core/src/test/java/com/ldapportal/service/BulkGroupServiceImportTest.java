@@ -9,7 +9,8 @@ import com.ldapportal.dto.csv.GroupMemberChange.Outcome;
 import com.ldapportal.dto.ldap.MembershipChangeRequest.Op;
 import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.entity.DirectoryConnection;
-import com.ldapportal.entity.enums.ConflictHandling;
+import com.unboundid.ldap.sdk.Modification;
+import com.unboundid.ldap.sdk.ModificationType;
 import com.ldapportal.ldap.LdapGroupService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -65,12 +66,12 @@ class BulkGroupServiceImportTest {
     }
 
     private BulkImportResult run(String csv) throws IOException {
-        return run(csv, ConflictHandling.SKIP, "member");
+        return run(csv, "member");
     }
 
-    private BulkImportResult run(String csv, ConflictHandling conflict, String memberAttr) throws IOException {
+    private BulkImportResult run(String csv, String memberAttr) throws IOException {
         return service.importCsv(dc, new ByteArrayInputStream(csv.getBytes(StandardCharsets.UTF_8)), PARENT,
-                conflict, List.of(), List.of("groupOfNames"), memberAttr, true, ',', true, dir);
+                List.of(), List.of("groupOfNames"), memberAttr, true, ',', true, dir);
     }
 
     private static List<Outcome> outcomes(BulkImportRowResult row) {
@@ -117,7 +118,7 @@ class BulkGroupServiceImportTest {
 
     @Test
     void newPosixGroup_getsUidsInMemberUid() throws IOException {
-        run("cn,members\nengineering,\"alice|" + BOB + "\"\n", ConflictHandling.SKIP, "memberUid");
+        run("cn,members\nengineering,\"alice|" + BOB + "\"\n", "memberUid");
 
         assertThat(createdAttrs(ENG)).containsEntry("memberUid", List.of("alice", "bob"));
     }
@@ -161,8 +162,8 @@ class BulkGroupServiceImportTest {
     }
 
     @Test
-    void existingGroup_noMembersToAdd_isSkipped() throws IOException {
-        dir.group(ENG, "member", ALICE);
+    void existingGroup_noMembersToAdd_andNothingChanged_isSkipped() throws IOException {
+        dir.group(ENG, "member", ALICE).attr(ENG, "description", "Eng team");
 
         BulkImportResult result = run("cn,description\nengineering,Eng team\n");
 
@@ -173,16 +174,46 @@ class BulkGroupServiceImportTest {
     }
 
     @Test
-    void existingGroup_overwriteReplacesOtherAttributes_andStillAddsMembers() throws IOException {
-        dir.group(ENG, "member", ALICE);
+    void existingGroup_providedOwnerAndDescription_replaceTheCurrentValues() throws IOException {
+        dir.group(ENG, "member", ALICE).attr(ENG, "description", "Old desc");
 
-        BulkImportResult result = run("cn,description,members\nengineering,New desc,bob\n",
-                ConflictHandling.OVERWRITE, "member");
+        BulkImportResult result = run("cn,description,owner,members\nengineering,New desc,\"" + CAROL + "\",bob\n");
 
-        verify(groupService).updateGroup(eq(dc), eq(ENG), any());
+        List<Modification> mods = updateMods();
+        assertThat(mods).extracting(Modification::getAttributeName).containsExactly("description", "owner");
+        assertThat(mods).allMatch(m -> m.getModificationType() == ModificationType.REPLACE);
+        assertThat(mods.get(0).getValues()).containsExactly("New desc");
+        assertThat(mods.get(1).getValues()).containsExactly(CAROL);
         assertThat(dir.writes).hasSize(1);
         assertThat(result.rows().get(0).status()).isEqualTo(Status.UPDATED);
-        assertThat(result.rows().get(0).message()).isEqualTo("Attributes replaced; 1 added");
+        assertThat(result.rows().get(0).message()).isEqualTo("Updated description, owner; 1 added");
+    }
+
+    @Test
+    void existingGroup_blankOrMissingOwnerAndDescription_areLeftAsTheyAre() throws IOException {
+        dir.group(ENG, "member", ALICE).attr(ENG, "description", "Eng team").attr(ENG, "owner", CAROL);
+
+        // description blank, owner column absent: neither is touched.
+        BulkImportResult result = run("cn,description,members\nengineering,,bob\n");
+
+        verify(groupService, never()).updateGroup(any(), anyString(), any());
+        assertThat(result.rows().get(0).message()).isEqualTo("1 added");
+    }
+
+    @Test
+    void existingGroup_onlyChangedAttributesAreWritten() throws IOException {
+        dir.group(ENG, "member", ALICE).attr(ENG, "description", "Eng team").attr(ENG, "owner", BOB);
+
+        run("cn,description,owner\nengineering,Eng team,\"" + CAROL + "\"\n");
+
+        assertThat(updateMods()).extracting(Modification::getAttributeName).containsExactly("owner");
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Modification> updateMods() {
+        ArgumentCaptor<List<Modification>> mods = ArgumentCaptor.forClass(List.class);
+        verify(groupService).updateGroup(eq(dc), eq(ENG), mods.capture());
+        return mods.getValue();
     }
 
     @Test
@@ -252,13 +283,13 @@ class BulkGroupServiceImportTest {
     }
 
     @Test
-    void delete_ignoresOverwrite() throws IOException {
-        dir.group(ENG, "member", ALICE, BOB);
+    void delete_alsoUpdatesProvidedAttributes() throws IOException {
+        dir.group(ENG, "member", ALICE, BOB).attr(ENG, "description", "Old desc");
 
-        run("cn,description,members,member-operation\nengineering,New desc,alice,delete\n",
-                ConflictHandling.OVERWRITE, "member");
+        BulkImportResult result = run("cn,description,members,member-operation\nengineering,New desc,alice,delete\n");
 
-        verify(groupService, never()).updateGroup(any(), anyString(), any());
+        assertThat(updateMods()).extracting(Modification::getAttributeName).containsExactly("description");
+        assertThat(result.rows().get(0).message()).isEqualTo("Updated description; 1 removed");
     }
 
     @Test

@@ -1555,7 +1555,9 @@ public class LdapOperationService {
         String parentDn = effectiveImportParentDn(req, importProfile, true);
         permissionService.requireDnWithinScope(principal, directoryId, parentDn);
 
-        ConflictHandling  conflictHandling = ConflictHandling.SKIP;
+        // No conflict handling for groups: an existing group always takes the
+        // attributes a row provides (see BulkGroupService), so a template's or
+        // request's conflictHandling is not consulted here.
         List<String>      objectClasses    = (objectClass != null && !objectClass.isBlank())
                 ? List.of(objectClass.split(",")) : List.of("groupOfNames");
         List<CsvColumnMappingDto> mappings = req.columnMappings() != null
@@ -1566,7 +1568,6 @@ public class LdapOperationService {
                     csvTemplateService.loadTemplate(req.templateId(), directoryId, principal);
             List<CsvMappingTemplateEntry> entries =
                     csvTemplateService.loadEntries(req.templateId());
-            conflictHandling = template.getConflictHandling();
             if (template.getObjectClass() != null && !template.getObjectClass().isBlank()) {
                 objectClasses = List.of(template.getObjectClass().split(","));
             }
@@ -1578,8 +1579,6 @@ public class LdapOperationService {
             }
         }
 
-        if (req.conflictHandling() != null) conflictHandling = req.conflictHandling();
-
         boolean skipHeader = resolveSkipHeaderRow(req.skipHeaderRow(), req.templateId(), directoryId, principal);
 
         String effectiveMemberAttr = (memberAttribute != null && !memberAttribute.isBlank())
@@ -1588,7 +1587,7 @@ public class LdapOperationService {
         char delimiter = resolveFieldDelimiter(req.fieldDelimiter(), req.templateId(), directoryId, principal);
 
         BulkImportResult result = bulkGroupService.importCsv(
-                dc, csvInput, parentDn, conflictHandling, mappings,
+                dc, csvInput, parentDn, mappings,
                 objectClasses, effectiveMemberAttr, skipHeader, delimiter,
                 req.templateId() == null, groupImportMembers(dc, directoryId, principal));
 

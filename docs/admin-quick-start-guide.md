@@ -303,7 +303,9 @@ Base DN:  dc=corp,dc=local
   `cn`, optional attributes, `members` (separated by `|`; each a uid or a full DN) and
   an optional `member-operation` column (`add` by default, or `delete` to remove the
   listed members from an existing group). A `dn` column, as written by group export, is
-  ignored, so an exported file can be edited and re-imported. Preview shows whether each
+  ignored, so an exported file can be edited and re-imported. There is no conflict-handling
+  setting: on an existing group, a `description`, `owner` or other attribute the row provides
+  replaces the current value, and a blank or missing one leaves it unchanged. Preview shows whether each
   row creates or updates its group and what every member change will do (will add,
   already a member, not found, out of scope…) before anything is written. Member changes
   on existing groups follow the same approval, separation-of-duties and audit rules as

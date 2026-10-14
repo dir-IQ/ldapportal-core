@@ -63,14 +63,21 @@ final class FakeGroupImportMembers implements GroupImportMembers {
             else uids.add(v.toLowerCase(Locale.ROOT));
         }
         groups.put(GroupImportMembers.normalizeDn(dn),
-                new ExistingGroup(dn, true, memberAttribute, dns, uids));
+                new ExistingGroup(dn, true, memberAttribute, dns, uids, new HashMap<>()));
+        return this;
+    }
+
+    /** Sets a current attribute value on a group registered with {@link #group}. */
+    FakeGroupImportMembers attr(String dn, String attribute, String... values) {
+        groups.get(GroupImportMembers.normalizeDn(dn)).attributes()
+                .put(attribute.toLowerCase(Locale.ROOT), List.of(values));
         return this;
     }
 
     /** An existing entry at {@code dn} that isn't a group. */
     FakeGroupImportMembers nonGroup(String dn) {
         groups.put(GroupImportMembers.normalizeDn(dn),
-                new ExistingGroup(dn, false, "member", Set.of(), Set.of()));
+                new ExistingGroup(dn, false, "member", Set.of(), Set.of(), new HashMap<>()));
         return this;
     }
 

@@ -16,7 +16,8 @@ import java.util.Map;
  * <p>Group imports also fill {@code groupAction} (whether the row creates or
  * updates its group), {@code message} (why a row can't run at all, e.g. a
  * delete against a group that doesn't exist) and {@code memberChanges} (the
- * planned outcome of every member change on the row).</p>
+ * planned outcome of every member change on the row) and {@code attributeChanges}
+ * (the attributes an existing group will get new values for).</p>
  */
 public record BulkImportPreviewRow(
         int rowNumber,
@@ -25,7 +26,8 @@ public record BulkImportPreviewRow(
         List<String> missingRequired,
         GroupAction groupAction,
         String message,
-        List<GroupMemberChange> memberChanges) {
+        List<GroupMemberChange> memberChanges,
+        List<GroupAttributeChange> attributeChanges) {
 
     /**
      * What a group-import row does to its group. {@code null} for user imports
@@ -36,7 +38,7 @@ public record BulkImportPreviewRow(
     /** User-import (and schema-validated) rows: no group detail. */
     public BulkImportPreviewRow(int rowNumber, String computedDn, Map<String, String> attributes,
                                 List<String> missingRequired) {
-        this(rowNumber, computedDn, attributes, missingRequired, null, null, List.of());
+        this(rowNumber, computedDn, attributes, missingRequired, null, null, List.of(), List.of());
     }
 
     /** Convenience for callers that aren't running schema validation. */

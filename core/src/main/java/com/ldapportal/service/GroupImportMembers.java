@@ -8,8 +8,11 @@ import com.ldapportal.ldap.model.LdapGroup;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.LDAPException;
 
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -59,10 +62,12 @@ interface GroupImportMembers {
 
     /**
      * An existing entry at a group DN. {@code isGroup} is false when the entry
-     * isn't one of the directory's group object classes.
+     * isn't one of the directory's group object classes. {@code attributes}
+     * holds its current values, keyed by lower-case attribute name.
      */
     record ExistingGroup(String dn, boolean isGroup, String memberAttribute,
-                         Set<String> memberDns, Set<String> memberUids) {
+                         Set<String> memberDns, Set<String> memberUids,
+                         Map<String, List<String>> attributes) {
 
         /**
          * Picks the attribute members are written to: whichever one the group
@@ -93,13 +98,24 @@ interface GroupImportMembers {
             g.getUniqueMember().forEach(m -> dns.add(normalizeDn(m)));
             Set<String> uids = new HashSet<>();
             g.getMemberUid().forEach(m -> uids.add(m.toLowerCase(Locale.ROOT)));
-            return new ExistingGroup(g.getDn(), isGroup, attr, dns, uids);
+            return new ExistingGroup(g.getDn(), isGroup, attr, dns, uids, lowerKeys(g.getAttributes()));
         }
 
-        /** A group created earlier in the same file, with the members it was given. */
+        /** A group created earlier in the same file, with the members and attributes it was given. */
         static ExistingGroup created(String dn, String memberAttribute, Set<String> memberDns,
-                                     Set<String> memberUids) {
-            return new ExistingGroup(dn, true, memberAttribute, memberDns, memberUids);
+                                     Set<String> memberUids, Map<String, List<String>> attributes) {
+            return new ExistingGroup(dn, true, memberAttribute, memberDns, memberUids, lowerKeys(attributes));
+        }
+
+        /** The group's current values for {@code attribute}; empty when it isn't set. */
+        List<String> valuesOf(String attribute) {
+            return attributes.getOrDefault(attribute.toLowerCase(Locale.ROOT), List.of());
+        }
+
+        private static Map<String, List<String>> lowerKeys(Map<String, List<String>> attrs) {
+            Map<String, List<String>> out = new HashMap<>();
+            if (attrs != null) attrs.forEach((k, v) -> out.put(k.toLowerCase(Locale.ROOT), v));
+            return out;
         }
 
         boolean hasMember(Member m) {

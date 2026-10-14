@@ -45,9 +45,6 @@ final class ScopedGroupImportMembers implements GroupImportMembers {
                                      List<MembershipChangeRequest.Change> changes);
     }
 
-    private static final String[] GROUP_ATTRS =
-            {"objectClass", "cn", "member", "uniqueMember", "memberUid"};
-
     private final DirectoryConnection dc;
     private final UUID directoryId;
     private final AuthPrincipal principal;
@@ -83,7 +80,9 @@ final class ScopedGroupImportMembers implements GroupImportMembers {
     @Override
     public ExistingGroup findGroup(String dn) {
         try {
-            LdapGroup g = groupService.getGroup(dc, dn, GROUP_ATTRS);
+            // All user attributes: members, object classes, and the current
+            // values a row's attributes are compared against.
+            LdapGroup g = groupService.getGroup(dc, dn);
             Set<String> groupClasses = DirectoryObjectClassDefaults.effectiveGroupObjectClassSet(dc);
             boolean isGroup = g.getValues("objectClass").stream()
                     .anyMatch(oc -> groupClasses.contains(oc.toLowerCase(Locale.ROOT)));

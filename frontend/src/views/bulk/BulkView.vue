@@ -301,16 +301,17 @@
     <section v-if="activeTab === 'import' && canBulkImport && entityType === 'groups'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
       <h2 class="text-lg font-semibold mb-3">Import Groups from CSV</h2>
       <div class="space-y-2">
-        <!-- 12-column grid: Parent DN (3) + Object Class (3)
-             + Conflict Handling (3) + CSV File (3) = 12.
+        <!-- 12-column grid: Active profile (4) + Object Class (4) + CSV File (4) = 12.
+             There is no conflict-handling choice for groups: an existing group
+             takes the attributes a row provides and keeps the ones it leaves blank.
              Member Attribute is fully derived from Object Class
              (groupOfNames → member, groupOfUniqueNames → uniqueMember,
              posixGroup → memberUid) so it's resolved silently in the
              groupMemberAttr computed and doesn't need a UI field. -->
         <div class="grid grid-cols-12 gap-2 items-start">
-          <ActiveProfileField class="col-span-3"
+          <ActiveProfileField class="col-span-4"
             :name="activeProfile?.name" :color="activeProfile?.themeColor" :dn="activeGroupTargetDn" />
-          <div class="col-span-3">
+          <div class="col-span-4">
             <label for="bulk-group-object-class" class="block text-sm font-medium text-gray-700 mb-1">Object Class</label>
             <select id="bulk-group-object-class" v-model="groupImportForm.objectClass" class="input w-full">
               <option value="groupOfNames">groupOfNames</option>
@@ -318,14 +319,7 @@
               <option value="posixGroup">posixGroup</option>
             </select>
           </div>
-          <div class="col-span-3">
-            <label for="bulk-group-conflict-handling" class="block text-sm font-medium text-gray-700 mb-1">Conflict Handling</label>
-            <select id="bulk-group-conflict-handling" v-model="groupImportForm.conflictHandling" class="input w-full">
-              <option value="SKIP">Skip existing</option>
-              <option value="OVERWRITE">Overwrite existing</option>
-            </select>
-          </div>
-          <div class="col-span-3">
+          <div class="col-span-4">
             <label class="block text-sm font-medium text-gray-700 mb-1">CSV File <span class="text-red-500">*</span></label>
             <label class="csv-file-picker input flex items-center gap-2 w-full cursor-pointer !py-0 !pr-1 hover:border-gray-400 transition-colors bg-white">
               <span class="flex-1 truncate text-sm"
@@ -344,6 +338,8 @@
           <code>members</code> (pipe-separated; each a uid or a full DN),
           <code>member-operation</code> (<code>add</code>, the default, or <code>delete</code> to remove the listed members from an existing group).
           A <code>dn</code> column, as written by export, is ignored. First row must be a header row.
+          On an existing group, a <code>description</code>, <code>owner</code> or other attribute you provide replaces
+          the current value; a blank or missing one leaves it unchanged.
           Member changes on existing groups follow the same approval and separation-of-duties rules as editing them by hand.
         </p>
         <p v-if="!canManageGroupMembers" data-testid="group-import-no-member-permission"
@@ -386,7 +382,18 @@
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
                   <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td class="px-2 py-1 text-gray-700" data-testid="group-preview-action">{{ groupActionLabel(row.groupAction) }}</td>
-                  <td class="px-2 py-1 text-gray-600">{{ formatAttrs(row.attributes) }}</td>
+                  <td class="px-2 py-1 text-gray-600" data-testid="group-preview-attributes">
+                    <!-- An existing group shows only what changes; a new one shows what it's created with. -->
+                    <template v-if="row.groupAction === 'UPDATE'">
+                      <ul v-if="row.attributeChanges?.length" class="space-y-0.5">
+                        <li v-for="a in row.attributeChanges" :key="a.attribute">
+                          {{ a.attribute }}: <span class="text-gray-500">{{ a.currentValue ?? '(not set)' }}</span> → {{ a.newValue }}
+                        </li>
+                      </ul>
+                      <span v-else class="text-gray-500">no attribute changes</span>
+                    </template>
+                    <template v-else>{{ formatAttrs(row.attributes) }}</template>
+                  </td>
                   <td class="px-2 py-1" data-testid="group-preview-members">
                     <ul v-if="row.memberChanges?.length" class="space-y-0.5">
                       <li v-for="(c, ci) in row.memberChanges" :key="ci" :title="c.memberDn || c.member">
@@ -736,7 +743,7 @@ interface CsvTemplate {
   entries?: TemplateEntry[]
 }
 interface ExportForm { filter: string, baseDn: string, attributes: string }
-interface GroupImportForm { objectClass: string, conflictHandling: string }
+interface GroupImportForm { objectClass: string }
 /** Provisioning profile as consumed by the import target + theme banner. */
 interface ProfileLite {
   id: string
@@ -781,6 +788,8 @@ interface PreviewRow {
   groupAction?: 'CREATE' | 'UPDATE' | null
   message?: string | null
   memberChanges?: GroupMemberChange[]
+  // Attributes an existing group gets new values for (see GroupAttributeChange.java).
+  attributeChanges?: { attribute: string, currentValue?: string | null, newValue: string }[]
 }
 interface PreviewResult {
   totalRows: number
@@ -838,7 +847,6 @@ const groupImportResult = ref<ImportResult | null>(null)
 const groupPreviewResult = ref<PreviewResult | null>(null)
 const groupImportForm = ref<GroupImportForm>({
   objectClass: 'groupOfNames',
-  conflictHandling: 'SKIP',
 })
 const groupImportConfirmText = ref('')
 const groupExportForm = ref<GroupExportForm>({
@@ -1651,7 +1659,6 @@ function buildGroupImportRequest() {
   return {
     // The active profile supplies the target group container (its targetGroupDn).
     profileId: activeProfile.value?.id,
-    conflictHandling: groupImportForm.value.conflictHandling,
     skipHeaderRow: true,
     columnMappings: [],
   }

@@ -663,6 +663,29 @@ describe('BulkView — group import member changes', () => {
     expect(w.find('[data-testid="group-preview-member-problems"]').text()).toContain('1 member change')
   })
 
+  it('has no conflict-handling choice, and previews what changes on an existing group', async () => {
+    vi.mocked(previewGroupCsv).mockResolvedValue({ data: {
+      totalRows: 2,
+      rows: [
+        { rowNumber: 1, computedDn: 'cn=eng,ou=g,dc=x', attributes: { cn: 'eng', description: 'New' },
+          missingRequired: [], groupAction: 'UPDATE', message: null, memberChanges: [],
+          attributeChanges: [{ attribute: 'description', currentValue: 'Old', newValue: 'New' }] },
+        { rowNumber: 2, computedDn: 'cn=ops,ou=g,dc=x', attributes: { cn: 'ops' },
+          missingRequired: [], groupAction: 'UPDATE', message: null, memberChanges: [], attributeChanges: [] },
+      ],
+    } } as never)
+    const w = await openGroupImport()
+    expect(w.find('#bulk-group-conflict-handling').exists()).toBe(false)
+
+    await btnByText(w, 'Preview Import').trigger('click')
+    await flushPromises()
+
+    expect(vi.mocked(previewGroupCsv).mock.calls[0][2]).not.toHaveProperty('conflictHandling')
+    const attrs = w.findAll('[data-testid="group-preview-attributes"]').map(c => c.text())
+    expect(attrs[0]).toContain('description: Old → New')
+    expect(attrs[1]).toContain('no attribute changes')
+  })
+
   it('reports queued approvals and failed member changes after import', async () => {
     vi.mocked(previewGroupCsv).mockResolvedValue({ data: { totalRows: 1, rows: [] } } as never)
     vi.mocked(importGroupCsv).mockResolvedValue({ status: 200, data: {

@@ -127,18 +127,20 @@ class ScopedGroupImportMembersTest {
         String g2 = "cn=g2,ou=groups,dc=example,dc=com";
         String person = "cn=p,ou=groups,dc=example,dc=com";
         String missing = "cn=none,ou=groups,dc=example,dc=com";
-        when(groupService.getGroup(eq(dc), eq(g1), any(String[].class))).thenReturn(new LdapGroup(g1, Map.of(
+        when(groupService.getGroup(dc, g1)).thenReturn(new LdapGroup(g1, Map.of(
                 "objectclass", List.of("groupOfUniqueNames"), "uniquemember", List.of(ALICE))));
-        when(groupService.getGroup(eq(dc), eq(g2), any(String[].class))).thenReturn(new LdapGroup(g2, Map.of(
+        when(groupService.getGroup(dc, g2)).thenReturn(new LdapGroup(g2, Map.of(
                 "objectclass", List.of("posixGroup"))));
-        when(groupService.getGroup(eq(dc), eq(person), any(String[].class))).thenReturn(new LdapGroup(person, Map.of(
+        when(groupService.getGroup(dc, person)).thenReturn(new LdapGroup(person, Map.of(
                 "objectclass", List.of("inetOrgPerson"))));
-        when(groupService.getGroup(eq(dc), eq(missing), any(String[].class)))
+        when(groupService.getGroup(dc, missing))
                 .thenThrow(new ResourceNotFoundException("LDAP group", missing));
 
         ExistingGroup unique = members.findGroup(g1);
         assertThat(unique.isGroup()).isTrue();
         assertThat(unique.memberAttribute()).isEqualTo("uniqueMember");
+        // Current values are kept so a row's attributes can be compared against them.
+        assertThat(unique.valuesOf("objectClass")).containsExactly("groupOfUniqueNames");
         assertThat(unique.hasMember(Member.of("UID=Alice,ou=people,dc=example,dc=com", "alice"))).isTrue();
         assertThat(members.findGroup(g2).memberAttribute()).isEqualTo("memberUid");
         assertThat(members.findGroup(person).isGroup()).isFalse();
