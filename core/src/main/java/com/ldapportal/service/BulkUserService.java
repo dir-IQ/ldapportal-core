@@ -265,22 +265,13 @@ public class BulkUserService {
         int rowNum = 0;
         for (Map<String, String> row : rows) {
             rowNum++;
-            Map<String, String> attrs = new LinkedHashMap<>();
-            for (Map.Entry<String, String> cell : row.entrySet()) {
-                String csvCol = cell.getKey();
-                String rawVal = cell.getValue();
-                if (rawVal == null || rawVal.isBlank()) continue;
-                if (dnFromColumn && isColumn(csvCol, dnSourceColumn)) continue;
-                String ldapAttr = colToAttr.attributeFor(csvCol);
-                if (ldapAttr == null) continue; // ignored, or unmapped under a template
-                attrs.put(ldapAttr, rawVal);
-            }
+            Map<String, List<String>> attrs = collectAttributes(row, colToAttr, dnSourceColumn);
 
             String dn = null;
             String error = null;
             try {
-                dn = resolveDn(row, dnSourceColumn, targetKeyAttr, attrs.get(targetKeyAttr), parentDn);
-                if (dnFromColumn) injectRdnAttributes(dn, attrs);
+                dn = resolveDn(row, dnSourceColumn, targetKeyAttr, firstOrNull(valuesFor(attrs, targetKeyAttr)), parentDn);
+                if (dnFromColumn) ensureRdnAttributes(dn, attrs);
             } catch (IllegalArgumentException ex) {
                 error = ex.getMessage();
             }
@@ -387,18 +378,7 @@ public class BulkUserService {
         for (Map<String, String> row : rows) {
             rowNum++;
             boolean dnFromColumn = dnSourceColumn != null && !dnSourceColumn.isBlank();
-            Map<String, String> attrs = new LinkedHashMap<>();
-            for (Map.Entry<String, String> cell : row.entrySet()) {
-                String csvCol = cell.getKey();
-                String rawVal = cell.getValue();
-                if (rawVal == null || rawVal.isBlank()) continue;
-                // The DN-source column carries the DN, not an attribute value.
-                if (dnFromColumn && isColumn(csvCol, dnSourceColumn)) continue;
-
-                String ldapAttr = colToAttr.attributeFor(csvCol);
-                if (ldapAttr == null) continue; // ignored, or unmapped under a template
-                attrs.put(ldapAttr, rawVal);
-            }
+            Map<String, List<String>> attrs = collectAttributes(row, colToAttr, dnSourceColumn);
 
             List<String> missing = new ArrayList<>();
             String dn;
@@ -407,12 +387,12 @@ public class BulkUserService {
             // "missing dn" never hides the real reason.
             String dnProblem = null;
             try {
-                dn = resolveDn(row, dnSourceColumn, targetKeyAttr, attrs.get(targetKeyAttr), parentDn);
+                dn = resolveDn(row, dnSourceColumn, targetKeyAttr, firstOrNull(valuesFor(attrs, targetKeyAttr)), parentDn);
                 // An explicit DN supplies the RDN attribute(s); reflect them in the
                 // attribute set so the required-attribute check matches the import,
                 // which injects them before the add.
                 if (dnFromColumn) {
-                    injectRdnAttributes(dn, attrs);
+                    ensureRdnAttributes(dn, attrs);
                 }
             } catch (IllegalArgumentException ex) {
                 dn = null;
@@ -437,7 +417,7 @@ public class BulkUserService {
                     .filter(a -> !present.contains(a.toLowerCase(java.util.Locale.ROOT)))
                     .forEach(missing::add);
 
-            previewRows.add(new BulkImportPreviewRow(rowNum, dn, attrs, missing,
+            previewRows.add(new BulkImportPreviewRow(rowNum, dn, previewValues(attrs), missing,
                     null, dnProblem, List.of(), List.of()));
         }
 
@@ -644,20 +624,7 @@ public class BulkUserService {
             attrMap.put("objectClass", objectClasses);
         }
 
-        for (Map.Entry<String, String> cell : row.entrySet()) {
-            String csvCol  = cell.getKey();
-            String rawVal  = cell.getValue();
-            if (rawVal == null || rawVal.isBlank()) continue;
-            // The DN-source column carries the DN, not an attribute value.
-            if (dnFromColumn && isColumn(csvCol, dnSourceColumn)) continue;
-
-            // null = ignored column, or a column the template doesn't mention;
-            // without a template the header itself is the attribute name.
-            String ldapAttr = colToAttr.attributeFor(csvCol);
-            if (ldapAttr == null) continue;
-
-            attrMap.put(ldapAttr, List.of(rawVal));
-        }
+        attrMap.putAll(collectAttributes(row, colToAttr, dnSourceColumn));
 
         // Apply profile attribute defaults BEFORE the create, matching
         // UserController.create's behaviour: any computed / default /
@@ -681,7 +648,7 @@ public class BulkUserService {
         // per-row error.
         String dn;
         try {
-            dn = resolveDn(row, dnSourceColumn, targetKeyAttr, firstOrNull(attrMap.get(targetKeyAttr)), parentDn);
+            dn = resolveDn(row, dnSourceColumn, targetKeyAttr, firstOrNull(valuesFor(attrMap, targetKeyAttr)), parentDn);
         } catch (IllegalArgumentException ex) {
             return BulkImportRowResult.error(rowNum, null, ex.getMessage());
         }
@@ -893,22 +860,6 @@ public class BulkUserService {
         return names;
     }
 
-    /** Preview counterpart of {@link #ensureRdnAttributes} for the single-valued attribute map. */
-    private static void injectRdnAttributes(String dn, Map<String, String> attrs) {
-        RDN rdn = leftmostRdn(dn);
-        if (rdn == null) {
-            return;
-        }
-        Set<String> present = lowerKeys(attrs.keySet());
-        String[] attrNames = rdn.getAttributeNames();
-        String[] attrValues = rdn.getAttributeValues();
-        for (int i = 0; i < attrNames.length; i++) {
-            if (!present.contains(attrNames[i].toLowerCase(Locale.ROOT))) {
-                attrs.put(attrNames[i], attrValues[i]);
-            }
-        }
-    }
-
     private static RDN leftmostRdn(String dn) {
         try {
             return new DN(dn).getRDN();
@@ -922,6 +873,58 @@ public class BulkUserService {
         for (String k : keys) {
             out.add(k.toLowerCase(Locale.ROOT));
         }
+        return out;
+    }
+
+    /**
+     * The row's attribute values, by LDAP attribute. A cell holding several
+     * values separated by {@code |} ({@code \|} for a literal pipe) gives a
+     * multi-valued attribute, and columns mapped to the same attribute (names
+     * compared ignoring case) add their values together. Repeated values are
+     * kept once. Blank cells, the DN column, ignored columns and columns the
+     * template doesn't map are skipped; without a template the header itself is
+     * the attribute name.
+     */
+    static Map<String, List<String>> collectAttributes(Map<String, String> row,
+                                                       CsvColumnMap colToAttr,
+                                                       String dnSourceColumn) {
+        boolean dnFromColumn = dnSourceColumn != null && !dnSourceColumn.isBlank();
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        for (Map.Entry<String, String> cell : row.entrySet()) {
+            String csvCol = cell.getKey();
+            String rawVal = cell.getValue();
+            if (rawVal == null || rawVal.isBlank()) continue;
+            // The DN-source column carries the DN, not an attribute value.
+            if (dnFromColumn && isColumn(csvCol, dnSourceColumn)) continue;
+            String ldapAttr = colToAttr.attributeFor(csvCol);
+            if (ldapAttr == null) continue; // ignored, or unmapped under a template
+
+            List<String> values = CsvUtils.splitMultiValue(rawVal);
+            if (values.isEmpty()) continue;
+            String key = out.keySet().stream()
+                    .filter(k -> k.equalsIgnoreCase(ldapAttr))
+                    .findFirst().orElse(ldapAttr);
+            List<String> merged = out.computeIfAbsent(key, k -> new ArrayList<>());
+            for (String v : values) {
+                if (!merged.contains(v)) merged.add(v);
+            }
+        }
+        return out;
+    }
+
+    /** Values of {@code attr} in {@code attrs}, matching the name ignoring case. */
+    private static List<String> valuesFor(Map<String, List<String>> attrs, String attr) {
+        if (attr == null) return null;
+        for (Map.Entry<String, List<String>> e : attrs.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(attr)) return e.getValue();
+        }
+        return null;
+    }
+
+    /** Preview display: one string per attribute, several values separated by " | ". */
+    private static Map<String, String> previewValues(Map<String, List<String>> attrs) {
+        Map<String, String> out = new LinkedHashMap<>();
+        attrs.forEach((k, v) -> out.put(k, String.join(" | ", v)));
         return out;
     }
 
@@ -948,7 +951,11 @@ public class BulkUserService {
         return cols;
     }
 
-    /** Builds a single CSV data row from an LDAP entry. Multi-values are pipe-joined. */
+    /**
+     * Builds a single CSV data row from an LDAP entry. Multi-values are joined
+     * with {@code |} (a literal pipe is written {@code \|}), the format the
+     * import reads back.
+     */
     private Map<String, String> buildExportRow(LdapUser user, List<String> columns) {
         Map<String, String> row = new LinkedHashMap<>();
         for (String col : columns) {
@@ -956,7 +963,7 @@ public class BulkUserService {
                 row.put("dn", user.getDn());
             } else {
                 List<String> vals = user.getValues(col);
-                row.put(col, String.join("|", vals));
+                row.put(col, CsvUtils.joinMultiValue(vals));
             }
         }
         return row;

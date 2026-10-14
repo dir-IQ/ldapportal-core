@@ -201,7 +201,7 @@ export function checkMappings(rows: MappingRow[], opts: CheckOptions): MappingCh
       result[i].warnings.push('Not in the selected object classes')
     }
     if (live[i] && rows.some((o, j) => j !== i && live[j] && sameAttr(o.attribute, attr))) {
-      result[i].warnings.push(`Another column also maps to ${attr}`)
+      result[i].warnings.push(`Another column also maps to ${attr}; their values are added together`)
     }
     if (r.notInSample) result[i].warnings.push('Not in the sample file')
     if (opts.repeatedColumns?.some(c => sameColumn(c, r.column))) {

@@ -98,4 +98,30 @@ class CsvUtilsTest {
         assertThat(rows.get(0)).containsOnlyKeys("dn", "mail")
                 .containsEntry("dn", "cn=Jane,ou=people,dc=example,dc=com");
     }
+
+    @Test
+    void splitMultiValue_splitsOnPipe_trimsAndDropsEmptyValues() {
+        assertThat(CsvUtils.splitMultiValue(" cn=A,ou=G,dc=x | cn=B,ou=G,dc=x ||"))
+                .containsExactly("cn=A,ou=G,dc=x", "cn=B,ou=G,dc=x");
+        assertThat(CsvUtils.splitMultiValue("single")).containsExactly("single");
+        assertThat(CsvUtils.splitMultiValue("  ")).isEmpty();
+        assertThat(CsvUtils.splitMultiValue(null)).isEmpty();
+    }
+
+    @Test
+    void splitMultiValue_backslashPipeIsALiteralPipe_otherBackslashesAreKept() {
+        assertThat(CsvUtils.splitMultiValue("a\\|b|c"))
+                .containsExactly("a|b", "c");
+        // DN escapes pass through untouched.
+        assertThat(CsvUtils.splitMultiValue("cn=Smith\\, John,dc=x|cn=O\\+R,dc=x"))
+                .containsExactly("cn=Smith\\, John,dc=x", "cn=O\\+R,dc=x");
+    }
+
+    @Test
+    void joinMultiValue_isTheInverseOfSplit() {
+        List<String> values = List.of("cn=Smith\\, John,dc=x", "a|b", "plain");
+        String cell = CsvUtils.joinMultiValue(values);
+        assertThat(cell).isEqualTo("cn=Smith\\, John,dc=x|a\\|b|plain");
+        assertThat(CsvUtils.splitMultiValue(cell)).isEqualTo(values);
+    }
 }
