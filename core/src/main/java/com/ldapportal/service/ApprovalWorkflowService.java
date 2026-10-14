@@ -519,14 +519,32 @@ public class ApprovalWorkflowService {
             BulkImportRequest req = objectMapper.treeToValue(root.get("request"), BulkImportRequest.class);
             String csvBase64 = root.get("csvContent").asText();
             byte[] csvBytes = java.util.Base64.getDecoder().decode(csvBase64);
-            ldapOperationService.bulkImportUsers(
-                    pa.getDirectoryId(), approver,
-                    new java.io.ByteArrayInputStream(csvBytes), req);
+            if (isGroupBulkImport(root)) {
+                ldapOperationService.bulkImportGroups(
+                        pa.getDirectoryId(), approver,
+                        new java.io.ByteArrayInputStream(csvBytes), req,
+                        root.path("memberAttribute").asText("member"),
+                        root.path("objectClass").asText("groupOfNames"));
+            } else {
+                ldapOperationService.bulkImportUsers(
+                        pa.getDirectoryId(), approver,
+                        new java.io.ByteArrayInputStream(csvBytes), req);
+            }
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to deserialize bulk import payload", e);
         } catch (java.io.IOException e) {
             throw new IllegalStateException("Failed to execute bulk import", e);
         }
+    }
+
+    /**
+     * A BULK_IMPORT payload from the group import endpoint. Newer payloads say
+     * so with {@code "entity": "groups"}; ones queued before that field existed
+     * are recognised by the group-only {@code memberAttribute} / {@code objectClass}.
+     */
+    private static boolean isGroupBulkImport(JsonNode root) {
+        return "groups".equals(root.path("entity").asText())
+                || root.has("memberAttribute") || root.has("objectClass");
     }
 
     private void executeUserMove(PendingApproval pa, AuthPrincipal approver) {

@@ -9,6 +9,7 @@ import com.ldapportal.config.AppProperties;
 import com.ldapportal.entity.PendingApproval;
 import com.ldapportal.entity.ProvisioningProfile;
 import com.ldapportal.entity.enums.ApprovalRequestType;
+import com.ldapportal.entity.enums.ApprovalStatus;
 import com.ldapportal.repository.AccountRepository;
 import com.ldapportal.repository.PendingApprovalRepository;
 import com.ldapportal.repository.RegistrationRequestRepository;
@@ -25,6 +26,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -111,5 +113,64 @@ class ApprovalWorkflowServiceTest {
 
         assertThat(service.approvalsEnabled()).isFalse();
         assertThat(service.selfRegistrationApprovalEnabled()).isTrue();
+    }
+
+    // ── BULK_IMPORT replay ────────────────────────────────────────────────────
+
+    private PendingApproval pendingBulkImport(String extraPayloadFields) {
+        String csv = java.util.Base64.getEncoder().encodeToString("cn\neng\n".getBytes());
+        PendingApproval pa = new PendingApproval();
+        pa.setId(UUID.randomUUID());
+        pa.setDirectoryId(dirId);
+        pa.setRequestedBy(UUID.randomUUID());
+        pa.setRequestType(ApprovalRequestType.BULK_IMPORT);
+        pa.setStatus(ApprovalStatus.PENDING);
+        pa.setPayload("{" + extraPayloadFields
+                + "\"request\":{\"parentDn\":\"ou=groups,dc=example,dc=com\"},"
+                + "\"csvContent\":\"" + csv + "\"}");
+        when(approvalRepo.findById(pa.getId())).thenReturn(Optional.of(pa));
+        return pa;
+    }
+
+    private AuthPrincipal superadmin() {
+        return new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "root");
+    }
+
+    @Test
+    void approve_groupBulkImport_replaysAsAGroupImport() throws Exception {
+        PendingApproval pa = pendingBulkImport(
+                "\"entity\":\"groups\",\"memberAttribute\":\"uniqueMember\",\"objectClass\":\"groupOfUniqueNames\",");
+        AuthPrincipal approver = superadmin();
+
+        service.approve(pa.getId(), approver);
+
+        verify(ldapOperationService).bulkImportGroups(eq(dirId), eq(approver), any(), any(),
+                eq("uniqueMember"), eq("groupOfUniqueNames"));
+        verify(ldapOperationService, never()).bulkImportUsers(any(), any(), any(), any());
+        assertThat(pa.getStatus()).isEqualTo(ApprovalStatus.APPROVED);
+    }
+
+    @Test
+    void approve_groupBulkImportQueuedBeforeTheEntityField_isStillAGroupImport() throws Exception {
+        PendingApproval pa = pendingBulkImport(
+                "\"memberAttribute\":\"member\",\"objectClass\":\"groupOfNames\",");
+        AuthPrincipal approver = superadmin();
+
+        service.approve(pa.getId(), approver);
+
+        verify(ldapOperationService).bulkImportGroups(eq(dirId), eq(approver), any(), any(),
+                eq("member"), eq("groupOfNames"));
+        verify(ldapOperationService, never()).bulkImportUsers(any(), any(), any(), any());
+    }
+
+    @Test
+    void approve_userBulkImport_stillReplaysAsAUserImport() throws Exception {
+        PendingApproval pa = pendingBulkImport("");
+        AuthPrincipal approver = superadmin();
+
+        service.approve(pa.getId(), approver);
+
+        verify(ldapOperationService).bulkImportUsers(eq(dirId), eq(approver), any(), any());
+        verify(ldapOperationService, never()).bulkImportGroups(any(), any(), any(), any(), any(), any());
     }
 }
