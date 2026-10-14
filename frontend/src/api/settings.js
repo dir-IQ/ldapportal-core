@@ -17,6 +17,10 @@ export const completeSetup = () =>
 export const testSiem = () =>
   client.post('/settings/siem/test')
 
+/** Sends a test email with the saved SMTP settings; resolves to { ok, message }. */
+export const testSmtp = (recipient) =>
+  client.post('/settings/smtp/test', { recipient })
+
 export const siemBackfill = (from, to) =>
   client.post('/settings/siem/backfill', null, { params: { from, to } })
 
