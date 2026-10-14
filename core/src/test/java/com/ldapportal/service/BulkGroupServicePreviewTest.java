@@ -168,7 +168,7 @@ class BulkGroupServicePreviewTest {
 
         assertThat(row.missingRequired()).containsExactly("member-operation");
         assertThat(row.message())
-                .isEqualTo("member-operation is required when members are listed: use 'add' or 'delete'");
+                .isEqualTo("The member-operation column is required when members are listed: use 'add' or 'delete'");
     }
 
     @Test

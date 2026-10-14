@@ -376,7 +376,7 @@ class BulkGroupServiceImportTest {
         verify(groupService, never()).createGroup(any(), anyString(), any());
         assertThat(result.errors()).isEqualTo(2);
         assertThat(result.rows().get(0).message())
-                .isEqualTo("member-operation is required when members are listed: use 'add' or 'delete'");
+                .isEqualTo("The member-operation column is required when members are listed: use 'add' or 'delete'");
     }
 
     @Test

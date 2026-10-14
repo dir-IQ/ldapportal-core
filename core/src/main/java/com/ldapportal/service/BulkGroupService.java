@@ -297,7 +297,7 @@ public class BulkGroupService {
             }
             if (!memberValues.isEmpty() && (rawOp == null || rawOp.isBlank())) {
                 p.operation = null;
-                p.error = "member-operation is required when members are listed: use 'add' or 'delete'";
+                p.error = "The member-operation column is required when members are listed: use 'add' or 'delete'";
                 continue;
             }
             if (rawOp != null && !rawOp.isBlank()) {

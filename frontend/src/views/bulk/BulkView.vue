@@ -225,7 +225,7 @@
                     <span v-if="row.message">{{ row.message }}</span>
                     <span v-else-if="row.missingRequired?.length"
                           :title="`Missing required: ${row.missingRequired.join(', ')}`">
-                      missing: {{ row.missingRequired.join(', ') }}
+                      Missing: {{ row.missingRequired.join(', ') }}
                     </span>
                   </td>
                 </tr>
@@ -342,18 +342,36 @@
             </label>
           </div>
         </div>
-        <p class="text-xs text-gray-500">
-          CSV columns: <code>cn</code> (required), <code>description</code>, <code>owner</code>,
-          <code>members</code> (optional; pipe-separated, each a uid or a full DN),
-          <code>member-operation</code> (required when <code>members</code> is filled in: <code>add</code>, or <code>delete</code> to remove the listed members from an existing group).
-          A group that doesn't exist is created; a new <code>groupOfNames</code> or <code>groupOfUniqueNames</code> needs at least one member.
-          A <code>dn</code> column, as written by export, is ignored. First row must be a header row.
-          On an existing group, a <code>description</code>, <code>owner</code> or other attribute you provide replaces
-          the current value; a blank or missing one leaves it unchanged.
-          <span data-testid="group-import-governance-note">
-            Member changes on existing groups follow the same approval{{ auth.isCommunityDistribution ? '' : ' and separation-of-duties' }} rules as editing them by hand.
-          </span>
-        </p>
+        <FileFormatHelp title="Group import file format">
+          <ul class="list-disc pl-4 space-y-1.5">
+            <li>The first row is a header row naming the columns. Column names ignore case; any order works.</li>
+            <li><code>cn</code> <span class="text-red-600">(required)</span> names the group. Its DN is
+              <code>cn=&lt;cn&gt;</code> under the active profile's group container. A group that doesn't exist is created.</li>
+            <li><code>description</code>, <code>owner</code> and other group attributes are optional. On an existing group,
+              a value you provide replaces the current one; a blank cell or a missing column leaves it unchanged.</li>
+            <li><code>members</code> is optional: one or more members separated by <code>|</code>. Each member is either
+              <ul class="list-[circle] pl-4 mt-0.5 space-y-0.5">
+                <li>a full DN, e.g. <code>uid=jsmith,ou=People,dc=example,dc=com</code>, or</li>
+                <li>a <code>uid</code>, e.g. <code>jsmith</code>, which must match exactly one user you can see.</li>
+              </ul>
+            </li>
+            <li class="font-medium text-gray-900">Wrap a <code>members</code> cell that contains DNs in double quotes.
+              The commas inside a DN otherwise split the cell into separate columns.</li>
+            <li><code>member-operation</code> is required when <code>members</code> is filled in: <code>add</code>, or
+              <code>delete</code> to remove the listed members from an existing group. Each row has one operation; to add
+              some members and remove others, use two rows with the same <code>cn</code>.</li>
+            <li>A new <code>groupOfNames</code> or <code>groupOfUniqueNames</code> group needs at least one member;
+              a <code>posixGroup</code> can be created empty.</li>
+            <li>A <code>dn</code> column, as written by the group export, is ignored. A file can make up to 2,000 member changes.</li>
+            <li data-testid="group-import-governance-note">Member changes need the Manage group members permission and
+              follow the same approval{{ auth.isCommunityDistribution ? '' : ' and separation-of-duties' }} rules as editing them by hand.</li>
+          </ul>
+          <p class="font-medium text-gray-900 mt-3 mb-1">Example</p>
+          <pre class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre overflow-x-auto">cn,description,members,member-operation
+engineering,Engineering team,"uid=jsmith,ou=People,dc=example,dc=com|uid=adoe,ou=People,dc=example,dc=com",add
+support,Support desk,bwong|cchan,add
+engineering,,"uid=old,ou=People,dc=example,dc=com",delete</pre>
+        </FileFormatHelp>
         <p v-if="!canManageGroupMembers" data-testid="group-import-no-member-permission"
            class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
           You don’t have permission to manage group members, so a file that lists any members will be refused.
@@ -392,7 +410,7 @@
                 <tr v-for="(row, idx) in groupPreviewResult.rows" :key="row.rowNumber"
                     :class="row.missingRequired?.length || row.message ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
-                  <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
+                  <td class="px-2 py-1 pr-4 font-mono text-[13px] text-gray-800 break-all">{{ row.computedDn || '(no DN)' }}</td>
                   <td class="px-2 py-1 text-gray-700" data-testid="group-preview-action">{{ groupActionLabel(row.groupAction) }}</td>
                   <td class="px-2 py-1 text-gray-600" data-testid="group-preview-attributes">
                     <!-- An existing group shows only what changes; a new one shows what it's created with. -->
@@ -406,20 +424,21 @@
                     </template>
                     <template v-else>{{ formatAttrs(row.attributes) }}</template>
                   </td>
-                  <td class="px-2 py-1" data-testid="group-preview-members">
-                    <ul v-if="row.memberChanges?.length" class="space-y-0.5">
+                  <td class="px-2 py-1 pr-4 align-top" data-testid="group-preview-members">
+                    <!-- One entry per member: the value from the file, then what will
+                         happen to it on its own line, so long DNs stay readable. -->
+                    <ul v-if="row.memberChanges?.length" class="space-y-1">
                       <li v-for="(c, ci) in row.memberChanges" :key="ci" :title="c.memberDn || c.member">
-                        <span aria-hidden="true">{{ c.op === 'REMOVE' ? '−' : '+' }}</span>
-                        <span class="font-mono text-gray-800">{{ c.member }}</span>
-                        <span :class="memberOutcomeClass(c.outcome)"> {{ memberOutcomeLabel(c) }}</span>
+                        <span class="block font-mono text-gray-800 break-all">{{ c.member }}</span>
+                        <span class="block" :class="memberOutcomeClass(c.outcome)">{{ memberOutcomeLabel(c) }}</span>
                       </li>
                     </ul>
                   </td>
-                  <td class="px-2 py-1 text-amber-700">
+                  <td class="px-2 py-1 pl-4 text-amber-700" data-testid="group-preview-issues">
                     <span v-if="row.message">{{ row.message }}</span>
                     <span v-else-if="row.missingRequired?.length"
                           :title="`Missing required: ${row.missingRequired.join(', ')}`">
-                      missing: {{ row.missingRequired.join(', ') }}
+                      Missing: {{ row.missingRequired.join(', ') }}
                     </span>
                   </td>
                 </tr>
@@ -460,7 +479,7 @@
             Row {{ r.rowNumber }}: {{ r.message }}
             <ul v-if="failedMemberChanges(r).length" class="ml-4 mt-0.5 space-y-0.5">
               <li v-for="(c, ci) in failedMemberChanges(r)" :key="ci">
-                <span class="font-mono">{{ c.member }}</span> — {{ memberOutcomeLabel(c) }}
+                <span class="font-mono">{{ c.member }}</span>: {{ memberOutcomeLabel(c) }}
               </li>
             </ul>
           </li>
@@ -734,6 +753,7 @@ import AppModal from '@/components/AppModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import BulkDeleteSection from './BulkDeleteSection.vue'
 import TemplateColumnMappings from './TemplateColumnMappings.vue'
+import FileFormatHelp from './FileFormatHelp.vue'
 import {
   applySampleColumns, checkMappings, dnLikeColumns, entriesToRows, parseSampleHeader, repeatedColumns,
   rowsToEntries, sameColumn, suggestAttributes, type MappingRow, type SchemaAttr,
@@ -1276,26 +1296,26 @@ const FAILED_MEMBER_OUTCOMES = new Set([
   'REFUSED', 'BLOCKED', 'ERROR', 'MEMBER_NOT_FOUND', 'AMBIGUOUS', 'OUT_OF_SCOPE', 'INVALID',
 ])
 const MEMBER_OUTCOME_LABELS: Record<string, string> = {
-  WILL_ADD: 'will be added',
-  WILL_REMOVE: 'will be removed',
-  APPLIED: 'done',
-  QUEUED_FOR_APPROVAL: 'queued for approval',
-  REFUSED: 'refused',
-  BLOCKED: 'blocked by separation of duties',
-  ERROR: 'failed',
-  ALREADY_MEMBER: 'already a member',
-  NOT_A_MEMBER: 'not a member',
-  DUPLICATE: 'repeated in the file',
-  MEMBER_NOT_FOUND: 'not found',
-  AMBIGUOUS: 'ambiguous',
-  OUT_OF_SCOPE: 'outside your scope',
-  INVALID: 'invalid',
+  WILL_ADD: 'Will be added',
+  WILL_REMOVE: 'Will be removed',
+  APPLIED: 'Done',
+  QUEUED_FOR_APPROVAL: 'Queued for approval',
+  REFUSED: 'Refused',
+  BLOCKED: 'Blocked by separation of duties',
+  ERROR: 'Failed',
+  ALREADY_MEMBER: 'Already a member',
+  NOT_A_MEMBER: 'Not a member',
+  DUPLICATE: 'Repeated in the file',
+  MEMBER_NOT_FOUND: 'Not found',
+  AMBIGUOUS: 'Ambiguous',
+  OUT_OF_SCOPE: 'Outside your scope',
+  INVALID: 'Invalid',
 }
 
 function memberOutcomeLabel(c: GroupMemberChange): string {
   const label = MEMBER_OUTCOME_LABELS[c.outcome] || c.outcome
   // A no-op's message just repeats its label; problems carry the useful detail.
-  return c.message && FAILED_MEMBER_OUTCOMES.has(c.outcome) ? `${label}: ${c.message}` : label
+  return c.message && FAILED_MEMBER_OUTCOMES.has(c.outcome) ? `${label} — ${c.message}` : label
 }
 
 function memberOutcomeClass(outcome: string): string {
