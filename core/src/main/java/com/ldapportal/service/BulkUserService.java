@@ -16,6 +16,7 @@ import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.ImportErrorHandling;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdapUserService;
+import com.ldapportal.ldap.UserGroupIndex;
 import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.util.CsvUtils;
 import com.unboundid.ldap.sdk.DN;
@@ -532,15 +533,31 @@ public class BulkUserService {
                              String filter,
                              List<String> baseDns,
                              List<String> attributes) throws IOException {
+        return exportCsvFromBases(dc, filter, baseDns, attributes, null);
+    }
+
+    /**
+     * Export variant that, with a non-null {@code groups} index, adds a last
+     * {@value CsvColumnMap#GROUPS_COLUMN} column listing each user's groups
+     * ({@code |}-separated, the format the import's groups column reads).
+     */
+    public byte[] exportCsvFromBases(DirectoryConnection dc,
+                             String filter,
+                             List<String> baseDns,
+                             List<String> attributes,
+                             UserGroupIndex groups) throws IOException {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
         }
 
         String effectiveFilter = (filter == null || filter.isBlank())
                 ? "(objectClass=*)" : filter;
-        String[] attrArray = attributes.isEmpty()
-                ? new String[0]
-                : attributes.toArray(new String[0]);
+        List<String> fetch = new ArrayList<>(attributes);
+        // memberUid (posixGroup) memberships are matched on the user's uid.
+        if (groups != null && !fetch.isEmpty() && fetch.stream().noneMatch(a -> a.equalsIgnoreCase("uid"))) {
+            fetch.add("uid");
+        }
+        String[] attrArray = fetch.toArray(new String[0]);
 
         List<String> bases = (baseDns == null || baseDns.isEmpty())
                 ? Collections.singletonList(null) : baseDns;
@@ -554,14 +571,14 @@ public class BulkUserService {
         // When attributes is empty, columns are derived dynamically; we must do a full
         // search to discover the union of all attribute names before writing the header.
         if (!attributes.isEmpty()) {
-            List<String> columns = buildExportColumns(List.of(), attributes);
+            List<String> columns = withGroupsColumn(buildExportColumns(List.of(), attributes), groups);
             CsvUtils.writeHeader(writer, columns);
             for (String base : bases) {
                 userService.processUsers(dc, effectiveFilter, base,
                         user -> {
                             if (!seenDns.add(user.getDn().toLowerCase(Locale.ROOT))) return;
                             try {
-                                CsvUtils.writeRow(writer, columns, buildExportRow(user, columns));
+                                CsvUtils.writeRow(writer, columns, buildExportRow(user, columns, groups));
                             } catch (IOException e) {
                                 throw new RuntimeException("CSV write failed", e);
                             }
@@ -579,10 +596,10 @@ public class BulkUserService {
                     }
                 }
             }
-            List<String> columns = buildExportColumns(users, attributes);
+            List<String> columns = withGroupsColumn(buildExportColumns(users, attributes), groups);
             CsvUtils.writeHeader(writer, columns);
             for (LdapUser user : users) {
-                CsvUtils.writeRow(writer, columns, buildExportRow(user, columns));
+                CsvUtils.writeRow(writer, columns, buildExportRow(user, columns, groups));
             }
         }
 
@@ -1136,15 +1153,29 @@ public class BulkUserService {
     }
 
     /**
+     * Adds the groups column last when a group index is supplied. An attribute
+     * that happens to be called {@code groups} gives way to it.
+     */
+    private static List<String> withGroupsColumn(List<String> columns, UserGroupIndex groups) {
+        if (groups == null) return columns;
+        List<String> out = new ArrayList<>(columns);
+        out.removeIf(c -> c.equalsIgnoreCase(CsvColumnMap.GROUPS_COLUMN));
+        out.add(CsvColumnMap.GROUPS_COLUMN);
+        return out;
+    }
+
+    /**
      * Builds a single CSV data row from an LDAP entry. Multi-values are joined
      * with {@code |} (a literal pipe is written {@code \|}), the format the
      * import reads back.
      */
-    private Map<String, String> buildExportRow(LdapUser user, List<String> columns) {
+    private Map<String, String> buildExportRow(LdapUser user, List<String> columns, UserGroupIndex groups) {
         Map<String, String> row = new LinkedHashMap<>();
         for (String col : columns) {
             if ("dn".equals(col)) {
                 row.put("dn", user.getDn());
+            } else if (groups != null && CsvColumnMap.GROUPS_COLUMN.equals(col)) {
+                row.put(col, CsvUtils.joinMultiValue(groups.groupsOf(user.getDn(), user.getFirstValue("uid"))));
             } else {
                 List<String> vals = user.getValues(col);
                 row.put(col, CsvUtils.joinMultiValue(vals));
