@@ -50,6 +50,7 @@ import com.ldapportal.ldap.LdapSchemaService.AttributeTypeInfo;
 import com.ldapportal.ldap.LdapSchemaService.ObjectClassAttributes;
 import com.ldapportal.ldap.LdapSchemaService.SchemaListItem;
 import com.ldapportal.ldap.LdapUserService;
+import com.ldapportal.ldap.UserGroupIndex;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.util.CsvUtils;
 import com.unboundid.ldap.sdk.LDAPException;
@@ -1244,6 +1245,21 @@ public class LdapOperationService {
     public byte[] bulkExportUsers(UUID directoryId, AuthPrincipal principal,
                                   String filter, String baseDn,
                                   List<String> attributes, UUID templateId) throws IOException {
+        return bulkExportUsers(directoryId, principal, filter, baseDn, attributes, templateId, false);
+    }
+
+    /**
+     * {@link #bulkExportUsers(UUID, AuthPrincipal, String, String, List, UUID)}
+     * with an optional {@code groups} column: each user's direct group
+     * memberships, from the groups within the caller's scope, written the way
+     * the import's groups column reads them. It's included when asked for,
+     * when {@code groups} is one of the requested attributes, or when the
+     * template maps a column to group memberships.
+     */
+    public byte[] bulkExportUsers(UUID directoryId, AuthPrincipal principal,
+                                  String filter, String baseDn,
+                                  List<String> attributes, UUID templateId,
+                                  boolean includeGroups) throws IOException {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
 
@@ -1254,17 +1270,25 @@ public class LdapOperationService {
         // OUs so the CSV doesn't leak entries outside scope.
         List<String> bases = permissionService.resolveSearchBaseDns(principal, directoryId, baseDn);
 
+        // "groups" among the attributes asks for the groups column, not an attribute.
+        boolean groupsColumn = includeGroups
+                || attributes.stream().anyMatch(a -> a.equalsIgnoreCase(CsvColumnMap.GROUPS_COLUMN));
         List<String> effectiveAttrs = new ArrayList<>(attributes);
+        effectiveAttrs.removeIf(a -> a.equalsIgnoreCase(CsvColumnMap.GROUPS_COLUMN));
         if (effectiveAttrs.isEmpty() && templateId != null) {
-            csvTemplateService.loadEntries(templateId).stream()
-                    .filter(e -> !e.isIgnored() && e.getLdapAttribute() != null)
-                    // Group memberships are written to groups, not read back as an attribute.
-                    .filter(e -> !CsvColumnMap.GROUP_MEMBERSHIPS.equals(e.getLdapAttribute()))
-                    .map(CsvMappingTemplateEntry::getLdapAttribute)
-                    .forEach(effectiveAttrs::add);
+            for (CsvMappingTemplateEntry e : csvTemplateService.loadEntries(templateId)) {
+                if (e.isIgnored() || e.getLdapAttribute() == null) continue;
+                // Group memberships come from the groups, not from an attribute.
+                if (CsvColumnMap.GROUP_MEMBERSHIPS.equals(e.getLdapAttribute())) {
+                    groupsColumn = true;
+                    continue;
+                }
+                effectiveAttrs.add(e.getLdapAttribute());
+            }
         }
 
-        return bulkUserService.exportCsvFromBases(dc, filter, bases, effectiveAttrs);
+        UserGroupIndex groups = groupsColumn ? UserGroupIndex.build(groupService, dc, bases) : null;
+        return bulkUserService.exportCsvFromBases(dc, filter, bases, effectiveAttrs, groups);
     }
 
     // ── Bulk delete ───────────────────────────────────────────────────────────

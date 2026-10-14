@@ -126,6 +126,8 @@
             <li>Groups are only added, never removed. They apply to new users and to users updated by
               “Overwrite existing”; users skipped as already existing are left as they are. A group that can't be
               added is reported, and the user is still imported.</li>
+            <li>The user export writes this column when “Include a <code>groups</code> column” is ticked, so an export
+              can be edited and imported again.</li>
             <li class="font-medium text-gray-900">Wrap any cell that contains DNs in double quotes. The commas inside
               a DN otherwise split the cell into separate columns.</li>
             <li data-testid="user-import-governance-note">Adding users to groups needs the Manage group members permission
@@ -341,6 +343,17 @@ adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
           </div>
           <FormField class="col-span-4 !mb-0" label="Attributes (comma-separated)" v-model="exportForm.attributes" placeholder="cn,mail,uid,sn" />
         </div>
+        <label class="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+          <input type="checkbox" v-model="exportForm.includeGroups" class="rounded text-blue-600 mt-0.5"
+                 data-testid="export-include-groups" />
+          <span>
+            Include a <code>groups</code> column
+            <span class="block text-xs text-gray-500">
+              Each user's direct group memberships, among the groups you can see, separated by <code>|</code>:
+              the group's cn, or its DN when two groups share a cn. The user import reads this column back.
+            </span>
+          </span>
+        </label>
         <button @click="doExport" :disabled="exporting" class="btn-primary">
           {{ exporting ? 'Exporting…' : 'Download CSV' }}
         </button>
@@ -832,7 +845,7 @@ interface CsvTemplate {
   fieldDelimiter?: string
   entries?: TemplateEntry[]
 }
-interface ExportForm { filter: string, baseDn: string, attributes: string }
+interface ExportForm { filter: string, baseDn: string, attributes: string, includeGroups: boolean }
 interface GroupImportForm { objectClass: string }
 /** Provisioning profile as consumed by the import target + theme banner. */
 interface ProfileLite {
@@ -924,7 +937,7 @@ const importResult  = ref<ImportResult | null>(null)
 const previewResult = ref<PreviewResult | null>(null)
 
 const importConfirmText = ref('')
-const exportForm = ref<ExportForm>({ filter: '', baseDn: '', attributes: 'cn,mail,uid' })
+const exportForm = ref<ExportForm>({ filter: '', baseDn: '', attributes: 'cn,mail,uid', includeGroups: false })
 
 // ── Group bulk state ─────────────────────────────────────────────────────────
 const groupImporting    = ref(false)
@@ -1741,6 +1754,7 @@ async function doExport() {
       filter:     exportForm.value.filter     || undefined,
       baseDn:     exportForm.value.baseDn     || undefined,
       attributes: exportForm.value.attributes || undefined,
+      includeGroups: exportForm.value.includeGroups || undefined,
     }
     const { data } = await exportCsv(dirId, params)
     downloadBlob(data, 'users.csv')
