@@ -93,6 +93,30 @@ public class LdapUserService {
                                       String baseDn,
                                       int maxResults,
                                       String... attributes) {
+        return searchUsers0(dc, filter, baseDn, maxResults, true, attributes);
+    }
+
+    /**
+     * {@link #searchUsers(DirectoryConnection, String, String, int, String...)}
+     * without the read-enricher chain: entries carry only the attributes the
+     * directory returned, never addon-added virtual ones (e.g. the IVIA
+     * addon's {@code isva.*}). For reports and exports, whose columns must be
+     * real attributes.
+     */
+    public List<LdapUser> searchUsersRaw(DirectoryConnection dc,
+                                         String filter,
+                                         String baseDn,
+                                         int maxResults,
+                                         String... attributes) {
+        return searchUsers0(dc, filter, baseDn, maxResults, false, attributes);
+    }
+
+    private List<LdapUser> searchUsers0(DirectoryConnection dc,
+                                        String filter,
+                                        String baseDn,
+                                        int maxResults,
+                                        boolean enrich,
+                                        String... attributes) {
         String searchBase = baseDn != null ? baseDn : dc.getBaseDn();
         // Clamp the page size: no point asking for more entries per page than the total limit
         int pageSize = Math.min(dc.getPagingSize(), maxResults);
@@ -135,7 +159,7 @@ public class LdapUserService {
                         break;
                     }
                 }
-                results.addAll(readEnrichers.enrichBatch(dc, page));
+                results.addAll(enrich ? readEnrichers.enrichBatch(dc, page) : page);
                 if (results.size() >= maxResults) {
                     return results; // stop early — caller has everything
                 }
@@ -195,6 +219,27 @@ public class LdapUserService {
                              String baseDn,
                              Consumer<LdapUser> consumer,
                              String... attributes) {
+        processUsers0(dc, filter, baseDn, consumer, true, attributes);
+    }
+
+    /**
+     * {@link #processUsers(DirectoryConnection, String, String, Consumer, String...)}
+     * without the read-enricher chain; see {@link #searchUsersRaw}.
+     */
+    public void processUsersRaw(DirectoryConnection dc,
+                                String filter,
+                                String baseDn,
+                                Consumer<LdapUser> consumer,
+                                String... attributes) {
+        processUsers0(dc, filter, baseDn, consumer, false, attributes);
+    }
+
+    private void processUsers0(DirectoryConnection dc,
+                               String filter,
+                               String baseDn,
+                               Consumer<LdapUser> consumer,
+                               boolean enrich,
+                               String... attributes) {
         String searchBase = baseDn != null ? baseDn : dc.getBaseDn();
         int pageSize = dc.getPagingSize();
 
@@ -214,7 +259,7 @@ public class LdapUserService {
                 for (SearchResultEntry entry : searchResult.getSearchEntries()) {
                     page.add(LdapEntryMapper.toUser(entry));
                 }
-                for (LdapUser enriched : readEnrichers.enrichBatch(dc, page)) {
+                for (LdapUser enriched : enrich ? readEnrichers.enrichBatch(dc, page) : page) {
                     consumer.accept(enriched);
                 }
 

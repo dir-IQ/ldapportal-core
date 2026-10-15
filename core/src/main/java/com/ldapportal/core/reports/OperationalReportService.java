@@ -11,6 +11,7 @@ import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.ldap.LdapUserService;
+import com.ldapportal.ldap.UserGroupIndex;
 import com.ldapportal.ldap.model.LdapGroup;
 import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.repository.AuditEventRepository;
@@ -173,21 +174,23 @@ public class OperationalReportService {
         OperationalReportType builtin = builtinOrNull(reportType);
         if (builtin != null) {
             return switch (builtin) {
-                case USERS_IN_GROUP         -> runUsersInGroupReport(dc, safeParams, scope);
+                case USERS_IN_GROUP         -> withGroups(dc, scope,
+                        runUsersInGroupReport(dc, safeParams, scope));
                 case USERS_IN_BRANCH        -> {
                     String branchDn = requireString(safeParams, "branchDn");
                     scope.requireInScope(branchDn);
-                    yield runLdapReport(dc,
-                            "(|(objectClass=inetOrgPerson)(objectClass=person))", branchDn);
+                    yield withGroups(dc, scope, runLdapReport(dc,
+                            "(|(objectClass=inetOrgPerson)(objectClass=person))", branchDn));
                 }
-                case USERS_WITH_NO_GROUP    -> perBase(scope,
-                        base -> runUsersByGroupCountReport(dc, base, safeParams));
-                case RECENTLY_ADDED         -> perBase(scope, base -> runLdapReport(dc,
-                        buildRecentFilter("createTimestamp", safeParams), base));
-                case RECENTLY_MODIFIED      -> perBase(scope, base -> runLdapReport(dc,
-                        buildRecentFilter("modifyTimestamp", safeParams), base));
+                case USERS_WITH_NO_GROUP    -> withGroups(dc, scope, perBase(scope,
+                        base -> runUsersByGroupCountReport(dc, base, safeParams)));
+                case RECENTLY_ADDED         -> withGroups(dc, scope, perBase(scope, base -> runLdapReport(dc,
+                        buildRecentFilter("createTimestamp", safeParams), base)));
+                case RECENTLY_MODIFIED      -> withGroups(dc, scope, perBase(scope, base -> runLdapReport(dc,
+                        buildRecentFilter("modifyTimestamp", safeParams), base)));
                 case RECENTLY_DELETED       -> runDeletedReport(directoryId, safeParams, scope);
-                case DISABLED_ACCOUNTS      -> perBase(scope, base -> runDisabledAccountsReport(dc, base));
+                case DISABLED_ACCOUNTS      -> withGroups(dc, scope,
+                        perBase(scope, base -> runDisabledAccountsReport(dc, base)));
                 case MISSING_PROFILE_GROUPS -> runMissingProfileGroupsReport(dc, directoryId, scope);
                 case AUDIT_ENTRIES          -> runAuditEntriesReport(directoryId, safeParams, scope);
                 case MISSING_DATA           -> runMissingDataReport(dc, safeParams, scope);
@@ -217,14 +220,62 @@ public class OperationalReportService {
         if (scope.bases().size() == 1) {
             return runner.apply(scope.bases().get(0));
         }
-        List<String> columns = null;
+        // Entry reports derive their columns from the attributes found, so
+        // each base can contribute different ones: keep the union, in order.
+        LinkedHashSet<String> columns = new LinkedHashSet<>();
+        Map<String, String> labels = new LinkedHashMap<>();
         LinkedHashSet<Map<String, String>> rows = new LinkedHashSet<>();
         for (String base : scope.bases()) {
             ReportData part = runner.apply(base);
-            if (columns == null) columns = part.columns();
+            columns.addAll(part.columns());
+            labels.putAll(part.labels());
             rows.addAll(part.rows());
         }
-        return new ReportData(columns == null ? List.of() : columns, new ArrayList<>(rows));
+        return new ReportData(new ArrayList<>(columns), new ArrayList<>(rows), labels);
+    }
+
+    /** Column key of the groups column added to reports that list users. */
+    static final String GROUPS_COLUMN = "groups";
+
+    /**
+     * Adds a last {@value #GROUPS_COLUMN} column naming each listed user's
+     * groups ({@code |}-separated), worked out from the group entries under the
+     * caller's search bases, so only groups they can see are named. The UI
+     * hides it until asked for; a CSV export carries it.
+     */
+    private ReportData withGroups(DirectoryConnection dc, ReportScope scope, ReportData data) {
+        List<String> columns = new ArrayList<>(data.columns());
+        columns.remove(GROUPS_COLUMN);
+        columns.add(GROUPS_COLUMN);
+        Map<String, String> labels = new LinkedHashMap<>(data.labels());
+        labels.put(GROUPS_COLUMN, "Groups");
+        if (data.rows().isEmpty()) {
+            return new ReportData(columns, data.rows(), labels);
+        }
+        UserGroupIndex index;
+        try {
+            index = UserGroupIndex.build(groupService, dc, scope.bases());
+        } catch (RuntimeException e) {
+            // The report itself still stands; it just goes without the column.
+            log.warn("Could not read groups for the report's groups column: {}", e.getMessage());
+            return data;
+        }
+        List<Map<String, String>> rows = new ArrayList<>(data.rows().size());
+        for (Map<String, String> row : data.rows()) {
+            Map<String, String> out = new LinkedHashMap<>(row);
+            String dn = row.get("dn");
+            out.put(GROUPS_COLUMN, dn == null ? ""
+                    : String.join("|", index.groupsOf(dn, firstValue(row.get("uid")))));
+            rows.add(out);
+        }
+        return new ReportData(columns, rows, labels);
+    }
+
+    /** The first of a {@code |}-joined cell's values, or null when blank. */
+    private static String firstValue(String cell) {
+        if (cell == null || cell.isBlank()) return null;
+        int bar = cell.indexOf('|');
+        return bar < 0 ? cell : cell.substring(0, bar);
     }
 
     /** Resolve a built-in report type by name, or null if not a built-in. */
@@ -265,13 +316,14 @@ public class OperationalReportService {
         memberDns.removeIf(m -> !scope.dnAllowed().test(m));
 
         if (memberDns.isEmpty()) {
-            return new ReportData(List.of("DN", "Name", "Email", "User ID"), List.of());
+            List<String> columns = List.of("dn", "cn", "mail", "uid");
+            return new ReportData(columns, List.of(), labelsFor(columns));
         }
 
         List<LdapUser> users = new ArrayList<>();
         for (String memberDn : memberDns) {
             try {
-                users.addAll(userService.searchUsers(dc, "(objectClass=*)", memberDn, 1, "*"));
+                users.addAll(userService.searchUsersRaw(dc, "(objectClass=*)", memberDn, 1, "*"));
             } catch (Exception e) {
                 log.debug("Skipping member {}: {}", memberDn, e.getMessage());
             }
@@ -311,7 +363,7 @@ public class OperationalReportService {
             }
         }
 
-        List<LdapUser> allUsers = userService.searchUsers(dc,
+        List<LdapUser> allUsers = userService.searchUsersRaw(dc,
                 "(|(objectClass=inetOrgPerson)(objectClass=person))", scopeBaseDn,
                 MAX_LDAP_RESULTS, "*");
 
@@ -564,18 +616,23 @@ public class OperationalReportService {
         String filter = objectTypeFilter(params);
         List<String> requested = new ArrayList<>(attributes);
         requested.add("objectClass");
-        List<LdapUser> entries = userService.searchUsers(dc, filter, branchDn, MAX_LDAP_RESULTS,
+        List<LdapUser> entries = userService.searchUsersRaw(dc, filter, branchDn, MAX_LDAP_RESULTS,
                 requested.toArray(String[]::new));
         if (entries.size() >= MAX_LDAP_RESULTS) {
             log.warn("Missing-data report hit the {} result limit under {} — results may be truncated.",
                     MAX_LDAP_RESULTS, branchDn);
         }
 
+        // Columns are keyed by attribute name (what a CSV export writes);
+        // a secret attribute is checked for presence but its values never shown.
+        List<String> shown = attributes.stream().filter(a -> !isSecretAttribute(a)).toList();
         List<String> columns = new ArrayList<>();
-        columns.add("DN");
-        columns.add("Missing Attributes");
-        columns.add("Object Class");
-        attributes.forEach(a -> columns.add(friendlyLdapColumn(a)));
+        columns.add("dn");
+        columns.add(MISSING_ATTRIBUTES_COLUMN);
+        columns.add("objectClass");
+        shown.forEach(a -> { if (!a.equalsIgnoreCase("objectClass")) columns.add(a); });
+        Map<String, String> labels = labelsFor(columns);
+        labels.put(MISSING_ATTRIBUTES_COLUMN, "Missing Attributes");
 
         List<Map<String, String>> rows = new ArrayList<>();
         for (LdapUser entry : entries) {
@@ -585,18 +642,20 @@ public class OperationalReportService {
                     .toList();
             if (missing.isEmpty()) continue;
             Map<String, String> row = new LinkedHashMap<>();
-            row.put("DN", entry.getDn());
-            row.put("Missing Attributes", String.join(", ", missing));
-            row.put("Object Class", String.join("|", entry.getValues("objectClass")));
-            for (String a : attributes) {
-                row.put(friendlyLdapColumn(a), String.join("|", entry.getValues(a)));
+            row.put("dn", entry.getDn());
+            row.put(MISSING_ATTRIBUTES_COLUMN, String.join(", ", missing));
+            for (String a : columns.subList(2, columns.size())) {
+                row.put(a, String.join("|", entry.getValues(a)));
             }
             rows.add(row);
         }
         log.info("Missing-data report under {}: {} of {} entries missing one of {}",
                 branchDn, rows.size(), entries.size(), attributes);
-        return new ReportData(columns, rows);
+        return new ReportData(columns, rows, labels);
     }
+
+    /** Column key of the missing-data report's list of unset attributes. */
+    static final String MISSING_ATTRIBUTES_COLUMN = "missingAttributes";
 
     /** Absent, or present with no value carrying non-whitespace text. */
     static boolean isBlankAttribute(LdapUser entry, String attribute) {
@@ -656,7 +715,7 @@ public class OperationalReportService {
     // ── Shared helpers ────────────────────────────────────────────────────────
 
     private ReportData runLdapReport(DirectoryConnection dc, String filter, String baseDn) {
-        List<LdapUser> users = userService.searchUsers(dc, filter, baseDn, MAX_LDAP_RESULTS, "*");
+        List<LdapUser> users = userService.searchUsersRaw(dc, filter, baseDn, MAX_LDAP_RESULTS, "*");
         if (users.size() >= MAX_LDAP_RESULTS) {
             log.warn("Report query hit the {} result limit — results may be truncated. "
                     + "Filter: {}, baseDn: {}", MAX_LDAP_RESULTS, filter, baseDn);
@@ -664,31 +723,61 @@ public class OperationalReportService {
         return buildReportDataFromUsers(users);
     }
 
+    /**
+     * One row per entry, one column per attribute any entry carries ({@code dn}
+     * first, the rest sorted), keyed by the attribute name so a CSV export
+     * carries the real names; the friendly headings go in the labels. Secret
+     * attributes (password hashes and the like) are left out even when the
+     * bind account can read them.
+     */
     private ReportData buildReportDataFromUsers(List<LdapUser> users) {
         TreeSet<String> attrNames = new TreeSet<>();
-        users.forEach(u -> attrNames.addAll(u.getAttributes().keySet()));
-        List<String> rawColumns = new ArrayList<>();
-        rawColumns.add("dn");
-        rawColumns.addAll(attrNames);
+        users.forEach(u -> u.getAttributes().keySet().stream()
+                .filter(a -> !isSecretAttribute(a))
+                .forEach(attrNames::add));
+        attrNames.remove("dn");
+        List<String> columns = new ArrayList<>();
+        columns.add("dn");
+        columns.addAll(attrNames);
 
-        List<String> columns = rawColumns.stream().map(OperationalReportService::friendlyLdapColumn).toList();
         List<Map<String, String>> rows = users.stream()
-                .map(u -> buildFriendlyRow(u, rawColumns))
+                .map(u -> buildRow(u, columns))
                 .toList();
-        return new ReportData(columns, rows);
+        return new ReportData(columns, rows, labelsFor(columns));
     }
 
-    private Map<String, String> buildFriendlyRow(LdapUser user, List<String> rawColumns) {
+    private static Map<String, String> buildRow(LdapUser user, List<String> columns) {
         Map<String, String> row = new LinkedHashMap<>();
-        for (String col : rawColumns) {
-            String friendly = friendlyLdapColumn(col);
-            if ("dn".equals(col)) {
-                row.put(friendly, user.getDn());
-            } else {
-                row.put(friendly, String.join("|", user.getValues(col)));
-            }
+        for (String col : columns) {
+            row.put(col, "dn".equals(col) ? user.getDn() : String.join("|", user.getValues(col)));
         }
         return row;
+    }
+
+    /** Friendly headings for the columns that have one. */
+    private static Map<String, String> labelsFor(List<String> columns) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        for (String c : columns) {
+            String friendly = friendlyLdapColumn(c);
+            if (!friendly.equals(c)) labels.put(c, friendly);
+        }
+        return labels;
+    }
+
+    /**
+     * Attributes holding passwords or password-derived material. A report
+     * never shows them, whatever the bind account is allowed to read.
+     */
+    private static final Set<String> SECRET_ATTRIBUTES = Set.of(
+            "userpassword", "authpassword", "unicodepwd", "dbcspwd", "ntpwdhistory", "lmpwdhistory",
+            "supplementalcredentials", "pwdhistory", "passwordhistory",
+            "sambantpassword", "sambalmpassword", "sambapasswordhistory",
+            "krbprincipalkey", "krbextradata", "userpkcs12", "ibm-slapdadminpw");
+
+    static boolean isSecretAttribute(String attribute) {
+        String a = attribute.toLowerCase();
+        int semi = a.indexOf(';');
+        return SECRET_ATTRIBUTES.contains(semi < 0 ? a : a.substring(0, semi));
     }
 
     private static final Map<String, String> LDAP_COLUMN_NAMES = Map.ofEntries(
@@ -725,7 +814,6 @@ public class OperationalReportService {
             Map.entry("userprincipalname", "UPN"),
             Map.entry("pwdaccountlockedtime", "Locked Since"),
             Map.entry("nsaccountlock", "Account Lock"),
-            Map.entry("userpassword", "Password"),
             Map.entry("entryuuid", "Entry UUID"),
             Map.entry("entrydn", "Entry DN"),
             Map.entry("structuralobjectclass", "Structural Class"),

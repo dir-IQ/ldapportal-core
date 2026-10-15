@@ -610,6 +610,8 @@ const running = ref(false)
 const exporting = ref(false)
 const hasResults = ref(false)
 const resultColumns = ref<string[]>([])
+/** Display headings by column key; entry reports key columns by attribute name. */
+const resultLabels = ref<Record<string, string>>({})
 const resultRows = ref<ReportRow[]>([])
 
 const currentRunType   = computed(() => reportTypes.value.find(t => t.value === runForm.value.reportType))
@@ -675,19 +677,32 @@ async function loadAuditActions(): Promise<void> {
 onMounted(() => { document.addEventListener('click', onAuditActionClickOutside); loadAuditActions() })
 onBeforeUnmount(() => document.removeEventListener('click', onAuditActionClickOutside))
 
-// Show max 10 columns, hide internal columns like 'id'. Use the friendly
-// column name for display (e.g. "cn" → "Name") so callers see consistent
-// labels regardless of report shape.
-const tableColumns = computed<ColumnDef[]>(() =>
-  resultColumns.value
+/** Columns shown up front; the rest start hidden but can be turned on from the Columns menu. */
+const VISIBLE_COLUMN_LIMIT = 10
+/** Each listed user's groups, added by the backend; shown only on request. */
+const GROUPS_COLUMN = 'groups'
+
+function columnLabel(col: string): string {
+  return resultLabels.value[col] ?? friendlyColumnName(col)
+}
+
+// Every column reaches the table (internal ones like 'id' aside), headed by
+// the backend's label or the friendly LDAP name ("cn" → "Name"). Past the
+// first ten, and the groups column, start hidden in the Columns menu.
+const tableColumns = computed<ColumnDef[]>(() => {
+  let shown = 0
+  return resultColumns.value
     .filter(c => !HIDDEN_COLUMNS.has(c))
-    .slice(0, 10)
-    .map(c => ({ key: c, label: friendlyColumnName(c) })),
-)
+    .map(c => {
+      const hidden = c === GROUPS_COLUMN || shown++ >= VISIBLE_COLUMN_LIMIT
+      return hidden ? { key: c, label: columnLabel(c), defaultHidden: true } : { key: c, label: columnLabel(c) }
+    })
+})
 
 // Smart column type detection
 function isDateColumn(col: string, val: unknown): boolean {
-  return DATE_COLUMNS.has(col) || (col.toLowerCase().includes('timestamp') && looksLikeTimestamp(val as string))
+  return DATE_COLUMNS.has(col) || DATE_COLUMNS.has(columnLabel(col))
+    || (col.toLowerCase().includes('timestamp') && looksLikeTimestamp(val as string))
 }
 function isDnColumn(col: string, val: unknown): boolean {
   if (!val) return false
@@ -734,6 +749,7 @@ async function doRun(): Promise<void> {
         reportParams: buildReportParams(),
       })
       resultColumns.value = data.columns || []
+      resultLabels.value = data.labels || {}
       resultRows.value = data.rows || []
     }
     hasResults.value = true
@@ -751,6 +767,7 @@ async function runIntegrityCheck(): Promise<void> {
   const { data } = await checkIntegrity(dirId.value, '', checks)
   const issues = data.issues || []
   resultColumns.value = ['type', 'dn', 'description']
+  resultLabels.value = {}
   resultRows.value = issues.map((i: { type: string, dn: string, description: string }) => ({
     type: i.type, dn: i.dn, description: i.description,
   }))
