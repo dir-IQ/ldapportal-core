@@ -152,7 +152,7 @@ class OperationalReportServiceTest {
         service.run(dc, "DISABLED_ACCOUNTS", Map.of(), dirId, alice);
 
         // Not the directory base the old code fell back to.
-        verify(userService).searchUsers(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
+        verify(userService).searchUsersRaw(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
     }
 
     @Test
@@ -167,7 +167,7 @@ class OperationalReportServiceTest {
         service.run(dc, "RECENTLY_ADDED",
                 Map.of("scopeBaseDn", "dc=example,dc=com", "lookbackDays", 7), dirId, alice);
 
-        verify(userService).searchUsers(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
+        verify(userService).searchUsersRaw(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
     }
 
     @Test
@@ -300,7 +300,7 @@ class OperationalReportServiceTest {
                 Map.of("branchDn", BRANCH, "attributes", " mail, telephoneNumber ,,MAIL "), dirId, superadmin());
 
         ArgumentCaptor<String[]> attrs = ArgumentCaptor.forClass(String[].class);
-        verify(userService).searchUsers(eq(dc), eq("(objectClass=*)"), eq(BRANCH), anyInt(), attrs.capture());
+        verify(userService).searchUsersRaw(eq(dc), eq("(objectClass=*)"), eq(BRANCH), anyInt(), attrs.capture());
         assertThat(attrs.getValue()).containsExactly("mail", "telephoneNumber", "objectClass");
     }
 
@@ -314,7 +314,7 @@ class OperationalReportServiceTest {
                 Map.of("branchDn", BRANCH, "attributes", List.of("mail"), "objectType", "USER"),
                 dirId, superadmin());
 
-        verify(userService).searchUsers(eq(dc),
+        verify(userService).searchUsersRaw(eq(dc),
                 eq("(|(objectClass=inetOrgPerson)(&(objectClass=user)(!(objectClass=computer))))"),
                 eq(BRANCH), anyInt(), any(String[].class));
     }
@@ -412,7 +412,7 @@ class OperationalReportServiceTest {
 
         service.run(dc, "DISABLED_ACCOUNTS", Map.of(), dirId, superadmin());
 
-        verify(userService).searchUsers(eq(dc), anyString(), isNull(), anyInt(), eq("*"));
+        verify(userService).searchUsersRaw(eq(dc), anyString(), isNull(), anyInt(), eq("*"));
         verifyNoInteractions(permissionService);
     }
 
@@ -422,7 +422,7 @@ class OperationalReportServiceTest {
 
         service.run(dc, "DISABLED_ACCOUNTS", Map.of("scopeBaseDn", PEOPLE), dirId);
 
-        verify(userService).searchUsers(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
+        verify(userService).searchUsersRaw(eq(dc), anyString(), eq(PEOPLE), anyInt(), eq("*"));
         verifyNoInteractions(permissionService);
     }
 }
