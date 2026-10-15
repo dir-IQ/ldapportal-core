@@ -920,8 +920,23 @@ describe('BulkView — user import group memberships', () => {
     ])
     expect(w.find('[data-testid="user-preview-group-problems"]').text())
       .toContain('1 group change can\'t be applied')
-    // A group problem isn't a missing-attribute warning.
-    expect(w.text()).not.toContain('missing required attributes')
+    // A group problem doesn't fail the row itself.
+    expect(w.text()).not.toContain('rows have problems')
+    expect(w.text()).not.toContain('row has a problem')
+  })
+
+  it('counts and highlights a row the admin\'s permissions would refuse', async () => {
+    const w = await previewWith([
+      { rowNumber: 1, computedDn: 'uid=new,ou=eng,dc=x', attributes: { cn: 'New' }, missingRequired: [],
+        message: "Creating this user needs the 'Create users' permission" },
+      { rowNumber: 2, computedDn: 'uid=ok,ou=eng,dc=x', attributes: { cn: 'Ok' }, missingRequired: [] },
+    ])
+
+    expect(w.text()).toContain('1 row has a problem (see the Issues column)')
+    const issues = w.findAll('[data-testid="user-preview-issues"]')
+    expect(issues[0].text()).toBe("Creating this user needs the 'Create users' permission")
+    expect(issues[0].element.closest('tr')!.className).toContain('bg-amber-50')
+    expect(issues[1].element.closest('tr')!.className).not.toContain('bg-amber-50')
   })
 
   it('has no Groups column when no row lists groups', async () => {

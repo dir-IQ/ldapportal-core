@@ -211,13 +211,13 @@ adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
                those rows would still error during the LDAP add — but
                warning at preview time saves a confirm-then-fail round-trip. -->
           <p v-if="previewWarningCount && importBlocked" class="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 mb-2">
-            Import blocked: {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row is' : 'rows are' }}
-            missing required attributes. This template is set to block the import until every row is valid —
+            Import blocked: {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row has a problem' : 'rows have problems' }}
+            (see the Issues column). This template is set to block the import until every row is valid —
             fix the rows (or switch the template to “Skip rows with errors”) and preview again.
           </p>
           <p v-else-if="previewWarningCount" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
-            {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row is' : 'rows are' }}
-            missing required attributes — they will fail at import.
+            {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row has a problem' : 'rows have problems' }}
+            (see the Issues column) — they will fail at import.
           </p>
           <p v-if="userPreviewGroupProblemCount" data-testid="user-preview-group-problems"
              class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
@@ -239,7 +239,7 @@ adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
               </thead>
               <tbody class="divide-y divide-blue-100">
                 <tr v-for="(row, idx) in previewResult.rows" :key="row.rowNumber"
-                    :class="row.missingRequired?.length ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
+                    :class="row.missingRequired?.length || row.message ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
                   <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td v-for="attr in userPreviewAttrCols" :key="attr"
@@ -254,7 +254,8 @@ adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
                   </td>
                   <td class="px-2 py-1 text-amber-700" data-testid="user-preview-issues">
                     <!-- A DN that couldn't be resolved says why (outside the
-                         container, not a DN, column not in the file). -->
+                         container, not a DN, column not in the file), as does
+                         a row the admin's permissions would refuse. -->
                     <span v-if="row.message">{{ row.message }}</span>
                     <span v-else-if="row.missingRequired?.length"
                           :title="`Missing required: ${row.missingRequired.join(', ')}`">
@@ -1327,10 +1328,11 @@ const canImport = computed(() => {
   return selectedTemplateId.value && importFile.value && !!activeProfile.value
 })
 
-/** Number of preview rows missing any required attribute — drives the
+/** Number of preview rows that will fail — missing a required attribute, or
+ *  refused (unresolvable DN, or a permission the admin lacks). Drives the
  *  amber "N rows will fail" banner above the preview table. */
 const previewWarningCount = computed(() =>
-  (previewResult.value?.rows || []).filter(r => r.missingRequired?.length).length
+  (previewResult.value?.rows || []).filter(r => r.missingRequired?.length || r.message).length
 )
 
 /** When the selected template blocks on errors (errorHandling = ABORT_ON_ERROR)

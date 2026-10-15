@@ -31,6 +31,8 @@ final class FakeGroupImportMembers implements GroupImportMembers {
     /** Set to refuse member changes, as a caller without group.manage_members would be. */
     boolean mayManageMembers = true;
     int memberChangeChecks;
+    /** Member DNs the Separation-of-Duties gate blocks from a new group (lower-case). */
+    final Set<String> sodBlocked = new HashSet<>();
     /** Decides each governed write's outcome; applied by default. */
     Function<Write, MembershipChangeResult.Status> outcome = w -> MembershipChangeResult.Status.APPLIED;
 
@@ -112,6 +114,12 @@ final class FakeGroupImportMembers implements GroupImportMembers {
             case BLOCKED -> MembershipChangeResult.Item.blocked(c, "SoD violation");
             case ERROR -> MembershipChangeResult.Item.errored(c, "LDAP said no");
         };
+    }
+
+    @Override
+    public String blockedInitialMember(Member member, String groupDn) {
+        return member.dn() != null && sodBlocked.contains(member.dn().toLowerCase(Locale.ROOT))
+                ? "SoD violation" : null;
     }
 
     static final UUID APPROVAL_ID = UUID.fromString("00000000-0000-0000-0000-0000000000aa");

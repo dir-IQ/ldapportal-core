@@ -136,10 +136,31 @@ public class BulkGroupService {
                                        char fieldDelimiter,
                                        boolean passthroughUnmapped,
                                        GroupImportMembers members) throws IOException {
+        return importCsv(dc, csvInput, parentDn, columnMappings, objectClasses, memberAttribute,
+                skipHeaderRow, fieldDelimiter, passthroughUnmapped, members, BulkImportPermissions.ALL);
+    }
+
+    /**
+     * {@link #importCsv} with {@code permissions} deciding, row by row, whether
+     * the admin may create the group or change an existing one's attributes;
+     * a row it refuses is an error, the rest run.
+     */
+    public BulkImportResult importCsv(DirectoryConnection dc,
+                                       InputStream csvInput,
+                                       String parentDn,
+                                       List<CsvColumnMappingDto> columnMappings,
+                                       List<String> objectClasses,
+                                       String memberAttribute,
+                                       boolean skipHeaderRow,
+                                       char fieldDelimiter,
+                                       boolean passthroughUnmapped,
+                                       GroupImportMembers members,
+                                       BulkImportPermissions permissions) throws IOException {
 
         CsvColumnMap colToAttr = CsvColumnMap.of(columnMappings, passthroughUnmapped);
         List<Map<String, String>> rows = parse(csvInput, skipHeaderRow, fieldDelimiter);
-        List<RowPlan> plans = plan(rows, colToAttr, parentDn, objectClasses, memberAttribute, members);
+        List<RowPlan> plans = plan(rows, colToAttr, parentDn, objectClasses, memberAttribute, members,
+                permissions);
 
         List<BulkImportRowResult> rowResults = new ArrayList<>(plans.size());
         for (RowPlan p : plans) {
@@ -180,10 +201,27 @@ public class BulkGroupService {
                                                   char fieldDelimiter,
                                                   boolean passthroughUnmapped,
                                                   GroupImportMembers members) throws IOException {
+        return previewImport(csvInput, parentDn, columnMappings, skipHeaderRow, requiredAttrs, memberAttr,
+                objectClasses, fieldDelimiter, passthroughUnmapped, members, BulkImportPermissions.ALL);
+    }
+
+    /** {@link #previewImport} with the admin's per-row {@code permissions} applied, as the import will. */
+    public BulkImportPreviewResult previewImport(InputStream csvInput,
+                                                  String parentDn,
+                                                  List<CsvColumnMappingDto> columnMappings,
+                                                  boolean skipHeaderRow,
+                                                  List<String> requiredAttrs,
+                                                  String memberAttr,
+                                                  List<String> objectClasses,
+                                                  char fieldDelimiter,
+                                                  boolean passthroughUnmapped,
+                                                  GroupImportMembers members,
+                                                  BulkImportPermissions permissions) throws IOException {
 
         CsvColumnMap colToAttr = CsvColumnMap.of(columnMappings, passthroughUnmapped);
         List<Map<String, String>> rows = parse(csvInput, skipHeaderRow, fieldDelimiter);
-        List<RowPlan> plans = plan(rows, colToAttr, parentDn, objectClasses, memberAttr, members);
+        List<RowPlan> plans = plan(rows, colToAttr, parentDn, objectClasses, memberAttr, members,
+                permissions);
 
         List<String> required = requiredAttrs == null ? List.of() : requiredAttrs;
         List<BulkImportPreviewRow> previewRows = new ArrayList<>(plans.size());
@@ -232,7 +270,7 @@ public class BulkGroupService {
 
     private List<RowPlan> plan(List<Map<String, String>> rows, CsvColumnMap colToAttr, String parentDn,
                                List<String> objectClasses, String memberAttribute,
-                               GroupImportMembers members) {
+                               GroupImportMembers members, BulkImportPermissions permissions) {
         String newGroupMemberAttr = memberAttribute == null || memberAttribute.isBlank()
                 ? "member" : memberAttribute;
         String needsMemberClass = memberRequiringClass(objectClasses);
@@ -333,6 +371,19 @@ public class BulkGroupService {
                     }
                 });
             }
+            // The per-entry features a manual create / edit needs. A refused
+            // create isn't recorded as created, so later rows for the same
+            // group are refused too.
+            if (p.action == GroupAction.CREATE && !permissions.createGroups()) {
+                p.error = BulkImportPermissions.needs("Creating this group", BulkImportPermissions.CREATE_GROUPS);
+                continue;
+            }
+            if (!p.attrUpdates.isEmpty() && !permissions.editGroups()) {
+                p.error = BulkImportPermissions.needs("Changing "
+                        + String.join(", ", p.attrUpdates.stream().map(GroupAttributeChange::attribute).toList())
+                        + " on this existing group", BulkImportPermissions.EDIT_GROUPS);
+                continue;
+            }
             p.memberAttribute = group == null ? newGroupMemberAttr : group.memberAttribute();
             boolean uidMembers = "memberUid".equalsIgnoreCase(p.memberAttribute);
 
@@ -364,6 +415,7 @@ public class BulkGroupService {
             // groupOfNames / groupOfUniqueNames can't exist without a member, so
             // a row that would create one empty fails here rather than at the
             // add, and isn't recorded as created (a later row may create it).
+            p.memberRequiringClass = p.action == GroupAction.CREATE ? needsMemberClass : null;
             if (p.action == GroupAction.CREATE && needsMemberClass != null
                     && p.changes.stream().noneMatch(c -> c.outcome == Outcome.WILL_ADD)) {
                 p.error = "A new " + needsMemberClass + " group needs at least one member";
@@ -455,7 +507,7 @@ public class BulkGroupService {
         }
         try {
             if (p.action == GroupAction.CREATE) {
-                return create(dc, p);
+                return create(dc, p, members);
             }
             String updated = null;
             if (!p.attrUpdates.isEmpty()) {
@@ -482,8 +534,24 @@ public class BulkGroupService {
         }
     }
 
-    /** Creates the group with all of its resolved members in one add. */
-    private BulkImportRowResult create(DirectoryConnection dc, RowPlan p) {
+    /**
+     * Creates the group with its resolved members in one add. Each initial
+     * member first passes the Separation-of-Duties gate, as a member added to
+     * an existing group does; a blocked one is left out, and a group whose
+     * object class needs a member isn't created when none is left.
+     */
+    private BulkImportRowResult create(DirectoryConnection dc, RowPlan p, GroupImportMembers members) {
+        for (PlannedChange c : p.changes) {
+            if (c.outcome != Outcome.WILL_ADD) continue;
+            String blocked = members.blockedInitialMember(c.member, p.dn);
+            if (blocked != null) c.set(Outcome.BLOCKED, blocked);
+        }
+        if (p.memberRequiringClass != null
+                && p.changes.stream().noneMatch(c -> c.outcome == Outcome.WILL_ADD)) {
+            return new BulkImportRowResult(p.rowNumber, p.dn, BulkImportRowResult.Status.ERROR,
+                    "Not created: every member was blocked by separation of duties, and a new "
+                            + p.memberRequiringClass + " group needs at least one", p.changeRows());
+        }
         Map<String, List<String>> attrMap = new LinkedHashMap<>(p.attrs);
         boolean uidMembers = "memberUid".equalsIgnoreCase(p.memberAttribute);
         List<String> values = p.changes.stream()
@@ -702,6 +770,8 @@ public class BulkGroupService {
         String error;
         /** The row would create a group whose object class requires a member, with none to add. */
         boolean needsMember;
+        /** For a create: the object class that requires a member, or null when none does. */
+        String memberRequiringClass;
 
         RowPlan(int rowNumber) {
             this.rowNumber = rowNumber;
