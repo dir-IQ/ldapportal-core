@@ -944,6 +944,21 @@ function buildJobPayload(): Record<string, unknown> {
   }
   if (currentJobFormType.value?.attributes) params.attributes = splitAttributes(jobForm.value.attributes)
   if (jobFormNeedsObjectType.value && jobForm.value.objectType) params.objectType = jobForm.value.objectType
+  // Scheduled jobs run as the system, so the backend pins each one to a
+  // single OU at save time. Branch-based types (USERS_IN_BRANCH,
+  // MISSING_DATA) leave scopeBaseDn off — the backend derives it from the
+  // branch. Everything else keeps the scope an edited job already stores,
+  // or, for a new admin job, takes the picked profile's OU (as Run Report
+  // does) so an admin holding several OUs isn't asked for a value the form
+  // has no field for.
+  if (currentJobFormType.value?.param !== 'branchDn') {
+    const storedScope = editJob.value?.reportParams?.scopeBaseDn
+    if (typeof storedScope === 'string' && storedScope.trim()) {
+      params.scopeBaseDn = storedScope
+    } else if (!auth.isSuperadmin && profilePicker.selectedProfile?.targetUserDn) {
+      params.scopeBaseDn = profilePicker.selectedProfile.targetUserDn
+    }
+  }
   return {
     name: jobForm.value.name,
     reportType: jobForm.value.reportType,
