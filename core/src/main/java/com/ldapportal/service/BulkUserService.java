@@ -567,14 +567,15 @@ public class BulkUserService {
         Set<String> seenDns = new HashSet<>();
 
         // When columns are known upfront (attributes provided), write header first and
-        // stream entries via processUsers — only one entry lives in memory at a time.
+        // stream entries via processUsersRaw — only one entry lives in memory at a time.
+        // Raw reads: no read enrichers, so the columns are real attributes only.
         // When attributes is empty, columns are derived dynamically; we must do a full
         // search to discover the union of all attribute names before writing the header.
         if (!attributes.isEmpty()) {
             List<String> columns = withGroupsColumn(buildExportColumns(List.of(), attributes), groups);
             CsvUtils.writeHeader(writer, columns);
             for (String base : bases) {
-                userService.processUsers(dc, effectiveFilter, base,
+                userService.processUsersRaw(dc, effectiveFilter, base,
                         user -> {
                             if (!seenDns.add(user.getDn().toLowerCase(Locale.ROOT))) return;
                             try {
@@ -590,7 +591,7 @@ public class BulkUserService {
             // column set, then write. Dedupe across bases by DN.
             List<LdapUser> users = new ArrayList<>();
             for (String base : bases) {
-                for (LdapUser u : userService.searchUsers(dc, effectiveFilter, base, attrArray)) {
+                for (LdapUser u : userService.searchUsersRaw(dc, effectiveFilter, base, Integer.MAX_VALUE, attrArray)) {
                     if (seenDns.add(u.getDn().toLowerCase(Locale.ROOT))) {
                         users.add(u);
                     }

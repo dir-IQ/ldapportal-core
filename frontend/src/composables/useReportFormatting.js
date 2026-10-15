@@ -89,7 +89,6 @@ const LDAP_COLUMN_MAP = {
   st: 'State',
   postalCode: 'Postal Code',
   street: 'Street',
-  userPassword: 'Password',
   memberOf: 'Member Of',
   manager: 'Manager',
   loginShell: 'Login Shell',
@@ -103,12 +102,18 @@ const LDAP_COLUMN_MAP = {
   nsAccountLock: 'Account Lock',
 }
 
+/** LDAP_COLUMN_MAP keyed by lower-cased name: attribute names are case-insensitive. */
+const LDAP_COLUMN_MAP_LC = Object.fromEntries(
+  Object.entries(LDAP_COLUMN_MAP).map(([k, v]) => [k.toLowerCase(), v]),
+)
+
 /**
- * Humanize a column name: use LDAP mapping if available,
- * otherwise leave as-is (backend already uses friendly names for structured reports).
+ * Humanize a column name: use the LDAP mapping (matched ignoring case) if
+ * available, otherwise leave as-is (structured reports already use friendly
+ * names, and entry reports send their own labels).
  */
 export function friendlyColumnName(col) {
-  return LDAP_COLUMN_MAP[col] || col
+  return LDAP_COLUMN_MAP_LC[String(col).toLowerCase()] || col
 }
 
 /**
