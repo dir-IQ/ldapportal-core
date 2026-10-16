@@ -472,4 +472,109 @@ class BulkGroupServiceImportTest {
 
         assertThat(createdAttrs(ENG)).doesNotContainKey("member-operation");
     }
+
+    // ── Per-row permissions ──────────────────────────────────────────────────
+
+    private static BulkImportPermissions groupPerms(boolean create, boolean edit) {
+        return new BulkImportPermissions(true, true, Map.of(), create, edit);
+    }
+
+    private BulkImportResult run(String csv, BulkImportPermissions perms) throws IOException {
+        return service.importCsv(dc, new ByteArrayInputStream(csv.getBytes(StandardCharsets.UTF_8)), PARENT,
+                List.of(), List.of("groupOfNames"), "member", true, ',', true, dir, perms);
+    }
+
+    @Test
+    void withoutCreateGroups_aNewGroupRowFails_butAnExistingGroupRowRuns() throws IOException {
+        dir.group(ENG, "member", ALICE);
+        BulkImportResult result = run("""
+                cn,members,member-operation
+                newteam,bob,add
+                engineering,bob,add
+                """, groupPerms(false, true));
+
+        BulkImportRowResult created = result.rows().get(0);
+        assertThat(created.status()).isEqualTo(Status.ERROR);
+        assertThat(created.message()).isEqualTo("Creating this group needs the 'Create / delete groups' permission");
+        verify(groupService, never()).createGroup(any(), anyString(), any());
+
+        assertThat(result.rows().get(1).status()).isEqualTo(Status.UPDATED);
+        assertThat(dir.writes).containsExactly(new FakeGroupImportMembers.Write(BOB, "bob", ENG, "member", Op.ADD));
+        assertThat(result.errors()).isEqualTo(1);
+        assertThat(result.updated()).isEqualTo(1);
+    }
+
+    @Test
+    void withoutCreateGroups_laterRowsForTheRefusedGroupFailToo() throws IOException {
+        BulkImportResult result = run("""
+                cn,members,member-operation
+                newteam,alice,add
+                newteam,bob,add
+                """, groupPerms(false, true));
+
+        assertThat(result.rows()).extracting(BulkImportRowResult::status).containsExactly(Status.ERROR, Status.ERROR);
+        assertThat(dir.writes).isEmpty();
+    }
+
+    @Test
+    void withoutEditGroups_changingAnAttributeFails_butMemberOnlyChangesRun() throws IOException {
+        dir.group(ENG, "member", ALICE).attr(ENG, "description", "Old");
+        BulkImportResult result = run("""
+                cn,description,members,member-operation
+                engineering,New,bob,add
+                engineering,,carol,add
+                engineering,Old,,
+                """, groupPerms(true, false));
+
+        assertThat(result.rows().get(0).status()).isEqualTo(Status.ERROR);
+        assertThat(result.rows().get(0).message())
+                .isEqualTo("Changing description on this existing group needs the 'Edit groups' permission");
+        // Member changes alone, and an unchanged attribute, need no group.edit.
+        assertThat(result.rows().get(1).status()).isEqualTo(Status.UPDATED);
+        assertThat(result.rows().get(2).status()).isEqualTo(Status.SKIPPED);
+        verify(groupService, never()).updateGroup(any(), anyString(), any());
+        assertThat(dir.writes).containsExactly(new FakeGroupImportMembers.Write(CAROL, "carol", ENG, "member", Op.ADD));
+    }
+
+    @Test
+    void permissionErrorsShowInThePreviewToo() throws IOException {
+        dir.group(ENG, "member", ALICE).attr(ENG, "description", "Old");
+        var preview = service.previewImport(new ByteArrayInputStream("""
+                cn,description,members,member-operation
+                newteam,,bob,add
+                engineering,New,,
+                """.getBytes(StandardCharsets.UTF_8)), PARENT, List.of(), true, List.of(), "member",
+                List.of("groupOfNames"), ',', true, dir, groupPerms(false, false));
+
+        assertThat(preview.rows().get(0).message()).contains("'Create / delete groups'");
+        assertThat(preview.rows().get(0).groupAction()).isNull();
+        assertThat(preview.rows().get(1).message()).contains("'Edit groups'");
+    }
+
+    // ── Separation of duties for a new group's members ───────────────────────
+
+    @Test
+    void newGroup_leavesOutAMemberTheSodGateBlocks() throws IOException {
+        dir.sodBlocked.add(BOB.toLowerCase());
+        BulkImportResult result = run("cn,members,member-operation\nengineering,\"alice|bob\",add\n");
+
+        assertThat(createdAttrs(ENG)).containsEntry("member", List.of(ALICE));
+        BulkImportRowResult row = result.rows().get(0);
+        assertThat(outcomes(row)).containsExactly(Outcome.APPLIED, Outcome.BLOCKED);
+        // A blocked member fails the row, like one blocked on an existing group.
+        assertThat(row.status()).isEqualTo(Status.ERROR);
+        assertThat(row.message()).contains("Group created").contains("1 blocked by separation of duties");
+    }
+
+    @Test
+    void newGroupOfNames_whoseEveryMemberIsBlocked_isNotCreated() throws IOException {
+        dir.sodBlocked.add(BOB.toLowerCase());
+        BulkImportResult result = run("cn,members,member-operation\nengineering,bob,add\n");
+
+        verify(groupService, never()).createGroup(any(), anyString(), any());
+        BulkImportRowResult row = result.rows().get(0);
+        assertThat(row.status()).isEqualTo(Status.ERROR);
+        assertThat(row.message()).startsWith("Not created: every member was blocked by separation of duties");
+        assertThat(outcomes(row)).containsExactly(Outcome.BLOCKED);
+    }
 }

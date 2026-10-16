@@ -49,6 +49,13 @@ interface GroupImportMembers {
     MembershipChangeResult.Item apply(Member member, String groupDn, String memberAttribute,
                                       MembershipChangeRequest.Op op);
 
+    /**
+     * Runs the Separation-of-Duties gate for a member a new group is created
+     * with (those go into the create itself, not through {@link #apply}).
+     * Returns why the policy blocks it, or {@code null} when it may be added.
+     */
+    String blockedInitialMember(Member member, String groupDn);
+
     /** A resolved member value; {@code problem} is set when it couldn't be used. */
     record Member(String dn, String uid, GroupMemberChange.Outcome problem, String note) {
         static Member of(String dn, String uid) {

@@ -3,6 +3,7 @@ package com.ldapportal.service;
 
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PermissionService;
+import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.dto.approval.PendingApprovalResponse;
 import com.ldapportal.dto.csv.BulkImportRequest;
 import com.ldapportal.dto.ldap.CreateEntryRequest;
@@ -519,16 +520,21 @@ public class ApprovalWorkflowService {
             BulkImportRequest req = objectMapper.treeToValue(root.get("request"), BulkImportRequest.class);
             String csvBase64 = root.get("csvContent").asText();
             byte[] csvBytes = java.util.Base64.getDecoder().decode(csvBase64);
+            // Each row also needs the requester to hold the feature it uses
+            // (create users, edit groups, …) — approving a file doesn't grant
+            // its submitter permissions they lack.
+            AuthPrincipal requester = requesterPrincipal(pa);
             if (isGroupBulkImport(root)) {
                 ldapOperationService.bulkImportGroups(
                         pa.getDirectoryId(), approver,
                         new java.io.ByteArrayInputStream(csvBytes), req,
                         root.path("memberAttribute").asText("member"),
-                        root.path("objectClass").asText("groupOfNames"));
+                        root.path("objectClass").asText("groupOfNames"),
+                        requester);
             } else {
                 ldapOperationService.bulkImportUsers(
                         pa.getDirectoryId(), approver,
-                        new java.io.ByteArrayInputStream(csvBytes), req);
+                        new java.io.ByteArrayInputStream(csvBytes), req, requester);
             }
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Failed to deserialize bulk import payload", e);
@@ -648,6 +654,20 @@ public class ApprovalWorkflowService {
                 obfuscateNode(child);
             }
         }
+    }
+
+    /**
+     * The account that submitted {@code pa}, as a principal its permissions can
+     * be checked against. A deleted account comes back as an admin with no
+     * profile roles, which holds no directory feature.
+     */
+    private AuthPrincipal requesterPrincipal(PendingApproval pa) {
+        return accountRepo.findById(pa.getRequestedBy())
+                .map(a -> new AuthPrincipal(
+                        a.getRole() == com.ldapportal.entity.enums.AccountRole.SUPERADMIN
+                                ? PrincipalType.SUPERADMIN : PrincipalType.ADMIN,
+                        a.getId(), a.getUsername()))
+                .orElseGet(() -> new AuthPrincipal(PrincipalType.ADMIN, pa.getRequestedBy(), null));
     }
 
     private PendingApprovalResponse toResponse(PendingApproval pa) {
