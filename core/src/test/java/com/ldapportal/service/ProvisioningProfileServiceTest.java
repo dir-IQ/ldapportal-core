@@ -497,7 +497,16 @@ class ProvisioningProfileServiceTest {
         return new com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry(
                 name, null, inputType, required, true, true, false, false,
                 null, computed, null, null, null, null, null, null, 6, hidden,
-                null, null, null, null);
+                null, null, null, null, null, null);
+    }
+
+    /** A TEXT entry carrying only self-registration / self-service layout values. */
+    private static com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry layoutEntry(
+            String name, Integer regSpan, Integer regOrder, Integer ssSpan, Integer ssOrder) {
+        return new com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry(
+                name, null, "TEXT", false, true, true, true, true,
+                null, null, null, null, null, null, null, null, 6, false,
+                null, regSpan, regOrder, null, ssSpan, ssOrder);
     }
 
     private com.ldapportal.dto.profile.CreateProfileRequest reqFull(
@@ -528,6 +537,36 @@ class ProvisioningProfileServiceTest {
         var withRdn = new java.util.ArrayList<>(List.of(attrEntry("uid", "TEXT", true, false, null)));
         withRdn.addAll(configs);
         return reqWith("uid", null, withRdn);
+    }
+
+    @Test
+    void createProfile_savesSelfRegistrationAndSelfServiceLayoutOrder() {
+        // Those layouts are ordered independently of the admin form: the
+        // designer's order must be stored, not the attribute's admin position.
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+
+        var req = createReqWithConfigs(List.of(
+                layoutEntry("mail", 6, 1, 6, 0),
+                layoutEntry("cn", 6, 0, 6, 1),
+                // Legacy client: span set but no explicit order → admin position.
+                layoutEntry("sn", 6, null, null, null)));
+
+        assertThatCode(() -> service.create(directoryId, req, true, null))
+                .doesNotThrowAnyException();
+
+        var captor = org.mockito.ArgumentCaptor.forClass(ProfileAttributeConfig.class);
+        org.mockito.Mockito.verify(attrConfigRepo, org.mockito.Mockito.atLeastOnce()).save(captor.capture());
+        var byName = new java.util.HashMap<String, ProfileAttributeConfig>();
+        captor.getAllValues().forEach(c -> byName.put(c.getAttributeName(), c));
+
+        assertThat(byName.get("mail").getRegistrationDisplayOrder()).isEqualTo(1);
+        assertThat(byName.get("mail").getSelfServiceDisplayOrder()).isEqualTo(0);
+        assertThat(byName.get("cn").getRegistrationDisplayOrder()).isEqualTo(0);
+        assertThat(byName.get("cn").getSelfServiceDisplayOrder()).isEqualTo(1);
+        // uid is prepended, so sn sits at admin index 3.
+        assertThat(byName.get("sn").getRegistrationDisplayOrder()).isEqualTo(3);
+        assertThat(byName.get("sn").getSelfServiceDisplayOrder()).isNull();
     }
 
     @Test

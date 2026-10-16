@@ -62,8 +62,10 @@ public record CreateProfileRequest(
             boolean hidden,
             @Size(max = 100) String registrationSectionName,
             Integer registrationColumnSpan,
+            Integer registrationDisplayOrder,
             @Size(max = 100) String selfServiceSectionName,
-            Integer selfServiceColumnSpan) {
+            Integer selfServiceColumnSpan,
+            Integer selfServiceDisplayOrder) {
     }
 
     public record GroupAssignmentEntry(

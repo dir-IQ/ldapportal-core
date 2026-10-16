@@ -722,6 +722,100 @@ describe('UserForm DN field layout', () => {
   })
 })
 
+describe('UserForm honors the designer layout', () => {
+  beforeEach(() => setActivePinia(createPinia()))
+
+  type Wrapper = ReturnType<typeof mount>
+
+  // Each rendered grid cell, in order, as "<label>:<span>" — e.g. "DN:6".
+  function cells(wrapper: Wrapper): string[] {
+    return wrapper.findAll('.grid.grid-cols-6 > div').map(cell => {
+      const label = cell.find('label').text().replace(/\s*\*$/, '').trim()
+      const span = /grid-column:\s*span (\d+)/.exec(cell.attributes('style') || '')?.[1]
+      return `${label}:${span}`
+    })
+  }
+
+  function mountLayout(config: Record<string, unknown>, isEdit = false) {
+    return mount(UserForm, {
+      props: {
+        data: isEdit
+          ? { dn: 'uid=jsmith,ou=people,dc=x', attributes: { uid: 'jsmith', mail: 'a@b.com', cn: 'J' } }
+          : { attributes: {} },
+        isEdit,
+        userTemplateConfig: { rdnAttribute: 'uid', showDnField: true, ...config },
+        dirId: null,
+        profileId: null,
+      },
+    })
+  }
+
+  const identity = [
+    { attributeName: 'uid', sectionName: 'Identity', columnSpan: 3, requiredOnCreate: true, editableOnCreate: true, editableOnUpdate: false, inputType: 'TEXT' },
+    { attributeName: 'cn', sectionName: 'Identity', columnSpan: 3, editableOnCreate: true, editableOnUpdate: true, inputType: 'TEXT' },
+    { attributeName: 'mail', sectionName: 'Identity', columnSpan: 6, editableOnCreate: true, editableOnUpdate: true, inputType: 'TEXT' },
+  ]
+
+  it('renders a full-width DN at full width in edit mode, and leaves the RDN its own width', () => {
+    const wrapper = mountLayout({ attributeConfigs: identity, dnColumnSpan: 6 }, true)
+    expect(cells(wrapper)).toEqual(['uid (RDN):3', 'DN:6', 'cn:3', 'mail:6'])
+  })
+
+  it('places the DN at its configured position in edit mode', () => {
+    const wrapper = mountLayout(
+      { attributeConfigs: identity, dnColumnSpan: 6, dnSectionName: 'Identity', dnDisplayOrder: 3 }, true)
+    expect(cells(wrapper)).toEqual(['uid (RDN):3', 'cn:3', 'mail:6', 'DN:6'])
+  })
+
+  it('places the DN at its configured position in create mode', () => {
+    const wrapper = mountLayout(
+      { attributeConfigs: identity, dnColumnSpan: 6, dnSectionName: 'Identity', dnDisplayOrder: 2 })
+    expect(cells(wrapper)).toEqual(['uid:3', 'cn:3', 'DN:6', 'mail:6'])
+  })
+
+  it('places the DN per the layout when the RDN is hidden (computed), not in a standalone top row', () => {
+    const attrs = [
+      { ...identity[0], hidden: true, computedExpression: '${cn}' },
+      identity[1], identity[2],
+    ]
+    const wrapper = mountLayout({ attributeConfigs: attrs, dnColumnSpan: 3, dnSectionName: 'Identity', dnDisplayOrder: 1 })
+    expect(cells(wrapper)).toEqual(['cn:3', 'DN:3', 'mail:6'])
+  })
+
+  it('does not render HIDDEN_FIXED fields as grid cells', () => {
+    const attrs = [...identity, { attributeName: 'employeeType', sectionName: 'Identity', columnSpan: 6, inputType: 'HIDDEN_FIXED', defaultValue: 'staff' }]
+    expect(cells(mountLayout({ attributeConfigs: attrs, showDnField: false })))
+      .toEqual(['uid:3', 'cn:3', 'mail:6'])
+    expect(cells(mountLayout({ attributeConfigs: attrs, showDnField: false }, true)))
+      .toEqual(['uid (RDN):3', 'cn:3', 'mail:6'])
+  })
+
+  it('counts the DN position against the designer list (skipping HIDDEN_FIXED and a generated password)', () => {
+    const attrs = [
+      identity[0],
+      { attributeName: 'employeeType', sectionName: 'Identity', columnSpan: 6, inputType: 'HIDDEN_FIXED', defaultValue: 'staff' },
+      { attributeName: 'userPassword', sectionName: 'Identity', columnSpan: 6, inputType: 'PASSWORD', requiredOnCreate: true },
+      identity[1],
+    ]
+    // The designer saw [uid, cn]; order 2 is the end of the section.
+    const wrapper = mountLayout({
+      attributeConfigs: attrs, passwordDisposition: 'GENERATED_DISCARDED',
+      dnColumnSpan: 6, dnSectionName: 'Identity', dnDisplayOrder: 2,
+    })
+    expect(cells(wrapper)).toEqual(['uid:3', 'cn:3', 'DN:6'])
+  })
+
+  it('renders multi-line fields at the configured width and snaps a narrow password to 1/2', () => {
+    const attrs = [
+      identity[0],
+      { attributeName: 'description', columnSpan: 2, editableOnCreate: true, inputType: 'TEXTAREA' },
+      { attributeName: 'userPassword', columnSpan: 2, editableOnCreate: true, inputType: 'PASSWORD' },
+    ]
+    const wrapper = mountLayout({ attributeConfigs: attrs, showDnField: false, passwordDisposition: 'OPERATOR_ENTERED' })
+    expect(cells(wrapper)).toEqual(['uid:3', 'description:2', 'userPassword:3'])
+  })
+})
+
 describe('UserForm IVIA attribute refresh', () => {
   beforeEach(() => setActivePinia(createPinia()))
 

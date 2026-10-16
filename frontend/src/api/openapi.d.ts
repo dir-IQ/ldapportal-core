@@ -3542,9 +3542,13 @@ export interface components {
             registrationSectionName?: string;
             /** Format: int32 */
             registrationColumnSpan?: number;
+            /** Format: int32 */
+            registrationDisplayOrder?: number;
             selfServiceSectionName?: string;
             /** Format: int32 */
             selfServiceColumnSpan?: number;
+            /** Format: int32 */
+            selfServiceDisplayOrder?: number;
         };
         GroupAssignmentEntry: {
             groupDn: string;
