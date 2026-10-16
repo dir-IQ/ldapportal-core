@@ -1079,8 +1079,11 @@ public class ProvisioningProfileService {
         // "<rdn>=<value>,<targetUserDn>" composition rather than an empty template.
         profile.setDnTemplate((dnTemplate != null && !dnTemplate.isBlank()) ? dnTemplate.trim() : null);
         // DN field layout — null reproduces the default (after the RDN, 2/3 width).
+        // An empty section name is a deliberate choice, not "unset": it is the
+        // form's unnamed section, so it is kept as "" rather than collapsing to
+        // null (which would move the DN back to the RDN's section on reload).
         profile.setDnColumnSpan(dnColumnSpan);
-        profile.setDnSectionName((dnSectionName != null && !dnSectionName.isBlank()) ? dnSectionName.trim() : null);
+        profile.setDnSectionName(dnSectionName != null ? dnSectionName.trim() : null);
         profile.setDnDisplayOrder(dnDisplayOrder);
         profile.setEnabled(enabled);
         profile.setSelfRegistrationAllowed(selfRegistrationAllowed);
@@ -1218,12 +1221,23 @@ public class ProvisioningProfileService {
             c.setHidden(e.hidden());
             c.setRegistrationSectionName(e.registrationSectionName());
             c.setRegistrationColumnSpan(e.registrationColumnSpan());
-            c.setRegistrationDisplayOrder(e.registrationColumnSpan() != null ? i : null);
+            c.setRegistrationDisplayOrder(layoutOrder(e.registrationDisplayOrder(), e.registrationColumnSpan(), i));
             c.setSelfServiceSectionName(e.selfServiceSectionName());
             c.setSelfServiceColumnSpan(e.selfServiceColumnSpan());
-            c.setSelfServiceDisplayOrder(e.selfServiceColumnSpan() != null ? i : null);
+            c.setSelfServiceDisplayOrder(layoutOrder(e.selfServiceDisplayOrder(), e.selfServiceColumnSpan(), i));
             attrConfigRepo.save(c);
         }
+    }
+
+    /**
+     * Position of a field in the self-registration / self-service layout. Those
+     * layouts are ordered independently of the admin form, so the designer's
+     * explicit order wins; a client that sends none keeps the legacy behavior
+     * (admin position once the layout has been customised, else unset).
+     */
+    private static Integer layoutOrder(Integer explicitOrder, Integer layoutColumnSpan, int adminIndex) {
+        if (explicitOrder != null) return explicitOrder;
+        return layoutColumnSpan != null ? adminIndex : null;
     }
 
     private void saveGroupAssignments(ProvisioningProfile profile,
