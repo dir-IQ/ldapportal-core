@@ -66,6 +66,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -166,6 +167,47 @@ public class LdapOperationService {
                 permissionService.requireFeature(principal, directoryId, FeatureKey.GROUP_MANAGE_MEMBERS);
             }
         }
+    }
+
+    /**
+     * The per-row permissions a bulk import runs with (see
+     * {@link BulkImportPermissions}). With several principals — the requester
+     * and the approver of an approved import — a feature counts only when
+     * every one of them holds it; {@code null} entries are ignored.
+     */
+    BulkImportPermissions importPermissions(UUID directoryId, DirectoryConnection dc,
+                                            AuthPrincipal... principals) {
+        boolean resetPasswords = holdsAll(directoryId, FeatureKey.USER_RESET_PASSWORD, principals);
+        boolean enableDisable  = holdsAll(directoryId, FeatureKey.USER_ENABLE_DISABLE, principals);
+        Map<String, String> protectedAttrs = new HashMap<>();
+        if (!resetPasswords) {
+            PASSWORD_ATTRIBUTES.forEach(a -> protectedAttrs.put(a, BulkImportPermissions.RESET_PASSWORDS));
+        }
+        if (!enableDisable) {
+            ENABLE_DISABLE_ATTRIBUTES.forEach(a -> protectedAttrs.put(a, BulkImportPermissions.ENABLE_DISABLE));
+            String configured = dc.getEnableDisableAttribute();
+            if (configured != null && !configured.isBlank()) {
+                protectedAttrs.put(attributeKey(configured), BulkImportPermissions.ENABLE_DISABLE);
+            }
+        }
+        return new BulkImportPermissions(
+                holdsAll(directoryId, FeatureKey.USER_CREATE, principals),
+                holdsAll(directoryId, FeatureKey.USER_EDIT, principals),
+                Map.copyOf(protectedAttrs),
+                holdsAll(directoryId, FeatureKey.GROUP_CREATE_DELETE, principals),
+                holdsAll(directoryId, FeatureKey.GROUP_EDIT, principals));
+    }
+
+    private boolean holdsAll(UUID directoryId, FeatureKey feature, AuthPrincipal... principals) {
+        for (AuthPrincipal p : principals) {
+            if (p == null) continue;
+            try {
+                permissionService.requireFeature(p, directoryId, feature);
+            } catch (AccessDeniedException e) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ── Browse ────────────────────────────────────────────────────────────────
@@ -1089,6 +1131,16 @@ public class LdapOperationService {
         if (req.dnSourceColumn() != null) dnSourceColumn = req.dnSourceColumn();
         if (dnSourceColumn != null && dnSourceColumn.isBlank()) dnSourceColumn = null;
 
+        // Same resolution as bulkImportUsers, so the preview can say which rows
+        // the admin's permissions would refuse (an overwrite needs user.edit).
+        ConflictHandling conflictHandling = ConflictHandling.SKIP;
+        if (req.templateId() != null) {
+            ConflictHandling fromTemplate = csvTemplateService
+                    .loadTemplate(req.templateId(), directoryId, principal).getConflictHandling();
+            if (fromTemplate != null) conflictHandling = fromTemplate;
+        }
+        if (req.conflictHandling() != null) conflictHandling = req.conflictHandling();
+
         boolean skipHeader = resolveSkipHeaderRow(req.skipHeaderRow(), req.templateId(), directoryId, principal);
 
         // Resolve the object classes' MUST attributes via schema so the preview
@@ -1115,7 +1167,10 @@ public class LdapOperationService {
         boolean passthroughUnmapped = req.templateId() == null;
         return bulkUserService.previewImport(
                 csvInput, parentDn, targetKeyAttr, mappings, skipHeader, requiredAttrs, dnSourceColumn,
-                delimiter, passthroughUnmapped, userImportGroups(dc, directoryId, principal));
+                delimiter, passthroughUnmapped, userImportGroups(dc, directoryId, principal),
+                conflictHandling == ConflictHandling.OVERWRITE,
+                importPermissions(directoryId, dc, principal),
+                dn -> userService.entryExists(dc, dn));
     }
 
     /**
@@ -1127,6 +1182,18 @@ public class LdapOperationService {
     public BulkImportResult bulkImportUsers(UUID directoryId, AuthPrincipal principal,
                                             InputStream csvInput,
                                             BulkImportRequest req) throws IOException {
+        return bulkImportUsers(directoryId, principal, csvInput, req, null);
+    }
+
+    /**
+     * {@link #bulkImportUsers(UUID, AuthPrincipal, InputStream, BulkImportRequest)}
+     * replayed after approval: {@code principal} is the approver, and a row runs
+     * only when {@code requester} also holds the features it needs.
+     */
+    public BulkImportResult bulkImportUsers(UUID directoryId, AuthPrincipal principal,
+                                            InputStream csvInput,
+                                            BulkImportRequest req,
+                                            AuthPrincipal requester) throws IOException {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
 
@@ -1217,7 +1284,8 @@ public class LdapOperationService {
                 dc, csvInput, parentDn, targetKeyAttr, conflictHandling, mappings,
                 objectClasses, skipHeader, dnSourceColumn, profileContext,
                 requiredAttrs, errorHandling, delimiter, passthroughUnmapped,
-                userImportGroups(dc, directoryId, principal));
+                userImportGroups(dc, directoryId, principal),
+                importPermissions(directoryId, dc, principal, requester));
 
         // Fold the created DNs into the detail so the audit trail names exactly
         // which users were added — symmetric with bulkDelete's deletedDns.
@@ -1566,7 +1634,8 @@ public class LdapOperationService {
         return bulkGroupService.previewImport(
                 csvInput, parentDn, mappings, skipHeader, requiredAttrs, memberAttribute,
                 List.of(oc.split(",")), delimiter,
-                req.templateId() == null, groupImportMembers(dc, directoryId, principal));
+                req.templateId() == null, groupImportMembers(dc, directoryId, principal),
+                importPermissions(directoryId, dc, principal));
     }
 
     public BulkImportResult bulkImportGroups(UUID directoryId, AuthPrincipal principal,
@@ -1574,6 +1643,20 @@ public class LdapOperationService {
                                               BulkImportRequest req,
                                               String memberAttribute,
                                               String objectClass) throws IOException {
+        return bulkImportGroups(directoryId, principal, csvInput, req, memberAttribute, objectClass, null);
+    }
+
+    /**
+     * {@link #bulkImportGroups(UUID, AuthPrincipal, InputStream, BulkImportRequest, String, String)}
+     * replayed after approval: {@code principal} is the approver, and a row runs
+     * only when {@code requester} also holds the features it needs.
+     */
+    public BulkImportResult bulkImportGroups(UUID directoryId, AuthPrincipal principal,
+                                              InputStream csvInput,
+                                              BulkImportRequest req,
+                                              String memberAttribute,
+                                              String objectClass,
+                                              AuthPrincipal requester) throws IOException {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDirectoryAccess(principal, directoryId);
 
@@ -1617,7 +1700,8 @@ public class LdapOperationService {
         BulkImportResult result = bulkGroupService.importCsv(
                 dc, csvInput, parentDn, mappings,
                 objectClasses, effectiveMemberAttr, skipHeader, delimiter,
-                req.templateId() == null, groupImportMembers(dc, directoryId, principal));
+                req.templateId() == null, groupImportMembers(dc, directoryId, principal),
+                importPermissions(directoryId, dc, principal, requester));
 
         auditService.record(principal, directoryId, AuditAction.GROUP_BULK_IMPORT, parentDn,
                 Map.of("operation", "bulkGroupImport",
@@ -1665,7 +1749,9 @@ public class LdapOperationService {
         return new ScopedGroupImportMembers(dc, directoryId, principal, permissionService,
                 userService, groupService,
                 (memberDn, memberUid, changes) ->
-                        applyMembershipChanges(directoryId, principal, memberDn, memberUid, changes));
+                        applyMembershipChanges(directoryId, principal, memberDn, memberUid, changes),
+                (memberDn, groupDn) ->
+                        membershipGate.checkMembership(directoryId, memberDn, groupDn, principal));
     }
 
     /**

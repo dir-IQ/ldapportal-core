@@ -145,8 +145,8 @@ class ApprovalWorkflowServiceTest {
         service.approve(pa.getId(), approver);
 
         verify(ldapOperationService).bulkImportGroups(eq(dirId), eq(approver), any(), any(),
-                eq("uniqueMember"), eq("groupOfUniqueNames"));
-        verify(ldapOperationService, never()).bulkImportUsers(any(), any(), any(), any());
+                eq("uniqueMember"), eq("groupOfUniqueNames"), any());
+        verify(ldapOperationService, never()).bulkImportUsers(any(), any(), any(), any(), any());
         assertThat(pa.getStatus()).isEqualTo(ApprovalStatus.APPROVED);
     }
 
@@ -159,8 +159,8 @@ class ApprovalWorkflowServiceTest {
         service.approve(pa.getId(), approver);
 
         verify(ldapOperationService).bulkImportGroups(eq(dirId), eq(approver), any(), any(),
-                eq("member"), eq("groupOfNames"));
-        verify(ldapOperationService, never()).bulkImportUsers(any(), any(), any(), any());
+                eq("member"), eq("groupOfNames"), any());
+        verify(ldapOperationService, never()).bulkImportUsers(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -170,7 +170,35 @@ class ApprovalWorkflowServiceTest {
 
         service.approve(pa.getId(), approver);
 
-        verify(ldapOperationService).bulkImportUsers(eq(dirId), eq(approver), any(), any());
-        verify(ldapOperationService, never()).bulkImportGroups(any(), any(), any(), any(), any(), any());
+        verify(ldapOperationService).bulkImportUsers(eq(dirId), eq(approver), any(), any(), any());
+        verify(ldapOperationService, never()).bulkImportGroups(any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void approve_bulkImport_alsoChecksTheRequestersPermissions() throws Exception {
+        PendingApproval pa = pendingBulkImport("");
+        com.ldapportal.entity.Account requester = new com.ldapportal.entity.Account();
+        requester.setId(pa.getRequestedBy());
+        requester.setUsername("alice");
+        requester.setRole(com.ldapportal.entity.enums.AccountRole.ADMIN);
+        when(accountRepo.findById(pa.getRequestedBy())).thenReturn(Optional.of(requester));
+        AuthPrincipal approver = superadmin();
+
+        service.approve(pa.getId(), approver);
+
+        verify(ldapOperationService).bulkImportUsers(eq(dirId), eq(approver), any(), any(),
+                eq(new AuthPrincipal(PrincipalType.ADMIN, pa.getRequestedBy(), "alice")));
+    }
+
+    @Test
+    void approve_bulkImport_fromADeletedAccount_checksANoRoleRequester() throws Exception {
+        PendingApproval pa = pendingBulkImport("");
+        when(accountRepo.findById(pa.getRequestedBy())).thenReturn(Optional.empty());
+        AuthPrincipal approver = superadmin();
+
+        service.approve(pa.getId(), approver);
+
+        verify(ldapOperationService).bulkImportUsers(eq(dirId), eq(approver), any(), any(),
+                eq(new AuthPrincipal(PrincipalType.ADMIN, pa.getRequestedBy(), null)));
     }
 }
