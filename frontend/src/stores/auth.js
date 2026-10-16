@@ -87,6 +87,8 @@ export const useAuthStore = defineStore('auth', () => {
       features:           data.features || [],
       hrIntegrationEnabled: data.hrIntegrationEnabled !== false,
       complianceEnabled: data.complianceEnabled !== false,
+      // True on the community jar (no ee/ classes). Backs isCommunityDistribution.
+      communityDistribution: data.communityDistribution === true,
       alertingEnabled: data.alertingEnabled !== false,
       isvaIntegrationEnabled: data.isvaIntegrationEnabled === true,
       directorySyncEnabled: data.directorySyncEnabled === true,

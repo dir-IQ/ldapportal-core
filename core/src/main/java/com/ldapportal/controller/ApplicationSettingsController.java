@@ -4,14 +4,17 @@ package com.ldapportal.controller;
 import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.dto.settings.ApplicationSettingsDto;
 import com.ldapportal.dto.settings.BrandingDto;
+import com.ldapportal.dto.settings.SmtpTestRequest;
 import com.ldapportal.dto.settings.UpdateApplicationSettingsRequest;
 import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.service.ApplicationSettingsService;
 import com.ldapportal.service.ApprovalWorkflowService;
+import com.ldapportal.service.EmailService;
 import com.ldapportal.core.siem.service.SiemExportService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -40,6 +43,7 @@ public class ApplicationSettingsController {
     private final ApplicationSettingsService service;
     private final SiemExportService          siemExportService;
     private final ApprovalWorkflowService    approvalWorkflowService;
+    private final EmailService               emailService;
 
     /** Returns current settings (superadmin only). */
     @GetMapping
@@ -91,6 +95,20 @@ public class ApplicationSettingsController {
         String connectivity = siemExportService.testConnectivity();
         String delivery = siemExportService.sendTestEvent();
         return Map.of("connectivity", connectivity, "delivery", delivery);
+    }
+
+    /**
+     * Verifies the saved SMTP settings by sending a test message to
+     * {@code recipient}. Always 200 for an attempted send — {@code ok} and
+     * {@code message} carry the server's verdict (e.g. a rejected STARTTLS or
+     * AUTH) so the settings page can show it inline; 400 for a bad address.
+     */
+    @PostMapping("/smtp/test")
+    @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_APPLICATION_SETTINGS)
+    public ResponseEntity<Map<String, Object>> testSmtp(@Valid @RequestBody SmtpTestRequest req) {
+        EmailService.TestResult result = emailService.sendTest(req.recipient());
+        return ResponseEntity.ok(Map.of("ok", result.ok(), "message", result.message()));
     }
 
     /**

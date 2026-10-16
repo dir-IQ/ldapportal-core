@@ -210,4 +210,22 @@ describe('useAuthStore', () => {
       expect(store.isSuperadminOwner).toBe(false)
     })
   })
+
+  describe('isCommunityDistribution', () => {
+    // /auth/me reports whether the community jar is running; the store used to
+    // drop the field, so the flag was always false.
+    it.each([[true, true], [false, false], [undefined, false]])(
+      'communityDistribution=%s on /auth/me gives isCommunityDistribution=%s',
+      async (reported, expected) => {
+        me.mockResolvedValue({ data: {
+          id: 'a1', username: 'admin', accountType: 'SUPERADMIN', communityDistribution: reported,
+        } })
+        getSetupStatus.mockResolvedValue({ data: { setupCompleted: true } })
+
+        const store = useAuthStore()
+        await store.init()
+
+        expect(store.isCommunityDistribution).toBe(expected)
+      })
+  })
 })

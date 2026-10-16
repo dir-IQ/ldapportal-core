@@ -223,6 +223,56 @@ Readiness probes and health checks that hit the frontend must still target
 the frontend's own root (`/`), since the prefix exists only on the WebSEAL
 side.
 
+### 3.6 Junction ACL: allow PUT and DELETE
+
+WebSEAL authorizes every request against the ACL on the protected object
+(the junction, or anything beneath it) **before** forwarding it, and the
+action bit it checks depends on the HTTP method. GET and POST need only
+`r`/`x` (plus traverse `T`), which the default `default-webseal` ACL already
+grants. **PUT needs `m` (modify) and DELETE needs `d` (delete)**, and the
+default ACL grants neither.
+
+The portal uses PUT and DELETE for most edits: saving a user or group,
+removing group members from the Groups page, deleting entries, saving
+templates, playbooks, reports, preferences and settings. Without `m`/`d`
+those requests fail with WebSEAL's own **403 Forbidden** page (error code
+`0x38cf0427`), and the request never reaches the backend, so nothing appears
+in the backend logs. POST-based actions, such as membership changes from the
+user dialog, keep working, which makes the problem look like an app
+permission issue. It isn't.
+
+Attach a junction-specific ACL that grants the extra actions to the portal's
+admin population (keep any actions the existing entries already have):
+
+```
+pdadmin sec_master> acl create ldapportal-acl
+pdadmin sec_master> acl modify ldapportal-acl set group <portal-admins> Tmdrx
+pdadmin sec_master> acl modify ldapportal-acl set any-other Trx
+pdadmin sec_master> acl modify ldapportal-acl set unauthenticated T
+pdadmin sec_master> acl attach /WebSEAL/<host>-<instance>/<junction> ldapportal-acl
+```
+
+To inspect what is in effect today:
+
+```
+pdadmin sec_master> object show /WebSEAL/<host>-<instance>/<junction>
+pdadmin sec_master> acl show <attached-acl>
+```
+
+If no ACL is attached to the junction, the one on
+`/WebSEAL/<host>-<instance>` (normally `default-webseal`) is inherited.
+Prefer attaching a dedicated ACL to the junction over editing
+`default-webseal`, which affects every junction on the instance.
+
+Also confirm the `[server] http-method-disabled-remote` entry in the WebSEAL
+configuration file does not list `PUT` or `DELETE`. ACL changes take effect
+without a restart; a configuration-file change needs one.
+
+The portal also issues a few PATCH requests (enabling or disabling a
+scheduled report, saving preferences). Verify one of these after applying
+the ACL; if it is denied, check which action your WebSEAL version maps PATCH
+to.
+
 ---
 
 ## 4. Account provisioning
@@ -264,6 +314,13 @@ IdP-independent.
 peer IP. The fix is to collapse the hop or scope the allow-list to the real
 peer — *not* to add a broad subnet, which would trust spoofed headers.
 
+**Leaving the junction on the default ACL.**
+`default-webseal` grants no `m` or `d`, so every PUT and DELETE through the
+junction is refused by WebSEAL with a 403 (`0x38cf0427`) while GETs and POSTs
+succeed. Admins see "can add group members but can't save the user". Don't
+chase this in the portal's permission settings; grant `m` and `d` on the
+junction ACL (§3.6).
+
 **Treating the frontend split as access control.**
 An admin pointing a browser at the superadmin host (or calling superadmin APIs
 directly) is still bounded by the server-side role checks, and the split adds no
@@ -294,6 +351,10 @@ Admin (WebSEAL) flow:
       has elapsed. A `403 Invalid CORS request` here means the WebSEAL
       host is missing from `CORS_ALLOWED_ORIGIN` (§3.4); the backend log
       names the rejected origin.
+
+- [ ] Editing a user's description and saving (PUT) succeeds, and removing a
+      member on the Groups page (DELETE) succeeds. A WebSEAL 403 page with
+      `0x38cf0427` means the junction ACL lacks `m`/`d` (§3.6).
 
 Superadmin (LOCAL) flow:
 

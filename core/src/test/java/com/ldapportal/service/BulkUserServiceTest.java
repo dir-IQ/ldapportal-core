@@ -324,6 +324,155 @@ class BulkUserServiceTest {
         assertThat(captor.getValue()).containsKey("cn");
     }
 
+    // ── Import — multi-valued attributes ───────────────────────────────────────
+
+    @Test
+    void importCsv_pipeSeparatedCell_givesSeveralValues_quotedDnsKeepTheirCommas() throws IOException {
+        String csvContent = "uid,seeAlso\n"
+                + "jsmith,\"cn=Group A,ou=Groups,dc=example,dc=com|cn=Group B,ou=Groups,dc=example,dc=com\"\n";
+
+        service.importCsv(dc, csv(csvContent),
+                "ou=people,dc=example,dc=com", "uid", ConflictHandling.SKIP, List.of(), List.of(), true);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(eq(dc),
+                eq("uid=jsmith,ou=people,dc=example,dc=com"), captor.capture(), any());
+        assertThat(captor.getValue().get("seeAlso")).containsExactly(
+                "cn=Group A,ou=Groups,dc=example,dc=com", "cn=Group B,ou=Groups,dc=example,dc=com");
+        assertThat(captor.getValue().get("uid")).containsExactly("jsmith");
+    }
+
+    @Test
+    void importCsv_escapedPipe_isALiteralPipe() throws IOException {
+        service.importCsv(dc, csv("uid,description\njsmith,a\\|b|c\n"),
+                "ou=people,dc=example,dc=com", "uid", ConflictHandling.SKIP, List.of(), List.of(), true);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(any(), anyString(), captor.capture(), any());
+        assertThat(captor.getValue().get("description")).containsExactly("a|b", "c");
+    }
+
+    @Test
+    void importCsv_columnsMappedToTheSameAttribute_addTheirValues() throws IOException {
+        String csvContent = "login,mail1,mail2\njsmith,j@x.com,john@x.com|j@x.com\n";
+        List<CsvColumnMappingDto> mappings = List.of(
+                new CsvColumnMappingDto("login", "uid", false),
+                new CsvColumnMappingDto("mail1", "mail", false),
+                new CsvColumnMappingDto("mail2", "MAIL", false));
+
+        service.importCsv(dc, csv(csvContent),
+                "ou=people,dc=example,dc=com", "uid", ConflictHandling.SKIP, mappings, List.of(), true);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(any(), anyString(), captor.capture(), any());
+        // Names compared ignoring case; the repeated value is kept once.
+        assertThat(captor.getValue()).doesNotContainKey("MAIL");
+        assertThat(captor.getValue().get("mail")).containsExactly("j@x.com", "john@x.com");
+    }
+
+    @Test
+    void importCsv_overwrite_replacesWithEveryValue() throws IOException {
+        doThrow(entryAlreadyExists("uid=existing,ou=people,dc=example,dc=com"))
+                .when(userService).createUser(eq(dc), anyString(), any(), any());
+
+        service.importCsv(dc, csv("uid,seeAlso\nexisting,\"cn=A,dc=x|cn=B,dc=x\"\n"),
+                "ou=people,dc=example,dc=com", "uid", ConflictHandling.OVERWRITE, List.of(), List.of(), true);
+
+        verify(userService).updateUser(eq(dc), eq("uid=existing,ou=people,dc=example,dc=com"),
+                argThat(mods -> mods.stream().anyMatch(m -> m.getAttributeName().equals("seeAlso")
+                        && List.of(m.getValues()).equals(List.of("cn=A,dc=x", "cn=B,dc=x")))));
+    }
+
+    @Test
+    void importCsv_rdnFromTheFirstValue() throws IOException {
+        service.importCsv(dc, csv("uid,cn\njsmith|john,John\n"),
+                "ou=people,dc=example,dc=com", "uid", ConflictHandling.SKIP, List.of(), List.of(), true);
+
+        verify(userService).createUser(eq(dc), eq("uid=jsmith,ou=people,dc=example,dc=com"), any(), any());
+    }
+
+    @Test
+    void previewImport_showsEachValueOfAMultiValuedCell() throws IOException {
+        var result = service.previewImport(csv("uid,seeAlso\njsmith,\"cn=A,dc=x|cn=B,dc=x\"\n"),
+                "ou=people,dc=example,dc=com", "uid", List.of(), true, List.of(), null, ',', true);
+
+        assertThat(result.rows().get(0).attributes()).containsEntry("seeAlso", "cn=A,dc=x | cn=B,dc=x");
+        assertThat(result.rows().get(0).computedDn()).isEqualTo("uid=jsmith,ou=people,dc=example,dc=com");
+    }
+
+    // ── Unmapped columns: template vs template-less ──────────────────────────
+
+    private static final List<CsvColumnMappingDto> TEMPLATE_MAPPINGS = List.of(
+            new CsvColumnMappingDto("uid", "uid", false),
+            new CsvColumnMappingDto("name", "cn", false),
+            new CsvColumnMappingDto("surname", "sn", false));
+
+    @Test
+    void importCsv_underTemplate_dropsColumnsTheTemplateDoesNotMention() throws IOException {
+        String csvContent = "uid,name,surname,CostCenter,mail\njsmith,John Smith,Smith,CC1,j@x\n";
+
+        service.importCsv(dc, csv(csvContent), "ou=people,dc=example,dc=com", "uid",
+                ConflictHandling.SKIP, TEMPLATE_MAPPINGS, List.of(), true, null, null,
+                List.of(), ImportErrorHandling.SKIP_ERRORS, ',', false);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(any(), anyString(), captor.capture(), any());
+        assertThat(captor.getValue()).containsKeys("uid", "cn", "sn")
+                .doesNotContainKeys("CostCenter", "mail");
+    }
+
+    @Test
+    void importCsv_withoutTemplate_stillPassesUnmappedColumnsThrough() throws IOException {
+        String csvContent = "uid,name,surname,mail\njsmith,John Smith,Smith,j@x\n";
+
+        service.importCsv(dc, csv(csvContent), "ou=people,dc=example,dc=com", "uid",
+                ConflictHandling.SKIP, TEMPLATE_MAPPINGS, List.of(), true, null, null,
+                List.of(), ImportErrorHandling.SKIP_ERRORS, ',', true);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> captor = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(any(), anyString(), captor.capture(), any());
+        assertThat(captor.getValue()).containsEntry("mail", List.of("j@x"));
+    }
+
+    @Test
+    void importCsv_underTemplate_matchesHeadersIgnoringCase() throws IOException {
+        String csvContent = "UID,Name,Surname\njsmith,John Smith,Smith\n";
+
+        service.importCsv(dc, csv(csvContent), "ou=people,dc=example,dc=com", "uid",
+                ConflictHandling.SKIP, TEMPLATE_MAPPINGS, List.of(), true, null, null,
+                List.of(), ImportErrorHandling.SKIP_ERRORS, ',', false);
+
+        verify(userService).createUser(eq(dc), eq("uid=jsmith,ou=people,dc=example,dc=com"),
+                argThat(m -> m.containsKey("cn") && m.containsKey("sn")), any());
+    }
+
+    @Test
+    void previewImport_underTemplate_listsAndOmitsUnmappedColumns() throws IOException {
+        String csvContent = "dn,uid,name,surname,CostCenter,mail\n"
+                + "\"uid=jsmith,ou=people,dc=example,dc=com\",jsmith,John,Smith,CC1,j@x\n";
+
+        var result = service.previewImport(csv(csvContent), "ou=people,dc=example,dc=com", "uid",
+                TEMPLATE_MAPPINGS, true, List.of(), "dn", ',', false);
+
+        // The DN column carries the DN, so it isn't reported as unmapped.
+        assertThat(result.unmappedColumns()).containsExactly("CostCenter", "mail");
+        assertThat(result.rows().get(0).attributes()).doesNotContainKeys("CostCenter", "mail");
+    }
+
+    @Test
+    void previewImport_withoutTemplate_reportsNoUnmappedColumns() throws IOException {
+        var result = service.previewImport(csv("uid,mail\njsmith,j@x\n"), "ou=people,dc=example,dc=com",
+                "uid", List.of(), true, List.of(), null, ',', true);
+
+        assertThat(result.unmappedColumns()).isEmpty();
+        assertThat(result.rows().get(0).attributes()).containsEntry("mail", "j@x");
+    }
+
     // ── Export ────────────────────────────────────────────────────────────────
 
     @Test
@@ -366,6 +515,23 @@ class BulkUserServiceTest {
 
         String output = new String(csv, StandardCharsets.UTF_8);
         assertThat(output).contains("cn=admins,dc=example,dc=com|cn=users,dc=example,dc=com");
+    }
+
+    @Test
+    void exportCsv_pipeInsideAValue_isEscapedSoItReimportsAsOneValue() throws IOException {
+        LdapUser user = ldapUser("uid=jsmith,ou=people,dc=example,dc=com",
+                Map.of("description", List.of("a|b", "c")));
+
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Consumer<LdapUser> consumer = invocation.getArgument(3);
+            consumer.accept(user);
+            return null;
+        }).when(userService).processUsers(eq(dc), anyString(), isNull(), any(), eq("description"));
+
+        byte[] csv = service.exportCsv(dc, null, null, List.of("description"));
+
+        assertThat(new String(csv, StandardCharsets.UTF_8)).contains("\"a\\|b|c\"");
     }
 
     @Test
@@ -701,5 +867,65 @@ class BulkUserServiceTest {
 
         // The service requests at most 2 — enough for the caller to flag AMBIGUOUS.
         assertThat(dns).hasSize(2);
+    }
+
+    // ── DN column lookup ──────────────────────────────────────────────────────
+
+    @Test
+    void previewImport_dnColumn_matchesHeaderCaseInsensitivelyAndIgnoresSpaces() throws IOException {
+        // Template reads the DN from "dn"; the file's header is " DN ".
+        String csvContent = " DN ,mail\n\"cn=Jane,ou=people,dc=example,dc=com\",jane@example.com\n";
+
+        var result = service.previewImport(csv(csvContent), "ou=people,dc=example,dc=com",
+                "uid", List.of(), true, List.of(), "dn");
+
+        assertThat(result.rows().get(0).computedDn()).isEqualTo("cn=Jane,ou=people,dc=example,dc=com");
+        assertThat(result.rows().get(0).missingRequired()).isEmpty();
+        assertThat(result.rows().get(0).attributes()).doesNotContainKey(" DN ");
+    }
+
+    @Test
+    void previewImport_dnColumn_firstColumnBehindAnExcelByteOrderMark_resolves() throws IOException {
+        String csvContent = "\uFEFFdn,mail\n\"cn=Jane,ou=people,dc=example,dc=com\",jane@example.com\n";
+
+        var result = service.previewImport(csv(csvContent), "ou=people,dc=example,dc=com",
+                "uid", List.of(), true, List.of(), "dn");
+
+        assertThat(result.rows().get(0).computedDn()).isEqualTo("cn=Jane,ou=people,dc=example,dc=com");
+    }
+
+    @Test
+    void previewImport_dnOutsideTheImportContainer_saysSoInsteadOfJustMissing() throws IOException {
+        String csvContent = "dn,mail\n\"cn=Jane,ou=contractors,dc=example,dc=com\",jane@example.com\n";
+
+        var result = service.previewImport(csv(csvContent), "ou=people,dc=example,dc=com",
+                "uid", List.of(), true, List.of(), "dn");
+
+        assertThat(result.rows().get(0).computedDn()).isNull();
+        assertThat(result.rows().get(0).missingRequired()).contains("dn");
+        assertThat(result.rows().get(0).message())
+                .isEqualTo("DN 'cn=Jane,ou=contractors,dc=example,dc=com' is not within the import container "
+                        + "'ou=people,dc=example,dc=com'");
+    }
+
+    @Test
+    void previewImport_dnColumnNotInTheFile_namesTheColumnsThatAre() throws IOException {
+        var result = service.previewImport(csv("userdn,mail\n\"cn=Jane,ou=people,dc=example,dc=com\",j@x\n"),
+                "ou=people,dc=example,dc=com", "uid", List.of(), true, List.of(), "dn");
+
+        assertThat(result.rows().get(0).message())
+                .isEqualTo("The file has no 'dn' column (the template reads the DN from it); columns are: userdn, mail");
+    }
+
+    @Test
+    void importCsv_dnColumn_matchesHeaderCaseInsensitively() throws IOException {
+        BulkImportResult result = importWithDnColumn("DN,mail\n\"cn=Jane,ou=people,dc=example,dc=com\",j@x\n",
+                "ou=people,dc=example,dc=com", ConflictHandling.SKIP, "dn");
+
+        assertThat(result.created()).isEqualTo(1);
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, List<String>>> attrs = ArgumentCaptor.forClass(Map.class);
+        verify(userService).createUser(eq(dc), eq("cn=Jane,ou=people,dc=example,dc=com"), attrs.capture(), any());
+        assertThat(attrs.getValue()).doesNotContainKey("DN");
     }
 }

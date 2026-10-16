@@ -38,8 +38,10 @@
         </div>
         <div v-if="needsParam">
           <label for="rj-param-value" class="block text-sm font-medium text-gray-700 mb-1">{{ paramLabel }}</label>
-          <DnPicker v-if="currentRunType?.param === 'groupDn'" v-model="runForm.paramValue" :directory-id="dirId" scope="group" />
-          <DnPicker v-else-if="currentRunType?.param === 'branchDn'" v-model="runForm.paramValue" :directory-id="dirId" />
+          <DnPicker v-if="currentRunType?.param === 'groupDn'" v-model="runForm.paramValue" :directory-id="dirId" scope="group"
+                     :base-dn="groupPickerBaseDn" />
+          <DnPicker v-else-if="currentRunType?.param === 'branchDn'" v-model="runForm.paramValue" :directory-id="dirId"
+                     :superadmin="auth.isSuperadmin" :authorized-roots="branchPickerRoots" />
           <input v-else id="rj-param-value" v-model="runForm.paramValue" type="text" :placeholder="paramPlaceholder" class="input w-full" />
         </div>
         <!-- Missing Data: the attributes every entry under the branch must carry. -->
@@ -302,8 +304,10 @@
             </div>
             <div v-if="jobFormNeedsParam">
               <label class="block text-sm font-medium text-gray-700 mb-1">{{ jobFormParamLabel }}</label>
-              <DnPicker v-if="currentJobFormType?.param === 'groupDn'" v-model="jobForm.paramValue" :directory-id="dirId" scope="group" />
-              <DnPicker v-else-if="currentJobFormType?.param === 'branchDn'" v-model="jobForm.paramValue" :directory-id="dirId" />
+              <DnPicker v-if="currentJobFormType?.param === 'groupDn'" v-model="jobForm.paramValue" :directory-id="dirId" scope="group"
+                     :base-dn="groupPickerBaseDn" />
+              <DnPicker v-else-if="currentJobFormType?.param === 'branchDn'" v-model="jobForm.paramValue" :directory-id="dirId"
+                     :superadmin="auth.isSuperadmin" :authorized-roots="branchPickerRoots" />
               <FormField v-else :label="jobFormParamLabel" v-model="jobForm.paramValue" />
             </div>
             <!-- Missing Data: the attributes every entry under the branch must carry. -->
@@ -491,6 +495,33 @@ const loadingDirs = ref(false)
 const selectedDir = ref('')
 
 const dirId = computed(() => routeDirId || selectedDir.value)
+
+// Roots for the Branch DN picker (Users in Branch, Missing Data). The picker
+// defaults to the superadmin-only browse endpoint, which rejects admins, so an
+// admin browses through the directory-scoped endpoint starting from the OUs
+// they hold: the picked profile's target OU, else every profile's in this
+// directory. Superadmins browse the whole tree from the base DN.
+const branchPickerRoots = computed<string[]>(() => {
+  if (auth.isSuperadmin) return []
+  const picked = profilePicker.selectedProfile?.targetUserDn
+  if (picked) return [picked]
+  const seen = new Set<string>()
+  const roots: string[] = []
+  for (const p of profilePicker.profiles ?? []) {
+    const dn = p.targetUserDn?.trim()
+    if (!dn || (p.directoryId && p.directoryId !== dirId.value) || seen.has(dn.toLowerCase())) continue
+    seen.add(dn.toLowerCase())
+    roots.push(dn)
+  }
+  return roots
+})
+
+// Base DN for the Group DN picker (Users in Group). The group search is
+// already clamped server-side to every OU the admin holds; narrow the tree to
+// the picked profile's target group OU so it matches the branch picker.
+const groupPickerBaseDn = computed<string>(() =>
+  auth.isSuperadmin ? '' : (profilePicker.selectedProfile?.targetGroupDn?.trim() || ''),
+)
 
 // Report types. INTEGRITY_CHECK is a frontend-only pseudo-type (handled via a
 // separate endpoint). ORPHANED_IVIA_ACCOUNTS is contributed by the IVIA addon
@@ -913,6 +944,21 @@ function buildJobPayload(): Record<string, unknown> {
   }
   if (currentJobFormType.value?.attributes) params.attributes = splitAttributes(jobForm.value.attributes)
   if (jobFormNeedsObjectType.value && jobForm.value.objectType) params.objectType = jobForm.value.objectType
+  // Scheduled jobs run as the system, so the backend pins each one to a
+  // single OU at save time. Branch-based types (USERS_IN_BRANCH,
+  // MISSING_DATA) leave scopeBaseDn off — the backend derives it from the
+  // branch. Everything else keeps the scope an edited job already stores,
+  // or, for a new admin job, takes the picked profile's OU (as Run Report
+  // does) so an admin holding several OUs isn't asked for a value the form
+  // has no field for.
+  if (currentJobFormType.value?.param !== 'branchDn') {
+    const storedScope = editJob.value?.reportParams?.scopeBaseDn
+    if (typeof storedScope === 'string' && storedScope.trim()) {
+      params.scopeBaseDn = storedScope
+    } else if (!auth.isSuperadmin && profilePicker.selectedProfile?.targetUserDn) {
+      params.scopeBaseDn = profilePicker.selectedProfile.targetUserDn
+    }
+  }
   return {
     name: jobForm.value.name,
     reportType: jobForm.value.reportType,

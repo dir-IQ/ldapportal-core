@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { myProfiles } from '@/api/auth'
 import { eeAppShellRoutes, eeTopLevelRoutes } from '@/ee'
+import { isChunkLoadError, reloadForStaleChunk } from '@/utils/staleChunk'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -87,7 +88,7 @@ const router = createRouter({
           path: 'directories/:dirId/playbooks',
           name: 'playbooks',
           component: () => import('@/views/playbooks/PlaybooksView.vue'),
-          meta: { requiresPlaybooks: true },
+          meta: { requiresPlaybooks: true, requiresFeature: 'playbook.manage' },
         },
 
         // Pending Approvals
@@ -97,7 +98,7 @@ const router = createRouter({
           // Hidden from the command palette when approvals are globally
           // disabled. The superadmin approvals route (below) is intentionally
           // left ungated so in-flight requests can still be drained.
-          meta: { requiresApprovals: true },
+          meta: { requiresApprovals: true, requiresFeature: 'approval.manage' },
           component: () => import('@/views/approvals/PendingApprovalsView.vue'),
         },
 
@@ -383,6 +384,11 @@ router.beforeEach(async (to) => {
   if (to.meta.requiresPlaybooks && !auth.isPlaybooksEnabled) {
     return { path: '/dashboard' }
   }
+  // Directory-scoped feature key (from /auth/me) the page needs to load at
+  // all — e.g. READ_ONLY admins lack playbook.manage and approval.manage.
+  if (to.meta.requiresFeature && !auth.hasFeature(to.meta.requiresFeature)) {
+    return { path: await resolveHomePath(auth) }
+  }
   if (to.meta.requiresHybridAccess) {
     if (!auth.isSuperadmin && !auth.hasFeature('HYBRID')) {
       return { path: await resolveHomePath(auth) }
@@ -392,6 +398,13 @@ router.beforeEach(async (to) => {
   if (auth.isSuperadmin && auth.setupPending && to.name !== 'setup') {
     return { name: 'setup' }
   }
+})
+
+// A lazy route chunk that fails to load (typically a browser holding the
+// previous build's index.html after a redeploy) aborts the navigation
+// silently. Reload the target once so the browser fetches the current build.
+router.onError((err, to) => {
+  if (isChunkLoadError(err)) reloadForStaleChunk(router.resolve(to).href)
 })
 
 export default router

@@ -281,9 +281,9 @@
                       v-model="local.attributes[attr.attributeName]"
                       :type="mapInputType(attr.inputType)"
                       :required="attr.requiredOnCreate"
-                      :disabled="isNamingAttr(attr.attributeName) || attr.editableOnUpdate === false"
+                      :disabled="readOnly || isNamingAttr(attr.attributeName) || attr.editableOnUpdate === false"
                       :rows="attr.inputType === 'TEXTAREA' || attr.inputType === 'MULTI_VALUE' ? 3 : undefined"
-                      :hint="editFieldHint(attr)"
+                      :hint="readOnly ? undefined : editFieldHint(attr)"
                     />
                   </div>
                   <!-- DN field (shown after RDN when enabled, edit mode) -->
@@ -310,7 +310,7 @@
                         :directory-id="dirId ?? undefined"
                         :placeholder="'Select a DN'"
                         :superadmin="false"
-                        :disabled="!attr.editableOnUpdate || isNamingAttr(attr.attributeName)"
+                        :disabled="readOnly || !attr.editableOnUpdate || isNamingAttr(attr.attributeName)"
                       />
                       <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                     </template>
@@ -319,12 +319,12 @@
                       :label="fieldLabel(attr)"
                       v-model="local.attributes[attr.attributeName]"
                       :type="mapInputType(attr.inputType)"
-                      :revealable="mapInputType(attr.inputType) === 'password'"
+                      :revealable="!readOnly && mapInputType(attr.inputType) === 'password'"
                       :options="attr.inputType === 'SELECT' ? parseOptions(attr.allowedValues) : undefined"
                       :required="attr.requiredOnCreate"
-                      :disabled="!attr.editableOnUpdate || isNamingAttr(attr.attributeName)"
+                      :disabled="readOnly || !attr.editableOnUpdate || isNamingAttr(attr.attributeName)"
                       :rows="attr.inputType === 'TEXTAREA' || attr.inputType === 'MULTI_VALUE' ? 3 : undefined"
-                      :hint="editFieldHint(attr)"
+                      :hint="readOnly ? undefined : editFieldHint(attr)"
                       :field-key="attr.attributeName"
                       :error="fieldErrors[attr.attributeName]"
                     />
@@ -352,8 +352,8 @@
               <template v-for="(_, key) in extraEditAttributes" :key="key">
                 <FormField :label="isNamingAttr(key) ? `${key} (RDN)` : key"
                            v-model="local.attributes[key]" type="textarea" :rows="2"
-                           :disabled="isNamingAttr(key)"
-                           :hint="isNamingAttr(key)
+                           :disabled="readOnly || isNamingAttr(key)"
+                           :hint="readOnly ? undefined : isNamingAttr(key)
                              ? 'Part of the entry DN — changing it requires a rename'
                              : 'One value per line'" />
               </template>
@@ -368,8 +368,8 @@
           <template v-for="(_, key) in editableAttributes" :key="key">
             <FormField :label="isNamingAttr(key) ? `${key} (RDN)` : key"
                        v-model="local.attributes[key]" type="textarea" :rows="2"
-                       :disabled="isNamingAttr(key)"
-                       :hint="isNamingAttr(key)
+                       :disabled="readOnly || isNamingAttr(key)"
+                       :hint="readOnly ? undefined : isNamingAttr(key)
                          ? 'Part of the entry DN — changing it requires a rename'
                          : 'One value per line'" />
           </template>
@@ -387,7 +387,7 @@
               <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
             </svg>
             {{ IVIA_ABBR }} attributes ({{ Object.keys(iviaDisplayAttributes).length }})
-            <span class="font-normal">— read-only, manage on the {{ IVIA_ABBR }} Account tab</span>
+            <span v-if="!readOnly" class="font-normal">— read-only, manage on the {{ IVIA_ABBR }} Account tab</span>
           </button>
           <div v-if="showIviaAttrs" class="space-y-2 mt-3 pl-3 border-l-2 border-gray-100">
             <template v-for="(val, key) in iviaDisplayAttributes" :key="key">
@@ -413,7 +413,7 @@
 
       <!-- Copy memberships from another user (edit mode). Pre-stages the
            source user's groups as additions; applied with the rest on Save. -->
-      <div v-if="isEdit" class="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+      <div v-if="isEdit && !readOnly" class="mb-4 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
         <button type="button" @click="showCopyFrom = !showCopyFrom"
                 class="flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800">
           <svg :class="['w-3.5 h-3.5 transition-transform', showCopyFrom && 'rotate-90']" viewBox="0 0 20 20" fill="currentColor">
@@ -444,7 +444,7 @@
            right = search + add. Stacks vertically on narrow screens.
            Identity DN appears in the header above the tab strip — no
            need to repeat it inside the tab content. -->
-      <div class="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="flex-1 min-h-0 grid grid-cols-1 gap-4" :class="readOnly ? '' : 'lg:grid-cols-2'">
 
         <!-- LEFT: existing memberships -->
         <div class="flex flex-col min-h-0">
@@ -469,7 +469,7 @@
                   </div>
                   <code class="text-xs text-gray-500 block truncate" :title="row.group.dn">{{ row.group.dn }}</code>
                 </div>
-                <button @click="onMembershipAction(row)"
+                <button v-if="!readOnly" @click="onMembershipAction(row)"
                         class="ml-2 text-xs font-medium"
                         :class="row.state === 'member' ? 'text-red-500 hover:text-red-700' : 'text-gray-600 hover:text-gray-800'">
                   {{ row.state === 'member' ? 'Remove' : 'Undo' }}
@@ -495,8 +495,8 @@
           </div>
         </div>
 
-        <!-- RIGHT: add to group -->
-        <div class="flex flex-col min-h-0">
+        <!-- RIGHT: add to group (hidden when read-only) -->
+        <div v-if="!readOnly" class="flex flex-col min-h-0">
           <h3 class="text-sm font-semibold text-gray-800 mb-2">Add to Group</h3>
           <div class="flex gap-2 mb-2">
             <input
@@ -534,6 +534,7 @@
         :dir-id="dirId || ''"
         :dn="local.dn || ''"
         :ivia-config-enabled="iviaTabVisible"
+        :read-only="readOnly"
         @status-changed="onIviaStatusChanged"
       />
     </div>
@@ -638,8 +639,15 @@ const props = withDefaults(defineProps<{
   userTemplateConfig?: UserTemplateConfig | null
   dirId?: string | null
   profileId?: string | null
+  /**
+   * View-only edit mode (an admin with user.read but not user.edit): every
+   * field is disabled, and the Groups tab's add / remove / copy controls and
+   * the IVIA Account tab's actions are hidden. Only meaningful with isEdit.
+   */
+  readOnly?: boolean
 }>(), {
   isEdit: false,
+  readOnly: false,
   userTemplateConfig: null,
   dirId: null,
   profileId: null,

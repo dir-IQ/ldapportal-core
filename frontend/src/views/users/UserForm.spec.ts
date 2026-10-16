@@ -763,3 +763,67 @@ describe('UserForm IVIA attribute refresh', () => {
     expect(last.attributes['isva.secacctvalid']).toBe('FALSE')
   })
 })
+
+describe('UserForm read-only mode', () => {
+  const USER_DN = 'uid=jsmith,ou=people,dc=x'
+  const DEVS = 'cn=devs,ou=groups,dc=x'
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(groupsApi.searchGroups).mockResolvedValue({
+      data: [{ dn: DEVS, attributes: { cn: ['devs'], member: [USER_DN] } }],
+    } as never)
+  })
+
+  async function mountReadOnly(iviaEnabled = false) {
+    const { getIsvaConfig } = await import('@/api/isvaConfig')
+    vi.mocked(getIsvaConfig).mockResolvedValueOnce(
+      { data: { enabled: iviaEnabled } } as Awaited<ReturnType<typeof getIsvaConfig>>)
+    const wrapper = mount(UserForm, {
+      props: {
+        data: { dn: USER_DN, attributes: { uid: 'jsmith', mail: 'a@b.com', title: 'Engineer' } },
+        isEdit: true,
+        readOnly: true,
+        userTemplateConfig: {
+          rdnAttribute: 'uid',
+          attributeConfigs: [
+            { attributeName: 'uid', inputType: 'TEXT', editableOnUpdate: true },
+            { attributeName: 'mail', inputType: 'TEXT', editableOnUpdate: true },
+          ],
+        },
+        dirId: 'dir1',
+        profileId: null,
+      },
+      global: { stubs: { IsvaAccountPanel: true } },
+    })
+    await flushPromises()
+    return wrapper
+  }
+
+  it('disables every attribute field, including the Other Attributes overflow', async () => {
+    const wrapper = await mountReadOnly()
+    await wrapper.findAll('button').find(b => b.text().startsWith('Other Attributes'))!.trigger('click')
+    const controls = wrapper.findAll('input, textarea, select')
+      .filter(c => c.attributes('aria-label') !== 'Search groups')
+    expect(controls.length).toBeGreaterThanOrEqual(3)
+    for (const c of controls) expect((c.element as HTMLInputElement).disabled).toBe(true)
+  })
+
+  it('lists group memberships without add, remove or copy controls', async () => {
+    const wrapper = await mountReadOnly()
+    expect(wrapper.text()).toContain('devs')
+    const buttons = wrapper.findAll('button').map(b => b.text().trim())
+    expect(buttons).not.toContain('Remove')
+    expect(buttons).not.toContain('Add')
+    expect(buttons).not.toContain('Search')
+    expect(buttons).not.toContain('Copy groups from another user')
+    expect(wrapper.find('[aria-label="Search groups"]').exists()).toBe(false)
+  })
+
+  it('passes read-only through to the IVIA Account panel', async () => {
+    const wrapper = await mountReadOnly(true)
+    const panel = wrapper.findComponent({ name: 'IsvaAccountPanel' })
+    expect(panel.exists()).toBe(true)
+    expect(panel.props('readOnly')).toBe(true)
+  })
+})

@@ -5,7 +5,8 @@
  * UI should only show the verbs the admin's effective feature set (from
  * /auth/me) actually grants. These tests pin that: a read-only feature set
  * hides Create / Export / Edit / Delete / Move / Reset / Disable / Run
- * playbook, and a full set shows them.
+ * playbook (offering a view-only View instead of Edit), and a full set
+ * shows them.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
@@ -113,6 +114,8 @@ describe('UserListView feature gating', () => {
     expect(t).toContain('Move')
     expect(t).toContain('Reset password')
     expect(t).toContain('Run playbook')
+    // Edit supersedes the view-only button.
+    expect(t).not.toContain('View')
   })
 
   it('hides Move when the directory exposes no other provisioning profile', async () => {
@@ -137,6 +140,43 @@ describe('UserListView feature gating', () => {
     expect(t).not.toContain('Run playbook')
     // Read-only action that isn't feature-gated stays available.
     expect(t).toContain('View history')
+    // ...and user.read gets a view-only details button in place of Edit.
+    expect(t).toContain('View')
+  })
+
+  it('opens the edit dialog view-only (no Save) for a read-only admin', async () => {
+    vi.mocked(usersApi.getUser).mockResolvedValueOnce({
+      data: { dn: 'uid=jdoe,ou=people,dc=x', attributes: { uid: ['jdoe'], mail: ['jdoe@x'] } },
+    } as never)
+    state.features = ['user.read']
+    // Render the title and footer slots so the dialog chrome is assertable.
+    const wrapper = mount(UserListView, { global: { stubs: {
+      ...stubs,
+      AppModal: {
+        props: ['modelValue', 'dirty'],
+        template: '<div v-if="modelValue" data-testid="modal"><slot name="title" /><slot /><slot name="footer" :close="() => {}" /></div>',
+      },
+    } } })
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === 'View')!.trigger('click')
+    await flushPromises()
+    expect(usersApi.getUser).toHaveBeenCalledWith('d1', 'uid=jdoe,ou=people,dc=x')
+    const form = wrapper.findComponent({ name: 'UserForm' })
+    expect(form.exists()).toBe(true)
+    expect(form.props('readOnly')).toBe(true)
+    expect(form.props('isEdit')).toBe(true)
+    const modal = wrapper.find('[data-testid="modal"]')
+    expect(modal.text()).toContain('User Details')
+    const footer = modal.findAll('button').map(b => b.text())
+    expect(footer).toContain('Close')
+    expect(footer).not.toContain('Save')
+    // Viewing never registers unsaved work.
+    expect(useUnsavedChangesStore().dirtyPage()).toBeNull()
+  })
+
+  it('offers no View button without user.read', async () => {
+    const wrapper = await mountWith([])
+    expect(texts(wrapper)).not.toContain('View')
   })
 
   it('hides Run playbook when the Lifecycle Playbooks setting is off, even with the feature', async () => {

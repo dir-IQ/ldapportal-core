@@ -23,6 +23,8 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -66,5 +68,24 @@ class BulkGroupControllerTest extends BaseControllerTest {
         // through and NPE in profile resolution.
         verify(approvalService).checkAndSubmitForApproval(eq(DIR_ID), eq("ou=groups,dc=example,dc=com"),
                 any(), eq(ApprovalRequestType.BULK_IMPORT), any());
+    }
+
+    @Test
+    void import_withMembers_withoutManageMembers_isRefusedBeforeAnythingIsQueued() throws Exception {
+        BulkImportRequest req = new BulkImportRequest(
+                null, UUID.randomUUID(), null, null, null, true, null, List.of(), null);
+        willThrow(new org.springframework.security.access.AccessDeniedException("group.manage_members"))
+                .given(ldapService).requireGroupImportMemberPermission(eq(DIR_ID), any(), any(), eq(req), any());
+
+        mockMvc.perform(multipart(BASE_URL + "/import")
+                        .file(new MockMultipartFile("file", "groups.csv", "text/csv",
+                                "cn,members\ng1,alice\n".getBytes()))
+                        .file(new MockMultipartFile("request", "", "application/json",
+                                objectMapper.writeValueAsBytes(req)))
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+
+        verify(approvalService, never()).checkAndSubmitForApproval(any(), any(), any(), any(), any());
+        verify(ldapService, never()).bulkImportGroups(any(), any(), any(), any(), any(), any());
     }
 }

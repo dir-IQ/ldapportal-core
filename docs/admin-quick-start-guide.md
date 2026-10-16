@@ -299,3 +299,31 @@ Base DN:  dc=corp,dc=local
   playbook definitions and execution history are kept for when it is re-enabled.
 - **Scheduled Reports** — Set up recurring reports with email or S3 delivery in the Reports section.
 - **Bulk Operations** — Import/export users via CSV in the Bulk Import/Export section.
+  **Group import** creates groups and adds or removes their members from one CSV:
+  `cn`, optional attributes, optional `members` (separated by `|`; each a uid or a full
+  DN) and `member-operation`, which is required whenever `members` is filled in (`add`, or
+  `delete` to remove the listed members from an existing group). Each row names its own
+  group; a group that doesn't exist is created (a new `groupOfNames` or
+  `groupOfUniqueNames` needs at least one member), while a `delete` for a missing group is
+  an error. A `dn` column, as written by group export, is
+  ignored, so an exported file can be edited and re-imported. There is no conflict-handling
+  setting: on an existing group, a `description`, `owner` or other attribute the row provides
+  replaces the current value, and a blank or missing one leaves it unchanged. Preview shows whether each
+  row creates or updates its group and what every member change will do (will add,
+  already a member, not found, out of scope…) before anything is written. Member changes
+  on existing groups follow the same approval, separation-of-duties and audit rules as
+  editing a group by hand, so an add to a group that requires approval is queued; a new
+  group gets its members in the create itself, each checked against separation-of-duties
+  policies first (a blocked member is left out). At most 2,000 member changes per file.
+  Needs **bulk.import**; a file that lists any members also needs **group.manage_members**
+  (checked for the requester before a file is queued for approval, and for the approver
+  when it runs).
+  **Per-row permissions** (user and group imports): beyond **bulk.import**, each row needs
+  the permission its single-entry equivalent needs, and a row that lacks one fails on its
+  own while the rest of the file runs. Creating a user needs **user.create**; overwriting an
+  existing one needs **user.edit**, plus **user.reset_password** to change its password and
+  **user.enable_disable** to change its account-control attribute (a new user's initial
+  password is part of creating it). Creating a group needs **group.create_delete**; changing
+  an existing group's attributes needs **group.edit**. Preview shows these as row issues. An
+  import that runs after approval needs each permission from both the requester and the
+  approver.

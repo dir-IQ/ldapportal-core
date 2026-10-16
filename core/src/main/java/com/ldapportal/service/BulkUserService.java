@@ -6,12 +6,17 @@ import com.ldapportal.dto.csv.BulkImportPreviewRow;
 import com.ldapportal.dto.csv.BulkImportResult;
 import com.ldapportal.dto.csv.BulkImportRowResult;
 import com.ldapportal.dto.csv.CsvColumnMappingDto;
+import com.ldapportal.dto.csv.GroupMemberChange;
+import com.ldapportal.dto.csv.GroupMemberChange.Outcome;
+import com.ldapportal.dto.ldap.MembershipChangeRequest;
+import com.ldapportal.dto.ldap.MembershipChangeResult;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.ConflictHandling;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.ImportErrorHandling;
 import com.ldapportal.exception.LdapOperationException;
 import com.ldapportal.ldap.LdapUserService;
+import com.ldapportal.ldap.UserGroupIndex;
 import com.ldapportal.ldap.model.LdapUser;
 import com.ldapportal.util.CsvUtils;
 import com.unboundid.ldap.sdk.DN;
@@ -33,6 +38,7 @@ import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
@@ -40,6 +46,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * CSV parsing and generation service for bulk user import and export operations.
@@ -161,7 +168,7 @@ public class BulkUserService {
 
     /**
      * Full import variant with an explicit field delimiter (comma, semicolon,
-     * tab, ...); every other overload delegates here with a comma.
+     * tab, ...). Unmapped columns pass through as same-named attributes.
      */
     public BulkImportResult importCsv(DirectoryConnection dc,
                                       InputStream csvInput,
@@ -176,11 +183,89 @@ public class BulkUserService {
                                       List<String> requiredAttrs,
                                       ImportErrorHandling errorHandling,
                                       char fieldDelimiter) throws IOException {
+        return importCsv(dc, csvInput, parentDn, targetKeyAttr, conflictHandling, columnMappings,
+                objectClasses, skipHeaderRow, dnSourceColumn, profileContext,
+                requiredAttrs, errorHandling, fieldDelimiter, true);
+    }
+
+    /**
+     * Full import variant; every other overload delegates here.
+     *
+     * @param passthroughUnmapped {@code true} writes a column the mappings don't
+     *                            mention to the attribute named by its header
+     *                            (template-less imports); {@code false} drops it
+     *                            (template-driven imports). See {@link CsvColumnMap}.
+     */
+    public BulkImportResult importCsv(DirectoryConnection dc,
+                                      InputStream csvInput,
+                                      String parentDn,
+                                      String targetKeyAttr,
+                                      ConflictHandling conflictHandling,
+                                      List<CsvColumnMappingDto> columnMappings,
+                                      List<String> objectClasses,
+                                      boolean skipHeaderRow,
+                                      String dnSourceColumn,
+                                      ProfileContext profileContext,
+                                      List<String> requiredAttrs,
+                                      ImportErrorHandling errorHandling,
+                                      char fieldDelimiter,
+                                      boolean passthroughUnmapped) throws IOException {
+        return importCsv(dc, csvInput, parentDn, targetKeyAttr, conflictHandling, columnMappings,
+                objectClasses, skipHeaderRow, dnSourceColumn, profileContext, requiredAttrs,
+                errorHandling, fieldDelimiter, passthroughUnmapped, null);
+    }
+
+    /**
+     * Full import variant. {@code groups} resolves and writes the group
+     * memberships a row lists (see {@link #planGroupChanges}); {@code null}
+     * refuses every listed group.
+     */
+    public BulkImportResult importCsv(DirectoryConnection dc,
+                                      InputStream csvInput,
+                                      String parentDn,
+                                      String targetKeyAttr,
+                                      ConflictHandling conflictHandling,
+                                      List<CsvColumnMappingDto> columnMappings,
+                                      List<String> objectClasses,
+                                      boolean skipHeaderRow,
+                                      String dnSourceColumn,
+                                      ProfileContext profileContext,
+                                      List<String> requiredAttrs,
+                                      ImportErrorHandling errorHandling,
+                                      char fieldDelimiter,
+                                      boolean passthroughUnmapped,
+                                      UserImportGroups groups) throws IOException {
+        return importCsv(dc, csvInput, parentDn, targetKeyAttr, conflictHandling, columnMappings,
+                objectClasses, skipHeaderRow, dnSourceColumn, profileContext, requiredAttrs,
+                errorHandling, fieldDelimiter, passthroughUnmapped, groups, BulkImportPermissions.ALL);
+    }
+
+    /**
+     * Full import variant. {@code permissions} decides, row by row, whether the
+     * admin may create the user or overwrite the existing one (see
+     * {@link BulkImportPermissions}); a row it refuses is an error, the rest run.
+     */
+    public BulkImportResult importCsv(DirectoryConnection dc,
+                                      InputStream csvInput,
+                                      String parentDn,
+                                      String targetKeyAttr,
+                                      ConflictHandling conflictHandling,
+                                      List<CsvColumnMappingDto> columnMappings,
+                                      List<String> objectClasses,
+                                      boolean skipHeaderRow,
+                                      String dnSourceColumn,
+                                      ProfileContext profileContext,
+                                      List<String> requiredAttrs,
+                                      ImportErrorHandling errorHandling,
+                                      char fieldDelimiter,
+                                      boolean passthroughUnmapped,
+                                      UserImportGroups groups,
+                                      BulkImportPermissions permissions) throws IOException {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
         }
 
-        Map<String, String> colToAttr = resolveColumnMap(columnMappings);
+        CsvColumnMap colToAttr = CsvColumnMap.of(columnMappings, passthroughUnmapped);
         List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
 
         // ABORT_ON_ERROR: validate every row up front and, if any would error,
@@ -189,7 +274,9 @@ public class BulkUserService {
         // errors" and "the import is blocked" stay in lockstep.
         if (errorHandling == ImportErrorHandling.ABORT_ON_ERROR) {
             List<BulkImportRowResult> validation =
-                    validateRows(rows, colToAttr, targetKeyAttr, parentDn, dnSourceColumn, requiredAttrs);
+                    validateRows(rows, colToAttr, targetKeyAttr, parentDn, dnSourceColumn, requiredAttrs,
+                            conflictHandling == ConflictHandling.OVERWRITE, permissions,
+                            dn -> userService.entryExists(dc, dn));
             long errs = countByStatus(validation, BulkImportRowResult.Status.ERROR);
             if (errs > 0) {
                 log.info("Bulk import aborted: {} of {} rows have errors (errorHandling=ABORT_ON_ERROR)",
@@ -204,8 +291,10 @@ public class BulkUserService {
 
         for (Map<String, String> row : rows) {
             rowNum++;
-            rowResults.add(processRow(dc, row, colToAttr, targetKeyAttr,
-                    parentDn, conflictHandling, objectClasses, dnSourceColumn, rowNum, profileContext));
+            BulkImportRowResult result = processRow(dc, row, colToAttr, targetKeyAttr,
+                    parentDn, conflictHandling, objectClasses, dnSourceColumn, rowNum, profileContext,
+                    permissions);
+            rowResults.add(withGroupChanges(result, row, colToAttr, dnSourceColumn, groups));
         }
 
         long created = countByStatus(rowResults, BulkImportRowResult.Status.CREATED);
@@ -227,38 +316,28 @@ public class BulkUserService {
      * and preview so the three agree on what counts as an error.
      */
     private List<BulkImportRowResult> validateRows(List<Map<String, String>> rows,
-                                                   Map<String, String> colToAttr,
+                                                   CsvColumnMap colToAttr,
                                                    String targetKeyAttr,
                                                    String parentDn,
                                                    String dnSourceColumn,
-                                                   List<String> requiredAttrs) {
+                                                   List<String> requiredAttrs,
+                                                   boolean overwrite,
+                                                   BulkImportPermissions permissions,
+                                                   Predicate<String> userExists) {
         boolean dnFromColumn = dnSourceColumn != null && !dnSourceColumn.isBlank();
         List<String> required = requiredAttrs == null ? List.of() : requiredAttrs;
         List<BulkImportRowResult> out = new ArrayList<>();
         int rowNum = 0;
         for (Map<String, String> row : rows) {
             rowNum++;
-            Map<String, String> attrs = new LinkedHashMap<>();
-            for (Map.Entry<String, String> cell : row.entrySet()) {
-                String csvCol = cell.getKey();
-                String rawVal = cell.getValue();
-                if (rawVal == null || rawVal.isBlank()) continue;
-                if (dnFromColumn && csvCol.equalsIgnoreCase(dnSourceColumn)) continue;
-                String ldapAttr;
-                if (colToAttr.containsKey(csvCol)) {
-                    ldapAttr = colToAttr.get(csvCol);
-                    if (ldapAttr == null) continue;
-                } else {
-                    ldapAttr = csvCol;
-                }
-                attrs.put(ldapAttr, rawVal);
-            }
+            Map<String, List<String>> attrs = collectAttributes(row, colToAttr, dnSourceColumn);
 
             String dn = null;
             String error = null;
+            Set<String> rdnAttrs = Set.of(targetKeyAttr);
             try {
-                dn = resolveDn(row, dnSourceColumn, targetKeyAttr, attrs.get(targetKeyAttr), parentDn);
-                if (dnFromColumn) injectRdnAttributes(dn, attrs);
+                dn = resolveDn(row, dnSourceColumn, targetKeyAttr, firstOrNull(valuesFor(attrs, targetKeyAttr)), parentDn);
+                if (dnFromColumn) rdnAttrs = ensureRdnAttributes(dn, attrs);
             } catch (IllegalArgumentException ex) {
                 error = ex.getMessage();
             }
@@ -270,6 +349,9 @@ public class BulkUserService {
                 if (!missing.isEmpty()) {
                     error = "Missing required attribute(s): " + String.join(", ", missing);
                 }
+            }
+            if (error == null) {
+                error = permissionProblem(dn, attrs, rdnAttrs, overwrite, permissions, userExists);
             }
 
             out.add(error != null
@@ -320,7 +402,7 @@ public class BulkUserService {
                 skipHeaderRow, requiredAttrs, dnSourceColumn, CsvUtils.DEFAULT_DELIMITER);
     }
 
-    /** Preview variant with an explicit field delimiter. */
+    /** Preview variant with an explicit field delimiter; unmapped columns pass through. */
     public BulkImportPreviewResult previewImport(InputStream csvInput,
                                                   String parentDn,
                                                   String targetKeyAttr,
@@ -329,8 +411,71 @@ public class BulkUserService {
                                                   List<String> requiredAttrs,
                                                   String dnSourceColumn,
                                                   char fieldDelimiter) throws IOException {
+        return previewImport(csvInput, parentDn, targetKeyAttr, columnMappings, skipHeaderRow,
+                requiredAttrs, dnSourceColumn, fieldDelimiter, true);
+    }
 
-        Map<String, String> colToAttr = resolveColumnMap(columnMappings);
+    /**
+     * Full preview variant. With {@code passthroughUnmapped = false} the columns
+     * the mappings don't mention are left out of every row and listed in
+     * {@link BulkImportPreviewResult#unmappedColumns()}.
+     */
+    public BulkImportPreviewResult previewImport(InputStream csvInput,
+                                                  String parentDn,
+                                                  String targetKeyAttr,
+                                                  List<CsvColumnMappingDto> columnMappings,
+                                                  boolean skipHeaderRow,
+                                                  List<String> requiredAttrs,
+                                                  String dnSourceColumn,
+                                                  char fieldDelimiter,
+                                                  boolean passthroughUnmapped) throws IOException {
+        return previewImport(csvInput, parentDn, targetKeyAttr, columnMappings, skipHeaderRow,
+                requiredAttrs, dnSourceColumn, fieldDelimiter, passthroughUnmapped, null);
+    }
+
+    /**
+     * Preview variant that also plans each row's group memberships with
+     * {@code groups}: every listed group is resolved (a {@code cn} must match
+     * exactly one group in scope), but current memberships aren't looked up,
+     * so a resolvable group shows as "will be added".
+     */
+    public BulkImportPreviewResult previewImport(InputStream csvInput,
+                                                  String parentDn,
+                                                  String targetKeyAttr,
+                                                  List<CsvColumnMappingDto> columnMappings,
+                                                  boolean skipHeaderRow,
+                                                  List<String> requiredAttrs,
+                                                  String dnSourceColumn,
+                                                  char fieldDelimiter,
+                                                  boolean passthroughUnmapped,
+                                                  UserImportGroups groups) throws IOException {
+        return previewImport(csvInput, parentDn, targetKeyAttr, columnMappings, skipHeaderRow,
+                requiredAttrs, dnSourceColumn, fieldDelimiter, passthroughUnmapped, groups,
+                false, BulkImportPermissions.ALL, dn -> false);
+    }
+
+    /**
+     * Preview variant that also reports, per row, an import the admin's
+     * permissions would refuse (creating without {@code user.create},
+     * overwriting without {@code user.edit}, …) in the row's message.
+     * {@code userExists} is only consulted when {@code permissions} could
+     * refuse a row.
+     */
+    public BulkImportPreviewResult previewImport(InputStream csvInput,
+                                                  String parentDn,
+                                                  String targetKeyAttr,
+                                                  List<CsvColumnMappingDto> columnMappings,
+                                                  boolean skipHeaderRow,
+                                                  List<String> requiredAttrs,
+                                                  String dnSourceColumn,
+                                                  char fieldDelimiter,
+                                                  boolean passthroughUnmapped,
+                                                  UserImportGroups groups,
+                                                  boolean overwrite,
+                                                  BulkImportPermissions permissions,
+                                                  Predicate<String> userExists) throws IOException {
+
+        CsvColumnMap colToAttr = CsvColumnMap.of(columnMappings, passthroughUnmapped);
         List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
 
         // Pre-compute lowercase required-attribute set so per-row checks are
@@ -347,36 +492,30 @@ public class BulkUserService {
         for (Map<String, String> row : rows) {
             rowNum++;
             boolean dnFromColumn = dnSourceColumn != null && !dnSourceColumn.isBlank();
-            Map<String, String> attrs = new LinkedHashMap<>();
-            for (Map.Entry<String, String> cell : row.entrySet()) {
-                String csvCol = cell.getKey();
-                String rawVal = cell.getValue();
-                if (rawVal == null || rawVal.isBlank()) continue;
-                // The DN-source column carries the DN, not an attribute value.
-                if (dnFromColumn && csvCol.equalsIgnoreCase(dnSourceColumn)) continue;
-
-                String ldapAttr;
-                if (colToAttr.containsKey(csvCol)) {
-                    ldapAttr = colToAttr.get(csvCol);
-                    if (ldapAttr == null) continue;
-                } else {
-                    ldapAttr = csvCol;
-                }
-                attrs.put(ldapAttr, rawVal);
-            }
+            Map<String, List<String>> attrs = collectAttributes(row, colToAttr, dnSourceColumn);
 
             List<String> missing = new ArrayList<>();
             String dn;
+            // Why the DN couldn't be resolved (no value, not a DN, outside the
+            // import container, column not in the file); shown on the row so
+            // "missing dn" never hides the real reason.
+            String dnProblem = null;
+            Set<String> rdnAttrs = Set.of(targetKeyAttr);
             try {
-                dn = resolveDn(row, dnSourceColumn, targetKeyAttr, attrs.get(targetKeyAttr), parentDn);
+                dn = resolveDn(row, dnSourceColumn, targetKeyAttr, firstOrNull(valuesFor(attrs, targetKeyAttr)), parentDn);
                 // An explicit DN supplies the RDN attribute(s); reflect them in the
                 // attribute set so the required-attribute check matches the import,
                 // which injects them before the add.
                 if (dnFromColumn) {
-                    injectRdnAttributes(dn, attrs);
+                    rdnAttrs = ensureRdnAttributes(dn, attrs);
                 }
             } catch (IllegalArgumentException ex) {
                 dn = null;
+                dnProblem = ex.getMessage();
+            }
+            // A row the admin's permissions refuse says why, like a DN problem.
+            if (dnProblem == null) {
+                dnProblem = permissionProblem(dn, attrs, rdnAttrs, overwrite, permissions, userExists);
             }
 
             // Compare attrs (case-insensitive) against the required set.
@@ -397,10 +536,17 @@ public class BulkUserService {
                     .filter(a -> !present.contains(a.toLowerCase(java.util.Locale.ROOT)))
                     .forEach(missing::add);
 
-            previewRows.add(new BulkImportPreviewRow(rowNum, dn, attrs, missing));
+            List<GroupMemberChange> groupChanges = planGroupChanges(
+                    collectGroups(row, colToAttr), firstOrNull(valuesFor(attrs, "uid")), groups);
+            previewRows.add(new BulkImportPreviewRow(rowNum, dn, previewValues(attrs), missing,
+                    null, dnProblem, groupChanges, List.of()));
         }
 
-        return new BulkImportPreviewResult(rowNum, previewRows);
+        boolean dnFromCol = dnSourceColumn != null && !dnSourceColumn.isBlank();
+        List<String> unmapped = colToAttr.unmappedColumns(rows).stream()
+                .filter(c -> !(dnFromCol && isColumn(c, dnSourceColumn)))
+                .toList();
+        return new BulkImportPreviewResult(rowNum, previewRows, unmapped);
     }
 
     /** Backwards-compatible overload (no schema validation). */
@@ -454,15 +600,31 @@ public class BulkUserService {
                              String filter,
                              List<String> baseDns,
                              List<String> attributes) throws IOException {
+        return exportCsvFromBases(dc, filter, baseDns, attributes, null);
+    }
+
+    /**
+     * Export variant that, with a non-null {@code groups} index, adds a last
+     * {@value CsvColumnMap#GROUPS_COLUMN} column listing each user's groups
+     * ({@code |}-separated, the format the import's groups column reads).
+     */
+    public byte[] exportCsvFromBases(DirectoryConnection dc,
+                             String filter,
+                             List<String> baseDns,
+                             List<String> attributes,
+                             UserGroupIndex groups) throws IOException {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
         }
 
         String effectiveFilter = (filter == null || filter.isBlank())
                 ? "(objectClass=*)" : filter;
-        String[] attrArray = attributes.isEmpty()
-                ? new String[0]
-                : attributes.toArray(new String[0]);
+        List<String> fetch = new ArrayList<>(attributes);
+        // memberUid (posixGroup) memberships are matched on the user's uid.
+        if (groups != null && !fetch.isEmpty() && fetch.stream().noneMatch(a -> a.equalsIgnoreCase("uid"))) {
+            fetch.add("uid");
+        }
+        String[] attrArray = fetch.toArray(new String[0]);
 
         List<String> bases = (baseDns == null || baseDns.isEmpty())
                 ? Collections.singletonList(null) : baseDns;
@@ -476,14 +638,14 @@ public class BulkUserService {
         // When attributes is empty, columns are derived dynamically; we must do a full
         // search to discover the union of all attribute names before writing the header.
         if (!attributes.isEmpty()) {
-            List<String> columns = buildExportColumns(List.of(), attributes);
+            List<String> columns = withGroupsColumn(buildExportColumns(List.of(), attributes), groups);
             CsvUtils.writeHeader(writer, columns);
             for (String base : bases) {
                 userService.processUsers(dc, effectiveFilter, base,
                         user -> {
                             if (!seenDns.add(user.getDn().toLowerCase(Locale.ROOT))) return;
                             try {
-                                CsvUtils.writeRow(writer, columns, buildExportRow(user, columns));
+                                CsvUtils.writeRow(writer, columns, buildExportRow(user, columns, groups));
                             } catch (IOException e) {
                                 throw new RuntimeException("CSV write failed", e);
                             }
@@ -501,10 +663,10 @@ public class BulkUserService {
                     }
                 }
             }
-            List<String> columns = buildExportColumns(users, attributes);
+            List<String> columns = withGroupsColumn(buildExportColumns(users, attributes), groups);
             CsvUtils.writeHeader(writer, columns);
             for (LdapUser user : users) {
-                CsvUtils.writeRow(writer, columns, buildExportRow(user, columns));
+                CsvUtils.writeRow(writer, columns, buildExportRow(user, columns, groups));
             }
         }
 
@@ -581,14 +743,15 @@ public class BulkUserService {
      */
     private BulkImportRowResult processRow(DirectoryConnection dc,
                                            Map<String, String> row,
-                                           Map<String, String> colToAttr,
+                                           CsvColumnMap colToAttr,
                                            String targetKeyAttr,
                                            String parentDn,
                                            ConflictHandling conflictHandling,
                                            List<String> objectClasses,
                                            String dnSourceColumn,
                                            int rowNum,
-                                           ProfileContext profileContext) {
+                                           ProfileContext profileContext,
+                                           BulkImportPermissions permissions) {
         boolean dnFromColumn = dnSourceColumn != null && !dnSourceColumn.isBlank();
 
         // Build ldapAttribute→[value] map from the CSV row
@@ -599,24 +762,7 @@ public class BulkUserService {
             attrMap.put("objectClass", objectClasses);
         }
 
-        for (Map.Entry<String, String> cell : row.entrySet()) {
-            String csvCol  = cell.getKey();
-            String rawVal  = cell.getValue();
-            if (rawVal == null || rawVal.isBlank()) continue;
-            // The DN-source column carries the DN, not an attribute value.
-            if (dnFromColumn && csvCol.equalsIgnoreCase(dnSourceColumn)) continue;
-
-            // colToAttr: null value = explicitly ignored; absent key = passthrough
-            String ldapAttr;
-            if (colToAttr.containsKey(csvCol)) {
-                ldapAttr = colToAttr.get(csvCol);
-                if (ldapAttr == null) continue; // ignored column
-            } else {
-                ldapAttr = csvCol; // passthrough: header IS the attribute name
-            }
-
-            attrMap.put(ldapAttr, List.of(rawVal));
-        }
+        attrMap.putAll(collectAttributes(row, colToAttr, dnSourceColumn));
 
         // Apply profile attribute defaults BEFORE the create, matching
         // UserController.create's behaviour: any computed / default /
@@ -640,7 +786,7 @@ public class BulkUserService {
         // per-row error.
         String dn;
         try {
-            dn = resolveDn(row, dnSourceColumn, targetKeyAttr, firstOrNull(attrMap.get(targetKeyAttr)), parentDn);
+            dn = resolveDn(row, dnSourceColumn, targetKeyAttr, firstOrNull(valuesFor(attrMap, targetKeyAttr)), parentDn);
         } catch (IllegalArgumentException ex) {
             return BulkImportRowResult.error(rowNum, null, ex.getMessage());
         }
@@ -658,6 +804,15 @@ public class BulkUserService {
         }
 
         try {
+            // Without user.create, look the user up first: an existing one may
+            // still be overwritten (or skipped), a new one is refused.
+            if (!permissions.createUsers()) {
+                if (!userService.entryExists(dc, dn)) {
+                    return BulkImportRowResult.error(rowNum, dn,
+                            permissions.userRowProblem(false, false, List.of()));
+                }
+                return existingUser(dc, dn, attrMap, rdnAttrsLower, conflictHandling, rowNum, permissions);
+            }
             // Optimistic create: attempt the add first and handle the ENTRY_ALREADY_EXISTS
             // result code inline.  This avoids a separate getUser() existence check per row
             // (which would double the number of LDAP round-trips for large imports).
@@ -677,28 +832,64 @@ public class BulkUserService {
                 if (!isEntryAlreadyExists(ex)) {
                     throw ex; // not a duplicate — propagate
                 }
-                // Entry exists — apply conflict strategy
-                if (conflictHandling == ConflictHandling.OVERWRITE) {
-                    List<Modification> mods = attrMap.entrySet().stream()
-                            .filter(e -> !rdnAttrsLower.contains(e.getKey().toLowerCase(Locale.ROOT)))
-                            .map(e -> new Modification(
-                                    ModificationType.REPLACE,
-                                    e.getKey(),
-                                    e.getValue().toArray(new String[0])))
-                            .toList();
-                    if (!mods.isEmpty()) {
-                        userService.updateUser(dc, dn, mods);
-                    }
-                    return BulkImportRowResult.updated(rowNum, dn);
-                } else {
-                    // SKIP or PROMPT — no action taken
-                    return BulkImportRowResult.skipped(rowNum, dn, skippedExistingMessage(conflictHandling));
-                }
+                return existingUser(dc, dn, attrMap, rdnAttrsLower, conflictHandling, rowNum, permissions);
             }
         } catch (Exception ex) {
             log.warn("Row {} failed [dn={}]: {}", rowNum, dn, ex.getMessage());
             return BulkImportRowResult.error(rowNum, dn, ex.getMessage());
         }
+    }
+
+    /**
+     * A row whose user already exists: skipped, or — under OVERWRITE —
+     * updated with the row's attributes (never the naming ones), when the
+     * admin may edit users and change every attribute the row writes.
+     */
+    private BulkImportRowResult existingUser(DirectoryConnection dc, String dn,
+                                             Map<String, List<String>> attrMap,
+                                             Set<String> rdnAttrsLower,
+                                             ConflictHandling conflictHandling,
+                                             int rowNum,
+                                             BulkImportPermissions permissions) {
+        if (conflictHandling != ConflictHandling.OVERWRITE) {
+            // SKIP or PROMPT — no action taken
+            return BulkImportRowResult.skipped(rowNum, dn, skippedExistingMessage(conflictHandling));
+        }
+        List<String> written = attrMap.keySet().stream()
+                .filter(a -> !rdnAttrsLower.contains(a.toLowerCase(Locale.ROOT)))
+                .toList();
+        String problem = permissions.userRowProblem(true, true, written);
+        if (problem != null) {
+            return BulkImportRowResult.error(rowNum, dn, problem);
+        }
+        List<Modification> mods = attrMap.entrySet().stream()
+                .filter(e -> !rdnAttrsLower.contains(e.getKey().toLowerCase(Locale.ROOT)))
+                .map(e -> new Modification(
+                        ModificationType.REPLACE,
+                        e.getKey(),
+                        e.getValue().toArray(new String[0])))
+                .toList();
+        if (!mods.isEmpty()) {
+            userService.updateUser(dc, dn, mods);
+        }
+        return BulkImportRowResult.updated(rowNum, dn);
+    }
+
+    /**
+     * Why the admin may not import this row, or {@code null}. Looks the user up
+     * only when {@code permissions} could refuse the row, so an admin holding
+     * every feature costs no extra reads.
+     */
+    private static String permissionProblem(String dn, Map<String, List<String>> attrs,
+                                            Set<String> rdnAttrs, boolean overwrite,
+                                            BulkImportPermissions permissions,
+                                            Predicate<String> userExists) {
+        if (dn == null || !permissions.restrictsUsers(overwrite)) return null;
+        Set<String> rdnLower = lowerKeys(rdnAttrs);
+        List<String> written = attrs.keySet().stream()
+                .filter(a -> !rdnLower.contains(a.toLowerCase(Locale.ROOT)))
+                .toList();
+        return permissions.userRowProblem(userExists.test(dn), overwrite, written);
     }
 
     /**
@@ -758,27 +949,6 @@ public class BulkUserService {
             com.ldapportal.auth.AuthPrincipal principal) {}
 
     /**
-     * Builds a lookup map from CSV column name to LDAP attribute name.
-     * A {@code null} value in the returned map signals "ignore this column".
-     * Columns absent from the map are handled as passthrough.
-     */
-    private Map<String, String> resolveColumnMap(List<CsvColumnMappingDto> mappings) {
-        if (mappings == null || mappings.isEmpty()) {
-            return Map.of();
-        }
-        Map<String, String> result = new LinkedHashMap<>();
-        for (CsvColumnMappingDto m : mappings) {
-            if (m.ignored()) {
-                result.put(m.csvColumn(), null);
-            } else {
-                result.put(m.csvColumn(),
-                        m.ldapAttribute() != null ? m.ldapAttribute() : m.csvColumn());
-            }
-        }
-        return result;
-    }
-
-    /**
      * Constructs the full DN for a new entry.
      * The RDN value is escaped per RFC 4514 so that special characters
      * (comma, equals, plus, less-than, greater-than, hash, semicolon,
@@ -799,6 +969,16 @@ public class BulkUserService {
      *
      * @throws IllegalArgumentException with a row-friendly message on any failure
      */
+    /**
+     * Whether CSV header {@code header} is the column named {@code column}:
+     * case-insensitive, ignoring surrounding spaces and a byte-order mark, the
+     * same way template entries match headers.
+     */
+    static boolean isColumn(String header, String column) {
+        if (header == null || column == null) return false;
+        return header.replace("\uFEFF", "").trim().equalsIgnoreCase(column.replace("\uFEFF", "").trim());
+    }
+
     private String resolveDn(Map<String, String> row, String dnSourceColumn,
                              String keyAttr, String keyValue, String parentDn) {
         if (dnSourceColumn == null || dnSourceColumn.isBlank()) {
@@ -807,7 +987,15 @@ public class BulkUserService {
             }
             return buildDn(keyAttr, keyValue, parentDn);
         }
-        String raw = row.get(dnSourceColumn);
+        String header = row.keySet().stream()
+                .filter(h -> isColumn(h, dnSourceColumn))
+                .findFirst().orElse(null);
+        if (header == null) {
+            throw new IllegalArgumentException("The file has no '" + dnSourceColumn
+                    + "' column (the template reads the DN from it); columns are: "
+                    + String.join(", ", row.keySet()));
+        }
+        String raw = row.get(header);
         if (raw == null || raw.isBlank()) {
             throw new IllegalArgumentException("Missing DN value in column '" + dnSourceColumn + "'");
         }
@@ -855,22 +1043,6 @@ public class BulkUserService {
         return names;
     }
 
-    /** Preview counterpart of {@link #ensureRdnAttributes} for the single-valued attribute map. */
-    private static void injectRdnAttributes(String dn, Map<String, String> attrs) {
-        RDN rdn = leftmostRdn(dn);
-        if (rdn == null) {
-            return;
-        }
-        Set<String> present = lowerKeys(attrs.keySet());
-        String[] attrNames = rdn.getAttributeNames();
-        String[] attrValues = rdn.getAttributeValues();
-        for (int i = 0; i < attrNames.length; i++) {
-            if (!present.contains(attrNames[i].toLowerCase(Locale.ROOT))) {
-                attrs.put(attrNames[i], attrValues[i]);
-            }
-        }
-    }
-
     private static RDN leftmostRdn(String dn) {
         try {
             return new DN(dn).getRDN();
@@ -885,6 +1057,189 @@ public class BulkUserService {
             out.add(k.toLowerCase(Locale.ROOT));
         }
         return out;
+    }
+
+    /**
+     * The row's attribute values, by LDAP attribute. A cell holding several
+     * values separated by {@code |} ({@code \|} for a literal pipe) gives a
+     * multi-valued attribute, and columns mapped to the same attribute (names
+     * compared ignoring case) add their values together. Repeated values are
+     * kept once. Blank cells, the DN column, ignored columns and columns the
+     * template doesn't map are skipped; without a template the header itself is
+     * the attribute name.
+     */
+    static Map<String, List<String>> collectAttributes(Map<String, String> row,
+                                                       CsvColumnMap colToAttr,
+                                                       String dnSourceColumn) {
+        boolean dnFromColumn = dnSourceColumn != null && !dnSourceColumn.isBlank();
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        for (Map.Entry<String, String> cell : row.entrySet()) {
+            String csvCol = cell.getKey();
+            String rawVal = cell.getValue();
+            if (rawVal == null || rawVal.isBlank()) continue;
+            // The DN-source column carries the DN, not an attribute value.
+            if (dnFromColumn && isColumn(csvCol, dnSourceColumn)) continue;
+            if (colToAttr.isGroupMemberships(csvCol)) continue; // memberships, not an attribute
+            String ldapAttr = colToAttr.attributeFor(csvCol);
+            if (ldapAttr == null) continue; // ignored, or unmapped under a template
+
+            List<String> values = CsvUtils.splitMultiValue(rawVal);
+            if (values.isEmpty()) continue;
+            String key = out.keySet().stream()
+                    .filter(k -> k.equalsIgnoreCase(ldapAttr))
+                    .findFirst().orElse(ldapAttr);
+            List<String> merged = out.computeIfAbsent(key, k -> new ArrayList<>());
+            for (String v : values) {
+                if (!merged.contains(v)) merged.add(v);
+            }
+        }
+        return out;
+    }
+
+    /** Values of {@code attr} in {@code attrs}, matching the name ignoring case. */
+    private static List<String> valuesFor(Map<String, List<String>> attrs, String attr) {
+        if (attr == null) return null;
+        for (Map.Entry<String, List<String>> e : attrs.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(attr)) return e.getValue();
+        }
+        return null;
+    }
+
+    /** Preview display: one string per attribute, several values separated by " | ". */
+    private static Map<String, String> previewValues(Map<String, List<String>> attrs) {
+        Map<String, String> out = new LinkedHashMap<>();
+        attrs.forEach((k, v) -> out.put(k, String.join(" | ", v)));
+        return out;
+    }
+
+    // ── Group memberships ─────────────────────────────────────────────────────
+
+    /**
+     * The groups a row lists in its group-memberships column, split like any
+     * multi-valued cell; a value repeated (ignoring case) is kept once.
+     */
+    static List<String> collectGroups(Map<String, String> row, CsvColumnMap colToAttr) {
+        List<String> out = new ArrayList<>();
+        for (Map.Entry<String, String> cell : row.entrySet()) {
+            if (!colToAttr.isGroupMemberships(cell.getKey())) continue;
+            for (String v : CsvUtils.splitMultiValue(cell.getValue())) {
+                if (out.stream().noneMatch(o -> o.equalsIgnoreCase(v))) out.add(v);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * One planned add per listed group: WILL_ADD when it can be written, else
+     * why not (no permission, not found, ambiguous, outside scope, not a group,
+     * listed twice, or a memberUid group for a user without a uid). Problems
+     * never fail the row: the user is still imported and the change is
+     * reported. Current memberships aren't looked up.
+     */
+    static List<GroupMemberChange> planGroupChanges(List<String> values, String userUid,
+                                                    UserImportGroups groups) {
+        if (values.isEmpty()) return List.of();
+        List<GroupMemberChange> out = new ArrayList<>(values.size());
+        Set<String> seenDns = new HashSet<>();
+        boolean permitted = groups != null && groups.mayManageMembers();
+        for (String value : values) {
+            if (!permitted) {
+                out.add(change(value, null, Outcome.REFUSED,
+                        "You don't have permission to manage group members"));
+                continue;
+            }
+            UserImportGroups.Target t = groups.resolve(value);
+            if (t.problem() != null) {
+                out.add(change(value, null, t.problem(), t.note()));
+            } else if (!seenDns.add(GroupImportMembers.normalizeDn(t.dn()))) {
+                out.add(change(value, t.dn(), Outcome.DUPLICATE, "This group is listed more than once"));
+            } else if ("memberUid".equalsIgnoreCase(t.memberAttribute()) && (userUid == null || userUid.isBlank())) {
+                out.add(change(value, t.dn(), Outcome.INVALID, "Group uses memberUid but this user has no uid"));
+            } else {
+                out.add(change(value, t.dn(), Outcome.WILL_ADD, null));
+            }
+        }
+        return out;
+    }
+
+    private static GroupMemberChange change(String value, String groupDn, Outcome outcome, String message) {
+        return new GroupMemberChange(value, groupDn, MembershipChangeRequest.Op.ADD, outcome, message, null);
+    }
+
+    /**
+     * Adds a created or overwritten user to the groups its row lists, through
+     * the governed membership path, and attaches the per-group outcomes to the
+     * row result. A row skipped as already existing leaves the user's groups
+     * as they are, and says so; an error row writes nothing.
+     */
+    private BulkImportRowResult withGroupChanges(BulkImportRowResult result, Map<String, String> row,
+                                                 CsvColumnMap colToAttr, String dnSourceColumn,
+                                                 UserImportGroups groups) {
+        List<String> values = collectGroups(row, colToAttr);
+        if (values.isEmpty()) return result;
+        if (result.status() == BulkImportRowResult.Status.SKIPPED) {
+            String msg = result.message() == null ? "Groups not changed" : result.message() + "; groups not changed";
+            return new BulkImportRowResult(result.rowNumber(), result.dn(), result.status(), msg);
+        }
+        if (result.status() == BulkImportRowResult.Status.ERROR) return result;
+
+        String uid = userUid(result.dn(), collectAttributes(row, colToAttr, dnSourceColumn));
+        List<GroupMemberChange> planned = planGroupChanges(values, uid, groups);
+        List<MembershipChangeRequest.Change> changes = new ArrayList<>();
+        Map<String, String> attrByDn = new LinkedHashMap<>();
+        for (GroupMemberChange c : planned) {
+            if (c.outcome() != Outcome.WILL_ADD) continue;
+            UserImportGroups.Target t = groups.resolve(c.member());
+            changes.add(new MembershipChangeRequest.Change(t.dn(), t.memberAttribute(), MembershipChangeRequest.Op.ADD));
+            attrByDn.put(GroupImportMembers.normalizeDn(t.dn()), t.memberAttribute());
+        }
+
+        Map<String, MembershipChangeResult.Item> byDn = new HashMap<>();
+        String failure = null;
+        if (!changes.isEmpty()) {
+            try {
+                for (MembershipChangeResult.Item it : groups.add(result.dn(), uid, changes).items()) {
+                    byDn.put(GroupImportMembers.normalizeDn(it.groupDn()), it);
+                }
+            } catch (RuntimeException e) {
+                log.warn("Bulk import: group memberships failed for {}: {}", result.dn(), e.getMessage());
+                failure = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            }
+        }
+
+        List<GroupMemberChange> outcomes = new ArrayList<>(planned.size());
+        for (GroupMemberChange c : planned) {
+            if (c.outcome() != Outcome.WILL_ADD) {
+                outcomes.add(c);
+                continue;
+            }
+            MembershipChangeResult.Item it = byDn.get(GroupImportMembers.normalizeDn(c.memberDn()));
+            if (it == null) {
+                outcomes.add(c.withOutcome(Outcome.ERROR, failure != null ? failure : "Not applied", null));
+                continue;
+            }
+            outcomes.add(switch (it.status()) {
+                case APPLIED -> c.withOutcome(Outcome.APPLIED, null, null);
+                case QUEUED_FOR_APPROVAL -> c.withOutcome(Outcome.QUEUED_FOR_APPROVAL, null, it.approvalId());
+                case REFUSED -> c.withOutcome(Outcome.REFUSED, it.message(), null);
+                case BLOCKED -> c.withOutcome(Outcome.BLOCKED, it.message(), null);
+                case ERROR -> c.withOutcome(Outcome.ERROR, it.message(), null);
+            });
+        }
+        return new BulkImportRowResult(result.rowNumber(), result.dn(), result.status(), result.message(), outcomes);
+    }
+
+    /** The user's uid: from the row, else from a {@code uid=} RDN. */
+    private static String userUid(String dn, Map<String, List<String>> attrs) {
+        String uid = firstOrNull(valuesFor(attrs, "uid"));
+        if (uid != null) return uid;
+        RDN rdn = dn == null ? null : leftmostRdn(dn);
+        if (rdn == null) return null;
+        String[] names = rdn.getAttributeNames();
+        for (int i = 0; i < names.length; i++) {
+            if ("uid".equalsIgnoreCase(names[i])) return rdn.getAttributeValues()[i];
+        }
+        return null;
     }
 
     private static String firstOrNull(List<String> values) {
@@ -910,15 +1265,33 @@ public class BulkUserService {
         return cols;
     }
 
-    /** Builds a single CSV data row from an LDAP entry. Multi-values are pipe-joined. */
-    private Map<String, String> buildExportRow(LdapUser user, List<String> columns) {
+    /**
+     * Adds the groups column last when a group index is supplied. An attribute
+     * that happens to be called {@code groups} gives way to it.
+     */
+    private static List<String> withGroupsColumn(List<String> columns, UserGroupIndex groups) {
+        if (groups == null) return columns;
+        List<String> out = new ArrayList<>(columns);
+        out.removeIf(c -> c.equalsIgnoreCase(CsvColumnMap.GROUPS_COLUMN));
+        out.add(CsvColumnMap.GROUPS_COLUMN);
+        return out;
+    }
+
+    /**
+     * Builds a single CSV data row from an LDAP entry. Multi-values are joined
+     * with {@code |} (a literal pipe is written {@code \|}), the format the
+     * import reads back.
+     */
+    private Map<String, String> buildExportRow(LdapUser user, List<String> columns, UserGroupIndex groups) {
         Map<String, String> row = new LinkedHashMap<>();
         for (String col : columns) {
             if ("dn".equals(col)) {
                 row.put("dn", user.getDn());
+            } else if (groups != null && CsvColumnMap.GROUPS_COLUMN.equals(col)) {
+                row.put(col, CsvUtils.joinMultiValue(groups.groupsOf(user.getDn(), user.getFirstValue("uid"))));
             } else {
                 List<String> vals = user.getValues(col);
-                row.put(col, String.join("|", vals));
+                row.put(col, CsvUtils.joinMultiValue(vals));
             }
         }
         return row;

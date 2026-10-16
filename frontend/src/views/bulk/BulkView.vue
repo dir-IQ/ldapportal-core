@@ -20,12 +20,15 @@
 
     <!-- Tabs -->
     <div class="flex border-b border-gray-200 mb-0">
-      <button @click="activeTab = 'import'"
+      <!-- Each tab shows only when the admin holds its feature (a read-only
+           admin, for instance, gets Export only); the backend enforces the
+           same features, so a hidden tab is never a capability lost. -->
+      <button v-if="canBulkImport" @click="activeTab = 'import'"
         class="px-5 py-2.5 text-sm font-medium -mb-px"
         :class="activeTab === 'import' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-700'">
         Import
       </button>
-      <button @click="activeTab = 'export'"
+      <button v-if="canBulkExport" @click="activeTab = 'export'"
         class="px-5 py-2.5 text-sm font-medium -mb-px"
         :class="activeTab === 'export' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-700'">
         Export
@@ -39,8 +42,14 @@
       </button>
     </div>
 
+    <p v-if="availableTabs.length === 0" data-testid="bulk-no-access"
+       class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6 text-sm text-gray-600">
+      You don’t have permission for bulk {{ entityType === 'users' ? 'user' : 'group' }} operations
+      in this directory. Ask a superadmin to grant bulk import, export or delete.
+    </p>
+
     <!-- Import tab — Users -->
-    <section v-if="activeTab === 'import' && entityType === 'users'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
+    <section v-if="activeTab === 'import' && canBulkImport && entityType === 'users'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
       <h2 class="text-lg font-semibold mb-3">Import Users from CSV</h2>
       <div class="space-y-2">
         <!-- 12-column grid: Active profile (4) + Template wrapper (4) + CSV File (4).
@@ -59,7 +68,9 @@
                 <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
               </select>
             </div>
-            <div class="relative" ref="menuRef">
+            <!-- Creating, editing and deleting templates is its own feature
+                 (csv_template.manage), separate from running an import. -->
+            <div v-if="canManageTemplates" class="relative" ref="menuRef">
               <button @click="showTemplateMenu = !showTemplateMenu" class="btn-primary whitespace-nowrap flex items-center gap-1">
                 Template <span class="text-xs">&#9660;</span>
               </button>
@@ -82,7 +93,33 @@
           </div>
 
           <div class="col-span-4">
-            <label class="block text-sm font-medium text-gray-700 mb-1">CSV File <span class="text-red-500">*</span></label>
+            <div class="flex items-baseline justify-between gap-2 mb-1">
+              <label class="text-sm font-medium text-gray-700">CSV File <span class="text-red-500">*</span></label>
+              <FileFormatHelp title="User import file format">
+                <ul class="list-disc pl-4 space-y-1.5" data-testid="user-import-format">
+                  <li>Columns follow the selected template's mappings; columns the template doesn't mention aren't imported.</li>
+                  <li>For a multi-valued attribute, separate the values in one cell with <code>|</code>
+                    (write <code>\|</code> for a literal pipe).</li>
+                  <li><code>groups</code> (or the column the template maps to group memberships) is optional: groups to add
+                    the user to, separated by <code>|</code>. Each group is a <code>cn</code>, which must match exactly one
+                    group you can manage, or a full DN.</li>
+                  <li>Groups are only added, never removed. They apply to new users and to users updated by
+                    “Overwrite existing”; users skipped as already existing are left as they are. A group that can't be
+                    added is reported, and the user is still imported.</li>
+                  <li>The user export writes this column when “Include a <code>groups</code> column” is ticked, so an export
+                    can be edited and imported again.</li>
+                  <li class="font-medium text-gray-900">Wrap any cell that contains DNs in double quotes. The commas inside
+                    a DN otherwise split the cell into separate columns.</li>
+                  <li data-testid="user-import-governance-note">Adding users to groups needs the Manage group members permission
+                    and follows the same approval{{ auth.isCommunityDistribution ? '' : ' and separation-of-duties' }} rules as
+                    editing groups by hand.</li>
+                </ul>
+                <p class="font-medium text-gray-900 mt-3 mb-1">Example</p>
+                <pre class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre overflow-x-auto">uid,cn,sn,mail,groups
+jsmith,John Smith,Smith,jsmith@example.com,"admins|cn=Support,ou=Groups,dc=example,dc=com"
+adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
+              </FileFormatHelp>
+            </div>
             <!-- Custom file picker: bordered .input wrapper with the
                  filename on the left and a borderless chip-style 'Choose
                  File' button on the right. h-[38px] locks the field
@@ -160,19 +197,35 @@
       <div v-if="previewResult" class="mt-4">
         <div class="p-4 rounded-lg bg-blue-50 border border-blue-200 text-sm mb-3">
           <p class="font-medium text-blue-800 mb-2">Preview: {{ previewResult.totalRows }} rows to import</p>
+          <!-- Columns the template doesn't mention are never written (no
+               passthrough under a template); name them so nothing is dropped
+               silently. Informational, not an error. -->
+          <p v-if="previewResult.unmappedColumns?.length" data-testid="unmapped-columns"
+             class="text-xs text-gray-700 bg-white/70 border border-gray-200 rounded px-2 py-1 mb-2">
+            {{ previewResult.unmappedColumns.length === 1 ? 'This column isn’t' : 'These columns aren’t' }}
+            in the template and won’t be imported:
+            <span class="font-mono">{{ previewResult.unmappedColumns.join(', ') }}</span>.
+            Add {{ previewResult.unmappedColumns.length === 1 ? 'it' : 'them' }} to the template to import the values.
+          </p>
           <!-- Summary banner: surface schema validation issues (rows missing
                required attribute values) up-front so the user doesn't have
                to scan the table to spot them. The import isn't blocked —
                those rows would still error during the LDAP add — but
                warning at preview time saves a confirm-then-fail round-trip. -->
           <p v-if="previewWarningCount && importBlocked" class="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 mb-2">
-            Import blocked: {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row is' : 'rows are' }}
-            missing required attributes. This template is set to block the import until every row is valid —
+            Import blocked: {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row has a problem' : 'rows have problems' }}
+            (see the Issues column). This template is set to block the import until every row is valid —
             fix the rows (or switch the template to “Skip rows with errors”) and preview again.
           </p>
           <p v-else-if="previewWarningCount" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
-            {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row is' : 'rows are' }}
-            missing required attributes — they will fail at import.
+            {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row has a problem' : 'rows have problems' }}
+            (see the Issues column) — they will fail at import.
+          </p>
+          <p v-if="userPreviewGroupProblemCount" data-testid="user-preview-group-problems"
+             class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
+            {{ userPreviewGroupProblemCount }} group {{ userPreviewGroupProblemCount === 1 ? 'change' : 'changes' }}
+            can't be applied (no permission, not found, ambiguous or outside your scope) and will be reported as errors.
+            The users themselves still import.
           </p>
           <ExpandablePreview title="Import preview">
             <table class="w-full text-xs">
@@ -182,20 +235,33 @@
                   <th class="px-2 py-1 text-left font-medium text-blue-700">DN</th>
                   <th v-for="attr in userPreviewAttrCols" :key="attr"
                       class="px-2 py-1 text-left font-medium text-blue-700 whitespace-nowrap">{{ attr }}</th>
+                  <th v-if="userPreviewHasGroups" class="px-2 py-1 text-left font-medium text-blue-700">Groups</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Issues</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-blue-100">
                 <tr v-for="(row, idx) in previewResult.rows" :key="row.rowNumber"
-                    :class="row.missingRequired?.length ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
+                    :class="row.missingRequired?.length || row.message ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
                   <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td v-for="attr in userPreviewAttrCols" :key="attr"
                       class="px-2 py-1 font-mono text-[13px] text-gray-700 break-all">{{ row.attributes?.[attr] ?? '' }}</td>
-                  <td class="px-2 py-1 text-amber-700">
-                    <span v-if="row.missingRequired?.length"
+                  <td v-if="userPreviewHasGroups" class="px-2 py-1 pr-4 align-top" data-testid="user-preview-groups">
+                    <ul v-if="row.memberChanges?.length" class="space-y-1">
+                      <li v-for="(c, ci) in row.memberChanges" :key="ci" :title="c.memberDn || c.member">
+                        <span class="block font-mono text-gray-800 break-all">{{ c.member }}</span>
+                        <span class="block" :class="memberOutcomeClass(c.outcome)">{{ memberOutcomeLabel(c) }}</span>
+                      </li>
+                    </ul>
+                  </td>
+                  <td class="px-2 py-1 text-amber-700" data-testid="user-preview-issues">
+                    <!-- A DN that couldn't be resolved says why (outside the
+                         container, not a DN, column not in the file), as does
+                         a row the admin's permissions would refuse. -->
+                    <span v-if="row.message">{{ row.message }}</span>
+                    <span v-else-if="row.missingRequired?.length"
                           :title="`Missing required: ${row.missingRequired.join(', ')}`">
-                      missing: {{ row.missingRequired.join(', ') }}
+                      Missing: {{ row.missingRequired.join(', ') }}
                     </span>
                   </td>
                 </tr>
@@ -230,9 +296,26 @@
           <div class="text-center"><p class="text-2xl font-bold text-yellow-600">{{ importResult.skipped }}</p><p class="text-xs text-gray-500">Skipped</p></div>
           <div class="text-center"><p class="text-2xl font-bold text-red-600">{{ importResult.errors }}</p><p class="text-xs text-gray-500">Errors</p></div>
         </div>
+        <p v-if="userImportQueuedCount" data-testid="user-import-groups-queued"
+           class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
+          {{ userImportQueuedCount }} group {{ userImportQueuedCount === 1 ? 'membership is' : 'memberships are' }}
+          waiting for approval and will apply once approved.
+        </p>
         <ul v-if="importResult.rows?.filter(r => r.status === 'ERROR').length" class="space-y-1">
           <li v-for="r in importResult.rows.filter(r => r.status === 'ERROR')" :key="r.rowNumber" class="text-red-600 text-xs">
             Row {{ r.rowNumber }}: {{ r.message }}
+          </li>
+        </ul>
+        <!-- Users that imported but couldn't be added to some of their groups. -->
+        <ul v-if="userImportGroupFailures.length" class="space-y-1 mt-2" data-testid="user-import-group-failures">
+          <li v-for="r in userImportGroupFailures" :key="r.rowNumber" class="text-red-600 text-xs">
+            Row {{ r.rowNumber }}<span v-if="r.dn" class="font-mono"> ({{ r.dn }})</span>: imported, but not added to
+            {{ failedMemberChanges(r).length === 1 ? 'a group' : `${failedMemberChanges(r).length} groups` }}
+            <ul class="ml-4 mt-0.5 space-y-0.5">
+              <li v-for="(c, ci) in failedMemberChanges(r)" :key="ci">
+                <span class="font-mono">{{ c.member }}</span>: {{ memberOutcomeLabel(c) }}
+              </li>
+            </ul>
           </li>
         </ul>
         <!-- Skipped rows are expected outcomes (existing entries left as-is per
@@ -251,7 +334,7 @@
     </section>
 
     <!-- Export tab — Users -->
-    <section v-if="activeTab === 'export' && entityType === 'users'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
+    <section v-if="activeTab === 'export' && canBulkExport && entityType === 'users'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
       <h2 class="text-lg font-semibold mb-3">Export Users to CSV</h2>
       <div class="space-y-2">
         <!-- 12-column grid: LDAP Filter (4) + Base DN (4) + Attributes (4). -->
@@ -263,6 +346,17 @@
           </div>
           <FormField class="col-span-4 !mb-0" label="Attributes (comma-separated)" v-model="exportForm.attributes" placeholder="cn,mail,uid,sn" />
         </div>
+        <label class="flex items-start gap-2 text-sm text-gray-700 cursor-pointer">
+          <input type="checkbox" v-model="exportForm.includeGroups" class="rounded text-blue-600 mt-0.5"
+                 data-testid="export-include-groups" />
+          <span>
+            Include a <code>groups</code> column
+            <span class="block text-xs text-gray-500">
+              Each user's direct group memberships, among the groups you can see, separated by <code>|</code>:
+              the group's cn, or its DN when two groups share a cn. The user import reads this column back.
+            </span>
+          </span>
+        </label>
         <button @click="doExport" :disabled="exporting" class="btn-primary">
           {{ exporting ? 'Exporting…' : 'Download CSV' }}
         </button>
@@ -277,19 +371,20 @@
     />
 
     <!-- Import tab — Groups -->
-    <section v-if="activeTab === 'import' && entityType === 'groups'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
+    <section v-if="activeTab === 'import' && canBulkImport && entityType === 'groups'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
       <h2 class="text-lg font-semibold mb-3">Import Groups from CSV</h2>
       <div class="space-y-2">
-        <!-- 12-column grid: Parent DN (3) + Object Class (3)
-             + Conflict Handling (3) + CSV File (3) = 12.
+        <!-- 12-column grid: Active profile (4) + Object Class (4) + CSV File (4) = 12.
+             There is no conflict-handling choice for groups: an existing group
+             takes the attributes a row provides and keeps the ones it leaves blank.
              Member Attribute is fully derived from Object Class
              (groupOfNames → member, groupOfUniqueNames → uniqueMember,
              posixGroup → memberUid) so it's resolved silently in the
              groupMemberAttr computed and doesn't need a UI field. -->
         <div class="grid grid-cols-12 gap-2 items-start">
-          <ActiveProfileField class="col-span-3"
+          <ActiveProfileField class="col-span-4"
             :name="activeProfile?.name" :color="activeProfile?.themeColor" :dn="activeGroupTargetDn" />
-          <div class="col-span-3">
+          <div class="col-span-4">
             <label for="bulk-group-object-class" class="block text-sm font-medium text-gray-700 mb-1">Object Class</label>
             <select id="bulk-group-object-class" v-model="groupImportForm.objectClass" class="input w-full">
               <option value="groupOfNames">groupOfNames</option>
@@ -297,15 +392,40 @@
               <option value="posixGroup">posixGroup</option>
             </select>
           </div>
-          <div class="col-span-3">
-            <label for="bulk-group-conflict-handling" class="block text-sm font-medium text-gray-700 mb-1">Conflict Handling</label>
-            <select id="bulk-group-conflict-handling" v-model="groupImportForm.conflictHandling" class="input w-full">
-              <option value="SKIP">Skip existing</option>
-              <option value="OVERWRITE">Overwrite existing</option>
-            </select>
-          </div>
-          <div class="col-span-3">
-            <label class="block text-sm font-medium text-gray-700 mb-1">CSV File <span class="text-red-500">*</span></label>
+          <div class="col-span-4">
+            <div class="flex items-baseline justify-between gap-2 mb-1">
+              <label class="text-sm font-medium text-gray-700">CSV File <span class="text-red-500">*</span></label>
+              <FileFormatHelp title="Group import file format">
+                <ul class="list-disc pl-4 space-y-1.5">
+                  <li>The first row is a header row naming the columns. Column names ignore case; any order works.</li>
+                  <li><code>cn</code> <span class="text-red-600">(required)</span> names the group. Its DN is
+                    <code>cn=&lt;cn&gt;</code> under the active profile's group container. A group that doesn't exist is created.</li>
+                  <li><code>description</code>, <code>owner</code> and other group attributes are optional. On an existing group,
+                    a value you provide replaces the current one; a blank cell or a missing column leaves it unchanged.</li>
+                  <li><code>members</code> is optional: one or more members separated by <code>|</code>. Each member is either
+                    <ul class="list-[circle] pl-4 mt-0.5 space-y-0.5">
+                      <li>a full DN, e.g. <code>uid=jsmith,ou=People,dc=example,dc=com</code>, or</li>
+                      <li>a <code>uid</code>, e.g. <code>jsmith</code>, which must match exactly one user you can see.</li>
+                    </ul>
+                  </li>
+                  <li class="font-medium text-gray-900">Wrap a <code>members</code> cell that contains DNs in double quotes.
+                    The commas inside a DN otherwise split the cell into separate columns.</li>
+                  <li><code>member-operation</code> is required when <code>members</code> is filled in: <code>add</code>, or
+                    <code>delete</code> to remove the listed members from an existing group. Each row has one operation; to add
+                    some members and remove others, use two rows with the same <code>cn</code>.</li>
+                  <li>A new <code>groupOfNames</code> or <code>groupOfUniqueNames</code> group needs at least one member;
+                    a <code>posixGroup</code> can be created empty.</li>
+                  <li>A <code>dn</code> column, as written by the group export, is ignored. A file can make up to 2,000 member changes.</li>
+                  <li data-testid="group-import-governance-note">Member changes need the Manage group members permission and
+                    follow the same approval{{ auth.isCommunityDistribution ? '' : ' and separation-of-duties' }} rules as editing them by hand.</li>
+                </ul>
+                <p class="font-medium text-gray-900 mt-3 mb-1">Example</p>
+                <pre class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre overflow-x-auto">cn,description,members,member-operation
+engineering,Engineering team,"uid=jsmith,ou=People,dc=example,dc=com|uid=adoe,ou=People,dc=example,dc=com",add
+support,Support desk,bwong|cchan,add
+engineering,,"uid=old,ou=People,dc=example,dc=com",delete</pre>
+              </FileFormatHelp>
+            </div>
             <label class="csv-file-picker input flex items-center gap-2 w-full cursor-pointer !py-0 !pr-1 hover:border-gray-400 transition-colors bg-white">
               <span class="flex-1 truncate text-sm"
                     :class="groupImportFile ? 'text-gray-900 font-medium' : 'text-gray-500'">
@@ -318,9 +438,9 @@
             </label>
           </div>
         </div>
-        <p class="text-xs text-gray-500">
-          CSV columns: <code>cn</code> (required), <code>description</code>, <code>owner</code>, <code>members</code> (pipe-separated DNs).
-          First row must be a header row.
+        <p v-if="!canManageGroupMembers" data-testid="group-import-no-member-permission"
+           class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+          You don’t have permission to manage group members, so a file that lists any members will be refused.
         </p>
         <button @click="doGroupPreview" :disabled="!canGroupImport || groupPreviewing" class="btn-primary">
           {{ groupPreviewing ? 'Loading preview…' : 'Preview Import' }}
@@ -333,7 +453,12 @@
           <p class="font-medium text-blue-800 mb-2">Preview: {{ groupPreviewResult.totalRows }} groups to import</p>
           <p v-if="groupPreviewWarningCount" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
             {{ groupPreviewWarningCount }} {{ groupPreviewWarningCount === 1 ? 'row is' : 'rows are' }}
-            missing required attributes — they will fail at import.
+            missing required attributes or can't run — they will fail at import.
+          </p>
+          <p v-if="groupPreviewMemberProblemCount" data-testid="group-preview-member-problems"
+             class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
+            {{ groupPreviewMemberProblemCount }} member {{ groupPreviewMemberProblemCount === 1 ? 'change' : 'changes' }}
+            can't be applied (not found, ambiguous, out of scope or contradictory) and will be reported as errors.
           </p>
           <ExpandablePreview title="Group import preview">
             <table class="w-full text-xs">
@@ -341,20 +466,45 @@
                 <tr>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">#</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">DN</th>
+                  <th class="px-2 py-1 text-left font-medium text-blue-700">Action</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Attributes</th>
+                  <th class="px-2 py-1 text-left font-medium text-blue-700">Members</th>
                   <th class="px-2 py-1 text-left font-medium text-blue-700">Issues</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-blue-100">
                 <tr v-for="(row, idx) in groupPreviewResult.rows" :key="row.rowNumber"
-                    :class="row.missingRequired?.length ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
+                    :class="row.missingRequired?.length || row.message ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
-                  <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
-                  <td class="px-2 py-1 text-gray-600">{{ formatAttrs(row.attributes) }}</td>
-                  <td class="px-2 py-1 text-amber-700">
-                    <span v-if="row.missingRequired?.length"
+                  <td class="px-2 py-1 pr-4 font-mono text-[13px] text-gray-800 break-all">{{ row.computedDn || '(no DN)' }}</td>
+                  <td class="px-2 py-1 text-gray-700" data-testid="group-preview-action">{{ groupActionLabel(row.groupAction) }}</td>
+                  <td class="px-2 py-1 text-gray-600" data-testid="group-preview-attributes">
+                    <!-- An existing group shows only what changes; a new one shows what it's created with. -->
+                    <template v-if="row.groupAction === 'UPDATE'">
+                      <ul v-if="row.attributeChanges?.length" class="space-y-0.5">
+                        <li v-for="a in row.attributeChanges" :key="a.attribute">
+                          {{ a.attribute }}: <span class="text-gray-500">{{ a.currentValue ?? '(not set)' }}</span> → {{ a.newValue }}
+                        </li>
+                      </ul>
+                      <span v-else class="text-gray-500">no attribute changes</span>
+                    </template>
+                    <template v-else>{{ formatAttrs(row.attributes) }}</template>
+                  </td>
+                  <td class="px-2 py-1 pr-4 align-top" data-testid="group-preview-members">
+                    <!-- One entry per member: the value from the file, then what will
+                         happen to it on its own line, so long DNs stay readable. -->
+                    <ul v-if="row.memberChanges?.length" class="space-y-1">
+                      <li v-for="(c, ci) in row.memberChanges" :key="ci" :title="c.memberDn || c.member">
+                        <span class="block font-mono text-gray-800 break-all">{{ c.member }}</span>
+                        <span class="block" :class="memberOutcomeClass(c.outcome)">{{ memberOutcomeLabel(c) }}</span>
+                      </li>
+                    </ul>
+                  </td>
+                  <td class="px-2 py-1 pl-4 text-amber-700" data-testid="group-preview-issues">
+                    <span v-if="row.message">{{ row.message }}</span>
+                    <span v-else-if="row.missingRequired?.length"
                           :title="`Missing required: ${row.missingRequired.join(', ')}`">
-                      missing: {{ row.missingRequired.join(', ') }}
+                      Missing: {{ row.missingRequired.join(', ') }}
                     </span>
                   </td>
                 </tr>
@@ -386,16 +536,25 @@
           <div class="text-center"><p class="text-2xl font-bold text-yellow-600">{{ groupImportResult.skipped }}</p><p class="text-xs text-gray-500">Skipped</p></div>
           <div class="text-center"><p class="text-2xl font-bold text-red-600">{{ groupImportResult.errors }}</p><p class="text-xs text-gray-500">Errors</p></div>
         </div>
-        <ul v-if="groupImportResult.rows?.filter(r => r.status === 'ERROR').length" class="space-y-1">
+        <p v-if="groupImportQueuedCount" data-testid="group-import-queued" class="text-xs text-amber-700 mb-2">
+          {{ groupImportQueuedCount }} member {{ groupImportQueuedCount === 1 ? 'addition is' : 'additions are' }}
+          waiting for approval and will apply once approved.
+        </p>
+        <ul v-if="groupImportResult.rows?.filter(r => r.status === 'ERROR').length" class="space-y-1" data-testid="group-import-errors">
           <li v-for="r in groupImportResult.rows.filter(r => r.status === 'ERROR')" :key="r.rowNumber" class="text-red-600 text-xs">
             Row {{ r.rowNumber }}: {{ r.message }}
+            <ul v-if="failedMemberChanges(r).length" class="ml-4 mt-0.5 space-y-0.5">
+              <li v-for="(c, ci) in failedMemberChanges(r)" :key="ci">
+                <span class="font-mono">{{ c.member }}</span>: {{ memberOutcomeLabel(c) }}
+              </li>
+            </ul>
           </li>
         </ul>
         <!-- Skipped rows are expected outcomes (existing entries left as-is per
              the template's conflict handling), so they read as info, not errors. -->
         <div v-if="rowsWithStatus(groupImportResult, 'SKIPPED').length" class="mt-3" data-testid="group-import-skipped">
           <p class="text-xs font-medium text-gray-700 mb-1">
-            Skipped ({{ rowsWithStatus(groupImportResult, 'SKIPPED').length }}) — left unchanged per the template's conflict handling
+            Skipped ({{ rowsWithStatus(groupImportResult, 'SKIPPED').length }}) — nothing needed changing
           </p>
           <ul class="space-y-1 max-h-48 overflow-y-auto">
             <li v-for="r in rowsWithStatus(groupImportResult, 'SKIPPED')" :key="r.rowNumber" class="text-gray-600 text-xs">
@@ -407,7 +566,7 @@
     </section>
 
     <!-- Export tab — Groups -->
-    <section v-if="activeTab === 'export' && entityType === 'groups'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
+    <section v-if="activeTab === 'export' && canBulkExport && entityType === 'groups'" class="bg-white border border-gray-200 border-t-0 rounded-b-xl p-6">
       <h2 class="text-lg font-semibold mb-3">Export Groups to CSV</h2>
       <div class="space-y-2">
         <!-- 12-column grid:
@@ -581,30 +740,40 @@
               <div class="flex flex-wrap content-start gap-1 mt-1 h-12 overflow-y-auto" data-testid="sample-columns">
                 <template v-if="sampleColumns.length">
                   <span class="text-xs text-gray-500 mr-1">{{ sampleColumns.length }} columns:</span>
-                  <code v-for="(c, ci) in sampleColumns" :key="ci"
-                        class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">{{ c }}</code>
+                  <template v-for="(c, ci) in sampleColumns" :key="ci">
+                    <code v-if="isSampleDnColumn(c)" data-testid="sample-dn-column"
+                          class="font-mono text-[11px] bg-blue-50 border border-blue-300 text-blue-800 rounded px-1.5 py-0.5"
+                          title="Each entry's DN is read from this column, so it isn't listed under Column Mappings">{{ c }}<span class="font-sans"> · DN column</span></code>
+                    <code v-else-if="isSampleGroupsColumn(c)" data-testid="sample-groups-column"
+                          class="font-mono text-[11px] bg-violet-50 border border-violet-300 text-violet-800 rounded px-1.5 py-0.5"
+                          title="Each user is added to the groups listed in this column">{{ c }}<span class="font-sans"> · group memberships</span></code>
+                    <code v-else class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5">{{ c }}</code>
+                  </template>
                 </template>
                 <span v-else class="text-xs italic text-gray-400">{{ sampleHint }}</span>
               </div>
+              <p v-if="sampleMissingDnColumn" data-testid="sample-dn-missing"
+                 class="text-xs text-amber-800 bg-amber-50 border border-amber-300 rounded-md px-2 py-1.5 mt-1">
+                The sample file has no <span class="font-mono">{{ effectiveDnColumn }}</span> column, so imports with
+                this template would find no DN for each entry. Change the DN column<template v-if="sampleDnCandidates.length">, or use
+                  <template v-for="(c, ci) in sampleDnCandidates" :key="c"><button type="button"
+                    class="font-mono text-blue-700 underline hover:text-blue-900" @click="useSampleDnColumn(c)">{{ c }}</button><template v-if="ci < sampleDnCandidates.length - 1">, </template></template></template>.
+              </p>
             </div>
           </div>
         </div>
 
-        <TemplateColumnMappings v-model:stacks="templateForm.mapping"
-          :editable-inputs="!sampleFileName" :from-sample="!!sampleFileName" :samples="sampleValues"
-          :dn-column="dnFromColumn ? templateForm.dnSourceColumn : null"
-          @remove="removeTemplateEntry">
+        <TemplateColumnMappings v-model:rows="templateForm.rows"
+          :editable-columns="!sampleFileName" :from-sample="!!sampleFileName" :samples="sampleValues"
+          :dn-column="effectiveDnColumn" :schema="ocSchema" :schema-state="ocSchemaState"
+          :check="mappingCheck" @remove="removeTemplateRow">
           <template #actions>
-            <span v-if="loadingOcAttrs" class="text-xs text-gray-500">Loading attributes…</span>
-            <button type="button" class="btn-sm" @click="autoMatchMapping" :disabled="!hasAnyInput"
-                    title="Line up input columns with attributes of the same (or a common alias) name">
-              Auto-match by name
+            <span v-if="ocSchemaState === 'loading'" class="text-xs text-gray-500">Loading attributes…</span>
+            <button type="button" class="btn-sm" @click="suggestByName" :disabled="!canSuggest"
+                    title="Fill blank attributes where the column name matches an attribute (or a common alias) of the selected object classes">
+              Suggest by name
             </button>
             <button v-if="!sampleFileName" type="button" class="btn-sm" @click="addInputColumn">+ Add input column</button>
-            <button v-if="lastRemovedEntry" type="button" @click="undoRemoveTemplateEntry" class="btn-sm"
-                    :title="`Restore the ${lastRemovedEntry.attr.name} mapping`">
-              Undo remove ({{ lastRemovedEntry.attr.name }})
-            </button>
           </template>
         </TemplateColumnMappings>
 
@@ -653,9 +822,10 @@ import AppModal from '@/components/AppModal.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import BulkDeleteSection from './BulkDeleteSection.vue'
 import TemplateColumnMappings from './TemplateColumnMappings.vue'
+import FileFormatHelp from './FileFormatHelp.vue'
 import {
-  applySampleColumns, autoMatch, entriesToStacks, padStacks, parseSampleHeader, rebuildAttrs, stacksToEntries,
-  type MappingAttr, type MappingStacks,
+  applySampleColumns, checkMappings, dnLikeColumns, entriesToRows, parseSampleHeader, repeatedColumns,
+  isGroupMemberships, rowsToEntries, sameColumn, suggestAttributes, type MappingRow, type SchemaAttr,
 } from './templateMapping'
 import { useListTypeahead } from '@/composables/useListTypeahead'
 
@@ -680,8 +850,8 @@ interface CsvTemplate {
   fieldDelimiter?: string
   entries?: TemplateEntry[]
 }
-interface ExportForm { filter: string, baseDn: string, attributes: string }
-interface GroupImportForm { objectClass: string, conflictHandling: string }
+interface ExportForm { filter: string, baseDn: string, attributes: string, includeGroups: boolean }
+interface GroupImportForm { objectClass: string }
 /** Provisioning profile as consumed by the import target + theme banner. */
 interface ProfileLite {
   id: string
@@ -703,19 +873,43 @@ interface TemplateForm {
   // CSV column holding the full DN; '' means construct from RDN + parent DN.
   dnSourceColumn: string
   fieldDelimiter: string
-  // Input-column and attribute stacks; row N of one maps to row N of the other.
-  mapping: MappingStacks
+  // One row per CSV input column, with the LDAP attribute typed for it.
+  rows: MappingRow[]
 }
-/** An attribute removed from the mapping stack, kept so it can be restored. */
-interface RemovedEntry { attr: MappingAttr, index: number }
+/** One member change on a group-import row (see GroupMemberChange.java). */
+interface GroupMemberChange {
+  member: string
+  memberDn?: string | null
+  op: 'ADD' | 'REMOVE'
+  outcome: string
+  message?: string | null
+  approvalId?: string | null
+}
 interface PreviewRow {
   rowNumber: number
   computedDn?: string
   attributes?: Record<string, string>
   missingRequired?: string[]
+  // Group imports only: what the row does, why it can't run, and its member changes.
+  groupAction?: 'CREATE' | 'UPDATE' | null
+  message?: string | null
+  memberChanges?: GroupMemberChange[]
+  // Attributes an existing group gets new values for (see GroupAttributeChange.java).
+  attributeChanges?: { attribute: string, currentValue?: string | null, newValue: string }[]
 }
-interface PreviewResult { totalRows: number, rows: PreviewRow[] }
-interface ImportRowResult { rowNumber: number, dn?: string, status: string, message?: string }
+interface PreviewResult {
+  totalRows: number
+  rows: PreviewRow[]
+  // Columns the template doesn't mention; a template-driven import skips them.
+  unmappedColumns?: string[]
+}
+interface ImportRowResult {
+  rowNumber: number
+  dn?: string
+  status: string
+  message?: string
+  memberChanges?: GroupMemberChange[]
+}
 interface ImportResult {
   totalRows: number
   created: number
@@ -748,7 +942,7 @@ const importResult  = ref<ImportResult | null>(null)
 const previewResult = ref<PreviewResult | null>(null)
 
 const importConfirmText = ref('')
-const exportForm = ref<ExportForm>({ filter: '', baseDn: '', attributes: 'cn,mail,uid' })
+const exportForm = ref<ExportForm>({ filter: '', baseDn: '', attributes: 'cn,mail,uid', includeGroups: false })
 
 // ── Group bulk state ─────────────────────────────────────────────────────────
 const groupImporting    = ref(false)
@@ -759,7 +953,6 @@ const groupImportResult = ref<ImportResult | null>(null)
 const groupPreviewResult = ref<PreviewResult | null>(null)
 const groupImportForm = ref<GroupImportForm>({
   objectClass: 'groupOfNames',
-  conflictHandling: 'SKIP',
 })
 const groupImportConfirmText = ref('')
 const groupExportForm = ref<GroupExportForm>({
@@ -795,13 +988,31 @@ onBeforeUnmount(() => document.removeEventListener('click', onClickOutside))
 // to its default "browse from directory base DN" behaviour).
 const auth = useAuthStore()
 
-// Bulk delete is users-only and gated on the bulk.delete feature. When the
-// admin switches to Groups while on the Delete tab, fall back to Import so
-// the panel never renders blank.
-const canBulkDelete = computed(() => auth.hasFeature('bulk.delete'))
-watch(entityType, v => {
-  if (v === 'groups' && activeTab.value === 'delete') activeTab.value = 'import'
+// Each tab is gated on the feature its endpoints require, so the page only
+// offers what the backend will allow (a read-only admin gets Export only).
+// Bulk delete is users-only. Template create/edit/delete is a separate
+// feature from running an import.
+const canBulkImport      = computed(() => auth.hasFeature('bulk.import'))
+const canBulkExport      = computed(() => auth.hasFeature('bulk.export'))
+const canBulkDelete      = computed(() => auth.hasFeature('bulk.delete'))
+const canManageTemplates = computed(() => auth.hasFeature('csv_template.manage'))
+// Group import files that list members also need group.manage_members (enforced server-side).
+const canManageGroupMembers = computed(() => auth.hasFeature('group.manage_members'))
+
+type BulkTab = 'import' | 'export' | 'delete'
+const availableTabs = computed<BulkTab[]>(() => {
+  const tabs: BulkTab[] = []
+  if (canBulkImport.value) tabs.push('import')
+  if (canBulkExport.value) tabs.push('export')
+  if (canBulkDelete.value && entityType.value === 'users') tabs.push('delete')
+  return tabs
 })
+// Keep the active tab on one the admin can use: the page opens on Import by
+// default, and Delete disappears when switching to Groups. Falls back to the
+// first available tab so the panel never renders blank.
+watch(availableTabs, tabs => {
+  if (tabs.length && !tabs.includes(activeTab.value)) activeTab.value = tabs[0]
+}, { immediate: true })
 
 // Admin bulk operations are scoped by the sidebar profile picker — there is no
 // separate target selector on these forms. We read the picked profile from the
@@ -857,7 +1068,7 @@ const deleteTemplateTarget = ref<CsvTemplate | null>(null)
 const templateForm = ref<TemplateForm>({
   name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
   errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', fieldDelimiter: ',',
-  mapping: { inputs: [], attrs: [] },
+  rows: [],
 })
 // Whether the template reads the DN from a CSV column (vs constructing it from
 // the RDN attribute + parent DN). Kept separate so toggling off preserves the
@@ -938,7 +1149,7 @@ function applySample() {
     sampleText.value, templateForm.value.fieldDelimiter || ',', templateForm.value.skipHeaderRow)
   sampleColumns.value = columns
   sampleValues.value = samples ? Object.fromEntries(columns.map((c, i) => [c, samples[i]])) : null
-  applySampleColumns(templateForm.value.mapping, columns)
+  templateForm.value.rows = applySampleColumns(templateForm.value.rows, columns)
 }
 
 async function onSampleFileChange(e: Event) {
@@ -972,30 +1183,62 @@ watch(() => [templateForm.value.fieldDelimiter, templateForm.value.skipHeaderRow
   if (sampleFileName.value) applySample()
 })
 
-const hasAnyInput = computed(() => templateForm.value.mapping.inputs.some(v => v != null && v.trim() !== ''))
+// The template's DN column when it reads DNs from a column, and its RDN
+// attribute when it builds them; exactly one of the two is set.
+const effectiveDnColumn = computed(() =>
+  dnFromColumn.value ? (templateForm.value.dnSourceColumn.trim() || null) : null)
+const effectiveRdnAttribute = computed(() =>
+  dnFromColumn.value ? null : (templateForm.value.targetKeyAttribute.trim() || null))
 
-function autoMatchMapping() {
-  const m = templateForm.value.mapping
-  m.inputs = autoMatch(m)
-  padStacks(m)
+// Sample columns whose name repeats, and whether the sample has the DN column.
+const sampleRepeated = computed(() => repeatedColumns(sampleColumns.value))
+const sampleMissingDnColumn = computed(() => !!sampleFileName.value && !!effectiveDnColumn.value
+  && !sampleColumns.value.some(c => sameColumn(c, effectiveDnColumn.value)))
+const sampleDnCandidates = computed(() => dnLikeColumns(sampleColumns.value))
+
+function isSampleDnColumn(c: string): boolean {
+  return sameColumn(c, effectiveDnColumn.value)
+}
+
+function isSampleGroupsColumn(c: string): boolean {
+  return templateForm.value.rows.some(r => isGroupMemberships(r.attribute) && sameColumn(r.column, c))
+}
+
+function useSampleDnColumn(c: string) {
+  templateForm.value.dnSourceColumn = c
+}
+
+const mappingCheck = computed(() => checkMappings(templateForm.value.rows, {
+  schema: ocSchemaState.value === 'loaded' ? ocSchema.value : null,
+  dnColumn: effectiveDnColumn.value,
+  rdnAttribute: effectiveRdnAttribute.value,
+  repeatedColumns: sampleFileName.value ? sampleRepeated.value : [],
+}))
+
+const canSuggest = computed(() => ocSchema.value.length > 0
+  && templateForm.value.rows.some(r => r.column.trim() && !r.attribute.trim()))
+
+/** Fills blank attributes whose column name matches an attribute or a common alias. */
+function suggestByName() {
+  const { rows, filled } = suggestAttributes(templateForm.value.rows, ocSchema.value, effectiveDnColumn.value)
+  templateForm.value.rows = rows
+  if (filled === 0) notif.info('No column names matched an attribute of the selected object classes.')
 }
 
 function addInputColumn() {
-  const m = templateForm.value.mapping
-  const free = m.inputs.findIndex(v => v == null)
-  if (free >= 0) { m.inputs[free] = ''; return }
-  m.inputs.push('')
-  m.attrs.push(null)
+  templateForm.value.rows.push({ column: '', attribute: '' })
 }
 
-// Attributes removed in this editing session, most recent last, so
-// "Undo remove" can restore them one at a time in reverse order.
-const removedEntries = ref<RemovedEntry[]>([])
-const lastRemovedEntry = computed(() => removedEntries.value[removedEntries.value.length - 1] ?? null)
+function removeTemplateRow(i: number) {
+  templateForm.value.rows.splice(i, 1)
+}
 
 // ObjectClass picker state
 const objectClasses       = ref<string[]>([])
-const loadingOcAttrs      = ref(false)
+// Attributes of the selected object classes. They feed suggestions and the
+// required-attribute check; they never add rows.
+const ocSchema            = ref<SchemaAttr[]>([])
+const ocSchemaState       = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 const selectedOcHighlight = ref<string | null>(null)
 const availableOcHighlight = ref<string | null>(null)
 
@@ -1081,7 +1324,7 @@ const otherTemplateAttrs = computed(() => {
   const rdn = t.dnSourceColumn ? '' : (t.targetKeyAttribute || '').toLowerCase()
   return (t.entries || [])
     .filter(e => e.ldapAttribute && e.ldapAttribute.toLowerCase() !== rdn)
-    .map(e => e.ldapAttribute)
+    .map(e => isGroupMemberships(e.ldapAttribute) ? `${e.csvColumn} (group memberships)` : e.ldapAttribute)
     .join(', ')
 })
 
@@ -1089,10 +1332,11 @@ const canImport = computed(() => {
   return selectedTemplateId.value && importFile.value && !!activeProfile.value
 })
 
-/** Number of preview rows missing any required attribute — drives the
+/** Number of preview rows that will fail — missing a required attribute, or
+ *  refused (unresolvable DN, or a permission the admin lacks). Drives the
  *  amber "N rows will fail" banner above the preview table. */
 const previewWarningCount = computed(() =>
-  (previewResult.value?.rows || []).filter(r => r.missingRequired?.length).length
+  (previewResult.value?.rows || []).filter(r => r.missingRequired?.length || r.message).length
 )
 
 /** When the selected template blocks on errors (errorHandling = ABORT_ON_ERROR)
@@ -1116,9 +1360,86 @@ const userPreviewAttrCols = computed<string[]>(() => {
   return cols
 })
 
+/** Whether any preview row lists groups, which adds a Groups column. */
+const userPreviewHasGroups = computed(() =>
+  (previewResult.value?.rows || []).some(r => r.memberChanges?.length))
+
+/** Group changes in the user preview that can't be applied. */
+const userPreviewGroupProblemCount = computed(() =>
+  (previewResult.value?.rows || [])
+    .flatMap(r => r.memberChanges || [])
+    .filter(c => FAILED_MEMBER_OUTCOMES.has(c.outcome)).length
+)
+
+/** Imported (or updated) users with at least one group that couldn't be added. */
+const userImportGroupFailures = computed(() =>
+  (importResult.value?.rows || []).filter(r => r.status !== 'ERROR' && failedMemberChanges(r).length))
+
+const userImportQueuedCount = computed(() =>
+  (importResult.value?.rows || [])
+    .flatMap(r => r.memberChanges || [])
+    .filter(c => c.outcome === 'QUEUED_FOR_APPROVAL').length
+)
+
 /** Same idea, for the group import preview. */
 const groupPreviewWarningCount = computed(() =>
-  (groupPreviewResult.value?.rows || []).filter(r => r.missingRequired?.length).length
+  (groupPreviewResult.value?.rows || []).filter(r => r.missingRequired?.length || r.message).length
+)
+
+// Member-change outcomes that mean the change won't be (or wasn't) made.
+const FAILED_MEMBER_OUTCOMES = new Set([
+  'REFUSED', 'BLOCKED', 'ERROR', 'MEMBER_NOT_FOUND', 'AMBIGUOUS', 'OUT_OF_SCOPE', 'INVALID',
+])
+const MEMBER_OUTCOME_LABELS: Record<string, string> = {
+  WILL_ADD: 'Will be added',
+  WILL_REMOVE: 'Will be removed',
+  APPLIED: 'Done',
+  QUEUED_FOR_APPROVAL: 'Queued for approval',
+  REFUSED: 'Refused',
+  BLOCKED: 'Blocked by separation of duties',
+  ERROR: 'Failed',
+  ALREADY_MEMBER: 'Already a member',
+  NOT_A_MEMBER: 'Not a member',
+  DUPLICATE: 'Repeated in the file',
+  MEMBER_NOT_FOUND: 'Not found',
+  AMBIGUOUS: 'Ambiguous',
+  OUT_OF_SCOPE: 'Outside your scope',
+  INVALID: 'Invalid',
+}
+
+function memberOutcomeLabel(c: GroupMemberChange): string {
+  const label = MEMBER_OUTCOME_LABELS[c.outcome] || c.outcome
+  // A no-op's message just repeats its label; problems carry the useful detail.
+  return c.message && FAILED_MEMBER_OUTCOMES.has(c.outcome) ? `${label} — ${c.message}` : label
+}
+
+function memberOutcomeClass(outcome: string): string {
+  if (FAILED_MEMBER_OUTCOMES.has(outcome)) return 'text-red-600'
+  if (outcome === 'QUEUED_FOR_APPROVAL') return 'text-amber-700'
+  if (outcome === 'WILL_ADD' || outcome === 'WILL_REMOVE' || outcome === 'APPLIED') return 'text-green-700'
+  return 'text-gray-500'
+}
+
+function groupActionLabel(action?: string | null): string {
+  if (action === 'CREATE') return 'Create'
+  if (action === 'UPDATE') return 'Update'
+  return '—'
+}
+
+function failedMemberChanges(r: ImportRowResult): GroupMemberChange[] {
+  return (r.memberChanges || []).filter(c => FAILED_MEMBER_OUTCOMES.has(c.outcome))
+}
+
+const groupPreviewMemberProblemCount = computed(() =>
+  (groupPreviewResult.value?.rows || [])
+    .flatMap(r => r.memberChanges || [])
+    .filter(c => FAILED_MEMBER_OUTCOMES.has(c.outcome)).length
+)
+
+const groupImportQueuedCount = computed(() =>
+  (groupImportResult.value?.rows || [])
+    .flatMap(r => r.memberChanges || [])
+    .filter(c => c.outcome === 'QUEUED_FOR_APPROVAL').length
 )
 
 const canSaveTemplate = computed(() => {
@@ -1126,8 +1447,9 @@ const canSaveTemplate = computed(() => {
   if (!f.name || f.objectClasses.length === 0) return false
   if (dnColumnMissing.value) return false
   if (delimiterPreset.value === 'other' && !customDelimiterValid.value) return false
-  const { inputs, attrs } = f.mapping
-  return attrs.every((a, i) => !a?.required || !!inputs[i]?.trim())
+  // Required attributes can't be checked until the schema has loaded.
+  if (ocSchemaState.value === 'loading') return false
+  return !mappingCheck.value.blocking
 })
 
 /** Result rows with the given status (e.g. SKIPPED), or none. */
@@ -1163,8 +1485,10 @@ async function loadObjectClasses() {
 }
 
 onMounted(() => {
-  loadTemplates()
-  loadObjectClasses()
+  // Both calls back features the admin may not hold; skipping them avoids
+  // 403s for panels that aren't shown. Object classes feed the template editor.
+  if (canBulkImport.value || canManageTemplates.value) loadTemplates()
+  if (canManageTemplates.value) loadObjectClasses()
 })
 
 function onTemplateSelected() {
@@ -1180,11 +1504,12 @@ function openCreateTemplate() {
   templateForm.value = {
     name: '', objectClasses: [], targetKeyAttribute: 'uid', conflictHandling: 'SKIP',
     errorHandling: 'SKIP_ERRORS', skipHeaderRow: true, dnSourceColumn: '', fieldDelimiter: ',',
-    mapping: { inputs: [], attrs: [] },
+    rows: [],
   }
   dnFromColumn.value = false
   syncDelimiterPicker(',')
-  removedEntries.value = []
+  ocSchema.value = []
+  ocSchemaState.value = 'idle'
   showTemplateModal.value = true
 }
 
@@ -1202,80 +1527,55 @@ function openEditTemplate(t: CsvTemplate) {
     skipHeaderRow: t.skipHeaderRow !== false,
     dnSourceColumn: t.dnSourceColumn ?? '',
     fieldDelimiter: t.fieldDelimiter || ',',
-    mapping: entriesToStacks(t.entries ?? []),
+    rows: entriesToRows(t.entries ?? [], t.dnSourceColumn || null),
   }
   dnFromColumn.value = !!t.dnSourceColumn
   syncDelimiterPicker(templateForm.value.fieldDelimiter)
-  removedEntries.value = []
+  ocSchema.value = []
+  ocSchemaState.value = 'idle'
   showTemplateModal.value = true
-  // Fill in the classes' other attributes (and required markers) around the
-  // saved mappings; attributes saved but no longer in the schema are kept.
-  if (templateForm.value.objectClasses.length) loadObjectClassAttrs(true)
+  // Load the classes' attributes for suggestions and checks; the saved rows
+  // stay exactly as they are.
+  if (templateForm.value.objectClasses.length) loadObjectClassAttrs()
 }
 
 function onObjectClassChange() {
-  return loadObjectClassAttrs(false)
+  return loadObjectClassAttrs()
 }
 
 /**
- * Rebuilds the attribute stack from the selected object classes (required
- * first, then optional), carrying each attribute's input column across.
- * `keepUnknown` keeps attributes already in the stack that the schema no
- * longer lists — used when opening a saved template.
+ * Loads the attributes of the selected object classes (required first, then
+ * optional). Typed mappings are left alone: one whose attribute the classes
+ * no longer have just gets a warning.
  */
-async function loadObjectClassAttrs(keepUnknown: boolean) {
-  const ocs = templateForm.value.objectClasses
+async function loadObjectClassAttrs() {
+  const ocs = [...templateForm.value.objectClasses]
   const form = templateForm.value
   if (ocs.length === 0) {
-    form.mapping = rebuildAttrs(form.mapping, [], false)
-    removedEntries.value = []
+    ocSchema.value = []
+    ocSchemaState.value = 'idle'
     return
   }
-  loadingOcAttrs.value = true
+  ocSchemaState.value = 'loading'
   try {
     const { data } = await getObjectClassesBulk(dirId, ocs)
-    // The modal may have been reopened for another template meanwhile.
-    if (templateForm.value !== form) return
-    const schema: MappingAttr[] = []
+    // The modal may have been reopened, or the classes changed, meanwhile.
+    if (templateForm.value !== form || form.objectClasses.join(',') !== ocs.join(',')) return
+    const schema: SchemaAttr[] = []
     for (const attr of (data.required || [])) {
       if (attr.toLowerCase() !== 'objectclass') schema.push({ name: attr, required: true })
     }
     for (const attr of (data.optional || [])) {
       if (attr.toLowerCase() !== 'objectclass') schema.push({ name: attr, required: false })
     }
-    form.mapping = rebuildAttrs(form.mapping, schema, keepUnknown)
-    // The rebuild re-lists every attribute of the chosen classes, so earlier
-    // removals are already back and their positions no longer apply.
-    removedEntries.value = []
+    ocSchema.value = schema
+    ocSchemaState.value = 'loaded'
   } catch (e) {
+    if (templateForm.value !== form || form.objectClasses.join(',') !== ocs.join(',')) return
+    ocSchema.value = []
+    ocSchemaState.value = 'error'
     notif.error('Failed to load objectClass attributes: ' + errMsg(e))
-  } finally {
-    loadingOcAttrs.value = false
   }
-}
-
-/** Removing an attribute leaves an empty slot so the rows below keep their pairings. */
-function removeTemplateEntry(i: number) {
-  const attr = templateForm.value.mapping.attrs[i]
-  if (!attr || attr.required) return
-  templateForm.value.mapping.attrs[i] = null
-  removedEntries.value.push({ attr, index: i })
-}
-
-/** Puts the most recently removed attribute back in its row. */
-function undoRemoveTemplateEntry() {
-  const last = removedEntries.value.pop()
-  if (!last) return
-  const { inputs, attrs } = templateForm.value.mapping
-  if (last.index < attrs.length && attrs[last.index] == null) {
-    attrs[last.index] = last.attr
-  } else {
-    // Its slot was reused: open a new row there instead.
-    const at = Math.min(last.index, attrs.length)
-    attrs.splice(at, 0, last.attr)
-    inputs.splice(at, 0, null)
-  }
-  padStacks(templateForm.value.mapping)
 }
 
 async function saveTemplate() {
@@ -1294,7 +1594,7 @@ async function saveTemplate() {
       fieldDelimiter: templateForm.value.fieldDelimiter || ',',
       // Inputs without an attribute are saved as ignored, so the import
       // discards them instead of passing them through as same-named attributes.
-      entries: stacksToEntries(templateForm.value.mapping),
+      entries: rowsToEntries(templateForm.value.rows, effectiveDnColumn.value),
     }
     if (editTemplate.value) {
       await updateCsvTemplate(dirId, editTemplate.value.id, payload)
@@ -1460,6 +1760,7 @@ async function doExport() {
       filter:     exportForm.value.filter     || undefined,
       baseDn:     exportForm.value.baseDn     || undefined,
       attributes: exportForm.value.attributes || undefined,
+      includeGroups: exportForm.value.includeGroups || undefined,
     }
     const { data } = await exportCsv(dirId, params)
     downloadBlob(data, 'users.csv')
@@ -1496,7 +1797,6 @@ function buildGroupImportRequest() {
   return {
     // The active profile supplies the target group container (its targetGroupDn).
     profileId: activeProfile.value?.id,
-    conflictHandling: groupImportForm.value.conflictHandling,
     skipHeaderRow: true,
     columnMappings: [],
   }

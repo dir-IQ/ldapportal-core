@@ -134,9 +134,12 @@ const campaignProgress = computed(() => data.value?.campaignProgress || [])
 const approvalAging = computed(() => data.value?.approvalAging || null)
 /**
  * Is the approval-workflow feature in use for the caller's directories?
- * Server computes this as "at least one profile has requireApproval=true".
- * When true the Pending Approvals card, the Approval Aging panel, and
- * the sidebar Approvals link all earn their slots — even when the
+ * Server computes this (ApprovalUsageService) by pairing each global master
+ * switch with its per-profile configuration: approvalsEnabled AND some
+ * profile has requireApproval, OR selfRegistrationApprovalEnabled AND some
+ * profile allows self-registration. When true the Pending Approvals card,
+ * the Profiles panel's Pending column, the All-clear "pending actions"
+ * wording, and the sidebar Approvals link all earn their slots — even when the
  * current queue happens to be empty, because "0 pending" is a useful
  * "inbox clear" signal in an approval-enabled environment.
  *
@@ -152,8 +155,11 @@ const approvalsConfigured = computed(() => !!data.value?.approvalsConfigured)
 const showApprovalsUI = computed(() =>
   // Globally gated: when both approval master switches are off, the approval
   // widgets are hidden entirely. Otherwise the existing "configured or has
-  // residual pending" rule applies.
-  auth.isAnyApprovalEnabled && (approvalsConfigured.value || (metrics.value?.pendingApprovals ?? 0) > 0)
+  // residual pending" rule applies. Directory admins also need
+  // approval.manage (READ_ONLY admins lack it) — the tiles link to a queue
+  // they couldn't open; superadmins land on the superadmin queue instead.
+  (isSuperadmin.value || auth.hasFeature('approval.manage'))
+    && auth.isAnyApprovalEnabled && (approvalsConfigured.value || (metrics.value?.pendingApprovals ?? 0) > 0)
 )
 const recentActivity = computed(() => data.value?.recentActivity || [])
 const actions = computed(() => data.value?.actions || [])
@@ -808,7 +814,7 @@ useUnsavedChangesGuard('Dashboard', () => layoutStore.editing)
                 :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
                 row-clickable @row-click="onDirectoryClick" />
               <ProfilesPanel v-else-if="id === 'directories'"
-                :profiles="profiles" :counts-loaded="countsLoaded"
+                :profiles="profiles" :counts-loaded="countsLoaded" :show-pending="showApprovalsUI"
                 row-clickable @row-click="onProfileClick" />
               <RecentActivityPanel v-else-if="id === 'recent-activity'"
                 :events="recentActivity" :view-all-to="recentActivityViewAll" />
@@ -831,7 +837,7 @@ useUnsavedChangesGuard('Dashboard', () => layoutStore.editing)
               :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
               row-clickable @row-click="onDirectoryClick" />
             <ProfilesPanel v-else-if="id === 'directories'"
-              :profiles="profiles" :counts-loaded="countsLoaded"
+              :profiles="profiles" :counts-loaded="countsLoaded" :show-pending="showApprovalsUI"
               row-clickable @row-click="onProfileClick" />
             <RecentActivityPanel v-else-if="id === 'recent-activity'"
               :events="recentActivity" :view-all-to="recentActivityViewAll" />
@@ -866,7 +872,7 @@ useUnsavedChangesGuard('Dashboard', () => layoutStore.editing)
                 :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
                 row-clickable @row-click="onDirectoryClick" />
               <ProfilesPanel v-else-if="id === 'directories'"
-                :profiles="profiles" :counts-loaded="countsLoaded"
+                :profiles="profiles" :counts-loaded="countsLoaded" :show-pending="showApprovalsUI"
                 row-clickable @row-click="onProfileClick" />
               <RecentActivityPanel v-else-if="id === 'recent-activity'"
                 :events="recentActivity" :view-all-to="recentActivityViewAll" />
@@ -891,7 +897,7 @@ useUnsavedChangesGuard('Dashboard', () => layoutStore.editing)
               :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
               row-clickable @row-click="onDirectoryClick" />
             <ProfilesPanel v-else-if="id === 'directories'"
-              :profiles="profiles" :counts-loaded="countsLoaded"
+              :profiles="profiles" :counts-loaded="countsLoaded" :show-pending="showApprovalsUI"
               row-clickable @row-click="onProfileClick" />
             <RecentActivityPanel v-else-if="id === 'recent-activity'"
               :events="recentActivity" :view-all-to="recentActivityViewAll" />
@@ -927,7 +933,7 @@ useUnsavedChangesGuard('Dashboard', () => layoutStore.editing)
                 :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
                 row-clickable @row-click="onDirectoryClick" />
               <ProfilesPanel v-else-if="id === 'directories'"
-                :profiles="profiles" :counts-loaded="countsLoaded"
+                :profiles="profiles" :counts-loaded="countsLoaded" :show-pending="showApprovalsUI"
                 row-clickable @row-click="onProfileClick" />
               <RecentActivityPanel v-else-if="id === 'recent-activity'"
                 :events="recentActivity" :view-all-to="recentActivityViewAll" />
@@ -950,7 +956,7 @@ useUnsavedChangesGuard('Dashboard', () => layoutStore.editing)
               :show-campaigns="complianceEnabled" :show-sod="complianceEnabled"
               row-clickable @row-click="onDirectoryClick" />
             <ProfilesPanel v-else-if="id === 'directories'"
-              :profiles="profiles" :counts-loaded="countsLoaded"
+              :profiles="profiles" :counts-loaded="countsLoaded" :show-pending="showApprovalsUI"
               row-clickable @row-click="onProfileClick" />
             <RecentActivityPanel v-else-if="id === 'recent-activity'"
               :events="recentActivity" :view-all-to="recentActivityViewAll" />
@@ -961,7 +967,8 @@ useUnsavedChangesGuard('Dashboard', () => layoutStore.editing)
             <CampaignProgressPanel v-else-if="id === 'campaign-progress'" :campaigns="campaignProgress" />
             <AwarenessPanel v-else-if="id === 'awareness'" :awareness="awareness" />
           </template>
-          <AllClearPanel v-if="!layoutStore.editing && showAllClear" :unavailable-count="unavailableScopeCount" />
+          <AllClearPanel v-if="!layoutStore.editing && showAllClear" :unavailable-count="unavailableScopeCount"
+            :show-approvals="showApprovalsUI" />
         </div>
       </div>
 

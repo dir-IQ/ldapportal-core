@@ -65,6 +65,7 @@ interface RouteMetaFlags {
   requiresHr?: boolean
   requiresApprovals?: boolean
   requiresPlaybooks?: boolean
+  requiresFeature?: string
 }
 
 const router = useRouter()
@@ -158,6 +159,8 @@ const commands = computed<Command[]>(() => {
     if (meta.requiresApprovals && !auth.isAnyApprovalEnabled) continue
     // ...and the Lifecycle Playbooks master switch.
     if (meta.requiresPlaybooks && !auth.isPlaybooksEnabled) continue
+    // ...and the directory feature key the page needs (see router guard).
+    if (meta.requiresFeature && !auth.hasFeature(meta.requiresFeature)) continue
 
     // For directory-scoped routes, substitute the current dirId
     if (path.includes(':dirId')) {

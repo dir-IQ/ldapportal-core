@@ -317,9 +317,6 @@ public class AuthController {
             // Determine base role — ADMIN gets all features by default, READ_ONLY gets subset
             boolean hasAdminRole = profileRoleRepo
                     .existsByAdminAccountIdAndBaseRole(principal.id(), com.ldapportal.entity.enums.BaseRole.ADMIN);
-            java.util.Set<String> readOnlyDefaults = java.util.Set.of(
-                    "bulk.export", "reports.run", "directory.browse", "schema.read",
-                    "user.read", "group.read", "approval.manage");
 
             // Iterate the edition-exposed keys only, so an entitlement-gated key
             // (e.g. access_review.*) never reaches the SPA on the community
@@ -328,7 +325,8 @@ public class AuthController {
                     .filter(fk -> {
                         Boolean override = overrides.get(fk);
                         if (override != null) return override; // explicit override
-                        return hasAdminRole || readOnlyDefaults.contains(fk.getDbValue()); // base role
+                        return hasAdminRole
+                                || com.ldapportal.auth.PermissionService.READONLY_DEFAULT_FEATURES.contains(fk); // base role
                     })
                     .map(com.ldapportal.entity.enums.FeatureKey::getDbValue)
                     .toList();
@@ -767,6 +765,10 @@ public class AuthController {
                     m.put("name", p.getName());
                     m.put("directoryId", p.getDirectory().getId());
                     m.put("directoryType", p.getDirectory().getDirectoryType().name());
+                    // The admin views scope their pickers and reports to the
+                    // picked profile's containers, so they need to see them.
+                    m.put("targetUserDn", p.getTargetUserDn());
+                    m.put("targetGroupDn", p.getTargetGroupDn());
                     return m;
                 })
                 .toList();

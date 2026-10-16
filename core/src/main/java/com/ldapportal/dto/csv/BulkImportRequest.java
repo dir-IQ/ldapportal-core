@@ -14,8 +14,12 @@ import java.util.UUID;
  * <ol>
  *   <li>{@code columnMappings} on this request (explicit ad-hoc override)</li>
  *   <li>Entries of the referenced {@code templateId}</li>
- *   <li>CSV header names used as LDAP attribute names directly (passthrough)</li>
  * </ol>
+ * A column neither source mentions is handled by whether a template is in use:
+ * with a {@code templateId} it is <em>not imported</em> (the template is the
+ * contract for the file, and the preview lists such columns); without one its
+ * header is used as the LDAP attribute name directly (passthrough), so an
+ * exported CSV can be re-imported unchanged.
  * </p>
  *
  * <p>When {@code templateId} is supplied and neither {@code targetKeyAttribute}

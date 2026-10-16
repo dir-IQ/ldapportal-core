@@ -8,6 +8,7 @@ export interface ProfileSummary {
   directoryId?: string
   directoryType?: string
   targetUserDn?: string | null
+  targetGroupDn?: string | null
   enabled?: boolean
 }
 

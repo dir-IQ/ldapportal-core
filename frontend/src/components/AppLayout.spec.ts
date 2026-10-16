@@ -18,17 +18,21 @@ const state = vi.hoisted(() => ({
   mounts: [] as string[],   // dirId of every UsersPage mount, in order
   dirty: { value: false },  // what the UsersPage guard reports
   playbooksEnabled: true,   // ApplicationSettings.playbooksEnabled as /auth/me reports it
+  approvalsEnabled: false,  // global approvals master switch
+  features: null as string[] | null,  // /auth/me feature set; null = every feature
 }))
+const hasFeature = (v: string) => state.features === null || state.features.includes(v)
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
     isSuperadmin: false, isComplianceEnabled: false, isAlertingEnabled: false,
-    isHrEnabled: false, isDirectorySyncEnabled: false, isAnyApprovalEnabled: false,
+    isHrEnabled: false, isDirectorySyncEnabled: false,
+    get isAnyApprovalEnabled() { return state.approvalsEnabled },
     get isPlaybooksEnabled() { return state.playbooksEnabled },
-    username: 'admin', hasSuperadminPermission: () => false, hasFeature: () => true, logout: vi.fn(),
+    username: 'admin', hasSuperadminPermission: () => false, hasFeature, logout: vi.fn(),
   }),
 }))
-vi.mock('@/composables/usePermissions', () => ({ usePermissions: () => ({ hasFeature: () => true }) }))
+vi.mock('@/composables/usePermissions', () => ({ usePermissions: () => ({ hasFeature }) }))
 vi.mock('@/stores/settings', () => ({ useSettingsStore: () => ({ init: vi.fn(), appName: 'LDAPPortal' }) }))
 vi.mock('@/composables/useKeyboardShortcuts', () => ({ useKeyboardShortcuts: () => ({ showHelp: ref(false) }) }))
 vi.mock('@/composables/useVersionCheck', () => ({
@@ -44,6 +48,7 @@ vi.mock('@/api/auth', () => ({
 vi.mock('@/api/approvals', () => ({
   countPendingApprovals: vi.fn().mockResolvedValue({ data: { pending: 0, configured: false } }),
 }))
+import { countPendingApprovals } from '@/api/approvals'
 vi.mock('@/ee', () => ({
   listCampaigns: vi.fn().mockResolvedValue({ data: { totalElements: 0 } }),
   getAlertSummary: vi.fn().mockResolvedValue({ data: {} }),
@@ -122,6 +127,8 @@ describe('AppLayout playbooks nav gating', () => {
     state.mounts = []
     state.dirty.value = false
     state.playbooksEnabled = true
+    state.approvalsEnabled = false
+    state.features = null
     document.body.innerHTML = ''
   })
 
@@ -141,6 +148,55 @@ describe('AppLayout playbooks nav gating', () => {
     expect(navLabels(wrapper)).not.toContain('Playbooks')
     // Neighbouring links are unaffected.
     expect(navLabels(wrapper)).toContain('Users')
+    wrapper.unmount()
+  })
+
+  it('hides the Playbooks link without playbook.manage, even with the setting on', async () => {
+    state.features = ['user.read', 'group.read', 'reports.run', 'bulk.export', 'playbook.execute']
+    const wrapper = await mountOnUsers()
+    expect(navLabels(wrapper)).not.toContain('Playbooks')
+    wrapper.unmount()
+  })
+})
+
+// The READ_ONLY base-role defaults, as /auth/me reports them.
+const READ_ONLY_FEATURES = [
+  'bulk.export', 'reports.run', 'directory.browse', 'schema.read', 'user.read', 'group.read',
+]
+
+describe('AppLayout read-only admin nav', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    state.mounts = []
+    state.dirty.value = false
+    state.playbooksEnabled = true
+    state.approvalsEnabled = true
+    state.features = READ_ONLY_FEATURES
+    vi.mocked(countPendingApprovals).mockClear()
+    vi.mocked(countPendingApprovals).mockResolvedValue({ data: { pending: 2, configured: true } } as never)
+    document.body.innerHTML = ''
+  })
+
+  function navLabels(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('a.nav-item').map(a => a.text().trim())
+  }
+
+  it('keeps the read surfaces and Bulk Operations, hides Playbooks and Approvals', async () => {
+    const wrapper = await mountOnUsers()
+    const labels = navLabels(wrapper)
+    expect(labels).toEqual(expect.arrayContaining(['Users', 'Groups', 'Reports', 'Bulk Operations', 'Audit Log']))
+    expect(labels).not.toContain('Playbooks')
+    expect(labels.some(l => l.startsWith('Approvals'))).toBe(false)
+    // No approval.manage, so the pending-count endpoint (which would 403) isn't called.
+    expect(countPendingApprovals).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('shows Approvals once approval.manage is granted by override', async () => {
+    state.features = [...READ_ONLY_FEATURES, 'approval.manage']
+    const wrapper = await mountOnUsers()
+    expect(navLabels(wrapper).some(l => l.startsWith('Approvals'))).toBe(true)
+    expect(countPendingApprovals).toHaveBeenCalledWith('d1')
     wrapper.unmount()
   })
 })
