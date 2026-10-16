@@ -521,6 +521,18 @@ class ProvisioningProfileServiceTest {
                 false, false, null, configs, List.of());
     }
 
+    // Operator-entered DN mode with the DN field placed in the given section.
+    private com.ldapportal.dto.profile.CreateProfileRequest reqWithDnSection(String dnSectionName) {
+        return new com.ldapportal.dto.profile.CreateProfileRequest(
+                "engineers", null, null, "ou=People,dc=example,dc=com", null,
+                List.of("inetOrgPerson"), "uid", true,
+                null, 6, dnSectionName, 0,
+                true, false,
+                null, null, null, null, null, null, null, null,
+                false, false, null,
+                List.of(attrEntry("uid", "TEXT", true, false, null)), List.of());
+    }
+
     // Automatic DN mode (showDnField=false), self-registration off — the setup
     // the RDN-must-be-configured guard governs.
     private com.ldapportal.dto.profile.CreateProfileRequest reqWith(
@@ -537,6 +549,25 @@ class ProvisioningProfileServiceTest {
         var withRdn = new java.util.ArrayList<>(List.of(attrEntry("uid", "TEXT", true, false, null)));
         withRdn.addAll(configs);
         return reqWith("uid", null, withRdn);
+    }
+
+    @Test
+    void createProfile_dnInUnnamedSection_keepsEmptySectionName() {
+        // "" is the form's unnamed section — a real placement. Collapsing it to
+        // null ("unset") moved the DN back to the RDN's section on reload.
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        var captor = org.mockito.ArgumentCaptor.forClass(ProvisioningProfile.class);
+
+        service.create(directoryId, reqWithDnSection(""), true, null);
+        service.create(directoryId, reqWithDnSection(null), true, null);
+        service.create(directoryId, reqWithDnSection("  Identity "), true, null);
+
+        org.mockito.Mockito.verify(profileRepo, org.mockito.Mockito.atLeast(3)).save(captor.capture());
+        var sectionNames = captor.getAllValues().stream()
+                .map(p -> java.util.Optional.ofNullable(p.getDnSectionName()).orElse("<null>"))
+                .distinct().toList();
+        assertThat(sectionNames).containsExactly("", "<null>", "Identity");
     }
 
     @Test

@@ -773,6 +773,14 @@ describe('UserForm honors the designer layout', () => {
     expect(cells(wrapper)).toEqual(['uid:3', 'cn:3', 'DN:6', 'mail:6'])
   })
 
+  it('places the DN in the unnamed section when that is where it was saved', () => {
+    // "" is the unnamed section — a real placement, distinct from null (unset,
+    // which falls back to the RDN's section).
+    const attrs = [...identity, { attributeName: 'description', sectionName: '', columnSpan: 6, editableOnCreate: true, inputType: 'TEXT' }]
+    const wrapper = mountLayout({ attributeConfigs: attrs, dnColumnSpan: 6, dnSectionName: '', dnDisplayOrder: 1 })
+    expect(cells(wrapper)).toEqual(['uid:3', 'cn:3', 'mail:6', 'description:6', 'DN:6'])
+  })
+
   it('places the DN per the layout when the RDN is hidden (computed), not in a standalone top row', () => {
     const attrs = [
       { ...identity[0], hidden: true, computedExpression: '${cn}' },

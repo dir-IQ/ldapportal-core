@@ -1079,8 +1079,11 @@ public class ProvisioningProfileService {
         // "<rdn>=<value>,<targetUserDn>" composition rather than an empty template.
         profile.setDnTemplate((dnTemplate != null && !dnTemplate.isBlank()) ? dnTemplate.trim() : null);
         // DN field layout — null reproduces the default (after the RDN, 2/3 width).
+        // An empty section name is a deliberate choice, not "unset": it is the
+        // form's unnamed section, so it is kept as "" rather than collapsing to
+        // null (which would move the DN back to the RDN's section on reload).
         profile.setDnColumnSpan(dnColumnSpan);
-        profile.setDnSectionName((dnSectionName != null && !dnSectionName.isBlank()) ? dnSectionName.trim() : null);
+        profile.setDnSectionName(dnSectionName != null ? dnSectionName.trim() : null);
         profile.setDnDisplayOrder(dnDisplayOrder);
         profile.setEnabled(enabled);
         profile.setSelfRegistrationAllowed(selfRegistrationAllowed);
