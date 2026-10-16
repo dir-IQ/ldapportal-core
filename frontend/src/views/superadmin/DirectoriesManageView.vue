@@ -46,6 +46,7 @@
             hidden: row.directoryType !== 'ENTRA_ID' },
           { label: `${IVIA_ABBR} integration`,
             onClick: () => $router.push(`/superadmin/directories/${row.id}/isva-config`),
+            indicator: iviaIndicator(row.id),
             // Hide when the addon's entitlement isn't granted
             // (community + commercial-without-addon) AND when the
             // directory is Entra (ISVA doesn't run on Entra anyway).
@@ -226,6 +227,7 @@ import ActionMenu from '@/components/ActionMenu.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import DataTable from '@/components/DataTable.vue'
 import { IVIA_ABBR } from '@/constants/productNames'
+import { listIsvaConfigStatuses } from '@/api/isvaConfig'
 import PageContainer from '@/components/PageContainer.vue'
 import type { components } from '@/api/openapi'
 
@@ -365,6 +367,10 @@ const deleteTarget = ref<DirectoryRow | null>(null)
 const testLoading  = ref(false)
 const testResult   = ref<TestResult | null>(null)
 const statusById   = ref<Record<string, DirStatus>>({})
+// directoryId → IVIA config enabled flag; absent ⇒ not configured. null
+// until loaded (or when the lookup failed), so no indicator is shown
+// rather than a misleading "not configured".
+const iviaEnabledById = ref<Record<string, boolean> | null>(null)
 
 function statusOf(d: DirectoryRow): DirStatus {
   return statusById.value[d.id] ?? { state: d.enabled ? 'checking' : 'disabled' }
@@ -516,6 +522,7 @@ async function load() {
     // Kick off reachability probes (fire-and-forget; each cell fills in as
     // its probe resolves). Not awaited so the table paints immediately.
     probeAll()
+    loadIviaStatuses()
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
@@ -524,6 +531,34 @@ async function load() {
 }
 
 onMounted(load)
+
+// Dot on the "IVIA integration" row action: green = configured and enabled,
+// amber = configured but disabled, hollow = not configured. Raw colour
+// utilities match the STATUS_META status dots above.
+const IVIA_INDICATOR = {
+  enabled:       { dotClass: 'bg-green-500',          label: `${IVIA_ABBR} enabled` },
+  disabled:      { dotClass: 'bg-amber-400',          label: `${IVIA_ABBR} configured but disabled` },
+  notConfigured: { dotClass: 'border border-gray-400', label: `${IVIA_ABBR} not configured` },
+}
+
+function iviaIndicator(dirId: string) {
+  const map = iviaEnabledById.value
+  if (!map) return undefined
+  if (!(dirId in map)) return IVIA_INDICATOR.notConfigured
+  return map[dirId] ? IVIA_INDICATOR.enabled : IVIA_INDICATOR.disabled
+}
+
+// Fire-and-forget like probeAll(): the indicator is a hint, so a failure
+// (e.g. a superadmin without VIEW_INTEGRATIONS gets 403) just leaves it off.
+async function loadIviaStatuses() {
+  if (!auth.isIsvaIntegrationEnabled) return
+  try {
+    const { data } = await listIsvaConfigStatuses()
+    iviaEnabledById.value = Object.fromEntries(data.map((s) => [s.directoryId, s.enabled]))
+  } catch {
+    iviaEnabledById.value = null
+  }
+}
 
 function openCreate() {
   editing.value = null

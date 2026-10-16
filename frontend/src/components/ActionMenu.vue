@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-<script setup>
+<script setup lang="ts">
 /**
  * ActionMenu — row-level action buttons with overflow.
  *
@@ -39,6 +39,11 @@
  *     disabled?: boolean
  *     icon?:     string               // optional emoji/glyph prefix
  *     title?:    string               // tooltip
+ *     indicator?: { dotClass: string, label: string }
+ *                                     // small status dot before the label;
+ *                                     //   dotClass sets its colour, label is
+ *                                     //   the screen-reader text and default
+ *                                     //   tooltip
  *   }
  *
  * ### Props
@@ -63,14 +68,33 @@
  */
 import { ref, computed, onMounted, onBeforeUnmount, useSlots, nextTick } from 'vue'
 
-const props = defineProps({
-  items:           { type: Array,   default: () => [] },
+interface ActionMenuItem {
+  label: string
+  onClick?: () => void
+  danger?: boolean
+  variant?: 'secondary' | 'success' | 'warning' | 'neutral'
+  hidden?: boolean
+  disabled?: boolean
+  icon?: string
+  title?: string
+  indicator?: { dotClass: string; label: string }
+}
+
+type MenuEntry = ActionMenuItem | { divider: true }
+
+const props = withDefaults(defineProps<{
+  items?: ActionMenuItem[]
   /** Total inline buttons (primary + items). Overflow folds into the kebab. */
-  inlineThreshold: { type: Number,  default: 3 },
+  inlineThreshold?: number
   /** Disable every button (inline, kebab, and primary via scoped slot prop). */
-  disabled:        { type: Boolean, default: false },
+  disabled?: boolean
   /** Aria label for the kebab trigger. */
-  ariaLabel:       { type: String,  default: 'Row actions' },
+  ariaLabel?: string
+}>(), {
+  items: () => [],
+  inlineThreshold: 3,
+  disabled: false,
+  ariaLabel: 'Row actions',
 })
 
 const slots = useSlots()
@@ -82,8 +106,8 @@ const itemsInlineBudget = computed(() =>
 )
 
 const open = ref(false)
-const root = ref(null)
-const kebabRef = ref(null)
+const root = ref<HTMLElement | null>(null)
+const kebabRef = ref<HTMLButtonElement | null>(null)
 
 /**
  * Document-relative coordinates for the menu panel. The panel is
@@ -99,9 +123,9 @@ const kebabRef = ref(null)
  * (matches the typical dropdown UX). w-48 = 12rem = 192px.
  */
 const MENU_WIDTH_PX = 192
-const menuPos = ref({ top: 0, left: 0 })
+const menuPos = ref<{ top: number; left: number }>({ top: 0, left: 0 })
 
-const visibleItems = computed(() =>
+const visibleItems = computed<ActionMenuItem[]>(() =>
   (props.items || []).filter(i => !i.hidden)
 )
 
@@ -126,8 +150,8 @@ const overflowItems = computed(() =>
  * before the first danger entry if one exists and isn't already the first
  * entry. Keeps destructive actions visually segregated from routine ones.
  */
-const menuEntries = computed(() => {
-  const out = []
+const menuEntries = computed<MenuEntry[]>(() => {
+  const out: MenuEntry[] = []
   const items = overflowItems.value
   let dividerInserted = false
   for (let i = 0; i < items.length; i++) {
@@ -142,7 +166,7 @@ const menuEntries = computed(() => {
 })
 
 /** Map item → button class for inline rendering. */
-function inlineClass(item) {
+function inlineClass(item: ActionMenuItem): string {
   if (item.danger)               return 'btn-danger-soft btn-compact'
   if (item.variant === 'success')  return 'btn-success-soft btn-compact'
   if (item.variant === 'warning')  return 'btn-warning btn-compact'
@@ -187,18 +211,18 @@ function onScroll() {
   if (open.value) close()
 }
 
-function runItem(item) {
+function runItem(item: ActionMenuItem) {
   if (item.disabled || props.disabled) return
   close()
   item.onClick?.()
 }
 
-function onDocClick(ev) {
+function onDocClick(ev: MouseEvent) {
   if (!open.value) return
-  if (root.value && !root.value.contains(ev.target)) close()
+  if (root.value && !root.value.contains(ev.target as Node)) close()
 }
 
-function onEsc(ev) {
+function onEsc(ev: KeyboardEvent) {
   if (ev.key === 'Escape') close()
 }
 
@@ -222,10 +246,12 @@ onBeforeUnmount(() => {
     <button v-for="(item, idx) in inlineItems" :key="idx"
             type="button"
             :disabled="item.disabled || disabled"
-            :title="item.title || ''"
-            :class="inlineClass(item)"
+            :title="item.title || item.indicator?.label || ''"
+            :class="[inlineClass(item), item.indicator ? 'inline-flex items-center gap-1.5' : '']"
             @click="runItem(item)">
+      <span v-if="item.indicator" class="w-2 h-2 rounded-full shrink-0" :class="item.indicator.dotClass" aria-hidden="true"></span>
       <span v-if="item.icon" class="mr-1">{{ item.icon }}</span>{{ item.label }}
+      <span v-if="item.indicator" class="sr-only">({{ item.indicator.label }})</span>
     </button>
 
     <!-- Kebab: only when there are overflow items. -->
@@ -265,19 +291,21 @@ onBeforeUnmount(() => {
              class="bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-30 text-left"
              @click.stop>
           <template v-for="(entry, idx) in menuEntries" :key="idx">
-            <div v-if="entry.divider" class="my-1 border-t border-gray-100" />
+            <div v-if="'divider' in entry" class="my-1 border-t border-gray-100" />
             <button v-else
                     type="button"
                     role="menuitem"
                     :disabled="entry.disabled"
-                    :title="entry.title || ''"
+                    :title="entry.title || entry.indicator?.label || ''"
                     class="w-full text-left px-3 py-1.5 text-sm transition-colors flex items-center gap-2"
                     :class="entry.danger
                       ? 'text-red-600 hover:bg-red-50 disabled:text-red-300'
                       : 'text-gray-700 hover:bg-gray-50 disabled:text-gray-300'"
                     @click="runItem(entry)">
+              <span v-if="entry.indicator" class="w-2 h-2 rounded-full shrink-0" :class="entry.indicator.dotClass" aria-hidden="true"></span>
               <span v-if="entry.icon" class="text-xs">{{ entry.icon }}</span>
               <span>{{ entry.label }}</span>
+              <span v-if="entry.indicator" class="sr-only">({{ entry.indicator.label }})</span>
             </button>
           </template>
         </div>

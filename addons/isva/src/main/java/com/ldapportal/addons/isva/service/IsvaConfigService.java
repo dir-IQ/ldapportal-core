@@ -3,6 +3,7 @@ package com.ldapportal.addons.isva.service;
 
 import com.ldapportal.addons.isva.IsvaSecUserPlans;
 import com.ldapportal.addons.isva.dto.IsvaConfigDto;
+import com.ldapportal.addons.isva.dto.IsvaConfigStatusDto;
 import com.ldapportal.addons.isva.dto.ProbeResult;
 import com.ldapportal.addons.isva.dto.UpsertIsvaConfigRequest;
 import com.ldapportal.addons.isva.entity.IsvaRdnValueSource;
@@ -54,6 +55,14 @@ public class IsvaConfigService {
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "No ISVA configuration exists for directory " + directoryId
                                 + ". PUT a config to create one."));
+    }
+
+    /** Configured directories and their enabled flag (absent ⇒ not configured). */
+    @Transactional(readOnly = true)
+    public List<IsvaConfigStatusDto> listStatuses() {
+        return configRepo.findAll().stream()
+                .map(cfg -> new IsvaConfigStatusDto(cfg.getDirectoryConnectionId(), cfg.isEnabled()))
+                .toList();
     }
 
     @Transactional
