@@ -12,7 +12,7 @@ export type SyncCaptureMode = 'APP_INTERCEPT' | 'CHANGELOG'
 export type SyncScope = 'BASE' | 'ONE' | 'SUB'
 export type SyncDeletePolicy = 'DELETE' | 'REVIEW'
 export type MembershipState = 'APPLIED' | 'PENDING' | 'FAILED' | 'REVIEW'
-export type ChangelogFormat = 'DSEE_CHANGELOG' | 'OPENLDAP_ACCESSLOG' | 'AD_DIRSYNC'
+export type ChangelogFormat = 'DSEE_CHANGELOG' | 'OPENLDAP_ACCESSLOG' | 'AD_DIRSYNC' | 'OUD_COOKIE_CHANGELOG'
 export type SyncChangelogHealth =
   | 'HEALTHY' | 'LAGGING' | 'STALLED' | 'GAP_DETECTED' | 'CURSOR_RESET' | 'DISABLED_CONFIG_ERROR'
 

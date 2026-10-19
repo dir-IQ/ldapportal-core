@@ -77,6 +77,63 @@ class SyncReconcileSchedulerTest {
     }
 
     @Test
+    void pendingReconcileRequest_makesARecentlyReconciledSetDue() {
+        UUID id = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(id);
+        set.setReconcileLastRunAt(java.time.OffsetDateTime.now()); // cadence not elapsed
+        set.setReconcileRequestSeq(3);
+        set.setReconcileAttemptedSeq(2);
+        set.setReconcileHandledSeq(2);                             // one request, not yet attempted
+        when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(set));
+        when(verifier.verify(id)).thenReturn(result(0, 0, 0, true, true));
+
+        scheduler.reconcileDueSets();
+
+        verify(reconciler).reconcile(id);
+    }
+
+    @Test
+    void handledReconcileRequest_recentRun_isNotDue() {
+        UUID id = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(id);
+        set.setReconcileLastRunAt(java.time.OffsetDateTime.now());
+        set.setReconcileRequestSeq(3);
+        set.setReconcileAttemptedSeq(3);
+        set.setReconcileHandledSeq(3);
+        when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(set));
+
+        scheduler.reconcileDueSets();
+
+        verify(reconciler, never()).reconcile(any());
+    }
+
+    @Test
+    void unhandledRequest_isRetriedOnlyAfterTheRetrySpacing() {
+        // Attempted by a reconcile whose enumeration didn't complete: not
+        // handled. A retry waits REQUEST_RETRY_SPACING after that run, so a
+        // persistently failing source isn't re-enumerated every tick.
+        UUID id = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(id);
+        set.setReconcileRequestSeq(3);
+        set.setReconcileAttemptedSeq(3);
+        set.setReconcileHandledSeq(2);
+        set.setReconcileLastRunAt(java.time.OffsetDateTime.now().minusMinutes(1));
+        when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(set));
+        when(verifier.verify(id)).thenReturn(result(0, 0, 0, true, true));
+
+        scheduler.reconcileDueSets();
+        verify(reconciler, never()).reconcile(any());
+
+        set.setReconcileLastRunAt(java.time.OffsetDateTime.now()
+                .minus(SyncReconcileScheduler.REQUEST_RETRY_SPACING).minusSeconds(1));
+        scheduler.reconcileDueSets();
+        verify(reconciler).reconcile(id);
+    }
+
+    @Test
     void doesNothing_whenDirectorySyncNotEntitled() {
         when(entitlementService.has(Entitlement.DIRECTORY_SYNC)).thenReturn(false);
 

@@ -23,7 +23,10 @@ import java.util.UUID;
  *
  * <p>Each tick reconciles sets whose {@code reconcile_last_run_at + cadence} has
  * elapsed, where cadence is the set's {@code reconcileCadenceSeconds} or the
- * global default. Gated on {@code DIRECTORY_SYNC}.
+ * global default, and sets with a pending reconcile request (raised by the
+ * changelog poller on a seed or gap): at once when no reconcile has attempted
+ * it yet, or after {@link #REQUEST_RETRY_SPACING} when the last attempt's source
+ * enumeration didn't complete. Gated on {@code DIRECTORY_SYNC}.
  */
 @Component
 @Slf4j
@@ -34,6 +37,8 @@ public class SyncReconcileScheduler {
     private final SyncContentVerifier verifier;
     private final EntitlementService entitlementService;
     private final long defaultCadenceSeconds;
+    /** Minimum gap between retries of a reconcile request an incomplete run didn't handle. */
+    static final Duration REQUEST_RETRY_SPACING = Duration.ofMinutes(5);
 
     public SyncReconcileScheduler(SyncSetRepository syncSetRepo,
                                   MembershipReconciler reconciler,
@@ -94,7 +99,17 @@ public class SyncReconcileScheduler {
     }
 
     private boolean isDue(SyncSet set, OffsetDateTime now) {
+        // A request no reconcile has attempted yet: run now.
+        if (set.getReconcileRequestSeq() > set.getReconcileAttemptedSeq()) {
+            return true;
+        }
         if (set.getReconcileLastRunAt() == null) {
+            return true;
+        }
+        // Attempted but not handled (the enumeration didn't complete): retry, but
+        // spaced out so a persistently failing source isn't re-enumerated every tick.
+        if (set.getReconcileRequestSeq() > set.getReconcileHandledSeq()
+                && !set.getReconcileLastRunAt().plus(REQUEST_RETRY_SPACING).isAfter(now)) {
             return true;
         }
         long cadence = set.getReconcileCadenceSeconds() != null

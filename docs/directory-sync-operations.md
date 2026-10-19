@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture, reconcile, brownfield adoption, cross-link reference resolution; 2026-09-16).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, brownfield adoption, cross-link reference resolution; 2026-10-19).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -118,13 +118,16 @@ superadmin-only and `DIRECTORY_SYNC`-entitled.
 | **Source directory** | Must differ from target (self-pairs rejected). |
 | **Target directory** | Where entries are created/updated/deleted. |
 | **Capture mode** | `APP_INTERCEPT` (capture portal writes) or `CHANGELOG` (poll source changelog). See §4. |
-| **Changelog format** | Required for `CHANGELOG`. Currently `DSEE_CHANGELOG` (DSEE / `cn=changelog`). |
+| **Changelog format** | Required for `CHANGELOG`. `DSEE_CHANGELOG` (DSEE / `cn=changelog`, integer `changeNumber`) or `OUD_COOKIE_CHANGELOG` (OUD / OpenDJ `cn=changelog` in cookie mode). See §4.3. |
 | **Changelog base DN** | Required for `CHANGELOG`, e.g. `cn=changelog`. |
 | **Enabled** | When off, the link's sets are not processed (engine and poller skip a disabled link). |
 
 Validation (`SyncConfigService.validateLink`): source ≠ target; both
-directories must exist; `CHANGELOG` requires both `changelogFormat` and
-`changelogBaseDn`. `APP_INTERCEPT` clears any changelog config.
+directories must exist; `CHANGELOG` requires both `changelogFormat` (one of
+the two above) and `changelogBaseDn`. `APP_INTERCEPT` clears any changelog
+config. Changing the format or base DN of an existing link clears its cursor
+and its changelog health/error: a cursor is only meaningful for the feed that
+issued it. The base DN is stored trimmed.
 
 ### 3.2 Sync set — *what* (selection + projection), nested under a link
 
@@ -168,14 +171,129 @@ reconcile sweep is the backstop.
 
 ### 4.2 `CHANGELOG`
 `SyncChangelogPoller` polls each `CHANGELOG`-mode link's source changelog
-(`fixed-delay ~15s`), reading up to 500 records per pass. For each record it
+(`fixed-delay ~15s`), reading 500-record pages. For each record it
 emits `recompute(targetDN)` — *including DELETE records* (the engine re-reads
 the source, finds it absent, and deletes via the index). The lossy `changes`
 blob is **ignored**; convergence makes a bare "this DN changed" signal
 sufficient, so there is no exactly-once dedup, no FIFO, no LDIF reconstruction.
 
 The poller maintains a cursor, an HA poll-lease, and a **health** state
-(see §7.3). On a detected gap it triggers a reconcile to re-derive state.
+(see §7.3).
+
+- **Paging.** A pass keeps reading pages while the source has more — up to 20
+  pages (10,000 records) or 5 s per link per pass — and reports `LAGGING` if it
+  stops with more still pending. When the server cuts a search short at a
+  size, time or lookthrough limit (the poller's own 500, or the bind account's
+  server-side limits), the partial page is kept: it is an in-order prefix, so
+  the cursor resumes after it. A cut-short search that returns nothing the
+  cursor can advance by goes `STALLED` ("cut short by a server limit") instead
+  of looping silently — raise the bind account's limits.
+- **Reconcile requests.** On a detected gap (and, in cookie mode, the first
+  poll or a refused cookie) the poller jumps the cursor to the source head and
+  **requests** a reconcile of the link's sets: it increments their
+  `reconcile_request_seq`, and the reconcile scheduler runs them on its next
+  tick (~60s). A finishing reconcile records the request count it saw when it
+  *started* as `reconcile_attempted_seq`, and also as `reconcile_handled_seq`
+  if its source enumeration completed. So a request raised while a reconcile is
+  already running (a manual "Reconcile now", or another instance) stays pending
+  and gets its own run, and one whose reconcile couldn't enumerate the whole
+  source is retried — at most every 5 minutes, so a persistently failing source
+  isn't re-scanned every tick. These counters are written only by targeted
+  updates, never by an entity save.
+  The poller never reconciles inline, so a large or failing reconcile can't
+  block polling or hold the cursor back.
+- **Isolation.** One link's poll failure doesn't skip the other links in the
+  pass.
+
+### 4.3 Replicated sources — choosing the changelog format
+The two formats differ in what the cursor means, which matters when the source
+is a replication topology (e.g. clustered OUD) rather than a single server.
+
+| | `DSEE_CHANGELOG` | `OUD_COOKIE_CHANGELOG` |
+|---|---|---|
+| Cursor | Integer `changeNumber` | Opaque `changeLogCookie` (persisted verbatim) |
+| Issued by | Each server's own change-number indexer | Replication CSNs — global to the topology |
+| Same change on two replicas | Different numbers | Same CSNs |
+| Cursor survives failover / load-balanced source | **No** — a node switch looks like a gap (reconcile + jump to head) or a cursor reset (full replay); changes can be skipped until the next reconcile | **Yes** — any replica resolves the cookie |
+| Head | Root DSE `firstChangeNumber` / `lastChangeNumber` | Root DSE `lastExternalChangelogCookie` |
+
+**Use `OUD_COOKIE_CHANGELOG` for OUD (or OpenDJ) sources, and always when the
+source connection has a secondary host.** With `DSEE_CHANGELOG`, point the
+source at one fixed node.
+
+> **The cursor is replica-safe; the engine's reads are not.** A change record
+> only says "this DN changed" — the engine then re-reads the entry over its own
+> pooled connection, ~10 s later (the worker interval). If that read lands on a
+> replica that hasn't received the change yet, the engine applies the old state
+> and nothing re-signals that DN: the target stays stale until the next
+> reconcile (hourly by default). Normal replication lag is far below 10 s, but a
+> replication backlog isn't. So for the **source**, prefer a **primary +
+> secondary (failover)** connection over a round-robin / load-balanced
+> address: with failover every connection uses the primary, so the exposure is
+> limited to the moments around a failover; with round-robin it applies to
+> every change. If you must use a load balancer, make it sticky or
+> primary-preferred, and keep the reconcile cadence short.
+
+How cookie mode works (`OudCookieChangelogStrategy`):
+
+- The poller searches the changelog base (subtree) with the **External
+  Changelog Request Control** (OID `1.3.6.1.4.1.26027.1.5.4`, marked critical)
+  carrying the stored cookie, and advances to the `changeLogCookie` of the last
+  entry read. A server without cookie-mode support fails the search rather than
+  silently answering in change-number mode.
+- **First poll** (no cursor yet): the cursor is seeded from the source's
+  `lastExternalChangelogCookie` and a reconcile of every set on the link is
+  requested (§4.2) — the retained changelog is not replayed. The head is read
+  first, so the reconcile covers everything older than it.
+- **Cookie refused** (`UNWILLING_TO_PERFORM` — older than the source's
+  changelog purge window, or naming an unknown replicated domain): handled as a
+  gap — re-seed from the head, request a reconcile, health `GAP_DETECTED`. If
+  the freshly re-seeded cookie is refused again within an hour, the link goes
+  `STALLED` ("refused again after re-seed") instead of requesting a reconcile
+  on every poll.
+- **Control not supported** (`UNAVAILABLE_CRITICAL_EXTENSION`): `STALLED` with
+  the server's message — the source isn't serving cookie mode.
+- **Lag** has no numeric form: `LAGGING` means the last pass stopped with more
+  pending (§4.2). The numeric cursor columns stay empty, so cookie links don't
+  contribute to the `ldapportal_sync_changelog_lag_max_changes` metric or the
+  dashboard's lag figure — alert on `LAGGING` health instead (see
+  `docs/observability.md`).
+
+Cookie mode fixes the *source cursor* only. The engine still issues each
+source/target read and write as a separate pooled operation, so for the
+**target** prefer one writable node (optionally with a failover secondary), not
+a round-robin/load-balanced address — replication lag between nodes can mislead
+the engine's read-then-write decisions. The reconcile sweep remains the
+consistency backstop. `OUD_COOKIE_CHANGELOG` is a sync-capture format only;
+OUD audit sources keep using `DSEE_CHANGELOG`.
+
+#### Other replicated directories
+The per-server cursor problem isn't specific to OUD — any changelog that
+numbers changes per server has it. Only OUD has a cookie mode to fix it.
+
+| Source | Feed LDAP Portal can read | Cluster exposure | Guidance |
+|---|---|---|---|
+| **IBM Directory Server** | `cn=changelog` with integer `changeNumber` → `DSEE_CHANGELOG` | Same as DSEE above. IBM keeps the change log in a local, per-server database with locally assigned numbers (verify for your version), so a node switch either renumbers (gap / replay) or, if a server logs only its own writes, never shows changes made on the other node — only a reconcile catches those. There is no cookie equivalent. | Point the link at **one fixed node**: no secondary host, no load-balanced address. Keep a sensible reconcile cadence. |
+| **389 DS / Red Hat DS** (as `GENERIC`, retro changelog) | `cn=changelog` with `changeNumber` → `DSEE_CHANGELOG` | Same as IBM — the retro changelog is per server. | Same as IBM. |
+| **OpenLDAP** | None for sync — `slapo-accesslog` is audit-only, so sync links use `APP_INTERCEPT` + reconcile | Not exposed today (neither depends on a per-server position). An accesslog-based feed would be: each provider keeps its own accesslog, keyed by its own clock (`reqStart`). | The cluster-safe feed is syncrepl (RFC 4533), whose cookie carries a CSN per provider server ID — planned, not shipped. |
+| **Active Directory** | None for sync — DirSync is audit-only | DirSync cookies are designed to be resumable against any DC. | — |
+
+#### Audit sources have the same exposure
+The audit reader (`LdapChangelogReader`) keeps no cursor: each poll it scans the
+changelog and skips entries it has already recorded, keyed by the linked
+directory (matched from the target DN) and the entry id — for DSEE-format
+changelogs (OUD in change-number mode, IBM, 389 DS) that id is the per-server
+`changeNumber`. An audit source has a single host. If that host is a **load-balanced address** in front of several
+nodes, a node switch silently corrupts the audit trail, with no error:
+
+- **Lost events** — node B's change 1234 is a different change from node A's
+  1234, but the reader has already recorded "1234" and skips it.
+- **Duplicate events** — the same change appears under different numbers on
+  each node and is recorded twice.
+
+**Point every DSEE-format audit source at one fixed node**, never a VIP. (A
+replication-safe key exists — cookie-mode entries carry `replicationCSN`, the
+same on every replica — but audit sources don't read cookie mode today.)
 
 ---
 
@@ -310,18 +428,19 @@ Exposed on the link (`changelogHealth`, `changelogLastError`,
 | Health | Meaning | What to do |
 |---|---|---|
 | `HEALTHY` | Polling; cursor advancing. | Nothing. |
-| `LAGGING` | Behind source head by > 1000. | Watch; check target/worker throughput. |
+| `LAGGING` | Behind source head by > 1000 (cookie mode: the last pass stopped with more pending). | Watch; persistent `LAGGING` means the source writes faster than a pass drains (20 pages / 5 s per 15 s) — check the bind account's limits and source/network latency. |
 | `STALLED` | Repeated poll errors — see `changelogLastError`. | Fix source reachability/perms. |
-| `GAP_DETECTED` | Cursor fell off the bottom (changelog purged before read). Engine auto-reconciles. | Verify reconcile cleared it; consider larger source changelog retention. |
+| `GAP_DETECTED` | Cursor fell off the bottom (changelog purged before read; cookie mode: source refused the cookie). Cursor jumps to the head; a reconcile is requested and runs on the next scheduler tick. | Verify reconcile cleared it; consider larger source changelog retention. With `DSEE_CHANGELOG` on a replicated source, a node switch also lands here — see §4.3. |
 | `CURSOR_RESET` | Source changelog restarted (head < cursor). Cursor reset to 0. | Expect a re-scan; confirm convergence. |
-| `DISABLED_CONFIG_ERROR` | Source dir or changelog strategy unavailable. | Fix link config / source. |
+| `DISABLED_CONFIG_ERROR` | Source dir or changelog strategy unavailable (cookie mode: Root DSE returned no `lastExternalChangelogCookie`). | Fix link config / source; enable the source's external changelog, and check the bind account can read that Root DSE attribute. |
 
 ### 7.4 Logs
 JSON logs (`logback-spring.xml`). Useful greps:
 ```
 "FAILED —"                        # an identity's apply failure + reason
 "quarantined for REVIEW"          # quarantine + reason
-"changelog gap detected"          # gap → reconcile
+"changelog gap detected"          # gap → reconcile requested
+"changelog cookie refused"        # cookie-mode gap → reconcile requested
 "Released ... stale recompute claim"   # worker crashed mid-process and recovered
 "Scheduled reconcile of sync set ... failed"
 ```
@@ -350,7 +469,9 @@ e.g. `ldapportal.sync.worker.fixed-delay-ms` → `LDAPPORTAL_SYNC_WORKER_FIXED_D
 | `ldapportal.sync.reconcile.tick-ms` | `60000` | Reconcile sweep tick (checks which sets are *due*). |
 | `ldapportal.sync.reconcile.default-cadence-seconds` | `3600` | Default per-set reconcile cadence (overridden per set). |
 | `ldapportal.sync.changelog.fixed-delay-ms` | `15000` | Changelog poll interval. |
-| (constant) changelog batch | `500` | Records per poll. |
+| (constant) changelog page | `500` | Records per changelog search. |
+| (constant) pages per pass | `20` (or `5s`, whichever first) | Per link per poll; more pending → `LAGGING`. The poller shares the app's single scheduler thread, so this also bounds how long a busy link delays other scheduled jobs. |
+| (constant) reconcile-request retry spacing | `5m` | Retry interval for a requested reconcile whose source enumeration didn't complete. |
 | (constant) lag threshold | `1000` | Above this lag → `LAGGING`. |
 | (constant) stale poll lease | `5m` | Reclaim a poll lease from a dead instance. |
 
@@ -368,7 +489,7 @@ instances as you like; no leader election needed.
 | Table | Holds |
 |---|---|
 | `sync_links` | source/target dirs, capture mode, changelog config + health/cursor. |
-| `sync_set` | selection + projection config per set. |
+| `sync_set` | selection + projection config per set; reconcile cadence, last run, and the reconcile request counters (`reconcile_request_seq` / `reconcile_attempted_seq` / `reconcile_handled_seq`). |
 | `sync_membership` | one row per identity per set: source/target DN, content hash, state, fail reason, scan epoch, version. (Renamed from `membership` in `V7`.) |
 | `recompute_request` | coalescing trigger queue, PK `(sync_set_id, request_key)`. |
 
@@ -397,7 +518,7 @@ behind (raise throughput or lower batch latency).
 | Identity `REVIEW` | Brownfield ambiguity / occupied DN / held delete | Resolve at target (dedupe anchors, clear DN, or confirm delete); **Recompute** or **Dismiss**. |
 | Many `FAILED` after target change | Target outage/ACL change | Fix target; reconcile re-drives FAILED rows automatically next cadence, or **Reconcile now**. |
 | Changelog `STALLED` | Source unreachable / changelog perms | See `changelogLastError`; fix source bind/ACL. |
-| Changelog `GAP_DETECTED` | Source changelog purged faster than polled | Engine auto-reconciles; raise source changelog retention or poll more often. |
+| Changelog `GAP_DETECTED` | Source changelog purged faster than polled | A reconcile is requested automatically (next scheduler tick); raise source changelog retention or poll more often. |
 | `recompute_request` backlog growing | Worker behind | Lower `worker.fixed-delay-ms`, scale instances, check DB. |
 | Wrong DN on target after a rename | (shouldn't happen) engine converges renames as MODDN | If stuck, **Recompute** by identity; reconcile re-derives. |
 | Member/manager points at stale DN | reference attr not declared | Add the attr to **Reference attributes**; recompute the group/referrer. |
@@ -453,7 +574,7 @@ JOIN sync_set ss ON ss.id = rr.sync_set_id
 GROUP BY ss.name
 ORDER BY queued DESC;
 
--- Changelog poll health and lag (CHANGELOG links)
+-- Changelog poll health and lag (CHANGELOG links; lag is NULL in cookie mode)
 SELECT l.display_name,
        l.changelog_health,
        l.changelog_last_polled_at,
@@ -463,11 +584,17 @@ FROM sync_links l
 WHERE l.capture_mode = 'CHANGELOG'
 ORDER BY l.display_name;
 
--- Sets overdue for reconcile (last run older than their cadence; blank cadence = 3600s)
-SELECT ss.name, ss.reconcile_last_run_at, ss.reconcile_cadence_seconds
+-- Sets due for reconcile (unattempted request; unhandled request with the last
+-- run 5+ minutes ago; or last run older than their cadence, blank = 3600s)
+SELECT ss.name, ss.reconcile_last_run_at, ss.reconcile_cadence_seconds,
+       ss.reconcile_request_seq > ss.reconcile_attempted_seq AS reconcile_requested,
+       ss.reconcile_request_seq > ss.reconcile_handled_seq  AS reconcile_unhandled
 FROM sync_set ss
 WHERE ss.enabled
-  AND (ss.reconcile_last_run_at IS NULL
+  AND (ss.reconcile_request_seq > ss.reconcile_attempted_seq
+       OR ss.reconcile_last_run_at IS NULL
+       OR (ss.reconcile_request_seq > ss.reconcile_handled_seq
+           AND ss.reconcile_last_run_at + interval '5 minutes' <= now())
        OR ss.reconcile_last_run_at
           + make_interval(secs => COALESCE(ss.reconcile_cadence_seconds, 3600)) < now())
 ORDER BY ss.reconcile_last_run_at NULLS FIRST;
@@ -493,5 +620,8 @@ ORDER BY ss.reconcile_last_run_at NULLS FIRST;
   key breaks correlation; the engine quarantines what it can't disambiguate.
 - **Convergence, not history.** There is no per-change audit/event trail in the
   sync subsystem today (see §7.4) — the record is current index state + logs.
-- **Changelog format:** currently `DSEE_CHANGELOG` only; other feeds (DirSync,
+- **Changelog format:** `DSEE_CHANGELOG` and `OUD_COOKIE_CHANGELOG`; other feeds (DirSync,
   syncrepl, Entra delta) are planned, not shipped.
+- **Per-server changelogs need a fixed node.** Only OUD cookie mode survives a
+  replica switch. `DSEE_CHANGELOG` links (OUD change-number mode, IBM, 389 DS)
+  and DSEE-format audit sources must point at one node — see §4.3.
