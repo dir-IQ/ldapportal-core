@@ -11,6 +11,7 @@ import {
 import { listDirectories } from '@/api/directories'
 import { listObjectClasses, getObjectClass } from '@/api/schema'
 import { permittedAttrSet, unsupportedAttrs } from '@/utils/schemaPermitted'
+import { byLayoutOrder } from '@/utils/layoutOrder'
 import { parseLeadingRdn } from '@/utils/dn'
 import { listAccountSummaries } from '@/api/adminManagement'
 import type { components } from '@/api/openapi'
@@ -1419,6 +1420,8 @@ const registrationAttributeConfigs = computed<LayoutRow[]>({
   get() {
     return profile.value.attributeConfigs
       .filter(a => a.selfRegistrationEdit && !a.hidden && a.inputType !== 'HIDDEN_FIXED')
+      // Ordered by this layout's own saved order, not the admin form's.
+      .sort(byLayoutOrder('registrationDisplayOrder'))
       .map(a => ({
         ...a,
         rdn: a.attributeName === profile.value.rdnAttribute,
@@ -1451,6 +1454,7 @@ const selfServiceAttributeConfigs = computed<LayoutRow[]>({
   get() {
     return profile.value.attributeConfigs
       .filter(a => a.selfServiceEdit && !a.hidden && a.inputType !== 'HIDDEN_FIXED')
+      .sort(byLayoutOrder('selfServiceDisplayOrder'))
       .map(a => ({
         ...a,
         rdn: a.attributeName === profile.value.rdnAttribute,

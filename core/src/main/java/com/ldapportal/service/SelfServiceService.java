@@ -79,7 +79,7 @@ public class SelfServiceService {
 
         List<SelfServiceFieldConfig> fields = configs.stream()
                 .filter(c -> !c.isHidden() && c.isSelfServiceEdit())
-                .sorted(Comparator.comparingInt(ProfileAttributeConfig::getSelfServiceDisplayOrder))
+                .sorted(Comparator.comparing(ProfileAttributeConfig::getSelfServiceDisplayOrder, Comparator.nullsLast(Comparator.naturalOrder())))
                 .map(c -> new SelfServiceFieldConfig(
                         c.getAttributeName(),
                         c.getCustomLabel() != null ? c.getCustomLabel() : humanize(c.getAttributeName()),
