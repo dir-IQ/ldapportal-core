@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.service;
 
+import com.ldapportal.dto.sync.SyncLinkRequest;
 import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncVerifyResult;
+import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
+import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.MembershipState;
+import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
@@ -226,5 +230,71 @@ class SyncConfigServiceTest {
         service.listMemberships(UUID.randomUUID(), null, "   ", PageRequest.of(0, 50));
 
         verify(membershipRepo).search(any(), isNull(), isNull(), any());
+    }
+
+    // ── link capture config ──────────────────────────────────────────────────
+
+    private SyncLinkRequest linkReq(SyncCaptureMode mode, ChangelogFormat format, String baseDn) {
+        return new SyncLinkRequest("link", SRC_DIR, DST_DIR, true, mode, format, baseDn);
+    }
+
+    @Test
+    void createLink_rejectsChangelogFormatWithoutSyncCapture() {
+        when(directoryRepo.existsById(any())).thenReturn(true);
+
+        assertThatThrownBy(() -> service.createLink(
+                linkReq(SyncCaptureMode.CHANGELOG, ChangelogFormat.OPENLDAP_ACCESSLOG, "cn=accesslog")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not supported for CHANGELOG capture");
+        verify(linkRepo, never()).save(any());
+    }
+
+    @Test
+    void updateLink_switchingFeed_resetsCursor() {
+        SyncLink existing = changelogLink(ChangelogFormat.DSEE_CHANGELOG, "cn=changelog");
+        when(directoryRepo.existsById(any())).thenReturn(true);
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // A DSEE changeNumber is meaningless as an OUD cookie.
+        service.updateLink(existing.getId(),
+                linkReq(SyncCaptureMode.CHANGELOG, ChangelogFormat.OUD_COOKIE_CHANGELOG, "cn=changelog"));
+
+        assertThat(existing.getChangelogFormat()).isEqualTo(ChangelogFormat.OUD_COOKIE_CHANGELOG);
+        assertThat(existing.getChangelogCursorToken()).isNull();
+        assertThat(existing.getChangelogLastChangeNumber()).isNull();
+        assertThat(existing.getChangelogSourceLastChangeNumber()).isNull();
+    }
+
+    @Test
+    void updateLink_sameFeed_keepsCursor() {
+        SyncLink existing = changelogLink(ChangelogFormat.OUD_COOKIE_CHANGELOG, "cn=changelog");
+        existing.setChangelogCursorToken("dc=example,dc=com:0000018c2f3a1b2c00010000000a;");
+        when(directoryRepo.existsById(any())).thenReturn(true);
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateLink(existing.getId(),
+                linkReq(SyncCaptureMode.CHANGELOG, ChangelogFormat.OUD_COOKIE_CHANGELOG, "cn=changelog"));
+
+        assertThat(existing.getChangelogCursorToken())
+                .isEqualTo("dc=example,dc=com:0000018c2f3a1b2c00010000000a;");
+    }
+
+    private static final UUID SRC_DIR = UUID.randomUUID();
+    private static final UUID DST_DIR = UUID.randomUUID();
+
+    private static SyncLink changelogLink(ChangelogFormat format, String baseDn) {
+        SyncLink l = new SyncLink();
+        l.setId(UUID.randomUUID());
+        l.setSourceDirId(SRC_DIR);
+        l.setTargetDirId(DST_DIR);
+        l.setCaptureMode(SyncCaptureMode.CHANGELOG);
+        l.setChangelogFormat(format);
+        l.setChangelogBaseDn(baseDn);
+        l.setChangelogCursorToken("42");
+        l.setChangelogLastChangeNumber(42L);
+        l.setChangelogSourceLastChangeNumber(50L);
+        return l;
     }
 }

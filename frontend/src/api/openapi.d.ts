@@ -2844,7 +2844,7 @@ export interface components {
             /** @enum {string} */
             captureMode?: "APP_INTERCEPT" | "CHANGELOG";
             /** @enum {string} */
-            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC" | "OUD_COOKIE_CHANGELOG";
             changelogBaseDn?: string;
         };
         SyncLinkResponse: {
@@ -2859,7 +2859,7 @@ export interface components {
             /** @enum {string} */
             captureMode?: "APP_INTERCEPT" | "CHANGELOG";
             /** @enum {string} */
-            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC" | "OUD_COOKIE_CHANGELOG";
             changelogBaseDn?: string;
             /** @enum {string} */
             changelogHealth?: "HEALTHY" | "LAGGING" | "STALLED" | "GAP_DETECTED" | "CURSOR_RESET" | "DISABLED_CONFIG_ERROR";
@@ -3137,7 +3137,7 @@ export interface components {
             changelogBaseDn: string;
             branchFilterDn?: string;
             /** @enum {string} */
-            changelogFormat: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogFormat: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC" | "OUD_COOKIE_CHANGELOG";
             enabled?: boolean;
         };
         AuditSourceResponse: {
@@ -3154,7 +3154,7 @@ export interface components {
             changelogBaseDn?: string;
             branchFilterDn?: string;
             /** @enum {string} */
-            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC" | "OUD_COOKIE_CHANGELOG";
             enabled?: boolean;
             /** Format: date-time */
             createdAt?: string;

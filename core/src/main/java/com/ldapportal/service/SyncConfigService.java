@@ -9,6 +9,7 @@ import com.ldapportal.dto.sync.SyncSetResponse;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
+import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
@@ -37,6 +38,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -109,6 +111,14 @@ public class SyncConfigService {
         l.setEnabled(req.enabled());
         l.setCaptureMode(mode);
         if (mode == SyncCaptureMode.CHANGELOG) {
+            // A cursor is only meaningful for the feed that issued it (a DSEE
+            // changeNumber is not an OUD cookie), so a feed change restarts it.
+            if (l.getChangelogFormat() != req.changelogFormat()
+                    || !Objects.equals(l.getChangelogBaseDn(), req.changelogBaseDn())) {
+                l.setChangelogCursorToken(null);
+                l.setChangelogLastChangeNumber(null);
+                l.setChangelogSourceLastChangeNumber(null);
+            }
             l.setChangelogFormat(req.changelogFormat());
             l.setChangelogBaseDn(req.changelogBaseDn());
         } else {
@@ -131,6 +141,11 @@ public class SyncConfigService {
         if (req.captureMode() == SyncCaptureMode.CHANGELOG) {
             if (req.changelogFormat() == null) {
                 throw new IllegalArgumentException("changelogFormat is required for CHANGELOG capture");
+            }
+            if (req.changelogFormat() != ChangelogFormat.DSEE_CHANGELOG
+                    && req.changelogFormat() != ChangelogFormat.OUD_COOKIE_CHANGELOG) {
+                throw new IllegalArgumentException("changelogFormat " + req.changelogFormat()
+                        + " is not supported for CHANGELOG capture (use DSEE_CHANGELOG or OUD_COOKIE_CHANGELOG)");
             }
             if (req.changelogBaseDn() == null || req.changelogBaseDn().isBlank()) {
                 throw new IllegalArgumentException("changelogBaseDn is required for CHANGELOG capture");

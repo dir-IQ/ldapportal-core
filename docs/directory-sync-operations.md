@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture, reconcile, brownfield adoption, cross-link reference resolution; 2026-09-16).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, brownfield adoption, cross-link reference resolution; 2026-10-19).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -118,13 +118,15 @@ superadmin-only and `DIRECTORY_SYNC`-entitled.
 | **Source directory** | Must differ from target (self-pairs rejected). |
 | **Target directory** | Where entries are created/updated/deleted. |
 | **Capture mode** | `APP_INTERCEPT` (capture portal writes) or `CHANGELOG` (poll source changelog). See §4. |
-| **Changelog format** | Required for `CHANGELOG`. Currently `DSEE_CHANGELOG` (DSEE / `cn=changelog`). |
+| **Changelog format** | Required for `CHANGELOG`. `DSEE_CHANGELOG` (DSEE / `cn=changelog`, integer `changeNumber`) or `OUD_COOKIE_CHANGELOG` (OUD / OpenDJ `cn=changelog` in cookie mode). See §4.3. |
 | **Changelog base DN** | Required for `CHANGELOG`, e.g. `cn=changelog`. |
 | **Enabled** | When off, the link's sets are not processed (engine and poller skip a disabled link). |
 
 Validation (`SyncConfigService.validateLink`): source ≠ target; both
-directories must exist; `CHANGELOG` requires both `changelogFormat` and
-`changelogBaseDn`. `APP_INTERCEPT` clears any changelog config.
+directories must exist; `CHANGELOG` requires both `changelogFormat` (one of
+the two above) and `changelogBaseDn`. `APP_INTERCEPT` clears any changelog
+config. Changing the format or base DN of an existing link clears its cursor:
+a cursor is only meaningful for the feed that issued it.
 
 ### 3.2 Sync set — *what* (selection + projection), nested under a link
 
@@ -176,6 +178,49 @@ sufficient, so there is no exactly-once dedup, no FIFO, no LDIF reconstruction.
 
 The poller maintains a cursor, an HA poll-lease, and a **health** state
 (see §7.3). On a detected gap it triggers a reconcile to re-derive state.
+
+### 4.3 Replicated sources — choosing the changelog format
+The two formats differ in what the cursor means, which matters when the source
+is a replication topology (e.g. clustered OUD) rather than a single server.
+
+| | `DSEE_CHANGELOG` | `OUD_COOKIE_CHANGELOG` |
+|---|---|---|
+| Cursor | Integer `changeNumber` | Opaque `changeLogCookie` (persisted verbatim) |
+| Issued by | Each server's own change-number indexer | Replication CSNs — global to the topology |
+| Same change on two replicas | Different numbers | Same CSNs |
+| Survives failover / load-balanced source | **No** — a node switch looks like a gap (reconcile + jump to head) or a cursor reset (full replay); changes can be skipped until the next reconcile | **Yes** — any replica resolves the cookie |
+| Head | Root DSE `firstChangeNumber` / `lastChangeNumber` | Root DSE `lastExternalChangelogCookie` |
+
+**Use `OUD_COOKIE_CHANGELOG` for OUD (or OpenDJ) sources, and always when the
+source connection has a secondary host or points at a load-balanced address.**
+With `DSEE_CHANGELOG`, point the source at one fixed node.
+
+How cookie mode works (`OudCookieChangelogStrategy`):
+
+- The poller searches the changelog base (subtree) with the **External
+  Changelog Request Control** (OID `1.3.6.1.4.1.26027.1.5.4`, marked critical)
+  carrying the stored cookie, and advances to the `changeLogCookie` of the last
+  entry read. A server without cookie-mode support fails the search rather than
+  silently answering in change-number mode.
+- **First poll** (no cursor yet): every set on the link is reconciled and the
+  cursor is seeded from the source's `lastExternalChangelogCookie` — the
+  retained changelog is not replayed.
+- **Cookie refused** (`UNWILLING_TO_PERFORM` — older than the source's
+  changelog purge window, or naming an unknown replicated domain): handled as a
+  gap — reconcile every set, re-seed from the head, health `GAP_DETECTED`. If
+  the freshly re-seeded cookie is refused again within an hour, the link goes
+  `STALLED` ("refused again after re-seed") instead of reconciling on every
+  poll.
+- **Lag** has no numeric form: `LAGGING` means the last poll hit the 500-record
+  batch (more is pending). The numeric cursor columns stay empty.
+
+Cookie mode fixes the *source cursor* only. The engine still issues each
+source/target read and write as a separate pooled operation, so for the
+**target** prefer one writable node (optionally with a failover secondary), not
+a round-robin/load-balanced address — replication lag between nodes can mislead
+the engine's read-then-write decisions. The reconcile sweep remains the
+consistency backstop. `OUD_COOKIE_CHANGELOG` is a sync-capture format only;
+OUD audit sources keep using `DSEE_CHANGELOG`.
 
 ---
 
@@ -310,11 +355,11 @@ Exposed on the link (`changelogHealth`, `changelogLastError`,
 | Health | Meaning | What to do |
 |---|---|---|
 | `HEALTHY` | Polling; cursor advancing. | Nothing. |
-| `LAGGING` | Behind source head by > 1000. | Watch; check target/worker throughput. |
+| `LAGGING` | Behind source head by > 1000 (cookie mode: last poll filled the 500-record batch). | Watch; check target/worker throughput. |
 | `STALLED` | Repeated poll errors — see `changelogLastError`. | Fix source reachability/perms. |
-| `GAP_DETECTED` | Cursor fell off the bottom (changelog purged before read). Engine auto-reconciles. | Verify reconcile cleared it; consider larger source changelog retention. |
+| `GAP_DETECTED` | Cursor fell off the bottom (changelog purged before read; cookie mode: source refused the cookie). Engine auto-reconciles. | Verify reconcile cleared it; consider larger source changelog retention. With `DSEE_CHANGELOG` on a replicated source, a node switch also lands here — see §4.3. |
 | `CURSOR_RESET` | Source changelog restarted (head < cursor). Cursor reset to 0. | Expect a re-scan; confirm convergence. |
-| `DISABLED_CONFIG_ERROR` | Source dir or changelog strategy unavailable. | Fix link config / source. |
+| `DISABLED_CONFIG_ERROR` | Source dir or changelog strategy unavailable (cookie mode: Root DSE has no `lastExternalChangelogCookie`). | Fix link config / source; enable the source's external changelog. |
 
 ### 7.4 Logs
 JSON logs (`logback-spring.xml`). Useful greps:
@@ -453,7 +498,7 @@ JOIN sync_set ss ON ss.id = rr.sync_set_id
 GROUP BY ss.name
 ORDER BY queued DESC;
 
--- Changelog poll health and lag (CHANGELOG links)
+-- Changelog poll health and lag (CHANGELOG links; lag is NULL in cookie mode)
 SELECT l.display_name,
        l.changelog_health,
        l.changelog_last_polled_at,
@@ -493,5 +538,5 @@ ORDER BY ss.reconcile_last_run_at NULLS FIRST;
   key breaks correlation; the engine quarantines what it can't disambiguate.
 - **Convergence, not history.** There is no per-change audit/event trail in the
   sync subsystem today (see §7.4) — the record is current index state + logs.
-- **Changelog format:** currently `DSEE_CHANGELOG` only; other feeds (DirSync,
+- **Changelog format:** `DSEE_CHANGELOG` and `OUD_COOKIE_CHANGELOG`; other feeds (DirSync,
   syncrepl, Entra delta) are planned, not shipped.

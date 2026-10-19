@@ -128,7 +128,8 @@
             <label class="block text-sm font-medium text-gray-700 mb-1">Changelog format</label>
             <select v-model="linkForm.changelogFormat" aria-label="Changelog format" class="input">
               <option :value="null" disabled>Select…</option>
-              <option value="DSEE_CHANGELOG">DSEE / cn=changelog</option>
+              <option value="DSEE_CHANGELOG">DSEE / cn=changelog (changeNumber, single node)</option>
+              <option value="OUD_COOKIE_CHANGELOG">OUD / cn=changelog (cookie, replication-safe)</option>
             </select>
           </div>
           <FormField label="Changelog base DN" v-model="changelogBaseDnModel" placeholder="cn=changelog" />

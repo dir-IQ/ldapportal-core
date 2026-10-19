@@ -12,9 +12,14 @@ import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.changelog.ChangelogReadContext;
 import com.ldapportal.ldap.changelog.ChangelogStrategy;
 import com.ldapportal.ldap.changelog.DseeChangelogStrategy;
+import com.ldapportal.ldap.changelog.OudCookieChangelogStrategy;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.SyncLinkRepository;
 import com.ldapportal.repository.SyncSetRepository;
+import com.unboundid.ldap.sdk.FullLDAPInterface;
+import com.unboundid.ldap.sdk.LDAPException;
+import com.unboundid.ldap.sdk.LDAPSearchException;
+import com.unboundid.ldap.sdk.ResultCode;
 import com.unboundid.ldap.sdk.RootDSE;
 import com.unboundid.ldap.sdk.SearchRequest;
 import com.unboundid.ldap.sdk.SearchResultEntry;
@@ -40,6 +45,11 @@ import java.util.UUID;
  * <p>Keeps the operational machinery: an HA poll-lease, a cursor, lag/gap/cursor-
  * reset health, and a reconcile trigger when the cursor falls off the bottom of
  * the changelog. Gated on {@code DIRECTORY_SYNC}.
+ *
+ * <p>Two cursor families: the DSEE integer {@code changeNumber} (per-server, so
+ * only meaningful against the node that issued it) and the OUD external
+ * changelog cookie (replication-CSN based, valid on any replica — see
+ * {@link #pollCookie}).
  */
 @Component
 @RequiredArgsConstructor
@@ -49,7 +59,11 @@ public class SyncChangelogPoller {
     private static final int BATCH = 500;
     private static final long LAG_THRESHOLD = 1000;
     private static final Duration STALE_LEASE = Duration.ofMinutes(5);
+    /** Minimum spacing between refusal-driven re-seeds (each one reconciles every set). */
+    private static final Duration RESEED_BACKOFF = Duration.ofHours(1);
+    private static final String COOKIE_REFUSED_AGAIN = "changelog cookie refused again after re-seed: ";
     private static final DseeChangelogStrategy DSEE = new DseeChangelogStrategy();
+    private static final OudCookieChangelogStrategy OUD_COOKIE = new OudCookieChangelogStrategy();
 
     private final SyncLinkRepository linkRepo;
     private final SyncSetRepository syncSetRepo;
@@ -92,6 +106,10 @@ public class SyncChangelogPoller {
             return;
         }
         List<SyncSet> sets = syncSetRepo.findAllByLinkId(linkId).stream().filter(SyncSet::isEnabled).toList();
+        if (strategy == OUD_COOKIE) {
+            pollCookie(link, source, sets);
+            return;
+        }
         try {
             PollResult r = connectionFactory.withConnectionUnreplicated(source, conn -> {
                 RootDSE root = conn.getRootDSE();
@@ -120,20 +138,7 @@ public class SyncChangelogPoller {
                         continue;
                     }
                     long cn = Long.parseLong(id);
-                    // A rename/move record names the PRE-move DN; the post-move DN
-                    // is enqueued as well so a move INTO a set's scope is seen (the
-                    // old DN alone never passes that set's scope check), and a move
-                    // OUT of scope still reaches the set through the old DN.
-                    List<String> changedDns = strategy.extractPostModifyDn(e)
-                            .map(post -> List.of(dn, post))
-                            .orElse(List.of(dn));
-                    for (SyncSet set : sets) {
-                        for (String changed : changedDns) {
-                            if (SyncScopes.inScope(set, changed)) {
-                                enqueuer.enqueue(set.getId(), changed, cn);
-                            }
-                        }
-                    }
+                    enqueueChanged(sets, dn, strategy.extractPostModifyDn(e).orElse(null), cn);
                     maxCn = Math.max(maxCn, cn);
                 }
                 return new PollResult(maxCn, lastCn, gap, cursorReset);
@@ -171,6 +176,143 @@ public class SyncChangelogPoller {
         linkRepo.save(link);
     }
 
+    /**
+     * Cookie-mode poll. The cursor token is the OUD {@code changeLogCookie},
+     * passed back verbatim; it advances to the cookie on the last entry read.
+     * No numeric head exists, so:
+     * <ul>
+     *   <li><b>No cursor yet</b> — seed: reconcile every set (nothing before the
+     *       head is known to have been seen) and start from the source's
+     *       {@code lastExternalChangelogCookie}.</li>
+     *   <li><b>Cookie refused</b> ({@code UNWILLING_TO_PERFORM}: purged past it, or
+     *       an unknown domain) — the gap path: reconcile, then re-seed from the
+     *       head. A refusal of a cookie re-seeded under {@link #RESEED_BACKOFF}
+     *       ago is not a gap (the cookie is fresh) but a server problem, so it
+     *       stalls instead of reconciling on every poll.</li>
+     *   <li><b>Lag</b> — a full batch (or a size-limited partial one) means more
+     *       is pending.</li>
+     * </ul>
+     */
+    private void pollCookie(SyncLink link, DirectoryConnection source, List<SyncSet> sets) {
+        String cursor = link.getChangelogCursorToken();
+        boolean seed = cursor == null || cursor.isBlank();
+        try {
+            CookiePollResult r = connectionFactory.withConnectionUnreplicated(source, conn -> {
+                if (seed) {
+                    return CookiePollResult.reseed(headCookie(conn));
+                }
+                SearchRequest req = OUD_COOKIE.buildCookieSearchRequest(link.getChangelogBaseDn(), cursor, BATCH);
+                List<SearchResultEntry> entries;
+                boolean more;
+                try {
+                    entries = conn.search(req).getSearchEntries();
+                    more = entries.size() >= BATCH;
+                } catch (LDAPSearchException ex) {
+                    if (ex.getResultCode() == ResultCode.SIZE_LIMIT_EXCEEDED) {
+                        // A size-limited page is still a prefix of the change stream;
+                        // the last entry's cookie is a valid resume point.
+                        entries = ex.getSearchEntries();
+                        more = true;
+                    } else if (ex.getResultCode() == ResultCode.UNWILLING_TO_PERFORM) {
+                        return CookiePollResult.refused(headCookie(conn), ex.getDiagnosticMessage());
+                    } else {
+                        throw ex;
+                    }
+                }
+                String newCursor = cursor;
+                for (SearchResultEntry e : entries) {
+                    String cookie = OUD_COOKIE.extractEntryId(e);
+                    String dn = OUD_COOKIE.extractTargetDn(e);
+                    if (dn != null) {
+                        enqueueChanged(sets, dn, OUD_COOKIE.extractPostModifyDn(e).orElse(null), null);
+                    }
+                    if (cookie != null) {
+                        newCursor = cookie;
+                    }
+                }
+                return CookiePollResult.advanced(newCursor, more);
+            });
+
+            if (r.reseed()) {
+                if (r.head() == null) {
+                    markError(link, "source Root DSE has no " + OudCookieChangelogStrategy.ROOT_DSE_LAST_COOKIE
+                            + " (external changelog not enabled?)", SyncChangelogHealth.DISABLED_CONFIG_ERROR);
+                    return;
+                }
+                if (r.refusal() != null && reseededRecently(link)) {
+                    markError(link, COOKIE_REFUSED_AGAIN + r.refusal(), SyncChangelogHealth.STALLED);
+                    return;
+                }
+                if (r.refusal() != null) {
+                    log.warn("Sync link {}: changelog cookie refused ({}); reconciling to re-derive state",
+                            link.getId(), r.refusal());
+                }
+                for (SyncSet set : sets) {
+                    reconciler.reconcile(set.getId());
+                }
+                advanceCookie(link, r.head(),
+                        r.refusal() != null ? SyncChangelogHealth.GAP_DETECTED : SyncChangelogHealth.HEALTHY);
+            } else {
+                advanceCookie(link, r.cursor(), r.more() ? SyncChangelogHealth.LAGGING : SyncChangelogHealth.HEALTHY);
+            }
+        } catch (Exception ex) {
+            markError(link, ex.getMessage(), SyncChangelogHealth.STALLED);
+        }
+    }
+
+    /**
+     * Whether the current cursor came from a refusal-driven re-seed within the
+     * backoff window and nothing has been read since: still GAP_DETECTED, or
+     * already stalled by a repeat refusal. {@code markError} leaves
+     * {@code lastPolledAt} alone, so it still dates the re-seed.
+     */
+    private static boolean reseededRecently(SyncLink link) {
+        SyncChangelogHealth h = link.getChangelogHealth();
+        boolean afterReseed = h == SyncChangelogHealth.GAP_DETECTED
+                || (h == SyncChangelogHealth.STALLED && link.getChangelogLastError() != null
+                        && link.getChangelogLastError().startsWith(COOKIE_REFUSED_AGAIN));
+        OffsetDateTime at = link.getChangelogLastPolledAt();
+        return afterReseed && at != null && at.isAfter(OffsetDateTime.now().minus(RESEED_BACKOFF));
+    }
+
+    /** The source's newest cookie, requested by name (it is a virtual operational attribute). */
+    private static String headCookie(FullLDAPInterface conn) throws LDAPException {
+        SearchResultEntry root = conn.getEntry("", OudCookieChangelogStrategy.ROOT_DSE_LAST_COOKIE);
+        String head = root == null ? null
+                : root.getAttributeValue(OudCookieChangelogStrategy.ROOT_DSE_LAST_COOKIE);
+        return head == null || head.isBlank() ? null : head;
+    }
+
+    private void advanceCookie(SyncLink link, String cursor, SyncChangelogHealth health) {
+        link.setChangelogCursorToken(cursor);
+        // No monotonic integer in cookie mode; the numeric mirrors stay empty.
+        link.setChangelogLastChangeNumber(null);
+        link.setChangelogSourceLastChangeNumber(null);
+        link.setChangelogLastPolledAt(OffsetDateTime.now());
+        link.setChangelogLastError(null);
+        link.setChangelogPollClaimedAt(null);
+        link.setChangelogHealth(health);
+        linkRepo.save(link);
+    }
+
+    /**
+     * Enqueue a change record's DN(s) for every set whose scope covers them. A
+     * rename/move record names the PRE-move DN; the post-move DN is enqueued as
+     * well so a move INTO a set's scope is seen (the old DN alone never passes
+     * that set's scope check), and a move OUT of scope still reaches the set
+     * through the old DN.
+     */
+    private void enqueueChanged(List<SyncSet> sets, String dn, String postMoveDn, Long srcCursor) {
+        List<String> changedDns = postMoveDn != null ? List.of(dn, postMoveDn) : List.of(dn);
+        for (SyncSet set : sets) {
+            for (String changed : changedDns) {
+                if (SyncScopes.inScope(set, changed)) {
+                    enqueuer.enqueue(set.getId(), changed, srcCursor);
+                }
+            }
+        }
+    }
+
     private void markError(SyncLink link, String message, SyncChangelogHealth health) {
         link.setChangelogLastError(message);
         link.setChangelogLastErrorAt(OffsetDateTime.now());
@@ -181,9 +323,36 @@ public class SyncChangelogPoller {
     }
 
     private static ChangelogStrategy strategyFor(ChangelogFormat format) {
-        return format == ChangelogFormat.DSEE_CHANGELOG ? DSEE : null;
+        if (format == null) {
+            return null;
+        }
+        return switch (format) {
+            case DSEE_CHANGELOG -> DSEE;
+            case OUD_COOKIE_CHANGELOG -> OUD_COOKIE;
+            default -> null;
+        };
     }
 
     private record PollResult(long maxChangeNumber, Long sourceHead, boolean gap, boolean cursorReset) {
+    }
+
+    /**
+     * Outcome of one cookie poll: either an advance ({@code cursor}, {@code more})
+     * or a re-seed from {@code head} — first poll, or {@code refusal} set when the
+     * server refused the stored cookie.
+     */
+    private record CookiePollResult(String cursor, boolean more, boolean reseed, String head, String refusal) {
+        static CookiePollResult advanced(String cursor, boolean more) {
+            return new CookiePollResult(cursor, more, false, null, null);
+        }
+
+        static CookiePollResult reseed(String head) {
+            return new CookiePollResult(null, false, true, head, null);
+        }
+
+        static CookiePollResult refused(String head, String diagnostic) {
+            return new CookiePollResult(null, false, true, head,
+                    diagnostic == null || diagnostic.isBlank() ? "UNWILLING_TO_PERFORM" : diagnostic);
+        }
     }
 }
