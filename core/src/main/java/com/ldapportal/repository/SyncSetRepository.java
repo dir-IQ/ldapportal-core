@@ -33,4 +33,17 @@ public interface SyncSetRepository extends JpaRepository<SyncSet, UUID> {
     int recordVerifyResult(@Param("id") UUID id, @Param("at") OffsetDateTime at,
                            @Param("missing") int missing, @Param("orphan") int orphan,
                            @Param("mismatch") int mismatch);
+
+    /**
+     * Mark every enabled set on a link as due for reconcile: {@code SyncReconcileScheduler}
+     * treats a null last-run as due and picks the sets up on its next tick. The
+     * changelog poller uses this instead of reconciling inline, so a seed or gap
+     * never blocks the poll thread and a failing reconcile can't hold the cursor
+     * back. A targeted update, like {@link #recordVerifyResult}, so it never
+     * collides with the config/engine optimistic-lock version.
+     */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.reconcileLastRunAt = null where s.linkId = :linkId and s.enabled = true")
+    int requestReconcile(@Param("linkId") UUID linkId);
 }

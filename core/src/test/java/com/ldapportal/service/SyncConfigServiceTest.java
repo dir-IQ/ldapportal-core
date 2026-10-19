@@ -10,6 +10,7 @@ import com.ldapportal.entity.SyncTransformRule;
 import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
+import com.ldapportal.entity.enums.SyncChangelogHealth;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
@@ -250,8 +251,12 @@ class SyncConfigServiceTest {
     }
 
     @Test
-    void updateLink_switchingFeed_resetsCursor() {
+    void updateLink_switchingFeed_resetsCursorAndHealth() {
         SyncLink existing = changelogLink(ChangelogFormat.DSEE_CHANGELOG, "cn=changelog");
+        existing.setChangelogHealth(SyncChangelogHealth.STALLED);
+        existing.setChangelogLastError("old feed error");
+        existing.setChangelogLastErrorAt(java.time.OffsetDateTime.now());
+        existing.setChangelogLastPolledAt(java.time.OffsetDateTime.now());
         when(directoryRepo.existsById(any())).thenReturn(true);
         when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
         when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -264,6 +269,25 @@ class SyncConfigServiceTest {
         assertThat(existing.getChangelogCursorToken()).isNull();
         assertThat(existing.getChangelogLastChangeNumber()).isNull();
         assertThat(existing.getChangelogSourceLastChangeNumber()).isNull();
+        // The old feed's health/error no longer describe this link.
+        assertThat(existing.getChangelogHealth()).isEqualTo(SyncChangelogHealth.HEALTHY);
+        assertThat(existing.getChangelogLastError()).isNull();
+        assertThat(existing.getChangelogLastErrorAt()).isNull();
+        assertThat(existing.getChangelogLastPolledAt()).isNull();
+    }
+
+    @Test
+    void updateLink_whitespaceOnlyBaseDnEdit_keepsCursor_andStoresTrimmed() {
+        SyncLink existing = changelogLink(ChangelogFormat.OUD_COOKIE_CHANGELOG, "cn=changelog");
+        when(directoryRepo.existsById(any())).thenReturn(true);
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateLink(existing.getId(),
+                linkReq(SyncCaptureMode.CHANGELOG, ChangelogFormat.OUD_COOKIE_CHANGELOG, "  cn=changelog "));
+
+        assertThat(existing.getChangelogBaseDn()).isEqualTo("cn=changelog");
+        assertThat(existing.getChangelogCursorToken()).isEqualTo("42");
     }
 
     @Test

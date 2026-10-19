@@ -43,8 +43,11 @@ import java.util.UUID;
  * makes a bare "this DN changed" signal sufficient.
  *
  * <p>Keeps the operational machinery: an HA poll-lease, a cursor, lag/gap/cursor-
- * reset health, and a reconcile trigger when the cursor falls off the bottom of
- * the changelog. Gated on {@code DIRECTORY_SYNC}.
+ * reset health, and a reconcile request when the cursor falls off the bottom of
+ * the changelog. The poller never reconciles inline: it marks the link's sets due
+ * ({@link SyncSetRepository#requestReconcile}) and moves the cursor on, so a large
+ * or failing reconcile can't block the poll thread or hold the cursor back; the
+ * reconcile scheduler runs them on its next tick. Gated on {@code DIRECTORY_SYNC}.
  *
  * <p>Two cursor families: the DSEE integer {@code changeNumber} (per-server, so
  * only meaningful against the node that issued it) and the OUD external
@@ -70,7 +73,6 @@ public class SyncChangelogPoller {
     private final DirectoryConnectionRepository directoryRepo;
     private final LdapConnectionFactory connectionFactory;
     private final RecomputeEnqueuer enqueuer;
-    private final MembershipReconciler reconciler;
     private final EntitlementService entitlementService;
 
     @Scheduled(fixedDelayString = "${ldapportal.sync.changelog.fixed-delay-ms:15000}")
@@ -131,7 +133,7 @@ public class SyncChangelogPoller {
                 ChangelogReadContext ctx = new ChangelogReadContext(link.getChangelogBaseDn(), null, cursor);
                 SearchRequest req = strategy.buildSearchRequest(ctx, BATCH);
                 long maxCn = cursor != null ? cursor : 0L;
-                for (SearchResultEntry e : conn.search(req).getSearchEntries()) {
+                for (SearchResultEntry e : searchPage(conn, req).entries()) {
                     String id = strategy.extractEntryId(e);
                     String dn = strategy.extractTargetDn(e);
                     if (id == null || dn == null) {
@@ -145,10 +147,8 @@ public class SyncChangelogPoller {
             });
 
             if (r.gap()) {
-                log.warn("Sync link {}: changelog gap detected; reconciling to re-derive state", linkId);
-                for (SyncSet set : sets) {
-                    reconciler.reconcile(set.getId());
-                }
+                log.warn("Sync link {}: changelog gap detected; requesting reconcile to re-derive state", linkId);
+                syncSetRepo.requestReconcile(linkId);
             }
             advance(link, r);
         } catch (Exception ex) {
@@ -181,14 +181,15 @@ public class SyncChangelogPoller {
      * passed back verbatim; it advances to the cookie on the last entry read.
      * No numeric head exists, so:
      * <ul>
-     *   <li><b>No cursor yet</b> — seed: reconcile every set (nothing before the
-     *       head is known to have been seen) and start from the source's
-     *       {@code lastExternalChangelogCookie}.</li>
+     *   <li><b>No cursor yet</b> — seed: start from the source's
+     *       {@code lastExternalChangelogCookie} and request a reconcile of every
+     *       set (nothing before the head is known to have been seen). The head is
+     *       read before the request, so the reconcile covers everything older.</li>
      *   <li><b>Cookie refused</b> ({@code UNWILLING_TO_PERFORM}: purged past it, or
-     *       an unknown domain) — the gap path: reconcile, then re-seed from the
-     *       head. A refusal of a cookie re-seeded under {@link #RESEED_BACKOFF}
+     *       an unknown domain) — the gap path: re-seed from the head and request a
+     *       reconcile. A refusal of a cookie re-seeded under {@link #RESEED_BACKOFF}
      *       ago is not a gap (the cookie is fresh) but a server problem, so it
-     *       stalls instead of reconciling on every poll.</li>
+     *       stalls instead of requesting a reconcile on every poll.</li>
      *   <li><b>Lag</b> — a full batch (or a size-limited partial one) means more
      *       is pending.</li>
      * </ul>
@@ -202,25 +203,19 @@ public class SyncChangelogPoller {
                     return CookiePollResult.reseed(headCookie(conn));
                 }
                 SearchRequest req = OUD_COOKIE.buildCookieSearchRequest(link.getChangelogBaseDn(), cursor, BATCH);
-                List<SearchResultEntry> entries;
-                boolean more;
+                Page page;
                 try {
-                    entries = conn.search(req).getSearchEntries();
-                    more = entries.size() >= BATCH;
+                    // A size-limited page is still a prefix of the change stream;
+                    // the last entry's cookie is a valid resume point.
+                    page = searchPage(conn, req);
                 } catch (LDAPSearchException ex) {
-                    if (ex.getResultCode() == ResultCode.SIZE_LIMIT_EXCEEDED) {
-                        // A size-limited page is still a prefix of the change stream;
-                        // the last entry's cookie is a valid resume point.
-                        entries = ex.getSearchEntries();
-                        more = true;
-                    } else if (ex.getResultCode() == ResultCode.UNWILLING_TO_PERFORM) {
+                    if (ex.getResultCode() == ResultCode.UNWILLING_TO_PERFORM) {
                         return CookiePollResult.refused(headCookie(conn), ex.getDiagnosticMessage());
-                    } else {
-                        throw ex;
                     }
+                    throw ex;
                 }
                 String newCursor = cursor;
-                for (SearchResultEntry e : entries) {
+                for (SearchResultEntry e : page.entries()) {
                     String cookie = OUD_COOKIE.extractEntryId(e);
                     String dn = OUD_COOKIE.extractTargetDn(e);
                     if (dn != null) {
@@ -230,13 +225,14 @@ public class SyncChangelogPoller {
                         newCursor = cookie;
                     }
                 }
-                return CookiePollResult.advanced(newCursor, more);
+                return CookiePollResult.advanced(newCursor, page.truncated() || page.entries().size() >= BATCH);
             });
 
             if (r.reseed()) {
                 if (r.head() == null) {
-                    markError(link, "source Root DSE has no " + OudCookieChangelogStrategy.ROOT_DSE_LAST_COOKIE
-                            + " (external changelog not enabled?)", SyncChangelogHealth.DISABLED_CONFIG_ERROR);
+                    markError(link, "source Root DSE returned no " + OudCookieChangelogStrategy.ROOT_DSE_LAST_COOKIE
+                            + " (external changelog not enabled, or the bind account cannot read it)",
+                            SyncChangelogHealth.DISABLED_CONFIG_ERROR);
                     return;
                 }
                 if (r.refusal() != null && reseededRecently(link)) {
@@ -244,12 +240,10 @@ public class SyncChangelogPoller {
                     return;
                 }
                 if (r.refusal() != null) {
-                    log.warn("Sync link {}: changelog cookie refused ({}); reconciling to re-derive state",
+                    log.warn("Sync link {}: changelog cookie refused ({}); requesting reconcile to re-derive state",
                             link.getId(), r.refusal());
                 }
-                for (SyncSet set : sets) {
-                    reconciler.reconcile(set.getId());
-                }
+                syncSetRepo.requestReconcile(link.getId());
                 advanceCookie(link, r.head(),
                         r.refusal() != null ? SyncChangelogHealth.GAP_DETECTED : SyncChangelogHealth.HEALTHY);
             } else {
@@ -273,6 +267,23 @@ public class SyncChangelogPoller {
                         && link.getChangelogLastError().startsWith(COOKIE_REFUSED_AGAIN));
         OffsetDateTime at = link.getChangelogLastPolledAt();
         return afterReseed && at != null && at.isAfter(OffsetDateTime.now().minus(RESEED_BACKOFF));
+    }
+
+    /**
+     * Run a changelog search, keeping the partial page when the server stops at
+     * the size limit (ours or its own per-user limit). UnboundID reports that as
+     * an exception carrying the entries already returned; dropping them would
+     * leave the cursor stuck for as long as more than a page is pending.
+     */
+    private static Page searchPage(FullLDAPInterface conn, SearchRequest req) throws LDAPSearchException {
+        try {
+            return new Page(conn.search(req).getSearchEntries(), false);
+        } catch (LDAPSearchException ex) {
+            if (ex.getResultCode() == ResultCode.SIZE_LIMIT_EXCEEDED) {
+                return new Page(ex.getSearchEntries(), true);
+            }
+            throw ex;
+        }
     }
 
     /** The source's newest cookie, requested by name (it is a virtual operational attribute). */
@@ -334,6 +345,10 @@ public class SyncChangelogPoller {
     }
 
     private record PollResult(long maxChangeNumber, Long sourceHead, boolean gap, boolean cursorReset) {
+    }
+
+    /** One changelog search page; {@code truncated} when the server hit a size limit. */
+    private record Page(List<SearchResultEntry> entries, boolean truncated) {
     }
 
     /**

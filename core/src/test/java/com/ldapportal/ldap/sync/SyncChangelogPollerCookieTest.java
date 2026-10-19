@@ -42,6 +42,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -133,9 +134,10 @@ class SyncChangelogPollerCookieTest {
     }
 
     @Test
-    void firstPoll_reconcilesAndSeedsCursorFromHead() throws Exception {
+    void firstPoll_seedsCursorFromHead_andRequestsReconcileWithoutRunningIt() throws Exception {
         addPerson("alice");          // pre-existing: only a reconcile can see it
         changelog.record("add", "uid=alice," + SRC_PEOPLE);
+        stampReconciled();
 
         poller.pollOne(link.getId());
 
@@ -143,8 +145,11 @@ class SyncChangelogPollerCookieTest {
         assertThat(after.getChangelogCursorToken()).isEqualTo(changelog.head());
         assertThat(after.getChangelogHealth()).isEqualTo(SyncChangelogHealth.HEALTHY);
         assertThat(after.getChangelogLastChangeNumber()).isNull();
-        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
         assertThat(changelog.searches).isZero(); // seeded from the head, not a replay
+        // Reconcile is handed to the scheduler (null last-run = due), not run on
+        // the poll thread.
+        assertThat(lastReconciledAt()).isNull();
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
     }
 
     @Test
@@ -194,35 +199,72 @@ class SyncChangelogPollerCookieTest {
     }
 
     @Test
-    void refusedCookie_reconcilesAndReseeds_thenARepeatRefusalStallsWithoutReconciling() throws Exception {
+    void refusedCookie_reseedsAndRequestsReconcile_thenARepeatRefusalStallsWithoutRequestingAgain() throws Exception {
         seedCursor();
         String stale = reload().getChangelogCursorToken();
-        addPerson("erin");           // no changelog record: only a reconcile can see it
         changelog.record("add", "uid=unrelated,ou=elsewhere," + SRC_BASE);
         changelog.refuse(stale);
+        stampReconciled();
 
         poller.pollOne(link.getId());
 
         SyncLink afterGap = reload();
         assertThat(afterGap.getChangelogHealth()).isEqualTo(SyncChangelogHealth.GAP_DETECTED);
         assertThat(afterGap.getChangelogCursorToken()).isEqualTo(changelog.head());
-        assertThat(target.getEntry("uid=erin," + DST_USERS)).isNotNull();
+        assertThat(lastReconciledAt()).isNull();
 
         // The fresh head cookie is refused too: a server problem, not a gap.
-        // It must not reconcile again on every poll.
+        // It must not request a reconcile on every poll.
         changelog.refuse(afterGap.getChangelogCursorToken());
-        addPerson("frank");
+        stampReconciled();
         poller.pollOne(link.getId());
 
         SyncLink afterRepeat = reload();
         assertThat(afterRepeat.getChangelogHealth()).isEqualTo(SyncChangelogHealth.STALLED);
         assertThat(afterRepeat.getChangelogLastError()).contains("refused again");
         assertThat(afterRepeat.getChangelogCursorToken()).isEqualTo(afterGap.getChangelogCursorToken());
-        assertThat(target.getEntry("uid=frank," + DST_USERS)).isNull();
+        assertThat(lastReconciledAt()).isNotNull();
 
         poller.pollOne(link.getId());
         assertThat(reload().getChangelogHealth()).isEqualTo(SyncChangelogHealth.STALLED);
-        assertThat(target.getEntry("uid=frank," + DST_USERS)).isNull();
+        assertThat(lastReconciledAt()).isNotNull();
+    }
+
+    @Test
+    void refusalAfterTheBackoffWindow_isAGapAgain() throws Exception {
+        seedCursor();
+        String stale = reload().getChangelogCursorToken();
+        changelog.refuse(stale);
+        poller.pollOne(link.getId());
+        assertThat(reload().getChangelogHealth()).isEqualTo(SyncChangelogHealth.GAP_DETECTED);
+
+        // Age the re-seed past the backoff; a refusal now is a fresh gap.
+        SyncLink l = reload();
+        l.setChangelogLastPolledAt(OffsetDateTime.now().minusHours(2));
+        linkRepo.save(l);
+        changelog.record("add", "uid=unrelated,ou=elsewhere," + SRC_BASE);
+        changelog.refuse(l.getChangelogCursorToken());
+        stampReconciled();
+
+        poller.pollOne(link.getId());
+
+        SyncLink after = reload();
+        assertThat(after.getChangelogHealth()).isEqualTo(SyncChangelogHealth.GAP_DETECTED);
+        assertThat(after.getChangelogCursorToken()).isEqualTo(changelog.head());
+        assertThat(lastReconciledAt()).isNull();
+    }
+
+    @Test
+    void criticalControlRejected_stallsWithTheServerError() throws Exception {
+        seedCursor();
+        changelog.rejectControl = true;
+
+        poller.pollOne(link.getId());
+
+        SyncLink after = reload();
+        assertThat(after.getChangelogHealth()).isEqualTo(SyncChangelogHealth.STALLED);
+        assertThat(after.getChangelogLastError()).isNotBlank();
+        assertThat(after.getChangelogCursorToken()).isEqualTo(changelog.head());
     }
 
     @Test
@@ -257,10 +299,20 @@ class SyncChangelogPollerCookieTest {
 
     // ── helpers ──────────────────────────────────────────────────────────────
 
-    /** First poll seeds the cursor from the head (and reconciles the empty set). */
+    /** First poll seeds the cursor from the head (and requests a reconcile). */
     private void seedCursor() {
         poller.pollOne(link.getId());
         assertThat(reload().getChangelogCursorToken()).isEqualTo(changelog.head());
+    }
+
+    private void stampReconciled() {
+        SyncSet s = setRepo.findById(peopleSet.getId()).orElseThrow();
+        s.setReconcileLastRunAt(OffsetDateTime.now());
+        setRepo.save(s);
+    }
+
+    private OffsetDateTime lastReconciledAt() {
+        return setRepo.findById(peopleSet.getId()).orElseThrow().getReconcileLastRunAt();
     }
 
     private SyncLink reload() {
@@ -324,6 +376,7 @@ class SyncChangelogPollerCookieTest {
         private final List<Entry> records = new ArrayList<>();
         private final List<String> refused = new ArrayList<>();
         volatile boolean publishHead = true;
+        volatile boolean rejectControl;
         volatile String lastRequestCookie;
         volatile boolean lastRequestCritical;
         volatile int searches;
@@ -381,6 +434,10 @@ class SyncChangelogPollerCookieTest {
             Control c = req.getControl(OudCookieChangelogStrategy.ECL_COOKIE_CONTROL_OID);
             if (c == null) {
                 throw new LDAPException(ResultCode.UNWILLING_TO_PERFORM, "test fake only serves cookie mode");
+            }
+            if (rejectControl) {
+                throw new LDAPException(ResultCode.UNAVAILABLE_CRITICAL_EXTENSION,
+                        "critical control " + c.getOID() + " is not supported");
             }
             lastRequestCritical = c.isCritical();
             String cookie;

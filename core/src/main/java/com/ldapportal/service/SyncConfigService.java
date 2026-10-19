@@ -12,6 +12,7 @@ import com.ldapportal.entity.SyncTransformRule;
 import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
+import com.ldapportal.entity.enums.SyncChangelogHealth;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.sync.MembershipReconciler;
@@ -111,16 +112,22 @@ public class SyncConfigService {
         l.setEnabled(req.enabled());
         l.setCaptureMode(mode);
         if (mode == SyncCaptureMode.CHANGELOG) {
+            String baseDn = req.changelogBaseDn().trim();
             // A cursor is only meaningful for the feed that issued it (a DSEE
-            // changeNumber is not an OUD cookie), so a feed change restarts it.
+            // changeNumber is not an OUD cookie), so a feed change restarts it,
+            // along with the old feed's health and error.
             if (l.getChangelogFormat() != req.changelogFormat()
-                    || !Objects.equals(l.getChangelogBaseDn(), req.changelogBaseDn())) {
+                    || !Objects.equals(l.getChangelogBaseDn(), baseDn)) {
                 l.setChangelogCursorToken(null);
                 l.setChangelogLastChangeNumber(null);
                 l.setChangelogSourceLastChangeNumber(null);
+                l.setChangelogHealth(SyncChangelogHealth.HEALTHY);
+                l.setChangelogLastError(null);
+                l.setChangelogLastErrorAt(null);
+                l.setChangelogLastPolledAt(null);
             }
             l.setChangelogFormat(req.changelogFormat());
-            l.setChangelogBaseDn(req.changelogBaseDn());
+            l.setChangelogBaseDn(baseDn);
         } else {
             // APP_INTERCEPT leaves changelog config null (DB cfg constraint).
             l.setChangelogFormat(null);

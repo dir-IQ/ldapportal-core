@@ -125,8 +125,9 @@ superadmin-only and `DIRECTORY_SYNC`-entitled.
 Validation (`SyncConfigService.validateLink`): source ≠ target; both
 directories must exist; `CHANGELOG` requires both `changelogFormat` (one of
 the two above) and `changelogBaseDn`. `APP_INTERCEPT` clears any changelog
-config. Changing the format or base DN of an existing link clears its cursor:
-a cursor is only meaningful for the feed that issued it.
+config. Changing the format or base DN of an existing link clears its cursor
+and its changelog health/error: a cursor is only meaningful for the feed that
+issued it. The base DN is stored trimmed.
 
 ### 3.2 Sync set — *what* (selection + projection), nested under a link
 
@@ -177,7 +178,13 @@ blob is **ignored**; convergence makes a bare "this DN changed" signal
 sufficient, so there is no exactly-once dedup, no FIFO, no LDIF reconstruction.
 
 The poller maintains a cursor, an HA poll-lease, and a **health** state
-(see §7.3). On a detected gap it triggers a reconcile to re-derive state.
+(see §7.3). When more than 500 records are pending, the server stops at the
+size limit and the poller keeps that partial page and continues from it on the
+next pass. On a detected gap it jumps the cursor to the source head and
+**requests** a reconcile of the link's sets: it clears their
+`reconcile_last_run_at`, so the reconcile scheduler runs them on its next tick
+(~60s). The poller never reconciles inline, so a large or failing reconcile
+can't block polling or hold the cursor back.
 
 ### 4.3 Replicated sources — choosing the changelog format
 The two formats differ in what the cursor means, which matters when the source
@@ -202,15 +209,18 @@ How cookie mode works (`OudCookieChangelogStrategy`):
   carrying the stored cookie, and advances to the `changeLogCookie` of the last
   entry read. A server without cookie-mode support fails the search rather than
   silently answering in change-number mode.
-- **First poll** (no cursor yet): every set on the link is reconciled and the
-  cursor is seeded from the source's `lastExternalChangelogCookie` — the
-  retained changelog is not replayed.
+- **First poll** (no cursor yet): the cursor is seeded from the source's
+  `lastExternalChangelogCookie` and a reconcile of every set on the link is
+  requested (§4.2) — the retained changelog is not replayed. The head is read
+  first, so the reconcile covers everything older than it.
 - **Cookie refused** (`UNWILLING_TO_PERFORM` — older than the source's
   changelog purge window, or naming an unknown replicated domain): handled as a
-  gap — reconcile every set, re-seed from the head, health `GAP_DETECTED`. If
+  gap — re-seed from the head, request a reconcile, health `GAP_DETECTED`. If
   the freshly re-seeded cookie is refused again within an hour, the link goes
-  `STALLED` ("refused again after re-seed") instead of reconciling on every
-  poll.
+  `STALLED` ("refused again after re-seed") instead of requesting a reconcile
+  on every poll.
+- **Control not supported** (`UNAVAILABLE_CRITICAL_EXTENSION`): `STALLED` with
+  the server's message — the source isn't serving cookie mode.
 - **Lag** has no numeric form: `LAGGING` means the last poll hit the 500-record
   batch (more is pending). The numeric cursor columns stay empty.
 
@@ -357,16 +367,17 @@ Exposed on the link (`changelogHealth`, `changelogLastError`,
 | `HEALTHY` | Polling; cursor advancing. | Nothing. |
 | `LAGGING` | Behind source head by > 1000 (cookie mode: last poll filled the 500-record batch). | Watch; check target/worker throughput. |
 | `STALLED` | Repeated poll errors — see `changelogLastError`. | Fix source reachability/perms. |
-| `GAP_DETECTED` | Cursor fell off the bottom (changelog purged before read; cookie mode: source refused the cookie). Engine auto-reconciles. | Verify reconcile cleared it; consider larger source changelog retention. With `DSEE_CHANGELOG` on a replicated source, a node switch also lands here — see §4.3. |
+| `GAP_DETECTED` | Cursor fell off the bottom (changelog purged before read; cookie mode: source refused the cookie). Cursor jumps to the head; a reconcile is requested and runs on the next scheduler tick. | Verify reconcile cleared it; consider larger source changelog retention. With `DSEE_CHANGELOG` on a replicated source, a node switch also lands here — see §4.3. |
 | `CURSOR_RESET` | Source changelog restarted (head < cursor). Cursor reset to 0. | Expect a re-scan; confirm convergence. |
-| `DISABLED_CONFIG_ERROR` | Source dir or changelog strategy unavailable (cookie mode: Root DSE has no `lastExternalChangelogCookie`). | Fix link config / source; enable the source's external changelog. |
+| `DISABLED_CONFIG_ERROR` | Source dir or changelog strategy unavailable (cookie mode: Root DSE returned no `lastExternalChangelogCookie`). | Fix link config / source; enable the source's external changelog, and check the bind account can read that Root DSE attribute. |
 
 ### 7.4 Logs
 JSON logs (`logback-spring.xml`). Useful greps:
 ```
 "FAILED —"                        # an identity's apply failure + reason
 "quarantined for REVIEW"          # quarantine + reason
-"changelog gap detected"          # gap → reconcile
+"changelog gap detected"          # gap → reconcile requested
+"changelog cookie refused"        # cookie-mode gap → reconcile requested
 "Released ... stale recompute claim"   # worker crashed mid-process and recovered
 "Scheduled reconcile of sync set ... failed"
 ```
@@ -442,7 +453,7 @@ behind (raise throughput or lower batch latency).
 | Identity `REVIEW` | Brownfield ambiguity / occupied DN / held delete | Resolve at target (dedupe anchors, clear DN, or confirm delete); **Recompute** or **Dismiss**. |
 | Many `FAILED` after target change | Target outage/ACL change | Fix target; reconcile re-drives FAILED rows automatically next cadence, or **Reconcile now**. |
 | Changelog `STALLED` | Source unreachable / changelog perms | See `changelogLastError`; fix source bind/ACL. |
-| Changelog `GAP_DETECTED` | Source changelog purged faster than polled | Engine auto-reconciles; raise source changelog retention or poll more often. |
+| Changelog `GAP_DETECTED` | Source changelog purged faster than polled | A reconcile is requested automatically (next scheduler tick); raise source changelog retention or poll more often. |
 | `recompute_request` backlog growing | Worker behind | Lower `worker.fixed-delay-ms`, scale instances, check DB. |
 | Wrong DN on target after a rename | (shouldn't happen) engine converges renames as MODDN | If stuck, **Recompute** by identity; reconcile re-derives. |
 | Member/manager points at stale DN | reference attr not declared | Add the attr to **Reference attributes**; recompute the group/referrer. |

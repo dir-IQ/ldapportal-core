@@ -79,7 +79,8 @@ public class DseeChangelogStrategy implements ChangelogStrategy {
         // subset — otherwise advancing the cursor past the page max could skip
         // unreceived lower entries. Non-critical: a server that can't sort
         // returns the changelog in its natural (append) order, which is already
-        // changeNumber-ascending, and the poller sorts in-memory as a backstop.
+        // changeNumber-ascending. The poller keeps a size-limited partial page
+        // and advances to its highest changeNumber, so that order matters.
         if (hasAfter) {
             req.addControl(new ServerSideSortRequestControl(false, new SortKey("changeNumber")));
         }
