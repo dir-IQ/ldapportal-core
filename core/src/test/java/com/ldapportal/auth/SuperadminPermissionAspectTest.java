@@ -2,6 +2,7 @@
 package com.ldapportal.auth;
 
 import com.ldapportal.entity.enums.SuperadminPermission;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -54,6 +55,13 @@ class SuperadminPermissionAspectTest {
 
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(viewer, null, List.of()));
+    }
+
+    // The context is thread-local: left set, it leaks into whichever test the
+    // runner schedules next on this thread.
+    @AfterEach
+    void clearContext() {
+        SecurityContextHolder.clearContext();
     }
 
     @Test

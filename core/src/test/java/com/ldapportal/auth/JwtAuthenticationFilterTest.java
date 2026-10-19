@@ -49,6 +49,9 @@ class JwtAuthenticationFilterTest {
 
     @BeforeEach
     void setUp() {
+        // Assertions read the thread-local context; start clean rather than
+        // trust every earlier test on this thread to have cleared it.
+        SecurityContextHolder.clearContext();
         filter = new JwtAuthenticationFilter(jwtTokenService, accountRepository);
         req = new MockHttpServletRequest();
         resp = new MockHttpServletResponse();
