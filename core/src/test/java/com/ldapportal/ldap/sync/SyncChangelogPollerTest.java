@@ -176,26 +176,21 @@ class SyncChangelogPollerTest {
     }
 
     @Test
-    void poll_moreThanAPagePending_advancesThroughSizeLimitedPages() throws Exception {
+    void poll_moreThanAPagePending_keepsSizeLimitedPagesAndReadsToTheHead() throws Exception {
         // More than one 500-record page pending: the server answers
         // sizeLimitExceeded with a partial page. Dropping that page used to leave
-        // the cursor stuck (STALLED) for as long as the backlog exceeded a page.
+        // the cursor stuck (STALLED) for as long as the backlog exceeded a page;
+        // now the page is kept and the same pass reads on.
         for (int i = 0; i < 520; i++) {
             addPerson("p" + i);
         }
 
         poller.pollOne(link.getId());
 
-        SyncLink first = linkRepo.findById(link.getId()).orElseThrow();
-        assertThat(first.getChangelogHealth()).isNotEqualTo(SyncChangelogHealth.STALLED);
-        assertThat(first.getChangelogLastChangeNumber()).isNotNull()
-                .isLessThan(first.getChangelogSourceLastChangeNumber());
-
-        poller.pollOne(link.getId());
-
-        SyncLink second = linkRepo.findById(link.getId()).orElseThrow();
-        assertThat(second.getChangelogHealth()).isEqualTo(SyncChangelogHealth.HEALTHY);
-        assertThat(second.getChangelogLastChangeNumber()).isEqualTo(second.getChangelogSourceLastChangeNumber());
+        SyncLink after = linkRepo.findById(link.getId()).orElseThrow();
+        assertThat(after.getChangelogHealth()).isEqualTo(SyncChangelogHealth.HEALTHY);
+        assertThat(after.getChangelogLastChangeNumber()).isEqualTo(after.getChangelogSourceLastChangeNumber());
+        assertThat(requestRepo.findAllBySyncSetId(peopleSet.getId())).hasSizeGreaterThanOrEqualTo(520);
     }
 
     @Test
@@ -210,16 +205,16 @@ class SyncChangelogPollerTest {
         SyncLink l = linkRepo.findById(link.getId()).orElseThrow();
         l.setChangelogCursorToken("1");
         linkRepo.save(l);
-        SyncSet s = setRepo.findById(peopleSet.getId()).orElseThrow();
-        s.setReconcileLastRunAt(java.time.OffsetDateTime.now());
-        setRepo.save(s);
+        long requestsBefore = setRepo.findById(peopleSet.getId()).orElseThrow().getReconcileRequestSeq();
 
         poller.pollOne(link.getId());
 
         SyncLink after = linkRepo.findById(link.getId()).orElseThrow();
         assertThat(after.getChangelogHealth()).isEqualTo(SyncChangelogHealth.GAP_DETECTED);
         assertThat(after.getChangelogLastChangeNumber()).isEqualTo(after.getChangelogSourceLastChangeNumber());
-        assertThat(setRepo.findById(peopleSet.getId()).orElseThrow().getReconcileLastRunAt()).isNull();
+        SyncSet s = setRepo.findById(peopleSet.getId()).orElseThrow();
+        assertThat(s.getReconcileRequestSeq()).isEqualTo(requestsBefore + 1);
+        assertThat(s.getReconcileRequestSeq()).isGreaterThan(s.getReconcileHandledSeq());
         // Handed to the reconcile scheduler, not run on the poll thread.
         assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).isEmpty();
     }

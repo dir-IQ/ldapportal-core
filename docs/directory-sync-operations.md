@@ -171,20 +171,39 @@ reconcile sweep is the backstop.
 
 ### 4.2 `CHANGELOG`
 `SyncChangelogPoller` polls each `CHANGELOG`-mode link's source changelog
-(`fixed-delay ~15s`), reading up to 500 records per pass. For each record it
+(`fixed-delay ~15s`), reading 500-record pages. For each record it
 emits `recompute(targetDN)` — *including DELETE records* (the engine re-reads
 the source, finds it absent, and deletes via the index). The lossy `changes`
 blob is **ignored**; convergence makes a bare "this DN changed" signal
 sufficient, so there is no exactly-once dedup, no FIFO, no LDIF reconstruction.
 
 The poller maintains a cursor, an HA poll-lease, and a **health** state
-(see §7.3). When more than 500 records are pending, the server stops at the
-size limit and the poller keeps that partial page and continues from it on the
-next pass. On a detected gap it jumps the cursor to the source head and
-**requests** a reconcile of the link's sets: it clears their
-`reconcile_last_run_at`, so the reconcile scheduler runs them on its next tick
-(~60s). The poller never reconciles inline, so a large or failing reconcile
-can't block polling or hold the cursor back.
+(see §7.3).
+
+- **Paging.** A pass keeps reading pages while the source has more — up to 20
+  pages (10,000 records) or 5 s per link per pass — and reports `LAGGING` if it
+  stops with more still pending. When the server cuts a search short at a
+  size, time or lookthrough limit (the poller's own 500, or the bind account's
+  server-side limits), the partial page is kept: it is an in-order prefix, so
+  the cursor resumes after it. A cut-short search that returns nothing the
+  cursor can advance by goes `STALLED` ("cut short by a server limit") instead
+  of looping silently — raise the bind account's limits.
+- **Reconcile requests.** On a detected gap (and, in cookie mode, the first
+  poll or a refused cookie) the poller jumps the cursor to the source head and
+  **requests** a reconcile of the link's sets: it increments their
+  `reconcile_request_seq`, and the reconcile scheduler runs them on its next
+  tick (~60s). A finishing reconcile records the request count it saw when it
+  *started* as `reconcile_attempted_seq`, and also as `reconcile_handled_seq`
+  if its source enumeration completed. So a request raised while a reconcile is
+  already running (a manual "Reconcile now", or another instance) stays pending
+  and gets its own run, and one whose reconcile couldn't enumerate the whole
+  source is retried — at most every 5 minutes, so a persistently failing source
+  isn't re-scanned every tick. These counters are written only by targeted
+  updates, never by an entity save.
+  The poller never reconciles inline, so a large or failing reconcile can't
+  block polling or hold the cursor back.
+- **Isolation.** One link's poll failure doesn't skip the other links in the
+  pass.
 
 ### 4.3 Replicated sources — choosing the changelog format
 The two formats differ in what the cursor means, which matters when the source
@@ -195,12 +214,25 @@ is a replication topology (e.g. clustered OUD) rather than a single server.
 | Cursor | Integer `changeNumber` | Opaque `changeLogCookie` (persisted verbatim) |
 | Issued by | Each server's own change-number indexer | Replication CSNs — global to the topology |
 | Same change on two replicas | Different numbers | Same CSNs |
-| Survives failover / load-balanced source | **No** — a node switch looks like a gap (reconcile + jump to head) or a cursor reset (full replay); changes can be skipped until the next reconcile | **Yes** — any replica resolves the cookie |
+| Cursor survives failover / load-balanced source | **No** — a node switch looks like a gap (reconcile + jump to head) or a cursor reset (full replay); changes can be skipped until the next reconcile | **Yes** — any replica resolves the cookie |
 | Head | Root DSE `firstChangeNumber` / `lastChangeNumber` | Root DSE `lastExternalChangelogCookie` |
 
 **Use `OUD_COOKIE_CHANGELOG` for OUD (or OpenDJ) sources, and always when the
-source connection has a secondary host or points at a load-balanced address.**
-With `DSEE_CHANGELOG`, point the source at one fixed node.
+source connection has a secondary host.** With `DSEE_CHANGELOG`, point the
+source at one fixed node.
+
+> **The cursor is replica-safe; the engine's reads are not.** A change record
+> only says "this DN changed" — the engine then re-reads the entry over its own
+> pooled connection, ~10 s later (the worker interval). If that read lands on a
+> replica that hasn't received the change yet, the engine applies the old state
+> and nothing re-signals that DN: the target stays stale until the next
+> reconcile (hourly by default). Normal replication lag is far below 10 s, but a
+> replication backlog isn't. So for the **source**, prefer a **primary +
+> secondary (failover)** connection over a round-robin / load-balanced
+> address: with failover every connection uses the primary, so the exposure is
+> limited to the moments around a failover; with round-robin it applies to
+> every change. If you must use a load balancer, make it sticky or
+> primary-preferred, and keep the reconcile cadence short.
 
 How cookie mode works (`OudCookieChangelogStrategy`):
 
@@ -221,8 +253,11 @@ How cookie mode works (`OudCookieChangelogStrategy`):
   on every poll.
 - **Control not supported** (`UNAVAILABLE_CRITICAL_EXTENSION`): `STALLED` with
   the server's message — the source isn't serving cookie mode.
-- **Lag** has no numeric form: `LAGGING` means the last poll hit the 500-record
-  batch (more is pending). The numeric cursor columns stay empty.
+- **Lag** has no numeric form: `LAGGING` means the last pass stopped with more
+  pending (§4.2). The numeric cursor columns stay empty, so cookie links don't
+  contribute to the `ldapportal_sync_changelog_lag_max_changes` metric or the
+  dashboard's lag figure — alert on `LAGGING` health instead (see
+  `docs/observability.md`).
 
 Cookie mode fixes the *source cursor* only. The engine still issues each
 source/target read and write as a separate pooled operation, so for the
@@ -393,7 +428,7 @@ Exposed on the link (`changelogHealth`, `changelogLastError`,
 | Health | Meaning | What to do |
 |---|---|---|
 | `HEALTHY` | Polling; cursor advancing. | Nothing. |
-| `LAGGING` | Behind source head by > 1000 (cookie mode: last poll filled the 500-record batch). | Watch; check target/worker throughput. |
+| `LAGGING` | Behind source head by > 1000 (cookie mode: the last pass stopped with more pending). | Watch; persistent `LAGGING` means the source writes faster than a pass drains (20 pages / 5 s per 15 s) — check the bind account's limits and source/network latency. |
 | `STALLED` | Repeated poll errors — see `changelogLastError`. | Fix source reachability/perms. |
 | `GAP_DETECTED` | Cursor fell off the bottom (changelog purged before read; cookie mode: source refused the cookie). Cursor jumps to the head; a reconcile is requested and runs on the next scheduler tick. | Verify reconcile cleared it; consider larger source changelog retention. With `DSEE_CHANGELOG` on a replicated source, a node switch also lands here — see §4.3. |
 | `CURSOR_RESET` | Source changelog restarted (head < cursor). Cursor reset to 0. | Expect a re-scan; confirm convergence. |
@@ -434,7 +469,9 @@ e.g. `ldapportal.sync.worker.fixed-delay-ms` → `LDAPPORTAL_SYNC_WORKER_FIXED_D
 | `ldapportal.sync.reconcile.tick-ms` | `60000` | Reconcile sweep tick (checks which sets are *due*). |
 | `ldapportal.sync.reconcile.default-cadence-seconds` | `3600` | Default per-set reconcile cadence (overridden per set). |
 | `ldapportal.sync.changelog.fixed-delay-ms` | `15000` | Changelog poll interval. |
-| (constant) changelog batch | `500` | Records per poll. |
+| (constant) changelog page | `500` | Records per changelog search. |
+| (constant) pages per pass | `20` (or `5s`, whichever first) | Per link per poll; more pending → `LAGGING`. The poller shares the app's single scheduler thread, so this also bounds how long a busy link delays other scheduled jobs. |
+| (constant) reconcile-request retry spacing | `5m` | Retry interval for a requested reconcile whose source enumeration didn't complete. |
 | (constant) lag threshold | `1000` | Above this lag → `LAGGING`. |
 | (constant) stale poll lease | `5m` | Reclaim a poll lease from a dead instance. |
 
@@ -452,7 +489,7 @@ instances as you like; no leader election needed.
 | Table | Holds |
 |---|---|
 | `sync_links` | source/target dirs, capture mode, changelog config + health/cursor. |
-| `sync_set` | selection + projection config per set. |
+| `sync_set` | selection + projection config per set; reconcile cadence, last run, and the reconcile request counters (`reconcile_request_seq` / `reconcile_attempted_seq` / `reconcile_handled_seq`). |
 | `sync_membership` | one row per identity per set: source/target DN, content hash, state, fail reason, scan epoch, version. (Renamed from `membership` in `V7`.) |
 | `recompute_request` | coalescing trigger queue, PK `(sync_set_id, request_key)`. |
 
@@ -547,11 +584,17 @@ FROM sync_links l
 WHERE l.capture_mode = 'CHANGELOG'
 ORDER BY l.display_name;
 
--- Sets overdue for reconcile (last run older than their cadence; blank cadence = 3600s)
-SELECT ss.name, ss.reconcile_last_run_at, ss.reconcile_cadence_seconds
+-- Sets due for reconcile (unattempted request; unhandled request with the last
+-- run 5+ minutes ago; or last run older than their cadence, blank = 3600s)
+SELECT ss.name, ss.reconcile_last_run_at, ss.reconcile_cadence_seconds,
+       ss.reconcile_request_seq > ss.reconcile_attempted_seq AS reconcile_requested,
+       ss.reconcile_request_seq > ss.reconcile_handled_seq  AS reconcile_unhandled
 FROM sync_set ss
 WHERE ss.enabled
-  AND (ss.reconcile_last_run_at IS NULL
+  AND (ss.reconcile_request_seq > ss.reconcile_attempted_seq
+       OR ss.reconcile_last_run_at IS NULL
+       OR (ss.reconcile_request_seq > ss.reconcile_handled_seq
+           AND ss.reconcile_last_run_at + interval '5 minutes' <= now())
        OR ss.reconcile_last_run_at
           + make_interval(secs => COALESCE(ss.reconcile_cadence_seconds, 3600)) < now())
 ORDER BY ss.reconcile_last_run_at NULLS FIRST;

@@ -31,6 +31,8 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -60,13 +62,25 @@ import java.util.UUID;
 public class SyncChangelogPoller {
 
     private static final int BATCH = 500;
+    /**
+     * A pass keeps reading pages while the source has more, up to these bounds, so
+     * a busy source doesn't fall behind at one page per poll interval.
+     */
+    private static final int MAX_PAGES_PER_PASS = 20;
+    private static final Duration PASS_BUDGET = Duration.ofSeconds(5);
     private static final long LAG_THRESHOLD = 1000;
     private static final Duration STALE_LEASE = Duration.ofMinutes(5);
-    /** Minimum spacing between refusal-driven re-seeds (each one reconciles every set). */
+    /** Minimum spacing between refusal-driven re-seeds (each one requests a reconcile of every set). */
     private static final Duration RESEED_BACKOFF = Duration.ofHours(1);
     private static final String COOKIE_REFUSED_AGAIN = "changelog cookie refused again after re-seed: ";
     private static final DseeChangelogStrategy DSEE = new DseeChangelogStrategy();
     private static final OudCookieChangelogStrategy OUD_COOKIE = new OudCookieChangelogStrategy();
+    private static final String NO_PROGRESS = "changelog search was cut short by a server limit before "
+            + "returning any change it could resume from; check the bind account's size, time and "
+            + "lookthrough limits on the source";
+    /** Search cut-offs whose partial page is still an in-order prefix of the change stream. */
+    private static final Set<ResultCode> PARTIAL_PAGE_CODES = Set.of(
+            ResultCode.SIZE_LIMIT_EXCEEDED, ResultCode.TIME_LIMIT_EXCEEDED, ResultCode.ADMIN_LIMIT_EXCEEDED);
 
     private final SyncLinkRepository linkRepo;
     private final SyncSetRepository syncSetRepo;
@@ -87,7 +101,14 @@ public class SyncChangelogPoller {
                 if (linkRepo.claimChangelogPoll(linkId, now, staleBefore) == 0) {
                     continue; // another instance holds the lease
                 }
-                pollOne(linkId);
+                // One link's failure (e.g. an optimistic-lock conflict with an admin
+                // edit saving its state) must not skip the rest of the pass. Its
+                // lease lapses after STALE_LEASE and it is polled again.
+                try {
+                    pollOne(linkId);
+                } catch (Exception ex) {
+                    log.error("Sync changelog poll of link {} failed: {}", linkId, ex.toString());
+                }
             }
         } catch (Exception ex) {
             log.error("Sync changelog poll pass failed: {}", ex.toString());
@@ -130,19 +151,36 @@ public class SyncChangelogPoller {
                 }
                 boolean gap = cursor != null && firstCn != null && firstCn > cursor + 1;
 
-                ChangelogReadContext ctx = new ChangelogReadContext(link.getChangelogBaseDn(), null, cursor);
-                SearchRequest req = strategy.buildSearchRequest(ctx, BATCH);
                 long maxCn = cursor != null ? cursor : 0L;
-                for (SearchResultEntry e : searchPage(conn, req).entries()) {
-                    String id = strategy.extractEntryId(e);
-                    String dn = strategy.extractTargetDn(e);
-                    if (id == null || dn == null) {
-                        continue;
+                Long after = cursor;
+                long deadline = System.nanoTime() + PASS_BUDGET.toNanos();
+                int pages = 0;
+                boolean more;
+                do {
+                    ChangelogReadContext ctx = new ChangelogReadContext(link.getChangelogBaseDn(), null, after);
+                    Page page = searchPage(conn, strategy.buildSearchRequest(ctx, BATCH));
+                    long before = maxCn;
+                    for (SearchResultEntry e : page.entries()) {
+                        String id = strategy.extractEntryId(e);
+                        String dn = strategy.extractTargetDn(e);
+                        if (id == null || dn == null) {
+                            continue;
+                        }
+                        long cn = Long.parseLong(id);
+                        enqueueChanged(sets, dn, strategy.extractPostModifyDn(e).orElse(null), cn);
+                        maxCn = Math.max(maxCn, cn);
                     }
-                    long cn = Long.parseLong(id);
-                    enqueueChanged(sets, dn, strategy.extractPostModifyDn(e).orElse(null), cn);
-                    maxCn = Math.max(maxCn, cn);
-                }
+                    pages++;
+                    more = page.truncated() || page.entries().size() >= BATCH;
+                    if (more && maxCn == before) {
+                        if (pages == 1) {
+                            throw new IllegalStateException(NO_PROGRESS);
+                        }
+                        break; // keep this pass's progress; the next pass reports the stall
+                    }
+                    after = maxCn;
+                    // On a gap the cursor jumps to the head anyway; no point paging on.
+                } while (more && !gap && pages < MAX_PAGES_PER_PASS && System.nanoTime() < deadline);
                 return new PollResult(maxCn, lastCn, gap, cursorReset);
             });
 
@@ -190,8 +228,10 @@ public class SyncChangelogPoller {
      *       reconcile. A refusal of a cookie re-seeded under {@link #RESEED_BACKOFF}
      *       ago is not a gap (the cookie is fresh) but a server problem, so it
      *       stalls instead of requesting a reconcile on every poll.</li>
-     *   <li><b>Lag</b> — a full batch (or a size-limited partial one) means more
-     *       is pending.</li>
+     *   <li><b>Paging</b> — a full or cut-short page means more is pending; the
+     *       pass keeps reading (bounded by {@link #MAX_PAGES_PER_PASS} and
+     *       {@link #PASS_BUDGET}) and reports {@code LAGGING} if it stops with
+     *       more still pending. A page that makes no progress is {@code STALLED}.</li>
      * </ul>
      */
     private void pollCookie(SyncLink link, DirectoryConnection source, List<SyncSet> sets) {
@@ -202,36 +242,56 @@ public class SyncChangelogPoller {
                 if (seed) {
                     return CookiePollResult.reseed(headCookie(conn));
                 }
-                SearchRequest req = OUD_COOKIE.buildCookieSearchRequest(link.getChangelogBaseDn(), cursor, BATCH);
-                Page page;
-                try {
-                    // A size-limited page is still a prefix of the change stream;
-                    // the last entry's cookie is a valid resume point.
-                    page = searchPage(conn, req);
-                } catch (LDAPSearchException ex) {
-                    if (ex.getResultCode() == ResultCode.UNWILLING_TO_PERFORM) {
-                        return CookiePollResult.refused(headCookie(conn), ex.getDiagnosticMessage());
+                String position = cursor;
+                long deadline = System.nanoTime() + PASS_BUDGET.toNanos();
+                int pages = 0;
+                boolean more;
+                do {
+                    SearchRequest req = OUD_COOKIE.buildCookieSearchRequest(link.getChangelogBaseDn(), position, BATCH);
+                    Page page;
+                    try {
+                        // A cut-short page is still a prefix of the change stream;
+                        // the last entry's cookie is a valid resume point.
+                        page = searchPage(conn, req);
+                    } catch (LDAPSearchException ex) {
+                        if (ex.getResultCode() != ResultCode.UNWILLING_TO_PERFORM) {
+                            throw ex;
+                        }
+                        if (pages == 0) {
+                            return CookiePollResult.refused(headCookie(conn), ex.getDiagnosticMessage());
+                        }
+                        // A cookie the server issued in this same pass: keep the
+                        // progress made, and let the next pass face the refusal.
+                        return CookiePollResult.advanced(position, true);
                     }
-                    throw ex;
-                }
-                String newCursor = cursor;
-                for (SearchResultEntry e : page.entries()) {
-                    String cookie = OUD_COOKIE.extractEntryId(e);
-                    String dn = OUD_COOKIE.extractTargetDn(e);
-                    if (dn != null) {
-                        enqueueChanged(sets, dn, OUD_COOKIE.extractPostModifyDn(e).orElse(null), null);
+                    String before = position;
+                    for (SearchResultEntry e : page.entries()) {
+                        String cookie = OUD_COOKIE.extractEntryId(e);
+                        String dn = OUD_COOKIE.extractTargetDn(e);
+                        if (dn != null) {
+                            enqueueChanged(sets, dn, OUD_COOKIE.extractPostModifyDn(e).orElse(null), null);
+                        }
+                        if (cookie != null) {
+                            position = cookie;
+                        }
                     }
-                    if (cookie != null) {
-                        newCursor = cookie;
+                    pages++;
+                    more = page.truncated() || page.entries().size() >= BATCH;
+                    if (more && Objects.equals(position, before)) {
+                        if (pages == 1) {
+                            throw new IllegalStateException(NO_PROGRESS);
+                        }
+                        break; // keep this pass's progress; the next pass reports the stall
                     }
-                }
-                return CookiePollResult.advanced(newCursor, page.truncated() || page.entries().size() >= BATCH);
+                } while (more && pages < MAX_PAGES_PER_PASS && System.nanoTime() < deadline);
+                return CookiePollResult.advanced(position, more);
             });
 
             if (r.reseed()) {
                 if (r.head() == null) {
                     markError(link, "source Root DSE returned no " + OudCookieChangelogStrategy.ROOT_DSE_LAST_COOKIE
-                            + " (external changelog not enabled, or the bind account cannot read it)",
+                            + " (external changelog not enabled, no replicated suffix on the source, "
+                            + "or the bind account cannot read it)",
                             SyncChangelogHealth.DISABLED_CONFIG_ERROR);
                     return;
                 }
@@ -270,16 +330,17 @@ public class SyncChangelogPoller {
     }
 
     /**
-     * Run a changelog search, keeping the partial page when the server stops at
-     * the size limit (ours or its own per-user limit). UnboundID reports that as
-     * an exception carrying the entries already returned; dropping them would
-     * leave the cursor stuck for as long as more than a page is pending.
+     * Run a changelog search, keeping the partial page when the server stops at a
+     * size, time or lookthrough limit (ours or its own per-user limits). UnboundID
+     * reports those as an exception carrying the entries already returned, which
+     * arrive in changelog order; dropping them would leave the cursor stuck for as
+     * long as the backlog exceeds what one search can return.
      */
     private static Page searchPage(FullLDAPInterface conn, SearchRequest req) throws LDAPSearchException {
         try {
             return new Page(conn.search(req).getSearchEntries(), false);
         } catch (LDAPSearchException ex) {
-            if (ex.getResultCode() == ResultCode.SIZE_LIMIT_EXCEEDED) {
+            if (PARTIAL_PAGE_CODES.contains(ex.getResultCode())) {
                 return new Page(ex.getSearchEntries(), true);
             }
             throw ex;
@@ -347,7 +408,7 @@ public class SyncChangelogPoller {
     private record PollResult(long maxChangeNumber, Long sourceHead, boolean gap, boolean cursorReset) {
     }
 
-    /** One changelog search page; {@code truncated} when the server hit a size limit. */
+    /** One changelog search page; {@code truncated} when the server cut the search short at a limit. */
     private record Page(List<SearchResultEntry> entries, boolean truncated) {
     }
 

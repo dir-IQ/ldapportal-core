@@ -81,6 +81,7 @@ class SyncChangelogPollerCookieTest {
     @Autowired private RecomputeRequestRepository requestRepo;
     @Autowired private SyncChangelogPoller poller;
     @Autowired private RecomputeEngine engine;
+    @Autowired private MembershipReconciler reconciler;
 
     private final FakeCookieChangelog changelog = new FakeCookieChangelog();
     private InMemoryDirectoryServer source;
@@ -137,7 +138,7 @@ class SyncChangelogPollerCookieTest {
     void firstPoll_seedsCursorFromHead_andRequestsReconcileWithoutRunningIt() throws Exception {
         addPerson("alice");          // pre-existing: only a reconcile can see it
         changelog.record("add", "uid=alice," + SRC_PEOPLE);
-        stampReconciled();
+        clearReconcileRequests();
 
         poller.pollOne(link.getId());
 
@@ -148,7 +149,7 @@ class SyncChangelogPollerCookieTest {
         assertThat(changelog.searches).isZero(); // seeded from the head, not a replay
         // Reconcile is handed to the scheduler (null last-run = due), not run on
         // the poll thread.
-        assertThat(lastReconciledAt()).isNull();
+        assertThat(reconcileRequested()).isTrue();
         assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
     }
 
@@ -204,30 +205,30 @@ class SyncChangelogPollerCookieTest {
         String stale = reload().getChangelogCursorToken();
         changelog.record("add", "uid=unrelated,ou=elsewhere," + SRC_BASE);
         changelog.refuse(stale);
-        stampReconciled();
+        clearReconcileRequests();
 
         poller.pollOne(link.getId());
 
         SyncLink afterGap = reload();
         assertThat(afterGap.getChangelogHealth()).isEqualTo(SyncChangelogHealth.GAP_DETECTED);
         assertThat(afterGap.getChangelogCursorToken()).isEqualTo(changelog.head());
-        assertThat(lastReconciledAt()).isNull();
+        assertThat(reconcileRequested()).isTrue();
 
         // The fresh head cookie is refused too: a server problem, not a gap.
         // It must not request a reconcile on every poll.
         changelog.refuse(afterGap.getChangelogCursorToken());
-        stampReconciled();
+        clearReconcileRequests();
         poller.pollOne(link.getId());
 
         SyncLink afterRepeat = reload();
         assertThat(afterRepeat.getChangelogHealth()).isEqualTo(SyncChangelogHealth.STALLED);
         assertThat(afterRepeat.getChangelogLastError()).contains("refused again");
         assertThat(afterRepeat.getChangelogCursorToken()).isEqualTo(afterGap.getChangelogCursorToken());
-        assertThat(lastReconciledAt()).isNotNull();
+        assertThat(reconcileRequested()).isFalse();
 
         poller.pollOne(link.getId());
         assertThat(reload().getChangelogHealth()).isEqualTo(SyncChangelogHealth.STALLED);
-        assertThat(lastReconciledAt()).isNotNull();
+        assertThat(reconcileRequested()).isFalse();
     }
 
     @Test
@@ -244,14 +245,14 @@ class SyncChangelogPollerCookieTest {
         linkRepo.save(l);
         changelog.record("add", "uid=unrelated,ou=elsewhere," + SRC_BASE);
         changelog.refuse(l.getChangelogCursorToken());
-        stampReconciled();
+        clearReconcileRequests();
 
         poller.pollOne(link.getId());
 
         SyncLink after = reload();
         assertThat(after.getChangelogHealth()).isEqualTo(SyncChangelogHealth.GAP_DETECTED);
         assertThat(after.getChangelogCursorToken()).isEqualTo(changelog.head());
-        assertThat(lastReconciledAt()).isNull();
+        assertThat(reconcileRequested()).isTrue();
     }
 
     @Test
@@ -268,7 +269,7 @@ class SyncChangelogPollerCookieTest {
     }
 
     @Test
-    void sizeLimitedPage_advancesToLastReceivedCookie_andReportsLagging() throws Exception {
+    void sizeLimitedPage_isKept_andThePassReadsOnToTheHead() throws Exception {
         seedCursor();
         for (int i = 0; i < 501; i++) {
             changelog.record("modify", "uid=u" + i + ",ou=elsewhere," + SRC_BASE);
@@ -276,14 +277,142 @@ class SyncChangelogPollerCookieTest {
 
         poller.pollOne(link.getId());
 
+        // Page 1 is cut short at 500; the same pass reads page 2.
         SyncLink after = reload();
-        assertThat(after.getChangelogHealth()).isEqualTo(SyncChangelogHealth.LAGGING);
-        assertThat(after.getChangelogCursorToken()).isEqualTo(changelog.cookieAt(500));
+        assertThat(changelog.searches).isEqualTo(2);
+        assertThat(after.getChangelogCursorToken()).isEqualTo(changelog.cookieAt(501));
+        assertThat(after.getChangelogHealth()).isEqualTo(SyncChangelogHealth.HEALTHY);
+    }
+
+    @Test
+    void timeLimitedPage_isKeptLikeASizeLimitedOne() throws Exception {
+        seedCursor();
+        changelog.truncateWith = ResultCode.TIME_LIMIT_EXCEEDED;
+        for (int i = 0; i < 501; i++) {
+            changelog.record("modify", "uid=u" + i + ",ou=elsewhere," + SRC_BASE);
+        }
 
         poller.pollOne(link.getId());
+
+        SyncLink after = reload();
+        assertThat(after.getChangelogCursorToken()).isEqualTo(changelog.cookieAt(501));
+        assertThat(after.getChangelogHealth()).isEqualTo(SyncChangelogHealth.HEALTHY);
+    }
+
+    @Test
+    void backlogBeyondOnePass_reportsLagging_andLaterPassesCatchUp() throws Exception {
+        seedCursor();
+        int total = 20 * 500 + 1; // one record more than a full pass can read
+        for (int i = 0; i < total; i++) {
+            changelog.record("modify", "uid=u" + i + ",ou=elsewhere," + SRC_BASE);
+        }
+
+        poller.pollOne(link.getId());
+
+        SyncLink first = reload();
+        assertThat(first.getChangelogHealth()).isEqualTo(SyncChangelogHealth.LAGGING);
+        assertThat(first.getChangelogCursorToken()).isNotEqualTo(changelog.head());
+
+        for (int pass = 0; pass < 5 && reload().getChangelogHealth() == SyncChangelogHealth.LAGGING; pass++) {
+            poller.pollOne(link.getId());
+        }
         SyncLink caughtUp = reload();
-        assertThat(caughtUp.getChangelogCursorToken()).isEqualTo(changelog.cookieAt(501));
+        assertThat(caughtUp.getChangelogCursorToken()).isEqualTo(changelog.head());
         assertThat(caughtUp.getChangelogHealth()).isEqualTo(SyncChangelogHealth.HEALTHY);
+    }
+
+    @Test
+    void cutShortPageWithNoProgress_stallsInsteadOfReportingLagging() throws Exception {
+        seedCursor();
+        String seeded = reload().getChangelogCursorToken();
+        changelog.record("modify", "uid=u0,ou=elsewhere," + SRC_BASE);
+        changelog.truncateBeforeFirstEntry = true;
+
+        poller.pollOne(link.getId());
+
+        SyncLink after = reload();
+        assertThat(after.getChangelogHealth()).isEqualTo(SyncChangelogHealth.STALLED);
+        assertThat(after.getChangelogLastError()).contains("cut short by a server limit");
+        assertThat(after.getChangelogCursorToken()).isEqualTo(seeded);
+    }
+
+    @Test
+    void progressThenACutShortPageWithNoProgress_keepsTheProgress_andTheNextPassStalls() throws Exception {
+        seedCursor();
+        for (int i = 0; i < 600; i++) {
+            changelog.record("modify", "uid=u" + i + ",ou=elsewhere," + SRC_BASE);
+        }
+        changelog.truncateBeforeFirstEntryFromSearch = 2; // page 1 fine, page 2 cut before any entry
+
+        poller.pollOne(link.getId());
+
+        SyncLink first = reload();
+        assertThat(first.getChangelogCursorToken()).isEqualTo(changelog.cookieAt(500));
+        assertThat(first.getChangelogHealth()).isEqualTo(SyncChangelogHealth.LAGGING);
+
+        poller.pollOne(link.getId());
+
+        SyncLink second = reload();
+        assertThat(second.getChangelogHealth()).isEqualTo(SyncChangelogHealth.STALLED);
+        assertThat(second.getChangelogLastError()).contains("cut short by a server limit");
+        assertThat(second.getChangelogCursorToken()).isEqualTo(changelog.cookieAt(500));
+    }
+
+    // ── reconcile request durability ─────────────────────────────────────────
+
+    @Test
+    void reconcileRequest_survivesAStaleEntitySave() {
+        // A reconcile (or config edit) that loaded the set before the request
+        // saves its copy afterwards; the request must not be overwritten.
+        SyncSet stale = setRepo.findById(peopleSet.getId()).orElseThrow();
+        clearReconcileRequests();
+        setRepo.requestReconcile(link.getId());
+
+        stale.setReconcileCadenceSeconds(7200L);
+        setRepo.save(stale);
+
+        assertThat(reconcileRequested()).isTrue();
+    }
+
+    @Test
+    void reconcileThatStartedBeforeARequest_leavesItPending() {
+        clearReconcileRequests();
+        long seenAtStart = setRepo.findById(peopleSet.getId()).orElseThrow().getReconcileRequestSeq();
+        setRepo.requestReconcile(link.getId());          // raised while that reconcile runs
+
+        setRepo.markReconcileRun(peopleSet.getId(), seenAtStart, true);
+
+        assertThat(reconcileRequested()).isTrue();
+    }
+
+    @Test
+    void incompleteReconcile_attemptsButDoesNotHandleTheRequest() {
+        clearReconcileRequests();
+        setRepo.requestReconcile(link.getId());
+        long seq = setRepo.findById(peopleSet.getId()).orElseThrow().getReconcileRequestSeq();
+
+        setRepo.markReconcileRun(peopleSet.getId(), seq, false);   // enumeration failed partway
+
+        SyncSet s = setRepo.findById(peopleSet.getId()).orElseThrow();
+        assertThat(s.getReconcileAttemptedSeq()).isEqualTo(seq);   // not due at once again…
+        assertThat(s.getReconcileHandledSeq()).isLessThan(seq);    // …but still owed a retry
+    }
+
+    @Test
+    void reconcile_clearsTheRequestItCovers_andAnOlderFinishCantReopenIt() {
+        clearReconcileRequests();
+        long older = setRepo.findById(peopleSet.getId()).orElseThrow().getReconcileRequestSeq();
+        setRepo.requestReconcile(link.getId());
+
+        reconciler.reconcile(peopleSet.getId());
+        assertThat(reconcileRequested()).isFalse();
+
+        // A slower reconcile that started earlier finishing now must not move
+        // the handled mark backwards.
+        setRepo.markReconcileRun(peopleSet.getId(), older, true);
+        assertThat(reconcileRequested()).isFalse();
+        SyncSet s = setRepo.findById(peopleSet.getId()).orElseThrow();
+        assertThat(s.getReconcileAttemptedSeq()).isEqualTo(s.getReconcileRequestSeq());
     }
 
     @Test
@@ -305,14 +434,15 @@ class SyncChangelogPollerCookieTest {
         assertThat(reload().getChangelogCursorToken()).isEqualTo(changelog.head());
     }
 
-    private void stampReconciled() {
+    /** Mark any pending reconcile request on the set as handled. */
+    private void clearReconcileRequests() {
         SyncSet s = setRepo.findById(peopleSet.getId()).orElseThrow();
-        s.setReconcileLastRunAt(OffsetDateTime.now());
-        setRepo.save(s);
+        setRepo.markReconcileRun(s.getId(), s.getReconcileRequestSeq(), true);
     }
 
-    private OffsetDateTime lastReconciledAt() {
-        return setRepo.findById(peopleSet.getId()).orElseThrow().getReconcileLastRunAt();
+    private boolean reconcileRequested() {
+        SyncSet s = setRepo.findById(peopleSet.getId()).orElseThrow();
+        return s.getReconcileRequestSeq() > s.getReconcileHandledSeq();
     }
 
     private SyncLink reload() {
@@ -377,6 +507,10 @@ class SyncChangelogPollerCookieTest {
         private final List<String> refused = new ArrayList<>();
         volatile boolean publishHead = true;
         volatile boolean rejectControl;
+        volatile ResultCode truncateWith = ResultCode.SIZE_LIMIT_EXCEEDED;
+        volatile boolean truncateBeforeFirstEntry;
+        /** From this search number on (1-based), cut short before any entry; 0 = never. */
+        volatile int truncateBeforeFirstEntryFromSearch;
         volatile String lastRequestCookie;
         volatile boolean lastRequestCritical;
         volatile int searches;
@@ -452,11 +586,16 @@ class SyncChangelogPollerCookieTest {
                 throw new LDAPException(ResultCode.UNWILLING_TO_PERFORM,
                         "Full resync required. Reason: The provided cookie is older than the start of historical");
             }
+            boolean emptyCut = truncateBeforeFirstEntry
+                    || (truncateBeforeFirstEntryFromSearch > 0 && searches >= truncateBeforeFirstEntryFromSearch);
+            if (emptyCut && from < records.size()) {
+                throw new LDAPException(truncateWith, "limit exceeded before any entry");
+            }
             int limit = req.getSizeLimit() > 0 ? req.getSizeLimit() : Integer.MAX_VALUE;
             int sent = 0;
             for (int i = from; i < records.size(); i++) {
                 if (sent == limit) {
-                    throw new LDAPException(ResultCode.SIZE_LIMIT_EXCEEDED, "size limit exceeded");
+                    throw new LDAPException(truncateWith, "limit exceeded");
                 }
                 request.sendSearchEntry(records.get(i));
                 sent++;

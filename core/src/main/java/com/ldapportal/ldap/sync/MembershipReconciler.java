@@ -138,6 +138,11 @@ public class MembershipReconciler {
         }
         ctx.set.setReconcileLastRunAt(java.time.OffsetDateTime.now());
         syncSetRepo.save(ctx.set);
+        // ctx.set was loaded before the enumeration started, so its request
+        // counter is exactly what this run covers; anything raised since stays due.
+        // An incomplete enumeration didn't cover every entry, so it only counts as
+        // an attempt and the request is retried.
+        syncSetRepo.markReconcileRun(syncSetId, ctx.set.getReconcileRequestSeq(), plan.complete);
         return plan.entries.size();
     }
 
