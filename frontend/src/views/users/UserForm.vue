@@ -78,24 +78,6 @@
 
         <!-- Dynamic fields from user form config (all attributes in layout order) -->
         <template v-if="userTemplateConfig?.attributeConfigs?.length">
-          <!-- Standalone DN row when the RDN attribute is hidden (a computed
-               RDN, e.g. cn derived from other fields). The usual DN field
-               renders beside the RDN field, which doesn't exist here. -->
-          <div v-if="rdnIsHidden && showDnField" class="grid grid-cols-6 gap-2">
-            <div class="col-span-6">
-              <FormField
-                label="DN"
-                :model-value="effectiveDn"
-                @update:model-value="onDnInput"
-                placeholder="uid=jsmith,ou=people,dc=example,dc=com"
-                required
-                :error="dnError"
-              />
-              <button v-if="dnEdited" type="button" class="mt-1 text-xs text-blue-600 hover:underline" @click="resetDn">
-                Reset to computed
-              </button>
-            </div>
-          </div>
           <template v-for="(section, sIdx) in createSections" :key="sIdx">
             <fieldset v-if="section.fields.length" class="space-y-2">
               <legend v-if="section.name" class="text-base font-semibold text-gray-900 pb-1.5 border-b-2 border-gray-200 w-full mb-3">{{ section.name }}</legend>
@@ -149,10 +131,10 @@
                     </button>
                   </div>
                   <!-- Password field with generate/show/copy (create mode only).
-                       Hidden entirely when the profile auto-generates it
-                       server-side — see hidePasswordField. -->
+                       An auto-generated password never reaches this list —
+                       see layoutAttributes. -->
                   <div
-                    v-if="!attr.rdn && attr.inputType === 'PASSWORD' && !hidePasswordField"
+                    v-if="!attr.rdn && attr.inputType === 'PASSWORD'"
                     :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <label :for="`uf-pw-${attr.attributeName}`" class="block text-sm font-medium text-gray-700 mb-1">
@@ -205,9 +187,7 @@
                     </div>
                     <p v-if="fieldErrors[attr.attributeName]" class="mt-1 text-xs text-red-500">{{ fieldErrors[attr.attributeName] }}</p>
                   </div>
-                  <!-- Regular field. Excludes PASSWORD so a hidden (auto-
-                       generated) password renders nothing rather than falling
-                       through to a plain text input. -->
+                  <!-- Regular field. -->
                   <div
                     v-else-if="!attr.rdn && !attr.isDn && attr.inputType !== 'PASSWORD'"
                     :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
@@ -275,7 +255,7 @@
                        names the entry — an entry created under an overridden
                        DN that doesn't use the designated attribute keeps this
                        field editable. -->
-                  <div v-if="attr.rdn" :style="{ gridColumn: showDnField ? 'span 2' : `span ${attr.columnSpan || 6}` }">
+                  <div v-if="attr.rdn" :style="{ gridColumn: `span ${attr.columnSpan || 6}` }">
                     <FormField
                       :label="fieldLabel(attr)"
                       v-model="local.attributes[attr.attributeName]"
@@ -286,8 +266,9 @@
                       :hint="readOnly ? undefined : editFieldHint(attr)"
                     />
                   </div>
-                  <!-- DN field (shown after RDN when enabled, edit mode) -->
-                  <div v-if="attr.rdn && showDnField" class="col-span-4">
+                  <!-- Read-only DN. Position + width come from the
+                       designer-configured layout, same as create mode. -->
+                  <div v-else-if="attr.isDn" :style="{ gridColumn: `span ${attr.columnSpan || 4}` }">
                     <FormField
                       label="DN"
                       :model-value="local.dn"
@@ -299,7 +280,7 @@
                        naming attribute, not just the designated one, and a
                        modify against any of them fails with notAllowedOnRDN. -->
                   <div
-                    v-if="!attr.rdn"
+                    v-else
                     :style="{ gridColumn: `span ${effectiveColumnSpan(attr)}` }"
                   >
                     <!-- DN Lookup: use DnPicker instead of text input -->
@@ -559,6 +540,7 @@ import { IVIA_ABBR, isIviaAttr, iviaAttrLabel } from '@/constants/productNames'
 import type { IsvaAccountStatus } from '@/api/isvaAccount'
 import { validateAttributeValue, type AttributeRules } from '@/utils/attributeValidation'
 import { parseLeadingRdn, dnEquals } from '@/utils/dn'
+import { effectiveSpan } from '@/utils/fieldWidth'
 import { resolveGroupMembers } from '@/utils/groupMembers'
 import { useAttributeSyntaxStore } from '@/stores/attributeSyntax'
 
@@ -858,14 +840,15 @@ const iviaDisplayAttributes = computed<Record<string, string>>(() => {
   return result
 })
 
-/** Attributes from the form config to show in edit mode (excludes objectClass, password, and hidden; includes RDN). */
-const editFormAttributes = computed(() => {
-  if (!props.userTemplateConfig?.attributeConfigs) return []
-  const rdnName = props.userTemplateConfig.rdnAttribute
-  return props.userTemplateConfig.attributeConfigs
-    .filter(a => !a.hidden && !HIDDEN_EDIT_ATTRS.has(a.attributeName) && !HIDDEN_EDIT_ATTRS.has(a.attributeName.toLowerCase()))
-    .map(a => ({ ...a, rdn: a.attributeName === rdnName }))
-})
+/**
+ * Attributes from the form config to show in edit mode, in layout order with
+ * the DN field placed: the shared layout minus objectClass and password.
+ * Fields are dropped only *after* the DN is placed, so the DN's saved position
+ * (counted against the designer's field list) still lands where it was put.
+ */
+const editFormAttributes = computed(() =>
+  withDnField(layoutAttributes.value).filter(a =>
+    a.isDn || (!HIDDEN_EDIT_ATTRS.has(a.attributeName) && !HIDDEN_EDIT_ATTRS.has(a.attributeName.toLowerCase()))))
 
 /** Attributes present on the entry but NOT in the form config (edit mode overflow). */
 const extraEditAttributes = computed<Record<string, string>>(() => {
@@ -901,23 +884,13 @@ function mapInputType(inputType?: string | null): string {
 }
 
 /**
- * Grid-column width for an attribute. Three layers:
- *
- *   1. Widgets that structurally need horizontal room — PASSWORD (show /
- *      generate / copy controls), TEXTAREA + MULTI_VALUE (multi-line),
- *      DN_LOOKUP (DN picker + browse button) — always span the full row
- *      regardless of profile config. The admin can't usefully override
- *      this; the widget would break at narrower widths.
- *
- *   2. Profile config — `attr.columnSpan` set on ProfileAttributeConfig.
- *      Admin's deliberate choice for this attribute on this profile.
- *
- *   3. Fallback to 3 (two-column row) when neither rule applies.
+ * Grid-column width for an attribute: the designer-configured `columnSpan`
+ * (falling back to 3, a two-column row), under the same per-input-type rule
+ * the designer applies — see utils/fieldWidth — so the form renders the width
+ * the admin picked.
  */
-const FULL_WIDTH_INPUT_TYPES = new Set(['PASSWORD', 'TEXTAREA', 'MULTI_VALUE', 'DN_LOOKUP'])
 function effectiveColumnSpan(attr: AttributeConfig): number {
-  if (attr.inputType && FULL_WIDTH_INPUT_TYPES.has(attr.inputType)) return 6
-  return attr.columnSpan || 3
+  return effectiveSpan(attr.inputType, attr.columnSpan, 3)
 }
 
 /** Parse the allowedValues JSON string into FormField options. */
@@ -977,17 +950,6 @@ function resolveDnVar(name: string): string {
   if (name === local.rdnAttribute) return local.rdnValue || ''
   return local.attributes[name] || ''
 }
-
-/**
- * Whether the RDN attribute is hidden from the create form (i.e. a computed
- * RDN). The DN field then renders standalone, and the RDN value used for DN
- * composition comes from the computed expression rather than a typed field.
- */
-const rdnIsHidden = computed(() => {
-  const cfg = props.userTemplateConfig?.attributeConfigs?.find(
-    a => a.attributeName === props.userTemplateConfig?.rdnAttribute)
-  return !!cfg?.hidden
-})
 
 /** The RDN value for DN composition: computed when the RDN attr is computed. */
 const rdnEffectiveValue = computed(() => {
@@ -1126,45 +1088,69 @@ const hidePasswordField = computed(() => {
   return d === 'GENERATED_DELIVERED' || d === 'GENERATED_DISCARDED'
 })
 
-/** All non-hidden attributes (including RDN), preserving the order defined in the user form config. */
-const allVisibleAttributes = computed(() => {
-  if (!props.userTemplateConfig?.attributeConfigs) return []
-  const rdnName = props.userTemplateConfig.rdnAttribute
-  const list: AttributeConfig[] = props.userTemplateConfig.attributeConfigs
-    .filter(a => !a.hidden && a.attributeName.toLowerCase() !== 'objectclass')
-    .map(a => ({ ...a, rdn: a.attributeName === rdnName }))
-  // Skip injection when the RDN is hidden — a standalone full-width DN row
-  // handles that (computed-RDN) case separately.
-  if (showDnField.value && !rdnIsHidden.value) insertDnPseudoField(list)
-  return list
-})
+function isPasswordAttr(a: AttributeConfig): boolean {
+  return a.inputType === 'PASSWORD' || a.attributeName.toLowerCase() === 'userpassword'
+}
 
 /**
- * Inject the synthetic, editable DN field into the create layout at its
- * designer-configured section / position / width. Null layout values reproduce
- * the default — immediately after the RDN at 2/3 width.
+ * The attributes the admin form-layout designer lays out, in saved order (the
+ * RDN flagged): everything visible except objectClass, HIDDEN_FIXED fields
+ * (server-applied constants — no operator input, and rendering one would leave
+ * an empty labelled cell in the grid) and an auto-generated password. Keeping
+ * this identical to the designer's list is what makes the saved DN position
+ * (counted against that list) land in the same place here.
  */
-function insertDnPseudoField(list: AttributeConfig[]): void {
+const layoutAttributes = computed<AttributeConfig[]>(() => {
+  if (!props.userTemplateConfig?.attributeConfigs) return []
+  const rdnName = props.userTemplateConfig.rdnAttribute
+  return props.userTemplateConfig.attributeConfigs
+    .filter(a => !a.hidden
+      && a.inputType !== 'HIDDEN_FIXED'
+      && a.attributeName.toLowerCase() !== 'objectclass'
+      && !(hidePasswordField.value && isPasswordAttr(a)))
+    .map(a => ({ ...a, rdn: a.attributeName === rdnName }))
+})
+
+/** All attributes rendered on the create form, in layout order with the DN field placed. */
+const allVisibleAttributes = computed(() => withDnField(layoutAttributes.value))
+
+/**
+ * A copy of the list with the synthetic DN field injected at its
+ * designer-configured section / position / width (when the profile shows the
+ * DN). Placement mirrors FormLayoutDesigner's insertDnField: the configured
+ * section if it exists, else the RDN's section, else the first; within it the
+ * configured index, else right after the RDN, else the end. Null layout values
+ * reproduce the default — immediately after the RDN at 2/3 width.
+ */
+function withDnField(attrs: AttributeConfig[]): AttributeConfig[] {
+  const list = [...attrs]
+  if (!showDnField.value) return list
   const cfg = props.userTemplateConfig
-  const rdnIdx = list.findIndex(f => f.rdn)
-  const rdnSection = rdnIdx >= 0 ? (list[rdnIdx].sectionName || '') : ''
-  const targetSection = cfg?.dnSectionName != null ? cfg.dnSectionName : rdnSection
-  const dn: AttributeConfig = {
-    attributeName: '__dn__', isDn: true, rdn: false,
-    columnSpan: cfg?.dnColumnSpan || 4, sectionName: targetSection,
+  const sectionOf = (f: AttributeConfig) => f.sectionName || ''
+  const rdn = list.find(f => f.rdn)
+  let targetSection: string
+  if (cfg?.dnSectionName != null && list.some(f => sectionOf(f) === cfg.dnSectionName)) {
+    targetSection = cfg.dnSectionName
+  } else if (rdn) {
+    targetSection = sectionOf(rdn)
+  } else {
+    targetSection = list.length ? sectionOf(list[0]) : ''
   }
   const sectionIdxs: number[] = []
-  list.forEach((f, i) => { if ((f.sectionName || '') === targetSection) sectionIdxs.push(i) })
+  list.forEach((f, i) => { if (sectionOf(f) === targetSection) sectionIdxs.push(i) })
+  const endOfSection = sectionIdxs.length ? sectionIdxs[sectionIdxs.length - 1] + 1 : list.length
   let insertAt: number
   if (cfg?.dnDisplayOrder != null && cfg.dnDisplayOrder >= 0) {
-    const order = Math.min(cfg.dnDisplayOrder, sectionIdxs.length)
-    insertAt = order < sectionIdxs.length
-      ? sectionIdxs[order]
-      : (sectionIdxs.length ? sectionIdxs[sectionIdxs.length - 1] + 1 : list.length)
+    insertAt = cfg.dnDisplayOrder < sectionIdxs.length ? sectionIdxs[cfg.dnDisplayOrder] : endOfSection
   } else {
-    insertAt = rdnIdx >= 0 ? rdnIdx + 1 : list.length
+    const rdnIdx = rdn ? list.indexOf(rdn) : -1
+    insertAt = rdnIdx >= 0 && sectionOf(rdn!) === targetSection ? rdnIdx + 1 : endOfSection
   }
-  list.splice(insertAt, 0, dn)
+  list.splice(insertAt, 0, {
+    attributeName: '__dn__', isDn: true, rdn: false,
+    columnSpan: cfg?.dnColumnSpan || 4, sectionName: targetSection,
+  })
+  return list
 }
 
 /** Group all visible attributes into sections for create mode. */
