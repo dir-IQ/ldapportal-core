@@ -232,6 +232,34 @@ the engine's read-then-write decisions. The reconcile sweep remains the
 consistency backstop. `OUD_COOKIE_CHANGELOG` is a sync-capture format only;
 OUD audit sources keep using `DSEE_CHANGELOG`.
 
+#### Other replicated directories
+The per-server cursor problem isn't specific to OUD — any changelog that
+numbers changes per server has it. Only OUD has a cookie mode to fix it.
+
+| Source | Feed LDAP Portal can read | Cluster exposure | Guidance |
+|---|---|---|---|
+| **IBM Directory Server** | `cn=changelog` with integer `changeNumber` → `DSEE_CHANGELOG` | Same as DSEE above. IBM keeps the change log in a local, per-server database with locally assigned numbers (verify for your version), so a node switch either renumbers (gap / replay) or, if a server logs only its own writes, never shows changes made on the other node — only a reconcile catches those. There is no cookie equivalent. | Point the link at **one fixed node**: no secondary host, no load-balanced address. Keep a sensible reconcile cadence. |
+| **389 DS / Red Hat DS** (as `GENERIC`, retro changelog) | `cn=changelog` with `changeNumber` → `DSEE_CHANGELOG` | Same as IBM — the retro changelog is per server. | Same as IBM. |
+| **OpenLDAP** | None for sync — `slapo-accesslog` is audit-only, so sync links use `APP_INTERCEPT` + reconcile | Not exposed today (neither depends on a per-server position). An accesslog-based feed would be: each provider keeps its own accesslog, keyed by its own clock (`reqStart`). | The cluster-safe feed is syncrepl (RFC 4533), whose cookie carries a CSN per provider server ID — planned, not shipped. |
+| **Active Directory** | None for sync — DirSync is audit-only | DirSync cookies are designed to be resumable against any DC. | — |
+
+#### Audit sources have the same exposure
+The audit reader (`LdapChangelogReader`) keeps no cursor: each poll it scans the
+changelog and skips entries it has already recorded, keyed by the linked
+directory (matched from the target DN) and the entry id — for DSEE-format
+changelogs (OUD in change-number mode, IBM, 389 DS) that id is the per-server
+`changeNumber`. An audit source has a single host. If that host is a **load-balanced address** in front of several
+nodes, a node switch silently corrupts the audit trail, with no error:
+
+- **Lost events** — node B's change 1234 is a different change from node A's
+  1234, but the reader has already recorded "1234" and skips it.
+- **Duplicate events** — the same change appears under different numbers on
+  each node and is recorded twice.
+
+**Point every DSEE-format audit source at one fixed node**, never a VIP. (A
+replication-safe key exists — cookie-mode entries carry `replicationCSN`, the
+same on every replica — but audit sources don't read cookie mode today.)
+
 ---
 
 ## 5. The engine — what actually happens on a recompute
@@ -551,3 +579,6 @@ ORDER BY ss.reconcile_last_run_at NULLS FIRST;
   sync subsystem today (see §7.4) — the record is current index state + logs.
 - **Changelog format:** `DSEE_CHANGELOG` and `OUD_COOKIE_CHANGELOG`; other feeds (DirSync,
   syncrepl, Entra delta) are planned, not shipped.
+- **Per-server changelogs need a fixed node.** Only OUD cookie mode survives a
+  replica switch. `DSEE_CHANGELOG` links (OUD change-number mode, IBM, 389 DS)
+  and DSEE-format audit sources must point at one node — see §4.3.
