@@ -171,6 +171,19 @@ public class SyncSetController {
         return ResponseEntity.accepted().build();
     }
 
+    /**
+     * Approve a delete held for review: deletes the identity's target entry now,
+     * whatever the delete policy or guard (the source is re-read first; an entry
+     * back in scope is refused with 400).
+     */
+    @PostMapping("/{id}/memberships/{identity}/approve-delete")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncDeleteApproval approveDelete(
+            @PathVariable UUID id, @PathVariable String identity,
+            @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.approveDelete(id, identity, principal);
+    }
+
     @DeleteMapping("/{id}/memberships/{identity}")
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public ResponseEntity<Void> dismiss(@PathVariable UUID id, @PathVariable String identity) {

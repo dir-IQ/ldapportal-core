@@ -93,7 +93,15 @@ export interface Membership {
   failReason: string | null
   lastSrcCursor: number | null
   lastScanEpoch: number | null
+  /** Which decision a REVIEW row waits on; null for other states. */
+  reviewKind: SyncReviewKind | null
 }
+
+/**
+ * Why a row is held for REVIEW: a delete waiting for approval, an ambiguous
+ * source-anchor match, an occupied placement DN, or an unrecognized reason.
+ */
+export type SyncReviewKind = 'PENDING_DELETE' | 'AMBIGUOUS_MATCH' | 'PLACEMENT_CONFLICT' | 'OTHER'
 
 // ── Links ──────────────────────────────────────────────────────────────────
 export const listSyncLinks = () => client.get<SyncLink[]>('/superadmin/sync/links')
@@ -295,3 +303,20 @@ export const recomputeKey = (setId: string, key: string) =>
   client.post(`/superadmin/sync/sets/${setId}/recompute`, { key })
 export const dismissMembership = (setId: string, identity: string) =>
   client.delete(`/superadmin/sync/sets/${setId}/memberships/${encodeURIComponent(identity)}`)
+
+/**
+ * Result of approving a held delete: DELETE (target entry removed), FORGET
+ * (another identity owns the target entry, so only the row was dropped) or
+ * ERROR (the delete failed; the row is now FAILED with `message`).
+ */
+export interface SyncDeleteApproval {
+  outcome: 'DELETE' | 'FORGET' | 'ERROR'
+  targetDirectoryId: string
+  targetDn: string
+  message: string | null
+}
+
+/** Approve a delete held for review: deletes the target entry now, whatever the delete policy. */
+export const approveDelete = (setId: string, identity: string) =>
+  client.post<SyncDeleteApproval>(
+    `/superadmin/sync/sets/${setId}/memberships/${encodeURIComponent(identity)}/approve-delete`)

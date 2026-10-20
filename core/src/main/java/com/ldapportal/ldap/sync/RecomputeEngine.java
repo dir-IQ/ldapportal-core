@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.dto.sync.SyncDeleteApproval;
 import com.ldapportal.dto.sync.SyncPreviewAction;
 import com.ldapportal.dto.sync.SyncPreviewAttributeChange;
 import com.ldapportal.dto.sync.SyncPreviewEntry;
+import com.ldapportal.dto.sync.SyncReviewKind;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.MembershipId;
@@ -131,6 +133,69 @@ public class RecomputeEngine {
                         syncSetId, key, attempt);
             }
         }
+    }
+
+    /**
+     * An operator approves a delete held for review: delete the identity's target
+     * entry now, whatever the set's delete policy or the reconcile's delete guard
+     * said — the operator is the approval. The source is re-read first, so an
+     * entry that came back into scope is refused rather than deleted, and the
+     * ownership check still applies: a target entry another live identity owns is
+     * kept and only this row is dropped.
+     *
+     * @throws IllegalArgumentException when the set or link is disabled, the row
+     *         isn't a held delete, or the entry is back in scope
+     */
+    public SyncDeleteApproval approveDelete(UUID syncSetId, String identity) {
+        SyncSet set = syncSetRepo.findById(syncSetId)
+                .orElseThrow(() -> new IllegalArgumentException("Sync set not found"));
+        SyncLink link = syncLinkRepo.findById(set.getLinkId()).orElse(null);
+        if (!set.isEnabled() || link == null || !link.isEnabled()) {
+            throw new IllegalArgumentException("Enable the sync set and its link to apply a deletion.");
+        }
+        DirectoryConnection source = directoryRepo.findById(link.getSourceDirId()).orElse(null);
+        DirectoryConnection target = directoryRepo.findById(link.getTargetDirId()).orElse(null);
+        if (source == null || target == null) {
+            throw new IllegalArgumentException("The sync link's source or target directory is missing.");
+        }
+        Membership current = membershipRepo.findById(new MembershipId(syncSetId, identity)).orElse(null);
+        if (current == null
+                || SyncReviewKind.of(current.getState(), current.getFailReason()) != SyncReviewKind.PENDING_DELETE) {
+            throw new IllegalArgumentException("This entry has no deletion waiting for review.");
+        }
+
+        IdentityStrategy strategy = identityStrategies.forType(source.getDirectoryType());
+        if (SyncIdentity.attribute(set, strategy) == null) {
+            // Without an identity attribute the source can't be re-read, and an
+            // unconfirmed absence must never become a delete.
+            throw new IllegalArgumentException("The source directory type has no LDAP identity attribute.");
+        }
+        Entry entry = searchSourceByIdentity(source, set, strategy, identity);
+        if (entry != null
+                && membershipFunction.evaluate(set, strategy, entry, referenceResolvers.forLink(link)).member()) {
+            throw new IllegalArgumentException("The source entry is back in scope, so it won't be deleted. "
+                    + "Recompute it to sync it again.");
+        }
+
+        String targetDn = current.getTargetDn();
+        if (!otherOwners(set, target, identity, targetDn).isEmpty()) {
+            log.info("Sync set {}: approved delete of {} kept target {}: another identity owns it",
+                    syncSetId, identity, targetDn);
+            live.dropRow(set, identity);
+            return new SyncDeleteApproval(SyncPreviewAction.FORGET, target.getId(), targetDn, null);
+        }
+        ApplyOutcome del = live.delete(target, targetDn);
+        if (!LdapResultInterpreter.deleteConverged(del.code())) {
+            String reason = describe("delete", del);
+            live.failed(set, identity, current.getSourceDn(), targetDn, current.getContentHash(), reason);
+            return new SyncDeleteApproval(SyncPreviewAction.ERROR, target.getId(), targetDn, reason);
+        }
+        live.dropRow(set, identity);
+        if (current.getSourceDn() != null) {
+            closureResolver.fanOut(link, current.getSourceDn());
+        }
+        log.info("Sync set {}: operator-approved delete of target {} (identity {})", syncSetId, targetDn, identity);
+        return new SyncDeleteApproval(SyncPreviewAction.DELETE, target.getId(), targetDn, null);
     }
 
     /**
@@ -266,8 +331,8 @@ public class RecomputeEngine {
                     fx.review(set, identity, current.getSourceDn(), current.getTargetDn(),
                             current.getContentHash(),
                             suppressDeletes
-                                    ? "scope-exit held for review (delete guard tripped)"
-                                    : "scope-exit held for review (deletePolicy=REVIEW)");
+                                    ? SyncReviewKind.PENDING_DELETE_PREFIX + " (delete guard tripped)"
+                                    : SyncReviewKind.PENDING_DELETE_PREFIX + " (deletePolicy=REVIEW)");
                 }
                 return false;
             }
@@ -298,7 +363,8 @@ public class RecomputeEngine {
             List<String> matches = searchTargetByAnchor(target, set, anchorAttr, identity);
             if (matches.size() > 1) {
                 fx.review(set, identity, sourceDn, targetDn, hash,
-                        "ambiguous: " + matches.size() + " target entries carry sourceAnchor=" + identity);
+                        SyncReviewKind.AMBIGUOUS_MATCH_PREFIX + " " + matches.size()
+                                + " target entries carry sourceAnchor=" + identity);
                 return false;
             } else if (matches.size() == 1) {
                 String adoptedDn = matches.get(0);
@@ -311,7 +377,7 @@ public class RecomputeEngine {
                 // No anchor match but the placement DN is occupied by an entry
                 // that doesn't carry our anchor → don't clobber it.
                 fx.review(set, identity, sourceDn, targetDn, hash,
-                        "unanchored entry already at placement DN " + targetDn);
+                        SyncReviewKind.PLACEMENT_CONFLICT_PREFIX + " " + targetDn);
                 return false;
             }
         }

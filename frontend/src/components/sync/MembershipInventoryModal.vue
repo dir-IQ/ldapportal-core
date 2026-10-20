@@ -94,10 +94,14 @@
         <template #cell-failReason="{ row }">
           <span class="cell-muted line-clamp-2" :title="row.failReason || undefined">{{ row.failReason || '—' }}</span>
         </template>
+        <!-- Actions are labelled by what they do to this row (see rowActions). -->
         <template #actions="{ row }">
-          <ActionMenu :items="[{ label: 'Dismiss', onClick: () => dismiss(row.identity) }]">
+          <ActionMenu :items="rowActions(row).menu">
             <template #primary>
-              <button class="btn-secondary btn-compact" @click="recompute(row.identity)">Recompute</button>
+              <button :class="rowActions(row).primary.danger ? 'btn-danger btn-compact' : 'btn-secondary btn-compact'"
+                      :title="rowActions(row).primary.hint" @click="rowActions(row).primary.run()">
+                {{ rowActions(row).primary.label }}
+              </button>
             </template>
           </ActionMenu>
         </template>
@@ -141,8 +145,9 @@ import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import ReconcileRunHistory from '@/components/sync/ReconcileRunHistory.vue'
 import { useNotificationStore } from '@/stores/notifications'
+import { useConfirm } from '@/composables/useConfirm'
 import {
-  listMemberships, reconcileSet, recomputeKey, dismissMembership, verifyContents,
+  listMemberships, reconcileSet, recomputeKey, dismissMembership, verifyContents, approveDelete,
   type SyncSet, type Membership, type MembershipState, type SyncVerifyResult,
 } from '@/api/sync'
 
@@ -158,6 +163,7 @@ const props = defineProps<{
 const emit = defineEmits<{ changed: [] }>()
 
 const notif = useNotificationStore()
+const confirm = useConfirm()
 
 const rows = ref<Membership[]>([])
 const total = ref(0)
@@ -308,15 +314,110 @@ async function verify() {
     verifying.value = false
   }
 }
-async function recompute(identity: string) {
+interface RowAction { label: string; hint: string; danger?: boolean; run: () => void }
+
+/**
+ * The row's actions, named for what they do in its situation. A held delete
+ * gets an explicit "Delete target" (approves it, whatever the delete policy)
+ * and "Keep entry, stop syncing"; other rows get a recompute named for its
+ * effect, and "Stop tracking" for dismiss.
+ */
+function rowActions(row: Membership): { primary: RowAction; menu: { label: string; onClick: () => void }[] } {
+  const stopTracking = { label: 'Stop tracking', onClick: () => confirmStopTracking(row) }
+  if (row.state === 'REVIEW' && row.reviewKind === 'PENDING_DELETE') {
+    return {
+      primary: {
+        label: 'Delete target', danger: true, run: () => confirmApproveDelete(row),
+        hint: 'The source entry left scope. Approve the held deletion of the target entry.',
+      },
+      menu: [
+        { label: 'Keep entry, stop syncing', onClick: () => confirmKeep(row) },
+        { label: 'Re-check', onClick: () => recompute(row.identity, 'Re-check') },
+      ],
+    }
+  }
+  if (row.state === 'REVIEW' && (row.reviewKind === 'AMBIGUOUS_MATCH' || row.reviewKind === 'PLACEMENT_CONFLICT')) {
+    return {
+      primary: {
+        label: 'Retry match', run: () => recompute(row.identity, 'Retry match'),
+        hint: 'Run target matching again, once the conflicting target entries are resolved.',
+      },
+      menu: [stopTracking],
+    }
+  }
+  if (row.state === 'FAILED') {
+    return {
+      primary: {
+        label: 'Retry', run: () => recompute(row.identity, 'Retry'),
+        hint: 'Retry the failed write once its cause is fixed.',
+      },
+      menu: [stopTracking],
+    }
+  }
+  return {
+    primary: {
+      label: row.state === 'REVIEW' ? 'Recompute' : 'Re-sync', run: () => recompute(row.identity, 'Re-sync'),
+      hint: 'Re-read the source entry and bring the target entry in line now.',
+    },
+    menu: [stopTracking],
+  }
+}
+
+async function recompute(identity: string, label = 'Recompute') {
   if (!props.set) return
   try {
     await recomputeKey(props.set.id, identity)
-    notif.success('Recompute enqueued')
+    notif.success(`${label} queued — the row updates in a few seconds`)
     emit('changed')
   } catch (e) {
     notif.error(errMsg(e))
   }
+}
+
+async function confirmApproveDelete(row: Membership) {
+  if (!props.set) return
+  const ok = await confirm({
+    title: 'Delete target entry?',
+    message: `This deletes ${row.targetDn} from ${props.targetName} now. The source entry has left this `
+      + "set's scope, and this approves the held deletion. It can't be undone.",
+    confirmLabel: 'Delete entry',
+    danger: true,
+  })
+  if (!ok) return
+  try {
+    const { data } = await approveDelete(props.set.id, row.identity)
+    if (data.outcome === 'DELETE') {
+      notif.success(`Deleted ${data.targetDn}`)
+    } else if (data.outcome === 'FORGET') {
+      notif.success(`Kept ${data.targetDn}: another sync identity owns it. Only this row was removed.`)
+    } else {
+      notif.error(data.message || 'The deletion failed')
+    }
+    await load()
+    emit('changed')
+  } catch (e) {
+    notif.error(errMsg(e))
+  }
+}
+
+async function confirmKeep(row: Membership) {
+  const ok = await confirm({
+    title: 'Keep the target entry?',
+    message: `${row.targetDn} stays in ${props.targetName}, but this set stops managing it: sync won't `
+      + 'update or delete it again. Content verification will list it as orphaned on target.',
+    confirmLabel: 'Keep and stop syncing',
+  })
+  if (ok) await dismiss(row.identity, 'Kept the target entry; this set no longer manages it')
+}
+
+async function confirmStopTracking(row: Membership) {
+  const ok = await confirm({
+    title: 'Stop tracking this entry?',
+    message: `The portal forgets its record of this entry; ${props.targetName} isn't changed. If the source `
+      + 'entry is still in scope, the next reconcile picks it up again from scratch.',
+    confirmLabel: 'Stop tracking',
+  })
+  if (ok) await dismiss(row.identity, 'Stopped tracking the entry')
 }
 async function recomputeQuery() {
   if (!props.set) return
@@ -330,11 +431,11 @@ async function recomputeQuery() {
     notif.error(errMsg(e))
   }
 }
-async function dismiss(identity: string) {
+async function dismiss(identity: string, message: string) {
   if (!props.set) return
   try {
     await dismissMembership(props.set.id, identity)
-    notif.success('Membership dismissed')
+    notif.success(message)
     await load()
     emit('changed')
   } catch (e) {

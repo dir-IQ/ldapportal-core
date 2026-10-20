@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history, brownfield adoption, cross-link reference resolution; 2026-10-20).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history, brownfield adoption, cross-link reference resolution, review actions; 2026-10-20).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -372,8 +372,8 @@ Each tracked identity has one `sync_membership` row with a **state**
 |---|---|---|---|
 | **APPLIED** | green | Target reflects the projected desired state. | None. |
 | **PENDING** | grey | A transition is queued/in-progress. | None unless persistent (see §7). |
-| **FAILED** | red | Last apply failed; this identity is dead-lettered and retried, isolated. The **reason** column carries the server diagnostic. | Fix the cause, then **Recompute**. |
-| **REVIEW** | amber | Quarantine: ambiguous correlation or a held delete. | Resolve, then **Recompute** or **Dismiss**. |
+| **FAILED** | red | Last apply failed; this identity is dead-lettered and retried, isolated. The **reason** column carries the server diagnostic. | Fix the cause, then **Retry**. |
+| **REVIEW** | amber | Quarantine: ambiguous correlation or a held delete. | See *Resolving `REVIEW`* below. |
 
 ### When `REVIEW` happens
 - **Brownfield ambiguity** — `sourceAnchor` matches multiple target entries:
@@ -381,10 +381,28 @@ Each tracked identity has one `sync_membership` row with a **state**
 - **Occupied placement DN** — an unanchored entry already sits at the placement
   DN: `unanchored entry already at placement DN <dn>`. The engine won't clobber it.
 - **Held delete** — `deletePolicy=REVIEW` and the entry left membership:
-  `scope-exit held for review (deletePolicy=REVIEW)`.
+  `scope-exit held for review (deletePolicy=REVIEW)`; or the reconcile's delete
+  guard tripped: `scope-exit held for review (delete guard tripped)`.
 
 The engine is **conservative**: it never auto-overwrites or auto-deletes an
 ambiguous target; it quarantines for a human.
+
+The inventory API classifies each `REVIEW` row as `reviewKind`
+`PENDING_DELETE`, `AMBIGUOUS_MATCH`, `PLACEMENT_CONFLICT` (or `OTHER` for an
+unrecognized reason), and the inventory names each row's actions for it.
+
+### Resolving `REVIEW` (and the other row actions)
+
+| Row | Actions |
+|---|---|
+| **Held delete** (`PENDING_DELETE`) | **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`). Refused while the set or link is disabled. **Keep entry, stop syncing** — dismiss: the target entry stays but is no longer managed (verification then reports it *orphaned on target*). **Re-check** — recompute: re-applies it if the entry came back into scope; otherwise leaves it held under `deletePolicy=REVIEW`, or deletes it under `DELETE` (a single recompute doesn't apply the guard). |
+| **Ambiguous match / placement conflict** | **Retry match** (recompute, after cleaning up the conflicting target entries) · **Stop tracking** |
+| **FAILED** | **Retry** (recompute) · **Stop tracking** |
+| **APPLIED / PENDING** | **Re-sync** (recompute) · **Stop tracking** |
+
+**Stop tracking** (dismiss) drops only the index row — the target isn't touched.
+An in-scope entry is picked up again from scratch by the next reconcile; an
+out-of-scope one is left unmanaged. Destructive actions ask for confirmation.
 
 ### `FAILED` reasons
 The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
@@ -404,7 +422,7 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
 - **Membership inventory modal** (per set): state-filter chips (All / Applied /
   Pending / Review / Failed with counts), a search box (identity or DN),
   per-row Identity / State / Source DN / Target DN / **Reason**, and per-row
-  **Recompute** and **Dismiss** actions. Header has **Reconcile now** and
+  actions named for the row's situation (see §6, *Resolving `REVIEW`*). Header has **Reconcile now** and
   **Verify contents**.
 - **Last reconcile** (top of the inventory modal) — the latest recorded run:
   status, trigger, when it started and how long it took, its outcome counts,
@@ -505,7 +523,8 @@ GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source�
 POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}; recorded as a MANUAL run
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs?limit=   # recent reconcile runs, newest first; limit 1..20 (default 10)
 POST   /api/v1/superadmin/sync/sets/{id}/recompute        # body {"key": "<dn-or-identity>"} → 202
-DELETE /api/v1/superadmin/sync/sets/{id}/memberships/{identity}   # dismiss
+DELETE /api/v1/superadmin/sync/sets/{id}/memberships/{identity}   # dismiss ("stop tracking")
+POST   /api/v1/superadmin/sync/sets/{id}/memberships/{identity}/approve-delete   # approve a held delete → {"outcome": DELETE|FORGET|ERROR, "targetDn", …}; 400 if not a held delete, back in scope, or the set is disabled
 ```
 
 ### 7.3 Changelog health (`CHANGELOG` links)

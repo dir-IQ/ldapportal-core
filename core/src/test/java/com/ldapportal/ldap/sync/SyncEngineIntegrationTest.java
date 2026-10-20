@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.dto.sync.SyncDeleteApproval;
+import com.ldapportal.dto.sync.SyncPreviewAction;
+import com.ldapportal.dto.sync.SyncReviewKind;
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
@@ -41,6 +44,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -541,6 +545,71 @@ class SyncEngineIntegrationTest {
 
         // Held for review, target retained (not deleted).
         assertThat(membership("alice").getState()).isEqualTo(MembershipState.REVIEW);
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+    }
+
+    // ── Operator-approved delete of a held scope-exit ──────────────────────────
+
+    /** alice is synced, then leaves scope under deletePolicy=REVIEW: her delete is held. */
+    private String holdAliceDeleteForReview() throws Exception {
+        peopleSet.setDeletePolicy(com.ldapportal.entity.enums.SyncDeletePolicy.REVIEW);
+        peopleSet = setRepo.save(peopleSet);
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        String identity = membership("alice").getIdentity();
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "employeeType", "contractor"));
+        engine.process(peopleSet.getId(), dn("alice"));
+        assertThat(SyncReviewKind.of(membership(identity).getState(), membership(identity).getFailReason()))
+                .isEqualTo(SyncReviewKind.PENDING_DELETE);
+        return identity;
+    }
+
+    @Test
+    void approveDelete_deletesHeldTarget_despiteReviewPolicy() throws Exception {
+        String identity = holdAliceDeleteForReview();
+        // A recompute alone leaves a REVIEW-policy delete held — the gap this closes.
+        engine.process(peopleSet.getId(), identity);
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+
+        SyncDeleteApproval result = engine.approveDelete(peopleSet.getId(), identity);
+
+        assertThat(result.outcome()).isEqualTo(SyncPreviewAction.DELETE);
+        assertThat(result.targetDn()).isEqualToIgnoringCase("uid=alice," + DST_USERS);
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).isEmpty();
+    }
+
+    @Test
+    void approveDelete_refusesWhenTheEntryIsBackInScope() throws Exception {
+        String identity = holdAliceDeleteForReview();
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "employeeType", "staff"));
+
+        assertThatThrownBy(() -> engine.approveDelete(peopleSet.getId(), identity))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("back in scope");
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+    }
+
+    @Test
+    void approveDelete_refusesARowThatIsNotAHeldDelete() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        assertThatThrownBy(() -> engine.approveDelete(peopleSet.getId(), membership("alice").getIdentity()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no deletion waiting");
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+    }
+
+    @Test
+    void approveDelete_refusesOnADisabledSet() throws Exception {
+        String identity = holdAliceDeleteForReview();
+        peopleSet.setEnabled(false);
+        setRepo.save(peopleSet);
+
+        assertThatThrownBy(() -> engine.approveDelete(peopleSet.getId(), identity))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Enable the sync set");
         assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
     }
 

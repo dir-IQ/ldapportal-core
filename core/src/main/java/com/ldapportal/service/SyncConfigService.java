@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.service;
 
+import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.dto.sync.MembershipResponse;
 import com.ldapportal.dto.sync.SyncLinkRequest;
 import com.ldapportal.dto.sync.SyncLinkResponse;
@@ -9,6 +10,7 @@ import com.ldapportal.dto.sync.SyncSetResponse;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
+import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
@@ -17,6 +19,7 @@ import com.ldapportal.entity.enums.SyncDeletePolicy;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.sync.MembershipReconciler;
+import com.ldapportal.ldap.sync.RecomputeEngine;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
 import com.ldapportal.ldap.sync.SyncContentVerifier;
 import com.ldapportal.ldap.sync.SyncPreviewService;
@@ -71,6 +74,8 @@ public class SyncConfigService {
     private final RecomputeEnqueuer enqueuer;
     private final SyncPreviewService previewService;
     private final SyncReconcileHistory reconcileHistory;
+    private final RecomputeEngine engine;
+    private final AuditService auditService;
 
     // ── Links ────────────────────────────────────────────────────────────────
 
@@ -425,6 +430,23 @@ public class SyncConfigService {
             throw new IllegalArgumentException("key (source DN or identity) is required");
         }
         enqueuer.enqueue(syncSetId, key.trim(), null);
+    }
+
+    /**
+     * Approve a delete held for review: delete the identity's target entry now,
+     * regardless of the set's delete policy or the delete guard. Audited as an
+     * {@code ENTRY_DELETE} on the target directory when the entry is removed.
+     */
+    public com.ldapportal.dto.sync.SyncDeleteApproval approveDelete(UUID syncSetId, String identity,
+                                                                    AuthPrincipal principal) {
+        requireSet(syncSetId);
+        com.ldapportal.dto.sync.SyncDeleteApproval result = engine.approveDelete(syncSetId, identity);
+        if (result.outcome() == com.ldapportal.dto.sync.SyncPreviewAction.DELETE && principal != null) {
+            auditService.record(principal, result.targetDirectoryId(), AuditAction.ENTRY_DELETE,
+                    result.targetDn(), Map.of("source", "directory-sync", "operation", "approved-review-delete",
+                            "syncSetId", syncSetId.toString(), "identity", identity));
+        }
+        return result;
     }
 
     /** Dismiss a quarantined (or any) membership row — drop the index entry without touching the target. */
