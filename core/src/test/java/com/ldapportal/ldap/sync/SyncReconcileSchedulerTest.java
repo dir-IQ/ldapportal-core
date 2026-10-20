@@ -5,6 +5,7 @@ import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.SyncSet;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.repository.SyncSetRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -58,7 +59,7 @@ class SyncReconcileSchedulerTest {
 
         scheduler.reconcileDueSets();
 
-        verify(reconciler).reconcile(id);
+        verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
         verify(syncSetRepo).recordVerifyResult(eq(id), any(), eq(2), eq(1), eq(0));
     }
 
@@ -72,7 +73,7 @@ class SyncReconcileSchedulerTest {
 
         scheduler.reconcileDueSets();
 
-        verify(reconciler).reconcile(id);
+        verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
         verify(syncSetRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
     }
 
@@ -90,7 +91,7 @@ class SyncReconcileSchedulerTest {
 
         scheduler.reconcileDueSets();
 
-        verify(reconciler).reconcile(id);
+        verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
     }
 
     @Test
@@ -106,7 +107,7 @@ class SyncReconcileSchedulerTest {
 
         scheduler.reconcileDueSets();
 
-        verify(reconciler, never()).reconcile(any());
+        verify(reconciler, never()).reconcile(any(), any(), any());
     }
 
     @Test
@@ -125,12 +126,12 @@ class SyncReconcileSchedulerTest {
         when(verifier.verify(id)).thenReturn(result(0, 0, 0, true, true));
 
         scheduler.reconcileDueSets();
-        verify(reconciler, never()).reconcile(any());
+        verify(reconciler, never()).reconcile(any(), any(), any());
 
         set.setReconcileLastRunAt(java.time.OffsetDateTime.now()
                 .minus(SyncReconcileScheduler.REQUEST_RETRY_SPACING).minusSeconds(1));
         scheduler.reconcileDueSets();
-        verify(reconciler).reconcile(id);
+        verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
     }
 
     @Test

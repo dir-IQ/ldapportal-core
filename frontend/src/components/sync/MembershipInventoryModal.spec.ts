@@ -24,6 +24,7 @@ const page = (content: unknown[]) => ({
 vi.mock('@/api/sync', () => ({
   listMemberships: vi.fn(() => Promise.resolve(page([membership]))),
   reconcileSet: vi.fn(() => Promise.resolve({ data: { enumerated: 3 } })),
+  listReconcileRuns: vi.fn(() => Promise.resolve({ data: [] })),
   recomputeKey: vi.fn(() => Promise.resolve({ data: undefined })),
   dismissMembership: vi.fn(() => Promise.resolve({ data: undefined })),
   verifyContents: vi.fn(() => Promise.resolve({
@@ -106,6 +107,17 @@ describe('MembershipInventoryModal', () => {
     expect(txt).toContain('Content verification')
     expect(txt).toContain('uid=gone,ou=Users,dc=dst') // sample missing DN
     expect(txt).toContain('uid=drift,ou=Users,dc=dst') // sample drift DN
+    wrapper.unmount()
+  })
+
+  it('Reconcile now reloads the reconcile history once the run finishes', async () => {
+    const wrapper = open()
+    await flushPromises()
+    expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(1)
+    byText('Reconcile now')!.click()
+    await flushPromises()
+    expect(syncApi.reconcileSet).toHaveBeenCalledWith('set-1')
+    expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
 

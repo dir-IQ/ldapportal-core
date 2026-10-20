@@ -8,10 +8,13 @@ import com.ldapportal.dto.sync.MembershipResponse;
 import com.ldapportal.dto.sync.RecomputeKeyRequest;
 import com.ldapportal.dto.sync.SyncLinkRequest;
 import com.ldapportal.dto.sync.SyncLinkResponse;
+import com.ldapportal.dto.sync.SyncReconcileRunResponse;
 import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncSetResponse;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
+import com.ldapportal.entity.enums.SyncReconcileRunStatus;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.service.SyncConfigService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -147,10 +150,32 @@ class SyncControllerTest extends BaseControllerTest {
 
     @Test
     void reconcile_superadmin_returnsCount() throws Exception {
-        given(service.reconcileNow(SET)).willReturn(7);
+        given(service.reconcileNow(SET, "superadmin")).willReturn(7);
         mockMvc.perform(post(SETS + "/" + SET + "/reconcile").with(authentication(superadminAuth())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.enumerated").value(7));
+    }
+
+    @Test
+    void reconcileRuns_superadmin_returnsHistory_withClampedLimit() throws Exception {
+        UUID runId = UUID.randomUUID();
+        given(service.reconcileRuns(SET, 20)).willReturn(List.of(new SyncReconcileRunResponse(
+                runId, SyncReconcileTrigger.MANUAL, "superadmin", SyncReconcileRunStatus.COMPLETE,
+                OffsetDateTime.now(), OffsetDateTime.now(), true, 4741, 876, 4741L, 4741,
+                3, 1, 0, 0, 0, 3865, 0, 872, 0, 0, 0, false, null, null)));
+        mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs").param("limit", "500")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(runId.toString()))
+                .andExpect(jsonPath("$[0].trigger").value("MANUAL"))
+                .andExpect(jsonPath("$[0].noChange").value(3865))
+                .andExpect(jsonPath("$[0].managedAfter").value(4741));
+    }
+
+    @Test
+    void reconcileRuns_adminRole_returns403() throws Exception {
+        mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
     }
 
     @Test

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, brownfield adoption, cross-link reference resolution; 2026-10-19).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history, brownfield adoption, cross-link reference resolution; 2026-10-20).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -333,6 +333,22 @@ The enumeration is paged (the source directory's *paging size*), so a scope
 larger than the server's size limit still reconciles completely; one entry
 whose recompute faults is logged and skipped, never aborting the run.
 
+**Run history:** every reconcile of an enabled set is recorded in
+`sync_reconcile_run` — trigger (`SCHEDULED`, or `MANUAL` with the operator),
+start/finish, whether the source scan completed, the delete guard, managed rows
+before → after, and what the engine did to each entry it processed, in the
+preview's vocabulary: added / modified / moved / deleted / held for review /
+already matched (applied with no target write) / forgotten / unchanged /
+failed. *Faulted* entries (the recompute threw) retry next run; *skipped*
+entries were not processed because the set or link was disabled while the run
+was in progress — the engine checks on every entry, so disabling mid-run stops
+the writes but the run still walks the rest of the plan. A running row
+heartbeats about every 15 s; one silent for
+`ldapportal.sync.reconcile.run-stale-after-ms` (default 15 min) belonged to a
+server that stopped and reads as `FAILED`. The newest 20 runs per set are kept;
+deleting the set removes them. A disabled or unavailable set's reconcile is a
+no-op and is not recorded.
+
 **Target ownership:** a target DN has exactly one owning index row per set
 (`sync_membership` is unique on `(sync_set_id, target_dn)`). When an identity
 leaves membership, the engine first checks whether another live row — in this
@@ -390,6 +406,12 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   per-row Identity / State / Source DN / Target DN / **Reason**, and per-row
   **Recompute** and **Dismiss** actions. Header has **Reconcile now** and
   **Verify contents**.
+- **Last reconcile** (top of the inventory modal) — the latest recorded run:
+  status, trigger, when it started and how long it took, its outcome counts,
+  managed rows before → after, and warnings for an incomplete scan, a tripped
+  delete guard, faulted entries, or entries skipped because the set was
+  disabled mid-run. **Recent runs** lists up to the last 10. Refreshes after
+  **Reconcile now**.
 - **Untracked search** — searching a DN/identity that isn't tracked offers
   `Recompute "<term>"` to pull it in on demand.
 - **Verify contents** — a belts-and-suspenders check that re-reads *both*
@@ -478,7 +500,8 @@ POST   /api/v1/superadmin/sync/sets/{id}/preview/run      # start a per-entry dr
 GET    /api/v1/superadmin/sync/sets/{id}/preview/run      # latest run: status (RUNNING / COMPLETE / FAILED), progress, summary; manage permission
 GET    /api/v1/superadmin/sync/sets/{id}/preview/entries?page=&size=&changesOnly=   # page of the completed run (404 if none); size 1..200 (default 50), changesOnly default true; a page past the end returns the last page; manage permission
 GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source↔target compare (no writes)
-POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}
+POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}; recorded as a MANUAL run
+GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs?limit=   # recent reconcile runs, newest first; limit 1..20 (default 10)
 POST   /api/v1/superadmin/sync/sets/{id}/recompute        # body {"key": "<dn-or-identity>"} → 202
 DELETE /api/v1/superadmin/sync/sets/{id}/memberships/{identity}   # dismiss
 ```

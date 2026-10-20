@@ -6,15 +6,19 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.RecomputeRequest;
 import com.ldapportal.entity.SyncLink;
+import com.ldapportal.entity.SyncReconcileRun;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SslMode;
+import com.ldapportal.entity.enums.SyncReconcileRunStatus;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.entity.enums.SyncScope;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.MembershipRepository;
 import com.ldapportal.repository.RecomputeRequestRepository;
 import com.ldapportal.repository.SyncLinkRepository;
+import com.ldapportal.repository.SyncReconcileRunRepository;
 import com.ldapportal.repository.SyncSetRepository;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.listener.InMemoryDirectoryServer;
@@ -74,6 +78,7 @@ class SyncEngineIntegrationTest {
     @Autowired private MembershipReconciler reconciler;
     @Autowired private SyncContentVerifier verifier;
     @Autowired private RecomputeEnqueuer enqueuer;
+    @Autowired private SyncReconcileRunRepository runRepo;
 
     private InMemoryDirectoryServer source;
     private InMemoryDirectoryServer target;
@@ -89,6 +94,7 @@ class SyncEngineIntegrationTest {
 
         membershipRepo.deleteAll();
         requestRepo.deleteAll();
+        runRepo.deleteAll();
         setRepo.deleteAll();
         linkRepo.deleteAll();
         directoryRepo.deleteAll();
@@ -721,6 +727,63 @@ class SyncEngineIntegrationTest {
             assertThat(target.getEntry("uid=u" + i + "," + DST_USERS)).isNotNull();
         }
         assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).hasSize(7);
+    }
+
+    @Test
+    void reconcile_recordsWhatItDidToEachEntry() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        addPerson("dave", "staff", "dave@src");
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        // Then: bob changes, alice leaves the source, carol arrives, and dave's
+        // index row is lost while his target entry still matches the source.
+        source.modify(dn("bob"), new Modification(ModificationType.REPLACE, "mail", "bob@new"));
+        source.delete(dn("alice"));
+        addPerson("carol", "staff", "carol@src");
+        membershipRepo.delete(membership("dave"));
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+
+        List<SyncReconcileRun> runs = runRepo.findAll().stream()
+                .sorted(java.util.Comparator.comparing(SyncReconcileRun::getStartedAt))
+                .toList();
+        assertThat(runs).hasSize(2);
+        SyncReconcileRun first = runs.get(0);
+        assertThat(first.getTrigger()).isEqualTo(SyncReconcileTrigger.SCHEDULED);
+        assertThat(first.getAdded()).isEqualTo(3);
+        assertThat(first.getManagedBefore()).isZero();
+        assertThat(first.getManagedAfter()).isEqualTo(3L);
+
+        SyncReconcileRun run = runs.get(1);
+        assertThat(run.getStatus()).isEqualTo(SyncReconcileRunStatus.COMPLETE);
+        assertThat(run.getTrigger()).isEqualTo(SyncReconcileTrigger.MANUAL);
+        assertThat(run.getRequestedBy()).isEqualTo("operator");
+        assertThat(run.getFinishedAt()).isNotNull();
+        assertThat(run.isCompleteScan()).isTrue();
+        assertThat(run.isGuardTripped()).isFalse();
+        // The scope base OU + bob, carol, dave; alice is a not-seen row on top.
+        assertThat(run.getSourceCount()).isEqualTo(4);
+        assertThat(run.getProcessed()).isEqualTo(5);
+        assertThat(run.getManagedBefore()).isEqualTo(2L);
+        assertThat(run.getManagedAfter()).isEqualTo(3L);
+        assertThat(run.getAdded()).isEqualTo(1);        // carol
+        assertThat(run.getModified()).isEqualTo(1);     // bob
+        assertThat(run.getDeleted()).isEqualTo(1);      // alice
+        assertThat(run.getNoChange()).isEqualTo(1);     // dave, re-adopted without a write
+        assertThat(run.getUnchanged()).isEqualTo(1);    // the OU: out of scope, never tracked
+        assertThat(run.getFailed() + run.getFaulted() + run.getSkipped() + run.getMoved()
+                + run.getHeldForReview() + run.getForgotten()).isZero();
+    }
+
+    @Test
+    void reconcile_ofDisabledSet_isNotRecorded() {
+        peopleSet.setEnabled(false);
+        setRepo.save(peopleSet);
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        assertThat(runRepo.findAll()).isEmpty();
     }
 
     private String sourceEntryUuid(String uid) throws Exception {

@@ -7,6 +7,7 @@ import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.MembershipState;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.sync.identity.IdentityStrategy;
 import com.ldapportal.ldap.sync.identity.IdentityStrategyRegistry;
@@ -58,6 +59,10 @@ import java.util.concurrent.atomic.AtomicLong;
  *       floor, so tiny sets aren't tripped by a single legitimate delete).</li>
  * </ul>
  * The same plan powers {@link #preview(UUID)} for the UI.
+ *
+ * <p>Every run is recorded in the set's reconcile history
+ * ({@link SyncReconcileHistory}): its trigger, the plan's shape, and what the
+ * engine did to each entry.
  */
 @Component
 @RequiredArgsConstructor
@@ -84,21 +89,45 @@ public class MembershipReconciler {
     private final MembershipRepository membershipRepo;
     private final MembershipFunction membershipFunction;
     private final RecomputeEngine engine;
+    private final SyncReconcileHistory history;
 
     /** Strictly-increasing sweep generation, seeded above any stored epoch. */
     private final AtomicLong epochSequence = new AtomicLong(System.currentTimeMillis());
 
-    /**
-     * Reconcile one sync set synchronously. Returns the number of identities
-     * enumerated at the source.
-     */
+    /** Reconcile one sync set synchronously, recorded as a manual run with no requester. */
     public int reconcile(UUID syncSetId) {
+        return reconcile(syncSetId, SyncReconcileTrigger.MANUAL, null);
+    }
+
+    /**
+     * Reconcile one sync set synchronously, recording the run in the set's
+     * history. Returns the number of identities enumerated at the source. A
+     * disabled or unavailable set is skipped and not recorded.
+     *
+     * @param requestedBy the operator, for a manual run
+     */
+    public int reconcile(UUID syncSetId, SyncReconcileTrigger trigger, String requestedBy) {
         Context ctx = loadContext(syncSetId, true);
         if (ctx == null) {
             return 0;
         }
+        SyncReconcileHistory.Run run = history.start(syncSetId, trigger, requestedBy);
+        try {
+            int enumerated = reconcile(ctx, run);
+            history.complete(run, membershipRepo.countBySyncSetId(syncSetId));
+            return enumerated;
+        } catch (RuntimeException ex) {
+            history.fail(run, ex);
+            throw ex;
+        }
+    }
+
+    private int reconcile(Context ctx, SyncReconcileHistory.Run run) {
+        UUID syncSetId = ctx.set.getId();
         Plan plan = computePlan(ctx);
         Guard guard = evaluateGuard(plan);
+        history.planned(run, plan.entries.size(), plan.managedCount, plan.complete,
+                guard.tripped(), guard.reason());
 
         long epoch = epochSequence.incrementAndGet();
         int faults = 0;
@@ -108,9 +137,10 @@ public class MembershipReconciler {
             // the sweep for everyone else. It is still stamped as seen — it was
             // enumerated, so it must not become a not-seen delete candidate.
             try {
-                engine.process(syncSetId, p.entry.getDN(), guard.tripped());
+                history.record(run, engine.process(syncSetId, p.entry.getDN(), guard.tripped()));
             } catch (Exception ex) {
                 faults++;
+                history.fault(run);
                 log.warn("Sync set {}: reconcile recompute of {} faulted ({}); continuing",
                         syncSetId, p.entry.getDN(), ex.toString());
             } finally {
@@ -120,9 +150,10 @@ public class MembershipReconciler {
         if (plan.complete) {
             for (Membership row : membershipRepo.findNotSeen(syncSetId, epoch)) {
                 try {
-                    engine.process(syncSetId, row.getIdentity(), guard.tripped());
+                    history.record(run, engine.process(syncSetId, row.getIdentity(), guard.tripped()));
                 } catch (Exception ex) {
                     faults++;
+                    history.fault(run);
                     log.warn("Sync set {}: reconcile sweep of identity {} faulted ({}); continuing",
                             syncSetId, row.getIdentity(), ex.toString());
                 }
