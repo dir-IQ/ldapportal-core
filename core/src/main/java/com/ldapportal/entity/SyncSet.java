@@ -15,6 +15,7 @@ import jakarta.persistence.Version;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.ColumnDefault;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
@@ -113,6 +114,31 @@ public class SyncSet {
 
     @Column(name = "reconcile_last_run_at")
     private OffsetDateTime reconcileLastRunAt;
+
+    /**
+     * Reconcile-request counters. The changelog poller increments
+     * {@code requestSeq} ({@code SyncSetRepository.requestReconcile}). A finishing
+     * reconcile records the {@code requestSeq} it loaded at its start as
+     * {@code attemptedSeq}, and also as {@code handledSeq} when its source
+     * enumeration completed ({@code SyncSetRepository.markReconcileRun}), so a
+     * request raised while it ran stays pending. {@code SyncReconcileScheduler}
+     * treats {@code requestSeq > attemptedSeq} as due now and
+     * {@code requestSeq > handledSeq} as due for a spaced retry. Read-only to JPA
+     * (insertable/updatable = false): only those targeted updates write them, so
+     * an entity save from a reconcile that loaded the set earlier can never
+     * overwrite a newer request.
+     */
+    @ColumnDefault("0")
+    @Column(name = "reconcile_request_seq", nullable = false, insertable = false, updatable = false)
+    private long reconcileRequestSeq;
+
+    @ColumnDefault("0")
+    @Column(name = "reconcile_attempted_seq", nullable = false, insertable = false, updatable = false)
+    private long reconcileAttemptedSeq;
+
+    @ColumnDefault("0")
+    @Column(name = "reconcile_handled_seq", nullable = false, insertable = false, updatable = false)
+    private long reconcileHandledSeq;
 
     /**
      * Optional attribute rename / value-template rules. Null/empty => identity

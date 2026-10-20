@@ -9,8 +9,10 @@ import com.ldapportal.dto.sync.SyncSetResponse;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
+import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
+import com.ldapportal.entity.enums.SyncChangelogHealth;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.sync.MembershipReconciler;
@@ -37,6 +39,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -109,8 +112,22 @@ public class SyncConfigService {
         l.setEnabled(req.enabled());
         l.setCaptureMode(mode);
         if (mode == SyncCaptureMode.CHANGELOG) {
+            String baseDn = req.changelogBaseDn().trim();
+            // A cursor is only meaningful for the feed that issued it (a DSEE
+            // changeNumber is not an OUD cookie), so a feed change restarts it,
+            // along with the old feed's health and error.
+            if (l.getChangelogFormat() != req.changelogFormat()
+                    || !Objects.equals(l.getChangelogBaseDn(), baseDn)) {
+                l.setChangelogCursorToken(null);
+                l.setChangelogLastChangeNumber(null);
+                l.setChangelogSourceLastChangeNumber(null);
+                l.setChangelogHealth(SyncChangelogHealth.HEALTHY);
+                l.setChangelogLastError(null);
+                l.setChangelogLastErrorAt(null);
+                l.setChangelogLastPolledAt(null);
+            }
             l.setChangelogFormat(req.changelogFormat());
-            l.setChangelogBaseDn(req.changelogBaseDn());
+            l.setChangelogBaseDn(baseDn);
         } else {
             // APP_INTERCEPT leaves changelog config null (DB cfg constraint).
             l.setChangelogFormat(null);
@@ -131,6 +148,11 @@ public class SyncConfigService {
         if (req.captureMode() == SyncCaptureMode.CHANGELOG) {
             if (req.changelogFormat() == null) {
                 throw new IllegalArgumentException("changelogFormat is required for CHANGELOG capture");
+            }
+            if (req.changelogFormat() != ChangelogFormat.DSEE_CHANGELOG
+                    && req.changelogFormat() != ChangelogFormat.OUD_COOKIE_CHANGELOG) {
+                throw new IllegalArgumentException("changelogFormat " + req.changelogFormat()
+                        + " is not supported for CHANGELOG capture (use DSEE_CHANGELOG or OUD_COOKIE_CHANGELOG)");
             }
             if (req.changelogBaseDn() == null || req.changelogBaseDn().isBlank()) {
                 throw new IllegalArgumentException("changelogBaseDn is required for CHANGELOG capture");

@@ -199,7 +199,7 @@ and compute age **live**, so lag keeps climbing between refreshes.
 | `ldapportal_sync_recompute_inflight_requests` | gauge | Recompute requests currently claimed by a worker |
 | `ldapportal_sync_recompute_oldest_age_seconds` | gauge | Age of the oldest unclaimed request (queue lag); 0 when empty |
 | `ldapportal_sync_changelog_links{health=...}` | gauge | Enabled changelog-capture links per poll health (`HEALTHY`/`LAGGING`/`STALLED`/`GAP_DETECTED`/`CURSOR_RESET`/`DISABLED_CONFIG_ERROR`) |
-| `ldapportal_sync_changelog_lag_max_changes` | gauge | Largest changelog lag (source head − cursor) across links; clamped ≥ 0 |
+| `ldapportal_sync_changelog_lag_max_changes` | gauge | Largest changelog lag (source head − cursor) across links; clamped ≥ 0. Numeric-cursor (`DSEE_CHANGELOG`) links only — OUD cookie-mode links have no numeric lag and never move it; watch their `LAGGING` health instead |
 | `ldapportal_events_outbox_entries{status=pending\|delivering\|dead_lettered}` | gauge | Event-outbox entries by delivery status |
 | `ldapportal_events_outbox_oldest_pending_age_seconds` | gauge | Age of the oldest `PENDING` outbox entry (delivery backlog); 0 when none |
 | `ldapportal_report_jobs_enabled_jobs` | gauge | Enabled scheduled report jobs |
@@ -211,7 +211,9 @@ rather than a missing series. The outbox dispatcher and report scheduler run
 unconditionally in core, so those gauges are always meaningful.
 
 Good first alerts: `ldapportal_sync_changelog_links{health="STALLED"} > 0`
-(a poller is stuck), `ldapportal_events_outbox_entries{status="dead_lettered"} > 0`
+(a poller is stuck), `ldapportal_sync_changelog_links{health="LAGGING"} > 0` for
+a sustained period such as 15m (a link isn't keeping up — the only lag signal
+for OUD cookie-mode links), `ldapportal_events_outbox_entries{status="dead_lettered"} > 0`
 (deliveries are being abandoned), `ldapportal_report_jobs_failed_jobs > 0`.
 
 Refresh cadence is `ldapportal.metrics.refresh-ms` (default 15000).

@@ -9,6 +9,7 @@ import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.entity.enums.SyncCaptureMode;
+import com.ldapportal.entity.enums.SyncChangelogHealth;
 import com.ldapportal.entity.enums.SyncScope;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.MembershipRepository;
@@ -172,6 +173,50 @@ class SyncChangelogPollerTest {
         poller.pollOne(link.getId());
         drain();
         assertThat(target.getEntry("uid=carol," + DST_USERS)).isNull();
+    }
+
+    @Test
+    void poll_moreThanAPagePending_keepsSizeLimitedPagesAndReadsToTheHead() throws Exception {
+        // More than one 500-record page pending: the server answers
+        // sizeLimitExceeded with a partial page. Dropping that page used to leave
+        // the cursor stuck (STALLED) for as long as the backlog exceeded a page;
+        // now the page is kept and the same pass reads on.
+        for (int i = 0; i < 520; i++) {
+            addPerson("p" + i);
+        }
+
+        poller.pollOne(link.getId());
+
+        SyncLink after = linkRepo.findById(link.getId()).orElseThrow();
+        assertThat(after.getChangelogHealth()).isEqualTo(SyncChangelogHealth.HEALTHY);
+        assertThat(after.getChangelogLastChangeNumber()).isEqualTo(after.getChangelogSourceLastChangeNumber());
+        assertThat(requestRepo.findAllBySyncSetId(peopleSet.getId())).hasSizeGreaterThanOrEqualTo(520);
+    }
+
+    @Test
+    void poll_gap_jumpsToHeadAndRequestsReconcileWithoutRunningIt() throws Exception {
+        addPerson("gina");           // only a reconcile (or the record, now trimmed) can see it
+        // Trim the changelog past the cursor: the 1000-entry cap drops record 1.
+        for (int i = 0; i < 1005; i++) {
+            source.modify("uid=gina," + SRC_PEOPLE,
+                    new com.unboundid.ldap.sdk.Modification(
+                            com.unboundid.ldap.sdk.ModificationType.REPLACE, "sn", "v" + i));
+        }
+        SyncLink l = linkRepo.findById(link.getId()).orElseThrow();
+        l.setChangelogCursorToken("1");
+        linkRepo.save(l);
+        long requestsBefore = setRepo.findById(peopleSet.getId()).orElseThrow().getReconcileRequestSeq();
+
+        poller.pollOne(link.getId());
+
+        SyncLink after = linkRepo.findById(link.getId()).orElseThrow();
+        assertThat(after.getChangelogHealth()).isEqualTo(SyncChangelogHealth.GAP_DETECTED);
+        assertThat(after.getChangelogLastChangeNumber()).isEqualTo(after.getChangelogSourceLastChangeNumber());
+        SyncSet s = setRepo.findById(peopleSet.getId()).orElseThrow();
+        assertThat(s.getReconcileRequestSeq()).isEqualTo(requestsBefore + 1);
+        assertThat(s.getReconcileRequestSeq()).isGreaterThan(s.getReconcileHandledSeq());
+        // Handed to the reconcile scheduler, not run on the poll thread.
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).isEmpty();
     }
 
     private void drain() {
