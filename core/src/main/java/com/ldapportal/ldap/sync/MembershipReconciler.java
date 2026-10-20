@@ -93,7 +93,7 @@ public class MembershipReconciler {
      * enumerated at the source.
      */
     public int reconcile(UUID syncSetId) {
-        Context ctx = loadContext(syncSetId);
+        Context ctx = loadContext(syncSetId, true);
         if (ctx == null) {
             return 0;
         }
@@ -148,10 +148,13 @@ public class MembershipReconciler {
 
     /** Dry-run: what a reconcile would do, computed without writing to the target. */
     public SyncReconcilePreview preview(UUID syncSetId) {
-        Context ctx = loadContext(syncSetId);
+        // A preview never writes, so it plans for a disabled set or link too —
+        // that is exactly when an operator needs it: before enabling (the UI's
+        // enable confirmation runs this and asks only if deletes are planned).
+        Context ctx = loadContext(syncSetId, false);
         if (ctx == null) {
             return new SyncReconcilePreview(0, 0, 0, 0, List.of(), false,
-                    "Sync set, link, or source/target directory is unavailable or disabled.", false);
+                    "Sync set, link, or source directory is unavailable.", false);
         }
         Plan plan = computePlan(ctx);
         Guard guard = evaluateGuard(plan);
@@ -246,13 +249,18 @@ public class MembershipReconciler {
         return Guard.ok();
     }
 
-    private Context loadContext(UUID syncSetId) {
+    /**
+     * @param requireEnabled true for anything that writes (reconcile): a disabled
+     *                       set or link is skipped. A read-only preview passes
+     *                       false so it can plan before the set is turned on.
+     */
+    private Context loadContext(UUID syncSetId, boolean requireEnabled) {
         SyncSet set = syncSetRepo.findById(syncSetId).orElse(null);
-        if (set == null || !set.isEnabled()) {
+        if (set == null || (requireEnabled && !set.isEnabled())) {
             return null;
         }
         SyncLink link = syncLinkRepo.findById(set.getLinkId()).orElse(null);
-        if (link == null || !link.isEnabled()) {
+        if (link == null || (requireEnabled && !link.isEnabled())) {
             return null;
         }
         DirectoryConnection source = directoryRepo.findById(link.getSourceDirId()).orElse(null);
