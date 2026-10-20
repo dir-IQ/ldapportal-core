@@ -7,7 +7,9 @@ import com.ldapportal.controller.superadmin.SyncSetController;
 import com.ldapportal.dto.sync.MembershipResponse;
 import com.ldapportal.dto.sync.RecomputeKeyRequest;
 import com.ldapportal.dto.sync.SyncLinkRequest;
+import com.ldapportal.dto.sync.SyncDeleteApproval;
 import com.ldapportal.dto.sync.SyncLinkResponse;
+import com.ldapportal.dto.sync.SyncPreviewAction;
 import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncSetResponse;
 import com.ldapportal.entity.enums.MembershipState;
@@ -27,6 +29,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
@@ -154,6 +157,34 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void approveDelete_superadmin_returnsOutcome() throws Exception {
+        UUID targetDir = UUID.randomUUID();
+        given(service.approveDelete(eq(SET), eq("id-1"), any())).willReturn(
+                new SyncDeleteApproval(SyncPreviewAction.DELETE, targetDir, "uid=a,dc=dst", null));
+        mockMvc.perform(post(SETS + "/" + SET + "/memberships/id-1/approve-delete")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("DELETE"))
+                .andExpect(jsonPath("$.targetDn").value("uid=a,dc=dst"));
+    }
+
+    @Test
+    void approveDelete_entryBackInScope_returns400() throws Exception {
+        given(service.approveDelete(eq(SET), eq("id-1"), any()))
+                .willThrow(new IllegalArgumentException("The source entry is back in scope"));
+        mockMvc.perform(post(SETS + "/" + SET + "/memberships/id-1/approve-delete")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void approveDelete_adminRole_returns403() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/memberships/id-1/approve-delete")
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void recompute_superadmin_returns202() throws Exception {
         mockMvc.perform(post(SETS + "/" + SET + "/recompute").with(authentication(superadminAuth()))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -164,7 +195,7 @@ class SyncControllerTest extends BaseControllerTest {
     @Test
     void memberships_superadmin_returns200_withTopLevelPageEnvelope() throws Exception {
         MembershipResponse row = new MembershipResponse(SET, "id-1", "uid=a,dc=src", "uid=a,dc=dst",
-                MembershipState.APPLIED, null, null, null);
+                MembershipState.APPLIED, null, null, null, null);
         given(service.listMemberships(any(), any(), any(), any()))
                 .willReturn(new PageImpl<>(List.of(row), PageRequest.of(0, 50), 120));
         mockMvc.perform(get(SETS + "/" + SET + "/memberships").with(authentication(superadminAuth())))

@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.service;
 
+import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.PrincipalType;
+import com.ldapportal.dto.sync.SyncDeleteApproval;
 import com.ldapportal.dto.sync.SyncLinkRequest;
+import com.ldapportal.dto.sync.SyncPreviewAction;
 import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
+import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
@@ -59,13 +64,15 @@ class SyncConfigServiceTest {
     @Mock private SyncContentVerifier verifier;
     @Mock private RecomputeEnqueuer enqueuer;
     @Mock private com.ldapportal.ldap.sync.SyncPreviewService previewService;
+    @Mock private com.ldapportal.ldap.sync.RecomputeEngine engine;
+    @Mock private AuditService auditService;
 
     private SyncConfigService service;
 
     @BeforeEach
     void setUp() {
         service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo,
-                reconciler, verifier, enqueuer, previewService);
+                reconciler, verifier, enqueuer, previewService, engine, auditService);
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
@@ -209,6 +216,36 @@ class SyncConfigServiceTest {
 
         assertThat(enumerated).isEqualTo(5);
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+    }
+
+    @Test
+    void approveDelete_auditsTheTargetDelete() {
+        UUID setId = UUID.randomUUID();
+        UUID targetDir = UUID.randomUUID();
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(engine.approveDelete(setId, "id-1")).thenReturn(new SyncDeleteApproval(
+                SyncPreviewAction.DELETE, targetDir, "uid=a,dc=dst", null));
+
+        SyncDeleteApproval result = service.approveDelete(setId, "id-1", admin);
+
+        assertThat(result.outcome()).isEqualTo(SyncPreviewAction.DELETE);
+        verify(auditService).record(eq(admin), eq(targetDir), eq(AuditAction.ENTRY_DELETE), eq("uid=a,dc=dst"),
+                eq(java.util.Map.of("source", "directory-sync", "operation", "approved-review-delete",
+                        "syncSetId", setId.toString(), "identity", "id-1")));
+    }
+
+    @Test
+    void approveDelete_doesNotAudit_whenNothingWasDeleted() {
+        UUID setId = UUID.randomUUID();
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(engine.approveDelete(setId, "id-1")).thenReturn(new SyncDeleteApproval(
+                SyncPreviewAction.ERROR, UUID.randomUUID(), "uid=a,dc=dst", "delete failed: 50"));
+
+        service.approveDelete(setId, "id-1", admin);
+
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
     }
 
     @Test
