@@ -416,8 +416,10 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
     reads a fixed snapshot — every page comes from the same plan, and nothing
     is re-scanned. The dialog shows progress while it runs. One run per set at
     a time (across app instances): starting while one is running joins it. A
-    result is marked **outdated** once the set is edited or reconciled after
-    the run started.
+    result is marked **outdated** once, after the run started, the set is
+    edited or reconciled, its link is pointed at different directories, or
+    either directory's connection settings are edited. Changes live sync
+    applies between reconciles don't mark it outdated; run it again for those.
   - **How it predicts.** It dry-runs the sync engine's own decision code —
     brownfield adoption, the hash gate, ownership checks, the delete policy and
     the delete guard — with real target reads and recorded (not performed)
@@ -538,7 +540,7 @@ e.g. `ldapportal.sync.worker.fixed-delay-ms` → `LDAPPORTAL_SYNC_WORKER_FIXED_D
 | (constant) stale poll lease | `5m` | Reclaim a poll lease from a dead instance. |
 | `ldapportal.sync.preview.parallelism` | `2` | Per-entry preview runs executing at once per instance; more are refused with *try again*. |
 | `ldapportal.sync.preview.stale-after-ms` | `120000` | A running preview with no heartbeat this long reads as interrupted and can be replaced. |
-| `ldapportal.sync.preview.heartbeat-ms` | `15000` | Heartbeat interval of running previews. |
+| `ldapportal.sync.preview.heartbeat-ms` | `15000` | Heartbeat interval of running previews (on the preview's own timer, so a long reconcile sweep on the shared scheduler can't delay it). |
 | `ldapportal.sync.preview.retention-hours` | `24` | Stored preview results are deleted after this long. |
 | `ldapportal.sync.preview.purge-interval-ms` | `3600000` | How often expired previews are deleted. |
 

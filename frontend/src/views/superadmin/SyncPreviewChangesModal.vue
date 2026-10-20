@@ -47,7 +47,8 @@
         </p>
         <p v-if="run.outdated"
            class="text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-          The set has been edited or reconciled since this preview ran. Run it again for current results.
+          The set, its directories, or their connection settings have changed (or the set was reconciled)
+          since this preview ran. Run it again for current results.
         </p>
         <p class="text-gray-500">
           A dry run of the sync engine, computed {{ computedAt }}<template v-if="run.requestedBy">
@@ -127,6 +128,8 @@ const notif = useNotificationStore()
 const PAGE_SIZES = [25, 50, 100, 200]
 /** How often a running preview's progress is re-read. */
 const POLL_MS = 1500
+/** Longest wait between progress reads while they keep failing. */
+const MAX_POLL_MS = 30000
 
 const ACTION_LABEL: Record<SyncPreviewAction, string> = {
   ADD: 'Add', MODIFY: 'Modify', MOVE: 'Move', DELETE: 'Delete', REVIEW: 'Review',
@@ -164,6 +167,10 @@ const computedAt = computed<string>(() => {
 // so a slow earlier request can't overwrite what a later one asked for.
 let pageTicket = 0
 let pollTimer: ReturnType<typeof setTimeout> | null = null
+/** Progress reads failed in a row; drives the backoff. */
+let pollFailures = 0
+/** Set on unmount: a request still in flight must not re-arm polling or touch state. */
+let disposed = false
 
 function summary(e: SyncPreviewEntry): string {
   if (e.reason) return e.reason
@@ -197,14 +204,21 @@ function stopPolling() {
   }
 }
 
+function schedulePoll(delay: number) {
+  stopPolling()
+  if (disposed || !props.modelValue) return
+  pollTimer = setTimeout(() => { void refresh() }, delay)
+}
+
 /** Adopt a run status: poll while it runs, load the first page once it completes. */
 function adopt(status: SyncPreviewStatus) {
+  if (disposed) return
   // Load when this status is a completed run whose entries aren't on screen yet.
   const needsEntries = status.status === 'COMPLETE' && result.value?.runId !== status.runId
   run.value = status
   stopPolling()
-  if (status.status === 'RUNNING' && props.modelValue) {
-    pollTimer = setTimeout(() => { void refresh() }, POLL_MS)
+  if (status.status === 'RUNNING') {
+    schedulePoll(POLL_MS)
   } else if (needsEntries) {
     result.value = null
     void load(0)
@@ -214,14 +228,25 @@ function adopt(status: SyncPreviewStatus) {
 async function refresh() {
   try {
     const { data } = await getPreviewRun(props.setId)
-    if (!props.modelValue) return
+    if (disposed || !props.modelValue) return
+    pollFailures = 0
     if (data.status === null) {
       await start()
     } else {
       adopt(data)
     }
   } catch (e) {
-    notif.error(errorMessage(e, 'Could not load the preview'))
+    if (disposed || !props.modelValue) return
+    if (run.value?.status === 'RUNNING') {
+      // A blip while watching a run: keep watching, backing off, and say so once.
+      pollFailures++
+      if (pollFailures === 1) {
+        notif.error(`${errorMessage(e, 'Could not check the preview\'s progress')}. Retrying…`)
+      }
+      schedulePoll(Math.min(POLL_MS * 2 ** pollFailures, MAX_POLL_MS))
+    } else {
+      notif.error(errorMessage(e, 'Could not load the preview'))
+    }
   }
 }
 
@@ -243,7 +268,7 @@ async function load(target: number) {
   expanded.value = null
   try {
     const { data } = await previewEntries(props.setId, target, size.value, changesOnly.value)
-    if (ticket !== pageTicket) return
+    if (disposed || ticket !== pageTicket) return
     if (data.runId !== run.value?.runId) {
       // A newer run finished since this dialog last looked: show that one instead.
       await refresh()
@@ -252,7 +277,7 @@ async function load(target: number) {
     result.value = data
     page.value = data.page
   } catch (e) {
-    if (ticket !== pageTicket) return
+    if (disposed || ticket !== pageTicket) return
     if ((e as { response?: { status?: number } }).response?.status === 404) {
       // Someone started a new run, so this one's entries are gone: follow the new run.
       await refresh()
@@ -268,11 +293,15 @@ async function load(target: number) {
 watch(() => props.modelValue, (open) => {
   stopPolling()
   pageTicket++
+  pollFailures = 0
   loading.value = false
   run.value = null
   result.value = null
   if (open) void refresh()
 }, { immediate: true })
 
-onBeforeUnmount(stopPolling)
+onBeforeUnmount(() => {
+  disposed = true
+  stopPolling()
+})
 </script>

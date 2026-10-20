@@ -88,4 +88,12 @@ public class SyncPreviewRun {
 
     @Column(name = "error", columnDefinition = "TEXT")
     private String error;
+
+    /** The link's source directory when the run completed (an edit to the link outdates it). */
+    @Column(name = "source_dir_id")
+    private UUID sourceDirId;
+
+    /** The link's target directory when the run completed. */
+    @Column(name = "target_dir_id")
+    private UUID targetDirId;
 }

@@ -29,7 +29,8 @@ public interface SyncPreviewRunRepository extends JpaRepository<SyncPreviewRun, 
             + "r.status = com.ldapportal.entity.enums.SyncPreviewRunStatus.RUNNING, "
             + "r.requestedBy = :requestedBy, r.startedAt = :now, r.heartbeatAt = :now, r.finishedAt = null, "
             + "r.processed = 0, r.total = 0, r.sourceCount = 0, r.managedCount = 0, r.actionableCount = 0, "
-            + "r.guardTripped = false, r.guardReason = null, r.completeScan = false, r.note = null, r.error = null "
+            + "r.guardTripped = false, r.guardReason = null, r.completeScan = false, r.note = null, r.error = null, "
+            + "r.sourceDirId = null, r.targetDirId = null "
             + "where r.syncSetId = :setId and (r.status <> com.ldapportal.entity.enums.SyncPreviewRunStatus.RUNNING "
             + "or r.heartbeatAt < :staleBefore)")
     int claim(@Param("setId") UUID setId, @Param("runId") UUID runId, @Param("requestedBy") String requestedBy,
@@ -58,13 +59,15 @@ public interface SyncPreviewRunRepository extends JpaRepository<SyncPreviewRun, 
             + "r.finishedAt = :now, r.heartbeatAt = :now, r.processed = :total, r.total = :total, "
             + "r.sourceCount = :sourceCount, r.managedCount = :managedCount, r.actionableCount = :actionableCount, "
             + "r.guardTripped = :guardTripped, r.guardReason = :guardReason, r.completeScan = :completeScan, "
-            + "r.note = :note where r.syncSetId = :setId and r.runId = :runId "
+            + "r.note = :note, r.sourceDirId = :sourceDirId, r.targetDirId = :targetDirId "
+            + "where r.syncSetId = :setId and r.runId = :runId "
             + "and r.status = com.ldapportal.entity.enums.SyncPreviewRunStatus.RUNNING")
     int complete(@Param("setId") UUID setId, @Param("runId") UUID runId, @Param("now") OffsetDateTime now,
                  @Param("total") int total, @Param("sourceCount") int sourceCount,
                  @Param("managedCount") long managedCount, @Param("actionableCount") long actionableCount,
                  @Param("guardTripped") boolean guardTripped, @Param("guardReason") String guardReason,
-                 @Param("completeScan") boolean completeScan, @Param("note") String note);
+                 @Param("completeScan") boolean completeScan, @Param("note") String note,
+                 @Param("sourceDirId") UUID sourceDirId, @Param("targetDirId") UUID targetDirId);
 
     /** Mark the run failed. Returns 0 when it is no longer current. */
     @Transactional
