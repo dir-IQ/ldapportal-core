@@ -105,6 +105,21 @@ public class SyncSetController {
     }
 
     /**
+     * Per-entry dry-run preview, paged: what a reconcile would do to each entry
+     * (add / modify with attribute changes / move / delete / review), ordered by
+     * target DN. {@code changesOnly} leaves out entries that wouldn't change.
+     * No writes; works for a disabled set.
+     */
+    @GetMapping("/{id}/preview/entries")
+    public com.ldapportal.dto.sync.SyncPreviewPage previewEntries(
+            @PathVariable UUID id,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(defaultValue = "true") boolean changesOnly) {
+        return service.previewEntries(id, page, size, changesOnly);
+    }
+
+    /**
      * Independent content verification: re-reads the live source and target and
      * flags missing / orphaned / drifted entries (belts-and-suspenders, no writes).
      */

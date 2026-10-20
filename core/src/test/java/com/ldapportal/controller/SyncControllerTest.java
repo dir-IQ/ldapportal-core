@@ -182,4 +182,58 @@ class SyncControllerTest extends BaseControllerTest {
         mockMvc.perform(delete(SETS + "/" + SET + "/memberships/abc-123").with(authentication(superadminAuth())))
                 .andExpect(status().isNoContent());
     }
+
+    // ── per-entry preview ──────────────────────────────────────────────────────
+
+    private static com.ldapportal.dto.sync.SyncPreviewPage previewPage() {
+        var change = new com.ldapportal.dto.sync.SyncPreviewAttributeChange(
+                "mail", List.of("old@x"), List.of("new@x"), 0, 0);
+        var entry = new com.ldapportal.dto.sync.SyncPreviewEntry("id-1", "uid=a,ou=people,dc=src",
+                "uid=a,ou=Users,dc=dst", null, com.ldapportal.dto.sync.SyncPreviewAction.MODIFY, null,
+                List.of(change));
+        return new com.ldapportal.dto.sync.SyncPreviewPage(List.of(entry), 0, 50, 1, 1, true,
+                3, 2, 2, false, null, true, null);
+    }
+
+    @Test
+    void previewEntries_defaults_returnsPage() throws Exception {
+        given(service.previewEntries(SET, 0, 50, true)).willReturn(previewPage());
+        mockMvc.perform(get(SETS + "/" + SET + "/preview/entries").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entries[0].action").value("MODIFY"))
+                .andExpect(jsonPath("$.entries[0].changes[0].attribute").value("mail"))
+                .andExpect(jsonPath("$.entries[0].changes[0].removed[0]").value("old@x"))
+                .andExpect(jsonPath("$.totalEntries").value(1));
+    }
+
+    @Test
+    void previewEntries_passesPagingAndFilter() throws Exception {
+        given(service.previewEntries(SET, 2, 25, false)).willReturn(previewPage());
+        mockMvc.perform(get(SETS + "/" + SET + "/preview/entries?page=2&size=25&changesOnly=false")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void previewEntries_badSize_returns400() throws Exception {
+        willThrow(new IllegalArgumentException("size must be between 1 and 200"))
+                .given(service).previewEntries(SET, 0, 500, true);
+        mockMvc.perform(get(SETS + "/" + SET + "/preview/entries?size=500")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void previewEntries_unknownSet_returns404() throws Exception {
+        willThrow(new com.ldapportal.exception.ResourceNotFoundException("Sync set not found"))
+                .given(service).previewEntries(SET, 0, 50, true);
+        mockMvc.perform(get(SETS + "/" + SET + "/preview/entries").with(authentication(superadminAuth())))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void previewEntries_adminRole_returns403() throws Exception {
+        mockMvc.perform(get(SETS + "/" + SET + "/preview/entries").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
 }
