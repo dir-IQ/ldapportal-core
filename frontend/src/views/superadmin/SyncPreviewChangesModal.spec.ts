@@ -160,6 +160,53 @@ describe('SyncPreviewChangesModal', () => {
     expect(api.getPreviewRun).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps watching a run through failed progress checks, backing off and warning once', async () => {
+    vi.useFakeTimers()
+    const blip = { message: 'Network Error' }
+    api.getPreviewRun
+      .mockResolvedValueOnce(ok(run({ status: 'RUNNING', processed: 10, total: 100, finishedAt: null })))
+      .mockRejectedValueOnce(blip)
+      .mockRejectedValueOnce(blip)
+      .mockResolvedValueOnce(ok(run()))
+    api.previewEntries.mockResolvedValue(ok(page()))
+    const w = mountModal()
+    const notif = useNotificationStore()
+    const spy = vi.spyOn(notif, 'error')
+    await flushPromises()
+
+    await vi.advanceTimersByTimeAsync(1500)   // first check fails → retry in 3 s
+    expect(api.getPreviewRun).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(2999)
+    expect(api.getPreviewRun).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)      // second check fails → retry in 6 s
+    expect(api.getPreviewRun).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(6000)   // recovers: the run is complete
+    await flushPromises()
+
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith('Network Error. Retrying…')
+    expect(api.previewEntries).toHaveBeenCalledWith('set-1', 0, 50, true)
+    expect(w.text()).toContain('uid=alice,ou=Users,dc=dst')
+  })
+
+  it('does not resume polling when a check returns after the dialog is gone', async () => {
+    vi.useFakeTimers()
+    api.getPreviewRun.mockResolvedValueOnce(ok(run({ status: 'RUNNING', finishedAt: null })))
+    const late = deferred<AxiosResponse<SyncPreviewStatus>>()
+    api.getPreviewRun.mockReturnValueOnce(late.promise)
+    const w = mountModal()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1500)   // second check is in flight
+    expect(api.getPreviewRun).toHaveBeenCalledTimes(2)
+
+    w.unmount()
+    late.resolve(ok(run({ status: 'RUNNING', finishedAt: null })))
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(10000)
+
+    expect(api.getPreviewRun).toHaveBeenCalledTimes(2)
+  })
+
   it('"Run again" starts a new run', async () => {
     api.getPreviewRun.mockResolvedValue(ok(run()))
     api.previewEntries.mockResolvedValue(ok(page()))
@@ -254,7 +301,7 @@ describe('SyncPreviewChangesModal', () => {
 
     expect(w.text()).toContain('Delete guard would trip: planned deletions (60) exceed the absolute cap of 50')
     expect(w.text()).toContain('Source enumeration failed (timeout)')
-    expect(w.text()).toContain('edited or reconciled since this preview ran')
+    expect(w.text()).toContain('since this preview ran')
   })
 
   it('shows why a run failed', async () => {

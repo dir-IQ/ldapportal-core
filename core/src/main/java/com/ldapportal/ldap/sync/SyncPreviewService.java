@@ -51,7 +51,9 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -107,6 +109,7 @@ public class SyncPreviewService {
     private final Duration staleAfter;
     private final Duration retention;
     private final ExecutorService executor;
+    private final ScheduledExecutorService heartbeats;
 
     /** Runs executing on this instance (set id → run id), kept alive by {@link #heartbeat}. */
     private final Map<UUID, UUID> active = new ConcurrentHashMap<>();
@@ -125,6 +128,7 @@ public class SyncPreviewService {
                               ObjectMapper objectMapper,
                               @Value("${ldapportal.sync.preview.parallelism:2}") int parallelism,
                               @Value("${ldapportal.sync.preview.stale-after-ms:120000}") long staleAfterMs,
+                              @Value("${ldapportal.sync.preview.heartbeat-ms:15000}") long heartbeatMs,
                               @Value("${ldapportal.sync.preview.retention-hours:24}") long retentionHours) {
         this.syncSetRepo = syncSetRepo;
         this.syncLinkRepo = syncLinkRepo;
@@ -149,10 +153,21 @@ public class SyncPreviewService {
                     t.setDaemon(true);
                     return t;
                 });
+        // Its own timer, not @Scheduled: the app's single scheduler thread also runs
+        // the reconcile sweep, and a long sweep would starve the heartbeat until a
+        // healthy run read as interrupted (and could be replaced).
+        this.heartbeats = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "sync-preview-heartbeat");
+            t.setDaemon(true);
+            return t;
+        });
+        long every = Math.max(1, heartbeatMs);
+        this.heartbeats.scheduleWithFixedDelay(this::heartbeat, every, every, TimeUnit.MILLISECONDS);
     }
 
     @PreDestroy
     void shutdown() {
+        heartbeats.shutdownNow();
         executor.shutdownNow();
     }
 
@@ -216,6 +231,14 @@ public class SyncPreviewService {
         List<SyncPreviewEntryRow> rows = changesOnly
                 ? entryRepo.findByRunIdAndActionableTrueOrderByOrdinalAsc(run.getRunId(), request)
                 : entryRepo.findByRunIdOrderByOrdinalAsc(run.getRunId(), request);
+        // A run started between the two reads deletes these entries as it begins;
+        // report that rather than an empty page that contradicts the totals.
+        boolean stillCurrent = runRepo.findById(syncSetId)
+                .filter(r -> r.getStatus() == SyncPreviewRunStatus.COMPLETE && r.getRunId().equals(run.getRunId()))
+                .isPresent();
+        if (!stillCurrent) {
+            throw new ResourceNotFoundException("This preview was replaced by a newer run; reload it.");
+        }
         return new SyncPreviewPage(rows.stream().map(this::toEntry).toList(), actual, size, count, totalPages,
                 changesOnly, run.getRunId());
     }
@@ -223,7 +246,6 @@ public class SyncPreviewService {
     // ── Housekeeping ───────────────────────────────────────────────────────────
 
     /** Keep this instance's running previews visibly alive, including through a long source scan. */
-    @Scheduled(fixedDelayString = "${ldapportal.sync.preview.heartbeat-ms:15000}")
     void heartbeat() {
         OffsetDateTime now = OffsetDateTime.now();
         active.forEach((setId, runId) -> {
@@ -392,7 +414,7 @@ public class SyncPreviewService {
             entryRepo.saveAll(batch);
         }
         requireCurrent(runRepo.complete(syncSetId, runId, OffsetDateTime.now(), total, identified, rows.size(),
-                actionable, guard.tripped(), guard.reason(), complete, note));
+                actionable, guard.tripped(), guard.reason(), complete, note, source.getId(), target.getId()));
         return null;
     }
 
@@ -457,15 +479,43 @@ public class SyncPreviewService {
             error = INTERRUPTED;
         }
         boolean done = status == SyncPreviewRunStatus.COMPLETE;
-        boolean outdated = done && syncSetRepo.findById(run.getSyncSetId())
-                .map(SyncSet::getUpdatedAt)
-                .map(updated -> updated.isAfter(run.getStartedAt()))
-                .orElse(false);
+        boolean outdated = done && isOutdated(run);
         return new SyncPreviewStatus(run.getRunId(), status, run.getRequestedBy(), run.getStartedAt(),
                 run.getFinishedAt(), run.getProcessed(), run.getTotal(), outdated, error,
                 run.getSourceCount(), run.getManagedCount(), run.getActionableCount(),
                 done ? run.getTotal() - run.getActionableCount() : 0,
                 run.isGuardTripped(), run.getGuardReason(), run.isCompleteScan(), run.getNote());
+    }
+
+    /**
+     * Whether a completed run no longer describes the set: the set was edited or
+     * reconciled after the run started, its link now points at other
+     * directories, or either directory's connection settings were edited since.
+     * (The link's own timestamp can't be used: the changelog poller saves the
+     * link on every poll.)
+     */
+    private boolean isOutdated(SyncPreviewRun run) {
+        OffsetDateTime started = run.getStartedAt();
+        SyncSet set = syncSetRepo.findById(run.getSyncSetId()).orElse(null);
+        if (set == null || changedSince(set.getUpdatedAt(), started)) {
+            return true;
+        }
+        SyncLink link = syncLinkRepo.findById(set.getLinkId()).orElse(null);
+        if (link == null || !link.getSourceDirId().equals(run.getSourceDirId())
+                || !link.getTargetDirId().equals(run.getTargetDirId())) {
+            return true;
+        }
+        for (UUID dirId : List.of(link.getSourceDirId(), link.getTargetDirId())) {
+            DirectoryConnection dir = directoryRepo.findById(dirId).orElse(null);
+            if (dir == null || changedSince(dir.getUpdatedAt(), started)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean changedSince(OffsetDateTime updated, OffsetDateTime since) {
+        return updated != null && updated.isAfter(since);
     }
 
     private SyncPreviewEntryRow toRow(UUID syncSetId, UUID runId, int ordinal, SyncPreviewEntry e,
