@@ -124,6 +124,49 @@ export const deleteSyncSet = (id: string) => client.delete(`/superadmin/sync/set
 export const getExcludedAttributeDefaults = () =>
   client.get<string[]>('/superadmin/sync/sets/excluded-attribute-defaults')
 
+/**
+ * One recorded reconcile run of a set. The outcome counters mirror
+ * SyncPreviewAction, so a run compares directly with its preview.
+ * `status` FAILED covers both an aborted run (`error`) and one whose server
+ * stopped mid-run.
+ */
+export interface SyncReconcileRun {
+  id: string
+  trigger: 'SCHEDULED' | 'MANUAL'
+  requestedBy: string | null
+  status: 'RUNNING' | 'COMPLETE' | 'FAILED'
+  startedAt: string
+  finishedAt: string | null
+  /** False when source enumeration failed or stopped: no deletes were made. */
+  completeScan: boolean
+  sourceCount: number
+  managedBefore: number
+  managedAfter: number | null
+  processed: number
+  added: number
+  modified: number
+  moved: number
+  deleted: number
+  heldForReview: number
+  /** Applied without a target write: the target already matched. */
+  noChange: number
+  forgotten: number
+  unchanged: number
+  /** Target writes that failed (rows now FAILED). */
+  failed: number
+  /** Recomputes that threw; retried on the next run. */
+  faulted: number
+  /** Not processed: the set or link was disabled during the run. */
+  skipped: number
+  guardTripped: boolean
+  guardReason: string | null
+  error: string | null
+}
+
+/** A set's most recent reconcile runs, newest first. */
+export const listReconcileRuns = (setId: string, limit = 10) =>
+  client.get<SyncReconcileRun[]>(`/superadmin/sync/sets/${setId}/reconcile-runs`, { params: { limit } })
+
 /** Dry-run summary of what a reconcile of a sync set would change (no writes). */
 export interface SyncReconcilePreview {
   sourceCount: number

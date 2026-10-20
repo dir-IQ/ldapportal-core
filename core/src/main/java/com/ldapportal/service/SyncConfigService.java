@@ -16,12 +16,14 @@ import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.entity.enums.SyncChangelogHealth;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEngine;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
 import com.ldapportal.ldap.sync.SyncContentVerifier;
 import com.ldapportal.ldap.sync.SyncPreviewService;
+import com.ldapportal.ldap.sync.SyncReconcileHistory;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.MembershipRepository;
 import com.ldapportal.repository.MembershipStateCount;
@@ -71,6 +73,7 @@ public class SyncConfigService {
     private final SyncContentVerifier verifier;
     private final RecomputeEnqueuer enqueuer;
     private final SyncPreviewService previewService;
+    private final SyncReconcileHistory reconcileHistory;
     private final RecomputeEngine engine;
     private final AuditService auditService;
 
@@ -344,10 +347,13 @@ public class SyncConfigService {
         return membershipRepo.search(syncSetId, state, term, pageable).map(MembershipResponse::of);
     }
 
-    /** Run a synchronous reconcile of the set; returns the number of source identities enumerated. */
-    public int reconcileNow(UUID syncSetId) {
+    /**
+     * Run a synchronous reconcile of the set, recorded in its history as a manual
+     * run by {@code requestedBy}; returns the number of source identities enumerated.
+     */
+    public int reconcileNow(UUID syncSetId, String requestedBy) {
         requireSet(syncSetId);
-        int enumerated = reconciler.reconcile(syncSetId);
+        int enumerated = reconciler.reconcile(syncSetId, SyncReconcileTrigger.MANUAL, requestedBy);
         // Refresh the cached drift snapshot so the dashboard reflects the post-reconcile
         // state, mirroring the scheduled sweep (reconcile → re-verify). Guarded: the
         // reconcile already applied, so a verify hiccup must not fail the operation.
@@ -357,6 +363,12 @@ public class SyncConfigService {
             log.warn("Post-reconcile drift refresh for sync set {} failed: {}", syncSetId, ex.toString());
         }
         return enumerated;
+    }
+
+    /** The set's most recent reconcile runs, newest first (at most {@code limit}). */
+    public List<com.ldapportal.dto.sync.SyncReconcileRunResponse> reconcileRuns(UUID syncSetId, int limit) {
+        requireSet(syncSetId);
+        return reconcileHistory.recent(syncSetId, limit);
     }
 
     /** Dry-run preview of what a reconcile would change (no target writes). */

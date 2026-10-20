@@ -96,8 +96,18 @@ public class SyncSetController {
 
     @PostMapping("/{id}/reconcile")
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
-    public Map<String, Integer> reconcile(@PathVariable UUID id) {
-        return Map.of("enumerated", service.reconcileNow(id));
+    public Map<String, Integer> reconcile(@PathVariable UUID id, @AuthenticationPrincipal AuthPrincipal principal) {
+        return Map.of("enumerated", service.reconcileNow(id, principal != null ? principal.username() : null));
+    }
+
+    /**
+     * The set's most recent reconcile runs, newest first: trigger, scan
+     * completeness, and per-outcome counts (no attribute values).
+     */
+    @GetMapping("/{id}/reconcile-runs")
+    public List<com.ldapportal.dto.sync.SyncReconcileRunResponse> reconcileRuns(
+            @PathVariable UUID id, @RequestParam(defaultValue = "10") int limit) {
+        return service.reconcileRuns(id, Math.min(Math.max(limit, 1), 20));
     }
 
     /** Dry-run preview of a reconcile (counts + sample deletions, no writes). */

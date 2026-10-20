@@ -3,7 +3,8 @@ package com.ldapportal.dto.sync;
 
 /**
  * What a reconcile would do to one entry, as predicted by a dry run of the
- * engine's own decision path.
+ * engine's own decision path. A live recompute reports what it did in the same
+ * terms, so a reconcile's recorded counts compare directly with its preview.
  */
 public enum SyncPreviewAction {
     /** Create the entry on the target. */
