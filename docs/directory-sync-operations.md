@@ -414,7 +414,7 @@ DELETE /api/v1/superadmin/sync/sets/{id}
 
 # Inventory + operator triggers
 GET    /api/v1/superadmin/sync/sets/{id}/memberships?state=&q=&page=&size=   # size capped 1..200
-GET    /api/v1/superadmin/sync/sets/{id}/preview          # dry-run reconcile plan (index-based, no writes)
+GET    /api/v1/superadmin/sync/sets/{id}/preview          # dry-run reconcile plan (index-based, no writes; works on a disabled set/link)
 GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source↔target compare (no writes)
 POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}
 POST   /api/v1/superadmin/sync/sets/{id}/recompute        # body {"key": "<dn-or-identity>"} → 202
