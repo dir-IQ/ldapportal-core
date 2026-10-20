@@ -18,6 +18,7 @@ import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
 import com.ldapportal.ldap.sync.SyncContentVerifier;
+import com.ldapportal.ldap.sync.SyncPreviewService;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.MembershipRepository;
 import com.ldapportal.repository.MembershipStateCount;
@@ -66,6 +67,7 @@ public class SyncConfigService {
     private final MembershipReconciler reconciler;
     private final SyncContentVerifier verifier;
     private final RecomputeEnqueuer enqueuer;
+    private final SyncPreviewService previewService;
 
     // ── Links ────────────────────────────────────────────────────────────────
 
@@ -356,6 +358,13 @@ public class SyncConfigService {
     public com.ldapportal.dto.sync.SyncReconcilePreview previewReconcile(UUID syncSetId) {
         requireSet(syncSetId);
         return reconciler.preview(syncSetId);
+    }
+
+    /** One page of the per-entry dry-run preview (what a reconcile would do to each entry). */
+    public com.ldapportal.dto.sync.SyncPreviewPage previewEntries(UUID syncSetId, int page, int size,
+                                                                 boolean changesOnly) {
+        requireSet(syncSetId);
+        return previewService.previewEntries(syncSetId, page, size, changesOnly);
     }
 
     /**

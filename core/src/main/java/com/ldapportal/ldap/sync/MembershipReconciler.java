@@ -291,12 +291,19 @@ public class MembershipReconciler {
     }
 
     private List<SearchResultEntry> enumerateSource(Context ctx) {
-        String base = ctx.set.getObjectScopeBaseDn() != null
-                ? ctx.set.getObjectScopeBaseDn() : ctx.source.getBaseDn();
-        SearchScope scope = SyncScopes.searchScope(ctx.set);
-        String idAttr = SyncIdentity.attribute(ctx.set, ctx.strategy);
-        int pageSize = ctx.source.getPagingSize();
-        return connectionFactory.withConnectionUnreplicated(ctx.source, conn -> {
+        return enumerate(ctx.set, ctx.source, ctx.strategy);
+    }
+
+    /**
+     * The source scan a reconcile plans from: every entry in the set's scope,
+     * paged. Package-private so the per-entry preview enumerates identically.
+     */
+    List<SearchResultEntry> enumerate(SyncSet set, DirectoryConnection source, IdentityStrategy strategy) {
+        String base = set.getObjectScopeBaseDn() != null ? set.getObjectScopeBaseDn() : source.getBaseDn();
+        SearchScope scope = SyncScopes.searchScope(set);
+        String idAttr = SyncIdentity.attribute(set, strategy);
+        int pageSize = source.getPagingSize();
+        return connectionFactory.withConnectionUnreplicated(source, conn -> {
             // Fetch user attributes ("*") so membership can be evaluated for the
             // plan, plus the identity attribute explicitly (it may be operational,
             // e.g. entryUUID, which "*" does not return). Paged, so a scope larger

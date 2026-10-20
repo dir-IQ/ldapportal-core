@@ -234,8 +234,13 @@
         <div v-if="editingSet" class="rounded-lg border border-gray-200 p-3 space-y-2">
           <div class="flex items-center justify-between">
             <span class="text-sm font-medium text-gray-700">Impact preview</span>
-            <button type="button" class="btn-secondary btn-compact" :disabled="previewLoading"
-                    @click="runPreview">{{ previewLoading ? 'Checking…' : 'Preview impact' }}</button>
+            <div class="flex items-center gap-2">
+              <button type="button" class="btn-secondary btn-compact" :disabled="previewLoading"
+                      @click="runPreview">{{ previewLoading ? 'Checking…' : 'Preview impact' }}</button>
+              <button type="button" class="btn-secondary btn-compact" @click="showChanges = true">
+                Show changes
+              </button>
+            </div>
           </div>
           <div v-if="previewResult" class="text-xs text-gray-600 space-y-1">
             <p>
@@ -282,6 +287,9 @@
         </div>
       </form>
     </AppModal>
+
+    <SyncPreviewChangesModal v-if="editingSet" v-model="showChanges"
+                             :set-id="editingSet.id" :set-name="editingSet.name" />
   </PageContainer>
 </template>
 
@@ -293,6 +301,7 @@ import AppModal from '@/components/AppModal.vue'
 import FormField from '@/components/FormField.vue'
 import HelpTip from '@/components/HelpTip.vue'
 import DataTable from '@/components/DataTable.vue'
+import SyncPreviewChangesModal from './SyncPreviewChangesModal.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import TransformRulesEditor from '@/components/TransformRulesEditor.vue'
 import ExcludedAttributesEditor from '@/components/sync/ExcludedAttributesEditor.vue'
@@ -525,6 +534,7 @@ function openSetModal(s?: SyncSet) {
     : blankSet()
   previewResult.value = null
   confirmEnable.value = false
+  showChanges.value = false
   showSetModal.value = true
 }
 // Trim rows, drop blank-source rows, and collapse blank target/template to null
@@ -562,6 +572,8 @@ function toPayload(f: SetForm): SyncSetPayload {
 // ── Dry-run preview + enable confirmation ──
 const previewResult = ref<SyncReconcilePreview | null>(null)
 const previewLoading = ref(false)
+// Per-entry dry run (what a reconcile would do to each entry), in its own dialog.
+const showChanges = ref<boolean>(false)
 const confirmEnable = ref(false) // showing the "enable will delete N" confirmation
 
 async function runPreview() {

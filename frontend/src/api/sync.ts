@@ -131,6 +131,50 @@ export interface SyncReconcilePreview {
 export const previewReconcile = (setId: string) =>
   client.get<SyncReconcilePreview>(`/superadmin/sync/sets/${setId}/preview`)
 
+/** What a reconcile would do to one entry (from a dry run of the engine). */
+export type SyncPreviewAction =
+  | 'ADD' | 'MODIFY' | 'MOVE' | 'DELETE' | 'REVIEW' | 'NO_CHANGE' | 'FORGET' | 'UNCHANGED'
+
+/** Values an attribute would lose and gain; lists are capped, the rest counted. */
+export interface SyncPreviewAttributeChange {
+  attribute: string
+  removed: string[]
+  added: string[]
+  omittedRemoved: number
+  omittedAdded: number
+}
+
+export interface SyncPreviewEntry {
+  identity: string
+  sourceDn: string | null
+  targetDn: string | null
+  previousTargetDn: string | null
+  action: SyncPreviewAction
+  reason: string | null
+  changes: SyncPreviewAttributeChange[]
+}
+
+/** One page of the per-entry preview, ordered by target DN (parents first). */
+export interface SyncPreviewPage {
+  entries: SyncPreviewEntry[]
+  page: number
+  size: number
+  totalEntries: number
+  totalPages: number
+  changesOnly: boolean
+  sourceCount: number
+  managedCount: number
+  unchangedCount: number | null
+  guardTripped: boolean
+  guardReason: string | null
+  completeScan: boolean
+  note: string | null
+}
+
+export const previewEntries = (setId: string, page: number, size: number, changesOnly: boolean) =>
+  client.get<SyncPreviewPage>(`/superadmin/sync/sets/${setId}/preview/entries`,
+    { params: { page, size, changesOnly } })
+
 /**
  * Independent content verification: re-reads the live source and target and flags
  * missing / orphaned / drifted entries, without consulting the membership index.

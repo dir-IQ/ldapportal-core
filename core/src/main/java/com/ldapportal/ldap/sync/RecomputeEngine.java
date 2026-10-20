@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.dto.sync.SyncPreviewAction;
+import com.ldapportal.dto.sync.SyncPreviewAttributeChange;
+import com.ldapportal.dto.sync.SyncPreviewEntry;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.MembershipId;
@@ -72,6 +75,9 @@ public class RecomputeEngine {
     private final LdapConnectionFactory connectionFactory;
     private final ClosureResolver closureResolver;
     private final MembershipReferenceResolvers referenceResolvers;
+
+    /** The real side effects: target directory writes + index commits. */
+    private final Effects live = new LiveEffects();
 
     /**
      * Recompute one key (a source DN or a normalized identity) for one sync set.
@@ -185,7 +191,7 @@ public class RecomputeEngine {
                 ? SyncDnUtil.normalize(entry.getDN())
                 : (current != null ? current.getSourceDn() : null);
 
-        boolean changed = apply(set, target, identity, current, decision, entry, suppressDeletes);
+        boolean changed = apply(set, target, identity, current, decision, entry, suppressDeletes, live);
         if (changed && changedSourceDn != null) {
             closureResolver.fanOut(link, changedSourceDn);
         }
@@ -219,12 +225,16 @@ public class RecomputeEngine {
      *       success upsert the row APPLIED, on failure mark it FAILED.</li>
      * </ul>
      *
+     * <p>Every write — to the target or the index — goes through {@code fx}, so the
+     * same decision code runs live ({@link #live}) or as a dry run that records
+     * what it would do ({@link #previewApply}); reads always hit the real target.
+     *
      * @return {@code true} when the target was actually changed — the signal that
      *         drives {@link ClosureResolver closure} fan-out for referrers.
      */
     private boolean apply(SyncSet set, DirectoryConnection target, String identity,
                           Membership current, MembershipDecision decision, Entry entry,
-                          boolean suppressDeletes) {
+                          boolean suppressDeletes, Effects fx) {
         if (!decision.member()) {
             if (current == null) {
                 return false; // (OUT, none) — no-op
@@ -239,7 +249,7 @@ public class RecomputeEngine {
                 log.info("Sync set {}: identity {} left membership but target {} is owned by {} other "
                         + "identity row(s); dropping the stale index row without deleting",
                         set.getId(), identity, current.getTargetDn(), otherOwners.size());
-                membershipRepo.deleteById(new MembershipId(set.getId(), identity));
+                fx.dropRow(set, identity);
                 return false;
             }
             if (suppressDeletes || set.getDeletePolicy() == SyncDeletePolicy.REVIEW) {
@@ -247,7 +257,7 @@ public class RecomputeEngine {
                 // an operator decision, rather than deleting. suppressDeletes is the
                 // reconciler's blast-radius / zero-enumeration guard tripping.
                 if (current.getState() != MembershipState.REVIEW) {
-                    markReview(set, identity, current.getSourceDn(), current.getTargetDn(),
+                    fx.review(set, identity, current.getSourceDn(), current.getTargetDn(),
                             current.getContentHash(),
                             suppressDeletes
                                     ? "scope-exit held for review (delete guard tripped)"
@@ -255,12 +265,12 @@ public class RecomputeEngine {
                 }
                 return false;
             }
-            ApplyOutcome del = targetDelete(target, current.getTargetDn());
+            ApplyOutcome del = fx.delete(target, current.getTargetDn());
             if (LdapResultInterpreter.deleteConverged(del.code())) {
-                membershipRepo.deleteById(new MembershipId(set.getId(), identity));
+                fx.dropRow(set, identity);
                 return true;
             }
-            markFailed(set, identity, current.getSourceDn(), current.getTargetDn(),
+            fx.failed(set, identity, current.getSourceDn(), current.getTargetDn(),
                     current.getContentHash(), describe("delete", del));
             return false;
         }
@@ -281,7 +291,7 @@ public class RecomputeEngine {
         if (anchorAttr != null && !anchorAttr.isBlank() && firstOrReview) {
             List<String> matches = searchTargetByAnchor(target, set, anchorAttr, identity);
             if (matches.size() > 1) {
-                markReview(set, identity, sourceDn, targetDn, hash,
+                fx.review(set, identity, sourceDn, targetDn, hash,
                         "ambiguous: " + matches.size() + " target entries carry sourceAnchor=" + identity);
                 return false;
             } else if (matches.size() == 1) {
@@ -294,7 +304,7 @@ public class RecomputeEngine {
             } else if (readTarget(target, targetDn) != null) {
                 // No anchor match but the placement DN is occupied by an entry
                 // that doesn't carry our anchor → don't clobber it.
-                markReview(set, identity, sourceDn, targetDn, hash,
+                fx.review(set, identity, sourceDn, targetDn, hash,
                         "unanchored entry already at placement DN " + targetDn);
                 return false;
             }
@@ -305,8 +315,7 @@ public class RecomputeEngine {
                 && targetDn.equalsIgnoreCase(current.getTargetDn())
                 && java.util.Arrays.equals(hash, current.getContentHash())) {
             if (!sourceDn.equalsIgnoreCase(current.getSourceDn())) {
-                current.setSourceDn(sourceDn);
-                membershipRepo.save(current);
+                fx.refreshSourceDn(current, sourceDn);
             }
             return false;
         }
@@ -321,36 +330,307 @@ public class RecomputeEngine {
         if (current != null && current.getTargetDn() != null
                 && !targetDn.equalsIgnoreCase(current.getTargetDn())) {
             String oldTargetDn = current.getTargetDn();
-            ApplyOutcome mv = targetModifyDn(target, oldTargetDn, targetDn);
+            ApplyOutcome mv = fx.modifyDn(target, oldTargetDn, targetDn);
             if (!LdapResultInterpreter.success(mv.code()) && readTarget(target, oldTargetDn) != null) {
-                markFailed(set, identity, sourceDn, oldTargetDn, hash,
+                fx.failed(set, identity, sourceDn, oldTargetDn, hash,
                         describe("rename to " + targetDn, mv));
                 return false;
             }
         }
 
         java.util.Set<String> protectedAttrs = SyncExcludedAttributes.effectiveFor(set);
-        Entry tgt = readTarget(target, targetDn);
+        Entry tgt = fx.readTarget(target, targetDn);
         ApplyOutcome res;
         if (tgt == null) {
-            res = targetAdd(target, targetDn, decision.desiredAttrs());
+            res = fx.add(target, targetDn, decision.desiredAttrs());
             if (LdapResultInterpreter.addNeedsModify(res.code())) {
-                tgt = readTarget(target, targetDn);
+                tgt = fx.readTarget(target, targetDn);
                 res = (tgt == null) ? res
-                        : targetModify(target, targetDn,
-                                TargetEntryDiffer.diff(tgt, decision.desiredAttrs(), protectedAttrs));
+                        : fx.modify(target, targetDn,
+                                TargetEntryDiffer.diff(tgt, decision.desiredAttrs(), protectedAttrs), tgt);
             }
         } else {
-            res = targetModify(target, targetDn,
-                    TargetEntryDiffer.diff(tgt, decision.desiredAttrs(), protectedAttrs));
+            res = fx.modify(target, targetDn,
+                    TargetEntryDiffer.diff(tgt, decision.desiredAttrs(), protectedAttrs), tgt);
         }
 
         if (!LdapResultInterpreter.success(res.code())) {
-            markFailed(set, identity, sourceDn, targetDn, hash, describe("apply", res));
+            fx.failed(set, identity, sourceDn, targetDn, hash, describe("apply", res));
             return false;
         }
-        upsert(set, identity, sourceDn, targetDn, hash, MembershipState.APPLIED, null, current);
+        fx.applied(set, identity, sourceDn, targetDn, hash, current);
         return true;
+    }
+
+    // ── Dry run (impact preview) ───────────────────────────────────────────────
+
+    /**
+     * Predict what a reconcile would do for one identity, without writing to the
+     * target or the index: runs {@link #apply} with a {@link PreviewRecorder}, so
+     * every branch — brownfield correlation, the hash gate, ownership checks, the
+     * delete policy and guard — is the live code, with live target reads.
+     *
+     * @param entry           the current source entry, or {@code null} when it is
+     *                        gone from the scope (an OUT, as for a not-seen row)
+     * @param resolver        DN-reference resolver for projecting the entry
+     * @param suppressDeletes whether the reconcile's delete guard would trip
+     */
+    public SyncPreviewEntry previewApply(SyncSet set, DirectoryConnection target, IdentityStrategy strategy,
+                                         String identity, Entry entry, ReferenceResolver resolver,
+                                         boolean suppressDeletes) {
+        Membership current = membershipRepo.findById(new MembershipId(set.getId(), identity)).orElse(null);
+        MembershipDecision decision = entry != null
+                ? membershipFunction.evaluate(set, strategy, entry, resolver)
+                : MembershipDecision.out(identity);
+        PreviewRecorder rec = new PreviewRecorder();
+        apply(set, target, identity, current, decision, entry, suppressDeletes, rec);
+        String sourceDn = entry != null ? entry.getDN() : (current != null ? current.getSourceDn() : null);
+        String fallbackDn = decision.member() ? decision.targetDn()
+                : (current != null ? current.getTargetDn() : null);
+        return rec.toEntry(identity, sourceDn, fallbackDn);
+    }
+
+    /**
+     * Records {@link #apply}'s writes instead of performing them. Writes report
+     * success, so the decision path continues exactly as after a successful write.
+     */
+    private final class PreviewRecorder implements Effects {
+        private String addDn;
+        private List<Attribute> addAttrs;
+        private String modifyDn;
+        private List<SyncPreviewAttributeChange> modifyChanges;
+        private String moveFrom;
+        private String moveTo;
+        private String deleteDn;
+        private String reviewDn;
+        private String reviewReason;
+        private boolean applied;
+        private boolean droppedRow;
+
+        @Override
+        public Entry readTarget(DirectoryConnection target, String dn) {
+            if (moveTo == null || !SyncDnUtil.normalize(dn).equals(SyncDnUtil.normalize(moveTo))) {
+                return RecomputeEngine.this.readTarget(target, dn);
+            }
+            // The move was only recorded: read the entry where it is now and
+            // present it as the server would after MODDN (deleteOldRDN=true).
+            Entry existing = RecomputeEngine.this.readTarget(target, moveFrom);
+            return existing == null ? null : renamed(existing, moveTo);
+        }
+
+        @Override
+        public ApplyOutcome add(DirectoryConnection target, String dn, List<Attribute> attrs) {
+            addDn = dn;
+            addAttrs = attrs;
+            return ok(ResultCode.SUCCESS);
+        }
+
+        @Override
+        public ApplyOutcome modify(DirectoryConnection target, String dn, List<Modification> mods, Entry before) {
+            if (!mods.isEmpty()) {
+                modifyDn = dn;
+                modifyChanges = SyncPreviewValues.forModify(before, mods);
+            }
+            return ok(ResultCode.SUCCESS);
+        }
+
+        @Override
+        public ApplyOutcome modifyDn(DirectoryConnection target, String oldDn, String newDn) {
+            moveFrom = oldDn;
+            moveTo = newDn;
+            return ok(ResultCode.SUCCESS);
+        }
+
+        @Override
+        public ApplyOutcome delete(DirectoryConnection target, String dn) {
+            deleteDn = dn;
+            return ok(ResultCode.SUCCESS);
+        }
+
+        @Override
+        public void applied(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash,
+                            Membership current) {
+            applied = true;
+        }
+
+        @Override
+        public void review(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash,
+                           String reason) {
+            reviewDn = targetDn;
+            reviewReason = reason;
+        }
+
+        @Override
+        public void failed(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash,
+                           String reason) {
+            // Unreachable while every write reports success; surfaced rather than lost.
+            reviewDn = targetDn;
+            reviewReason = reason;
+        }
+
+        @Override
+        public void dropRow(SyncSet set, String identity) {
+            droppedRow = true;
+        }
+
+        @Override
+        public void refreshSourceDn(Membership current, String sourceDn) {
+            // Index bookkeeping only; not a change worth showing.
+        }
+
+        SyncPreviewEntry toEntry(String identity, String sourceDn, String fallbackDn) {
+            if (deleteDn != null) {
+                return entry(identity, sourceDn, deleteDn, null, SyncPreviewAction.DELETE, null, List.of());
+            }
+            if (reviewReason != null) {
+                return entry(identity, sourceDn, reviewDn, null, SyncPreviewAction.REVIEW, reviewReason, List.of());
+            }
+            List<SyncPreviewAttributeChange> changes = addAttrs != null
+                    ? SyncPreviewValues.forAdd(addAttrs)
+                    : (modifyChanges != null ? modifyChanges : List.of());
+            if (moveTo != null) {
+                return entry(identity, sourceDn, moveTo, moveFrom, SyncPreviewAction.MOVE, null, changes);
+            }
+            if (addDn != null) {
+                return entry(identity, sourceDn, addDn, null, SyncPreviewAction.ADD, null, changes);
+            }
+            if (modifyDn != null) {
+                return entry(identity, sourceDn, modifyDn, null, SyncPreviewAction.MODIFY, null, changes);
+            }
+            if (applied) {
+                return entry(identity, sourceDn, fallbackDn, null, SyncPreviewAction.NO_CHANGE, null, List.of());
+            }
+            if (droppedRow) {
+                return entry(identity, sourceDn, fallbackDn, null, SyncPreviewAction.FORGET,
+                        "target entry is owned by another identity; only the stale index row is dropped",
+                        List.of());
+            }
+            return entry(identity, sourceDn, fallbackDn, null, SyncPreviewAction.UNCHANGED, null, List.of());
+        }
+
+        private static Entry renamed(Entry existing, String newDn) {
+            Entry moved = existing.duplicate();
+            try {
+                com.unboundid.ldap.sdk.RDN oldRdn = existing.getParsedDN().getRDN();
+                com.unboundid.ldap.sdk.RDN newRdn = new DN(newDn).getRDN();
+                moved.setDN(newDn);
+                if (oldRdn != null) {
+                    String[] names = oldRdn.getAttributeNames();
+                    String[] vals = oldRdn.getAttributeValues();
+                    for (int i = 0; i < names.length; i++) {
+                        moved.removeAttributeValue(names[i], vals[i]);
+                    }
+                }
+                if (newRdn != null) {
+                    String[] names = newRdn.getAttributeNames();
+                    String[] vals = newRdn.getAttributeValues();
+                    for (int i = 0; i < names.length; i++) {
+                        moved.addAttribute(names[i], vals[i]);
+                    }
+                }
+            } catch (LDAPException e) {
+                moved.setDN(newDn); // unparseable DN: attribute values stay as read
+            }
+            return moved;
+        }
+
+        private static SyncPreviewEntry entry(String identity, String sourceDn, String targetDn, String previous,
+                                              SyncPreviewAction action, String reason,
+                                              List<SyncPreviewAttributeChange> changes) {
+            return new SyncPreviewEntry(identity, sourceDn, targetDn, previous, action, reason, changes);
+        }
+    }
+
+    // ── Side-effect seam ───────────────────────────────────────────────────────
+
+    /**
+     * Every write {@link #apply} can make. {@link LiveEffects} performs them;
+     * {@link PreviewRecorder} records them and reports success, so a dry run walks
+     * exactly the branches a real run would (reads are never redirected).
+     */
+    private interface Effects {
+        /**
+         * Read the target entry the apply step diffs against. Routed through the
+         * seam because after a (recorded, not performed) MOVE a dry run must read
+         * the entry as it would be at its new DN.
+         */
+        Entry readTarget(DirectoryConnection target, String dn);
+
+        ApplyOutcome add(DirectoryConnection target, String dn, List<Attribute> attrs);
+
+        /** {@code before} is the target entry the modifications were diffed against. */
+        ApplyOutcome modify(DirectoryConnection target, String dn, List<Modification> mods, Entry before);
+
+        ApplyOutcome modifyDn(DirectoryConnection target, String oldDn, String newDn);
+
+        ApplyOutcome delete(DirectoryConnection target, String dn);
+
+        void applied(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash,
+                     Membership current);
+
+        void review(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash, String reason);
+
+        void failed(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash, String reason);
+
+        void dropRow(SyncSet set, String identity);
+
+        void refreshSourceDn(Membership current, String sourceDn);
+    }
+
+    private final class LiveEffects implements Effects {
+        @Override
+        public Entry readTarget(DirectoryConnection target, String dn) {
+            return RecomputeEngine.this.readTarget(target, dn);
+        }
+
+        @Override
+        public ApplyOutcome add(DirectoryConnection target, String dn, List<Attribute> attrs) {
+            return targetAdd(target, dn, attrs);
+        }
+
+        @Override
+        public ApplyOutcome modify(DirectoryConnection target, String dn, List<Modification> mods, Entry before) {
+            return targetModify(target, dn, mods);
+        }
+
+        @Override
+        public ApplyOutcome modifyDn(DirectoryConnection target, String oldDn, String newDn) {
+            return targetModifyDn(target, oldDn, newDn);
+        }
+
+        @Override
+        public ApplyOutcome delete(DirectoryConnection target, String dn) {
+            return targetDelete(target, dn);
+        }
+
+        @Override
+        public void applied(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash,
+                            Membership current) {
+            upsert(set, identity, sourceDn, targetDn, hash, MembershipState.APPLIED, null, current);
+        }
+
+        @Override
+        public void review(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash,
+                           String reason) {
+            markReview(set, identity, sourceDn, targetDn, hash, reason);
+        }
+
+        @Override
+        public void failed(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash,
+                           String reason) {
+            markFailed(set, identity, sourceDn, targetDn, hash, reason);
+        }
+
+        @Override
+        public void dropRow(SyncSet set, String identity) {
+            membershipRepo.deleteById(new MembershipId(set.getId(), identity));
+        }
+
+        @Override
+        public void refreshSourceDn(Membership current, String sourceDn) {
+            current.setSourceDn(sourceDn);
+            membershipRepo.save(current);
+        }
     }
 
     // ── Index persistence ──────────────────────────────────────────────────────

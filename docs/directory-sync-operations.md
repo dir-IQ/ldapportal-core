@@ -397,6 +397,39 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   catches drift the index believes is already converged). Reports counts of
   in-sync / **missing on target** / **orphaned on target** / **content drift**
   entries, with sample DNs for each. Read-only; never writes.
+- **Impact preview** (set editor) — counts of what a reconcile would add and
+  delete, plus sample DNs to be deleted. Works on a **disabled** set, and runs
+  automatically as the confirmation step when you enable a set: if any deletes
+  are planned (or the delete guard would trip) you're asked before it turns on.
+- **Show changes** (set editor) — the full, paged list of what a reconcile
+  would do to **each entry**: **Add**, **Modify**, **Move**, **Delete**,
+  **Review**, **No change**, **Forget**, or **Unchanged**. Click a row for the
+  attribute-level changes (values removed `−` and added `+`), the source DN, the
+  previous DN of a move, or the reason an entry would be held for review.
+  *Changes only* (the default) hides entries that won't change. Details:
+
+  - **How it predicts.** It dry-runs the sync engine's own decision code —
+    brownfield adoption, the hash gate, ownership checks, the delete policy and
+    the delete guard — with real target reads and recorded (not performed)
+    writes. Nothing is written to the target or the index, and it works on a
+    disabled set or link.
+  - **Order.** Entries are listed by target DN, parents before their children.
+  - **Values.** Password attributes are always shown as `(redacted)`, binary
+    values as `(binary, N bytes)`, and each attribute lists at most 50 removed
+    and 50 added values (the rest are counted).
+  - **References.** DN references such as `member` resolve to target DNs through
+    the membership index, and through entries this same run would add, matching
+    the end state a reconcile reaches once groups are re-driven after their
+    members land.
+  - **Limits.** Each entry is predicted against the current target and index
+    independently. Effects that only arise *during* a run — a child whose parent
+    is added in the same run failing because of apply order, a write the server
+    rejects (schema, ACLs, password policy) — show as the planned action, not as
+    the failure a real run might hit.
+  - **Cost.** Every page re-reads the whole source scope (as a reconcile does)
+    and reads the target only for the entries on that page. With *Changes only*,
+    entries the engine is certain to skip are filtered from the index alone, no
+    target reads needed.
 
 ### 7.2 REST (superadmin, `DIRECTORY_SYNC`-entitled)
 ```
@@ -415,6 +448,7 @@ DELETE /api/v1/superadmin/sync/sets/{id}
 # Inventory + operator triggers
 GET    /api/v1/superadmin/sync/sets/{id}/memberships?state=&q=&page=&size=   # size capped 1..200
 GET    /api/v1/superadmin/sync/sets/{id}/preview          # dry-run reconcile plan (index-based, no writes; works on a disabled set/link)
+GET    /api/v1/superadmin/sync/sets/{id}/preview/entries?page=&size=&changesOnly=   # per-entry dry run; size 1..200 (default 50), changesOnly default true
 GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source↔target compare (no writes)
 POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}
 POST   /api/v1/superadmin/sync/sets/{id}/recompute        # body {"key": "<dn-or-identity>"} → 202
