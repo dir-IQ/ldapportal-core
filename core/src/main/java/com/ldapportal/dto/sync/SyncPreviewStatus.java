@@ -18,7 +18,8 @@ import java.util.UUID;
  * @param finishedAt      when it finished, or {@code null}
  * @param processed       entries dry-run so far
  * @param total           entries to dry-run ({@code 0} until the source scan is planned)
- * @param outdated        the set was edited or reconciled after this run started
+ * @param outdated        the set was edited or reconciled, its link repointed, or either
+ *                        directory's connection settings edited, after this run started
  * @param error           why the run failed, when FAILED
  * @param sourceCount     entries enumerated in the source scope
  * @param managedCount    index rows the set managed when the run started

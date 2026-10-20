@@ -210,7 +210,7 @@ export interface SyncPreviewStatus {
   finishedAt: string | null
   processed: number
   total: number
-  /** The set was edited or reconciled after this run started. */
+  /** The set was edited or reconciled, or its link or directories changed, after this run started. */
   outdated: boolean
   error: string | null
   sourceCount: number
