@@ -20,6 +20,11 @@ public enum SyncPreviewAction {
     NO_CHANGE,
     /** Drop a stale index row whose target entry another identity now owns; the target is kept. */
     FORGET,
-    /** Already applied with the same content (or never tracked and out of scope): nothing happens. */
-    UNCHANGED
+    /** Already applied with the same content, or already held for review: nothing happens. */
+    UNCHANGED,
+    /**
+     * The outcome couldn't be predicted: reading the target or projecting the
+     * entry failed. The reason says why; a reconcile would likely fail the same way.
+     */
+    ERROR
 }

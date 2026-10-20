@@ -370,15 +370,16 @@ public class RecomputeEngine {
      * every branch — brownfield correlation, the hash gate, ownership checks, the
      * delete policy and guard — is the live code, with live target reads.
      *
+     * @param current         the identity's index row, or {@code null} when untracked;
+     *                        a detached copy (the adoption branch may change it)
      * @param entry           the current source entry, or {@code null} when it is
      *                        gone from the scope (an OUT, as for a not-seen row)
      * @param resolver        DN-reference resolver for projecting the entry
      * @param suppressDeletes whether the reconcile's delete guard would trip
      */
     public SyncPreviewEntry previewApply(SyncSet set, DirectoryConnection target, IdentityStrategy strategy,
-                                         String identity, Entry entry, ReferenceResolver resolver,
-                                         boolean suppressDeletes) {
-        Membership current = membershipRepo.findById(new MembershipId(set.getId(), identity)).orElse(null);
+                                         String identity, Membership current, Entry entry,
+                                         ReferenceResolver resolver, boolean suppressDeletes) {
         MembershipDecision decision = entry != null
                 ? membershipFunction.evaluate(set, strategy, entry, resolver)
                 : MembershipDecision.out(identity);
@@ -404,6 +405,8 @@ public class RecomputeEngine {
         private String deleteDn;
         private String reviewDn;
         private String reviewReason;
+        private String failedDn;
+        private String failedReason;
         private boolean applied;
         private boolean droppedRow;
 
@@ -464,8 +467,8 @@ public class RecomputeEngine {
         public void failed(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash,
                            String reason) {
             // Unreachable while every write reports success; surfaced rather than lost.
-            reviewDn = targetDn;
-            reviewReason = reason;
+            failedDn = targetDn;
+            failedReason = reason;
         }
 
         @Override
@@ -484,6 +487,9 @@ public class RecomputeEngine {
             }
             if (reviewReason != null) {
                 return entry(identity, sourceDn, reviewDn, null, SyncPreviewAction.REVIEW, reviewReason, List.of());
+            }
+            if (failedReason != null) {
+                return entry(identity, sourceDn, failedDn, null, SyncPreviewAction.ERROR, failedReason, List.of());
             }
             List<SyncPreviewAttributeChange> changes = addAttrs != null
                     ? SyncPreviewValues.forAdd(addAttrs)

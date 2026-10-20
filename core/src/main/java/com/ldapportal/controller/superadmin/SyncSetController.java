@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.core.entitlement.Entitled;
 import com.ldapportal.core.entitlement.Entitlement;
@@ -19,6 +20,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -105,12 +107,36 @@ public class SyncSetController {
     }
 
     /**
-     * Per-entry dry-run preview, paged: what a reconcile would do to each entry
-     * (add / modify with attribute changes / move / delete / review), ordered by
-     * target DN. {@code changesOnly} leaves out entries that wouldn't change.
-     * No writes; works for a disabled set.
+     * The latest per-entry dry-run preview of the set: progress while it runs,
+     * its summary once complete. Manage-only, like the entries: a preview shows
+     * attribute values.
+     */
+    @GetMapping("/{id}/preview/run")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncPreviewStatus previewStatus(@PathVariable UUID id) {
+        return service.previewStatus(id);
+    }
+
+    /**
+     * Start a per-entry dry-run preview in the background: plans the whole set
+     * and predicts what a reconcile would do to each entry. No directory writes;
+     * works for a disabled set. Joins the run already in progress, if any.
+     */
+    @PostMapping("/{id}/preview/run")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public ResponseEntity<com.ldapportal.dto.sync.SyncPreviewStatus> startPreview(
+            @PathVariable UUID id, @AuthenticationPrincipal AuthPrincipal principal) {
+        return ResponseEntity.accepted()
+                .body(service.startPreview(id, principal != null ? principal.username() : null));
+    }
+
+    /**
+     * One page of the set's completed preview (add / modify with attribute
+     * changes / move / delete / review), ordered by target DN.
+     * {@code changesOnly} leaves out entries that wouldn't change.
      */
     @GetMapping("/{id}/preview/entries")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public com.ldapportal.dto.sync.SyncPreviewPage previewEntries(
             @PathVariable UUID id,
             @RequestParam(defaultValue = "0") int page,

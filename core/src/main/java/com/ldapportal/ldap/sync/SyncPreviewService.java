@@ -1,29 +1,45 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ldapportal.dto.sync.SyncPreviewAction;
+import com.ldapportal.dto.sync.SyncPreviewAttributeChange;
 import com.ldapportal.dto.sync.SyncPreviewEntry;
 import com.ldapportal.dto.sync.SyncPreviewPage;
+import com.ldapportal.dto.sync.SyncPreviewStatus;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.SyncLink;
+import com.ldapportal.entity.SyncPreviewEntryRow;
+import com.ldapportal.entity.SyncPreviewRun;
 import com.ldapportal.entity.SyncSet;
-import com.ldapportal.entity.enums.MembershipState;
+import com.ldapportal.entity.enums.SyncPreviewRunStatus;
+import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.sync.identity.IdentityStrategy;
 import com.ldapportal.ldap.sync.identity.IdentityStrategyRegistry;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.MembershipRepository;
 import com.ldapportal.repository.SyncLinkRepository;
+import com.ldapportal.repository.SyncPreviewEntryRowRepository;
+import com.ldapportal.repository.SyncPreviewRunRepository;
 import com.ldapportal.repository.SyncSetRepository;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.RDN;
 import com.unboundid.ldap.sdk.SearchResultEntry;
-import lombok.RequiredArgsConstructor;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -33,20 +49,28 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Per-entry reconcile preview: for every entry a reconcile of the set would
  * touch, what it would do — add, modify (with the attribute changes), move,
  * delete, hold for review — computed by dry-running the engine's own
  * {@link RecomputeEngine#previewApply decision path}, so the prediction can't
- * drift from the real behaviour. Nothing is written.
+ * drift from the real behaviour. Nothing is written to either directory.
  *
- * <p>Each request plans the whole set (one source scan, as a reconcile does),
- * orders it by target DN with parents before children, and dry-runs only the
- * requested page, so target reads scale with the page size, not the set. With
- * {@code changesOnly}, entries the engine is certain to leave alone are dropped
- * first — decided from the index alone (applied, same placement, same content
- * hash: the engine's own hash gate), so no target read is needed to filter.
+ * <p>A preview is a background job. {@link #start} claims the set's run row
+ * (at most one run per set at a time, across app instances) and hands the work
+ * to a small bounded pool; the job plans the whole set (one source scan, as a
+ * reconcile does), dry-runs every entry, and stores the results in display
+ * order. {@link #page} then reads that stored plan, so paging is cheap and
+ * every page comes from the same snapshot. Each entry is dry-run in isolation:
+ * one that can't be predicted is stored as {@link SyncPreviewAction#ERROR} with
+ * the reason, and the rest of the run carries on.
  *
  * <p>DN references (e.g. {@code member}) resolve through the index and then
  * through the placements this preview plans, approximating the end state a
@@ -54,13 +78,19 @@ import java.util.UUID;
  * disabled set or link (nothing is written).
  */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class SyncPreviewService {
 
     public static final int MAX_PAGE_SIZE = 200;
 
+    /** Entries per stored batch; progress is recorded after each. */
+    static final int BATCH_SIZE = 100;
+
+    static final String INTERRUPTED = "Interrupted: the server running this preview stopped before it finished.";
+    static final String BUSY = "Too many previews are running on this server; try again in a minute.";
+
     private static final ReferenceResolver NO_RESOLVER = dn -> Optional.empty();
+    private static final TypeReference<List<SyncPreviewAttributeChange>> CHANGES = new TypeReference<>() { };
 
     private final SyncSetRepository syncSetRepo;
     private final SyncLinkRepository syncLinkRepo;
@@ -71,30 +101,209 @@ public class SyncPreviewService {
     private final MembershipReferenceResolvers referenceResolvers;
     private final MembershipReconciler reconciler;
     private final RecomputeEngine engine;
+    private final SyncPreviewRunRepository runRepo;
+    private final SyncPreviewEntryRowRepository entryRepo;
+    private final ObjectMapper objectMapper;
+    private final Duration staleAfter;
+    private final Duration retention;
+    private final ExecutorService executor;
+
+    /** Runs executing on this instance (set id → run id), kept alive by {@link #heartbeat}. */
+    private final Map<UUID, UUID> active = new ConcurrentHashMap<>();
+
+    public SyncPreviewService(SyncSetRepository syncSetRepo,
+                              SyncLinkRepository syncLinkRepo,
+                              DirectoryConnectionRepository directoryRepo,
+                              IdentityStrategyRegistry identityStrategies,
+                              MembershipRepository membershipRepo,
+                              MembershipFunction membershipFunction,
+                              MembershipReferenceResolvers referenceResolvers,
+                              MembershipReconciler reconciler,
+                              RecomputeEngine engine,
+                              SyncPreviewRunRepository runRepo,
+                              SyncPreviewEntryRowRepository entryRepo,
+                              ObjectMapper objectMapper,
+                              @Value("${ldapportal.sync.preview.parallelism:2}") int parallelism,
+                              @Value("${ldapportal.sync.preview.stale-after-ms:120000}") long staleAfterMs,
+                              @Value("${ldapportal.sync.preview.retention-hours:24}") long retentionHours) {
+        this.syncSetRepo = syncSetRepo;
+        this.syncLinkRepo = syncLinkRepo;
+        this.directoryRepo = directoryRepo;
+        this.identityStrategies = identityStrategies;
+        this.membershipRepo = membershipRepo;
+        this.membershipFunction = membershipFunction;
+        this.referenceResolvers = referenceResolvers;
+        this.reconciler = reconciler;
+        this.engine = engine;
+        this.runRepo = runRepo;
+        this.entryRepo = entryRepo;
+        this.objectMapper = objectMapper;
+        this.staleAfter = Duration.ofMillis(Math.max(1, staleAfterMs));
+        this.retention = Duration.ofHours(Math.max(1, retentionHours));
+        int threads = Math.max(1, parallelism);
+        // No queue: when every worker is busy a new run is refused at once rather
+        // than waiting unseen (a queued run couldn't heartbeat and would look dead).
+        this.executor = new ThreadPoolExecutor(threads, threads, 0L, TimeUnit.MILLISECONDS,
+                new SynchronousQueue<>(), r -> {
+                    Thread t = new Thread(r, "sync-preview");
+                    t.setDaemon(true);
+                    return t;
+                });
+    }
+
+    @PreDestroy
+    void shutdown() {
+        executor.shutdownNow();
+    }
+
+    // ── API ────────────────────────────────────────────────────────────────────
+
+    /** The set's latest preview run, or {@link SyncPreviewStatus#none()}. */
+    public SyncPreviewStatus status(UUID syncSetId) {
+        return runRepo.findById(syncSetId).map(this::toStatus).orElseGet(SyncPreviewStatus::none);
+    }
 
     /**
+     * Start a preview of the set in the background, unless one is already
+     * running (then that run's status is returned, and nothing new starts).
+     */
+    public SyncPreviewStatus start(UUID syncSetId, String requestedBy) {
+        UUID runId = claim(syncSetId, requestedBy);
+        if (runId != null) {
+            try {
+                executor.execute(() -> execute(syncSetId, runId));
+            } catch (RejectedExecutionException ex) {
+                runRepo.fail(syncSetId, runId, OffsetDateTime.now(), BUSY);
+            }
+        }
+        return status(syncSetId);
+    }
+
+    /** {@link #start}, but runs the job on the calling thread. For tests. */
+    SyncPreviewStatus runNow(UUID syncSetId) {
+        UUID runId = claim(syncSetId, null);
+        if (runId != null) {
+            execute(syncSetId, runId);
+        }
+        return status(syncSetId);
+    }
+
+    /**
+     * One page of the set's completed preview. A page past the end returns the
+     * last page (the listing may have shrunk since the caller last looked).
+     *
      * @param page        zero-based page
      * @param size        page size, 1..{@value #MAX_PAGE_SIZE}
-     * @param changesOnly leave out entries certain to be UNCHANGED
-     * @throws IllegalArgumentException for an out-of-range page or size
+     * @param changesOnly leave out entries that wouldn't change (UNCHANGED, NO_CHANGE)
+     * @throws IllegalArgumentException  for an out-of-range page or size
+     * @throws ResourceNotFoundException when the set has no completed preview
      */
-    public SyncPreviewPage previewEntries(UUID syncSetId, int page, int size, boolean changesOnly) {
+    public SyncPreviewPage page(UUID syncSetId, int page, int size, boolean changesOnly) {
         if (page < 0) {
             throw new IllegalArgumentException("page must be >= 0");
         }
         if (size < 1 || size > MAX_PAGE_SIZE) {
             throw new IllegalArgumentException("size must be between 1 and " + MAX_PAGE_SIZE);
         }
+        SyncPreviewRun run = runRepo.findById(syncSetId)
+                .filter(r -> r.getStatus() == SyncPreviewRunStatus.COMPLETE)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "This sync set has no completed preview; start one first."));
+        long count = changesOnly ? run.getActionableCount() : run.getTotal();
+        int totalPages = (int) ((count + size - 1) / size);
+        int actual = totalPages == 0 ? 0 : Math.min(page, totalPages - 1);
+        PageRequest request = PageRequest.of(actual, size);
+        List<SyncPreviewEntryRow> rows = changesOnly
+                ? entryRepo.findByRunIdAndActionableTrueOrderByOrdinalAsc(run.getRunId(), request)
+                : entryRepo.findByRunIdOrderByOrdinalAsc(run.getRunId(), request);
+        return new SyncPreviewPage(rows.stream().map(this::toEntry).toList(), actual, size, count, totalPages,
+                changesOnly, run.getRunId());
+    }
+
+    // ── Housekeeping ───────────────────────────────────────────────────────────
+
+    /** Keep this instance's running previews visibly alive, including through a long source scan. */
+    @Scheduled(fixedDelayString = "${ldapportal.sync.preview.heartbeat-ms:15000}")
+    void heartbeat() {
+        OffsetDateTime now = OffsetDateTime.now();
+        active.forEach((setId, runId) -> {
+            try {
+                runRepo.heartbeat(setId, runId, now);
+            } catch (Exception ex) {
+                log.warn("Sync set {}: preview heartbeat failed: {}", setId, ex.toString());
+            }
+        });
+    }
+
+    /** Drop previews past the retention: they hold attribute values and go stale anyway. */
+    @Scheduled(fixedDelayString = "${ldapportal.sync.preview.purge-interval-ms:3600000}",
+            initialDelayString = "${ldapportal.sync.preview.purge-interval-ms:3600000}")
+    public void purge() {
+        OffsetDateTime before = OffsetDateTime.now().minus(retention);
+        entryRepo.deleteForRunsInactiveSince(before);
+        int runs = runRepo.deleteInactiveSince(before);
+        if (runs > 0) {
+            log.info("Removed {} sync preview run(s) older than {}", runs, retention);
+        }
+    }
+
+    // ── The job ────────────────────────────────────────────────────────────────
+
+    /** Start a run: returns its id, or {@code null} when one is already running. */
+    private UUID claim(UUID syncSetId, String requestedBy) {
+        UUID runId = UUID.randomUUID();
+        OffsetDateTime now = OffsetDateTime.now();
+        if (runRepo.claim(syncSetId, runId, requestedBy, now, now.minus(staleAfter)) == 1) {
+            return runId;
+        }
+        if (runRepo.existsById(syncSetId)) {
+            return null; // a live run holds it
+        }
+        SyncPreviewRun run = new SyncPreviewRun();
+        run.setSyncSetId(syncSetId);
+        run.setRunId(runId);
+        run.setStatus(SyncPreviewRunStatus.RUNNING);
+        run.setRequestedBy(requestedBy);
+        run.setStartedAt(now);
+        run.setHeartbeatAt(now);
+        try {
+            runRepo.saveAndFlush(run);
+            return runId;
+        } catch (DataIntegrityViolationException ex) {
+            return null; // another request created the set's first run a moment earlier
+        }
+    }
+
+    private void execute(UUID syncSetId, UUID runId) {
+        active.put(syncSetId, runId);
+        try {
+            entryRepo.deleteOtherRuns(syncSetId, runId);
+            String failure = plan(syncSetId, runId);
+            if (failure != null) {
+                runRepo.fail(syncSetId, runId, OffsetDateTime.now(), failure);
+            }
+        } catch (Superseded ex) {
+            log.info("Sync set {}: preview run {} was superseded; stopping", syncSetId, runId);
+        } catch (Exception ex) {
+            log.warn("Sync set {}: preview run {} failed", syncSetId, runId, ex);
+            runRepo.fail(syncSetId, runId, OffsetDateTime.now(), "The preview failed: " + message(ex));
+        } finally {
+            active.remove(syncSetId, runId);
+        }
+    }
+
+    /** Plan, dry-run and store the set. Returns a failure message, or {@code null} once complete. */
+    private String plan(UUID syncSetId, UUID runId) {
         SyncSet set = syncSetRepo.findById(syncSetId).orElse(null);
         SyncLink link = set == null ? null : syncLinkRepo.findById(set.getLinkId()).orElse(null);
         DirectoryConnection source = link == null ? null : directoryRepo.findById(link.getSourceDirId()).orElse(null);
         DirectoryConnection target = link == null ? null : directoryRepo.findById(link.getTargetDirId()).orElse(null);
         if (set == null || link == null || source == null || target == null) {
-            return unavailable(page, size, changesOnly, "Sync set, link, or source/target directory is unavailable.");
+            return "Sync set, link, or source/target directory is unavailable.";
         }
         IdentityStrategy strategy = identityStrategies.forType(source.getDirectoryType());
         if (SyncIdentity.attribute(set, strategy) == null) {
-            return unavailable(page, size, changesOnly, "The source directory type has no LDAP identity attribute.");
+            return "The source directory type has no LDAP identity attribute.";
         }
 
         // ── Plan the whole set, as a reconcile would ──
@@ -107,7 +316,7 @@ public class SyncPreviewService {
             log.warn("Sync set {}: preview source enumeration failed: {}", syncSetId, ex.toString());
             enumerated = List.of();
             complete = false;
-            note = "Source enumeration failed (" + ex.getMessage() + "); no deletes would happen.";
+            note = "Source enumeration failed (" + message(ex) + "); a reconcile would make no deletes.";
         }
 
         Map<String, Membership> rows = new HashMap<>();
@@ -120,7 +329,19 @@ public class SyncPreviewService {
         int identified = 0;
         int deletes = 0;
         for (SearchResultEntry e : enumerated) {
-            var placement = membershipFunction.evaluate(set, strategy, e, NO_RESOLVER);
+            MembershipDecision placement;
+            try {
+                placement = membershipFunction.evaluate(set, strategy, e, NO_RESOLVER);
+            } catch (Exception ex) {
+                // A reconcile's planning loop stops at the first entry it can't
+                // evaluate and treats the scan as incomplete; predict exactly that.
+                log.warn("Sync set {}: preview couldn't evaluate {}: {}", syncSetId, e.getDN(), ex.toString());
+                complete = false;
+                note = "Evaluating " + e.getDN() + " failed (" + message(ex) + "). A reconcile stops planning "
+                        + "at this entry: entries after it in the source scan aren't listed, and no deletes "
+                        + "would happen.";
+                break;
+            }
             String identity = placement.identity();
             if (identity == null || identity.isBlank()) {
                 continue; // a reconcile can't track an entry without an identity either
@@ -146,57 +367,145 @@ public class SyncPreviewService {
             }
         }
         MembershipReconciler.Guard guard = MembershipReconciler.guardFor(complete, identified, rows.size(), deletes);
-
-        ReferenceResolver index = referenceResolvers.forLink(link);
-        ReferenceResolver resolver = dn -> {
-            Optional<String> resolved = index.resolveTargetDn(dn);
-            return resolved.isPresent() ? resolved
-                    : Optional.ofNullable(plannedPlacement.get(SyncDnUtil.normalize(dn)));
-        };
-
+        ReferenceResolver resolver = plannedResolver(referenceResolvers.forLink(link), plannedPlacement);
         items.sort(Comparator.comparing(Item::sortKey));
-        Integer unchanged = null;
-        if (changesOnly) {
-            int before = items.size();
-            items.removeIf(it -> certainlyUnchanged(it, set, strategy, resolver));
-            unchanged = before - items.size();
-        }
 
-        // ── Dry-run just the requested page ──
-        long total = items.size();
-        int totalPages = (int) ((total + size - 1) / size);
-        int from = (int) Math.min((long) page * size, total);
-        int to = (int) Math.min((long) from + size, total);
-        List<SyncPreviewEntry> entries = new ArrayList<>(to - from);
-        for (Item it : items.subList(from, to)) {
-            entries.add(engine.previewApply(set, target, strategy, it.identity, it.entry, resolver, guard.tripped()));
+        // ── Dry-run every entry, storing the results in display order ──
+        int total = items.size();
+        requireCurrent(runRepo.progress(syncSetId, runId, 0, total, OffsetDateTime.now()));
+        List<SyncPreviewEntryRow> batch = new ArrayList<>(BATCH_SIZE);
+        long actionable = 0;
+        for (int i = 0; i < total; i++) {
+            SyncPreviewEntry entry = dryRun(set, target, strategy, items.get(i), resolver, guard.tripped());
+            boolean listed = isActionable(entry.action());
+            if (listed) {
+                actionable++;
+            }
+            batch.add(toRow(syncSetId, runId, i, entry, listed));
+            if (batch.size() == BATCH_SIZE) {
+                entryRepo.saveAll(batch);
+                batch.clear();
+                requireCurrent(runRepo.progress(syncSetId, runId, i + 1, total, OffsetDateTime.now()));
+            }
         }
-        return new SyncPreviewPage(entries, page, size, total, totalPages, changesOnly,
-                identified, rows.size(), unchanged, guard.tripped(), guard.reason(), complete, note);
+        if (!batch.isEmpty()) {
+            entryRepo.saveAll(batch);
+        }
+        requireCurrent(runRepo.complete(syncSetId, runId, OffsetDateTime.now(), total, identified, rows.size(),
+                actionable, guard.tripped(), guard.reason(), complete, note));
+        return null;
     }
 
     /**
-     * True only when the engine would certainly do nothing, decided without
-     * touching the target: an applied entry at the same placement with the same
-     * content hash (the engine's hash gate, which skips target I/O). Anything
-     * else goes through the dry run.
+     * Index first, then this plan's own placements. Index lookups are memoised:
+     * the same referent (a popular group member) is resolved once per run.
      */
-    private boolean certainlyUnchanged(Item it, SyncSet set, IdentityStrategy strategy, ReferenceResolver resolver) {
-        if (!it.member) {
-            return false; // a tracked entry leaving the set: delete, review or forget
-        }
-        Membership row = it.row;
-        if (row == null || row.getState() != MembershipState.APPLIED
-                || row.getTargetDn() == null || !row.getTargetDn().equalsIgnoreCase(it.targetDn)) {
-            return false;
-        }
-        var decision = membershipFunction.evaluate(set, strategy, it.entry, resolver);
-        return decision.member() && Arrays.equals(decision.contentHash(), row.getContentHash());
+    private static ReferenceResolver plannedResolver(ReferenceResolver index, Map<String, String> plannedPlacement) {
+        Map<String, Optional<String>> resolved = new HashMap<>();
+        return dn -> {
+            String norm = SyncDnUtil.normalize(dn);
+            Optional<String> hit = resolved.get(norm);
+            if (hit == null) {
+                hit = index.resolveTargetDn(dn);
+                resolved.put(norm, hit);
+            }
+            return hit.isPresent() ? hit : Optional.ofNullable(plannedPlacement.get(norm));
+        };
     }
 
-    private static SyncPreviewPage unavailable(int page, int size, boolean changesOnly, String note) {
-        return new SyncPreviewPage(List.of(), page, size, 0, 0, changesOnly, 0, 0,
-                changesOnly ? 0 : null, false, null, false, note);
+    /** One entry's dry run, isolated: a failure becomes an ERROR entry, not a failed run. */
+    private SyncPreviewEntry dryRun(SyncSet set, DirectoryConnection target, IdentityStrategy strategy, Item it,
+                                    ReferenceResolver resolver, boolean suppressDeletes) {
+        try {
+            return engine.previewApply(set, target, strategy, it.identity, it.row, it.entry, resolver,
+                    suppressDeletes);
+        } catch (Exception ex) {
+            log.warn("Sync set {}: preview of identity {} failed: {}", set.getId(), it.identity, ex.toString());
+            String sourceDn = it.entry != null ? it.entry.getDN() : (it.row != null ? it.row.getSourceDn() : null);
+            String targetDn = it.member ? it.targetDn : (it.row != null ? it.row.getTargetDn() : null);
+            return new SyncPreviewEntry(it.identity, sourceDn, targetDn, null, SyncPreviewAction.ERROR,
+                    "Couldn't predict this entry: " + message(ex), List.of());
+        }
+    }
+
+    /** Whether the "changes only" view lists an entry: anything but a confirmed no-op. */
+    static boolean isActionable(SyncPreviewAction action) {
+        return action != SyncPreviewAction.UNCHANGED && action != SyncPreviewAction.NO_CHANGE;
+    }
+
+    private static void requireCurrent(int updated) {
+        if (updated == 0) {
+            throw new Superseded();
+        }
+    }
+
+    /** The run was replaced (or reclaimed as stale) while this worker ran it. */
+    private static final class Superseded extends RuntimeException {
+        Superseded() {
+            super(null, null, false, false);
+        }
+    }
+
+    // ── Mapping ────────────────────────────────────────────────────────────────
+
+    private SyncPreviewStatus toStatus(SyncPreviewRun run) {
+        SyncPreviewRunStatus status = run.getStatus();
+        String error = run.getError();
+        if (status == SyncPreviewRunStatus.RUNNING
+                && run.getHeartbeatAt().isBefore(OffsetDateTime.now().minus(staleAfter))) {
+            status = SyncPreviewRunStatus.FAILED;
+            error = INTERRUPTED;
+        }
+        boolean done = status == SyncPreviewRunStatus.COMPLETE;
+        boolean outdated = done && syncSetRepo.findById(run.getSyncSetId())
+                .map(SyncSet::getUpdatedAt)
+                .map(updated -> updated.isAfter(run.getStartedAt()))
+                .orElse(false);
+        return new SyncPreviewStatus(run.getRunId(), status, run.getRequestedBy(), run.getStartedAt(),
+                run.getFinishedAt(), run.getProcessed(), run.getTotal(), outdated, error,
+                run.getSourceCount(), run.getManagedCount(), run.getActionableCount(),
+                done ? run.getTotal() - run.getActionableCount() : 0,
+                run.isGuardTripped(), run.getGuardReason(), run.isCompleteScan(), run.getNote());
+    }
+
+    private SyncPreviewEntryRow toRow(UUID syncSetId, UUID runId, int ordinal, SyncPreviewEntry e,
+                                      boolean actionable) {
+        SyncPreviewEntryRow row = new SyncPreviewEntryRow();
+        row.setRunId(runId);
+        row.setOrdinal(ordinal);
+        row.setSyncSetId(syncSetId);
+        row.setIdentity(e.identity());
+        row.setSourceDn(e.sourceDn());
+        row.setTargetDn(e.targetDn());
+        row.setPreviousTargetDn(e.previousTargetDn());
+        row.setAction(e.action());
+        row.setReason(e.reason());
+        row.setActionable(actionable);
+        if (!e.changes().isEmpty()) {
+            try {
+                row.setChanges(objectMapper.writeValueAsString(e.changes()));
+            } catch (JsonProcessingException ex) {
+                throw new IllegalStateException("Couldn't serialise preview changes", ex);
+            }
+        }
+        return row;
+    }
+
+    private SyncPreviewEntry toEntry(SyncPreviewEntryRow row) {
+        List<SyncPreviewAttributeChange> changes = List.of();
+        if (row.getChanges() != null) {
+            try {
+                changes = objectMapper.readValue(row.getChanges(), CHANGES);
+            } catch (JsonProcessingException ex) {
+                throw new IllegalStateException("Stored preview changes are unreadable", ex);
+            }
+        }
+        return new SyncPreviewEntry(row.getIdentity(), row.getSourceDn(), row.getTargetDn(),
+                row.getPreviousTargetDn(), row.getAction(), row.getReason(), changes);
+    }
+
+    private static String message(Exception ex) {
+        return ex.getMessage() != null ? ex.getMessage() : ex.toString();
     }
 
     /**

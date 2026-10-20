@@ -237,7 +237,8 @@
             <div class="flex items-center gap-2">
               <button type="button" class="btn-secondary btn-compact" :disabled="previewLoading"
                       @click="runPreview">{{ previewLoading ? 'Checking…' : 'Preview impact' }}</button>
-              <button type="button" class="btn-secondary btn-compact" @click="showChanges = true">
+              <button v-if="canManage" type="button" class="btn-secondary btn-compact"
+                      @click="showChanges = true">
                 Show changes
               </button>
             </div>

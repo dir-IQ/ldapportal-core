@@ -133,7 +133,7 @@ export const previewReconcile = (setId: string) =>
 
 /** What a reconcile would do to one entry (from a dry run of the engine). */
 export type SyncPreviewAction =
-  | 'ADD' | 'MODIFY' | 'MOVE' | 'DELETE' | 'REVIEW' | 'NO_CHANGE' | 'FORGET' | 'UNCHANGED'
+  | 'ADD' | 'MODIFY' | 'MOVE' | 'DELETE' | 'REVIEW' | 'NO_CHANGE' | 'FORGET' | 'UNCHANGED' | 'ERROR'
 
 /** Values an attribute would lose and gain; lists are capped, the rest counted. */
 export interface SyncPreviewAttributeChange {
@@ -154,22 +154,50 @@ export interface SyncPreviewEntry {
   changes: SyncPreviewAttributeChange[]
 }
 
-/** One page of the per-entry preview, ordered by target DN (parents first). */
-export interface SyncPreviewPage {
-  entries: SyncPreviewEntry[]
-  page: number
-  size: number
-  totalEntries: number
-  totalPages: number
-  changesOnly: boolean
+/**
+ * The latest per-entry preview run of a set (a background job). `status` is
+ * null when the set has never been previewed; summary fields are filled once
+ * it is COMPLETE.
+ */
+export interface SyncPreviewStatus {
+  runId: string | null
+  status: 'RUNNING' | 'COMPLETE' | 'FAILED' | null
+  requestedBy: string | null
+  startedAt: string | null
+  finishedAt: string | null
+  processed: number
+  total: number
+  /** The set was edited or reconciled after this run started. */
+  outdated: boolean
+  error: string | null
   sourceCount: number
   managedCount: number
-  unchangedCount: number | null
+  actionableCount: number
+  unchangedCount: number
   guardTripped: boolean
   guardReason: string | null
   completeScan: boolean
   note: string | null
 }
+
+/** One page of a completed preview, ordered by target DN (parents first). */
+export interface SyncPreviewPage {
+  entries: SyncPreviewEntry[]
+  /** The page actually returned: a page past the end returns the last page. */
+  page: number
+  size: number
+  totalEntries: number
+  totalPages: number
+  changesOnly: boolean
+  runId: string
+}
+
+export const getPreviewRun = (setId: string) =>
+  client.get<SyncPreviewStatus>(`/superadmin/sync/sets/${setId}/preview/run`)
+
+/** Starts a preview in the background, or joins the one already running. */
+export const startPreviewRun = (setId: string) =>
+  client.post<SyncPreviewStatus>(`/superadmin/sync/sets/${setId}/preview/run`)
 
 export const previewEntries = (setId: string, page: number, size: number, changesOnly: boolean) =>
   client.get<SyncPreviewPage>(`/superadmin/sync/sets/${setId}/preview/entries`,

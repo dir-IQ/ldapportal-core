@@ -360,11 +360,23 @@ public class SyncConfigService {
         return reconciler.preview(syncSetId);
     }
 
-    /** One page of the per-entry dry-run preview (what a reconcile would do to each entry). */
+    /** The set's latest per-entry dry-run preview: progress, or the summary once complete. */
+    public com.ldapportal.dto.sync.SyncPreviewStatus previewStatus(UUID syncSetId) {
+        requireSet(syncSetId);
+        return previewService.status(syncSetId);
+    }
+
+    /** Start a per-entry dry-run preview in the background (joins one already running). */
+    public com.ldapportal.dto.sync.SyncPreviewStatus startPreview(UUID syncSetId, String requestedBy) {
+        requireSet(syncSetId);
+        return previewService.start(syncSetId, requestedBy);
+    }
+
+    /** One page of the set's completed per-entry preview (what a reconcile would do to each entry). */
     public com.ldapportal.dto.sync.SyncPreviewPage previewEntries(UUID syncSetId, int page, int size,
                                                                  boolean changesOnly) {
         requireSet(syncSetId);
-        return previewService.previewEntries(syncSetId, page, size, changesOnly);
+        return previewService.page(syncSetId, page, size, changesOnly);
     }
 
     /**

@@ -2,24 +2,22 @@
 package com.ldapportal.dto.sync;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
- * One page of a per-entry reconcile preview, ordered by target DN with parents
- * before children (the order a reconcile can create them in).
+ * One page of a completed per-entry reconcile preview, ordered by target DN
+ * with parents before children (the order a reconcile can create them in).
+ * Every page of a run reads the same stored plan; the run's summary is in
+ * {@link SyncPreviewStatus}.
  *
- * @param entries        the page's entries, each with its predicted action
- * @param page           zero-based page number
- * @param size           page size
- * @param totalEntries   entries in the listing (after the changes-only filter)
- * @param totalPages     pages in the listing
- * @param changesOnly    whether entries certain to be UNCHANGED were left out
- * @param sourceCount    entries enumerated in the source scope
- * @param managedCount   index rows the set currently manages
- * @param unchangedCount entries certain to be UNCHANGED (computed when {@code changesOnly})
- * @param guardTripped   the delete guard would hold every delete for review
- * @param guardReason    why, when {@code guardTripped}
- * @param completeScan   false when source enumeration failed (no deletes would happen)
- * @param note           explanation when the preview couldn't be computed
+ * @param entries      the page's entries, each with its predicted action
+ * @param page         zero-based page actually returned (a page past the end
+ *                     returns the last page)
+ * @param size         page size
+ * @param totalEntries entries in the listing (after the changes-only filter)
+ * @param totalPages   pages in the listing
+ * @param changesOnly  whether entries that wouldn't change were left out
+ * @param runId        the run these entries belong to
  */
 public record SyncPreviewPage(
         List<SyncPreviewEntry> entries,
@@ -28,11 +26,5 @@ public record SyncPreviewPage(
         long totalEntries,
         int totalPages,
         boolean changesOnly,
-        int sourceCount,
-        long managedCount,
-        Integer unchangedCount,
-        boolean guardTripped,
-        String guardReason,
-        boolean completeScan,
-        String note) {
+        UUID runId) {
 }

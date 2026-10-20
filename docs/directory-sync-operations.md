@@ -401,35 +401,61 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   delete, plus sample DNs to be deleted. Works on a **disabled** set, and runs
   automatically as the confirmation step when you enable a set: if any deletes
   are planned (or the delete guard would trip) you're asked before it turns on.
-- **Show changes** (set editor) — the full, paged list of what a reconcile
-  would do to **each entry**: **Add**, **Modify**, **Move**, **Delete**,
-  **Review**, **No change**, **Forget**, or **Unchanged**. Click a row for the
-  attribute-level changes (values removed `−` and added `+`), the source DN, the
-  previous DN of a move, or the reason an entry would be held for review.
-  *Changes only* (the default) hides entries that won't change. Details:
+- **Show changes** (set editor; needs *manage directory sync*) — the full,
+  paged list of what a reconcile would do to **each entry**: **Add**,
+  **Modify**, **Move**, **Delete**, **Review**, **No change**, **Forget**,
+  **Unchanged**, or **Error**. Click a row for the attribute-level changes
+  (values removed `−` and added `+`), the source DN, the previous DN of a move,
+  or the reason an entry would be held for review. *Changes only* (the default)
+  hides entries that won't change: **Unchanged** (already applied, or already
+  held for review) and **No change** (the target already matches). Details:
 
+  - **A background run.** Opening the dialog shows the set's latest preview, or
+    starts one if there is none; **Run again** starts a fresh one. A run scans
+    the source once, dry-runs every entry and stores the result, so paging
+    reads a fixed snapshot — every page comes from the same plan, and nothing
+    is re-scanned. The dialog shows progress while it runs. One run per set at
+    a time (across app instances): starting while one is running joins it. A
+    result is marked **outdated** once the set is edited or reconciled after
+    the run started.
   - **How it predicts.** It dry-runs the sync engine's own decision code —
     brownfield adoption, the hash gate, ownership checks, the delete policy and
     the delete guard — with real target reads and recorded (not performed)
     writes. Nothing is written to the target or the index, and it works on a
     disabled set or link.
+  - **Errors stay local.** An entry whose prediction fails (e.g. the target read
+    for it times out) is listed as **Error** with the reason; the rest of the
+    run carries on. If the set's filter can't be evaluated for an entry (an
+    extensible-match filter the engine can't evaluate locally), the preview
+    does what a reconcile does: it stops planning at that entry, marks the scan
+    incomplete, and predicts no deletes — the note says which entry.
   - **Order.** Entries are listed by target DN, parents before their children.
-  - **Values.** Password attributes are always shown as `(redacted)`, binary
-    values as `(binary, N bytes)`, and each attribute lists at most 50 removed
-    and 50 added values (the rest are counted).
+  - **Values.** Secret attributes are always shown as `(redacted)`: any
+    attribute whose name contains `password`, `pwd`, `secret`, `passphrase` or
+    `privatekey` (`userPassword`, `unicodePwd`, `sambaNTPassword`,
+    `pwdHistory`, …) plus known key and credential attributes (`userPKCS12`,
+    `krbPrincipalKey`, `supplementalCredentials`, `msDS-KeyCredentialLink`,
+    `olcRootPW`, `ibm-slapdAdminPw`, …). Binary values show as
+    `(binary, N bytes)`, and each attribute lists at most 50 removed and 50
+    added values (the rest are counted). Because a preview shows attribute
+    values, it needs the *manage directory sync* permission; view-only
+    superadmins still get the counts-only **Impact preview**.
   - **References.** DN references such as `member` resolve to target DNs through
     the membership index, and through entries this same run would add, matching
     the end state a reconcile reaches once groups are re-driven after their
     members land.
-  - **Limits.** Each entry is predicted against the current target and index
-    independently. Effects that only arise *during* a run — a child whose parent
-    is added in the same run failing because of apply order, a write the server
-    rejects (schema, ACLs, password policy) — show as the planned action, not as
-    the failure a real run might hit.
-  - **Cost.** Every page re-reads the whole source scope (as a reconcile does)
-    and reads the target only for the entries on that page. With *Changes only*,
-    entries the engine is certain to skip are filtered from the index alone, no
-    target reads needed.
+  - **Limits.** Each entry is predicted against the target and index as they
+    were when the run reached it. Effects that only arise *during* a real run —
+    a child whose parent is added in the same run failing because of apply
+    order, a write the server rejects (schema, ACLs, password policy) — show as
+    the planned action, not as the failure a real run might hit. Changes made
+    after the run aren't reflected until you run it again.
+  - **Cost and retention.** A run reads the whole source scope and the target
+    entries that need comparing — about what a reconcile reads, without the
+    writes. Runs execute on a small bounded pool (2 per app instance by
+    default); when it's full, a new run fails at once with *try again*. Stored
+    results (which hold the redacted attribute values) are deleted after 24
+    hours, and with the set.
 
 ### 7.2 REST (superadmin, `DIRECTORY_SYNC`-entitled)
 ```
@@ -448,7 +474,9 @@ DELETE /api/v1/superadmin/sync/sets/{id}
 # Inventory + operator triggers
 GET    /api/v1/superadmin/sync/sets/{id}/memberships?state=&q=&page=&size=   # size capped 1..200
 GET    /api/v1/superadmin/sync/sets/{id}/preview          # dry-run reconcile plan (index-based, no writes; works on a disabled set/link)
-GET    /api/v1/superadmin/sync/sets/{id}/preview/entries?page=&size=&changesOnly=   # per-entry dry run; size 1..200 (default 50), changesOnly default true
+POST   /api/v1/superadmin/sync/sets/{id}/preview/run      # start a per-entry dry run in the background (joins a running one) → 202 + status; manage permission
+GET    /api/v1/superadmin/sync/sets/{id}/preview/run      # latest run: status (RUNNING / COMPLETE / FAILED), progress, summary; manage permission
+GET    /api/v1/superadmin/sync/sets/{id}/preview/entries?page=&size=&changesOnly=   # page of the completed run (404 if none); size 1..200 (default 50), changesOnly default true; a page past the end returns the last page; manage permission
 GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source↔target compare (no writes)
 POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}
 POST   /api/v1/superadmin/sync/sets/{id}/recompute        # body {"key": "<dn-or-identity>"} → 202
@@ -508,6 +536,11 @@ e.g. `ldapportal.sync.worker.fixed-delay-ms` → `LDAPPORTAL_SYNC_WORKER_FIXED_D
 | (constant) reconcile-request retry spacing | `5m` | Retry interval for a requested reconcile whose source enumeration didn't complete. |
 | (constant) lag threshold | `1000` | Above this lag → `LAGGING`. |
 | (constant) stale poll lease | `5m` | Reclaim a poll lease from a dead instance. |
+| `ldapportal.sync.preview.parallelism` | `2` | Per-entry preview runs executing at once per instance; more are refused with *try again*. |
+| `ldapportal.sync.preview.stale-after-ms` | `120000` | A running preview with no heartbeat this long reads as interrupted and can be replaced. |
+| `ldapportal.sync.preview.heartbeat-ms` | `15000` | Heartbeat interval of running previews. |
+| `ldapportal.sync.preview.retention-hours` | `24` | Stored preview results are deleted after this long. |
+| `ldapportal.sync.preview.purge-interval-ms` | `3600000` | How often expired previews are deleted. |
 
 **Tuning guidance:** lower the worker/poll delays for lower latency at higher
 DB/source load; raise per-set reconcile cadence for large, stable sets to cut
