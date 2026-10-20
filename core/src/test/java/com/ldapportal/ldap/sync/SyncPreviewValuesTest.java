@@ -67,6 +67,25 @@ class SyncPreviewValuesTest {
     }
 
     @Test
+    void passwordHashesAndKeys_areRedacted_notJustUserPassword() {
+        for (String secret : List.of("sambaNTPassword", "sambaLMPassword", "unicodePwd", "pwdHistory",
+                "ds-pwp-last-login-time-pwd", "userPKCS12", "krbPrincipalKey", "olcRootPW",
+                "ibm-slapdAdminPw", "userPassword;binary", "supplementalCredentials", "clientSecret")) {
+            assertThat(SyncPreviewValues.isSecret(secret)).as(secret).isTrue();
+        }
+        for (String plain : List.of("cn", "mail", "member", "pwmEventLog", "description")) {
+            assertThat(SyncPreviewValues.isSecret(plain)).as(plain).isFalse();
+        }
+        List<SyncPreviewAttributeChange> c = SyncPreviewValues.forModify(
+                new Entry("uid=a,dc=x", new Attribute("sambaNTPassword", "0123ABCD")),
+                List.of(new Modification(ModificationType.REPLACE, "sambaNTPassword", "4567EF01")));
+        assertThat(c).singleElement().satisfies(ch -> {
+            assertThat(ch.removed()).containsExactly(SyncPreviewValues.REDACTED);
+            assertThat(ch.added()).containsExactly(SyncPreviewValues.REDACTED);
+        });
+    }
+
+    @Test
     void binaryValues_areSummarised() {
         byte[] jpeg = {(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, 0x00, 0x10};
 

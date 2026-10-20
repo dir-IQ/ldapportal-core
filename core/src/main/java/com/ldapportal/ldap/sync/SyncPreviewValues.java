@@ -19,9 +19,10 @@ import java.util.Set;
 
 /**
  * Turns planned target writes into displayable per-attribute changes for the
- * reconcile preview: what each attribute would lose and gain. Password values
- * are never shown, binary values are summarised by size, and each value list is
- * capped (a large group's {@code member} list would otherwise swamp the page).
+ * reconcile preview: what each attribute would lose and gain. Secret values
+ * (passwords, password hashes, keys) are never shown, binary values are
+ * summarised by size, and each value list is capped (a large group's
+ * {@code member} list would otherwise swamp the page).
  */
 final class SyncPreviewValues {
 
@@ -30,8 +31,27 @@ final class SyncPreviewValues {
 
     static final String REDACTED = "(redacted)";
 
+    /**
+     * Name fragments that mark an attribute as secret: every password and
+     * password-hash attribute in the common schemas carries one of them
+     * ({@code userPassword}, {@code unicodePwd}, {@code sambaNTPassword},
+     * {@code pwdHistory}, {@code ds-pwp-…}, …). Matched case-insensitively
+     * anywhere in the name, so a false positive only hides a value.
+     */
+    private static final List<String> SECRET_NAME_FRAGMENTS = List.of(
+            "password", "pwd", "secret", "passphrase", "privatekey");
+
+    /** Secret attributes whose names carry none of the fragments above. */
     private static final Set<String> SECRET_ATTRIBUTES = Set.of(
-            "userpassword", "authpassword", "unicodepwd", "pwdhistory");
+            "userpkcs12",              // RFC 2798: PKCS #12 bundle with the private key
+            "krbprincipalkey",         // MIT Kerberos LDAP backend: principal keys
+            "krbmkey",                 // MIT Kerberos LDAP backend: master key
+            "krbextradata",
+            "supplementalcredentials", // AD: Kerberos keys and password hashes
+            "msds-keycredentiallink",  // AD: Windows Hello / key trust credentials
+            "olcrootpw",               // OpenLDAP cn=config root password
+            "ibm-slapdadminpw",        // IBM Security Directory admin password
+            "ntpwdhistory", "lmpwdhistory", "dbcspwd");
 
     private SyncPreviewValues() {
     }
@@ -112,11 +132,29 @@ final class SyncPreviewValues {
     }
 
     private static SyncPreviewAttributeChange change(String name, List<String> removed, List<String> added) {
-        boolean secret = SECRET_ATTRIBUTES.contains(name.toLowerCase(Locale.ROOT));
+        boolean secret = isSecret(name);
         List<String> r = display(removed, secret);
         List<String> a = display(added, secret);
         return new SyncPreviewAttributeChange(name, r, a,
                 removed.size() - r.size(), added.size() - a.size());
+    }
+
+    /** Whether values of {@code attribute} (options such as {@code ;binary} ignored) must be hidden. */
+    static boolean isSecret(String attribute) {
+        String name = attribute.toLowerCase(Locale.ROOT);
+        int options = name.indexOf(';');
+        if (options >= 0) {
+            name = name.substring(0, options);
+        }
+        if (SECRET_ATTRIBUTES.contains(name)) {
+            return true;
+        }
+        for (String fragment : SECRET_NAME_FRAGMENTS) {
+            if (name.contains(fragment)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static List<String> display(List<String> vals, boolean secret) {

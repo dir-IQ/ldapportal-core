@@ -191,8 +191,55 @@ class SyncControllerTest extends BaseControllerTest {
         var entry = new com.ldapportal.dto.sync.SyncPreviewEntry("id-1", "uid=a,ou=people,dc=src",
                 "uid=a,ou=Users,dc=dst", null, com.ldapportal.dto.sync.SyncPreviewAction.MODIFY, null,
                 List.of(change));
-        return new com.ldapportal.dto.sync.SyncPreviewPage(List.of(entry), 0, 50, 1, 1, true,
-                3, 2, 2, false, null, true, null);
+        return new com.ldapportal.dto.sync.SyncPreviewPage(List.of(entry), 0, 50, 1, 1, true, RUN);
+    }
+
+    private static final UUID RUN = UUID.fromString("30000000-0000-0000-0000-000000000003");
+
+    private static com.ldapportal.dto.sync.SyncPreviewStatus runningStatus() {
+        return new com.ldapportal.dto.sync.SyncPreviewStatus(RUN,
+                com.ldapportal.entity.enums.SyncPreviewRunStatus.RUNNING, "superadmin", OffsetDateTime.now(),
+                null, 40, 100, false, null, 0, 0, 0, 0, false, null, false, null);
+    }
+
+    @Test
+    void startPreview_returns202_withTheRun_andRecordsWhoAsked() throws Exception {
+        given(service.startPreview(SET, "superadmin")).willReturn(runningStatus());
+        mockMvc.perform(post(SETS + "/" + SET + "/preview/run").with(authentication(superadminAuth())))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.runId").value(RUN.toString()))
+                .andExpect(jsonPath("$.status").value("RUNNING"))
+                .andExpect(jsonPath("$.processed").value(40));
+    }
+
+    @Test
+    void previewStatus_returnsTheLatestRun() throws Exception {
+        given(service.previewStatus(SET)).willReturn(runningStatus());
+        mockMvc.perform(get(SETS + "/" + SET + "/preview/run").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(100));
+    }
+
+    @Test
+    void previewEntries_withoutACompletedRun_returns404() throws Exception {
+        willThrow(new com.ldapportal.exception.ResourceNotFoundException("no completed preview"))
+                .given(service).previewEntries(SET, 0, 50, true);
+        mockMvc.perform(get(SETS + "/" + SET + "/preview/entries").with(authentication(superadminAuth())))
+                .andExpect(status().isNotFound());
+    }
+
+    /** A preview shows attribute values, so every preview endpoint needs the manage permission. */
+    @Test
+    void previewEndpoints_requireManageDirectorySync() throws Exception {
+        for (String name : List.of("previewStatus", "startPreview", "previewEntries")) {
+            java.lang.reflect.Method m = java.util.Arrays.stream(SyncSetController.class.getDeclaredMethods())
+                    .filter(x -> x.getName().equals(name)).findFirst().orElseThrow();
+            com.ldapportal.auth.RequiresSuperadminPermission p =
+                    m.getAnnotation(com.ldapportal.auth.RequiresSuperadminPermission.class);
+            org.assertj.core.api.Assertions.assertThat(p).as(name).isNotNull();
+            org.assertj.core.api.Assertions.assertThat(p.value()).as(name)
+                    .isEqualTo(com.ldapportal.entity.enums.SuperadminPermission.MANAGE_DIRECTORY_SYNC);
+        }
     }
 
     @Test
@@ -203,7 +250,8 @@ class SyncControllerTest extends BaseControllerTest {
                 .andExpect(jsonPath("$.entries[0].action").value("MODIFY"))
                 .andExpect(jsonPath("$.entries[0].changes[0].attribute").value("mail"))
                 .andExpect(jsonPath("$.entries[0].changes[0].removed[0]").value("old@x"))
-                .andExpect(jsonPath("$.totalEntries").value(1));
+                .andExpect(jsonPath("$.totalEntries").value(1))
+                .andExpect(jsonPath("$.runId").value(RUN.toString()));
     }
 
     @Test
