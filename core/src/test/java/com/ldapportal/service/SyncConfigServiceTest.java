@@ -12,6 +12,7 @@ import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.entity.enums.SyncChangelogHealth;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
 import com.ldapportal.ldap.sync.SyncContentVerifier;
@@ -59,13 +60,14 @@ class SyncConfigServiceTest {
     @Mock private SyncContentVerifier verifier;
     @Mock private RecomputeEnqueuer enqueuer;
     @Mock private com.ldapportal.ldap.sync.SyncPreviewService previewService;
+    @Mock private com.ldapportal.ldap.sync.SyncReconcileHistory reconcileHistory;
 
     private SyncConfigService service;
 
     @BeforeEach
     void setUp() {
         service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo,
-                reconciler, verifier, enqueuer, previewService);
+                reconciler, verifier, enqueuer, previewService, reconcileHistory);
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
@@ -167,13 +169,13 @@ class SyncConfigServiceTest {
     void reconcileNow_refreshesDriftSnapshot_whenScanComplete() {
         UUID setId = UUID.randomUUID();
         when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
-        when(reconciler.reconcile(setId)).thenReturn(42);
+        when(reconciler.reconcile(setId, SyncReconcileTrigger.MANUAL, "alice")).thenReturn(42);
         when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(
                 10, 9, 7, 2, 1, 0,
                 List.of(), List.of(), List.of(),
                 true, true, null)); // complete scan: missing=2, orphan=1, mismatch=0
 
-        int enumerated = service.reconcileNow(setId);
+        int enumerated = service.reconcileNow(setId, "alice");
 
         assertThat(enumerated).isEqualTo(42);
         // A manual reconcile must refresh the cached drift, else the dashboard stays stale.
@@ -184,13 +186,13 @@ class SyncConfigServiceTest {
     void reconcileNow_skipsPersist_whenScanIncomplete() {
         UUID setId = UUID.randomUUID();
         when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
-        when(reconciler.reconcile(setId)).thenReturn(1);
+        when(reconciler.reconcile(setId, SyncReconcileTrigger.MANUAL, "alice")).thenReturn(1);
         when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(
                 0, 0, 0, 0, 0, 0,
                 List.of(), List.of(), List.of(),
                 false, true, null)); // partial: source enumeration failed
 
-        service.reconcileNow(setId);
+        service.reconcileNow(setId, "alice");
 
         // A partial scan must not overwrite a previously good snapshot with low counts.
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
@@ -200,12 +202,12 @@ class SyncConfigServiceTest {
     void reconcileNow_returnsCount_whenSnapshotRefreshThrows() {
         UUID setId = UUID.randomUUID();
         when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
-        when(reconciler.reconcile(setId)).thenReturn(5);
+        when(reconciler.reconcile(setId, SyncReconcileTrigger.MANUAL, "alice")).thenReturn(5);
         when(verifier.verify(setId)).thenThrow(new RuntimeException("ldap read blew up"));
 
         // The reconcile already applied; a verify failure during the refresh must not
         // surface as a failed reconcile.
-        int enumerated = service.reconcileNow(setId);
+        int enumerated = service.reconcileNow(setId, "alice");
 
         assertThat(enumerated).isEqualTo(5);
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());

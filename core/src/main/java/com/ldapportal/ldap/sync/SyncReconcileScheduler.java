@@ -4,6 +4,7 @@ package com.ldapportal.ldap.sync;
 import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.entity.SyncSet;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.repository.SyncSetRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -67,7 +68,7 @@ public class SyncReconcileScheduler {
                     continue;
                 }
                 try {
-                    reconciler.reconcile(set.getId());
+                    reconciler.reconcile(set.getId(), SyncReconcileTrigger.SCHEDULED, null);
                     recordDrift(set.getId());
                 } catch (Exception ex) {
                     log.error("Scheduled reconcile of sync set {} failed: {}", set.getId(), ex.toString());

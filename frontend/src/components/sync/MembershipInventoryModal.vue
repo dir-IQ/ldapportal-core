@@ -21,6 +21,9 @@
         </div>
       </div>
 
+      <!-- What the set's last reconcile runs did (counts, warnings, recent history). -->
+      <ReconcileRunHistory :set-id="set?.id ?? null" :refresh-key="historyKey" />
+
       <!--
         Independent verification: re-reads both directories and compares them
         directly (no membership index), surfacing drift the index thinks is
@@ -136,6 +139,7 @@ import { ref, computed, watch } from 'vue'
 import AppModal from '@/components/AppModal.vue'
 import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
+import ReconcileRunHistory from '@/components/sync/ReconcileRunHistory.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import {
   listMemberships, reconcileSet, recomputeKey, dismissMembership, verifyContents,
@@ -166,6 +170,8 @@ const loading = ref(false)
 const reconciling = ref(false)
 const verifying = ref(false)
 const verifyResult = ref<SyncVerifyResult | null>(null)
+// Bumped to make ReconcileRunHistory reload (on open, and after a reconcile).
+const historyKey = ref(0)
 
 const hasMismatches = computed(() =>
   !!verifyResult.value
@@ -256,6 +262,7 @@ watch([show, () => props.set?.id], ([open]) => {
     search.value = ''
     page.value = 0
     verifyResult.value = null
+    historyKey.value++
     load()
   }
 }, { immediate: true })
@@ -280,6 +287,7 @@ async function reconcile() {
     notif.error(errMsg(e))
   } finally {
     reconciling.value = false
+    historyKey.value++ // a failed run is recorded too
   }
 }
 async function verify() {
