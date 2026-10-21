@@ -234,19 +234,19 @@ public class OperationalReportService {
         return new ReportData(new ArrayList<>(columns), new ArrayList<>(rows), labels);
     }
 
-    /** Column key of the groups column added to reports that list users. */
-    static final String GROUPS_COLUMN = "groups";
+    /** Column key of the groups column added to reports that list users — the user export's. */
+    static final String GROUPS_COLUMN = UserGroupIndex.COLUMN;
 
     /**
      * Adds a last {@value #GROUPS_COLUMN} column naming each listed user's
-     * groups ({@code |}-separated), worked out from the group entries under the
-     * caller's search bases, so only groups they can see are named. The UI
-     * hides it until asked for; a CSV export carries it.
+     * groups, worked out from the group entries under the caller's search
+     * bases, so only groups they can see are named. Built exactly as the user
+     * CSV export builds its groups column ({@link UserGroupIndex}: same labels,
+     * same {@code |}-joined cell), so the two agree. The UI hides it until
+     * asked for; a CSV export carries it.
      */
     private ReportData withGroups(DirectoryConnection dc, ReportScope scope, ReportData data) {
-        List<String> columns = new ArrayList<>(data.columns());
-        columns.remove(GROUPS_COLUMN);
-        columns.add(GROUPS_COLUMN);
+        List<String> columns = UserGroupIndex.withColumn(data.columns());
         Map<String, String> labels = new LinkedHashMap<>(data.labels());
         labels.put(GROUPS_COLUMN, "Groups");
         if (data.rows().isEmpty()) {
@@ -264,14 +264,17 @@ public class OperationalReportService {
         for (Map<String, String> row : data.rows()) {
             Map<String, String> out = new LinkedHashMap<>(row);
             String dn = row.get("dn");
-            out.put(GROUPS_COLUMN, dn == null ? ""
-                    : String.join("|", index.groupsOf(dn, firstValue(row.get("uid")))));
+            out.put(GROUPS_COLUMN, dn == null ? "" : index.cell(dn, firstValue(row.get("uid"))));
             rows.add(out);
         }
         return new ReportData(columns, rows, labels);
     }
 
-    /** The first of a {@code |}-joined cell's values, or null when blank. */
+    /**
+     * The first of a {@code |}-joined cell's values, or null when blank. Report
+     * cells join values with a bare {@code |}, so a uid containing one would be
+     * cut short here; uids don't.
+     */
     private static String firstValue(String cell) {
         if (cell == null || cell.isBlank()) return null;
         int bar = cell.indexOf('|');

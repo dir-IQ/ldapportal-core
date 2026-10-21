@@ -1271,11 +1271,7 @@ public class BulkUserService {
      * that happens to be called {@code groups} gives way to it.
      */
     private static List<String> withGroupsColumn(List<String> columns, UserGroupIndex groups) {
-        if (groups == null) return columns;
-        List<String> out = new ArrayList<>(columns);
-        out.removeIf(c -> c.equalsIgnoreCase(CsvColumnMap.GROUPS_COLUMN));
-        out.add(CsvColumnMap.GROUPS_COLUMN);
-        return out;
+        return groups == null ? columns : UserGroupIndex.withColumn(columns);
     }
 
     /**
@@ -1289,7 +1285,7 @@ public class BulkUserService {
             if ("dn".equals(col)) {
                 row.put("dn", user.getDn());
             } else if (groups != null && CsvColumnMap.GROUPS_COLUMN.equals(col)) {
-                row.put(col, CsvUtils.joinMultiValue(groups.groupsOf(user.getDn(), user.getFirstValue("uid"))));
+                row.put(col, groups.cell(user.getDn(), user.getFirstValue("uid")));
             } else {
                 List<String> vals = user.getValues(col);
                 row.put(col, CsvUtils.joinMultiValue(vals));

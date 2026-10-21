@@ -273,6 +273,23 @@ class OperationalReportServiceTest {
     }
 
     @Test
+    void groupsColumn_isBuiltLikeTheUserExport_soAPipeInAGroupNameIsEscaped() {
+        DirectoryConnection dc = ldapDir();
+        when(userService.searchUsersRaw(eq(dc), anyString(), eq(BRANCH), anyInt(), eq("*")))
+                .thenReturn(List.of(entry("uid=alice", Map.of("uid", List.of("alice")))));
+        LdapGroup piped = new LdapGroup("cn=r|d,ou=groups,dc=example,dc=com",
+                Map.of("cn", List.of("r|d"), "member", List.of("uid=alice," + BRANCH)));
+        when(groupService.searchGroups(eq(dc), anyString(), isNull(), any(String[].class)))
+                .thenReturn(List.of(piped));
+
+        ReportData data = service.run(dc, "USERS_IN_BRANCH", Map.of("branchDn", BRANCH), dirId, superadmin());
+
+        // Same cell as BulkUserService's export: the import reads it back as one group.
+        assertThat(data.rows()).singleElement()
+                .satisfies(row -> assertThat(row).containsEntry("groups", "r\\|d"));
+    }
+
+    @Test
     void entryReport_withNoRows_stillCarriesTheGroupsColumn_withoutScanningGroups() {
         DirectoryConnection dc = ldapDir();
 
