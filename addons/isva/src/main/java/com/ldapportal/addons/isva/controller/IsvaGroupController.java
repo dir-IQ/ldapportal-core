@@ -28,7 +28,8 @@ import java.util.UUID;
 
 /**
  * Importing groups into IVIA from the admin Groups page — the
- * {@code pdadmin group import} equivalent. Directory-scoped admin verbs:
+ * {@code pdadmin group import} equivalent — and removing them again
+ * ({@code pdadmin group delete} without {@code -registry}). Directory-scoped admin verbs:
  * reading needs {@code group.read}, importing {@code group.edit}, and the
  * group DN must be within the caller's scope. Refusals are ProblemDetails
  * with a {@code code} ({@link IsvaAccountExceptionHandler}).
@@ -59,6 +60,16 @@ public class IsvaGroupController {
                                                 @Valid @RequestBody IsvaGroupRegistrationQuery query) {
         return groupService.registrations(directoryId, query.dns(),
                 dn -> permissionService.isDnWithinScope(principal, directoryId, dn));
+    }
+
+    /** Removes the group from IVIA (its registration entry); the group itself is unchanged. */
+    @PostMapping("/remove")
+    @RequiresFeature(FeatureKey.GROUP_EDIT)
+    public IsvaGroupStatus removeGroup(@DirectoryId @PathVariable UUID directoryId,
+                                       @AuthenticationPrincipal AuthPrincipal principal,
+                                       @RequestParam String dn) {
+        permissionService.requireDnWithinScope(principal, directoryId, dn);
+        return groupService.removeGroup(directoryId, dn, principal);
     }
 
     @PostMapping("/import")

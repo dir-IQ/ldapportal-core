@@ -8,6 +8,7 @@ import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.addons.isva.repository.VendorIntegrationIsvaConfigRepository;
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.core.provisioning.AddStep;
+import com.ldapportal.core.provisioning.DeleteStep;
 import com.ldapportal.core.provisioning.PlanExecutor;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.DirectoryObjectClassDefaults;
@@ -149,7 +150,51 @@ public class IsvaGroupService {
         return new IsvaGroupStatus(true, step.targetDn(), true, null);
     }
 
+    /**
+     * Removes the group from IVIA: deletes its secGroup registration entry,
+     * as {@code pdadmin group delete} without {@code -registry} does. The
+     * group itself is not changed.
+     */
+    public IsvaGroupStatus removeGroup(UUID directoryId, String groupDn, AuthPrincipal principal) {
+        Ctx ctx = loadContext(directoryId);
+        String container = ctx.cfg().effectiveGroupContainerDn();
+        if (container == null) {
+            throw refuse(HttpStatus.CONFLICT, "ivia_no_group_container",
+                    "This directory's IVIA config has no management DIT, so no group can be "
+                            + "imported into IVIA from here");
+        }
+        String registrationDn = registry.findRegistrationDn(ctx.dir(), container, groupDn)
+                .orElseThrow(() -> refuse(HttpStatus.CONFLICT, "ivia_group_not_imported",
+                        "Group " + groupDn + " isn't imported into IVIA"));
+        try {
+            planExecutor.execute(ctx.dir(), DeleteStep.of(registrationDn));
+        } catch (LdapOperationException ex) {
+            // Already gone (removed meanwhile, e.g. with pdadmin): the state we wanted.
+            if (!(ex.getCause() instanceof LDAPException ldap
+                    && ldap.getResultCode() == ResultCode.NO_SUCH_OBJECT)) {
+                throw ex;
+            }
+        }
+
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("source", "ivia");
+        detail.put("ivia_op", "group_remove");
+        detail.put("registrationDn", registrationDn);
+        auditService.record(principal, directoryId, AuditAction.GROUP_UPDATE, groupDn, detail);
+        log.info("Removed group {} from IVIA ({})", groupDn, registrationDn);
+        return new IsvaGroupStatus(false, null, true, readGroupCnOrNull(ctx.dir(), groupDn));
+    }
+
     // ── helpers ─────────────────────────────────────────────────────
+
+    /** The group's cn for the next import's default name; null when it can't be read. */
+    private String readGroupCnOrNull(DirectoryConnection dir, String groupDn) {
+        try {
+            return readGroup(dir, groupDn).cn();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
 
     private record Ctx(DirectoryConnection dir, VendorIntegrationIsvaConfig cfg) {}
 

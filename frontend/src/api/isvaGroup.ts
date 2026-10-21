@@ -33,6 +33,12 @@ export const getIsvaGroupRegistrations = (
 ): Promise<AxiosResponse<IsvaGroupRegistrations>> =>
   client.post(`${base(dirId)}/registrations`, { dns })
 
+/** Removes the group from IVIA (its registration entry); the group itself is unchanged. */
+export const removeIsvaGroup = (
+  dirId: string, dn: string,
+): Promise<AxiosResponse<IsvaGroupStatus>> =>
+  client.post(`${base(dirId)}/remove`, null, { params: { dn } })
+
 /** Imports the group; a blank name uses the group's cn. */
 export const importIsvaGroup = (
   dirId: string, dn: string, name?: string,

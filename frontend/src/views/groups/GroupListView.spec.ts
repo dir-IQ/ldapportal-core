@@ -37,7 +37,10 @@ vi.mock('@/api/csvTemplates', () => ({ exportGroupCsv: vi.fn() }))
 vi.mock('@/api/isvaGroup', () => ({
   getIsvaGroupRegistrations: vi.fn(),
   importIsvaGroup: vi.fn(),
+  removeIsvaGroup: vi.fn(),
 }))
+const confirmApi = vi.hoisted(() => ({ confirm: vi.fn() }))
+vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => confirmApi.confirm }))
 vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ data: [] }) }))
 
 // The view registers an unsaved-changes guard (and reads the sidebar
@@ -46,7 +49,7 @@ beforeEach(() => setActivePinia(createPinia()))
 
 import GroupListView from './GroupListView.vue'
 import { createGroup, updateGroup, addGroupMembersBulk, removeGroupMembersBulk, searchGroups } from '@/api/groups'
-import { getIsvaGroupRegistrations, importIsvaGroup } from '@/api/isvaGroup'
+import { getIsvaGroupRegistrations, importIsvaGroup, removeIsvaGroup } from '@/api/isvaGroup'
 
 const stubs = {
   LdapFilterBuilder: true, RecentSearches: true, AppModal: true, FormField: true,
@@ -365,7 +368,7 @@ describe('GroupListView import into IVIA', () => {
     const wrapper = await mountIvia(['CN=staff, OU=groups, DC=x'])
 
     expect(getIsvaGroupRegistrations).toHaveBeenCalledWith('d1', [STAFF, OPS])
-    expect(row(wrapper, STAFF).text()).toContain('IVIA')
+    expect(row(wrapper, STAFF).find('.badge-blue').text()).toBe('IVIA')
     expect(row(wrapper, STAFF).find('[data-action="Import into IVIA"]').exists()).toBe(false)
     expect(row(wrapper, OPS).find('[data-action="Import into IVIA"]').exists()).toBe(true)
   })
@@ -405,7 +408,7 @@ describe('GroupListView import into IVIA', () => {
     await flushPromises()
 
     expect(importIsvaGroup).toHaveBeenCalledWith('d1', OPS, 'Operations')
-    expect(row(wrapper, OPS).text()).toContain('IVIA')
+    expect(row(wrapper, OPS).find('.badge-blue').text()).toBe('IVIA')
     expect(row(wrapper, OPS).find('[data-action="Import into IVIA"]').exists()).toBe(false)
   })
 
@@ -419,5 +422,39 @@ describe('GroupListView import into IVIA', () => {
     expect(importIsvaGroup).toHaveBeenCalledWith('d1', OPS, 'ops')
     expect(row(wrapper, OPS).find('[data-action="Import into IVIA"]').exists()).toBe(true)
   })
-})
 
+  it('offers Remove from IVIA only on imported groups', async () => {
+    const wrapper = await mountIvia([STAFF])
+
+    expect(row(wrapper, STAFF).find('[data-action="Remove from IVIA"]').exists()).toBe(true)
+    expect(row(wrapper, OPS).find('[data-action="Remove from IVIA"]').exists()).toBe(false)
+  })
+
+  it('removes after confirming, then offers the import again', async () => {
+    confirmApi.confirm.mockResolvedValue(true)
+    vi.mocked(removeIsvaGroup).mockResolvedValue({ data: { registered: false } } as never)
+    const wrapper = await mountIvia([STAFF])
+
+    await row(wrapper, STAFF).find('[data-action="Remove from IVIA"]').trigger('click')
+    await flushPromises()
+
+    const opts = confirmApi.confirm.mock.calls[0][0]
+    expect(opts).toMatchObject({ confirmLabel: 'Remove from IVIA', danger: true })
+    expect(opts.message).toContain('Remove "staff" from IBM Verify Identity Access?')
+    expect(opts.message).toContain('The LDAP group and its members are not changed')
+    expect(removeIsvaGroup).toHaveBeenCalledWith('d1', STAFF)
+    expect(row(wrapper, STAFF).find('.badge-blue').exists()).toBe(false)
+    expect(row(wrapper, STAFF).find('[data-action="Import into IVIA"]').exists()).toBe(true)
+  })
+
+  it('does nothing when the removal is cancelled', async () => {
+    confirmApi.confirm.mockResolvedValue(false)
+    const wrapper = await mountIvia([STAFF])
+
+    await row(wrapper, STAFF).find('[data-action="Remove from IVIA"]').trigger('click')
+    await flushPromises()
+
+    expect(removeIsvaGroup).not.toHaveBeenCalled()
+    expect(row(wrapper, STAFF).find('[data-action="Remove from IVIA"]').exists()).toBe(true)
+  })
+})

@@ -52,6 +52,7 @@ const IVIA_OP_LABELS: Record<string, string> = {
   renew:       `${IVIA_ABBR} account renewed`,
   force_reset: `${IVIA_ABBR} credential reset forced`,
   group_import: `Group imported into ${IVIA_ABBR}`,
+  group_remove: `Group removed from ${IVIA_ABBR}`,
 }
 
 /**

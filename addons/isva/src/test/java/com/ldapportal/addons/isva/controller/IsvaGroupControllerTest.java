@@ -85,6 +85,25 @@ class IsvaGroupControllerTest {
     }
 
     @Test
+    void remove_checksScopeThenRemoves() {
+        controller.removeGroup(DIR_ID, principal, DN);
+
+        InOrder order = inOrder(permissionService, groupService);
+        order.verify(permissionService).requireDnWithinScope(principal, DIR_ID, DN);
+        order.verify(groupService).removeGroup(DIR_ID, DN, principal);
+    }
+
+    @Test
+    void remove_scopeDenied_doesNotCallTheService() {
+        doThrow(new AccessDeniedException("out of scope"))
+                .when(permissionService).requireDnWithinScope(principal, DIR_ID, DN);
+
+        assertThatThrownBy(() -> controller.removeGroup(DIR_ID, principal, DN))
+                .isInstanceOf(AccessDeniedException.class);
+        verifyNoInteractions(groupService);
+    }
+
+    @Test
     void status_scopeDenied_doesNotCallTheService() {
         doThrow(new AccessDeniedException("out of scope"))
                 .when(permissionService).requireDnWithinScope(principal, DIR_ID, DN);

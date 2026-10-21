@@ -200,6 +200,43 @@ class IsvaGroupImportIntegrationTest {
     }
 
     @Test
+    void remove_deletesOnlyTheRegistration_andTheGroupCanBeImportedAgain() throws Exception {
+        service.importGroup(dir.getId(), GROUP_DN, null, admin);
+        Entry before = server.getEntry(GROUP_DN);
+        String regDn = "cn=Engineers," + GROUP_CONTAINER;
+
+        IsvaGroupStatus status = service.removeGroup(dir.getId(), GROUP_DN, admin);
+
+        assertThat(status).isEqualTo(new IsvaGroupStatus(false, null, true, "Engineers"));
+        assertThat(server.getEntry(regDn)).isNull();
+        assertThat(server.getEntry(GROUP_DN)).isEqualTo(before);
+        verify(auditService).record(eq(admin), eq(dir.getId()), eq(AuditAction.GROUP_UPDATE), eq(GROUP_DN),
+                eq(Map.of("source", "ivia", "ivia_op", "group_remove", "registrationDn", regDn)));
+
+        assertThat(service.importGroup(dir.getId(), GROUP_DN, null, admin).registered()).isTrue();
+    }
+
+    @Test
+    void remove_ofAGroupThatIsNotImported_isRefused() {
+        assertThatThrownBy(() -> service.removeGroup(dir.getId(), GROUP_DN, admin))
+                .isInstanceOfSatisfying(IsvaAccountRefusalException.class,
+                        e -> assertThat(e.getCode()).isEqualTo("ivia_group_not_imported"));
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void remove_findsARegistrationPdadminMadeUnderAnotherName() throws Exception {
+        server.add(new Entry("cn=eng_team," + GROUP_CONTAINER, new Attribute("objectClass", "top", "secGroup"),
+                new Attribute("cn", "eng_team"), new Attribute("secAuthority", "Default"),
+                new Attribute("secDN", GROUP_DN), new Attribute("secHasPolicy", "FALSE"),
+                new Attribute("secUUID", UUID.randomUUID().toString())));
+
+        service.removeGroup(dir.getId(), GROUP_DN, admin);
+
+        assertThat(server.getEntry("cn=eng_team," + GROUP_CONTAINER)).isNull();
+    }
+
+    @Test
     void import_withoutAManagementDit_isRefused_andStatusSaysItCantImport() {
         cfg.setManagementDitBaseDn(null);
 
