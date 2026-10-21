@@ -37,6 +37,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
@@ -281,7 +282,7 @@ class IsvaProvisioningInterceptorTest {
         VendorIntegrationIsvaConfig cfg = inlineConfig();
         cfg.setRequireSecGroup(true);
         when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
-        when(groupShapeCheck.hasObjectClass(dir, "cn=eng,dc=x", "secGroup"))
+        when(groupShapeCheck.isImportedIntoIvia(eq(dir), any(), eq("cn=eng,dc=x")))
                 .thenReturn(Optional.of(false));
 
         GroupMemberPlan plan = interceptor.planGroupMembership(dir,
@@ -300,7 +301,7 @@ class IsvaProvisioningInterceptorTest {
         VendorIntegrationIsvaConfig cfg = inlineConfig();
         cfg.setRequireSecGroup(true);
         when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
-        when(groupShapeCheck.hasObjectClass(dir, "cn=eng,dc=x", "secGroup"))
+        when(groupShapeCheck.isImportedIntoIvia(eq(dir), any(), eq("cn=eng,dc=x")))
                 .thenReturn(Optional.of(true));
 
         GroupMemberPlan plan = interceptor.planGroupMembership(dir,
@@ -318,7 +319,7 @@ class IsvaProvisioningInterceptorTest {
         VendorIntegrationIsvaConfig cfg = inlineConfig();
         cfg.setRequireSecGroup(true);
         when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
-        when(groupShapeCheck.hasObjectClass(dir, "cn=eng,dc=x", "secGroup"))
+        when(groupShapeCheck.isImportedIntoIvia(eq(dir), any(), eq("cn=eng,dc=x")))
                 .thenReturn(Optional.empty());
 
         GroupMemberPlan plan = interceptor.planGroupMembership(dir,
@@ -337,7 +338,7 @@ class IsvaProvisioningInterceptorTest {
         cfg.setGroupMemberTarget(
                 com.ldapportal.addons.isva.entity.IsvaGroupMemberTarget.SECUSER_DN);
         when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
-        when(groupShapeCheck.hasObjectClass(dir, "cn=eng,dc=x", "secGroup"))
+        when(groupShapeCheck.isImportedIntoIvia(eq(dir), any(), eq("cn=eng,dc=x")))
                 .thenReturn(Optional.of(false));
 
         GroupMemberPlan plan = interceptor.planGroupMembership(dir,
@@ -767,6 +768,8 @@ class IsvaProvisioningInterceptorTest {
         VendorIntegrationIsvaConfig cfg = inlineConfig();
         cfg.setTopologyMode(IsvaTopologyMode.LINKED);
         cfg.setManagementDitBaseDn("secAuthority=Default,o=acme,c=us");
+        // secUser entries sit directly under this DIT in the fixture.
+        cfg.setUserContainerDn("secAuthority=Default,o=acme,c=us");
         return cfg;
     }
 

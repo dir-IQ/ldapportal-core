@@ -11,14 +11,17 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 
-const state = vi.hoisted(() => ({ features: [] as string[] }))
+const state = vi.hoisted(() => ({ features: [] as string[], ivia: false }))
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { dirId: 'd1' } }) }))
 vi.mock('@/stores/notifications', () => ({
   useNotificationStore: () => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }),
 }))
 vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ hasFeature: (v: string) => state.features.includes(v) }),
+  useAuthStore: () => ({
+    hasFeature: (v: string) => state.features.includes(v),
+    get isIsvaIntegrationEnabled() { return state.ivia },
+  }),
 }))
 vi.mock('@/composables/useApi', () => ({
   useApi: () => ({ loading: { value: false }, call: (fn: () => unknown) => fn() }),
@@ -31,6 +34,10 @@ vi.mock('@/api/groups', () => ({
   removeGroupMembersBulk: vi.fn(),
 }))
 vi.mock('@/api/csvTemplates', () => ({ exportGroupCsv: vi.fn() }))
+vi.mock('@/api/isvaGroup', () => ({
+  getIsvaGroupRegistrations: vi.fn(),
+  importIsvaGroup: vi.fn(),
+}))
 vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ data: [] }) }))
 
 // The view registers an unsaved-changes guard (and reads the sidebar
@@ -38,7 +45,8 @@ vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ dat
 beforeEach(() => setActivePinia(createPinia()))
 
 import GroupListView from './GroupListView.vue'
-import { createGroup, updateGroup, addGroupMembersBulk, removeGroupMembersBulk } from '@/api/groups'
+import { createGroup, updateGroup, addGroupMembersBulk, removeGroupMembersBulk, searchGroups } from '@/api/groups'
+import { getIsvaGroupRegistrations, importIsvaGroup } from '@/api/isvaGroup'
 
 const stubs = {
   LdapFilterBuilder: true, RecentSearches: true, AppModal: true, FormField: true,
@@ -311,3 +319,105 @@ describe('GroupListView members dialog', () => {
   })
   /* eslint-enable @typescript-eslint/no-explicit-any */
 })
+
+describe('GroupListView import into IVIA', () => {
+  const STAFF = 'cn=staff,ou=groups,dc=x'
+  const OPS = 'cn=ops,ou=groups,dc=x'
+  // Renders each row's DN cell (for the badge) and its actions.
+  const iviaStubs = {
+    ...stubs,
+    ActionMenu: {
+      props: ['items'],
+      template: `<div><slot name="primary" /><button v-for="it in items.filter(i => !i.hidden)"
+                   :key="it.label" :data-action="it.label" @click="it.onClick()">{{ it.label }}</button></div>`,
+    },
+    ResultsTable: {
+      props: ['rows', 'columns', 'rowKey', 'tableKey', 'emptyText'],
+      template: `<div><div v-for="r in rows" :key="r.dn" :data-row="r.dn">
+                   <slot name="cell-dn" :value="r.dn" :row="r" /><slot name="cell-actions" :row="r" />
+                 </div></div>`,
+    },
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    state.ivia = true
+    vi.mocked(searchGroups).mockResolvedValue({ data: [
+      { dn: STAFF, attributes: { cn: ['staff'], member: ['uid=a,dc=x'] } },
+      { dn: OPS, attributes: { cn: ['ops'], member: ['uid=b,dc=x'] } },
+    ] } as never)
+  })
+
+  async function mountIvia(registered: string[], extra: Partial<{ enabled: boolean, canImport: boolean }> = {}) {
+    vi.mocked(getIsvaGroupRegistrations).mockResolvedValue({
+      data: { enabled: true, canImport: true, registered, ...extra },
+    } as never)
+    state.features = ['group.read', 'group.edit']
+    const wrapper = mount(GroupListView, { global: { stubs: iviaStubs } })
+    await flushPromises()
+    return wrapper
+  }
+
+  const row = (w: Awaited<ReturnType<typeof mountIvia>>, dn: string) => w.find(`[data-row="${dn}"]`)
+
+  it('badges imported groups and offers the import only on the others', async () => {
+    // Matched however the server spells the DN.
+    const wrapper = await mountIvia(['CN=staff, OU=groups, DC=x'])
+
+    expect(getIsvaGroupRegistrations).toHaveBeenCalledWith('d1', [STAFF, OPS])
+    expect(row(wrapper, STAFF).text()).toContain('IVIA')
+    expect(row(wrapper, STAFF).find('[data-action="Import into IVIA"]').exists()).toBe(false)
+    expect(row(wrapper, OPS).find('[data-action="Import into IVIA"]').exists()).toBe(true)
+  })
+
+  it('offers no import without group.edit, or when the directory has no group container', async () => {
+    let wrapper = await mountIvia([], { canImport: false })
+    expect(wrapper.find('[data-action="Import into IVIA"]').exists()).toBe(false)
+
+    vi.mocked(getIsvaGroupRegistrations).mockResolvedValue({
+      data: { enabled: true, canImport: true, registered: [] },
+    } as never)
+    state.features = ['group.read']
+    wrapper = mount(GroupListView, { global: { stubs: iviaStubs } })
+    await flushPromises()
+    expect(wrapper.find('[data-action="Import into IVIA"]').exists()).toBe(false)
+  })
+
+  it('does not ask about IVIA when the addon is absent', async () => {
+    state.ivia = false
+    state.features = ['group.read', 'group.edit']
+    const wrapper = mount(GroupListView, { global: { stubs: iviaStubs } })
+    await flushPromises()
+
+    expect(getIsvaGroupRegistrations).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-action="Import into IVIA"]').exists()).toBe(false)
+  })
+
+  it('imports under the chosen name, then badges the group', async () => {
+    vi.mocked(importIsvaGroup).mockResolvedValue({ data: { registered: true } } as never)
+    const wrapper = await mountIvia([])
+    await row(wrapper, OPS).find('[data-action="Import into IVIA"]').trigger('click')
+    const vm = wrapper.vm as unknown as { iviaImportName: string, doIviaImport: () => Promise<void> }
+    expect(vm.iviaImportName).toBe('ops')
+
+    vm.iviaImportName = 'Operations'
+    await vm.doIviaImport()
+    await flushPromises()
+
+    expect(importIsvaGroup).toHaveBeenCalledWith('d1', OPS, 'Operations')
+    expect(row(wrapper, OPS).text()).toContain('IVIA')
+    expect(row(wrapper, OPS).find('[data-action="Import into IVIA"]').exists()).toBe(false)
+  })
+
+  it('keeps the action when the import is refused', async () => {
+    vi.mocked(importIsvaGroup).mockRejectedValue({ response: { data: { detail: 'IVIA already has a group named "ops"' } } })
+    const wrapper = await mountIvia([])
+    await row(wrapper, OPS).find('[data-action="Import into IVIA"]').trigger('click')
+    await (wrapper.vm as unknown as { doIviaImport: () => Promise<void> }).doIviaImport()
+    await flushPromises()
+
+    expect(importIsvaGroup).toHaveBeenCalledWith('d1', OPS, 'ops')
+    expect(row(wrapper, OPS).find('[data-action="Import into IVIA"]').exists()).toBe(true)
+  })
+})
+

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.addons.isva;
 
+import com.ldapportal.addons.isva.entity.VendorIntegrationIsvaConfig;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.unboundid.ldap.sdk.LDAPException;
@@ -30,6 +31,43 @@ import java.util.Optional;
 public class IsvaGroupShapeCheck {
 
     private final LdapConnectionFactory connectionFactory;
+    private final IsvaGroupRegistry registry;
+
+    /**
+     * Whether IVIA knows the group: a secGroup registration entry in the
+     * group container points at it (what {@code pdadmin group import} and
+     * LDAPPortal's "Import into IVIA" write), or the group itself carries
+     * {@code objectClass: secGroup}. Empty when that can't be verified (the
+     * group can't be read and the registration lookup failed), which the
+     * caller treats as "proceed".
+     */
+    public Optional<Boolean> isImportedIntoIvia(DirectoryConnection dir,
+                                                VendorIntegrationIsvaConfig cfg,
+                                                String groupDn) {
+        boolean lookedUp = false;
+        String container = cfg.effectiveGroupContainerDn();
+        if (container != null) {
+            try {
+                if (registry.findRegistrationDn(dir, container, groupDn).isPresent()) {
+                    return Optional.of(true);
+                }
+                lookedUp = true;
+            } catch (RuntimeException e) {
+                log.debug("Could not look up the IVIA registration of {} under {}: {}",
+                        groupDn, container, e.getMessage());
+            }
+        }
+        Optional<Boolean> overlay = hasObjectClass(dir, groupDn, "secGroup");
+        if (overlay.isPresent() && overlay.get()) {
+            return overlay;
+        }
+        // Not registered for certain only when the registration lookup ran
+        // (or there's no container to look in) and the group was readable.
+        if (overlay.isPresent() && (lookedUp || container == null)) {
+            return Optional.of(false);
+        }
+        return Optional.empty();
+    }
 
     public Optional<Boolean> hasObjectClass(DirectoryConnection dir,
                                             String groupDn,

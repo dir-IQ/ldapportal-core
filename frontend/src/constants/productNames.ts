@@ -37,7 +37,7 @@ export function iviaAttrLabel(key: string): string {
     : key
 }
 
-// IVIA account operations are audited under a generic AuditAction (a hard
+// IVIA account (and group-import) operations are audited under a generic AuditAction (a hard
 // revoke is USER_DELETE, a grant is USER_UPDATE, etc.) with the real verb in
 // the `ivia_op` detail discriminator stamped by the isva addon
 // (IsvaAccountService). These map that discriminator to a specific, IVIA-branded
@@ -51,6 +51,7 @@ const IVIA_OP_LABELS: Record<string, string> = {
   restore:     `${IVIA_ABBR} account restored`,
   renew:       `${IVIA_ABBR} account renewed`,
   force_reset: `${IVIA_ABBR} credential reset forced`,
+  group_import: `Group imported into ${IVIA_ABBR}`,
 }
 
 /**

@@ -182,7 +182,7 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
                                               VendorIntegrationIsvaConfig cfg,
                                               String demographicDn) {
         Optional<String> secUserDn = linkedUserLookup.findSecUserDn(
-                dir, cfg.getManagementDitBaseDn(), demographicDn);
+                dir, cfg.effectiveUserContainerDn(), demographicDn);
 
         List<LdapOperationStep> steps = new ArrayList<>();
         secUserDn.ifPresent(s -> steps.add(secUserPlans.hardDelete(s)));
@@ -240,7 +240,7 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
         EnableDisablePlan base = BaselinePlans.userSetEnabled(dir, demographicDn, enabled);
         List<LdapOperationStep> steps = new ArrayList<>(base.steps());
         Optional<String> secUserDn = linkedUserLookup.findSecUserDn(
-                dir, cfg.getManagementDitBaseDn(), demographicDn);
+                dir, cfg.effectiveUserContainerDn(), demographicDn);
         secUserDn.ifPresent(s -> steps.add(
                 enabled ? secUserPlans.enable(s, cfg) : secUserPlans.disable(s, cfg)));
         return new EnableDisablePlan(steps);
@@ -282,7 +282,7 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
                                                   String demographicDn,
                                                   PasswordSetPayload payload) {
         Optional<String> secUserDn = linkedUserLookup.findSecUserDn(
-                dir, cfg.getManagementDitBaseDn(), demographicDn);
+                dir, cfg.effectiveUserContainerDn(), demographicDn);
         if (secUserDn.isEmpty()) {
             throw new ProvisioningRefusedException(
                     "No linked secUser entry found for demographic DN " + demographicDn
@@ -328,14 +328,13 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
         // fails with the server's own (clearer) error if the group really
         // is missing.
         if (cfg.isRequireSecGroup()) {
-            Optional<Boolean> hasSecGroup =
-                    groupShapeCheck.hasObjectClass(dir, groupDn, "secGroup");
-            if (hasSecGroup.isPresent() && !hasSecGroup.get()) {
+            Optional<Boolean> imported = groupShapeCheck.isImportedIntoIvia(dir, cfg, groupDn);
+            if (imported.isPresent() && !imported.get()) {
                 return GroupMemberPlan.refuse(
-                        "Group " + groupDn + " does not carry objectClass secGroup, and this "
-                                + "directory's IVIA integration is configured to require it "
-                                + "(memberships in non-secGroup groups are ignored by ISVA). "
-                                + "Add the secGroup objectClass to the group (pdadmin group "
+                        "Group " + groupDn + " isn't imported into IVIA, and this directory's "
+                                + "IVIA integration is configured to require it (IVIA ignores "
+                                + "memberships in groups it doesn't know). Import the group into "
+                                + "IVIA (\"Import into IVIA\" on the Groups page, or pdadmin group "
                                 + "import), or turn off 'Require secGroup' in the IVIA config.");
             }
         }
@@ -360,7 +359,7 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
         // SECUSER_DN: resolve via lookup, write secUser DN as the
         // member value.
         Optional<String> secUserDn = linkedUserLookup.findSecUserDn(
-                dir, cfg.getManagementDitBaseDn(), memberValue);
+                dir, cfg.effectiveUserContainerDn(), memberValue);
         if (secUserDn.isEmpty()) {
             // SECUSER_DN with no secUser → refuse. Silent fall-back
             // to demographic DN would silently disagree with this
@@ -368,7 +367,7 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
             return GroupMemberPlan.refuse(
                     "Group target is configured as SECUSER_DN, but no linked secUser "
                             + "entry was found for demographic DN " + memberValue
-                            + " under " + cfg.getManagementDitBaseDn()
+                            + " under " + cfg.effectiveUserContainerDn()
                             + ". Refusing the membership add; repair the orphan first.");
         }
         return BaselinePlans.groupMembership(groupDn, memberAttribute, secUserDn.get());
