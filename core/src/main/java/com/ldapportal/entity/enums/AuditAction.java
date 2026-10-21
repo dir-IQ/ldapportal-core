@@ -113,7 +113,8 @@ public enum AuditAction implements EditionScoped {
     // ── Directory sync (the membership engine) ──────────────────────────────
     // The legacy replication.* / reconciliation.* actions were removed with
     // their subsystem; sync.* actions are added as the engine needs them.
-    SYNC_SET_DELETE      ("sync.set_delete",     Entitlement.DIRECTORY_SYNC);
+    SYNC_SET_DELETE      ("sync.set_delete",     Entitlement.DIRECTORY_SYNC),
+    SYNC_LINK_DELETE     ("sync.link_delete",    Entitlement.DIRECTORY_SYNC);
 
     private final String dbValue;
 

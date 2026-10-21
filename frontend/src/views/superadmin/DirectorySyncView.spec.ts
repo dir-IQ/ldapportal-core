@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import DirectorySyncView from './DirectorySyncView.vue'
@@ -242,6 +242,77 @@ describe('DirectorySyncView', () => {
       expect(opts.message).toContain('Delete sync set "people"?')
       expect(opts.message).toContain('stay on the target, no longer managed')
       expect(syncApi.deleteSyncSet).toHaveBeenCalledWith('set-1')
+    })
+  })
+
+  describe('deleting a link', () => {
+    const stubs = {
+      ActionMenu: {
+        props: ['items'],
+        template: '<div><slot name="primary" /><button v-for="i in items" :key="i.label" type="button" '
+          + 'class="menu-item" @click.stop="i.onClick()">{{ i.label }}</button></div>',
+      },
+    }
+
+    // The link's own sets (asked for by link id) vs. every set (the health rollup on load).
+    function linkHasNoSets() {
+      vi.mocked(syncApi.listSyncSets).mockImplementation(((linkId?: string) =>
+        Promise.resolve({ data: linkId ? [] : [set] })) as never)
+    }
+    afterEach(() => {
+      vi.mocked(syncApi.listSyncSets).mockImplementation((() => Promise.resolve({ data: [set] })) as never)
+    })
+
+    async function clickDeleteOnTheLink() {
+      const wrapper = mount(DirectorySyncView, { global: { stubs } })
+      await flushPromises()
+      const linkRow = wrapper.findAll('table')[0].findAll('tbody tr')[0]
+      await linkRow.findAll('button.menu-item').find((b) => b.text() === 'Delete')!.trigger('click')
+      await flushPromises()
+      return wrapper
+    }
+
+    it('refuses up front while the link still has sync sets', async () => {
+      await clickDeleteOnTheLink()
+
+      expect(syncApi.listSyncSets).toHaveBeenCalledWith('link-1')
+      expect(confirmApi.confirm).not.toHaveBeenCalled()
+      expect(syncApi.deleteSyncLink).not.toHaveBeenCalled()
+    })
+
+    it('asks first once the link is empty, and deletes on confirm', async () => {
+      linkHasNoSets()
+      confirmApi.confirm.mockResolvedValue(true)
+
+      await clickDeleteOnTheLink()
+
+      const opts = confirmApi.confirm.mock.calls[0][0]
+      expect(opts).toMatchObject({ title: 'Delete sync link', confirmLabel: 'Delete link', danger: true })
+      expect(opts.message).toContain('Delete sync link "src->dst" (Source LDAP → Target LDAP)?')
+      expect(opts.message).toContain('Neither directory is changed.')
+      // APP_INTERCEPT: no changelog position to lose.
+      expect(opts.message).not.toContain('changelog')
+      expect(syncApi.deleteSyncLink).toHaveBeenCalledWith('link-1')
+    })
+
+    it('warns that a changelog link loses its position in the changelog', async () => {
+      vi.mocked(syncApi.listSyncLinks).mockResolvedValueOnce({ data: [{ ...link, captureMode: 'CHANGELOG' }] } as never)
+      linkHasNoSets()
+      confirmApi.confirm.mockResolvedValue(true)
+
+      await clickDeleteOnTheLink()
+
+      expect(confirmApi.confirm.mock.calls[0][0].message).toContain('position in the source changelog is discarded')
+    })
+
+    it('does nothing when the confirmation is cancelled', async () => {
+      linkHasNoSets()
+      confirmApi.confirm.mockResolvedValue(false)
+
+      await clickDeleteOnTheLink()
+
+      expect(confirmApi.confirm).toHaveBeenCalled()
+      expect(syncApi.deleteSyncLink).not.toHaveBeenCalled()
     })
   })
 })

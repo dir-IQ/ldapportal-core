@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history, brownfield adoption, cross-link reference resolution, review actions, audited set delete; 2026-10-21).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history, brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes; 2026-10-21).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -522,7 +522,7 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
 GET    /api/v1/superadmin/sync/links
 POST   /api/v1/superadmin/sync/links
 PUT    /api/v1/superadmin/sync/links/{id}
-DELETE /api/v1/superadmin/sync/links/{id}
+DELETE /api/v1/superadmin/sync/links/{id}                      # 400 while the link has sets; audited as sync.link_delete (see §9)
 
 # Sets
 GET    /api/v1/superadmin/sync/sets[?linkId=…]
@@ -734,6 +734,21 @@ The delete is audited as `sync.set_delete` on the link's **target** directory
 (target DN = the set's target base), with `detail` = `syncSetId`,
 `syncSetName`, `linkId`, `managedEntries`, `pendingReview`, `reconcileRuns` —
 the record outlives the set's own history.
+
+### Deleting a sync link
+
+A link can only be deleted once it has no sync sets — the server refuses
+(400) until they're gone, and the UI says so instead of asking. Deleting an
+empty link changes neither directory; what goes is the link's configuration
+and, for `CHANGELOG` capture, its position in the source changelog (cursor,
+last change number, health), so a link created to replace it starts afresh
+rather than resuming. The UI asks first.
+
+The delete is audited as `sync.link_delete` on the link's **target**
+directory (no target DN), with `detail` = `linkId`, `linkName`,
+`sourceDirId`, `targetDirId`, `captureMode`, and for `CHANGELOG` links
+`changelogFormat`, `changelogBaseDn` and `changelogLastChangeNumber` (when
+set). A refused delete isn't audited.
 
 ---
 

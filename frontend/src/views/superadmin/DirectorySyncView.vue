@@ -322,6 +322,7 @@ import {
 interface DirOption { id: string; displayName: string }
 
 const notif = useNotificationStore()
+const confirm = useConfirm()
 const auth = useAuthStore()
 // VIEW_DIRECTORY_SYNC shows links, sets, and previews; every write control
 // needs MANAGE_DIRECTORY_SYNC (enforced server-side as well).
@@ -468,6 +469,35 @@ async function saveLink() {
   }
 }
 async function removeLink(link: SyncLink) {
+  // The server refuses to delete a link that still has sets; say so up
+  // front rather than asking to confirm a delete that would fail.
+  let setCount: number | null = null
+  try {
+    setCount = (await listSyncSets(link.id)).data.length
+  } catch {
+    // Unknown: confirm anyway; the server still refuses if there are sets.
+  }
+  if (setCount) {
+    notif.error(`Delete the link's ${setCount === 1 ? 'sync set' : `${setCount} sync sets`} first.`)
+    return
+  }
+  const lines = [
+    `Delete sync link "${link.displayName}" (${dirName(link.sourceDirId)} → ${dirName(link.targetDirId)})?`,
+    '',
+    '• Neither directory is changed.',
+  ]
+  if (link.captureMode === 'CHANGELOG') {
+    lines.push('• Its position in the source changelog is discarded: a link created to replace it '
+      + 'starts afresh rather than resuming where this one stopped.')
+  }
+  lines.push('', 'This can\'t be undone.')
+  const ok = await confirm({
+    title: 'Delete sync link',
+    message: lines.join('\n'),
+    confirmLabel: 'Delete link',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await deleteSyncLink(link.id)
     notif.success('Link deleted')
@@ -621,8 +651,6 @@ async function doSaveSet() {
     notif.error(errMsg(e))
   }
 }
-const confirm = useConfirm()
-
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n.toLocaleString()} ${n === 1 ? one : many}`
 }

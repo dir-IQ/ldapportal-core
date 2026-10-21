@@ -46,6 +46,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -333,6 +334,54 @@ class SyncConfigServiceTest {
         detail.put("reconcileRuns", 12L);
         order.verify(auditService).record(eq(admin), eq(targetDir), eq(AuditAction.SYNC_SET_DELETE),
                 eq("ou=Users,dc=dst"), eq(detail));
+    }
+
+    @Test
+    void deleteLink_deletesThenAuditsAgainstTheTargetDirectory_withItsChangelogPosition() {
+        UUID linkId = UUID.randomUUID();
+        UUID sourceDir = UUID.randomUUID();
+        UUID targetDir = UUID.randomUUID();
+        SyncLink link = new SyncLink();
+        link.setDisplayName("hr->corp");
+        link.setSourceDirId(sourceDir);
+        link.setTargetDirId(targetDir);
+        link.setCaptureMode(com.ldapportal.entity.enums.SyncCaptureMode.CHANGELOG);
+        link.setChangelogFormat(com.ldapportal.entity.enums.ChangelogFormat.values()[0]);
+        link.setChangelogBaseDn("cn=changelog");
+        link.setChangelogLastChangeNumber(4242L);
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+        when(setRepo.findAllByLinkId(linkId)).thenReturn(List.of());
+
+        service.deleteLink(linkId, admin);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(linkRepo, auditService);
+        order.verify(linkRepo).delete(link);
+        java.util.Map<String, Object> detail = new java.util.LinkedHashMap<>();
+        detail.put("linkId", linkId.toString());
+        detail.put("linkName", "hr->corp");
+        detail.put("sourceDirId", sourceDir.toString());
+        detail.put("targetDirId", targetDir.toString());
+        detail.put("captureMode", "CHANGELOG");
+        detail.put("changelogFormat", com.ldapportal.entity.enums.ChangelogFormat.values()[0].toString());
+        detail.put("changelogBaseDn", "cn=changelog");
+        detail.put("changelogLastChangeNumber", 4242L);
+        order.verify(auditService).record(eq(admin), eq(targetDir), eq(AuditAction.SYNC_LINK_DELETE),
+                isNull(), eq(detail));
+    }
+
+    @Test
+    void deleteLink_withSetsStillOnIt_isRefused_andNotAudited() {
+        UUID linkId = UUID.randomUUID();
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(new SyncLink()));
+        when(setRepo.findAllByLinkId(linkId)).thenReturn(List.of(new SyncSet()));
+
+        assertThatThrownBy(() -> service.deleteLink(linkId,
+                new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("sync sets");
+        verify(linkRepo, never()).delete(any(SyncLink.class));
+        verifyNoInteractions(auditService);
     }
 
     @Test

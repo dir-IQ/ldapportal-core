@@ -107,12 +107,31 @@ public class SyncConfigService {
     }
 
     @Transactional
-    public void deleteLink(UUID id) {
+    public void deleteLink(UUID id, AuthPrincipal principal) {
         SyncLink l = requireLink(id);
         if (!setRepo.findAllByLinkId(id).isEmpty()) {
             throw new IllegalArgumentException("Delete the link's sync sets before deleting the link");
         }
         linkRepo.delete(l);
+        if (principal != null) {
+            // Recorded against the target directory, as a set delete is. A
+            // link has no sets by now, so all that goes is its configuration
+            // and, for changelog capture, its position in the changelog.
+            Map<String, Object> detail = new java.util.LinkedHashMap<>();
+            detail.put("linkId", id.toString());
+            detail.put("linkName", l.getDisplayName());
+            detail.put("sourceDirId", String.valueOf(l.getSourceDirId()));
+            detail.put("targetDirId", String.valueOf(l.getTargetDirId()));
+            detail.put("captureMode", String.valueOf(l.getCaptureMode()));
+            if (l.getCaptureMode() == SyncCaptureMode.CHANGELOG) {
+                detail.put("changelogFormat", String.valueOf(l.getChangelogFormat()));
+                detail.put("changelogBaseDn", l.getChangelogBaseDn());
+                if (l.getChangelogLastChangeNumber() != null) {
+                    detail.put("changelogLastChangeNumber", l.getChangelogLastChangeNumber());
+                }
+            }
+            auditService.record(principal, l.getTargetDirId(), AuditAction.SYNC_LINK_DELETE, null, detail);
+        }
     }
 
     private void applyLink(SyncLink l, SyncLinkRequest req) {

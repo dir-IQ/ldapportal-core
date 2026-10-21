@@ -148,6 +148,20 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void deleteLink_superadmin_deletesAsThePrincipal() throws Exception {
+        mockMvc.perform(delete(LINKS + "/" + LINK).with(authentication(superadminAuth())))
+                .andExpect(status().isNoContent());
+        org.mockito.Mockito.verify(service).deleteLink(eq(LINK),
+                org.mockito.ArgumentMatchers.argThat(p -> p != null && "superadmin".equals(p.username())));
+    }
+
+    @Test
+    void deleteLink_adminRole_returns403() throws Exception {
+        mockMvc.perform(delete(LINKS + "/" + LINK).with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void deleteSet_superadmin_deletesAsThePrincipal() throws Exception {
         mockMvc.perform(delete(SETS + "/" + SET).with(authentication(superadminAuth())))
                 .andExpect(status().isNoContent());
