@@ -279,3 +279,68 @@ describe('DirectoryBrowserView branch paging + filter', () => {
     expect(browse).toHaveBeenCalledWith(DIR, PEOPLE, { filter: 'bo', limit: 500 })
   })
 })
+
+describe('DirectoryBrowserView with several top-level roots', () => {
+  const PARTNERS = 'o=partners'
+  const CAROL_DN = 'uid=carol,' + PARTNERS
+
+  // The other roots come from the server's browse of the directory root —
+  // the directory list (the identity-only summary) doesn't carry them.
+  const multiRootPage = { ...rootPage, otherRoots: [PARTNERS] }
+
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.mocked(listDirectories).mockResolvedValue(ok([{ id: DIR, displayName: 'Example', directoryType: 'OPENLDAP' }]))
+    vi.mocked(browse).mockImplementation(async (_dir: string, dn?: string) => {
+      if (!dn) return ok(multiRootPage)
+      if (dn === BASE) return ok(rootPage)
+      if (dn === PARTNERS) {
+        return ok({ dn: PARTNERS, attributes: { o: ['partners'] },
+          children: [{ dn: CAROL_DN, rdn: 'uid=carol', hasChildren: false }], truncated: false, childCount: 1 })
+      }
+      if (dn === CAROL_DN) return ok({ dn: CAROL_DN, attributes: { uid: ['carol'] }, children: [] })
+      return ok(peoplePage())
+    })
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+    route.query = {}
+  })
+
+  it('shows one tree root per base DN, with the primary root selected', async () => {
+    const wrapper = await mountView()
+
+    expect(browse).toHaveBeenCalledWith(DIR, undefined, { limit: 500 })
+    expect(browse).toHaveBeenCalledWith(DIR, PARTNERS, { limit: 500 })
+    const text = wrapper.find('.dn-tree').text()
+    expect(text).toContain(BASE)
+    expect(text).toContain(PARTNERS)
+    const selected = wrapper.findAll('.dn-tree li > div').find(d => d.classes().includes('bg-blue-100'))
+    expect(selected?.text()).toContain(BASE)
+  })
+
+  it('reveals a deep-linked entry under an additional root without the outside-base notice', async () => {
+    route.query = { dir: DIR, dn: CAROL_DN }
+    const wrapper = await mountView()
+    await flushPromises()
+
+    expect(browse).toHaveBeenCalledWith(DIR, CAROL_DN, { limit: 1 })
+    const selected = wrapper.findAll('.dn-tree li > div').find(d => d.classes().includes('bg-blue-100'))
+    expect(selected?.text()).toContain('uid=carol')
+  })
+
+  it('keeps the tree when an additional root cannot be read', async () => {
+    vi.mocked(browse).mockImplementation(async (_dir: string, dn?: string) => {
+      if (!dn) return ok(multiRootPage)
+      if (dn === BASE) return ok(rootPage)
+      if (dn === PARTNERS) throw new Error('no such object')
+      return ok(peoplePage())
+    })
+    const wrapper = await mountView()
+
+    const text = wrapper.find('.dn-tree').text()
+    expect(text).toContain(BASE)
+    expect(text).not.toContain(PARTNERS)
+  })
+})

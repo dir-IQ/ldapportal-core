@@ -88,6 +88,20 @@ class BrowseControllerBrowseTest extends BaseControllerTest {
     }
 
     @Test
+    void browse_ofTheDirectoryRoot_serialisesTheOtherRoots() throws Exception {
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dir()));
+        when(browseService.browse(any(), isNull(), isNull(), eq(0)))
+                .thenReturn(new BrowseResult(BASE, Map.of("objectClass", List.of("domain")), List.of(),
+                        false, 0, false, List.of("o=partners")));
+
+        mockMvc.perform(get("/api/v1/superadmin/directories/{id}/browse", dirId)
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dn").value(BASE))
+                .andExpect(jsonPath("$.otherRoots[0]").value("o=partners"));
+    }
+
+    @Test
     void browse_withoutFilterOrLimit_asksForEverything() throws Exception {
         when(dirRepo.findById(dirId)).thenReturn(Optional.of(dir()));
         when(browseService.browse(any(), isNull(), isNull(), eq(0)))

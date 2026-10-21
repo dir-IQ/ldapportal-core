@@ -251,8 +251,7 @@ public class LdapChangelogReader {
 
         // Resolve directory association by matching the targetDN to linked dirs
         DirectoryConnection matchedDir = linkedDirs.stream()
-                .filter(dc -> targetDn != null
-                        && targetDn.toLowerCase().endsWith(dc.getBaseDn().toLowerCase()))
+                .filter(dc -> targetDn != null && com.ldapportal.ldap.DirectoryRoots.isWithin(dc, targetDn))
                 .findFirst().orElse(null);
 
         UUID   directoryId   = matchedDir != null ? matchedDir.getId() : null;

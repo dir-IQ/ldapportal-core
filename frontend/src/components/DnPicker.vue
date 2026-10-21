@@ -5,7 +5,7 @@
     <div class="flex gap-1">
       <input
         :value="modelValue"
-        @input="$emit('update:modelValue', $event.target.value)"
+        @input="emit('update:modelValue', ($event.target as HTMLInputElement).value)"
         type="text"
         class="input flex-1 font-mono"
         :placeholder="resolvedPlaceholder"
@@ -44,13 +44,13 @@
             <div v-if="treeLoading" class="text-sm text-gray-500 text-center py-8">
               {{ scope === 'group' ? 'Loading groups...' : 'Loading...' }}
             </div>
-            <div v-else-if="treeNodes.length === 0" class="text-sm text-gray-500 text-center py-8">
+            <div v-else-if="(scope === 'group' ? groupNodes : rootNodes).length === 0" class="text-sm text-gray-500 text-center py-8">
               {{ scope === 'group' ? 'No groups found.' : 'No entries found.' }}
             </div>
             <!-- Subtree mode: lazy-loading DnTree -->
             <DnTree
               v-else-if="scope !== 'group'"
-              :nodes="treeNodes"
+              :nodes="rootNodes"
               :selected-dn="pickerSelectedDn"
               :load-children="loadChildren"
               @select="onNodeSelect"
@@ -58,7 +58,7 @@
             <!-- Group mode: pre-built GroupTree -->
             <GroupTree
               v-else
-              :nodes="treeNodes"
+              :nodes="groupNodes"
               :selected-dn="pickerSelectedDn"
               @select="onNodeSelect"
             />
@@ -81,66 +81,124 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed } from 'vue'
 import { browse, directoryBrowse } from '@/api/browse'
 import { searchGroups } from '@/api/groups'
 import { listEntraGroups } from '@/api/entra'
-import DnTree from '@/components/DnTree.vue'
+import DnTree, { type DnTreeNode } from '@/components/DnTree.vue'
 import GroupTree from '@/components/GroupTree.vue'
 
-const props = defineProps({
-  modelValue:    { type: String, default: '' },
-  directoryId:   { type: String, default: '' },
-  scope:         { type: String, default: 'subtree' },  // 'subtree' | 'group'
-  title:         { type: String, default: null },
-  placeholder:   { type: String, default: null },
+/** The fields of a browse response the picker reads. */
+interface BrowsePayload {
+  dn: string
+  children?: DnTreeNode[]
+  /** On a browse of the directory root: its further top-level roots. */
+  otherRoots?: string[]
+}
+
+/** A subtree root, with the children its browse already returned. */
+interface PickerRootNode extends DnTreeNode {
+  _preloaded?: DnTreeNode[]
+}
+
+/** A node of the group picker's tree (a group, or a structural container). */
+interface GroupNode {
+  dn: string
+  rdn: string
+  isGroup: boolean
+  children: GroupNode[]
+}
+
+type BrowseFn = (dirId: string, dn?: string) => Promise<{ data: BrowsePayload }>
+
+const props = withDefaults(defineProps<{
+  modelValue?: string
+  directoryId?: string
+  /** 'subtree' | 'group' */
+  scope?: string
+  title?: string | null
+  placeholder?: string | null
   // subtree-only props
-  superadmin:    { type: Boolean, default: true },
+  superadmin?: boolean
   /**
    * Caller-supplied list of DNs to use as the picker's roots, in
    * place of the directory's default base DN. Use case: restrict an
    * admin's DN picker to the OUs they're authorized for (one per
    * profile), so the tree doesn't expose branches the operator
    * can't act on anyway. When empty / null, the picker browses
-   * from the directory base DN as before.
+   * from the directory's roots as before.
    */
-  authorizedRoots: { type: Array, default: () => [] },
+  authorizedRoots?: string[]
   // group-only props
-  directoryType: { type: String, default: '' },
+  directoryType?: string
   /**
    * Restricts the group picker to entries under this DN. Lets a caller
    * scope the browser to a profile's Target Group DN so the tree only
    * surfaces groups from the relevant subtree. Empty = browse all
    * groups (the prior behaviour). LDAP scope only; ignored for Entra.
    */
-  baseDn: { type: String, default: '' },
+  baseDn?: string
+}>(), {
+  modelValue: '',
+  directoryId: '',
+  scope: 'subtree',
+  title: null,
+  placeholder: null,
+  superadmin: true,
+  authorizedRoots: () => [],
+  directoryType: '',
+  baseDn: '',
 })
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits<{
+  (e: 'update:modelValue', value: string): void
+}>()
 
 const showPicker       = ref(false)
 const treeLoading      = ref(false)
-const treeNodes        = ref([])
+const rootNodes        = ref<PickerRootNode[]>([])   // subtree mode
+const groupNodes       = ref<GroupNode[]>([])        // group mode
 const pickerSelectedDn = ref('')
 
-const resolvedTitle = computed(() => {
+const resolvedTitle = computed<string>(() => {
   if (props.title) return props.title
   return props.scope === 'group' ? 'Select Group' : 'Select DN'
 })
 
-const resolvedPlaceholder = computed(() => {
+const resolvedPlaceholder = computed<string>(() => {
   // Use `!= null` (not truthy-check) so callers can pass an explicit
   // empty string to suppress the placeholder entirely.
   if (props.placeholder != null) return props.placeholder
   return props.scope === 'group' ? 'cn=engineers,ou=groups,dc=corp' : 'dc=example,dc=com'
 })
 
+function browseFn(): BrowseFn {
+  return (props.superadmin ? browse : directoryBrowse) as BrowseFn
+}
+
+function toRootNode(data: BrowsePayload): PickerRootNode {
+  const children = data.children || []
+  return { dn: data.dn, rdn: data.dn, hasChildren: children.length > 0, _preloaded: children }
+}
+
+/** Browse each DN as a root node, skipping (and logging) one that fails. */
+async function browseRoots(dns: string[], what: string): Promise<PickerRootNode[]> {
+  const roots: PickerRootNode[] = []
+  for (const rootDn of dns) {
+    try {
+      const { data } = await browseFn()(props.directoryId, rootDn)
+      roots.push(toRootNode(data))
+    } catch (e) {
+      console.warn(`Failed to load ${what}`, rootDn, e)
+    }
+  }
+  return roots
+}
+
 // ── Subtree helpers ──────────────────────────────────────────────────────────
 
-async function openSubtreePicker() {
-  const browseFn = props.superadmin ? browse : directoryBrowse
-
+async function openSubtreePicker(): Promise<void> {
   // When the caller has supplied authorizedRoots (e.g. the admin
   // bulk-import view passes the union of their profile target OUs),
   // browse each authorized OU directly and present them as the
@@ -148,48 +206,30 @@ async function openSubtreePicker() {
   // at the directory base DN — exposing the existence of every OU
   // the operator can't act on and inviting clicks that 403.
   if (props.authorizedRoots && props.authorizedRoots.length > 0) {
-    const roots = []
-    for (const rootDn of props.authorizedRoots) {
-      try {
-        const { data } = await browseFn(props.directoryId, rootDn)
-        roots.push({
-          dn: data.dn,
-          rdn: data.dn,
-          hasChildren: (data.children || []).length > 0,
-          _preloaded: data.children || [],
-        })
-      } catch (e) {
-        console.warn('Failed to load authorized root', rootDn, e)
-      }
-    }
-    treeNodes.value = roots
+    rootNodes.value = await browseRoots(props.authorizedRoots, 'authorized root')
     return
   }
 
   try {
-    const { data } = await browseFn(props.directoryId)
-    treeNodes.value = [{
-      dn: data.dn,
-      rdn: data.dn,
-      hasChildren: data.children.length > 0,
-      _preloaded: data.children,
-    }]
+    // The directory root: its base DN, plus one node per further
+    // top-level root the response lists for a multi-root directory.
+    const { data } = await browseFn()(props.directoryId)
+    rootNodes.value = [toRootNode(data), ...await browseRoots(data.otherRoots ?? [], 'base DN')]
   } catch (e) {
     console.warn('Failed to load directory tree:', e)
-    treeNodes.value = []
+    rootNodes.value = []
   }
 }
 
-async function loadChildren(dn) {
-  const rootNode = treeNodes.value.find(n => n.dn === dn)
+async function loadChildren(dn: string): Promise<DnTreeNode[]> {
+  const rootNode = rootNodes.value.find(n => n.dn === dn)
   if (rootNode?._preloaded) {
     const children = rootNode._preloaded
     delete rootNode._preloaded
     return children
   }
-  const browseFn = props.superadmin ? browse : directoryBrowse
   try {
-    const { data } = await browseFn(props.directoryId, dn)
+    const { data } = await browseFn()(props.directoryId, dn)
     return data.children || []
   } catch (e) {
     console.warn('Failed to load children for', dn, e)
@@ -204,8 +244,8 @@ async function loadChildren(dn) {
  * Each DN is decomposed into its RDN components so parent containers
  * (OUs, DCs) appear as non-selectable structural nodes.
  */
-function buildTree(groupDns) {
-  const nodeMap = new Map()  // dn -> { dn, rdn, children, isGroup }
+function buildTree(groupDns: string[]): GroupNode[] {
+  const nodeMap = new Map<string, GroupNode>()
 
   for (const dn of groupDns) {
     // Walk from the full DN up to root, ensuring every ancestor exists
@@ -234,7 +274,7 @@ function buildTree(groupDns) {
   }
 
   // Root nodes are those whose parent DN is not in the map
-  const roots = []
+  const roots: GroupNode[] = []
   for (const [dn, node] of nodeMap) {
     const commaIdx = dn.indexOf(',')
     if (commaIdx === -1) {
@@ -248,7 +288,7 @@ function buildTree(groupDns) {
   }
 
   // Sort children alphabetically at each level
-  function sortChildren(node) {
+  function sortChildren(node: GroupNode): void {
     node.children.sort((a, b) => a.rdn.localeCompare(b.rdn))
     node.children.forEach(sortChildren)
   }
@@ -261,8 +301,8 @@ function buildTree(groupDns) {
 /**
  * Split a DN into its RDN components, respecting escaped commas.
  */
-function parseDnComponents(dn) {
-  const parts = []
+function parseDnComponents(dn: string): string[] {
+  const parts: string[] = []
   let current = ''
   for (let i = 0; i < dn.length; i++) {
     if (dn[i] === '\\' && i + 1 < dn.length) {
@@ -279,12 +319,13 @@ function parseDnComponents(dn) {
   return parts
 }
 
-async function openGroupPicker() {
+async function openGroupPicker(): Promise<void> {
   try {
     if (props.directoryType === 'ENTRA_ID') {
       // Entra: flat list from cache (no OU tree structure)
-      const { data } = await listEntraGroups(props.directoryId)
-      treeNodes.value = data.map(g => ({
+      const { data } = await listEntraGroups(props.directoryId) as
+        { data: Array<{ objectId: string, displayName?: string }> }
+      groupNodes.value = data.map(g => ({
         dn: g.objectId,
         rdn: g.displayName || g.objectId,
         isGroup: true,
@@ -292,7 +333,8 @@ async function openGroupPicker() {
       }))
     } else {
       // LDAP: tree structure from group DNs
-      const { data } = await searchGroups(props.directoryId, { limit: 1000, attributes: 'dn' })
+      const { data } = await searchGroups(props.directoryId, { limit: 1000, attributes: 'dn' }) as
+        { data: Array<{ dn: string }> }
       let dns = data.map(e => e.dn)
       // Scope to the caller's base DN (e.g. a profile's Target Group DN)
       // when supplied, so the tree only surfaces groups from that subtree.
@@ -300,17 +342,17 @@ async function openGroupPicker() {
       if (base) {
         dns = dns.filter(dn => dn.toLowerCase().endsWith(base))
       }
-      treeNodes.value = buildTree(dns)
+      groupNodes.value = buildTree(dns)
     }
   } catch (e) {
     console.warn('Failed to load groups:', e)
-    treeNodes.value = []
+    groupNodes.value = []
   }
 }
 
 // ── Shared logic ─────────────────────────────────────────────────────────────
 
-async function openPicker() {
+async function openPicker(): Promise<void> {
   if (!props.directoryId) return
   showPicker.value = true
   pickerSelectedDn.value = props.modelValue || ''
@@ -326,11 +368,11 @@ async function openPicker() {
   }
 }
 
-function onNodeSelect(dn) {
+function onNodeSelect(dn: string): void {
   pickerSelectedDn.value = dn
 }
 
-function confirmSelection() {
+function confirmSelection(): void {
   emit('update:modelValue', pickerSelectedDn.value)
   showPicker.value = false
 }

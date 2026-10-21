@@ -3012,6 +3012,7 @@ export interface components {
             entraClientSecret?: string;
             graphEndpoint?: string;
             slug?: string;
+            additionalBaseDns?: string[];
         };
         BaseDnItem: {
             /** Format: uuid */
@@ -3097,6 +3098,8 @@ export interface components {
             updatedAt?: string;
             bindPasswordSet?: boolean;
             entraClientSecretSet?: boolean;
+            additionalBaseDns?: string[];
+            warnings?: string[];
         };
         AttributeModification: {
             /** @enum {string} */
@@ -3117,6 +3120,7 @@ export interface components {
             /** Format: int32 */
             childCount?: number;
             childCountApproximate?: boolean;
+            otherRoots?: string[];
         };
         ChildEntry: {
             dn?: string;

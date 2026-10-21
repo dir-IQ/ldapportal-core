@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -46,6 +48,8 @@ class DirectoryConnectionServiceTest {
     @Mock private ApplicationEventPublisher      eventPublisher;
     @Mock private com.ldapportal.core.entitlement.UsageLimitService usageLimitService;
     @Mock private com.ldapportal.directory.DirectoryProviderRegistry providerRegistry;
+    @Mock private com.ldapportal.repository.SyncLinkRepository     syncLinkRepo;
+    @Mock private com.ldapportal.repository.SyncSetRepository      syncSetRepo;
 
     @InjectMocks private DirectoryConnectionService service;
 
@@ -136,6 +140,95 @@ class DirectoryConnectionServiceTest {
 
     // ── fixtures ────────────────────────────────────────────────────────────
 
+    // ── further roots (multi-root directories) ─────────────────────────────
+
+    @Test
+    void updateDirectory_storesAdditionalRoots_trimmed_andReturnsThem() {
+        var resp = service.updateDirectory(DIR_ID, requestWithRoots(List.of(" o=partners ", "", "secAuthority=Default")));
+
+        assertThat(resp.additionalBaseDns()).containsExactly("o=partners", "secAuthority=Default");
+    }
+
+    @Test
+    void updateDirectory_addingARoot_warnsAboutSyncSetsWithBlankBases() {
+        com.ldapportal.entity.SyncLink asSource = new com.ldapportal.entity.SyncLink();
+        asSource.setId(UUID.randomUUID());
+        com.ldapportal.entity.SyncLink asTarget = new com.ldapportal.entity.SyncLink();
+        asTarget.setId(UUID.randomUUID());
+        com.ldapportal.entity.SyncSet blankScope = new com.ldapportal.entity.SyncSet();
+        blankScope.setName("people");
+        com.ldapportal.entity.SyncSet scoped = new com.ldapportal.entity.SyncSet();
+        scoped.setName("partners");
+        scoped.setObjectScopeBaseDn("o=partners");
+        com.ldapportal.entity.SyncSet blankTarget = new com.ldapportal.entity.SyncSet();
+        blankTarget.setName("inbound");
+        when(syncLinkRepo.findAllBySourceDirId(DIR_ID)).thenReturn(List.of(asSource));
+        when(syncLinkRepo.findAllByTargetDirId(DIR_ID)).thenReturn(List.of(asTarget));
+        when(syncSetRepo.findAllByLinkId(asSource.getId())).thenReturn(List.of(blankScope, scoped));
+        when(syncSetRepo.findAllByLinkId(asTarget.getId())).thenReturn(List.of(blankTarget));
+
+        var resp = service.updateDirectory(DIR_ID, requestWithRoots(List.of("o=partners")));
+
+        // Saved anyway; each blank-base set is named once.
+        assertThat(resp.additionalBaseDns()).containsExactly("o=partners");
+        assertThat(resp.warnings()).hasSize(2);
+        assertThat(resp.warnings().get(0)).contains("\"people\"", "source scope base DN");
+        assertThat(resp.warnings().get(1)).contains("\"inbound\"", "target base DN");
+    }
+
+    @Test
+    void updateDirectory_withoutNewRoots_doesNotLookForSyncSets() {
+        var resp = service.updateDirectory(DIR_ID, matchingRequest("ldap.example.com"));
+
+        assertThat(resp.warnings()).isEmpty();
+        verify(syncLinkRepo, never()).findAllBySourceDirId(any());
+        verify(syncLinkRepo, never()).findAllByTargetDirId(any());
+    }
+
+    @Test
+    void updateDirectory_rejectsARootNestedWithAnother() {
+        assertThatThrownBy(() -> service.updateDirectory(DIR_ID,
+                requestWithRoots(List.of("ou=people,dc=example,dc=com"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("nested");
+        assertThatThrownBy(() -> service.updateDirectory(DIR_ID,
+                requestWithRoots(List.of("o=partners", "DC=Example,DC=Com"))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.updateDirectory(DIR_ID,
+                requestWithRoots(List.of("o=partners", "ou=x,o=partners"))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void updateDirectory_rejectsAnInvalidRootDn() {
+        assertThatThrownBy(() -> service.updateDirectory(DIR_ID, requestWithRoots(List.of("not a dn"))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void exportAll_includesAdditionalRoots_andOmitsThemWhenThereAreNone() {
+        DirectoryConnection multi = existing();
+        multi.setAdditionalBaseDns(new java.util.ArrayList<>(List.of("o=partners")));
+        when(dirRepo.findAll()).thenReturn(List.of(multi));
+        assertThat(service.exportAll().get(0).request().additionalBaseDns()).containsExactly("o=partners");
+
+        when(dirRepo.findAll()).thenReturn(List.of(existing()));
+        assertThat(service.exportAll().get(0).request().additionalBaseDns()).isNull();
+    }
+
+    private static DirectoryConnectionRequest requestWithRoots(List<String> roots) {
+        return new DirectoryConnectionRequest(
+                DirectoryType.GENERIC, "Corp LDAP", "ldap.example.com", 389, SslMode.NONE,
+                false, null, "cn=admin,dc=example,dc=com", null,
+                "dc=example,dc=com", 500, 1, 10, 5, 30, 300,
+                null, null, null, null, null, true,
+                false, null, null, null, null,
+                null, null,
+                null, null,
+                null, null, null, "https://graph.microsoft.com",
+                null, null, roots);
+    }
+
     /** {@link #matchingRequest} with the audit-source link expressed by slug. */
     private static DirectoryConnectionRequest requestWithAuditSlug(String auditSlug) {
         return new DirectoryConnectionRequest(
@@ -147,7 +240,7 @@ class DirectoryConnectionServiceTest {
                 null, null,
                 null, null,
                 null, null, null, "https://graph.microsoft.com",
-                null, auditSlug);
+                null, auditSlug, null);
     }
 
     private static DirectoryConnection existing() {
@@ -190,6 +283,6 @@ class DirectoryConnectionServiceTest {
                 null, null,
                 null, null,
                 null, null, null, "https://graph.microsoft.com",
-                null, null);
+                null, null, null);
     }
 }
