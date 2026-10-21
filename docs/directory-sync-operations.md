@@ -332,6 +332,9 @@ those (each re-read to confirm absence before any delete). The not-seen sweep
 The enumeration is paged (the source directory's *paging size*), so a scope
 larger than the server's size limit still reconciles completely; one entry
 whose recompute faults is logged and skipped, never aborting the run.
+A reconcile is single-flight per set across instances (see §8.2), and it
+stamps the set with targeted updates only, so editing the set while it runs
+can't fail it.
 
 **Run history:** every reconcile of an enabled set is recorded in
 `sync_reconcile_run` — trigger (`SCHEDULED`, or `MANUAL` with the operator),
@@ -592,9 +595,19 @@ enumeration cost; the reconcile floor protects correctness regardless.
 
 ### 8.2 High availability
 Multi-instance safe by design: the recompute queue uses an atomic
-claim/settle lease (stale claims reclaimed after 10m), and changelog polling
-uses a per-link poll-lease (stale lease reclaimed after 5m). Run as many app
-instances as you like; no leader election needed.
+claim/settle lease (stale claims reclaimed after 10m), changelog polling
+uses a per-link poll-lease (stale lease reclaimed after 5m), and a set's
+reconcile holds a per-set lease (`sync_set.reconcile_lease_*`, heartbeat every
+30s, stale lease reclaimed after 15m). Every instance runs the reconcile
+scheduler, but only the instance that claims a due set reconciles it; the
+others skip it, and **Reconcile now** while it runs returns 409 *A reconcile of
+this sync set is already running*. Run as many app instances as you like; no
+leader election needed.
+
+> Before the reconcile lease, each instance reconciled the same due set at
+> once: N instances did the work N times, and all but the first to finish
+> failed with *Row was updated or deleted by another transaction* when saving
+> the set (they show as **Failed** runs in the reconcile history).
 
 ### 8.3 Schema (Flyway-owned; `db/migration/core`)
 | Table | Holds |

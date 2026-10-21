@@ -39,6 +39,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -78,7 +79,8 @@ class SyncEngineIntegrationTest {
     @Autowired private SyncSetRepository setRepo;
     @Autowired private MembershipRepository membershipRepo;
     @Autowired private RecomputeRequestRepository requestRepo;
-    @Autowired private RecomputeEngine engine;
+    // A spy (real behavior) so a test can act in the middle of a reconcile.
+    @MockitoSpyBean private RecomputeEngine engine;
     @Autowired private MembershipReconciler reconciler;
     @Autowired private SyncContentVerifier verifier;
     @Autowired private RecomputeEnqueuer enqueuer;
@@ -843,6 +845,69 @@ class SyncEngineIntegrationTest {
         assertThat(run.getUnchanged()).isEqualTo(1);    // the OU: out of scope, never tracked
         assertThat(run.getFailed() + run.getFaulted() + run.getSkipped() + run.getMoved()
                 + run.getHeldForReview() + run.getForgotten()).isZero();
+    }
+
+    @Test
+    void reconcile_isRefused_whileAnotherHoldsTheLease_andNotRecorded() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        OffsetDateTime now = OffsetDateTime.now();
+        // Another instance's reconcile is running (fresh heartbeat).
+        setRepo.claimReconcile(peopleSet.getId(), java.util.UUID.randomUUID(), now, now.minusHours(1));
+
+        assertThatThrownBy(() -> reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null))
+                .isInstanceOf(com.ldapportal.exception.ConflictException.class);
+        assertThat(runRepo.findAll()).isEmpty();
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
+    }
+
+    @Test
+    void reconcile_reclaimsAStaleLease() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        OffsetDateTime longAgo = OffsetDateTime.now().minus(MembershipReconciler.LEASE_STALE).minusMinutes(1);
+        // A reconcile whose server stopped mid-run left its lease behind.
+        setRepo.claimReconcile(peopleSet.getId(), java.util.UUID.randomUUID(), longAgo, longAgo.minusHours(1));
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+    }
+
+    @Test
+    void reconcile_releasesItsLease_andStampsTheRunWithoutBumpingTheVersion() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        long versionBefore = setRepo.findById(peopleSet.getId()).orElseThrow().getVersion();
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        SyncSet after = setRepo.findById(peopleSet.getId()).orElseThrow();
+        assertThat(after.getReconcileLeaseToken()).isNull();
+        assertThat(after.getReconcileLastRunAt()).isNotNull();
+        // No entity save: an admin edit made during the run can't collide with it.
+        assertThat(after.getVersion()).isEqualTo(versionBefore);
+        // ...and the next run can claim the lease straight away.
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+        assertThat(runRepo.findAll()).hasSize(2);
+    }
+
+    @Test
+    void reconcile_survivesAnAdminEditOfTheSetDuringTheRun() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        // An admin saves the set (bumping its version) while the reconcile works:
+        // the old code then failed saving its stale copy of the set at the end.
+        org.mockito.Mockito.doAnswer(inv -> {
+            SyncSet s = setRepo.findById(peopleSet.getId()).orElseThrow();
+            s.setName("people (edited)");
+            setRepo.save(s);
+            return inv.callRealMethod();
+        }).when(engine).process(org.mockito.ArgumentMatchers.eq(peopleSet.getId()),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyBoolean());
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+        assertThat(runRepo.findAll()).singleElement()
+                .extracting(SyncReconcileRun::getStatus).isEqualTo(SyncReconcileRunStatus.COMPLETE);
+        assertThat(setRepo.findById(peopleSet.getId()).orElseThrow().getName()).isEqualTo("people (edited)");
     }
 
     @Test

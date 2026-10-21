@@ -5,6 +5,7 @@ import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
+import com.ldapportal.exception.ConflictException;
 import com.ldapportal.repository.SyncSetRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -70,6 +71,9 @@ public class SyncReconcileScheduler {
                 try {
                     reconciler.reconcile(set.getId(), SyncReconcileTrigger.SCHEDULED, null);
                     recordDrift(set.getId());
+                } catch (ConflictException running) {
+                    // Another instance (or a manual run) holds the set's reconcile lease.
+                    log.debug("Sync set {}: reconcile already running elsewhere; skipped", set.getId());
                 } catch (Exception ex) {
                     log.error("Scheduled reconcile of sync set {} failed: {}", set.getId(), ex.toString());
                 }
