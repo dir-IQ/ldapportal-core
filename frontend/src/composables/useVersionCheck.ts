@@ -27,9 +27,11 @@ import { ref } from 'vue'
 import client from '@/api/client'
 
 const clientSha = __BUILD_SHA__
+// The frontend image's tag (IMAGE_VERSION build arg), when it was built with one.
+const clientImageVersion: string | null = __IMAGE_VERSION__.trim() || null
 const serverSha = ref<string | null>(null)
 // The backend image's tag (ARG/ENV IMAGE_VERSION), when the image was built
-// with one. Preferred over the raw SHA for the sidebar build stamp.
+// with one. Shown in the sidebar build stamp, falling back to the SHA.
 const serverImageVersion = ref<string | null>(null)
 const skewDetected = ref(false)
 const checkAttempted = ref(false)
@@ -61,5 +63,5 @@ async function performCheck(): Promise<void> {
 export function useVersionCheck() {
   // Fire-and-forget on first invocation; subsequent calls reuse cached state.
   performCheck()
-  return { clientSha, serverSha, serverImageVersion, skewDetected }
+  return { clientSha, clientImageVersion, serverSha, serverImageVersion, skewDetected }
 }

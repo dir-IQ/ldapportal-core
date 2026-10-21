@@ -247,14 +247,16 @@
         </div>
       </div>
 
-      <!-- Build identifier. Prefers the backend image's tag (e.g. "v1.4.2")
-           when the image carries one, otherwise the bundle's git short-SHA.
-           Lets a quick glance answer "is this the version I think it is?".
-           Hidden when the sidebar is collapsed to keep the icon strip
-           uncluttered. -->
-      <div v-if="!collapsed" class="px-3 py-1.5 border-t border-white/10 text-[10px] text-white/70 font-mono leading-none"
+      <!-- Build identifier: the frontend and backend image tags (e.g.
+           "FE 1.4.2 · BE 1.4.2"), each falling back to its git short-SHA
+           when the image was built without a tag. Amber when the two
+           builds' SHAs differ. Lets a quick glance answer "is this the
+           version I think it is?". Hidden when the sidebar is collapsed to
+           keep the icon strip uncluttered. -->
+      <div v-if="!collapsed" class="px-3 py-1.5 border-t border-white/10 text-[10px] font-mono leading-none truncate"
+           :class="skewDetected ? 'text-amber-300/80' : 'text-white/70'"
            :title="buildStampTitle">
-        {{ buildStamp }}<span v-if="!serverImageVersion && serverSha && serverSha !== clientSha" class="text-amber-300/80"> ≠ {{ serverSha }}</span>
+        FE {{ frontendStamp }} · BE {{ backendStamp }}
       </div>
     </aside>
 
@@ -354,17 +356,17 @@ const unsavedChanges = useUnsavedChangesStore()
 // Build identifier + skew detector. clientSha comes from
 // vite.config.js's `define` block; serverSha / serverImageVersion are
 // fetched once on first call. See composables/useVersionCheck.ts.
-const { clientSha, serverSha, serverImageVersion, skewDetected } = useVersionCheck()
+const { clientSha, clientImageVersion, serverSha, serverImageVersion, skewDetected } = useVersionCheck()
 
-// The sidebar build stamp prefers the backend image's tag (e.g. "v1.4.2")
-// when the image was built with one, falling back to the bundle's git SHA.
-const buildStamp = computed(() => serverImageVersion.value || clientSha)
+// The sidebar build stamp shows each side's image tag when its image was
+// built with one, falling back to that build's git SHA.
+const frontendStamp = computed(() => clientImageVersion || clientSha)
+const backendStamp = computed(() => serverImageVersion.value || serverSha.value || '…')
 const buildStampTitle = computed(() => {
-  const parts: string[] = []
-  if (serverImageVersion.value) parts.push(`Image ${serverImageVersion.value}`)
-  parts.push(`Bundle ${clientSha}`)
-  parts.push(`server ${serverSha.value || '…'}`)
-  return parts.join(' · ')
+  const frontend = clientImageVersion ? `${clientImageVersion} (${clientSha})` : clientSha
+  const sha = serverSha.value || '…'
+  const backend = serverImageVersion.value ? `${serverImageVersion.value} (${sha})` : sha
+  return `Frontend image ${frontend} · backend image ${backend}`
 })
 
 function reloadHard() {

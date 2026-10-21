@@ -155,6 +155,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      # Build identity for the sidebar build stamp. The frontend/ context has
+      # no .git, so the commit is passed in (the Makefile sets BUILD_SHA);
+      # IMAGE_VERSION is empty for local builds → the stamp shows the SHA.
+      args:
+        IMAGE_VERSION: ${IMAGE_VERSION:-}
+        BUILD_SHA: ${BUILD_SHA:-}
     container_name: ldap-portal-frontend
     depends_on:
       - app
