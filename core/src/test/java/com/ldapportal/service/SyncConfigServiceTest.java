@@ -6,6 +6,7 @@ import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.dto.sync.SyncDeleteApproval;
 import com.ldapportal.dto.sync.SyncLinkRequest;
 import com.ldapportal.dto.sync.SyncPreviewAction;
+import com.ldapportal.dto.sync.SyncRecheckResult;
 import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.SyncLink;
@@ -245,6 +246,55 @@ class SyncConfigServiceTest {
         assertThatThrownBy(() -> service.createSet(noScope))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("source scope base DN");
+    }
+
+    @Test
+    void recheckTarget_forgetsAppliedContent_andRequestsAReconcile() {
+        UUID setId = UUID.randomUUID();
+        UUID linkId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setEnabled(true);
+        set.setLinkId(linkId);
+        SyncLink link = new SyncLink();
+        link.setEnabled(true);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+        when(membershipRepo.forgetAppliedContent(eq(setId), any())).thenReturn(4741);
+
+        SyncRecheckResult result = service.recheckTarget(setId, "alice");
+
+        assertThat(result.entries()).isEqualTo(4741);
+        assertThat(result.reconcileQueued()).isTrue();
+        verify(setRepo).requestReconcileOfSet(setId);
+    }
+
+    @Test
+    void recheckTarget_onADisabledSetOrLink_waitsForThemToBeEnabled() {
+        UUID setId = UUID.randomUUID();
+        UUID linkId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setLinkId(linkId);
+        set.setEnabled(false);
+        SyncLink link = new SyncLink();
+        link.setEnabled(true);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        org.mockito.Mockito.lenient().when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+
+        assertThat(service.recheckTarget(setId, "alice").reconcileQueued()).isFalse();
+
+        set.setEnabled(true);
+        link.setEnabled(false);
+        assertThat(service.recheckTarget(setId, "alice").reconcileQueued()).isFalse();
+    }
+
+    @Test
+    void recheckTarget_unknownSet_isNotFound() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.recheckTarget(setId, "alice"))
+                .isInstanceOf(com.ldapportal.exception.ResourceNotFoundException.class);
+        verify(membershipRepo, never()).forgetAppliedContent(any(), any());
     }
 
     @Test

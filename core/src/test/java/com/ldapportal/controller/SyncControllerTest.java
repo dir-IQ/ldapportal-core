@@ -10,6 +10,7 @@ import com.ldapportal.dto.sync.SyncDeleteApproval;
 import com.ldapportal.dto.sync.SyncLinkRequest;
 import com.ldapportal.dto.sync.SyncLinkResponse;
 import com.ldapportal.dto.sync.SyncPreviewAction;
+import com.ldapportal.dto.sync.SyncRecheckResult;
 import com.ldapportal.dto.sync.SyncReconcileRunDetail;
 import com.ldapportal.dto.sync.SyncReconcileRunResponse;
 import com.ldapportal.dto.sync.SyncRunFailureReason;
@@ -239,6 +240,21 @@ class SyncControllerTest extends BaseControllerTest {
     @Test
     void reconcileRuns_adminRole_returns403() throws Exception {
         mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void recheckTarget_superadmin_returnsResult() throws Exception {
+        given(service.recheckTarget(SET, "superadmin")).willReturn(new SyncRecheckResult(4741, true));
+        mockMvc.perform(post(SETS + "/" + SET + "/recheck-target").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.entries").value(4741))
+                .andExpect(jsonPath("$.reconcileQueued").value(true));
+    }
+
+    @Test
+    void recheckTarget_adminRole_returns403() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/recheck-target").with(authentication(adminAuth())))
                 .andExpect(status().isForbidden());
     }
 

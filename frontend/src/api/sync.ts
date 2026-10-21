@@ -344,6 +344,20 @@ export const listMemberships = (setId: string, query: MembershipQuery = {}) =>
   client.get<Page<Membership>>(`/superadmin/sync/sets/${setId}/memberships`, { params: query })
 export const reconcileSet = (setId: string) =>
   client.post<{ enumerated: number }>(`/superadmin/sync/sets/${setId}/reconcile`)
+
+/**
+ * Result of a target re-check: how many applied entries the next reconcile will
+ * re-read, and whether that reconcile was queued (false while the set or its
+ * link is disabled).
+ */
+export interface SyncRecheckResult {
+  entries: number
+  reconcileQueued: boolean
+}
+
+/** Re-check the target (e.g. after a restore from backup): the next reconcile re-reads every applied entry. */
+export const recheckTarget = (setId: string) =>
+  client.post<SyncRecheckResult>(`/superadmin/sync/sets/${setId}/recheck-target`)
 export const recomputeKey = (setId: string, key: string) =>
   client.post(`/superadmin/sync/sets/${setId}/recompute`, { key })
 export const dismissMembership = (setId: string, identity: string) =>

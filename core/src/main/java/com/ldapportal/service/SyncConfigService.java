@@ -394,6 +394,27 @@ public class SyncConfigService {
         return enumerated;
     }
 
+    /**
+     * Re-check the set's target, e.g. after it was restored from a backup: forget
+     * what the set last wrote for each applied entry, so the next reconcile reads
+     * every target entry and re-applies the ones that no longer match, then ask
+     * for that reconcile. Writes nothing to the directories itself. The
+     * reconcile runs on the scheduler's next tick, under the set's reconcile
+     * lease; a reconcile already running finishes first and the requested one
+     * follows it.
+     */
+    public com.ldapportal.dto.sync.SyncRecheckResult recheckTarget(UUID syncSetId, String requestedBy) {
+        SyncSet set = requireSet(syncSetId);
+        int entries = membershipRepo.forgetAppliedContent(syncSetId, new byte[0]);
+        setRepo.requestReconcileOfSet(syncSetId);
+        log.info("Sync set {}: target re-check requested by {}; {} applied entries will be re-read",
+                syncSetId, requestedBy, entries);
+        // A reconcile only runs for an enabled set on an enabled link.
+        boolean willRun = set.isEnabled()
+                && linkRepo.findById(set.getLinkId()).map(SyncLink::isEnabled).orElse(false);
+        return new com.ldapportal.dto.sync.SyncRecheckResult(entries, willRun);
+    }
+
     /** Everything recorded about one reconcile run of the set (404 when it isn't one of the set's runs). */
     public com.ldapportal.dto.sync.SyncReconcileRunDetail reconcileRun(UUID syncSetId, UUID runId) {
         requireSet(syncSetId);
