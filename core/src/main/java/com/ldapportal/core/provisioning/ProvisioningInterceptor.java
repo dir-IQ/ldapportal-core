@@ -75,4 +75,17 @@ public interface ProvisioningInterceptor {
                                         String memberAttribute,
                                         String memberValue,
                                         ProvisioningContext ctx);
+
+    /**
+     * Plan a group delete. Vendor-aware interceptors use this to remove
+     * their own record of the group alongside it — e.g. ISVA deleting the
+     * group's secGroup registration under the management DIT, which
+     * otherwise points at a group that no longer exists. A default method
+     * so interceptors with nothing to add keep the baseline single DEL.
+     */
+    default DeletePlan planGroupDelete(DirectoryConnection dir,
+                                       String groupDn,
+                                       ProvisioningContext ctx) {
+        return BaselinePlans.groupDelete(groupDn);
+    }
 }

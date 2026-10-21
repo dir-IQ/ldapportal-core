@@ -224,11 +224,39 @@ API: `GET /api/v1/directories/{id}/isva-group?dn=…` (status, `group.read`),
 groups are imported, `group.read`), and `POST …/isva-group/import?dn=…` with
 an optional `{"name": "…"}` body (`group.edit`).
 
-Not covered yet:
-- **Removing a registration.** This is the equivalent of
-  `pdadmin group delete` without `-registry`; use `pdadmin`.
-- **Deleting a group in LDAP Portal** doesn't remove its registration
-  entry; remove it with `pdadmin group delete`.
+**Remove from IVIA**, on an imported group's row, does the reverse: it
+deletes the group's registration entry, as `pdadmin group delete` without
+`-registry` does, after a confirmation.
+
+- **What changes:** IVIA stops treating the group as a group. Access rules
+  that name it stop applying, and its members no longer get it at sign-in.
+- **What doesn't change:** the LDAP group and its members.
+- **Re-importing:** the group can be imported again later. The new
+  registration gets a new `secUUID`, so access rules that named the group may
+  need to name it again.
+- **Which entry is removed:** the one whose `secDN` points at the group,
+  whatever its name, so a registration `pdadmin` made under another name is
+  found too.
+- **Refusals and API:** removing a group that isn't imported is refused with
+  `ivia_group_not_imported`. API: `POST …/isva-group/remove?dn=…`
+  (`group.edit`).
+- **Audit:** recorded as `group.update` with `ivia_op = group_remove` and
+  `registrationDn`.
+
+**Deleting an imported group** in LDAP Portal removes its registration entry
+too, so IVIA isn't left with a registration pointing at a group that no
+longer exists. The delete confirmation says so.
+
+- **Order:** the group is deleted first. If that fails, the registration is
+  left alone.
+- **Best-effort:** if the registration can't be removed afterwards (for
+  example, the bind account has no rights on the management DIT), the group
+  delete still succeeds and a warning is logged. Remove the leftover entry
+  with `pdadmin group delete`.
+- **Audit:** the `group.delete` record lists the registration in
+  `relatedDeletes`.
+- **When it applies:** whenever the integration is enabled and a group
+  container is configured, in both inline and linked topology.
 
 ## Verifying it works
 

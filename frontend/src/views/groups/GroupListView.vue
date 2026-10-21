@@ -106,6 +106,8 @@
           { label: 'Members', onClick: () => openMembers(row as unknown as GroupRow), hidden: !can.viewMembers },
           { label: `Import into ${IVIA_ABBR}`, onClick: () => openIviaImport(row as unknown as GroupRow),
             hidden: !canImportIntoIvia(row as unknown as GroupRow) },
+          { label: `Remove from ${IVIA_ABBR}`, onClick: () => removeFromIvia(row as unknown as GroupRow),
+            danger: true, hidden: !canRemoveFromIvia(row as unknown as GroupRow) },
           { label: 'Delete',  onClick: () => confirmDelete(row as unknown as GroupRow), danger: true, hidden: !can.createDelete },
         ]">
           <template #primary>
@@ -254,7 +256,7 @@
       </ul>
     </AppModal>
 
-    <ConfirmDialog v-model="showDelete" title="Delete Group" :message="`Delete '${deleteTarget?.dn}'?`" confirm-label="Delete" danger @confirm="doDelete" />
+    <ConfirmDialog v-model="showDelete" title="Delete Group" :message="`Delete '${deleteTarget?.dn}'?` + (deleteTarget && isIviaImported(deleteTarget.dn) ? ` Its ${IVIA_ABBR} registration is removed too.` : '')" confirm-label="Delete" danger @confirm="doDelete" />
   </div>
 </template>
 
@@ -281,7 +283,8 @@ import { validateDn } from '@/utils/attributeValidation'
 import { resolveGroupMembers, type MemberAttr } from '@/utils/groupMembers'
 import ProfilePill from '@/components/ProfilePill.vue'
 import { useAuthStore } from '@/stores/auth'
-import { getIsvaGroupRegistrations, importIsvaGroup } from '@/api/isvaGroup'
+import { getIsvaGroupRegistrations, importIsvaGroup, removeIsvaGroup } from '@/api/isvaGroup'
+import { useConfirm } from '@/composables/useConfirm'
 import { IVIA_ABBR, IVIA_NAME } from '@/constants/productNames'
 
 interface ProfileLite {
@@ -387,6 +390,36 @@ function isIviaImported(dn: string): boolean {
 
 function canImportIntoIvia(row: GroupRow): boolean {
   return can.value.edit && ivia.value?.enabled === true && ivia.value.canImport && !isIviaImported(row.dn)
+}
+
+function canRemoveFromIvia(row: GroupRow): boolean {
+  return can.value.edit && ivia.value?.enabled === true && isIviaImported(row.dn)
+}
+
+const confirm = useConfirm()
+
+/** Deletes the group's IVIA registration, as pdadmin group delete (without -registry) does. */
+async function removeFromIvia(row: GroupRow): Promise<void> {
+  const name = row.cn || row.dn
+  const ok = await confirm({
+    title: `Remove from ${IVIA_ABBR}`,
+    message: `Remove "${name}" from ${IVIA_NAME}?\n\n`
+      + `${IVIA_ABBR} stops treating it as a group: access rules that name it stop applying, and its `
+      + `members no longer get it at sign-in.\n\n`
+      + 'The LDAP group and its members are not changed, and you can import it again later '
+      + `(access rules that named it may need to name it again).`,
+    confirmLabel: `Remove from ${IVIA_ABBR}`,
+    danger: true,
+  })
+  if (!ok) return
+  try {
+    await removeIsvaGroup(dirId, row.dn)
+    ivia.value?.imported.delete(dnKey(row.dn))
+    notif.success(`Removed ${name} from ${IVIA_ABBR}`)
+  } catch (e) {
+    const err = e as { response?: { data?: { detail?: string } }, message?: string }
+    notif.error(err.response?.data?.detail || err.message || `Remove from ${IVIA_ABBR} failed`)
+  }
 }
 
 async function loadIviaRegistrations(): Promise<void> {

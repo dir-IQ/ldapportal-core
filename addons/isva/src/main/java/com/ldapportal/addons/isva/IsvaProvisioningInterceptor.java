@@ -19,6 +19,7 @@ import com.ldapportal.core.provisioning.PasswordSetPayload;
 import com.ldapportal.core.provisioning.ProvisioningContext;
 import com.ldapportal.core.provisioning.ProvisioningInterceptor;
 import com.ldapportal.core.provisioning.ProvisioningRefusedException;
+import com.ldapportal.core.provisioning.StepFailurePolicy;
 import com.ldapportal.core.provisioning.UserCreatePayload;
 import com.ldapportal.core.provisioning.UserCreatePlan;
 import com.ldapportal.entity.DirectoryConnection;
@@ -371,6 +372,33 @@ public class IsvaProvisioningInterceptor implements ProvisioningInterceptor {
                             + ". Refusing the membership add; repair the orphan first.");
         }
         return BaselinePlans.groupMembership(groupDn, memberAttribute, secUserDn.get());
+    }
+
+    /**
+     * Group delete removes the group's IVIA registration too — the
+     * secGroup entry under the group container whose {@code secDN} points
+     * at the group — so IVIA isn't left with a registration for a group
+     * that no longer exists. The group goes first: if its DEL fails the
+     * registration is untouched. The registration DEL is best-effort
+     * ({@code CONTINUE}): failing to remove it (already gone, no rights on
+     * the management DIT) doesn't fail the delete the admin asked for. No
+     * registration found, or none to look in, is the baseline single DEL.
+     */
+    @Override
+    public DeletePlan planGroupDelete(DirectoryConnection dir,
+                                      String groupDn,
+                                      ProvisioningContext ctx) {
+        VendorIntegrationIsvaConfig cfg = activeConfigOrNull(dir);
+        if (cfg == null || isExempt(ctx)) {
+            return BaselinePlans.groupDelete(groupDn);
+        }
+        Optional<String> registrationDn = groupShapeCheck.findRegistrationDn(dir, cfg, groupDn);
+        if (registrationDn.isEmpty()) {
+            return BaselinePlans.groupDelete(groupDn);
+        }
+        return new DeletePlan(List.of(
+                DeleteStep.of(groupDn),
+                new DeleteStep(registrationDn.get(), StepFailurePolicy.CONTINUE)));
     }
 
     // ── helpers ──────────────────────────────────────────────────────

@@ -3,6 +3,8 @@ package com.ldapportal.addons.isva.service;
 
 import com.ldapportal.addons.isva.IsvaGroupRegistry;
 import com.ldapportal.addons.isva.IsvaGroupShapeCheck;
+import com.ldapportal.addons.isva.IsvaProvisioningInterceptor;
+import com.ldapportal.addons.isva.IsvaSecUserPlans;
 import com.ldapportal.addons.isva.dto.IsvaGroupRegistrations;
 import com.ldapportal.addons.isva.dto.IsvaGroupStatus;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
@@ -11,12 +13,14 @@ import com.ldapportal.addons.isva.repository.VendorIntegrationIsvaConfigReposito
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.core.provisioning.PlanExecutor;
+import com.ldapportal.core.provisioning.ProvisioningInterceptorChain;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapConnectionFactory;
+import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.service.AuditService;
 import com.ldapportal.service.EncryptionService;
@@ -69,6 +73,7 @@ class IsvaGroupImportIntegrationTest {
     @Mock private DirectoryConnectionRepository dirRepo;
     @Mock private VendorIntegrationIsvaConfigRepository configRepo;
     @Mock private AuditService auditService;
+    @Mock private IsvaProfileOverrideService overrideService;
 
     private InMemoryDirectoryServer server;
     private LdapConnectionFactory connectionFactory;
@@ -197,6 +202,58 @@ class IsvaGroupImportIntegrationTest {
 
         assertThatThrownBy(() -> service.importGroup(dir.getId(), "cn=nope,o=groups,c=us", null, admin))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void remove_deletesOnlyTheRegistration_andTheGroupCanBeImportedAgain() throws Exception {
+        service.importGroup(dir.getId(), GROUP_DN, null, admin);
+        Entry before = server.getEntry(GROUP_DN);
+        String regDn = "cn=Engineers," + GROUP_CONTAINER;
+
+        IsvaGroupStatus status = service.removeGroup(dir.getId(), GROUP_DN, admin);
+
+        assertThat(status).isEqualTo(new IsvaGroupStatus(false, null, true, "Engineers"));
+        assertThat(server.getEntry(regDn)).isNull();
+        assertThat(server.getEntry(GROUP_DN)).isEqualTo(before);
+        verify(auditService).record(eq(admin), eq(dir.getId()), eq(AuditAction.GROUP_UPDATE), eq(GROUP_DN),
+                eq(Map.of("source", "ivia", "ivia_op", "group_remove", "registrationDn", regDn)));
+
+        assertThat(service.importGroup(dir.getId(), GROUP_DN, null, admin).registered()).isTrue();
+    }
+
+    @Test
+    void deletingTheGroup_alsoDeletesItsRegistration() throws Exception {
+        service.importGroup(dir.getId(), GROUP_DN, null, admin);
+        String regDn = "cn=Engineers," + GROUP_CONTAINER;
+        IsvaProvisioningInterceptor interceptor = new IsvaProvisioningInterceptor(configRepo, null,
+                overrideService, new IsvaSecUserPlans(), new IsvaGroupShapeCheck(connectionFactory, registry));
+        LdapGroupService groups = new LdapGroupService(connectionFactory,
+                new ProvisioningInterceptorChain(List.of(interceptor)), new PlanExecutor(connectionFactory));
+
+        assertThat(groups.deleteGroup(dir, GROUP_DN)).containsExactly(regDn);
+
+        assertThat(server.getEntry(GROUP_DN)).isNull();
+        assertThat(server.getEntry(regDn)).isNull();
+    }
+
+    @Test
+    void remove_ofAGroupThatIsNotImported_isRefused() {
+        assertThatThrownBy(() -> service.removeGroup(dir.getId(), GROUP_DN, admin))
+                .isInstanceOfSatisfying(IsvaAccountRefusalException.class,
+                        e -> assertThat(e.getCode()).isEqualTo("ivia_group_not_imported"));
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void remove_findsARegistrationPdadminMadeUnderAnotherName() throws Exception {
+        server.add(new Entry("cn=eng_team," + GROUP_CONTAINER, new Attribute("objectClass", "top", "secGroup"),
+                new Attribute("cn", "eng_team"), new Attribute("secAuthority", "Default"),
+                new Attribute("secDN", GROUP_DN), new Attribute("secHasPolicy", "FALSE"),
+                new Attribute("secUUID", UUID.randomUUID().toString())));
+
+        service.removeGroup(dir.getId(), GROUP_DN, admin);
+
+        assertThat(server.getEntry("cn=eng_team," + GROUP_CONTAINER)).isNull();
     }
 
     @Test

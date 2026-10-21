@@ -69,6 +69,27 @@ public class IsvaGroupShapeCheck {
         return Optional.empty();
     }
 
+    /**
+     * DN of the group's IVIA registration entry, when there's a group
+     * container to look in and one points at the group. A failed lookup
+     * reads as "none" (logged) — callers use this for best-effort cleanup.
+     */
+    public Optional<String> findRegistrationDn(DirectoryConnection dir,
+                                               VendorIntegrationIsvaConfig cfg,
+                                               String groupDn) {
+        String container = cfg.effectiveGroupContainerDn();
+        if (container == null) {
+            return Optional.empty();
+        }
+        try {
+            return registry.findRegistrationDn(dir, container, groupDn);
+        } catch (RuntimeException e) {
+            log.warn("Could not look up the IVIA registration of {} under {}: {}",
+                    groupDn, container, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
     public Optional<Boolean> hasObjectClass(DirectoryConnection dir,
                                             String groupDn,
                                             String objectClass) {

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap;
 
+import com.ldapportal.core.provisioning.DeletePlan;
 import com.ldapportal.core.provisioning.GroupMemberPlan;
+import com.ldapportal.core.provisioning.LdapOperationStep;
 import com.ldapportal.core.provisioning.PlanExecutor;
 import com.ldapportal.core.provisioning.ProvisioningContext;
 import com.ldapportal.core.provisioning.ProvisioningInterceptorChain;
@@ -223,15 +225,21 @@ public class LdapGroupService {
     // ── Delete ────────────────────────────────────────────────────────────────
 
     /**
-     * Deletes the group entry at {@code dn}.
+     * Deletes the group entry at {@code dn}. Routed through the interceptor
+     * chain so a vendor-aware interceptor can remove its own record of the
+     * group alongside it (e.g. ISVA's secGroup registration).
+     *
+     * @return the DNs other than {@code dn} the plan deleted or tried to
+     *         delete (best-effort steps), empty for the baseline plan
      */
-    public void deleteGroup(DirectoryConnection dc, String dn) {
-        connectionFactory.withConnection(dc, conn -> {
-            LDAPResult result = conn.delete(dn);
-            checkResult(result, "deleteGroup", dn);
-            log.info("Deleted LDAP group {}", dn);
-            return null;
-        });
+    public List<String> deleteGroup(DirectoryConnection dc, String dn) {
+        DeletePlan plan = interceptors.planGroupDelete(dc, dn, ProvisioningContext.empty());
+        planExecutor.execute(dc, plan);
+        log.info("Deleted LDAP group {}", dn);
+        return plan.steps().stream()
+                .map(LdapOperationStep::targetDn)
+                .filter(target -> !target.equalsIgnoreCase(dn))
+                .toList();
     }
 
     /**

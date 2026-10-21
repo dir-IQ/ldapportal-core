@@ -849,8 +849,9 @@ public class LdapOperationService {
         DirectoryConnection dc = loadDirectory(directoryId, principal);
         permissionService.requireDnWithinScope(principal, directoryId, dn);
 
-        groupService.deleteGroup(dc, dn);
-        auditService.record(principal, directoryId, AuditAction.GROUP_DELETE, dn, null);
+        List<String> relatedDeletes = groupService.deleteGroup(dc, dn);
+        auditService.record(principal, directoryId, AuditAction.GROUP_DELETE, dn,
+                relatedDeletes.isEmpty() ? null : Map.of("relatedDeletes", relatedDeletes));
     }
 
     public void addGroupMember(UUID directoryId, AuthPrincipal principal,
