@@ -89,7 +89,7 @@ public class IsvaOrphanedAccountsReportProvider implements OperationalReportProv
 
         connectionFactory.withConnection(dir, conn -> {
             SearchRequest req = new SearchRequest(
-                    cfg.getManagementDitBaseDn(),
+                    cfg.effectiveUserContainerDn(),
                     SearchScope.SUB,
                     Filter.createEqualityFilter("objectClass", "secUser"),
                     SEC_ATTRS);
@@ -101,7 +101,7 @@ public class IsvaOrphanedAccountsReportProvider implements OperationalReportProv
             } catch (LDAPException e) {
                 throw new LdapOperationException(
                         "Orphaned-IVIA scan failed: secUser search under "
-                                + cfg.getManagementDitBaseDn() + " errored", e);
+                                + cfg.effectiveUserContainerDn() + " errored", e);
             }
 
             for (SearchResultEntry secUser : result.getSearchEntries()) {
@@ -174,7 +174,7 @@ public class IsvaOrphanedAccountsReportProvider implements OperationalReportProv
         if (cfg.getTopologyMode() != IsvaTopologyMode.LINKED) {
             return null;
         }
-        if (cfg.getManagementDitBaseDn() == null || cfg.getManagementDitBaseDn().isBlank()) {
+        if (cfg.effectiveUserContainerDn() == null || cfg.effectiveUserContainerDn().isBlank()) {
             return null;
         }
         return cfg;

@@ -236,9 +236,9 @@ class IsvaConfigControllerTest {
     }
 
     @Test
-    void upsert_topologyFlipFromLinkedToInline_clearsManagementDit() {
-        // Existing row is LINKED; PUT with INLINE should null out
-        // the linked-mode fields so a stale base DN doesn't linger.
+    void upsert_topologyFlipFromLinkedToInline_withoutAManagementDit_clearsIt() {
+        // Existing row is LINKED; a PUT is a full replace, so an INLINE
+        // request that omits the management DIT leaves none behind.
         VendorIntegrationIsvaConfig existing = new VendorIntegrationIsvaConfig();
         existing.setDirectoryConnectionId(directoryId);
         existing.setEnabled(true);
@@ -261,6 +261,39 @@ class IsvaConfigControllerTest {
                 ArgumentCaptor.forClass(VendorIntegrationIsvaConfig.class);
         verify(configRepo).saveAndFlush(captor.capture());
         assertThat(captor.getValue().getManagementDitBaseDn()).isNull();
+    }
+
+    @Test
+    void upsert_inline_keepsAManagementDit_andTheContainers_forGroupImport() {
+        when(configRepo.findById(directoryId)).thenReturn(Optional.empty());
+        when(configRepo.saveAndFlush(any(VendorIntegrationIsvaConfig.class)))
+                .thenAnswer(IsvaConfigControllerTest::saveAnswer);
+
+        UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
+                true, IsvaTopologyMode.INLINE, "Default", "Default", 100, false,
+                null, null, " secAuthority=Default,cn=treasury ", null, null, null, null,
+                null, "cn=Groups,secAuthority=Default,cn=treasury");
+
+        IsvaConfigDto body = controller.upsert(directoryId, null, principal, req).getBody();
+
+        assertThat(body).isNotNull();
+        assertThat(body.managementDitBaseDn()).isEqualTo("secAuthority=Default,cn=treasury");
+        assertThat(body.userContainerDn()).isNull();
+        assertThat(body.effectiveUserContainerDn()).isEqualTo("cn=Users,secAuthority=Default,cn=treasury");
+        assertThat(body.effectiveGroupContainerDn()).isEqualTo("cn=Groups,secAuthority=Default,cn=treasury");
+    }
+
+    @Test
+    void upsert_rejectsAContainerThatIsNotADn() {
+        UpsertIsvaConfigRequest req = new UpsertIsvaConfigRequest(
+                true, IsvaTopologyMode.LINKED, "Default", "Default", 100, false,
+                null, null, "secAuthority=Default,cn=treasury", null, null, null, null,
+                "not a dn", null);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> controller.upsert(directoryId, null, principal, req))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("userContainerDn");
     }
 
     @Test

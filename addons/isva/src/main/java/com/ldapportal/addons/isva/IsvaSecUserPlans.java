@@ -605,7 +605,7 @@ public class IsvaSecUserPlans {
             case GENERATED_UUID -> UUID.randomUUID().toString();
             case UID -> firstValueOrEmpty(payload.attributes().get("uid"));
         };
-        return rdnAttr + "=" + rdnValue + "," + cfg.getManagementDitBaseDn();
+        return rdnAttr + "=" + rdnValue + "," + cfg.effectiveUserContainerDn();
     }
 
     /**

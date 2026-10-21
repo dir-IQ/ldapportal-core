@@ -269,6 +269,7 @@ class IsvaUserReadEnricherTest {
         // tolerance is cheap.
         VendorIntegrationIsvaConfig cfg = enabledConfig(IsvaTopologyMode.LINKED);
         cfg.setManagementDitBaseDn(null);
+        cfg.setUserContainerDn(null);   // so no secUser container either
         when(configRepo.findById(dir.getId())).thenReturn(Optional.of(cfg));
 
         LdapUser alice = new LdapUser("uid=alice," + PEOPLE_OU,
@@ -289,6 +290,8 @@ class IsvaUserReadEnricherTest {
         cfg.setTopologyMode(mode);
         if (mode == IsvaTopologyMode.LINKED) {
             cfg.setManagementDitBaseDn(MGMT_BASE);
+            // secUser entries sit directly under this DIT in the fixture.
+            cfg.setUserContainerDn(MGMT_BASE);
         }
         return cfg;
     }
