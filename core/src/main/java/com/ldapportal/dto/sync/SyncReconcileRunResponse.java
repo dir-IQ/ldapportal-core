@@ -37,6 +37,12 @@ import java.util.UUID;
  * @param guardTripped   the delete guard held every delete for review
  * @param guardReason    why, when {@code guardTripped}
  * @param error          why the run failed, when FAILED
+ * @param instanceName   the app instance (host) that ran it
+ * @param plannedAt      when the source scan and plan finished (scan = plannedAt - startedAt)
+ * @param verifiedAt     when the content verification after the run ran, or {@code null}
+ * @param verifyMissing  members missing on the target after the run (with {@code verifiedAt})
+ * @param verifyOrphan   target entries with no source member after the run
+ * @param verifyMismatch entries whose content still differed after the run
  */
 public record SyncReconcileRunResponse(
         UUID id,
@@ -63,5 +69,11 @@ public record SyncReconcileRunResponse(
         int skipped,
         boolean guardTripped,
         String guardReason,
-        String error) {
+        String error,
+        String instanceName,
+        OffsetDateTime plannedAt,
+        OffsetDateTime verifiedAt,
+        Integer verifyMissing,
+        Integer verifyOrphan,
+        Integer verifyMismatch) {
 }

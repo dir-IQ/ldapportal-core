@@ -348,9 +348,20 @@ was in progress — the engine checks on every entry, so disabling mid-run stops
 the writes but the run still walks the rest of the plan. A running row
 heartbeats about every 15 s; one silent for
 `ldapportal.sync.reconcile.run-stale-after-ms` (default 15 min) belonged to a
-server that stopped and reads as `FAILED`. The newest 20 runs per set are kept;
+server that stopped and reads as `FAILED`. The newest
+`ldapportal.sync.reconcile.history-per-set` runs per set are kept (default 20);
 deleting the set removes them. A disabled or unavailable set's reconcile is a
 no-op and is not recorded.
+
+Each run also keeps: the **instance** (host name; `HOSTNAME`, i.e. the pod
+name under Kubernetes) that ran it; **when the plan was ready**, so scan time
+(start → plan) and apply time (plan → finish) are separate; the set's
+**settings and delete-guard limits** at run time; **failed and errored entries
+grouped by reason** (the reason up to its `—` detail, with a count and one full
+example); up to 25 **sample target DNs per outcome** (DNs only, no attribute
+values); and the **drift** found by the content verification that runs right
+after a scheduled or manual reconcile (missing / orphaned / content drift),
+when that verification's scans completed.
 
 **Target ownership:** a target DN has exactly one owning index row per set
 (`sync_membership` is unique on `(sync_set_id, target_dn)`). When an identity
@@ -431,8 +442,11 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   status, trigger, when it started and how long it took, its outcome counts,
   managed rows before → after, and warnings for an incomplete scan, a tripped
   delete guard, faulted entries, or entries skipped because the set was
-  disabled mid-run. **Recent runs** lists up to the last 10. Refreshes after
-  **Reconcile now**.
+  disabled mid-run, plus the instance that ran it, scan vs. apply time, and the
+  drift found right after it. **Recent runs** lists up to the last 10.
+  **Details** (or a click on a run) shows everything recorded about that run:
+  every count, failures grouped by reason, sample DNs per outcome, and the
+  settings it ran with. Refreshes after **Reconcile now**.
 - **Untracked search** — searching a DN/identity that isn't tracked offers
   `Recompute "<term>"` to pull it in on demand.
 - **Verify contents** — a belts-and-suspenders check that re-reads *both*
@@ -525,6 +539,7 @@ GET    /api/v1/superadmin/sync/sets/{id}/preview/entries?page=&size=&changesOnly
 GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source↔target compare (no writes)
 POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}; recorded as a MANUAL run
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs?limit=   # recent reconcile runs, newest first; limit 1..20 (default 10)
+GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}  # one run in full: summary, settings, failureReasons, samples (404 if not this set's run)
 POST   /api/v1/superadmin/sync/sets/{id}/recompute        # body {"key": "<dn-or-identity>"} → 202
 DELETE /api/v1/superadmin/sync/sets/{id}/memberships/{identity}   # dismiss ("stop tracking")
 POST   /api/v1/superadmin/sync/sets/{id}/memberships/{identity}/approve-delete   # approve a held delete → {"outcome": DELETE|FORGET|ERROR, "targetDn", …}; 400 if not a held delete, back in scope, or the set is disabled

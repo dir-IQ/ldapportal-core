@@ -128,4 +128,37 @@ public class SyncReconcileRun {
     /** Why the run aborted, when FAILED. */
     @Column(name = "error", columnDefinition = "TEXT")
     private String error;
+
+    /** The app instance (host) that ran it. */
+    @Column(name = "instance_name", columnDefinition = "TEXT")
+    private String instanceName;
+
+    /** When the source scan and plan finished; {@code null} until then. */
+    @Column(name = "planned_at")
+    private OffsetDateTime plannedAt;
+
+    /** The set's settings and delete-guard limits at run time, as JSON. */
+    @Column(name = "settings", columnDefinition = "TEXT")
+    private String settings;
+
+    /** Failed and faulted entries grouped by reason, as JSON. */
+    @Column(name = "failure_reasons", columnDefinition = "TEXT")
+    private String failureReasons;
+
+    /** Sample target DNs per outcome, as JSON. */
+    @Column(name = "samples", columnDefinition = "TEXT")
+    private String samples;
+
+    /** When the post-reconcile content verification ran; {@code null} when none was recorded. */
+    @Column(name = "verified_at")
+    private OffsetDateTime verifiedAt;
+
+    @Column(name = "verify_missing")
+    private Integer verifyMissing;
+
+    @Column(name = "verify_orphan")
+    private Integer verifyOrphan;
+
+    @Column(name = "verify_mismatch")
+    private Integer verifyMismatch;
 }

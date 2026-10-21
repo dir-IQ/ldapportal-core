@@ -191,6 +191,7 @@
  *   <li>{@code ldapportal.sync.reconcile.tick-ms} / {@code initial-delay-ms} — reconcile scheduler.</li>
  *   <li>{@code ldapportal.sync.reconcile.default-cadence-seconds} (default 3600) —
  *       per-set reconcile cadence fallback.</li>
+ *   <li>{@code ldapportal.sync.reconcile.history-per-set} (default 20) — reconcile runs kept per set.</li>
  *   <li>{@code ldapportal.sync.reconcile.run-stale-after-ms} (default 900000) — a recorded
  *       reconcile run silent this long reads as interrupted ({@code SyncReconcileHistory}).</li>
  *   <li>{@code ldapportal.sync.preview.parallelism} (default 2),

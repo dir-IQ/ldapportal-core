@@ -97,10 +97,11 @@ public class RecomputeEngine {
      *                        reconciler's blast-radius / zero-enumeration guards
      *                        so a misconfiguration can't mass-delete.
      * @return what the recompute did to the entry (in the preview's vocabulary,
-     *         {@code ERROR} for a failed write), or {@code null} when it was skipped
-     *         because the set or link is disabled or a directory is missing
+     *         {@code ERROR} for a failed write) and its target DN, or {@code null}
+     *         when it was skipped because the set or link is disabled or a
+     *         directory is missing
      */
-    public SyncPreviewAction process(UUID syncSetId, String key, boolean suppressDeletes) {
+    public RecomputeOutcome process(UUID syncSetId, String key, boolean suppressDeletes) {
         SyncSet set = syncSetRepo.findById(syncSetId).orElse(null);
         if (set == null || !set.isEnabled()) {
             return null;
@@ -220,7 +221,7 @@ public class RecomputeEngine {
      *
      * @return what was done to the entry ({@code UNCHANGED} for the no-op)
      */
-    private SyncPreviewAction processOnce(SyncSet set, SyncLink link, DirectoryConnection source,
+    private RecomputeOutcome processOnce(SyncSet set, SyncLink link, DirectoryConnection source,
                              DirectoryConnection target, IdentityStrategy strategy, String key,
                              boolean suppressDeletes) {
         // ── Resolve the current source entry and the identity ──
@@ -247,7 +248,7 @@ public class RecomputeEngine {
         }
         if (identity == null || identity.isBlank()) {
             // Absent and never tracked — nothing to do.
-            return SyncPreviewAction.UNCHANGED;
+            return new RecomputeOutcome(SyncPreviewAction.UNCHANGED, null, null);
         }
 
         Membership current = membershipRepo.findById(new MembershipId(set.getId(), identity)).orElse(null);
@@ -265,7 +266,10 @@ public class RecomputeEngine {
         if (changed && changedSourceDn != null) {
             closureResolver.fanOut(link, changedSourceDn);
         }
-        return rec.outcome();
+        String fallbackDn = decision.member() ? decision.targetDn()
+                : (current != null ? current.getTargetDn() : null);
+        return new RecomputeOutcome(rec.outcome(), rec.outcomeDn != null ? rec.outcomeDn : fallbackDn,
+                rec.outcomeReason);
     }
 
     /**
@@ -725,6 +729,10 @@ public class RecomputeEngine {
         private boolean failed;
         private boolean applied;
         private boolean droppedRow;
+        /** The target DN the last effective write or index transition named. */
+        private String outcomeDn;
+        /** Why the entry was held or failed. */
+        private String outcomeReason;
 
         @Override
         public Entry readTarget(DirectoryConnection target, String dn) {
@@ -734,7 +742,10 @@ public class RecomputeEngine {
         @Override
         public ApplyOutcome add(DirectoryConnection target, String dn, List<Attribute> attrs) {
             ApplyOutcome res = live.add(target, dn, attrs);
-            added |= LdapResultInterpreter.success(res.code());
+            if (LdapResultInterpreter.success(res.code())) {
+                added = true;
+                outcomeDn = dn;
+            }
             return res;
         }
 
@@ -748,14 +759,20 @@ public class RecomputeEngine {
         @Override
         public ApplyOutcome modifyDn(DirectoryConnection target, String oldDn, String newDn) {
             ApplyOutcome res = live.modifyDn(target, oldDn, newDn);
-            moved |= LdapResultInterpreter.success(res.code());
+            if (LdapResultInterpreter.success(res.code())) {
+                moved = true;
+                outcomeDn = newDn;
+            }
             return res;
         }
 
         @Override
         public ApplyOutcome delete(DirectoryConnection target, String dn) {
             ApplyOutcome res = live.delete(target, dn);
-            deleted |= LdapResultInterpreter.deleteConverged(res.code());
+            if (LdapResultInterpreter.deleteConverged(res.code())) {
+                deleted = true;
+                outcomeDn = dn;
+            }
             return res;
         }
 
@@ -764,6 +781,7 @@ public class RecomputeEngine {
                             Membership current) {
             live.applied(set, identity, sourceDn, targetDn, hash, current);
             applied = true;
+            outcomeDn = targetDn;
         }
 
         @Override
@@ -771,6 +789,8 @@ public class RecomputeEngine {
                            String reason) {
             live.review(set, identity, sourceDn, targetDn, hash, reason);
             held = true;
+            outcomeDn = targetDn;
+            outcomeReason = reason;
         }
 
         @Override
@@ -778,6 +798,8 @@ public class RecomputeEngine {
                            String reason) {
             live.failed(set, identity, sourceDn, targetDn, hash, reason);
             failed = true;
+            outcomeDn = targetDn;
+            outcomeReason = reason;
         }
 
         @Override

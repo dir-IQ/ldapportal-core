@@ -187,6 +187,8 @@ class SyncConfigServiceTest {
         assertThat(enumerated).isEqualTo(42);
         // A manual reconcile must refresh the cached drift, else the dashboard stays stale.
         verify(setRepo).recordVerifyResult(eq(setId), any(), eq(2), eq(1), eq(0));
+        // ...and record it on the run it follows.
+        verify(reconcileHistory).recordDrift(setId, 2, 1, 0);
     }
 
     @Test

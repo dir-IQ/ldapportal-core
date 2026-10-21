@@ -104,6 +104,18 @@ public class SyncSetController {
      * The set's most recent reconcile runs, newest first: trigger, scan
      * completeness, and per-outcome counts (no attribute values).
      */
+    /**
+     * Everything recorded about one reconcile run: its counts and timing, the
+     * instance that ran it, the set's settings at the time, failures grouped by
+     * reason, sample target DNs per outcome (DNs only), and the drift found by
+     * the verification after it.
+     */
+    @GetMapping("/{id}/reconcile-runs/{runId}")
+    public com.ldapportal.dto.sync.SyncReconcileRunDetail reconcileRun(@PathVariable UUID id,
+                                                                     @PathVariable UUID runId) {
+        return service.reconcileRun(id, runId);
+    }
+
     @GetMapping("/{id}/reconcile-runs")
     public List<com.ldapportal.dto.sync.SyncReconcileRunResponse> reconcileRuns(
             @PathVariable UUID id, @RequestParam(defaultValue = "10") int limit) {
