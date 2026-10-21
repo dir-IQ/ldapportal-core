@@ -256,7 +256,7 @@
       </ul>
     </AppModal>
 
-    <ConfirmDialog v-model="showDelete" title="Delete Group" :message="`Delete '${deleteTarget?.dn}'?`" confirm-label="Delete" danger @confirm="doDelete" />
+    <ConfirmDialog v-model="showDelete" title="Delete Group" :message="`Delete '${deleteTarget?.dn}'?` + (deleteTarget && isIviaImported(deleteTarget.dn) ? ` Its ${IVIA_ABBR} registration is removed too.` : '')" confirm-label="Delete" danger @confirm="doDelete" />
   </div>
 </template>
 

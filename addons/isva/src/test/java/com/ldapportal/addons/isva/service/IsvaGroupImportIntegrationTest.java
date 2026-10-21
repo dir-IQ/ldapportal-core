@@ -3,6 +3,8 @@ package com.ldapportal.addons.isva.service;
 
 import com.ldapportal.addons.isva.IsvaGroupRegistry;
 import com.ldapportal.addons.isva.IsvaGroupShapeCheck;
+import com.ldapportal.addons.isva.IsvaProvisioningInterceptor;
+import com.ldapportal.addons.isva.IsvaSecUserPlans;
 import com.ldapportal.addons.isva.dto.IsvaGroupRegistrations;
 import com.ldapportal.addons.isva.dto.IsvaGroupStatus;
 import com.ldapportal.addons.isva.entity.IsvaTopologyMode;
@@ -11,12 +13,14 @@ import com.ldapportal.addons.isva.repository.VendorIntegrationIsvaConfigReposito
 import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.PrincipalType;
 import com.ldapportal.core.provisioning.PlanExecutor;
+import com.ldapportal.core.provisioning.ProvisioningInterceptorChain;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapConnectionFactory;
+import com.ldapportal.ldap.LdapGroupService;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.service.AuditService;
 import com.ldapportal.service.EncryptionService;
@@ -69,6 +73,7 @@ class IsvaGroupImportIntegrationTest {
     @Mock private DirectoryConnectionRepository dirRepo;
     @Mock private VendorIntegrationIsvaConfigRepository configRepo;
     @Mock private AuditService auditService;
+    @Mock private IsvaProfileOverrideService overrideService;
 
     private InMemoryDirectoryServer server;
     private LdapConnectionFactory connectionFactory;
@@ -214,6 +219,21 @@ class IsvaGroupImportIntegrationTest {
                 eq(Map.of("source", "ivia", "ivia_op", "group_remove", "registrationDn", regDn)));
 
         assertThat(service.importGroup(dir.getId(), GROUP_DN, null, admin).registered()).isTrue();
+    }
+
+    @Test
+    void deletingTheGroup_alsoDeletesItsRegistration() throws Exception {
+        service.importGroup(dir.getId(), GROUP_DN, null, admin);
+        String regDn = "cn=Engineers," + GROUP_CONTAINER;
+        IsvaProvisioningInterceptor interceptor = new IsvaProvisioningInterceptor(configRepo, null,
+                overrideService, new IsvaSecUserPlans(), new IsvaGroupShapeCheck(connectionFactory, registry));
+        LdapGroupService groups = new LdapGroupService(connectionFactory,
+                new ProvisioningInterceptorChain(List.of(interceptor)), new PlanExecutor(connectionFactory));
+
+        assertThat(groups.deleteGroup(dir, GROUP_DN)).containsExactly(regDn);
+
+        assertThat(server.getEntry(GROUP_DN)).isNull();
+        assertThat(server.getEntry(regDn)).isNull();
     }
 
     @Test

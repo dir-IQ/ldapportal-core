@@ -243,9 +243,20 @@ deletes the group's registration entry, as `pdadmin group delete` without
 - **Audit:** recorded as `group.update` with `ivia_op = group_remove` and
   `registrationDn`.
 
-Not covered yet: **deleting a group in LDAP Portal** doesn't remove its
-registration entry. Remove it first (or afterwards with
-`pdadmin group delete`).
+**Deleting an imported group** in LDAP Portal removes its registration entry
+too, so IVIA isn't left with a registration pointing at a group that no
+longer exists. The delete confirmation says so.
+
+- **Order:** the group is deleted first. If that fails, the registration is
+  left alone.
+- **Best-effort:** if the registration can't be removed afterwards (for
+  example, the bind account has no rights on the management DIT), the group
+  delete still succeeds and a warning is logged. Remove the leftover entry
+  with `pdadmin group delete`.
+- **Audit:** the `group.delete` record lists the registration in
+  `relatedDeletes`.
+- **When it applies:** whenever the integration is enabled and a group
+  container is configured, in both inline and linked topology.
 
 ## Verifying it works
 
