@@ -48,6 +48,12 @@ public interface SyncSetRepository extends JpaRepository<SyncSet, UUID> {
             + "where s.linkId = :linkId and s.enabled = true")
     int requestReconcile(@Param("linkId") UUID linkId);
 
+    /** Ask for a reconcile of one set (see {@link #requestReconcile}); runs once the set is enabled. */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.reconcileRequestSeq = s.reconcileRequestSeq + 1 where s.id = :id")
+    int requestReconcileOfSet(@Param("id") UUID id);
+
     /**
      * Record that a reconcile which loaded {@code requestSeq} at its start has
      * finished: always as attempted, and as handled only when its source

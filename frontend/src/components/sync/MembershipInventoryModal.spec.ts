@@ -24,6 +24,7 @@ const page = (content: unknown[]) => ({
 vi.mock('@/api/sync', () => ({
   listMemberships: vi.fn(() => Promise.resolve(page([membership]))),
   reconcileSet: vi.fn(() => Promise.resolve({ data: { enumerated: 3 } })),
+  recheckTarget: vi.fn(() => Promise.resolve({ data: { entries: 5, reconcileQueued: true } })),
   listReconcileRuns: vi.fn(() => Promise.resolve({ data: [] })),
   recomputeKey: vi.fn(() => Promise.resolve({ data: undefined })),
   dismissMembership: vi.fn(() => Promise.resolve({ data: undefined })),
@@ -178,6 +179,26 @@ describe('MembershipInventoryModal', () => {
     byText('Stop tracking')!.click()
     await flushPromises()
     expect(syncApi.dismissMembership).toHaveBeenCalledWith('set-1', '1111')
+    wrapper.unmount()
+  })
+
+  it('Re-check target confirms first, then queues the re-check', async () => {
+    const wrapper = open()
+    await flushPromises()
+    byText('Re-check target')!.click()
+    await flushPromises()
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: 'Re-check target' }))
+    expect(syncApi.recheckTarget).toHaveBeenCalledWith('set-1')
+    wrapper.unmount()
+  })
+
+  it('Re-check target does nothing when the confirm is cancelled', async () => {
+    confirmMock.mockResolvedValueOnce(false)
+    const wrapper = open()
+    await flushPromises()
+    byText('Re-check target')!.click()
+    await flushPromises()
+    expect(syncApi.recheckTarget).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

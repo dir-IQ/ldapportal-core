@@ -18,6 +18,11 @@
           <button class="btn-secondary btn-compact" :disabled="reconciling" @click="reconcile">
             {{ reconciling ? 'Reconciling…' : 'Reconcile now' }}
           </button>
+          <button class="btn-secondary btn-compact" :disabled="rechecking"
+                  title="Re-read every target entry on the next reconcile, e.g. after the target was restored from a backup"
+                  @click="recheck">
+            {{ rechecking ? 'Re-checking…' : 'Re-check target' }}
+          </button>
         </div>
       </div>
 
@@ -147,7 +152,7 @@ import ReconcileRunHistory from '@/components/sync/ReconcileRunHistory.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useConfirm } from '@/composables/useConfirm'
 import {
-  listMemberships, reconcileSet, recomputeKey, dismissMembership, verifyContents, approveDelete,
+  listMemberships, reconcileSet, recheckTarget, recomputeKey, dismissMembership, verifyContents, approveDelete,
   type SyncSet, type Membership, type MembershipState, type SyncVerifyResult,
 } from '@/api/sync'
 
@@ -174,6 +179,7 @@ const stateFilter = ref<'' | MembershipState>('')
 const search = ref('')
 const loading = ref(false)
 const reconciling = ref(false)
+const rechecking = ref(false)
 const verifying = ref(false)
 const verifyResult = ref<SyncVerifyResult | null>(null)
 // Bumped to make ReconcileRunHistory reload (on open, and after a reconcile).
@@ -296,6 +302,38 @@ async function reconcile() {
     historyKey.value++ // a failed run is recorded too
   }
 }
+/**
+ * Forget what the set last wrote, so the next reconcile re-reads every target
+ * entry and re-applies the ones that differ (missing → added, stale → modified).
+ * For a target restored from a backup, which a normal reconcile trusts the
+ * index over.
+ */
+async function recheck() {
+  if (!props.set) return
+  const ok = await confirm({
+    title: 'Re-check the target?',
+    message: `The next reconcile of "${props.set.name}" re-reads every entry it manages on ${props.targetName} `
+      + 'instead of trusting what it last wrote, and re-applies any that are missing or differ — use this '
+      + 'after the target was restored from a backup. It takes longer than a normal reconcile. Entries the '
+      + 'sync had deleted that a restore brought back are not removed: Verify contents lists them as orphaned.',
+    confirmLabel: 'Re-check target',
+  })
+  if (!ok) return
+  rechecking.value = true
+  try {
+    const { data } = await recheckTarget(props.set.id)
+    if (data.reconcileQueued) {
+      notif.success(`Re-check queued: the next reconcile (within about a minute) re-reads ${data.entries} entries`)
+    } else {
+      notif.success(`Re-check set up for ${data.entries} entries; it runs once the set and its link are enabled`)
+    }
+  } catch (e) {
+    notif.error(errMsg(e))
+  } finally {
+    rechecking.value = false
+  }
+}
+
 async function verify() {
   if (!props.set) return
   verifying.value = true

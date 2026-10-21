@@ -122,6 +122,18 @@ public class SyncSetController {
         return service.reconcileRuns(id, Math.min(Math.max(limit, 1), 20));
     }
 
+    /**
+     * Re-check the target (e.g. after restoring it from a backup): the next
+     * reconcile re-reads every applied entry instead of trusting what the set
+     * last wrote, and re-applies the ones that differ. Queues that reconcile.
+     */
+    @PostMapping("/{id}/recheck-target")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncRecheckResult recheckTarget(
+            @PathVariable UUID id, @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.recheckTarget(id, principal != null ? principal.username() : null);
+    }
+
     /** Dry-run preview of a reconcile (counts + sample deletions, no writes). */
     @GetMapping("/{id}/preview")
     public com.ldapportal.dto.sync.SyncReconcilePreview preview(@PathVariable UUID id) {

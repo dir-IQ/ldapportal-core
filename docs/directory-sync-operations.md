@@ -436,8 +436,8 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
 - **Membership inventory modal** (per set): state-filter chips (All / Applied /
   Pending / Review / Failed with counts), a search box (identity or DN),
   per-row Identity / State / Source DN / Target DN / **Reason**, and per-row
-  actions named for the row's situation (see §6, *Resolving `REVIEW`*). Header has **Reconcile now** and
-  **Verify contents**.
+  actions named for the row's situation (see §6, *Resolving `REVIEW`*). Header has **Reconcile now**,
+  **Re-check target** (see §9, *Target restored from a backup*) and **Verify contents**.
 - **Last reconcile** (top of the inventory modal) — the latest recorded run:
   status, trigger, when it started and how long it took, its outcome counts,
   managed rows before → after, and warnings for an incomplete scan, a tripped
@@ -541,6 +541,7 @@ POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs?limit=   # recent reconcile runs, newest first; limit 1..20 (default 10)
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}  # one run in full: summary, settings, failureReasons, samples (404 if not this set's run)
 POST   /api/v1/superadmin/sync/sets/{id}/recompute        # body {"key": "<dn-or-identity>"} → 202
+POST   /api/v1/superadmin/sync/sets/{id}/recheck-target   # forget applied content hashes + request a reconcile → {"entries", "reconcileQueued"}; manage permission
 DELETE /api/v1/superadmin/sync/sets/{id}/memberships/{identity}   # dismiss ("stop tracking")
 POST   /api/v1/superadmin/sync/sets/{id}/memberships/{identity}/approve-delete   # approve a held delete → {"outcome": DELETE|FORGET|ERROR, "targetDn", …}; 400 if not a held delete, back in scope, or the set is disabled
 ```
@@ -661,6 +662,7 @@ behind (raise throughput or lower batch latency).
 | `recompute_request` backlog growing | Worker behind | Lower `worker.fixed-delay-ms`, scale instances, check DB. |
 | Wrong DN on target after a rename | (shouldn't happen) engine converges renames as MODDN | If stuck, **Recompute** by identity; reconcile re-derives. |
 | Member/manager points at stale DN | reference attr not declared | Add the attr to **Reference attributes**; recompute the group/referrer. |
+| Target restored from a backup; verification shows missing / stale entries but reconciles change nothing | The index still records what was written before the restore, so the hash gate skips those entries | **Re-check target**, then review orphans — see *Target restored from a backup* below. |
 | Reference into another link's subtree missing on target (e.g. `secDN`) | referent not yet synced by any link, or mirrored to different target DNs by two links (see the `ambiguous` warning in logs) | Sync the referent (or disable the conflicting link); the closure fan-out or next reconcile re-projects the referrer. |
 
 ### Operator triggers cheat-sheet
@@ -676,6 +678,37 @@ behind (raise throughput or lower batch latency).
 - **Dismiss (row)** — drop the index row *without touching the target*; use to
   clear a quarantine you've handled out-of-band. (The next reconcile/recompute
   may re-derive it if the source still qualifies.)
+- **Re-check target (set)** — forget what the set last wrote for every
+  `APPLIED` row (clears its content hash) and request a reconcile. That
+  reconcile reads each target entry instead of trusting the index, and re-adds
+  or re-modifies the ones that differ. Writes nothing itself; the reconcile
+  runs on the scheduler's next tick (~60s), under the set's lease, once the set
+  and link are enabled.
+
+### Target restored from a backup
+
+A reconcile trusts the membership index: an `APPLIED` row whose source
+projection is unchanged is skipped without reading the target (the hash gate,
+§5). After the target is restored from a backup, that index describes the
+target *before* the restore, so a plain reconcile — and a per-row
+**Recompute** — leaves the restored state in place:
+
+| Since the backup, the sync had… | After the restore | Plain reconcile | After **Re-check target** |
+|---|---|---|---|
+| left the entry alone | correct | skipped | read, no write (already matched) |
+| added the entry | missing | skipped | **re-added** |
+| modified the entry | stale values | skipped | **re-modified** |
+| moved / renamed the entry | at the old DN | skipped | **re-added at the new DN**; old-DN copy is an orphan |
+| deleted the entry | back (no index row) | never visited | still there — an orphan |
+
+Procedure:
+1. **Re-check target** on each affected set (inventory header). Wait for the
+   next reconcile (or **Reconcile now**); its run should show the re-adds and
+   re-modifies.
+2. **Verify contents** and review **Orphaned on target**: entries the sync had
+   deleted, and old-DN copies of moved entries. The sync never deletes an entry
+   it has no index row for — remove them on the target if they shouldn't exist.
+3. Verify again: missing on target and content drift should be 0.
 
 ---
 
