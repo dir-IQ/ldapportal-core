@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history, brownfield adoption, cross-link reference resolution, review actions; 2026-10-20).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history, brownfield adoption, cross-link reference resolution, review actions, audited set delete; 2026-10-21).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -528,7 +528,8 @@ DELETE /api/v1/superadmin/sync/links/{id}
 GET    /api/v1/superadmin/sync/sets[?linkId=…]
 POST   /api/v1/superadmin/sync/sets
 PUT    /api/v1/superadmin/sync/sets/{id}
-DELETE /api/v1/superadmin/sync/sets/{id}
+DELETE /api/v1/superadmin/sync/sets/{id}                       # audited as sync.set_delete (see §9)
+GET    /api/v1/superadmin/sync/sets/{id}/delete-impact         # what a delete discards → {"name", "managed", "pendingReview", "reconcileRuns", "otherSets"}
 
 # Inventory + operator triggers
 GET    /api/v1/superadmin/sync/sets/{id}/memberships?state=&q=&page=&size=   # size capped 1..200
@@ -709,6 +710,30 @@ Procedure:
    deleted, and old-DN copies of moved entries. The sync never deletes an entry
    it has no index row for — remove them on the target if they shouldn't exist.
 3. Verify again: missing on target and content drift should be 0.
+
+### Deleting a sync set
+
+Deleting a set removes everything the portal keeps for it — its membership
+index (including rows held for review, discarded undecided), reconcile run
+history, saved preview and queued recomputes — but **not** the entries it
+wrote: they stay on the target, unmanaged, and the portal can no longer tell
+they came from the set. The UI asks first, with the counts (managed entries,
+pending reviews, recorded runs) from `GET …/sets/{id}/delete-impact`.
+
+Two knock-on effects:
+- DN references (`member`, `manager`, `secDN`, …) are remapped through every
+  set's index, so a reference from another set to an entry only the deleted
+  set mirrored is dropped from that set's targets on its next recompute.
+- A new set over the same scope later finds those entries already present.
+  With a **source anchor attribute**, an entry carrying the identity is
+  adopted, and an entry at the placement DN without it is held for REVIEW.
+  Without one, the ADD falls through to a MODIFY: the new set takes the
+  entry over and rewrites it to match the source, with no review.
+
+The delete is audited as `sync.set_delete` on the link's **target** directory
+(target DN = the set's target base), with `detail` = `syncSetId`,
+`syncSetName`, `linkId`, `managedEntries`, `pendingReview`, `reconcileRuns` —
+the record outlives the set's own history.
 
 ---
 

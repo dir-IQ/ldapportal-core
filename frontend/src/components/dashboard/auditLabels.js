@@ -65,6 +65,7 @@ export const ACTION_LABELS = {
   API_TOKEN_UPDATED: 'API token updated',
   API_TOKEN_REVOKED: 'API token revoked',
   API_TOKEN_ROTATED: 'API token rotated',
+  SYNC_SET_DELETE: 'Sync set deleted',
   REPLICATION_LINK_CREATED: 'Replication link created',
   REPLICATION_LINK_UPDATED: 'Replication link updated',
   REPLICATION_LINK_DELETED: 'Replication link deleted',

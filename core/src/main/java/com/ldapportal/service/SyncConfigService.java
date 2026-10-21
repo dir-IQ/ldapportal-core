@@ -76,6 +76,7 @@ public class SyncConfigService {
     private final SyncReconcileHistory reconcileHistory;
     private final RecomputeEngine engine;
     private final AuditService auditService;
+    private final com.ldapportal.repository.SyncReconcileRunRepository reconcileRunRepo;
 
     // ── Links ────────────────────────────────────────────────────────────────
 
@@ -213,10 +214,43 @@ public class SyncConfigService {
     }
 
     @Transactional
-    public void deleteSet(UUID id) {
+    public void deleteSet(UUID id, AuthPrincipal principal) {
         SyncSet s = requireSet(id);
-        // membership + recompute_request rows cascade via FK ON DELETE CASCADE.
+        com.ldapportal.dto.sync.SyncSetDeleteImpact impact = deleteImpact(s);
+        // membership, recompute_request, reconcile-run and preview rows
+        // cascade via FK ON DELETE CASCADE; the target entries are untouched.
         setRepo.delete(s);
+        if (principal != null) {
+            // Recorded against the target directory: that's where the set's
+            // entries are left behind, now unmanaged.
+            UUID targetDirId = linkRepo.findById(s.getLinkId()).map(SyncLink::getTargetDirId).orElse(null);
+            Map<String, Object> detail = new java.util.LinkedHashMap<>();
+            detail.put("syncSetId", id.toString());
+            detail.put("syncSetName", s.getName());
+            detail.put("linkId", String.valueOf(s.getLinkId()));
+            detail.put("managedEntries", impact.managed());
+            detail.put("pendingReview", impact.pendingReview());
+            detail.put("reconcileRuns", impact.reconcileRuns());
+            auditService.record(principal, targetDirId, AuditAction.SYNC_SET_DELETE, s.getTargetBaseDn(), detail);
+        }
+    }
+
+    /** What deleting the set would discard (for the confirmation before a delete). */
+    public com.ldapportal.dto.sync.SyncSetDeleteImpact deleteImpact(UUID id) {
+        return deleteImpact(requireSet(id));
+    }
+
+    private com.ldapportal.dto.sync.SyncSetDeleteImpact deleteImpact(SyncSet s) {
+        List<String> otherSets = setRepo.findAll().stream()
+                .filter(o -> !o.getId().equals(s.getId()))
+                .map(SyncSet::getName)
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .toList();
+        return new com.ldapportal.dto.sync.SyncSetDeleteImpact(s.getName(),
+                membershipRepo.countBySyncSetId(s.getId()),
+                membershipRepo.countBySyncSetIdAndState(s.getId(), MembershipState.REVIEW),
+                reconcileRunRepo.countBySyncSetId(s.getId()),
+                otherSets);
     }
 
     private void applySet(SyncSet s, SyncSetRequest req) {

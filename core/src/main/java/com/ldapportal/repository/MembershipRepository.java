@@ -28,6 +28,9 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
     /** Rows the set manages, in any state. */
     long countBySyncSetId(UUID syncSetId);
 
+    /** Rows of one set in one state (e.g. REVIEW: held for an operator). */
+    long countBySyncSetIdAndState(UUID syncSetId, MembershipState state);
+
     /** Identity currently mapped to a (normalized) source DN within one set. */
     Optional<Membership> findFirstBySyncSetIdAndSourceDn(UUID syncSetId, String sourceDn);
 

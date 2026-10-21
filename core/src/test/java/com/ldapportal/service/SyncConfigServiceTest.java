@@ -69,13 +69,15 @@ class SyncConfigServiceTest {
     @Mock private com.ldapportal.ldap.sync.SyncReconcileHistory reconcileHistory;
     @Mock private com.ldapportal.ldap.sync.RecomputeEngine engine;
     @Mock private AuditService auditService;
+    @Mock private com.ldapportal.repository.SyncReconcileRunRepository reconcileRunRepo;
 
     private SyncConfigService service;
 
     @BeforeEach
     void setUp() {
         service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo,
-                reconciler, verifier, enqueuer, previewService, reconcileHistory, engine, auditService);
+                reconciler, verifier, enqueuer, previewService, reconcileHistory, engine, auditService,
+                reconcileRunRepo);
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
@@ -270,6 +272,70 @@ class SyncConfigServiceTest {
         assertThatThrownBy(() -> service.recheckTarget(setId, "alice"))
                 .isInstanceOf(com.ldapportal.exception.ResourceNotFoundException.class);
         verify(membershipRepo, never()).forgetAppliedContent(any(), any());
+    }
+
+    @Test
+    void deleteSet_deletesThenAuditsAgainstTheTargetDirectory_withWhatWasDiscarded() {
+        UUID setId = UUID.randomUUID();
+        UUID linkId = UUID.randomUUID();
+        UUID targetDir = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(setId);
+        set.setName("people");
+        set.setLinkId(linkId);
+        set.setTargetBaseDn("ou=Users,dc=dst");
+        SyncLink link = new SyncLink();
+        link.setTargetDirId(targetDir);
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        when(setRepo.findAll()).thenReturn(List.of(set));
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+        when(membershipRepo.countBySyncSetId(setId)).thenReturn(876L);
+        when(membershipRepo.countBySyncSetIdAndState(setId, com.ldapportal.entity.enums.MembershipState.REVIEW))
+                .thenReturn(3L);
+        when(reconcileRunRepo.countBySyncSetId(setId)).thenReturn(12L);
+
+        service.deleteSet(setId, admin);
+
+        org.mockito.InOrder order = org.mockito.Mockito.inOrder(setRepo, auditService);
+        order.verify(setRepo).delete(set);
+        java.util.Map<String, Object> detail = new java.util.LinkedHashMap<>();
+        detail.put("syncSetId", setId.toString());
+        detail.put("syncSetName", "people");
+        detail.put("linkId", linkId.toString());
+        detail.put("managedEntries", 876L);
+        detail.put("pendingReview", 3L);
+        detail.put("reconcileRuns", 12L);
+        order.verify(auditService).record(eq(admin), eq(targetDir), eq(AuditAction.SYNC_SET_DELETE),
+                eq("ou=Users,dc=dst"), eq(detail));
+    }
+
+    @Test
+    void deleteImpact_countsWhatWouldBeDiscarded_andNamesTheOtherSets() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(setId);
+        set.setName("people");
+        SyncSet groups = new SyncSet();
+        groups.setId(UUID.randomUUID());
+        groups.setName("groups");
+        SyncSet admins = new SyncSet();
+        admins.setId(UUID.randomUUID());
+        admins.setName("Admins");
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        when(setRepo.findAll()).thenReturn(List.of(groups, set, admins));
+        when(membershipRepo.countBySyncSetId(setId)).thenReturn(5L);
+        when(membershipRepo.countBySyncSetIdAndState(setId, com.ldapportal.entity.enums.MembershipState.REVIEW))
+                .thenReturn(0L);
+        when(reconcileRunRepo.countBySyncSetId(setId)).thenReturn(2L);
+
+        var impact = service.deleteImpact(setId);
+
+        assertThat(impact.name()).isEqualTo("people");
+        assertThat(impact.managed()).isEqualTo(5);
+        assertThat(impact.pendingReview()).isZero();
+        assertThat(impact.reconcileRuns()).isEqualTo(2);
+        assertThat(impact.otherSets()).containsExactly("Admins", "groups");
     }
 
     @Test
