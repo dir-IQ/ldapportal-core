@@ -399,9 +399,13 @@ public class BrowseController {
 
         IntegrityReport report = integrityCheckService.runChecks(dc, baseDn, checkTypes);
 
+        // The audit row's DN is one DN; "bases" records every base actually
+        // checked (all roots when no base was given).
+        boolean explicitBase = baseDn != null && !baseDn.isBlank();
         auditService.record(principal, directoryId, AuditAction.INTEGRITY_CHECK,
-                baseDn != null ? baseDn : dc.getBaseDn(),
-                Map.of("checks", checks, "issuesFound", report.issues().size()));
+                explicitBase ? baseDn : dc.getBaseDn(),
+                Map.of("checks", checks, "issuesFound", report.issues().size(),
+                        "bases", explicitBase ? baseDn : String.join("; ", dc.getBaseDns())));
 
         return report;
     }
@@ -431,10 +435,6 @@ public class BrowseController {
                 .orElseThrow(() -> new ResourceNotFoundException("DirectoryConnection", directoryId));
     }
 
-    /**
-     * Extracts the parent DN from a full DN string.
-     * e.g. "ou=People,dc=example,dc=com" → "dc=example,dc=com"
-     */
     /**
      * The parent to refresh after a change to {@code dn}; {@code null} (the
      * primary root, via {@code browse}) when {@code dn} is itself a root or has

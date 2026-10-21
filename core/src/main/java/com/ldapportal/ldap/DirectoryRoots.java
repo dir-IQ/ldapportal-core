@@ -5,7 +5,6 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.LDAPException;
 
-import java.util.List;
 import java.util.Locale;
 
 /**
@@ -17,11 +16,6 @@ import java.util.Locale;
 public final class DirectoryRoots {
 
     private DirectoryRoots() {
-    }
-
-    /** The directory's roots, primary first. */
-    public static List<String> of(DirectoryConnection dc) {
-        return dc.getBaseDns();
     }
 
     /** Whether the directory has more than one root. */

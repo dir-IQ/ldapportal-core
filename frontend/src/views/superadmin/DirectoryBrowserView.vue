@@ -359,8 +359,6 @@ interface DirectoryOption {
   id: string
   displayName: string
   directoryType?: string
-  /** Top-level roots besides the base DN, for a directory with several suffixes. */
-  additionalBaseDns?: string[]
 }
 
 interface TreeNode {
@@ -486,15 +484,16 @@ interface LoadedRoots { nodes: TreeNode[], base: BrowseResult }
 
 /**
  * Browse every top-level root of a directory: the base DN first, then each
- * additional root as its own tree node. An additional root that can't be
- * read is left out with a warning instead of failing the tree. Returns null
+ * further root the root browse lists (otherRoots) as its own tree node. A
+ * root that can't be read is left out with a warning instead of failing the
+ * tree. Returns null
  * when the directory was switched meanwhile. Callers apply the result with
  * applyRoots in the same tick they clear treeLoading, so the URL sync
  * doesn't see a half-loaded tree.
  */
 async function loadRoots(dirId: string): Promise<LoadedRoots | null> {
   const { data } = await browse(dirId, undefined, { limit: BRANCH_PAGE_SIZE }) as { data: BrowseResult }
-  const extraDns = directories.value.find(d => d.id === dirId)?.additionalBaseDns ?? []
+  const extraDns = data.otherRoots ?? []
   const extras = await Promise.allSettled(extraDns.map(dn =>
     browse(dirId, dn, { limit: BRANCH_PAGE_SIZE }) as Promise<{ data: BrowseResult }>))
   if (dirId !== selectedDirId.value) return null

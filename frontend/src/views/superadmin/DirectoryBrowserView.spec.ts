@@ -284,13 +284,16 @@ describe('DirectoryBrowserView with several top-level roots', () => {
   const PARTNERS = 'o=partners'
   const CAROL_DN = 'uid=carol,' + PARTNERS
 
+  // The other roots come from the server's browse of the directory root —
+  // the directory list (the identity-only summary) doesn't carry them.
+  const multiRootPage = { ...rootPage, otherRoots: [PARTNERS] }
+
   beforeEach(() => {
     setActivePinia(createPinia())
-    vi.mocked(listDirectories).mockResolvedValue(ok([{
-      id: DIR, displayName: 'Example', directoryType: 'OPENLDAP', additionalBaseDns: [PARTNERS],
-    }]))
+    vi.mocked(listDirectories).mockResolvedValue(ok([{ id: DIR, displayName: 'Example', directoryType: 'OPENLDAP' }]))
     vi.mocked(browse).mockImplementation(async (_dir: string, dn?: string) => {
-      if (!dn || dn === BASE) return ok(rootPage)
+      if (!dn) return ok(multiRootPage)
+      if (dn === BASE) return ok(rootPage)
       if (dn === PARTNERS) {
         return ok({ dn: PARTNERS, attributes: { o: ['partners'] },
           children: [{ dn: CAROL_DN, rdn: 'uid=carol', hasChildren: false }], truncated: false, childCount: 1 })
@@ -329,7 +332,8 @@ describe('DirectoryBrowserView with several top-level roots', () => {
 
   it('keeps the tree when an additional root cannot be read', async () => {
     vi.mocked(browse).mockImplementation(async (_dir: string, dn?: string) => {
-      if (!dn || dn === BASE) return ok(rootPage)
+      if (!dn) return ok(multiRootPage)
+      if (dn === BASE) return ok(rootPage)
       if (dn === PARTNERS) throw new Error('no such object')
       return ok(peoplePage())
     })

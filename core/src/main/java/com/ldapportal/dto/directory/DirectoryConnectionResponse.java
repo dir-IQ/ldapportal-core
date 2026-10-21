@@ -76,7 +76,10 @@ public record DirectoryConnectionResponse(
         boolean bindPasswordSet,
         boolean entraClientSecretSet,
         // ── Further top-level roots beyond baseDn (empty for single-root) ───
-        List<String> additionalBaseDns) {
+        List<String> additionalBaseDns,
+        // ── Things the operator should know about the save just made (e.g.
+        // sync sets a newly added root doesn't reach); empty on reads ──────
+        List<String> warnings) {
 
     public record BaseDnItem(UUID id, String dn, int displayOrder) {
         public static BaseDnItem fromUser(DirectoryUserBaseDn b) {
@@ -91,6 +94,13 @@ public record DirectoryConnectionResponse(
     public static DirectoryConnectionResponse from(DirectoryConnection dc,
                                                    List<DirectoryUserBaseDn> userDns,
                                                    List<DirectoryGroupBaseDn> groupDns) {
+        return from(dc, userDns, groupDns, List.of());
+    }
+
+    public static DirectoryConnectionResponse from(DirectoryConnection dc,
+                                                   List<DirectoryUserBaseDn> userDns,
+                                                   List<DirectoryGroupBaseDn> groupDns,
+                                                   List<String> warnings) {
         return new DirectoryConnectionResponse(
                 dc.getId(),
                 dc.getVersion(),
@@ -132,7 +142,8 @@ public record DirectoryConnectionResponse(
                 dc.getUpdatedAt(),
                 isSecretSet(dc.getBindPasswordEncrypted()),
                 isSecretSet(dc.getEntraClientSecretEncrypted()),
-                dc.getAdditionalBaseDns() != null ? List.copyOf(dc.getAdditionalBaseDns()) : List.of());
+                dc.getAdditionalBaseDns() != null ? List.copyOf(dc.getAdditionalBaseDns()) : List.of(),
+                List.copyOf(warnings));
     }
 
     /**

@@ -31,8 +31,9 @@ vi.mock('@/api/directories', () => ({
 
 vi.mock('@/api/entra', () => ({ testEntraConnection: vi.fn() }))
 
+const notif = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }))
 vi.mock('@/stores/notifications', () => ({
-  useNotificationStore: () => ({ success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() }),
+  useNotificationStore: () => notif,
 }))
 
 vi.mock('@/stores/auth', () => ({
@@ -183,5 +184,31 @@ describe('DirectoriesManageView additional base DNs', () => {
     expect(api.updateDirectory).toHaveBeenCalledWith('up', expect.objectContaining({
       additionalBaseDns: ['o=partners', 'o=archive'],
     }))
+  })
+
+  it('shows the root count in the list', async () => {
+    api.listDirectoryConnections.mockResolvedValue({ data: [
+      { ...dir('up', true), baseDn: 'dc=example,dc=com', additionalBaseDns: ['o=partners', 'o=archive'] },
+    ] })
+    const wrapper = mount(DirectoriesManageView, { global: { stubs } })
+    await flushPromises()
+
+    expect(wrapper.find('tbody').text()).toContain('+2 roots')
+  })
+
+  it('surfaces the warnings a save returns', async () => {
+    api.updateDirectory.mockResolvedValue({ data: { warnings: [
+      'Sync set "people" has no source scope base DN, so it still reads only dc=x; set its scope explicitly.',
+    ] } })
+    const wrapper = mount(DirectoriesManageView, { global: { stubs } })
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text() === 'Edit')!.trigger('click')
+    await flushPromises()
+    await wrapper.find('#dm-additional-roots').setValue('o=partners')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(notif.success).toHaveBeenCalledWith('Directory updated')
+    expect(notif.warning).toHaveBeenCalledWith(expect.stringContaining('"people"'))
   })
 })

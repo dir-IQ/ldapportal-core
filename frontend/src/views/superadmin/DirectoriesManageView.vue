@@ -23,6 +23,13 @@
           :title="capabilitiesTooltip(row)"
         >{{ vendorBadge(row) }}</div>
       </template>
+      <template #cell-baseDn="{ row }">
+        {{ row.baseDn }}
+        <span v-if="row.additionalBaseDns?.length" class="ml-1 text-xs text-gray-500"
+              :title="row.additionalBaseDns.join('\n')">
+          +{{ row.additionalBaseDns.length }} {{ row.additionalBaseDns.length === 1 ? 'root' : 'roots' }}
+        </span>
+      </template>
       <template #cell-enabled="{ row }">
         <span :class="row.enabled ? 'text-green-600' : 'text-gray-500'" class="text-xs font-medium">
           {{ row.enabled ? 'Yes' : 'No' }}
@@ -618,8 +625,10 @@ async function save() {
     // Form is a superset of the (stale) generated request schema.
     const requestBody = payload as unknown as DirectoryRequest
     if (editing.value) {
-      await updateDirectory(editing.value, requestBody)
+      const { data } = await updateDirectory(editing.value, requestBody) as { data?: { warnings?: string[] } }
       notif.success('Directory updated')
+      // e.g. sync sets with a blank base that a newly added root won't reach.
+      for (const w of data?.warnings ?? []) notif.warning(w)
     } else {
       await createDirectory(requestBody)
       notif.success('Directory created')

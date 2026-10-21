@@ -93,7 +93,9 @@ class DirectoryConnectionControllerTest extends BaseControllerTest {
                 OffsetDateTime.now(),               // createdAt
                 OffsetDateTime.now(),               // updatedAt
                 true,                               // bindPasswordSet
-                false, List.of());                             // entraClientSecretSet
+                false,                              // entraClientSecretSet
+                List.of(),                          // additionalBaseDns
+                List.of());                         // warnings
     }
 
     DirectoryConnectionRequest validRequest() {

@@ -48,6 +48,8 @@ class DirectoryConnectionServiceTest {
     @Mock private ApplicationEventPublisher      eventPublisher;
     @Mock private com.ldapportal.core.entitlement.UsageLimitService usageLimitService;
     @Mock private com.ldapportal.directory.DirectoryProviderRegistry providerRegistry;
+    @Mock private com.ldapportal.repository.SyncLinkRepository     syncLinkRepo;
+    @Mock private com.ldapportal.repository.SyncSetRepository      syncSetRepo;
 
     @InjectMocks private DirectoryConnectionService service;
 
@@ -145,6 +147,42 @@ class DirectoryConnectionServiceTest {
         var resp = service.updateDirectory(DIR_ID, requestWithRoots(List.of(" o=partners ", "", "secAuthority=Default")));
 
         assertThat(resp.additionalBaseDns()).containsExactly("o=partners", "secAuthority=Default");
+    }
+
+    @Test
+    void updateDirectory_addingARoot_warnsAboutSyncSetsWithBlankBases() {
+        com.ldapportal.entity.SyncLink asSource = new com.ldapportal.entity.SyncLink();
+        asSource.setId(UUID.randomUUID());
+        com.ldapportal.entity.SyncLink asTarget = new com.ldapportal.entity.SyncLink();
+        asTarget.setId(UUID.randomUUID());
+        com.ldapportal.entity.SyncSet blankScope = new com.ldapportal.entity.SyncSet();
+        blankScope.setName("people");
+        com.ldapportal.entity.SyncSet scoped = new com.ldapportal.entity.SyncSet();
+        scoped.setName("partners");
+        scoped.setObjectScopeBaseDn("o=partners");
+        com.ldapportal.entity.SyncSet blankTarget = new com.ldapportal.entity.SyncSet();
+        blankTarget.setName("inbound");
+        when(syncLinkRepo.findAllBySourceDirId(DIR_ID)).thenReturn(List.of(asSource));
+        when(syncLinkRepo.findAllByTargetDirId(DIR_ID)).thenReturn(List.of(asTarget));
+        when(syncSetRepo.findAllByLinkId(asSource.getId())).thenReturn(List.of(blankScope, scoped));
+        when(syncSetRepo.findAllByLinkId(asTarget.getId())).thenReturn(List.of(blankTarget));
+
+        var resp = service.updateDirectory(DIR_ID, requestWithRoots(List.of("o=partners")));
+
+        // Saved anyway; each blank-base set is named once.
+        assertThat(resp.additionalBaseDns()).containsExactly("o=partners");
+        assertThat(resp.warnings()).hasSize(2);
+        assertThat(resp.warnings().get(0)).contains("\"people\"", "source scope base DN");
+        assertThat(resp.warnings().get(1)).contains("\"inbound\"", "target base DN");
+    }
+
+    @Test
+    void updateDirectory_withoutNewRoots_doesNotLookForSyncSets() {
+        var resp = service.updateDirectory(DIR_ID, matchingRequest("ldap.example.com"));
+
+        assertThat(resp.warnings()).isEmpty();
+        verify(syncLinkRepo, never()).findAllBySourceDirId(any());
+        verify(syncLinkRepo, never()).findAllByTargetDirId(any());
     }
 
     @Test

@@ -175,6 +175,17 @@ class MultiRootDirectoryTest {
     }
 
     @Test
+    void browseOfTheDirectoryRoot_listsTheOtherRoots() {
+        assertThat(browseService.browse(dc, null).dn()).isEqualTo(CORP);
+        assertThat(browseService.browse(dc, null).otherRoots()).containsExactly(PARTNERS);
+        // Browsing a specific entry (a root included) lists none.
+        assertThat(browseService.browse(dc, PARTNERS).otherRoots()).isEmpty();
+
+        dc.setAdditionalBaseDns(new ArrayList<>());
+        assertThat(browseService.browse(dc, null).otherRoots()).isEmpty();
+    }
+
+    @Test
     void integrityCheck_acrossRoots_acceptsMembersInAnotherRoot_andExemptsEachRoot() {
         IntegrityReport report = integrityService.runChecks(dc, null,
                 EnumSet.of(IssueType.BROKEN_MEMBER, IssueType.ORPHANED_ENTRY));
