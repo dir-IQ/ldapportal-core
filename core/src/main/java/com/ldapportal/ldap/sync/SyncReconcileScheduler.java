@@ -37,6 +37,7 @@ public class SyncReconcileScheduler {
     private final SyncSetRepository syncSetRepo;
     private final MembershipReconciler reconciler;
     private final SyncContentVerifier verifier;
+    private final SyncReconcileHistory history;
     private final EntitlementService entitlementService;
     private final long defaultCadenceSeconds;
     /** Minimum gap between retries of a reconcile request an incomplete run didn't handle. */
@@ -45,12 +46,14 @@ public class SyncReconcileScheduler {
     public SyncReconcileScheduler(SyncSetRepository syncSetRepo,
                                   MembershipReconciler reconciler,
                                   SyncContentVerifier verifier,
+                                  SyncReconcileHistory history,
                                   EntitlementService entitlementService,
                                   @Value("${ldapportal.sync.reconcile.default-cadence-seconds:3600}")
                                   long defaultCadenceSeconds) {
         this.syncSetRepo = syncSetRepo;
         this.reconciler = reconciler;
         this.verifier = verifier;
+        this.history = history;
         this.entitlementService = entitlementService;
         this.defaultCadenceSeconds = defaultCadenceSeconds;
     }
@@ -97,6 +100,7 @@ public class SyncReconcileScheduler {
             if (v.sourceComplete() && v.targetComplete()) {
                 syncSetRepo.recordVerifyResult(setId, OffsetDateTime.now(),
                         v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
+                history.recordDrift(setId, v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
             }
         } catch (Exception ex) {
             log.warn("Scheduled content verify of sync set {} failed: {}", setId, ex.toString());

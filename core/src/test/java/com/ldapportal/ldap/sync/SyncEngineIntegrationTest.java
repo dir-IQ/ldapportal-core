@@ -3,6 +3,7 @@ package com.ldapportal.ldap.sync;
 
 import com.ldapportal.dto.sync.SyncDeleteApproval;
 import com.ldapportal.dto.sync.SyncPreviewAction;
+import com.ldapportal.dto.sync.SyncReconcileRunDetail;
 import com.ldapportal.dto.sync.SyncReviewKind;
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.DirectoryConnection;
@@ -85,6 +86,7 @@ class SyncEngineIntegrationTest {
     @Autowired private SyncContentVerifier verifier;
     @Autowired private RecomputeEnqueuer enqueuer;
     @Autowired private SyncReconcileRunRepository runRepo;
+    @Autowired private SyncReconcileHistory history;
 
     private InMemoryDirectoryServer source;
     private InMemoryDirectoryServer target;
@@ -845,6 +847,48 @@ class SyncEngineIntegrationTest {
         assertThat(run.getUnchanged()).isEqualTo(1);    // the OU: out of scope, never tracked
         assertThat(run.getFailed() + run.getFaulted() + run.getSkipped() + run.getMoved()
                 + run.getHeldForReview() + run.getForgotten()).isZero();
+    }
+
+    @Test
+    void reconcile_recordsDetails_instanceTimingSettingsAndSampleDns() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+        source.delete(dn("alice"));
+        addPerson("carol", "staff", "carol@src");
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+
+        SyncReconcileRun latest = runRepo.findAll().stream()
+                .max(java.util.Comparator.comparing(SyncReconcileRun::getStartedAt)).orElseThrow();
+        SyncReconcileRunDetail detail = history.detail(peopleSet.getId(), latest.getId());
+
+        assertThat(detail.run().instanceName()).isNotBlank();
+        assertThat(detail.run().plannedAt()).isBetween(detail.run().startedAt(), detail.run().finishedAt());
+        assertThat(detail.settings().deletePolicy()).isEqualTo("DELETE");
+        assertThat(detail.settings().applicabilityFilter()).isEqualTo("(&(objectClass=inetOrgPerson)(employeeType=staff))");
+        assertThat(detail.settings().guardMaxDeletes()).isEqualTo(MembershipReconciler.DELETE_GUARD_MAX_ABSOLUTE);
+        assertThat(detail.samples().get("ADD")).singleElement().asString().containsIgnoringCase("uid=carol");
+        assertThat(detail.samples().get("DELETE")).singleElement().asString().containsIgnoringCase("uid=alice");
+        assertThat(detail.failureReasons()).isEmpty();
+    }
+
+    @Test
+    void reconcile_groupsFailuresByReason() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        target.delete(DST_USERS); // every placement's parent is missing
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        SyncReconcileRun run = runRepo.findAll().get(0);
+        SyncReconcileRunDetail detail = history.detail(peopleSet.getId(), run.getId());
+        assertThat(detail.run().failed()).isEqualTo(2);
+        assertThat(detail.failureReasons()).singleElement().satisfies(r -> {
+            assertThat(r.reason()).isEqualTo("apply failed: 32 (no such object)");
+            assertThat(r.count()).isEqualTo(2);
+            assertThat(r.example()).contains("ou=Users");
+        });
+        assertThat(detail.samples().get("ERROR")).hasSize(2);
     }
 
     @Test

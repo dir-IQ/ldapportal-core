@@ -6,6 +6,7 @@ import type { SyncReconcileRun } from '@/api/sync'
 
 vi.mock('@/api/sync', () => ({
   listReconcileRuns: vi.fn(),
+  getReconcileRun: vi.fn(),
 }))
 
 import * as syncApi from '@/api/sync'
@@ -18,6 +19,8 @@ function run(over: Partial<SyncReconcileRun> = {}): SyncReconcileRun {
     added: 3, modified: 1, moved: 0, deleted: 0, heldForReview: 0, noChange: 3865,
     forgotten: 0, unchanged: 872, failed: 0, faulted: 0, skipped: 0,
     guardTripped: false, guardReason: null, error: null,
+    instanceName: 'app-2', plannedAt: '2026-10-20T10:00:40Z',
+    verifiedAt: null, verifyMissing: null, verifyOrphan: null, verifyMismatch: null,
     ...over,
   }
 }
@@ -39,6 +42,8 @@ describe('ReconcileRunHistory', () => {
     expect(txt).toContain('Completed')
     expect(txt).toContain('Manual (alice)')
     expect(txt).toContain('took 1m 5s')
+    expect(txt).toContain('scan 40s, apply 25s')
+    expect(txt).toContain('on app-2')
     expect(txt).toMatch(/Added:\s*3/)
     expect(txt).toMatch(/Already matched:\s*3865/)
     expect(txt).toMatch(/Managed:\s*876\s*→\s*4741/)
@@ -99,5 +104,34 @@ describe('ReconcileRunHistory', () => {
     const wrapper = mount(ReconcileRunHistory, { props: { setId: 'set-1' } })
     await flushPromises()
     expect(wrapper.find('[role="alert"]').text()).toBe('Sync set not found')
+  })
+
+  it('shows the drift the verification after the run found', async () => {
+    resolveRuns([run({ verifiedAt: '2026-10-20T10:02:00Z', verifyMissing: 0, verifyOrphan: 3, verifyMismatch: 1 })])
+    const wrapper = mount(ReconcileRunHistory, { props: { setId: 'set-1' } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('0 missing on target · 3 orphaned on target · 1 with content drift')
+  })
+
+  it('opens the run details from "Details" and from a history row', async () => {
+    resolveRuns([run(), run({ id: 'run-2', trigger: 'SCHEDULED', requestedBy: null })])
+    ;(syncApi.getReconcileRun as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      (_set: string, id: string) => Promise.resolve({
+        data: { run: run({ id }), settings: null, failureReasons: [], samples: {}, sampleLimit: 25 },
+      }))
+    const wrapper = mount(ReconcileRunHistory, { props: { setId: 'set-1' } })
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text() === 'Details')!.trigger('click')
+    await flushPromises()
+    expect(syncApi.getReconcileRun).toHaveBeenLastCalledWith('set-1', 'run-1')
+    expect(wrapper.find('[aria-label="Reconcile run details"]').exists()).toBe(true)
+
+    await wrapper.findAll('button').find((b) => b.text().includes('Recent runs'))!.trigger('click')
+    await wrapper.findAll('tbody tr')[1].trigger('click')
+    await flushPromises()
+    expect(syncApi.getReconcileRun).toHaveBeenLastCalledWith('set-1', 'run-2')
+
+    await wrapper.find('[aria-label="Close run details"]').trigger('click')
+    expect(wrapper.find('[aria-label="Reconcile run details"]').exists()).toBe(false)
   })
 })

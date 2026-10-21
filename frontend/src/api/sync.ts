@@ -161,7 +161,52 @@ export interface SyncReconcileRun {
   guardTripped: boolean
   guardReason: string | null
   error: string | null
+  /** The app instance (host) that ran it. */
+  instanceName: string | null
+  /** When the source scan and plan finished: scan = plannedAt − startedAt. */
+  plannedAt: string | null
+  /** The content verification right after the run (drift left behind), when recorded. */
+  verifiedAt: string | null
+  verifyMissing: number | null
+  verifyOrphan: number | null
+  verifyMismatch: number | null
 }
+
+/** The set's settings and delete-guard limits as the run saw them. */
+export interface SyncRunSettings {
+  deletePolicy: string | null
+  objectScopeBaseDn: string | null
+  objectScope: string | null
+  applicabilityFilter: string | null
+  targetBaseDn: string | null
+  identityKey: string | null
+  sourceAnchorAttribute: string | null
+  reconcileCadenceSeconds: number | null
+  guardMaxDeletes: number
+  guardMaxDeletePercent: number
+  guardMinPopulation: number
+}
+
+/** Failed / faulted entries sharing a reason, with one full example. */
+export interface SyncRunFailureReason {
+  reason: string
+  count: number
+  example: string
+}
+
+/** Everything recorded about one reconcile run. */
+export interface SyncReconcileRunDetail {
+  run: SyncReconcileRun
+  /** Null for a run recorded before settings were kept. */
+  settings: SyncRunSettings | null
+  failureReasons: SyncRunFailureReason[]
+  /** Outcome (ADD, MODIFY, …) → up to `sampleLimit` target DNs. */
+  samples: Partial<Record<SyncPreviewAction, string[]>>
+  sampleLimit: number
+}
+
+export const getReconcileRun = (setId: string, runId: string) =>
+  client.get<SyncReconcileRunDetail>(`/superadmin/sync/sets/${setId}/reconcile-runs/${runId}`)
 
 /** A set's most recent reconcile runs, newest first. */
 export const listReconcileRuns = (setId: string, limit = 10) =>

@@ -2,6 +2,7 @@
 package com.ldapportal.ldap.sync;
 
 import com.ldapportal.dto.sync.SyncReconcilePreview;
+import com.ldapportal.dto.sync.SyncRunSettings;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.SyncLink;
@@ -153,7 +154,7 @@ public class MembershipReconciler {
         Guard guard = evaluateGuard(plan);
         lease.beat(); // the source scan can be long
         history.planned(run, plan.entries.size(), plan.managedCount, plan.complete,
-                guard.tripped(), guard.reason());
+                guard.tripped(), guard.reason(), settingsOf(ctx.set));
 
         long epoch = epochSequence.incrementAndGet();
         int faults = 0;
@@ -167,7 +168,7 @@ public class MembershipReconciler {
                 history.record(run, engine.process(syncSetId, p.entry.getDN(), guard.tripped()));
             } catch (Exception ex) {
                 faults++;
-                history.fault(run);
+                history.fault(run, ex);
                 log.warn("Sync set {}: reconcile recompute of {} faulted ({}); continuing",
                         syncSetId, p.entry.getDN(), ex.toString());
             } finally {
@@ -181,7 +182,7 @@ public class MembershipReconciler {
                     history.record(run, engine.process(syncSetId, row.getIdentity(), guard.tripped()));
                 } catch (Exception ex) {
                     faults++;
-                    history.fault(run);
+                    history.fault(run, ex);
                     log.warn("Sync set {}: reconcile sweep of identity {} faulted ({}); continuing",
                             syncSetId, row.getIdentity(), ex.toString());
                 }
@@ -374,6 +375,22 @@ public class MembershipReconciler {
                     com.unboundid.ldap.sdk.Filter.createPresenceFilter("objectClass"), "*", idAttr);
             return SyncPagedSearch.all(conn, req, pageSize);
         });
+    }
+
+    /** The set's settings and guard limits as this run sees them, kept with the run's record. */
+    private static SyncRunSettings settingsOf(SyncSet set) {
+        return new SyncRunSettings(
+                set.getDeletePolicy() != null ? set.getDeletePolicy().name() : null,
+                set.getObjectScopeBaseDn(),
+                set.getObjectScope() != null ? set.getObjectScope().name() : null,
+                set.getApplicabilityFilter(),
+                set.getTargetBaseDn(),
+                set.getIdentityKey(),
+                set.getSourceAnchorAttribute(),
+                set.getReconcileCadenceSeconds(),
+                DELETE_GUARD_MAX_ABSOLUTE,
+                DELETE_GUARD_MAX_PERCENT,
+                DELETE_GUARD_MIN_POPULATION);
     }
 
     private record Context(SyncSet set, SyncLink link, DirectoryConnection source, IdentityStrategy strategy) {

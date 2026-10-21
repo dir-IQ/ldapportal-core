@@ -358,11 +358,17 @@ public class SyncConfigService {
         // state, mirroring the scheduled sweep (reconcile → re-verify). Guarded: the
         // reconcile already applied, so a verify hiccup must not fail the operation.
         try {
-            refreshDriftSnapshot(syncSetId);
+            refreshDriftSnapshot(syncSetId, true);
         } catch (Exception ex) {
             log.warn("Post-reconcile drift refresh for sync set {} failed: {}", syncSetId, ex.toString());
         }
         return enumerated;
+    }
+
+    /** Everything recorded about one reconcile run of the set (404 when it isn't one of the set's runs). */
+    public com.ldapportal.dto.sync.SyncReconcileRunDetail reconcileRun(UUID syncSetId, UUID runId) {
+        requireSet(syncSetId);
+        return reconcileHistory.detail(syncSetId, runId);
     }
 
     /** The set's most recent reconcile runs, newest first (at most {@code limit}). */
@@ -404,7 +410,7 @@ public class SyncConfigService {
      */
     public com.ldapportal.dto.sync.SyncVerifyResult verifyContents(UUID syncSetId) {
         requireSet(syncSetId);
-        return refreshDriftSnapshot(syncSetId);
+        return refreshDriftSnapshot(syncSetId, false);
     }
 
     /**
@@ -412,12 +418,18 @@ public class SyncConfigService {
      * set for the dashboard. Only a complete scan is persisted — a partial
      * enumeration would record misleadingly low counts over a previously good
      * snapshot. Shared by the verify endpoint and the post-reconcile refresh.
+     *
+     * @param afterReconcile also record the result on the reconcile run it follows
      */
-    private com.ldapportal.dto.sync.SyncVerifyResult refreshDriftSnapshot(UUID syncSetId) {
+    private com.ldapportal.dto.sync.SyncVerifyResult refreshDriftSnapshot(UUID syncSetId, boolean afterReconcile) {
         com.ldapportal.dto.sync.SyncVerifyResult result = verifier.verify(syncSetId);
         if (result.sourceComplete() && result.targetComplete()) {
             setRepo.recordVerifyResult(syncSetId, java.time.OffsetDateTime.now(),
                     result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
+            if (afterReconcile) {
+                reconcileHistory.recordDrift(syncSetId,
+                        result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
+            }
         }
         return result;
     }

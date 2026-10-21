@@ -10,7 +10,10 @@ import com.ldapportal.dto.sync.SyncDeleteApproval;
 import com.ldapportal.dto.sync.SyncLinkRequest;
 import com.ldapportal.dto.sync.SyncLinkResponse;
 import com.ldapportal.dto.sync.SyncPreviewAction;
+import com.ldapportal.dto.sync.SyncReconcileRunDetail;
 import com.ldapportal.dto.sync.SyncReconcileRunResponse;
+import com.ldapportal.dto.sync.SyncRunFailureReason;
+import com.ldapportal.dto.sync.SyncRunSettings;
 import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncSetResponse;
 import com.ldapportal.entity.enums.MembershipState;
@@ -193,7 +196,8 @@ class SyncControllerTest extends BaseControllerTest {
         given(service.reconcileRuns(SET, 20)).willReturn(List.of(new SyncReconcileRunResponse(
                 runId, SyncReconcileTrigger.MANUAL, "superadmin", SyncReconcileRunStatus.COMPLETE,
                 OffsetDateTime.now(), OffsetDateTime.now(), true, 4741, 876, 4741L, 4741,
-                3, 1, 0, 0, 0, 3865, 0, 872, 0, 0, 0, false, null, null)));
+                3, 1, 0, 0, 0, 3865, 0, 872, 0, 0, 0, false, null, null,
+                "app-2", OffsetDateTime.now(), null, null, null, null)));
         mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs").param("limit", "500")
                         .with(authentication(superadminAuth())))
                 .andExpect(status().isOk())
@@ -201,6 +205,35 @@ class SyncControllerTest extends BaseControllerTest {
                 .andExpect(jsonPath("$[0].trigger").value("MANUAL"))
                 .andExpect(jsonPath("$[0].noChange").value(3865))
                 .andExpect(jsonPath("$[0].managedAfter").value(4741));
+    }
+
+    @Test
+    void reconcileRun_superadmin_returnsDetail() throws Exception {
+        UUID runId = UUID.randomUUID();
+        SyncReconcileRunResponse run = new SyncReconcileRunResponse(
+                runId, SyncReconcileTrigger.SCHEDULED, null, SyncReconcileRunStatus.COMPLETE,
+                OffsetDateTime.now(), OffsetDateTime.now(), true, 10, 8, 9L, 10,
+                1, 0, 0, 0, 0, 0, 0, 7, 2, 0, 0, false, null, null,
+                "app-1", OffsetDateTime.now(), OffsetDateTime.now(), 0, 1, 0);
+        given(service.reconcileRun(SET, runId)).willReturn(new SyncReconcileRunDetail(run,
+                new SyncRunSettings("REVIEW", null, null, null, "ou=Users,dc=dst", null, null, null, 50, 20, 20),
+                List.of(new SyncRunFailureReason("apply failed: NO_SUCH_OBJECT", 2, "apply failed: NO_SUCH_OBJECT — x")),
+                java.util.Map.of("ADD", List.of("uid=a,dc=dst")), 25));
+        mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs/" + runId).with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.run.instanceName").value("app-1"))
+                .andExpect(jsonPath("$.settings.deletePolicy").value("REVIEW"))
+                .andExpect(jsonPath("$.failureReasons[0].count").value(2))
+                .andExpect(jsonPath("$.samples.ADD[0]").value("uid=a,dc=dst"));
+    }
+
+    @Test
+    void reconcileRun_ofAnotherSet_returns404() throws Exception {
+        UUID runId = UUID.randomUUID();
+        given(service.reconcileRun(SET, runId))
+                .willThrow(new com.ldapportal.exception.ResourceNotFoundException("Reconcile run not found"));
+        mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs/" + runId).with(authentication(superadminAuth())))
+                .andExpect(status().isNotFound());
     }
 
     @Test
