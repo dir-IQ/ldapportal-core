@@ -16,6 +16,9 @@ import java.util.UUID;
 /** Persistence for {@link SyncReconcileRun}: the reconcile history of each sync set. */
 public interface SyncReconcileRunRepository extends JpaRepository<SyncReconcileRun, UUID> {
 
+    /** How many runs are recorded for a set. */
+    long countBySyncSetId(UUID syncSetId);
+
     /** A set's runs, newest first. */
     List<SyncReconcileRun> findBySyncSetIdOrderByStartedAtDesc(UUID syncSetId, Pageable pageable);
 

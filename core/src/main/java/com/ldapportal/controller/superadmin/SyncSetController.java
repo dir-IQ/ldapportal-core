@@ -76,9 +76,15 @@ public class SyncSetController {
 
     @DeleteMapping("/{id}")
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
-    public ResponseEntity<Void> delete(@PathVariable UUID id) {
-        service.deleteSet(id);
+    public ResponseEntity<Void> delete(@PathVariable UUID id, @AuthenticationPrincipal AuthPrincipal principal) {
+        service.deleteSet(id, principal);
         return ResponseEntity.noContent().build();
+    }
+
+    /** What deleting the set would discard — shown in the confirmation before a delete. */
+    @GetMapping("/{id}/delete-impact")
+    public com.ldapportal.dto.sync.SyncSetDeleteImpact deleteImpact(@PathVariable UUID id) {
+        return service.deleteImpact(id);
     }
 
     // ── Inventory + operator triggers ──────────────────────────────────────────

@@ -108,10 +108,13 @@ public enum AuditAction implements EditionScoped {
     API_TOKEN_CREATED    ("api_token.created"),
     API_TOKEN_UPDATED    ("api_token.updated"),
     API_TOKEN_REVOKED    ("api_token.revoked"),
-    API_TOKEN_ROTATED    ("api_token.rotated");
-    // Directory-sync audit actions are reintroduced (as sync.*) when the
-    // membership-engine lands; the legacy replication.* / reconciliation.*
-    // actions were removed with that subsystem.
+    API_TOKEN_ROTATED    ("api_token.rotated"),
+
+    // ── Directory sync (the membership engine) ──────────────────────────────
+    // The legacy replication.* / reconciliation.* actions were removed with
+    // their subsystem; sync.* actions are added as the engine needs them.
+    SYNC_SET_DELETE      ("sync.set_delete",     Entitlement.DIRECTORY_SYNC),
+    SYNC_LINK_DELETE     ("sync.link_delete",    Entitlement.DIRECTORY_SYNC);
 
     private final String dbValue;
 
