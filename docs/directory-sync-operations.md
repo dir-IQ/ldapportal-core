@@ -135,10 +135,10 @@ issued it. The base DN is stored trimmed.
 |---|---|
 | **Name** | Label only; does not affect matching. |
 | **Identity key** | Source attribute used as each entry's stable identity (`entryUUID`, `objectGUID`, …). Blank → directory-type default. **Avoid mutable attributes like `mail`** — identity must never change for the same entry. |
-| **Source scope base DN** | Base DN under the source to enumerate / match against. Blank → the directory's own base DN. |
+| **Source scope base DN** | Base DN under the source to enumerate / match against. Blank → the directory's own base DN (required when the directory has [several roots](multi-root-directories.md)). |
 | **Source scope** | LDAP scope under the base: `SUB` (default), `ONE`, `BASE`. |
 | **Applicability filter** | RFC 4515 filter selecting which source entries belong, e.g. `(&(objectClass=inetOrgPerson)(employeeType=staff))`. Validated for syntax at save. |
-| **Target base DN** | Base DN under the target where matched entries are placed. |
+| **Target base DN** | Base DN under the target where matched entries are placed. Required when the target directory has [several roots](multi-root-directories.md). |
 | **Reference attributes** (csv) | DN-valued attributes whose values are rewritten to target DNs and whose referrers are re-driven on change, e.g. `member,uniqueMember,manager`. Blank → `member,uniqueMember,manager,owner,secDN`. Values are resolved through the membership index of **every** link (the referrer's own link first), so a reference into a subtree mirrored by another link — an IVIA `secDN` under `c=admin` pointing at a `c=us` entry when OUD exposes each suffix as its own directory connection — still remaps. A referent no link has synced is dropped until it lands; one that different links mirror to *different* target DNs is ambiguous and dropped (logged). |
 | **Source anchor attribute** | Target attribute that stores the source identity, used to **adopt** pre-existing target entries (brownfield). Ambiguity → REVIEW. See §6. |
 | **Delete policy** | `DELETE` (remove target when an entry leaves membership) or `REVIEW` (quarantine for an operator instead of auto-deleting). |

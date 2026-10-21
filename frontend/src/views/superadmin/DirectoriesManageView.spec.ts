@@ -15,12 +15,14 @@ import { mount, flushPromises } from '@vue/test-utils'
 const api = vi.hoisted(() => ({
   listDirectoryConnections: vi.fn(),
   getDirectoryStatus: vi.fn(),
+  createDirectory: vi.fn(),
+  updateDirectory: vi.fn(),
 }))
 
 vi.mock('@/api/directories', () => ({
   listDirectoryConnections: api.listDirectoryConnections,
-  createDirectory: vi.fn(),
-  updateDirectory: vi.fn(),
+  createDirectory: api.createDirectory,
+  updateDirectory: api.updateDirectory,
   deleteDirectory: vi.fn(),
   testDirectory: vi.fn(),
   evictPool: vi.fn(),
@@ -135,5 +137,51 @@ describe('DirectoriesManageView status column', () => {
     const names = wrapper.findAll('tbody tr td:first-child').map((c) => c.text().trim())
     // Case-insensitive: "apple" sorts before "Mango" before "Zebra".
     expect(names).toEqual(['apple', 'Mango', 'Zebra'])
+  })
+})
+
+describe('DirectoriesManageView additional base DNs', () => {
+  it('sends one additional root per non-blank line on create', async () => {
+    api.createDirectory.mockResolvedValue({ data: {} })
+    const wrapper = mount(DirectoriesManageView, { global: { stubs } })
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text().includes('New Directory'))!.trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#dm-additional-roots').setValue('o=partners\n\n  secAuthority=Default  \n')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(api.createDirectory).toHaveBeenCalledWith(expect.objectContaining({
+      additionalBaseDns: ['o=partners', 'secAuthority=Default'],
+    }))
+  })
+
+  it('loads the configured roots on edit and offers the unconfigured naming contexts', async () => {
+    api.updateDirectory.mockResolvedValue({ data: {} })
+    api.listDirectoryConnections.mockResolvedValue({ data: [{
+      ...dir('up', true), baseDn: 'dc=example,dc=com', additionalBaseDns: ['o=partners'],
+      capabilities: { namingContexts: ['dc=example,dc=com', 'o=partners', 'o=archive'] },
+    }] })
+    const wrapper = mount(DirectoriesManageView, { global: { stubs } })
+    await flushPromises()
+    await wrapper.findAll('button').find((b) => b.text() === 'Edit')!.trigger('click')
+    await flushPromises()
+
+    const roots = wrapper.find('#dm-additional-roots').element as HTMLTextAreaElement
+    expect(roots.value).toBe('o=partners')
+    // FormField is stubbed, so the form keeps the row's base DN as loaded.
+    const suggest = wrapper.findAll('button').find((b) => b.text().includes('naming contexts'))!
+    expect(suggest.text()).toContain('o=archive')
+    expect(suggest.text()).not.toContain('o=partners')
+    await suggest.trigger('click')
+    expect(roots.value).toBe('o=partners\no=archive')
+    expect(wrapper.findAll('button').some((b) => b.text().includes('naming contexts'))).toBe(false)
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(api.updateDirectory).toHaveBeenCalledWith('up', expect.objectContaining({
+      additionalBaseDns: ['o=partners', 'o=archive'],
+    }))
   })
 })

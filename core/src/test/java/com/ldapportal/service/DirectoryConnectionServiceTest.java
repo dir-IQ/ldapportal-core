@@ -23,6 +23,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -136,6 +138,59 @@ class DirectoryConnectionServiceTest {
 
     // ── fixtures ────────────────────────────────────────────────────────────
 
+    // ── further roots (multi-root directories) ─────────────────────────────
+
+    @Test
+    void updateDirectory_storesAdditionalRoots_trimmed_andReturnsThem() {
+        var resp = service.updateDirectory(DIR_ID, requestWithRoots(List.of(" o=partners ", "", "secAuthority=Default")));
+
+        assertThat(resp.additionalBaseDns()).containsExactly("o=partners", "secAuthority=Default");
+    }
+
+    @Test
+    void updateDirectory_rejectsARootNestedWithAnother() {
+        assertThatThrownBy(() -> service.updateDirectory(DIR_ID,
+                requestWithRoots(List.of("ou=people,dc=example,dc=com"))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("nested");
+        assertThatThrownBy(() -> service.updateDirectory(DIR_ID,
+                requestWithRoots(List.of("o=partners", "DC=Example,DC=Com"))))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> service.updateDirectory(DIR_ID,
+                requestWithRoots(List.of("o=partners", "ou=x,o=partners"))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void updateDirectory_rejectsAnInvalidRootDn() {
+        assertThatThrownBy(() -> service.updateDirectory(DIR_ID, requestWithRoots(List.of("not a dn"))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void exportAll_includesAdditionalRoots_andOmitsThemWhenThereAreNone() {
+        DirectoryConnection multi = existing();
+        multi.setAdditionalBaseDns(new java.util.ArrayList<>(List.of("o=partners")));
+        when(dirRepo.findAll()).thenReturn(List.of(multi));
+        assertThat(service.exportAll().get(0).request().additionalBaseDns()).containsExactly("o=partners");
+
+        when(dirRepo.findAll()).thenReturn(List.of(existing()));
+        assertThat(service.exportAll().get(0).request().additionalBaseDns()).isNull();
+    }
+
+    private static DirectoryConnectionRequest requestWithRoots(List<String> roots) {
+        return new DirectoryConnectionRequest(
+                DirectoryType.GENERIC, "Corp LDAP", "ldap.example.com", 389, SslMode.NONE,
+                false, null, "cn=admin,dc=example,dc=com", null,
+                "dc=example,dc=com", 500, 1, 10, 5, 30, 300,
+                null, null, null, null, null, true,
+                false, null, null, null, null,
+                null, null,
+                null, null,
+                null, null, null, "https://graph.microsoft.com",
+                null, null, roots);
+    }
+
     /** {@link #matchingRequest} with the audit-source link expressed by slug. */
     private static DirectoryConnectionRequest requestWithAuditSlug(String auditSlug) {
         return new DirectoryConnectionRequest(
@@ -147,7 +202,7 @@ class DirectoryConnectionServiceTest {
                 null, null,
                 null, null,
                 null, null, null, "https://graph.microsoft.com",
-                null, auditSlug);
+                null, auditSlug, null);
     }
 
     private static DirectoryConnection existing() {
@@ -190,6 +245,6 @@ class DirectoryConnectionServiceTest {
                 null, null,
                 null, null,
                 null, null, null, "https://graph.microsoft.com",
-                null, null);
+                null, null, null);
     }
 }

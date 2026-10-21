@@ -229,8 +229,10 @@ public class SelfServiceService {
         String escapedDn = Filter.encodeValue(principal.dn());
         String memberFilter = "(|(member=" + escapedDn + ")"
                 + "(uniqueMember=" + escapedDn + "))";
+        // Null base: every root of the directory — a group under another
+        // suffix can still list this user.
         List<LdapGroup> groups = ldapGroupService.searchGroups(
-                dc, memberFilter, dc.getBaseDn(), "cn", "description");
+                dc, memberFilter, null, "cn", "description");
 
         return groups.stream()
                 .map(g -> new SelfServiceGroupResponse(

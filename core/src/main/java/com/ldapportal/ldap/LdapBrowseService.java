@@ -624,7 +624,28 @@ public class LdapBrowseService {
                                            List<String> attributes, int sizeLimit,
                                            int timeLimitSeconds,
                                            boolean includeOperational) {
-        String searchBase = (baseDn != null && !baseDn.isBlank()) ? baseDn : dc.getBaseDn();
+        if (baseDn != null && !baseDn.isBlank()) {
+            return searchEntriesUnder(dc, baseDn, scope, filter, attributes, sizeLimit,
+                    timeLimitSeconds, includeOperational);
+        }
+        // No base: every root of the directory, in order, up to sizeLimit.
+        List<SearchEntry> merged = new ArrayList<>();
+        for (String root : dc.getBaseDns()) {
+            int remaining = sizeLimit - merged.size();
+            if (remaining <= 0) {
+                break;
+            }
+            merged.addAll(searchEntriesUnder(dc, root, scope, filter, attributes, remaining,
+                    timeLimitSeconds, includeOperational));
+        }
+        return merged;
+    }
+
+    private List<SearchEntry> searchEntriesUnder(DirectoryConnection dc, String searchBase,
+                                                 SearchScope scope, String filter,
+                                                 List<String> attributes, int sizeLimit,
+                                                 int timeLimitSeconds,
+                                                 boolean includeOperational) {
         String effectiveFilter = (filter == null || filter.isBlank()) ? "(objectClass=*)" : filter;
         // Build the effective attribute array. When includeOperational is set,
         // append "+" — RFC 4511's marker for "all operational attributes". If
@@ -757,7 +778,21 @@ public class LdapBrowseService {
      */
     private MatchCount countMatches(DirectoryConnection dc, String baseDn, SearchScope scope,
                                     String filter, int timeLimitSeconds) {
-        String searchBase = (baseDn != null && !baseDn.isBlank()) ? baseDn : dc.getBaseDn();
+        if (baseDn != null && !baseDn.isBlank()) {
+            return countMatchesUnder(dc, baseDn, scope, filter, timeLimitSeconds);
+        }
+        int count = 0;
+        boolean lowerBound = false;
+        for (String root : dc.getBaseDns()) {
+            MatchCount c = countMatchesUnder(dc, root, scope, filter, timeLimitSeconds);
+            count += c.count();
+            lowerBound |= c.lowerBound();
+        }
+        return new MatchCount(count, lowerBound);
+    }
+
+    private MatchCount countMatchesUnder(DirectoryConnection dc, String searchBase, SearchScope scope,
+                                         String filter, int timeLimitSeconds) {
         String effectiveFilter = (filter == null || filter.isBlank()) ? "(objectClass=*)" : filter;
 
         return connectionFactory.withConnection(dc, conn -> {

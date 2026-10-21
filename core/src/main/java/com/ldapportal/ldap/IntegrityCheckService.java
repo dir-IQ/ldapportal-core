@@ -31,35 +31,45 @@ public class IntegrityCheckService {
      * Runs the selected integrity checks against the directory.
      *
      * @param dc      directory connection
-     * @param baseDn  base DN to search under
+     * @param baseDn  base DN to search under (blank checks every root of the
+     *                directory; a member under any root then counts as present)
      * @param checks  which checks to run (BROKEN_MEMBER, ORPHANED_ENTRY, EMPTY_GROUP)
      * @return report with all issues found
      */
     public IntegrityReport runChecks(DirectoryConnection dc, String baseDn,
                                      Set<IssueType> checks) {
-        String searchBase = (baseDn != null && !baseDn.isBlank()) ? baseDn : dc.getBaseDn();
+        List<String> searchBases = (baseDn != null && !baseDn.isBlank()) ? List.of(baseDn) : dc.getBaseDns();
 
         return connectionFactory.withConnection(dc, conn -> {
             List<IntegrityIssue> issues = new ArrayList<>();
 
-            // Pre-load all DNs once if needed by broken-member or orphaned checks
+            // Pre-load all DNs once if needed by broken-member or orphaned
+            // checks — across every searched root, so a group in one root
+            // whose member lives in another isn't reported as broken.
             Set<String> allDns = null;
             if (checks.contains(IssueType.BROKEN_MEMBER) || checks.contains(IssueType.ORPHANED_ENTRY)) {
-                allDns = loadAllDns(conn, searchBase);
-                log.info("Loaded {} DNs from '{}'", allDns.size(), searchBase);
+                allDns = new HashSet<>();
+                for (String searchBase : searchBases) {
+                    allDns.addAll(loadAllDns(conn, searchBase));
+                }
+                log.info("Loaded {} DNs from {}", allDns.size(), searchBases);
             }
 
-            if (checks.contains(IssueType.BROKEN_MEMBER)) {
-                issues.addAll(checkBrokenMembers(conn, searchBase, allDns));
+            for (String searchBase : searchBases) {
+                if (checks.contains(IssueType.BROKEN_MEMBER)) {
+                    issues.addAll(checkBrokenMembers(conn, searchBase, allDns));
+                }
+                if (checks.contains(IssueType.EMPTY_GROUP)) {
+                    issues.addAll(checkEmptyGroups(conn, searchBase));
+                }
             }
+            // Once over the combined set: each searched root is exempt (its
+            // parent is outside the search by definition).
             if (checks.contains(IssueType.ORPHANED_ENTRY)) {
-                issues.addAll(checkOrphanedEntries(allDns, searchBase));
-            }
-            if (checks.contains(IssueType.EMPTY_GROUP)) {
-                issues.addAll(checkEmptyGroups(conn, searchBase));
+                issues.addAll(checkOrphanedEntries(allDns, searchBases));
             }
 
-            log.info("Integrity check on '{}': {} issues found", searchBase, issues.size());
+            log.info("Integrity check on {}: {} issues found", searchBases, issues.size());
             return new IntegrityReport(issues);
         });
     }
@@ -169,11 +179,15 @@ public class IntegrityCheckService {
      * Finds entries whose parent DN does not exist in the directory.
      * Uses the pre-loaded DN set — no additional LDAP queries needed.
      */
-    private List<IntegrityIssue> checkOrphanedEntries(Set<String> allDns, String baseDn) {
+    private List<IntegrityIssue> checkOrphanedEntries(Set<String> allDns, List<String> searchBases) {
         List<IntegrityIssue> issues = new ArrayList<>();
+        Set<String> roots = new HashSet<>();
+        for (String base : searchBases) {
+            roots.add(base.toLowerCase());
+        }
 
         for (String dn : allDns) {
-            if (dn.equalsIgnoreCase(baseDn)) continue;
+            if (roots.contains(dn.toLowerCase())) continue;
 
             String parentDn = extractParentDn(dn);
             if (parentDn != null && !allDns.contains(parentDn.toLowerCase())) {

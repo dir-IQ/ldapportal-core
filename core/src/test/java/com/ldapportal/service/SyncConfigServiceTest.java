@@ -223,6 +223,31 @@ class SyncConfigServiceTest {
     }
 
     @Test
+    void createSet_onAMultiRootDirectory_requiresExplicitBases() {
+        UUID linkId = UUID.randomUUID();
+        UUID srcId = UUID.randomUUID();
+        UUID dstId = UUID.randomUUID();
+        SyncLink link = new SyncLink();
+        link.setSourceDirId(srcId);
+        link.setTargetDirId(dstId);
+        com.ldapportal.entity.DirectoryConnection multi = new com.ldapportal.entity.DirectoryConnection();
+        multi.setBaseDn("dc=example,dc=com");
+        multi.setAdditionalBaseDns(new java.util.ArrayList<>(List.of("o=partners")));
+        com.ldapportal.entity.DirectoryConnection single = new com.ldapportal.entity.DirectoryConnection();
+        single.setBaseDn("dc=dst,dc=com");
+        when(linkRepo.existsById(linkId)).thenReturn(true);
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+        when(directoryRepo.findById(srcId)).thenReturn(Optional.of(multi));
+        org.mockito.Mockito.lenient().when(directoryRepo.findById(dstId)).thenReturn(Optional.of(single));
+
+        SyncSetRequest noScope = new SyncSetRequest(linkId, "people", null, null, null, "ou=Users,dc=dst,dc=com",
+                null, null, null, SyncDeletePolicy.DELETE, null, null, null, true);
+        assertThatThrownBy(() -> service.createSet(noScope))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("source scope base DN");
+    }
+
+    @Test
     void approveDelete_auditsTheTargetDelete() {
         UUID setId = UUID.randomUUID();
         UUID targetDir = UUID.randomUUID();

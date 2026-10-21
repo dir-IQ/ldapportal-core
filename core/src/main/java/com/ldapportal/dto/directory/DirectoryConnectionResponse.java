@@ -74,7 +74,9 @@ public record DirectoryConnectionResponse(
         // idempotent applier tell whether a credential is already stored
         // (so it can omit it on update) without exposing the value.
         boolean bindPasswordSet,
-        boolean entraClientSecretSet) {
+        boolean entraClientSecretSet,
+        // ── Further top-level roots beyond baseDn (empty for single-root) ───
+        List<String> additionalBaseDns) {
 
     public record BaseDnItem(UUID id, String dn, int displayOrder) {
         public static BaseDnItem fromUser(DirectoryUserBaseDn b) {
@@ -129,7 +131,8 @@ public record DirectoryConnectionResponse(
                 dc.getCreatedAt(),
                 dc.getUpdatedAt(),
                 isSecretSet(dc.getBindPasswordEncrypted()),
-                isSecretSet(dc.getEntraClientSecretEncrypted()));
+                isSecretSet(dc.getEntraClientSecretEncrypted()),
+                dc.getAdditionalBaseDns() != null ? List.copyOf(dc.getAdditionalBaseDns()) : List.of());
     }
 
     /**

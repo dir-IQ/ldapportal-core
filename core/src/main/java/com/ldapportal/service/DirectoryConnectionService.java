@@ -159,7 +159,10 @@ public class DirectoryConnectionService {
                 dc.getSlug(),
                 // Re-link by the audit source's stable slug (survives a fresh
                 // install); the id is intentionally left null.
-                dc.getAuditDataSource() != null ? dc.getAuditDataSource().getSlug() : null);
+                dc.getAuditDataSource() != null ? dc.getAuditDataSource().getSlug() : null,
+                // Null rather than empty keeps a single-root export's YAML unchanged.
+                dc.getAdditionalBaseDns() == null || dc.getAdditionalBaseDns().isEmpty()
+                        ? null : List.copyOf(dc.getAdditionalBaseDns()));
 
         return new DirectoryExport(req,
                 isSecretSet(dc.getBindPasswordEncrypted()),
@@ -407,6 +410,9 @@ public class DirectoryConnectionService {
         dc.setTrustedCertificatePem(req.trustedCertificatePem());
         dc.setBindDn(req.bindDn());
         dc.setBaseDn(req.baseDn());
+        dc.setAdditionalBaseDns(req.directoryType() == com.ldapportal.entity.enums.DirectoryType.ENTRA_ID
+                ? new java.util.ArrayList<>()
+                : validatedAdditionalRoots(req));
         dc.setPagingSize(req.pagingSize());
         dc.setPoolMinSize(req.poolMinSize());
         dc.setPoolMaxSize(req.poolMaxSize());
@@ -440,6 +446,38 @@ public class DirectoryConnectionService {
         dc.setTenantId(req.tenantId());
         dc.setEntraClientId(req.entraClientId());
         dc.setGraphEndpoint(req.graphEndpoint());
+    }
+
+    /**
+     * The request's further roots, trimmed with blanks dropped, each a valid DN
+     * that neither equals nor nests with the base DN or another root (a nested
+     * root would just repeat part of its parent's tree in every search).
+     */
+    private static List<String> validatedAdditionalRoots(DirectoryConnectionRequest req) {
+        List<String> roots = new java.util.ArrayList<>();
+        if (req.additionalBaseDns() == null) {
+            return roots;
+        }
+        List<String> all = new java.util.ArrayList<>();
+        if (req.baseDn() != null && !req.baseDn().isBlank()) {
+            all.add(req.baseDn().trim());
+        }
+        for (String dn : req.additionalBaseDns()) {
+            if (dn == null || dn.isBlank()) {
+                continue;
+            }
+            String root = dn.trim();
+            com.ldapportal.ldap.validation.DnValidator.requireValidDn(root, req.directoryType());
+            for (String other : all) {
+                if (com.ldapportal.ldap.DirectoryRoots.nests(root, other)) {
+                    throw new IllegalArgumentException("Additional base DN [" + root + "] is the same as, "
+                            + "or nested with, base DN [" + other + "]; list each top-level root once.");
+                }
+            }
+            all.add(root);
+            roots.add(root);
+        }
+        return roots;
     }
 
     /**
