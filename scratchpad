@@ -136,3 +136,25 @@ Afterwards
 Keep the local pgdata volume and ldapportal.dump until you're confident in the new setup. Delete the dump file once you're done, because it holds encrypted secrets and audit history.
 Turn on RDS automated backups (7 days or more) and deletion protection.
 Run make export-config with BASE_URL=https://<HOSTNAME> to get a readable config snapshot of the new install.
+
+changelog - cn=changelog
+cn - IVIA_Import_Test
+createTimestamp	- 20261021170433Z
+creatorsName - cn=ivmgrd/master,cn=SecurityDaemons,secAuthority=Default,cn=treasury
+ds-sync-hist - dn:000001a15f6bf4f93f3f00000003:add
+entryDN	- cn=ivia_import_test,cn=groups,secauthority=default,cn=treasury
+entryUUID - 949f2ab0-a340-47e4-b23f-d4c1591360ab
+hasSubordinates - false
+modifiersName - cn=ivmgrd/master,cn=SecurityDaemons,secAuthority=Default,cn=treasury
+modifyTimestamp - 20261021170433Z
+nsUniqueId - 949f2ab0-a34047e4-b23fd4c1-591360ab
+numSubordinates - 0
+objectClass - top secGroup
+orclGUID - 949F2AB0A34047E4B23FD4C1591360AB
+pwdPolicySubentry - cn=Default Password Policy,cn=Password Policies,cn=config
+secAuthority - Default
+secDN - cn=IVIA_Import_Test,o=groups,c=us
+secHasPolicy - FALSE
+secUUID - 7c964840-cd71-11f1-96aa-725a5d4b4e65
+structuralObjectClass - secGroup
+subschemaSubentry - cn=schema
