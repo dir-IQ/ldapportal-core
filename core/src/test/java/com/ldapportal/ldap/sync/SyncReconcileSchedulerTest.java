@@ -6,6 +6,7 @@ import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
+import com.ldapportal.exception.ConflictException;
 import com.ldapportal.repository.SyncSetRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -61,6 +62,25 @@ class SyncReconcileSchedulerTest {
 
         verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
         verify(syncSetRepo).recordVerifyResult(eq(id), any(), eq(2), eq(1), eq(0));
+    }
+
+    @Test
+    void setReconcilingElsewhere_isSkippedWithoutAVerify_andTheSweepContinues() {
+        UUID busy = UUID.randomUUID();
+        UUID free = UUID.randomUUID();
+        SyncSet a = new SyncSet();
+        a.setId(busy);
+        SyncSet b = new SyncSet();
+        b.setId(free);
+        when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(a, b));
+        when(reconciler.reconcile(busy, SyncReconcileTrigger.SCHEDULED, null))
+                .thenThrow(new ConflictException("A reconcile of this sync set is already running."));
+        when(verifier.verify(free)).thenReturn(result(0, 0, 0, true, true));
+
+        scheduler.reconcileDueSets();
+
+        verify(verifier, never()).verify(busy);
+        verify(reconciler).reconcile(free, SyncReconcileTrigger.SCHEDULED, null);
     }
 
     @Test

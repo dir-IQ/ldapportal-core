@@ -62,6 +62,42 @@ public interface SyncSetRepository extends JpaRepository<SyncSet, UUID> {
         }
     }
 
+    /**
+     * Claim the reconcile lease for a set: succeeds when no reconcile holds it or
+     * the holder's heartbeat is older than {@code staleBefore} (its server
+     * stopped). Returns 1 if claimed, 0 if another reconcile is running.
+     */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.reconcileLeaseToken = :token, s.reconcileLeaseHeartbeatAt = :now "
+            + "where s.id = :id and (s.reconcileLeaseToken is null or s.reconcileLeaseHeartbeatAt < :staleBefore)")
+    int claimReconcile(@Param("id") UUID id, @Param("token") UUID token, @Param("now") OffsetDateTime now,
+                       @Param("staleBefore") OffsetDateTime staleBefore);
+
+    /** Keep a held lease alive. Returns 0 when the lease is no longer this token's. */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.reconcileLeaseHeartbeatAt = :now "
+            + "where s.id = :id and s.reconcileLeaseToken = :token")
+    int heartbeatReconcile(@Param("id") UUID id, @Param("token") UUID token, @Param("now") OffsetDateTime now);
+
+    /** Release a held lease (a no-op when it is no longer this token's). */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.reconcileLeaseToken = null, s.reconcileLeaseHeartbeatAt = null "
+            + "where s.id = :id and s.reconcileLeaseToken = :token")
+    int releaseReconcile(@Param("id") UUID id, @Param("token") UUID token);
+
+    /**
+     * Stamp a finished reconcile. Also bumps {@code updatedAt}, which marks a
+     * per-entry preview started before it as outdated. A targeted update, so it
+     * never collides with an admin edit's optimistic-lock version.
+     */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.reconcileLastRunAt = :at, s.updatedAt = :at where s.id = :id")
+    int stampReconcileRun(@Param("id") UUID id, @Param("at") OffsetDateTime at);
+
     @Transactional
     @Modifying
     @Query("update SyncSet s set s.reconcileAttemptedSeq = :requestSeq "

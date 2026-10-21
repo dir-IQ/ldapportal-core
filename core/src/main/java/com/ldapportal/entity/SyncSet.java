@@ -112,7 +112,8 @@ public class SyncSet {
     @Column(name = "reconcile_cadence_seconds")
     private Long reconcileCadenceSeconds;
 
-    @Column(name = "reconcile_last_run_at")
+    /** Read-only to JPA: only {@code SyncSetRepository.stampReconcileRun} writes it. */
+    @Column(name = "reconcile_last_run_at", insertable = false, updatable = false)
     private OffsetDateTime reconcileLastRunAt;
 
     /**
@@ -139,6 +140,19 @@ public class SyncSet {
     @ColumnDefault("0")
     @Column(name = "reconcile_handled_seq", nullable = false, insertable = false, updatable = false)
     private long reconcileHandledSeq;
+
+    /**
+     * Single-flight lease for this set's reconcile across app instances: the
+     * running reconcile's token and its last heartbeat ({@code null} when none
+     * runs). Read-only to JPA, like the request counters: only the targeted
+     * claim / heartbeat / release updates in {@code SyncSetRepository} write it,
+     * so an admin edit saving the set can't clear a running reconcile's lease.
+     */
+    @Column(name = "reconcile_lease_token", insertable = false, updatable = false)
+    private UUID reconcileLeaseToken;
+
+    @Column(name = "reconcile_lease_heartbeat_at", insertable = false, updatable = false)
+    private OffsetDateTime reconcileLeaseHeartbeatAt;
 
     /**
      * Optional attribute rename / value-template rules. Null/empty => identity
