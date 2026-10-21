@@ -3,6 +3,7 @@ package com.ldapportal.ldap.sync;
 
 import com.ldapportal.dto.sync.SyncDeleteApproval;
 import com.ldapportal.dto.sync.SyncPreviewAction;
+import com.ldapportal.dto.sync.SyncRecheckResult;
 import com.ldapportal.dto.sync.SyncReconcileRunDetail;
 import com.ldapportal.dto.sync.SyncReviewKind;
 import com.ldapportal.dto.sync.SyncVerifyResult;
@@ -87,6 +88,7 @@ class SyncEngineIntegrationTest {
     @Autowired private RecomputeEnqueuer enqueuer;
     @Autowired private SyncReconcileRunRepository runRepo;
     @Autowired private SyncReconcileHistory history;
+    @Autowired private com.ldapportal.service.SyncConfigService syncConfigService;
 
     private InMemoryDirectoryServer source;
     private InMemoryDirectoryServer target;
@@ -952,6 +954,44 @@ class SyncEngineIntegrationTest {
         assertThat(runRepo.findAll()).singleElement()
                 .extracting(SyncReconcileRun::getStatus).isEqualTo(SyncReconcileRunStatus.COMPLETE);
         assertThat(setRepo.findById(peopleSet.getId()).orElseThrow().getName()).isEqualTo("people (edited)");
+    }
+
+    @Test
+    void restoredTarget_isOnlyRepairedAfterARecheck() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        // The target is restored from a backup taken before bob was synced and
+        // before alice's mail reached it; the source is unchanged.
+        target.delete("uid=bob," + DST_USERS);
+        target.modify("uid=alice," + DST_USERS, new Modification(ModificationType.REPLACE, "mail", "old@dst"));
+
+        // A plain reconcile trusts the index (hash gate) and leaves the restore in place.
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+        assertThat(target.getEntry("uid=bob," + DST_USERS)).isNull();
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("mail")).isEqualTo("old@dst");
+
+        long requestsBefore = setRepo.findById(peopleSet.getId()).orElseThrow().getReconcileRequestSeq();
+        SyncRecheckResult recheck = syncConfigService.recheckTarget(peopleSet.getId(), "operator");
+        assertThat(recheck.entries()).isEqualTo(2);
+        assertThat(recheck.reconcileQueued()).isTrue();
+        assertThat(setRepo.findById(peopleSet.getId()).orElseThrow().getReconcileRequestSeq())
+                .isEqualTo(requestsBefore + 1);
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        assertThat(target.getEntry("uid=bob," + DST_USERS)).isNotNull();
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("mail")).isEqualTo("alice@src");
+        SyncReconcileRun run = runRepo.findAll().stream()
+                .max(java.util.Comparator.comparing(SyncReconcileRun::getStartedAt)).orElseThrow();
+        assertThat(run.getAdded()).isEqualTo(1);    // bob
+        assertThat(run.getModified()).isEqualTo(1); // alice
+        // ...and the hashes are back, so the next run is a cheap no-op again.
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+        SyncReconcileRun after = runRepo.findAll().stream()
+                .max(java.util.Comparator.comparing(SyncReconcileRun::getStartedAt)).orElseThrow();
+        assertThat(after.getAdded() + after.getModified() + after.getNoChange()).isZero();
     }
 
     @Test
