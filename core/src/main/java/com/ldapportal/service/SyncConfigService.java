@@ -301,6 +301,7 @@ public class SyncConfigService {
         }
         requireValidDn(req.objectScopeBaseDn(), "objectScopeBaseDn");
         requireValidDn(req.targetBaseDn(), "targetBaseDn");
+        requireExplicitBaseOnMultiRoot(req);
         if (req.applicabilityFilter() != null && !req.applicabilityFilter().isBlank()) {
             try {
                 Filter.create(req.applicabilityFilter());
@@ -309,6 +310,34 @@ public class SyncConfigService {
             }
         }
         validateTransformRules(req.transformRules());
+    }
+
+    /**
+     * A blank source scope or target base falls back to the directory's base
+     * DN. On a directory with several roots that's just the primary one, which
+     * is rarely what was meant — so require the base explicitly there.
+     */
+    private void requireExplicitBaseOnMultiRoot(SyncSetRequest req) {
+        boolean noScope = req.objectScopeBaseDn() == null || req.objectScopeBaseDn().isBlank();
+        boolean noTarget = req.targetBaseDn() == null || req.targetBaseDn().isBlank();
+        if (!noScope && !noTarget) {
+            return;
+        }
+        linkRepo.findById(req.linkId()).ifPresent(link -> {
+            if (noScope && isMultiRoot(link.getSourceDirId())) {
+                throw new IllegalArgumentException("The source directory has more than one base DN: "
+                        + "set the source scope base DN for this sync set.");
+            }
+            if (noTarget && isMultiRoot(link.getTargetDirId())) {
+                throw new IllegalArgumentException("The target directory has more than one base DN: "
+                        + "set the target base DN for this sync set.");
+            }
+        });
+    }
+
+    private boolean isMultiRoot(UUID directoryId) {
+        return directoryId != null && directoryRepo.findById(directoryId)
+                .map(com.ldapportal.ldap.DirectoryRoots::isMultiRoot).orElse(false);
     }
 
     /**

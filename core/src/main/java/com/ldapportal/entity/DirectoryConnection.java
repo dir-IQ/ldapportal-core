@@ -82,8 +82,21 @@ public class DirectoryConnection {
     @Column(name = "bind_password_encrypted", nullable = false, columnDefinition = "TEXT")
     private String bindPasswordEncrypted;
 
+    /**
+     * The primary root: the default for anything that needs a single base
+     * (the browser's first root, sync and discovery fallbacks). See
+     * {@link #getBaseDns()} for every root.
+     */
     @Column(name = "base_dn", nullable = false)
     private String baseDn;
+
+    /**
+     * Further top-level roots of the same server (other suffixes / naming
+     * contexts), beyond {@link #baseDn}. Empty for a single-root directory.
+     */
+    @Convert(converter = com.ldapportal.entity.converter.DnListConverter.class)
+    @Column(name = "additional_base_dns", columnDefinition = "TEXT")
+    private java.util.List<String> additionalBaseDns = new java.util.ArrayList<>();
 
     @Column(name = "paging_size", nullable = false)
     private int pagingSize = 500;
@@ -256,5 +269,26 @@ public class DirectoryConnection {
             if (base.length() > 80) base = base.substring(0, 80).replaceAll("-+$", "");
             slug = base + "-" + UUID.randomUUID().toString().substring(0, 8);
         }
+    }
+
+    /**
+     * Every root of this directory: {@link #baseDn} first, then
+     * {@link #additionalBaseDns}, blank and duplicate (case-insensitive) DNs
+     * dropped. A single-root directory returns just its base DN.
+     */
+    public java.util.List<String> getBaseDns() {
+        java.util.List<String> roots = new java.util.ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        java.util.List<String> candidates = new java.util.ArrayList<>();
+        candidates.add(baseDn);
+        if (additionalBaseDns != null) {
+            candidates.addAll(additionalBaseDns);
+        }
+        for (String dn : candidates) {
+            if (dn != null && !dn.isBlank() && seen.add(dn.trim().toLowerCase(java.util.Locale.ROOT))) {
+                roots.add(dn.trim());
+            }
+        }
+        return roots;
     }
 }

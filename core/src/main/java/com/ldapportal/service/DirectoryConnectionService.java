@@ -61,6 +61,8 @@ public class DirectoryConnectionService {
     private final ApplicationEventPublisher      eventPublisher;
     private final com.ldapportal.core.entitlement.UsageLimitService usageLimitService;
     private final com.ldapportal.directory.DirectoryProviderRegistry providerRegistry;
+    private final com.ldapportal.repository.SyncLinkRepository     syncLinkRepo;
+    private final com.ldapportal.repository.SyncSetRepository      syncSetRepo;
 
     // ── CRUD ──────────────────────────────────────────────────────────────────
 
@@ -159,7 +161,10 @@ public class DirectoryConnectionService {
                 dc.getSlug(),
                 // Re-link by the audit source's stable slug (survives a fresh
                 // install); the id is intentionally left null.
-                dc.getAuditDataSource() != null ? dc.getAuditDataSource().getSlug() : null);
+                dc.getAuditDataSource() != null ? dc.getAuditDataSource().getSlug() : null,
+                // Null rather than empty keeps a single-root export's YAML unchanged.
+                dc.getAdditionalBaseDns() == null || dc.getAdditionalBaseDns().isEmpty()
+                        ? null : List.copyOf(dc.getAdditionalBaseDns()));
 
         return new DirectoryExport(req,
                 isSecretSet(dc.getBindPasswordEncrypted()),
@@ -295,7 +300,13 @@ public class DirectoryConnectionService {
         com.ldapportal.web.ETagSupport.requireMatch(expectedVersion, dc.getVersion());
 
         String beforeSignature = connectionSignature(dc);
+        List<String> rootsBefore = dc.getBaseDns();
         applyRequest(dc, req);
+        List<String> warnings = rootWarnings(dc, rootsBefore);
+        // Logged too: an IaC / bootstrap apply never shows the response.
+        for (String w : warnings) {
+            log.warn("Directory [{}]: {}", dc.getDisplayName(), w);
+        }
 
         boolean secretChanged = false;
         if (req.bindPassword() != null && !req.bindPassword().isBlank()) {
@@ -335,7 +346,44 @@ public class DirectoryConnectionService {
             eventPublisher.publishEvent(new DirectoryConnectionSavedEvent(dc.getId()));
         }
 
-        return toResponse(dc);
+        return toResponse(dc, warnings);
+    }
+
+    /**
+     * When an update adds a root, the sync sets that leave their source scope
+     * or target base blank: those fall back to the primary base DN, so they
+     * keep syncing only that root and never reach the new one. Saving still
+     * succeeds (the sets behave exactly as before); the operator is told
+     * which sets to give an explicit base.
+     */
+    private List<String> rootWarnings(DirectoryConnection dc, List<String> rootsBefore) {
+        java.util.Set<String> before = new java.util.HashSet<>();
+        rootsBefore.forEach(r -> before.add(r.toLowerCase(java.util.Locale.ROOT)));
+        boolean added = dc.getBaseDns().stream()
+                .anyMatch(r -> !before.contains(r.toLowerCase(java.util.Locale.ROOT)));
+        if (!added || !com.ldapportal.ldap.DirectoryRoots.isMultiRoot(dc)) {
+            return List.of();
+        }
+        List<String> warnings = new java.util.ArrayList<>();
+        for (var link : syncLinkRepo.findAllBySourceDirId(dc.getId())) {
+            for (var set : syncSetRepo.findAllByLinkId(link.getId())) {
+                if (set.getObjectScopeBaseDn() == null || set.getObjectScopeBaseDn().isBlank()) {
+                    warnings.add("Sync set \"" + set.getName() + "\" has no source scope base DN, so it "
+                            + "still reads only " + dc.getBaseDn() + "; set its scope explicitly to sync "
+                            + "another root.");
+                }
+            }
+        }
+        for (var link : syncLinkRepo.findAllByTargetDirId(dc.getId())) {
+            for (var set : syncSetRepo.findAllByLinkId(link.getId())) {
+                if (set.getTargetBaseDn() == null || set.getTargetBaseDn().isBlank()) {
+                    warnings.add("Sync set \"" + set.getName() + "\" has no target base DN, so it "
+                            + "still writes under " + dc.getBaseDn() + "; set its target base explicitly "
+                            + "to place entries under another root.");
+                }
+            }
+        }
+        return warnings;
     }
 
     @Transactional
@@ -407,6 +455,9 @@ public class DirectoryConnectionService {
         dc.setTrustedCertificatePem(req.trustedCertificatePem());
         dc.setBindDn(req.bindDn());
         dc.setBaseDn(req.baseDn());
+        dc.setAdditionalBaseDns(req.directoryType() == com.ldapportal.entity.enums.DirectoryType.ENTRA_ID
+                ? new java.util.ArrayList<>()
+                : validatedAdditionalRoots(req));
         dc.setPagingSize(req.pagingSize());
         dc.setPoolMinSize(req.poolMinSize());
         dc.setPoolMaxSize(req.poolMaxSize());
@@ -440,6 +491,38 @@ public class DirectoryConnectionService {
         dc.setTenantId(req.tenantId());
         dc.setEntraClientId(req.entraClientId());
         dc.setGraphEndpoint(req.graphEndpoint());
+    }
+
+    /**
+     * The request's further roots, trimmed with blanks dropped, each a valid DN
+     * that neither equals nor nests with the base DN or another root (a nested
+     * root would just repeat part of its parent's tree in every search).
+     */
+    private static List<String> validatedAdditionalRoots(DirectoryConnectionRequest req) {
+        List<String> roots = new java.util.ArrayList<>();
+        if (req.additionalBaseDns() == null) {
+            return roots;
+        }
+        List<String> all = new java.util.ArrayList<>();
+        if (req.baseDn() != null && !req.baseDn().isBlank()) {
+            all.add(req.baseDn().trim());
+        }
+        for (String dn : req.additionalBaseDns()) {
+            if (dn == null || dn.isBlank()) {
+                continue;
+            }
+            String root = dn.trim();
+            com.ldapportal.ldap.validation.DnValidator.requireValidDn(root, req.directoryType());
+            for (String other : all) {
+                if (com.ldapportal.ldap.DirectoryRoots.nests(root, other)) {
+                    throw new IllegalArgumentException("Additional base DN [" + root + "] is the same as, "
+                            + "or nested with, base DN [" + other + "]; list each top-level root once.");
+                }
+            }
+            all.add(root);
+            roots.add(root);
+        }
+        return roots;
     }
 
     /**
@@ -548,9 +631,13 @@ public class DirectoryConnectionService {
     }
 
     private DirectoryConnectionResponse toResponse(DirectoryConnection dc) {
+        return toResponse(dc, List.of());
+    }
+
+    private DirectoryConnectionResponse toResponse(DirectoryConnection dc, List<String> warnings) {
         List<DirectoryUserBaseDn>  users  = userBaseDnRepo.findAllByDirectoryIdOrderByDisplayOrderAsc(dc.getId());
         List<DirectoryGroupBaseDn> groups = groupBaseDnRepo.findAllByDirectoryIdOrderByDisplayOrderAsc(dc.getId());
-        return DirectoryConnectionResponse.from(dc, users, groups);
+        return DirectoryConnectionResponse.from(dc, users, groups, warnings);
     }
 
     private DirectoryConnection require(UUID id) {

@@ -517,8 +517,16 @@ public class AuthController {
         String loginAttr = dc.getSelfServiceLoginAttribute() != null
                 ? dc.getSelfServiceLoginAttribute() : "uid";
         String filter = "(" + loginAttr + "=" + escapeLdapFilter(req.username()) + ")";
-        List<LdapUser> users = ldapUserService.searchUsers(dc, filter, dc.getBaseDn(), 1, "dn");
+        // Every root of the directory. Two matches (in one root or across
+        // roots) are refused rather than resolved by picking one: which entry
+        // the password is checked against must never depend on search order.
+        List<LdapUser> users = ldapUserService.searchUsers(dc, filter, null, 2, "dn");
         if (users.isEmpty()) {
+            throw new BadCredentialsException("Invalid username or password");
+        }
+        if (users.size() > 1) {
+            log.warn("Self-service login on [{}] refused: {}={} matches more than one entry ({}, {})",
+                    dc.getDisplayName(), loginAttr, req.username(), users.get(0).getDn(), users.get(1).getDn());
             throw new BadCredentialsException("Invalid username or password");
         }
         String userDn = users.get(0).getDn();

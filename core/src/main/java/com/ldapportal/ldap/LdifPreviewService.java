@@ -123,7 +123,8 @@ public class LdifPreviewService {
         }
 
         boolean entra = dc.getDirectoryType() == DirectoryType.ENTRA_ID;
-        String baseDnNorm = normDn(dc.getBaseDn());
+        // Every root of the directory: an entry under any of them is in scope.
+        List<String> rootsNorm = dc.getBaseDns().stream().map(LdifPreviewService::normDn).toList();
         // Group classification uses the directory's configured (or vendor-
         // default) group object classes, so an AD `group` or IBM
         // `groupOfURLs` is recognised here exactly as it is in search.
@@ -157,7 +158,7 @@ public class LdifPreviewService {
         int add = 0, modify = 0, delete = 0, moddn = 0, skip = 0, error = 0, warnings = 0, errors = 0;
         int userAddCount = 0, applicable = 0, outOfScope = 0;
         for (ParsedRecord pr : records) {
-            LdifPreviewRow row = classify(pr, conflict, existing, baseDnNorm, entra, groupOcs, userOcs);
+            LdifPreviewRow row = classify(pr, conflict, existing, rootsNorm, entra, groupOcs, userOcs);
             rows.add(row);
             if (row.userAdd()) userAddCount++;
             switch (row.op()) {
@@ -187,7 +188,7 @@ public class LdifPreviewService {
                 warnings, applicable, outOfScope);
         return new LdifPreviewSummary(previewId.toString(), rows.size(), counts,
                 warnings, errors, false, page0, userAddCount, containsVendorOverlayEntries,
-                applicable, outOfScope, dc.getBaseDn());
+                applicable, outOfScope, String.join("; ", dc.getBaseDns()));
     }
 
     // ── Page / detail / apply ────────────────────────────────────────────────
@@ -244,7 +245,7 @@ public class LdifPreviewService {
     // ── Classification ────────────────────────────────────────────────────────
 
     private LdifPreviewRow classify(ParsedRecord pr, ConflictHandling conflict,
-                                    Set<String> existing, String baseDnNorm, boolean entra,
+                                    Set<String> existing, List<String> rootsNorm, boolean entra,
                                     Set<String> groupOcs, Set<String> userOcs) {
         if (pr.isError()) {
             return new LdifPreviewRow(pr.rowNumber(), null, LdifPreviewOp.ERROR,
@@ -258,8 +259,9 @@ public class LdifPreviewService {
         boolean validDn = !entra && DnValidator.isValidDn(dn);
         if (!entra && !validDn) {
             issues.add(LdifPreviewIssue.invalidDn(dn));
-        } else if (!entra && baseDnNorm != null && !baseDnNorm.isEmpty() && !isUnder(dn, dc(baseDnNorm))) {
-            issues.add(LdifPreviewIssue.outOfScope(baseDnNorm));
+        } else if (!entra && !rootsNorm.isEmpty()
+                && rootsNorm.stream().noneMatch(root -> isUnder(dn, dc(root)))) {
+            issues.add(LdifPreviewIssue.outOfScope(String.join("; ", rootsNorm)));
         }
 
         LdifPreviewOp op;
