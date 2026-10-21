@@ -66,7 +66,7 @@ class ConfigExportServiceTest {
                 List.of(new BaseDnRequest("ou=Groups,dc=corp,dc=example,dc=com", 0)),
                 List.of("inetOrgPerson"), List.of("groupOfNames"),
                 null, null, null, null,
-                "corp-ldap", "dsee-audit");   // linked to an audit source by slug
+                "corp-ldap", "dsee-audit", null);   // linked to an audit source by slug
     }
 
     private AdminAccountResponse adminResponse(String username, AccountRole role,

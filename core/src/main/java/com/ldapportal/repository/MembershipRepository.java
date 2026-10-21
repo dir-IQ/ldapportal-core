@@ -25,6 +25,9 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
 
     List<Membership> findAllBySyncSetId(UUID syncSetId);
 
+    /** Rows the set manages, in any state. */
+    long countBySyncSetId(UUID syncSetId);
+
     /** Identity currently mapped to a (normalized) source DN within one set. */
     Optional<Membership> findFirstBySyncSetIdAndSourceDn(UUID syncSetId, String sourceDn);
 
@@ -67,6 +70,19 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
             + "where m.syncSetId = :syncSetId and m.identity = :identity")
     int stampScanEpoch(@Param("syncSetId") UUID syncSetId, @Param("identity") String identity,
                        @Param("epoch") long epoch);
+
+    /**
+     * Forget what the set last wrote for its applied rows: clears their content
+     * hash, so the engine's hash gate no longer short-circuits them and the next
+     * recompute reads each target entry and re-applies it (ADD when missing,
+     * MODIFY when it differs, no write when it already matches). Used after the
+     * target was restored from a backup. Returns the number of rows reset.
+     */
+    @Transactional
+    @Modifying
+    @Query("update Membership m set m.contentHash = :none where m.syncSetId = :syncSetId "
+            + "and m.state = com.ldapportal.entity.enums.MembershipState.APPLIED")
+    int forgetAppliedContent(@Param("syncSetId") UUID syncSetId, @Param("none") byte[] none);
 
     /** Rows not stamped by the current reconcile epoch (never scanned, or seen in a prior generation). */
     @Query("select m from Membership m where m.syncSetId = :syncSetId "

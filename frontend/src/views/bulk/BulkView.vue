@@ -93,7 +93,33 @@
           </div>
 
           <div class="col-span-4">
-            <label class="block text-sm font-medium text-gray-700 mb-1">CSV File <span class="text-red-500">*</span></label>
+            <div class="flex items-baseline justify-between gap-2 mb-1">
+              <label class="text-sm font-medium text-gray-700">CSV File <span class="text-red-500">*</span></label>
+              <FileFormatHelp title="User import file format">
+                <ul class="list-disc pl-4 space-y-1.5" data-testid="user-import-format">
+                  <li>Columns follow the selected template's mappings; columns the template doesn't mention aren't imported.</li>
+                  <li>For a multi-valued attribute, separate the values in one cell with <code>|</code>
+                    (write <code>\|</code> for a literal pipe).</li>
+                  <li><code>groups</code> (or the column the template maps to group memberships) is optional: groups to add
+                    the user to, separated by <code>|</code>. Each group is a <code>cn</code>, which must match exactly one
+                    group you can manage, or a full DN.</li>
+                  <li>Groups are only added, never removed. They apply to new users and to users updated by
+                    “Overwrite existing”; users skipped as already existing are left as they are. A group that can't be
+                    added is reported, and the user is still imported.</li>
+                  <li>The user export writes this column when “Include a <code>groups</code> column” is ticked, so an export
+                    can be edited and imported again.</li>
+                  <li class="font-medium text-gray-900">Wrap any cell that contains DNs in double quotes. The commas inside
+                    a DN otherwise split the cell into separate columns.</li>
+                  <li data-testid="user-import-governance-note">Adding users to groups needs the Manage group members permission
+                    and follows the same approval{{ auth.isCommunityDistribution ? '' : ' and separation-of-duties' }} rules as
+                    editing groups by hand.</li>
+                </ul>
+                <p class="font-medium text-gray-900 mt-3 mb-1">Example</p>
+                <pre class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre overflow-x-auto">uid,cn,sn,mail,groups
+jsmith,John Smith,Smith,jsmith@example.com,"admins|cn=Support,ou=Groups,dc=example,dc=com"
+adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
+              </FileFormatHelp>
+            </div>
             <!-- Custom file picker: bordered .input wrapper with the
                  filename on the left and a borderless chip-style 'Choose
                  File' button on the right. h-[38px] locks the field
@@ -115,30 +141,6 @@
             </label>
           </div>
         </div>
-        <FileFormatHelp title="User import file format">
-          <ul class="list-disc pl-4 space-y-1.5" data-testid="user-import-format">
-            <li>Columns follow the selected template's mappings; columns the template doesn't mention aren't imported.</li>
-            <li>For a multi-valued attribute, separate the values in one cell with <code>|</code>
-              (write <code>\|</code> for a literal pipe).</li>
-            <li><code>groups</code> (or the column the template maps to group memberships) is optional: groups to add
-              the user to, separated by <code>|</code>. Each group is a <code>cn</code>, which must match exactly one
-              group you can manage, or a full DN.</li>
-            <li>Groups are only added, never removed. They apply to new users and to users updated by
-              “Overwrite existing”; users skipped as already existing are left as they are. A group that can't be
-              added is reported, and the user is still imported.</li>
-            <li>The user export writes this column when “Include a <code>groups</code> column” is ticked, so an export
-              can be edited and imported again.</li>
-            <li class="font-medium text-gray-900">Wrap any cell that contains DNs in double quotes. The commas inside
-              a DN otherwise split the cell into separate columns.</li>
-            <li data-testid="user-import-governance-note">Adding users to groups needs the Manage group members permission
-              and follows the same approval{{ auth.isCommunityDistribution ? '' : ' and separation-of-duties' }} rules as
-              editing groups by hand.</li>
-          </ul>
-          <p class="font-medium text-gray-900 mt-3 mb-1">Example</p>
-          <pre class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre overflow-x-auto">uid,cn,sn,mail,groups
-jsmith,John Smith,Smith,jsmith@example.com,"admins|cn=Support,ou=Groups,dc=example,dc=com"
-adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
-        </FileFormatHelp>
 
         <!-- Template-driven read-only fields. 12-col grid:
              Object Class (3) + RDN Attribute / DN Column (2) + Other Attributes (4)
@@ -211,13 +213,13 @@ adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
                those rows would still error during the LDAP add — but
                warning at preview time saves a confirm-then-fail round-trip. -->
           <p v-if="previewWarningCount && importBlocked" class="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1 mb-2">
-            Import blocked: {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row is' : 'rows are' }}
-            missing required attributes. This template is set to block the import until every row is valid —
+            Import blocked: {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row has a problem' : 'rows have problems' }}
+            (see the Issues column). This template is set to block the import until every row is valid —
             fix the rows (or switch the template to “Skip rows with errors”) and preview again.
           </p>
           <p v-else-if="previewWarningCount" class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
-            {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row is' : 'rows are' }}
-            missing required attributes — they will fail at import.
+            {{ previewWarningCount }} {{ previewWarningCount === 1 ? 'row has a problem' : 'rows have problems' }}
+            (see the Issues column) — they will fail at import.
           </p>
           <p v-if="userPreviewGroupProblemCount" data-testid="user-preview-group-problems"
              class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 mb-2">
@@ -239,7 +241,7 @@ adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
               </thead>
               <tbody class="divide-y divide-blue-100">
                 <tr v-for="(row, idx) in previewResult.rows" :key="row.rowNumber"
-                    :class="row.missingRequired?.length ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
+                    :class="row.missingRequired?.length || row.message ? 'bg-amber-50' : (idx % 2 ? 'bg-blue-50' : 'bg-white')">
                   <td class="px-2 py-1 text-gray-600">{{ row.rowNumber }}</td>
                   <td class="px-2 py-1 font-mono text-[13px] text-gray-800">{{ row.computedDn || '(no DN)' }}</td>
                   <td v-for="attr in userPreviewAttrCols" :key="attr"
@@ -254,7 +256,8 @@ adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
                   </td>
                   <td class="px-2 py-1 text-amber-700" data-testid="user-preview-issues">
                     <!-- A DN that couldn't be resolved says why (outside the
-                         container, not a DN, column not in the file). -->
+                         container, not a DN, column not in the file), as does
+                         a row the admin's permissions would refuse. -->
                     <span v-if="row.message">{{ row.message }}</span>
                     <span v-else-if="row.missingRequired?.length"
                           :title="`Missing required: ${row.missingRequired.join(', ')}`">
@@ -390,7 +393,39 @@ adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
             </select>
           </div>
           <div class="col-span-4">
-            <label class="block text-sm font-medium text-gray-700 mb-1">CSV File <span class="text-red-500">*</span></label>
+            <div class="flex items-baseline justify-between gap-2 mb-1">
+              <label class="text-sm font-medium text-gray-700">CSV File <span class="text-red-500">*</span></label>
+              <FileFormatHelp title="Group import file format">
+                <ul class="list-disc pl-4 space-y-1.5">
+                  <li>The first row is a header row naming the columns. Column names ignore case; any order works.</li>
+                  <li><code>cn</code> <span class="text-red-600">(required)</span> names the group. Its DN is
+                    <code>cn=&lt;cn&gt;</code> under the active profile's group container. A group that doesn't exist is created.</li>
+                  <li><code>description</code>, <code>owner</code> and other group attributes are optional. On an existing group,
+                    a value you provide replaces the current one; a blank cell or a missing column leaves it unchanged.</li>
+                  <li><code>members</code> is optional: one or more members separated by <code>|</code>. Each member is either
+                    <ul class="list-[circle] pl-4 mt-0.5 space-y-0.5">
+                      <li>a full DN, e.g. <code>uid=jsmith,ou=People,dc=example,dc=com</code>, or</li>
+                      <li>a <code>uid</code>, e.g. <code>jsmith</code>, which must match exactly one user you can see.</li>
+                    </ul>
+                  </li>
+                  <li class="font-medium text-gray-900">Wrap a <code>members</code> cell that contains DNs in double quotes.
+                    The commas inside a DN otherwise split the cell into separate columns.</li>
+                  <li><code>member-operation</code> is required when <code>members</code> is filled in: <code>add</code>, or
+                    <code>delete</code> to remove the listed members from an existing group. Each row has one operation; to add
+                    some members and remove others, use two rows with the same <code>cn</code>.</li>
+                  <li>A new <code>groupOfNames</code> or <code>groupOfUniqueNames</code> group needs at least one member;
+                    a <code>posixGroup</code> can be created empty.</li>
+                  <li>A <code>dn</code> column, as written by the group export, is ignored. A file can make up to 2,000 member changes.</li>
+                  <li data-testid="group-import-governance-note">Member changes need the Manage group members permission and
+                    follow the same approval{{ auth.isCommunityDistribution ? '' : ' and separation-of-duties' }} rules as editing them by hand.</li>
+                </ul>
+                <p class="font-medium text-gray-900 mt-3 mb-1">Example</p>
+                <pre class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre overflow-x-auto">cn,description,members,member-operation
+engineering,Engineering team,"uid=jsmith,ou=People,dc=example,dc=com|uid=adoe,ou=People,dc=example,dc=com",add
+support,Support desk,bwong|cchan,add
+engineering,,"uid=old,ou=People,dc=example,dc=com",delete</pre>
+              </FileFormatHelp>
+            </div>
             <label class="csv-file-picker input flex items-center gap-2 w-full cursor-pointer !py-0 !pr-1 hover:border-gray-400 transition-colors bg-white">
               <span class="flex-1 truncate text-sm"
                     :class="groupImportFile ? 'text-gray-900 font-medium' : 'text-gray-500'">
@@ -403,36 +438,6 @@ adoe,Ann Doe,Doe,adoe@example.com,vpn-users</pre>
             </label>
           </div>
         </div>
-        <FileFormatHelp title="Group import file format">
-          <ul class="list-disc pl-4 space-y-1.5">
-            <li>The first row is a header row naming the columns. Column names ignore case; any order works.</li>
-            <li><code>cn</code> <span class="text-red-600">(required)</span> names the group. Its DN is
-              <code>cn=&lt;cn&gt;</code> under the active profile's group container. A group that doesn't exist is created.</li>
-            <li><code>description</code>, <code>owner</code> and other group attributes are optional. On an existing group,
-              a value you provide replaces the current one; a blank cell or a missing column leaves it unchanged.</li>
-            <li><code>members</code> is optional: one or more members separated by <code>|</code>. Each member is either
-              <ul class="list-[circle] pl-4 mt-0.5 space-y-0.5">
-                <li>a full DN, e.g. <code>uid=jsmith,ou=People,dc=example,dc=com</code>, or</li>
-                <li>a <code>uid</code>, e.g. <code>jsmith</code>, which must match exactly one user you can see.</li>
-              </ul>
-            </li>
-            <li class="font-medium text-gray-900">Wrap a <code>members</code> cell that contains DNs in double quotes.
-              The commas inside a DN otherwise split the cell into separate columns.</li>
-            <li><code>member-operation</code> is required when <code>members</code> is filled in: <code>add</code>, or
-              <code>delete</code> to remove the listed members from an existing group. Each row has one operation; to add
-              some members and remove others, use two rows with the same <code>cn</code>.</li>
-            <li>A new <code>groupOfNames</code> or <code>groupOfUniqueNames</code> group needs at least one member;
-              a <code>posixGroup</code> can be created empty.</li>
-            <li>A <code>dn</code> column, as written by the group export, is ignored. A file can make up to 2,000 member changes.</li>
-            <li data-testid="group-import-governance-note">Member changes need the Manage group members permission and
-              follow the same approval{{ auth.isCommunityDistribution ? '' : ' and separation-of-duties' }} rules as editing them by hand.</li>
-          </ul>
-          <p class="font-medium text-gray-900 mt-3 mb-1">Example</p>
-          <pre class="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded p-2 whitespace-pre overflow-x-auto">cn,description,members,member-operation
-engineering,Engineering team,"uid=jsmith,ou=People,dc=example,dc=com|uid=adoe,ou=People,dc=example,dc=com",add
-support,Support desk,bwong|cchan,add
-engineering,,"uid=old,ou=People,dc=example,dc=com",delete</pre>
-        </FileFormatHelp>
         <p v-if="!canManageGroupMembers" data-testid="group-import-no-member-permission"
            class="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
           You don’t have permission to manage group members, so a file that lists any members will be refused.
@@ -1327,10 +1332,11 @@ const canImport = computed(() => {
   return selectedTemplateId.value && importFile.value && !!activeProfile.value
 })
 
-/** Number of preview rows missing any required attribute — drives the
+/** Number of preview rows that will fail — missing a required attribute, or
+ *  refused (unresolvable DN, or a permission the admin lacks). Drives the
  *  amber "N rows will fail" banner above the preview table. */
 const previewWarningCount = computed(() =>
-  (previewResult.value?.rows || []).filter(r => r.missingRequired?.length).length
+  (previewResult.value?.rows || []).filter(r => r.missingRequired?.length || r.message).length
 )
 
 /** When the selected template blocks on errors (errorHandling = ABORT_ON_ERROR)

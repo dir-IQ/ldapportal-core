@@ -126,7 +126,7 @@ public class BrowseController {
                 Map.of("attributes", req.attributes().keySet()));
 
         // Return the parent's browse result so the UI can refresh the tree
-        String parentDn = extractParentDn(req.dn(), dc.getBaseDn());
+        String parentDn = extractParentDn(dc, req.dn());
         return browseService.browse(dc, parentDn, null, REFRESH_CHILD_LIMIT);
     }
 
@@ -170,7 +170,7 @@ public class BrowseController {
         // Children-only keeps the entry, so return its (now-empty) listing to
         // refresh that node; a full delete removes the entry, so return the
         // parent's listing to refresh the parent instead.
-        String refreshDn = childrenOnly ? dn : extractParentDn(dn, dc.getBaseDn());
+        String refreshDn = childrenOnly ? dn : extractParentDn(dc, dn);
         return browseService.browse(dc, refreshDn, null, REFRESH_CHILD_LIMIT);
     }
 
@@ -198,7 +198,7 @@ public class BrowseController {
         DirectoryConnection dc = loadDirectory(directoryId);
         browseService.renameEntry(dc, dn, req.newRdn());
 
-        String parentDn = extractParentDn(dn, dc.getBaseDn());
+        String parentDn = extractParentDn(dc, dn);
         auditService.record(principal, directoryId, AuditAction.ENTRY_RENAME, dn,
                 Map.of("newRdn", req.newRdn()));
 
@@ -399,9 +399,13 @@ public class BrowseController {
 
         IntegrityReport report = integrityCheckService.runChecks(dc, baseDn, checkTypes);
 
+        // The audit row's DN is one DN; "bases" records every base actually
+        // checked (all roots when no base was given).
+        boolean explicitBase = baseDn != null && !baseDn.isBlank();
         auditService.record(principal, directoryId, AuditAction.INTEGRITY_CHECK,
-                baseDn != null ? baseDn : dc.getBaseDn(),
-                Map.of("checks", checks, "issuesFound", report.issues().size()));
+                explicitBase ? baseDn : dc.getBaseDn(),
+                Map.of("checks", checks, "issuesFound", report.issues().size(),
+                        "bases", explicitBase ? baseDn : String.join("; ", dc.getBaseDns())));
 
         return report;
     }
@@ -432,14 +436,11 @@ public class BrowseController {
     }
 
     /**
-     * Extracts the parent DN from a full DN string.
-     * e.g. "ou=People,dc=example,dc=com" → "dc=example,dc=com"
+     * The parent to refresh after a change to {@code dn}; {@code null} (the
+     * primary root, via {@code browse}) when {@code dn} is itself a root or has
+     * no parent.
      */
-    private String extractParentDn(String dn, String baseDn) {
-        int idx = dn.indexOf(',');
-        if (idx < 0 || idx + 1 >= dn.length()) {
-            return baseDn;
-        }
-        return dn.substring(idx + 1);
+    private String extractParentDn(DirectoryConnection dc, String dn) {
+        return com.ldapportal.ldap.DirectoryRoots.parentWithinRoots(dc, dn);
     }
 }

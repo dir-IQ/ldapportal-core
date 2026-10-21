@@ -12,7 +12,7 @@ export type SyncCaptureMode = 'APP_INTERCEPT' | 'CHANGELOG'
 export type SyncScope = 'BASE' | 'ONE' | 'SUB'
 export type SyncDeletePolicy = 'DELETE' | 'REVIEW'
 export type MembershipState = 'APPLIED' | 'PENDING' | 'FAILED' | 'REVIEW'
-export type ChangelogFormat = 'DSEE_CHANGELOG' | 'OPENLDAP_ACCESSLOG' | 'AD_DIRSYNC'
+export type ChangelogFormat = 'DSEE_CHANGELOG' | 'OPENLDAP_ACCESSLOG' | 'AD_DIRSYNC' | 'OUD_COOKIE_CHANGELOG'
 export type SyncChangelogHealth =
   | 'HEALTHY' | 'LAGGING' | 'STALLED' | 'GAP_DETECTED' | 'CURSOR_RESET' | 'DISABLED_CONFIG_ERROR'
 
@@ -93,7 +93,15 @@ export interface Membership {
   failReason: string | null
   lastSrcCursor: number | null
   lastScanEpoch: number | null
+  /** Which decision a REVIEW row waits on; null for other states. */
+  reviewKind: SyncReviewKind | null
 }
+
+/**
+ * Why a row is held for REVIEW: a delete waiting for approval, an ambiguous
+ * source-anchor match, an occupied placement DN, or an unrecognized reason.
+ */
+export type SyncReviewKind = 'PENDING_DELETE' | 'AMBIGUOUS_MATCH' | 'PLACEMENT_CONFLICT' | 'OTHER'
 
 // ── Links ──────────────────────────────────────────────────────────────────
 export const listSyncLinks = () => client.get<SyncLink[]>('/superadmin/sync/links')
@@ -116,6 +124,94 @@ export const deleteSyncSet = (id: string) => client.delete(`/superadmin/sync/set
 export const getExcludedAttributeDefaults = () =>
   client.get<string[]>('/superadmin/sync/sets/excluded-attribute-defaults')
 
+/**
+ * One recorded reconcile run of a set. The outcome counters mirror
+ * SyncPreviewAction, so a run compares directly with its preview.
+ * `status` FAILED covers both an aborted run (`error`) and one whose server
+ * stopped mid-run.
+ */
+export interface SyncReconcileRun {
+  id: string
+  trigger: 'SCHEDULED' | 'MANUAL'
+  requestedBy: string | null
+  status: 'RUNNING' | 'COMPLETE' | 'FAILED'
+  startedAt: string
+  finishedAt: string | null
+  /** False when source enumeration failed or stopped: no deletes were made. */
+  completeScan: boolean
+  sourceCount: number
+  managedBefore: number
+  managedAfter: number | null
+  processed: number
+  added: number
+  modified: number
+  moved: number
+  deleted: number
+  heldForReview: number
+  /** Applied without a target write: the target already matched. */
+  noChange: number
+  forgotten: number
+  unchanged: number
+  /** Target writes that failed (rows now FAILED). */
+  failed: number
+  /** Recomputes that threw; retried on the next run. */
+  faulted: number
+  /** Not processed: the set or link was disabled during the run. */
+  skipped: number
+  guardTripped: boolean
+  guardReason: string | null
+  error: string | null
+  /** The app instance (host) that ran it. */
+  instanceName: string | null
+  /** When the source scan and plan finished: scan = plannedAt − startedAt. */
+  plannedAt: string | null
+  /** The content verification right after the run (drift left behind), when recorded. */
+  verifiedAt: string | null
+  verifyMissing: number | null
+  verifyOrphan: number | null
+  verifyMismatch: number | null
+}
+
+/** The set's settings and delete-guard limits as the run saw them. */
+export interface SyncRunSettings {
+  deletePolicy: string | null
+  objectScopeBaseDn: string | null
+  objectScope: string | null
+  applicabilityFilter: string | null
+  targetBaseDn: string | null
+  identityKey: string | null
+  sourceAnchorAttribute: string | null
+  reconcileCadenceSeconds: number | null
+  guardMaxDeletes: number
+  guardMaxDeletePercent: number
+  guardMinPopulation: number
+}
+
+/** Failed / faulted entries sharing a reason, with one full example. */
+export interface SyncRunFailureReason {
+  reason: string
+  count: number
+  example: string
+}
+
+/** Everything recorded about one reconcile run. */
+export interface SyncReconcileRunDetail {
+  run: SyncReconcileRun
+  /** Null for a run recorded before settings were kept. */
+  settings: SyncRunSettings | null
+  failureReasons: SyncRunFailureReason[]
+  /** Outcome (ADD, MODIFY, …) → up to `sampleLimit` target DNs. */
+  samples: Partial<Record<SyncPreviewAction, string[]>>
+  sampleLimit: number
+}
+
+export const getReconcileRun = (setId: string, runId: string) =>
+  client.get<SyncReconcileRunDetail>(`/superadmin/sync/sets/${setId}/reconcile-runs/${runId}`)
+
+/** A set's most recent reconcile runs, newest first. */
+export const listReconcileRuns = (setId: string, limit = 10) =>
+  client.get<SyncReconcileRun[]>(`/superadmin/sync/sets/${setId}/reconcile-runs`, { params: { limit } })
+
 /** Dry-run summary of what a reconcile of a sync set would change (no writes). */
 export interface SyncReconcilePreview {
   sourceCount: number
@@ -130,6 +226,78 @@ export interface SyncReconcilePreview {
 
 export const previewReconcile = (setId: string) =>
   client.get<SyncReconcilePreview>(`/superadmin/sync/sets/${setId}/preview`)
+
+/** What a reconcile would do to one entry (from a dry run of the engine). */
+export type SyncPreviewAction =
+  | 'ADD' | 'MODIFY' | 'MOVE' | 'DELETE' | 'REVIEW' | 'NO_CHANGE' | 'FORGET' | 'UNCHANGED' | 'ERROR'
+
+/** Values an attribute would lose and gain; lists are capped, the rest counted. */
+export interface SyncPreviewAttributeChange {
+  attribute: string
+  removed: string[]
+  added: string[]
+  omittedRemoved: number
+  omittedAdded: number
+}
+
+export interface SyncPreviewEntry {
+  identity: string
+  sourceDn: string | null
+  targetDn: string | null
+  previousTargetDn: string | null
+  action: SyncPreviewAction
+  reason: string | null
+  changes: SyncPreviewAttributeChange[]
+}
+
+/**
+ * The latest per-entry preview run of a set (a background job). `status` is
+ * null when the set has never been previewed; summary fields are filled once
+ * it is COMPLETE.
+ */
+export interface SyncPreviewStatus {
+  runId: string | null
+  status: 'RUNNING' | 'COMPLETE' | 'FAILED' | null
+  requestedBy: string | null
+  startedAt: string | null
+  finishedAt: string | null
+  processed: number
+  total: number
+  /** The set was edited or reconciled, or its link or directories changed, after this run started. */
+  outdated: boolean
+  error: string | null
+  sourceCount: number
+  managedCount: number
+  actionableCount: number
+  unchangedCount: number
+  guardTripped: boolean
+  guardReason: string | null
+  completeScan: boolean
+  note: string | null
+}
+
+/** One page of a completed preview, ordered by target DN (parents first). */
+export interface SyncPreviewPage {
+  entries: SyncPreviewEntry[]
+  /** The page actually returned: a page past the end returns the last page. */
+  page: number
+  size: number
+  totalEntries: number
+  totalPages: number
+  changesOnly: boolean
+  runId: string
+}
+
+export const getPreviewRun = (setId: string) =>
+  client.get<SyncPreviewStatus>(`/superadmin/sync/sets/${setId}/preview/run`)
+
+/** Starts a preview in the background, or joins the one already running. */
+export const startPreviewRun = (setId: string) =>
+  client.post<SyncPreviewStatus>(`/superadmin/sync/sets/${setId}/preview/run`)
+
+export const previewEntries = (setId: string, page: number, size: number, changesOnly: boolean) =>
+  client.get<SyncPreviewPage>(`/superadmin/sync/sets/${setId}/preview/entries`,
+    { params: { page, size, changesOnly } })
 
 /**
  * Independent content verification: re-reads the live source and target and flags
@@ -176,7 +344,38 @@ export const listMemberships = (setId: string, query: MembershipQuery = {}) =>
   client.get<Page<Membership>>(`/superadmin/sync/sets/${setId}/memberships`, { params: query })
 export const reconcileSet = (setId: string) =>
   client.post<{ enumerated: number }>(`/superadmin/sync/sets/${setId}/reconcile`)
+
+/**
+ * Result of a target re-check: how many applied entries the next reconcile will
+ * re-read, and whether that reconcile was queued (false while the set or its
+ * link is disabled).
+ */
+export interface SyncRecheckResult {
+  entries: number
+  reconcileQueued: boolean
+}
+
+/** Re-check the target (e.g. after a restore from backup): the next reconcile re-reads every applied entry. */
+export const recheckTarget = (setId: string) =>
+  client.post<SyncRecheckResult>(`/superadmin/sync/sets/${setId}/recheck-target`)
 export const recomputeKey = (setId: string, key: string) =>
   client.post(`/superadmin/sync/sets/${setId}/recompute`, { key })
 export const dismissMembership = (setId: string, identity: string) =>
   client.delete(`/superadmin/sync/sets/${setId}/memberships/${encodeURIComponent(identity)}`)
+
+/**
+ * Result of approving a held delete: DELETE (target entry removed), FORGET
+ * (another identity owns the target entry, so only the row was dropped) or
+ * ERROR (the delete failed; the row is now FAILED with `message`).
+ */
+export interface SyncDeleteApproval {
+  outcome: 'DELETE' | 'FORGET' | 'ERROR'
+  targetDirectoryId: string
+  targetDn: string
+  message: string | null
+}
+
+/** Approve a delete held for review: deletes the target entry now, whatever the delete policy. */
+export const approveDelete = (setId: string, identity: string) =>
+  client.post<SyncDeleteApproval>(
+    `/superadmin/sync/sets/${setId}/memberships/${encodeURIComponent(identity)}/approve-delete`)

@@ -38,6 +38,8 @@ import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -455,6 +457,26 @@ class AuthControllerTest extends BaseControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isUnauthorized());
+    }
+
+    /** A login that matches two entries (e.g. the same uid under two roots)
+     *  is refused without binding — the password is never checked against
+     *  whichever entry a search happened to return first. */
+    @Test
+    void selfServiceLogin_ambiguousLogin_returns401WithoutBinding() throws Exception {
+        UUID dirId = UUID.randomUUID();
+        given(directoryConnectionRepository.findById(dirId))
+                .willReturn(Optional.of(selfServiceDir(dirId)));
+        given(ldapUserService.searchUsers(any(), any(), isNull(), eq(2), any()))
+                .willReturn(List.of(new LdapUser("uid=jane,dc=example,dc=com", Map.of()),
+                        new LdapUser("uid=jane,o=partners", Map.of())));
+
+        var req = new AuthController.SelfServiceLoginRequest(dirId, "jane", "secret");
+        mockMvc.perform(post("/api/v1/auth/self-service/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isUnauthorized());
+        org.mockito.Mockito.verify(ldapConnectionFactory, org.mockito.Mockito.never()).openUnboundConnection(any());
     }
 
     @Test

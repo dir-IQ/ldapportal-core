@@ -1,20 +1,29 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.dto.sync.SyncDeleteApproval;
+import com.ldapportal.dto.sync.SyncPreviewAction;
+import com.ldapportal.dto.sync.SyncRecheckResult;
+import com.ldapportal.dto.sync.SyncReconcileRunDetail;
+import com.ldapportal.dto.sync.SyncReviewKind;
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.RecomputeRequest;
 import com.ldapportal.entity.SyncLink;
+import com.ldapportal.entity.SyncReconcileRun;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SslMode;
+import com.ldapportal.entity.enums.SyncReconcileRunStatus;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.entity.enums.SyncScope;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.MembershipRepository;
 import com.ldapportal.repository.RecomputeRequestRepository;
 import com.ldapportal.repository.SyncLinkRepository;
+import com.ldapportal.repository.SyncReconcileRunRepository;
 import com.ldapportal.repository.SyncSetRepository;
 import com.ldapportal.service.EncryptionService;
 import com.unboundid.ldap.listener.InMemoryDirectoryServer;
@@ -32,11 +41,13 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.time.OffsetDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -70,10 +81,14 @@ class SyncEngineIntegrationTest {
     @Autowired private SyncSetRepository setRepo;
     @Autowired private MembershipRepository membershipRepo;
     @Autowired private RecomputeRequestRepository requestRepo;
-    @Autowired private RecomputeEngine engine;
+    // A spy (real behavior) so a test can act in the middle of a reconcile.
+    @MockitoSpyBean private RecomputeEngine engine;
     @Autowired private MembershipReconciler reconciler;
     @Autowired private SyncContentVerifier verifier;
     @Autowired private RecomputeEnqueuer enqueuer;
+    @Autowired private SyncReconcileRunRepository runRepo;
+    @Autowired private SyncReconcileHistory history;
+    @Autowired private com.ldapportal.service.SyncConfigService syncConfigService;
 
     private InMemoryDirectoryServer source;
     private InMemoryDirectoryServer target;
@@ -89,6 +104,7 @@ class SyncEngineIntegrationTest {
 
         membershipRepo.deleteAll();
         requestRepo.deleteAll();
+        runRepo.deleteAll();
         setRepo.deleteAll();
         linkRepo.deleteAll();
         directoryRepo.deleteAll();
@@ -538,6 +554,71 @@ class SyncEngineIntegrationTest {
         assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
     }
 
+    // ── Operator-approved delete of a held scope-exit ──────────────────────────
+
+    /** alice is synced, then leaves scope under deletePolicy=REVIEW: her delete is held. */
+    private String holdAliceDeleteForReview() throws Exception {
+        peopleSet.setDeletePolicy(com.ldapportal.entity.enums.SyncDeletePolicy.REVIEW);
+        peopleSet = setRepo.save(peopleSet);
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        String identity = membership("alice").getIdentity();
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "employeeType", "contractor"));
+        engine.process(peopleSet.getId(), dn("alice"));
+        assertThat(SyncReviewKind.of(membership(identity).getState(), membership(identity).getFailReason()))
+                .isEqualTo(SyncReviewKind.PENDING_DELETE);
+        return identity;
+    }
+
+    @Test
+    void approveDelete_deletesHeldTarget_despiteReviewPolicy() throws Exception {
+        String identity = holdAliceDeleteForReview();
+        // A recompute alone leaves a REVIEW-policy delete held — the gap this closes.
+        engine.process(peopleSet.getId(), identity);
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+
+        SyncDeleteApproval result = engine.approveDelete(peopleSet.getId(), identity);
+
+        assertThat(result.outcome()).isEqualTo(SyncPreviewAction.DELETE);
+        assertThat(result.targetDn()).isEqualToIgnoringCase("uid=alice," + DST_USERS);
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).isEmpty();
+    }
+
+    @Test
+    void approveDelete_refusesWhenTheEntryIsBackInScope() throws Exception {
+        String identity = holdAliceDeleteForReview();
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "employeeType", "staff"));
+
+        assertThatThrownBy(() -> engine.approveDelete(peopleSet.getId(), identity))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("back in scope");
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+    }
+
+    @Test
+    void approveDelete_refusesARowThatIsNotAHeldDelete() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        assertThatThrownBy(() -> engine.approveDelete(peopleSet.getId(), membership("alice").getIdentity()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no deletion waiting");
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+    }
+
+    @Test
+    void approveDelete_refusesOnADisabledSet() throws Exception {
+        String identity = holdAliceDeleteForReview();
+        peopleSet.setEnabled(false);
+        setRepo.save(peopleSet);
+
+        assertThatThrownBy(() -> engine.approveDelete(peopleSet.getId(), identity))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Enable the sync set");
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+    }
+
     // ── identityKey override ─────────────────────────────────────────────────────
 
     @Test
@@ -721,6 +802,206 @@ class SyncEngineIntegrationTest {
             assertThat(target.getEntry("uid=u" + i + "," + DST_USERS)).isNotNull();
         }
         assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).hasSize(7);
+    }
+
+    @Test
+    void reconcile_recordsWhatItDidToEachEntry() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        addPerson("dave", "staff", "dave@src");
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        // Then: bob changes, alice leaves the source, carol arrives, and dave's
+        // index row is lost while his target entry still matches the source.
+        source.modify(dn("bob"), new Modification(ModificationType.REPLACE, "mail", "bob@new"));
+        source.delete(dn("alice"));
+        addPerson("carol", "staff", "carol@src");
+        membershipRepo.delete(membership("dave"));
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+
+        List<SyncReconcileRun> runs = runRepo.findAll().stream()
+                .sorted(java.util.Comparator.comparing(SyncReconcileRun::getStartedAt))
+                .toList();
+        assertThat(runs).hasSize(2);
+        SyncReconcileRun first = runs.get(0);
+        assertThat(first.getTrigger()).isEqualTo(SyncReconcileTrigger.SCHEDULED);
+        assertThat(first.getAdded()).isEqualTo(3);
+        assertThat(first.getManagedBefore()).isZero();
+        assertThat(first.getManagedAfter()).isEqualTo(3L);
+
+        SyncReconcileRun run = runs.get(1);
+        assertThat(run.getStatus()).isEqualTo(SyncReconcileRunStatus.COMPLETE);
+        assertThat(run.getTrigger()).isEqualTo(SyncReconcileTrigger.MANUAL);
+        assertThat(run.getRequestedBy()).isEqualTo("operator");
+        assertThat(run.getFinishedAt()).isNotNull();
+        assertThat(run.isCompleteScan()).isTrue();
+        assertThat(run.isGuardTripped()).isFalse();
+        // The scope base OU + bob, carol, dave; alice is a not-seen row on top.
+        assertThat(run.getSourceCount()).isEqualTo(4);
+        assertThat(run.getProcessed()).isEqualTo(5);
+        assertThat(run.getManagedBefore()).isEqualTo(2L);
+        assertThat(run.getManagedAfter()).isEqualTo(3L);
+        assertThat(run.getAdded()).isEqualTo(1);        // carol
+        assertThat(run.getModified()).isEqualTo(1);     // bob
+        assertThat(run.getDeleted()).isEqualTo(1);      // alice
+        assertThat(run.getNoChange()).isEqualTo(1);     // dave, re-adopted without a write
+        assertThat(run.getUnchanged()).isEqualTo(1);    // the OU: out of scope, never tracked
+        assertThat(run.getFailed() + run.getFaulted() + run.getSkipped() + run.getMoved()
+                + run.getHeldForReview() + run.getForgotten()).isZero();
+    }
+
+    @Test
+    void reconcile_recordsDetails_instanceTimingSettingsAndSampleDns() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+        source.delete(dn("alice"));
+        addPerson("carol", "staff", "carol@src");
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+
+        SyncReconcileRun latest = runRepo.findAll().stream()
+                .max(java.util.Comparator.comparing(SyncReconcileRun::getStartedAt)).orElseThrow();
+        SyncReconcileRunDetail detail = history.detail(peopleSet.getId(), latest.getId());
+
+        assertThat(detail.run().instanceName()).isNotBlank();
+        assertThat(detail.run().plannedAt()).isBetween(detail.run().startedAt(), detail.run().finishedAt());
+        assertThat(detail.settings().deletePolicy()).isEqualTo("DELETE");
+        assertThat(detail.settings().applicabilityFilter()).isEqualTo("(&(objectClass=inetOrgPerson)(employeeType=staff))");
+        assertThat(detail.settings().guardMaxDeletes()).isEqualTo(MembershipReconciler.DELETE_GUARD_MAX_ABSOLUTE);
+        assertThat(detail.samples().get("ADD")).singleElement().asString().containsIgnoringCase("uid=carol");
+        assertThat(detail.samples().get("DELETE")).singleElement().asString().containsIgnoringCase("uid=alice");
+        assertThat(detail.failureReasons()).isEmpty();
+    }
+
+    @Test
+    void reconcile_groupsFailuresByReason() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        target.delete(DST_USERS); // every placement's parent is missing
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        SyncReconcileRun run = runRepo.findAll().get(0);
+        SyncReconcileRunDetail detail = history.detail(peopleSet.getId(), run.getId());
+        assertThat(detail.run().failed()).isEqualTo(2);
+        assertThat(detail.failureReasons()).singleElement().satisfies(r -> {
+            assertThat(r.reason()).isEqualTo("apply failed: 32 (no such object)");
+            assertThat(r.count()).isEqualTo(2);
+            assertThat(r.example()).contains("ou=Users");
+        });
+        assertThat(detail.samples().get("ERROR")).hasSize(2);
+    }
+
+    @Test
+    void reconcile_isRefused_whileAnotherHoldsTheLease_andNotRecorded() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        OffsetDateTime now = OffsetDateTime.now();
+        // Another instance's reconcile is running (fresh heartbeat).
+        setRepo.claimReconcile(peopleSet.getId(), java.util.UUID.randomUUID(), now, now.minusHours(1));
+
+        assertThatThrownBy(() -> reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null))
+                .isInstanceOf(com.ldapportal.exception.ConflictException.class);
+        assertThat(runRepo.findAll()).isEmpty();
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
+    }
+
+    @Test
+    void reconcile_reclaimsAStaleLease() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        OffsetDateTime longAgo = OffsetDateTime.now().minus(MembershipReconciler.LEASE_STALE).minusMinutes(1);
+        // A reconcile whose server stopped mid-run left its lease behind.
+        setRepo.claimReconcile(peopleSet.getId(), java.util.UUID.randomUUID(), longAgo, longAgo.minusHours(1));
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+    }
+
+    @Test
+    void reconcile_releasesItsLease_andStampsTheRunWithoutBumpingTheVersion() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        long versionBefore = setRepo.findById(peopleSet.getId()).orElseThrow().getVersion();
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        SyncSet after = setRepo.findById(peopleSet.getId()).orElseThrow();
+        assertThat(after.getReconcileLeaseToken()).isNull();
+        assertThat(after.getReconcileLastRunAt()).isNotNull();
+        // No entity save: an admin edit made during the run can't collide with it.
+        assertThat(after.getVersion()).isEqualTo(versionBefore);
+        // ...and the next run can claim the lease straight away.
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+        assertThat(runRepo.findAll()).hasSize(2);
+    }
+
+    @Test
+    void reconcile_survivesAnAdminEditOfTheSetDuringTheRun() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        // An admin saves the set (bumping its version) while the reconcile works:
+        // the old code then failed saving its stale copy of the set at the end.
+        org.mockito.Mockito.doAnswer(inv -> {
+            SyncSet s = setRepo.findById(peopleSet.getId()).orElseThrow();
+            s.setName("people (edited)");
+            setRepo.save(s);
+            return inv.callRealMethod();
+        }).when(engine).process(org.mockito.ArgumentMatchers.eq(peopleSet.getId()),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyBoolean());
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+        assertThat(runRepo.findAll()).singleElement()
+                .extracting(SyncReconcileRun::getStatus).isEqualTo(SyncReconcileRunStatus.COMPLETE);
+        assertThat(setRepo.findById(peopleSet.getId()).orElseThrow().getName()).isEqualTo("people (edited)");
+    }
+
+    @Test
+    void restoredTarget_isOnlyRepairedAfterARecheck() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        // The target is restored from a backup taken before bob was synced and
+        // before alice's mail reached it; the source is unchanged.
+        target.delete("uid=bob," + DST_USERS);
+        target.modify("uid=alice," + DST_USERS, new Modification(ModificationType.REPLACE, "mail", "old@dst"));
+
+        // A plain reconcile trusts the index (hash gate) and leaves the restore in place.
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+        assertThat(target.getEntry("uid=bob," + DST_USERS)).isNull();
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("mail")).isEqualTo("old@dst");
+
+        long requestsBefore = setRepo.findById(peopleSet.getId()).orElseThrow().getReconcileRequestSeq();
+        SyncRecheckResult recheck = syncConfigService.recheckTarget(peopleSet.getId(), "operator");
+        assertThat(recheck.entries()).isEqualTo(2);
+        assertThat(recheck.reconcileQueued()).isTrue();
+        assertThat(setRepo.findById(peopleSet.getId()).orElseThrow().getReconcileRequestSeq())
+                .isEqualTo(requestsBefore + 1);
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        assertThat(target.getEntry("uid=bob," + DST_USERS)).isNotNull();
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("mail")).isEqualTo("alice@src");
+        SyncReconcileRun run = runRepo.findAll().stream()
+                .max(java.util.Comparator.comparing(SyncReconcileRun::getStartedAt)).orElseThrow();
+        assertThat(run.getAdded()).isEqualTo(1);    // bob
+        assertThat(run.getModified()).isEqualTo(1); // alice
+        // ...and the hashes are back, so the next run is a cheap no-op again.
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+        SyncReconcileRun after = runRepo.findAll().stream()
+                .max(java.util.Comparator.comparing(SyncReconcileRun::getStartedAt)).orElseThrow();
+        assertThat(after.getAdded() + after.getModified() + after.getNoChange()).isZero();
+    }
+
+    @Test
+    void reconcile_ofDisabledSet_isNotRecorded() {
+        peopleSet.setEnabled(false);
+        setRepo.save(peopleSet);
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        assertThat(runRepo.findAll()).isEmpty();
     }
 
     private String sourceEntryUuid(String uid) throws Exception {

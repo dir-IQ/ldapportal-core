@@ -81,5 +81,10 @@ public record DirectoryConnectionRequest(
         @Size(max = 100)
         @Pattern(regexp = "^[a-z0-9]+(?:-[a-z0-9]+)*$",
                 message = "auditDataSourceSlug must be lowercase alphanumeric segments separated by single hyphens")
-        String auditDataSourceSlug) {
+        String auditDataSourceSlug,
+        // ── Further top-level roots (LDAP) ───────────────────────────────────
+        // Other suffixes / naming contexts of the same server, beyond baseDn.
+        // Null/empty = single-root. Each must be a valid DN, not equal to or
+        // under another root.
+        List<@Size(max = 1000) String> additionalBaseDns) {
 }

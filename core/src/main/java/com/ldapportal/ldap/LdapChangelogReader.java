@@ -76,6 +76,9 @@ public class LdapChangelogReader {
             case DSEE_CHANGELOG     -> DSEE_STRATEGY;
             case OPENLDAP_ACCESSLOG -> ACCESSLOG_STRATEGY;
             case AD_DIRSYNC         -> DIRSYNC_STRATEGY;
+            // Rejected for audit sources at the service layer (sync capture only).
+            case OUD_COOKIE_CHANGELOG -> throw new IllegalStateException(
+                    "OUD_COOKIE_CHANGELOG is not an audit-source format");
         };
     }
 
@@ -248,8 +251,7 @@ public class LdapChangelogReader {
 
         // Resolve directory association by matching the targetDN to linked dirs
         DirectoryConnection matchedDir = linkedDirs.stream()
-                .filter(dc -> targetDn != null
-                        && targetDn.toLowerCase().endsWith(dc.getBaseDn().toLowerCase()))
+                .filter(dc -> targetDn != null && com.ldapportal.ldap.DirectoryRoots.isWithin(dc, targetDn))
                 .findFirst().orElse(null);
 
         UUID   directoryId   = matchedDir != null ? matchedDir.getId() : null;

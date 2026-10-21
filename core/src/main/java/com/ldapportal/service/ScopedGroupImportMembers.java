@@ -45,6 +45,12 @@ final class ScopedGroupImportMembers implements GroupImportMembers {
                                      List<MembershipChangeRequest.Change> changes);
     }
 
+    /** The Separation-of-Duties gate; throws to block adding {@code memberDn} to {@code groupDn}. */
+    @FunctionalInterface
+    interface MemberGate {
+        void check(String memberDn, String groupDn);
+    }
+
     private final DirectoryConnection dc;
     private final UUID directoryId;
     private final AuthPrincipal principal;
@@ -52,12 +58,13 @@ final class ScopedGroupImportMembers implements GroupImportMembers {
     private final LdapUserService userService;
     private final LdapGroupService groupService;
     private final MembershipWriter writer;
+    private final MemberGate gate;
     private List<String> bases;
     private final Map<String, Member> members = new HashMap<>();
 
     ScopedGroupImportMembers(DirectoryConnection dc, UUID directoryId, AuthPrincipal principal,
                              PermissionService permissionService, LdapUserService userService,
-                             LdapGroupService groupService, MembershipWriter writer) {
+                             LdapGroupService groupService, MembershipWriter writer, MemberGate gate) {
         this.dc = dc;
         this.directoryId = directoryId;
         this.principal = principal;
@@ -65,6 +72,7 @@ final class ScopedGroupImportMembers implements GroupImportMembers {
         this.userService = userService;
         this.groupService = groupService;
         this.writer = writer;
+        this.gate = gate;
     }
 
     @Override
@@ -98,6 +106,22 @@ final class ScopedGroupImportMembers implements GroupImportMembers {
         MembershipChangeResult result = writer.write(member.dn(), member.uid(),
                 List.of(new MembershipChangeRequest.Change(groupDn, memberAttribute, op)));
         return result.items().isEmpty() ? null : result.items().get(0);
+    }
+
+    @Override
+    public String blockedInitialMember(Member member, String groupDn) {
+        try {
+            gate.check(member.dn(), groupDn);
+            return null;
+        } catch (RuntimeException e) {
+            // The governance addon's SodViolationException; core can't import
+            // it (edition boundary), so recognise it by name, as
+            // LdapOperationService does for member adds. Anything else fails the row.
+            if ("SodViolationException".equals(e.getClass().getSimpleName())) {
+                return e.getMessage() != null ? e.getMessage() : "Blocked by a separation-of-duties policy";
+            }
+            throw e;
+        }
     }
 
     private Member lookupMember(String value) {

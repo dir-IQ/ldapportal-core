@@ -2844,7 +2844,7 @@ export interface components {
             /** @enum {string} */
             captureMode?: "APP_INTERCEPT" | "CHANGELOG";
             /** @enum {string} */
-            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC" | "OUD_COOKIE_CHANGELOG";
             changelogBaseDn?: string;
         };
         SyncLinkResponse: {
@@ -2859,7 +2859,7 @@ export interface components {
             /** @enum {string} */
             captureMode?: "APP_INTERCEPT" | "CHANGELOG";
             /** @enum {string} */
-            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC" | "OUD_COOKIE_CHANGELOG";
             changelogBaseDn?: string;
             /** @enum {string} */
             changelogHealth?: "HEALTHY" | "LAGGING" | "STALLED" | "GAP_DETECTED" | "CURSOR_RESET" | "DISABLED_CONFIG_ERROR";
@@ -3012,6 +3012,7 @@ export interface components {
             entraClientSecret?: string;
             graphEndpoint?: string;
             slug?: string;
+            additionalBaseDns?: string[];
         };
         BaseDnItem: {
             /** Format: uuid */
@@ -3097,6 +3098,8 @@ export interface components {
             updatedAt?: string;
             bindPasswordSet?: boolean;
             entraClientSecretSet?: boolean;
+            additionalBaseDns?: string[];
+            warnings?: string[];
         };
         AttributeModification: {
             /** @enum {string} */
@@ -3117,6 +3120,7 @@ export interface components {
             /** Format: int32 */
             childCount?: number;
             childCountApproximate?: boolean;
+            otherRoots?: string[];
         };
         ChildEntry: {
             dn?: string;
@@ -3137,7 +3141,7 @@ export interface components {
             changelogBaseDn: string;
             branchFilterDn?: string;
             /** @enum {string} */
-            changelogFormat: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogFormat: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC" | "OUD_COOKIE_CHANGELOG";
             enabled?: boolean;
         };
         AuditSourceResponse: {
@@ -3154,7 +3158,7 @@ export interface components {
             changelogBaseDn?: string;
             branchFilterDn?: string;
             /** @enum {string} */
-            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC";
+            changelogFormat?: "DSEE_CHANGELOG" | "OPENLDAP_ACCESSLOG" | "AD_DIRSYNC" | "OUD_COOKIE_CHANGELOG";
             enabled?: boolean;
             /** Format: date-time */
             createdAt?: string;
@@ -3542,9 +3546,13 @@ export interface components {
             registrationSectionName?: string;
             /** Format: int32 */
             registrationColumnSpan?: number;
+            /** Format: int32 */
+            registrationDisplayOrder?: number;
             selfServiceSectionName?: string;
             /** Format: int32 */
             selfServiceColumnSpan?: number;
+            /** Format: int32 */
+            selfServiceDisplayOrder?: number;
         };
         GroupAssignmentEntry: {
             groupDn: string;

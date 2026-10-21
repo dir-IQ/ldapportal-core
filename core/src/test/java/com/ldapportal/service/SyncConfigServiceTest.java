@@ -1,12 +1,24 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.service;
 
+import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.auth.PrincipalType;
+import com.ldapportal.dto.sync.SyncDeleteApproval;
+import com.ldapportal.dto.sync.SyncLinkRequest;
+import com.ldapportal.dto.sync.SyncPreviewAction;
+import com.ldapportal.dto.sync.SyncRecheckResult;
 import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncVerifyResult;
+import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
+import com.ldapportal.entity.enums.AuditAction;
+import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.MembershipState;
+import com.ldapportal.entity.enums.SyncCaptureMode;
+import com.ldapportal.entity.enums.SyncChangelogHealth;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
 import com.ldapportal.ldap.sync.SyncContentVerifier;
@@ -53,13 +65,17 @@ class SyncConfigServiceTest {
     @Mock private MembershipReconciler reconciler;
     @Mock private SyncContentVerifier verifier;
     @Mock private RecomputeEnqueuer enqueuer;
+    @Mock private com.ldapportal.ldap.sync.SyncPreviewService previewService;
+    @Mock private com.ldapportal.ldap.sync.SyncReconcileHistory reconcileHistory;
+    @Mock private com.ldapportal.ldap.sync.RecomputeEngine engine;
+    @Mock private AuditService auditService;
 
     private SyncConfigService service;
 
     @BeforeEach
     void setUp() {
         service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo,
-                reconciler, verifier, enqueuer);
+                reconciler, verifier, enqueuer, previewService, reconcileHistory, engine, auditService);
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
@@ -161,30 +177,32 @@ class SyncConfigServiceTest {
     void reconcileNow_refreshesDriftSnapshot_whenScanComplete() {
         UUID setId = UUID.randomUUID();
         when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
-        when(reconciler.reconcile(setId)).thenReturn(42);
+        when(reconciler.reconcile(setId, SyncReconcileTrigger.MANUAL, "alice")).thenReturn(42);
         when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(
                 10, 9, 7, 2, 1, 0,
                 List.of(), List.of(), List.of(),
                 true, true, null)); // complete scan: missing=2, orphan=1, mismatch=0
 
-        int enumerated = service.reconcileNow(setId);
+        int enumerated = service.reconcileNow(setId, "alice");
 
         assertThat(enumerated).isEqualTo(42);
         // A manual reconcile must refresh the cached drift, else the dashboard stays stale.
         verify(setRepo).recordVerifyResult(eq(setId), any(), eq(2), eq(1), eq(0));
+        // ...and record it on the run it follows.
+        verify(reconcileHistory).recordDrift(setId, 2, 1, 0);
     }
 
     @Test
     void reconcileNow_skipsPersist_whenScanIncomplete() {
         UUID setId = UUID.randomUUID();
         when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
-        when(reconciler.reconcile(setId)).thenReturn(1);
+        when(reconciler.reconcile(setId, SyncReconcileTrigger.MANUAL, "alice")).thenReturn(1);
         when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(
                 0, 0, 0, 0, 0, 0,
                 List.of(), List.of(), List.of(),
                 false, true, null)); // partial: source enumeration failed
 
-        service.reconcileNow(setId);
+        service.reconcileNow(setId, "alice");
 
         // A partial scan must not overwrite a previously good snapshot with low counts.
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
@@ -194,15 +212,119 @@ class SyncConfigServiceTest {
     void reconcileNow_returnsCount_whenSnapshotRefreshThrows() {
         UUID setId = UUID.randomUUID();
         when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
-        when(reconciler.reconcile(setId)).thenReturn(5);
+        when(reconciler.reconcile(setId, SyncReconcileTrigger.MANUAL, "alice")).thenReturn(5);
         when(verifier.verify(setId)).thenThrow(new RuntimeException("ldap read blew up"));
 
         // The reconcile already applied; a verify failure during the refresh must not
         // surface as a failed reconcile.
-        int enumerated = service.reconcileNow(setId);
+        int enumerated = service.reconcileNow(setId, "alice");
 
         assertThat(enumerated).isEqualTo(5);
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+    }
+
+    @Test
+    void createSet_onAMultiRootDirectory_requiresExplicitBases() {
+        UUID linkId = UUID.randomUUID();
+        UUID srcId = UUID.randomUUID();
+        UUID dstId = UUID.randomUUID();
+        SyncLink link = new SyncLink();
+        link.setSourceDirId(srcId);
+        link.setTargetDirId(dstId);
+        com.ldapportal.entity.DirectoryConnection multi = new com.ldapportal.entity.DirectoryConnection();
+        multi.setBaseDn("dc=example,dc=com");
+        multi.setAdditionalBaseDns(new java.util.ArrayList<>(List.of("o=partners")));
+        com.ldapportal.entity.DirectoryConnection single = new com.ldapportal.entity.DirectoryConnection();
+        single.setBaseDn("dc=dst,dc=com");
+        when(linkRepo.existsById(linkId)).thenReturn(true);
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+        when(directoryRepo.findById(srcId)).thenReturn(Optional.of(multi));
+        org.mockito.Mockito.lenient().when(directoryRepo.findById(dstId)).thenReturn(Optional.of(single));
+
+        SyncSetRequest noScope = new SyncSetRequest(linkId, "people", null, null, null, "ou=Users,dc=dst,dc=com",
+                null, null, null, SyncDeletePolicy.DELETE, null, null, null, true);
+        assertThatThrownBy(() -> service.createSet(noScope))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("source scope base DN");
+    }
+
+    @Test
+    void recheckTarget_forgetsAppliedContent_andRequestsAReconcile() {
+        UUID setId = UUID.randomUUID();
+        UUID linkId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setEnabled(true);
+        set.setLinkId(linkId);
+        SyncLink link = new SyncLink();
+        link.setEnabled(true);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+        when(membershipRepo.forgetAppliedContent(eq(setId), any())).thenReturn(4741);
+
+        SyncRecheckResult result = service.recheckTarget(setId, "alice");
+
+        assertThat(result.entries()).isEqualTo(4741);
+        assertThat(result.reconcileQueued()).isTrue();
+        verify(setRepo).requestReconcileOfSet(setId);
+    }
+
+    @Test
+    void recheckTarget_onADisabledSetOrLink_waitsForThemToBeEnabled() {
+        UUID setId = UUID.randomUUID();
+        UUID linkId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setLinkId(linkId);
+        set.setEnabled(false);
+        SyncLink link = new SyncLink();
+        link.setEnabled(true);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        org.mockito.Mockito.lenient().when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+
+        assertThat(service.recheckTarget(setId, "alice").reconcileQueued()).isFalse();
+
+        set.setEnabled(true);
+        link.setEnabled(false);
+        assertThat(service.recheckTarget(setId, "alice").reconcileQueued()).isFalse();
+    }
+
+    @Test
+    void recheckTarget_unknownSet_isNotFound() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.recheckTarget(setId, "alice"))
+                .isInstanceOf(com.ldapportal.exception.ResourceNotFoundException.class);
+        verify(membershipRepo, never()).forgetAppliedContent(any(), any());
+    }
+
+    @Test
+    void approveDelete_auditsTheTargetDelete() {
+        UUID setId = UUID.randomUUID();
+        UUID targetDir = UUID.randomUUID();
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(engine.approveDelete(setId, "id-1")).thenReturn(new SyncDeleteApproval(
+                SyncPreviewAction.DELETE, targetDir, "uid=a,dc=dst", null));
+
+        SyncDeleteApproval result = service.approveDelete(setId, "id-1", admin);
+
+        assertThat(result.outcome()).isEqualTo(SyncPreviewAction.DELETE);
+        verify(auditService).record(eq(admin), eq(targetDir), eq(AuditAction.ENTRY_DELETE), eq("uid=a,dc=dst"),
+                eq(java.util.Map.of("source", "directory-sync", "operation", "approved-review-delete",
+                        "syncSetId", setId.toString(), "identity", "id-1")));
+    }
+
+    @Test
+    void approveDelete_doesNotAudit_whenNothingWasDeleted() {
+        UUID setId = UUID.randomUUID();
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(engine.approveDelete(setId, "id-1")).thenReturn(new SyncDeleteApproval(
+                SyncPreviewAction.ERROR, UUID.randomUUID(), "uid=a,dc=dst", "delete failed: 50"));
+
+        service.approveDelete(setId, "id-1", admin);
+
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -226,5 +348,94 @@ class SyncConfigServiceTest {
         service.listMemberships(UUID.randomUUID(), null, "   ", PageRequest.of(0, 50));
 
         verify(membershipRepo).search(any(), isNull(), isNull(), any());
+    }
+
+    // ── link capture config ──────────────────────────────────────────────────
+
+    private SyncLinkRequest linkReq(SyncCaptureMode mode, ChangelogFormat format, String baseDn) {
+        return new SyncLinkRequest("link", SRC_DIR, DST_DIR, true, mode, format, baseDn);
+    }
+
+    @Test
+    void createLink_rejectsChangelogFormatWithoutSyncCapture() {
+        when(directoryRepo.existsById(any())).thenReturn(true);
+
+        assertThatThrownBy(() -> service.createLink(
+                linkReq(SyncCaptureMode.CHANGELOG, ChangelogFormat.OPENLDAP_ACCESSLOG, "cn=accesslog")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not supported for CHANGELOG capture");
+        verify(linkRepo, never()).save(any());
+    }
+
+    @Test
+    void updateLink_switchingFeed_resetsCursorAndHealth() {
+        SyncLink existing = changelogLink(ChangelogFormat.DSEE_CHANGELOG, "cn=changelog");
+        existing.setChangelogHealth(SyncChangelogHealth.STALLED);
+        existing.setChangelogLastError("old feed error");
+        existing.setChangelogLastErrorAt(java.time.OffsetDateTime.now());
+        existing.setChangelogLastPolledAt(java.time.OffsetDateTime.now());
+        when(directoryRepo.existsById(any())).thenReturn(true);
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // A DSEE changeNumber is meaningless as an OUD cookie.
+        service.updateLink(existing.getId(),
+                linkReq(SyncCaptureMode.CHANGELOG, ChangelogFormat.OUD_COOKIE_CHANGELOG, "cn=changelog"));
+
+        assertThat(existing.getChangelogFormat()).isEqualTo(ChangelogFormat.OUD_COOKIE_CHANGELOG);
+        assertThat(existing.getChangelogCursorToken()).isNull();
+        assertThat(existing.getChangelogLastChangeNumber()).isNull();
+        assertThat(existing.getChangelogSourceLastChangeNumber()).isNull();
+        // The old feed's health/error no longer describe this link.
+        assertThat(existing.getChangelogHealth()).isEqualTo(SyncChangelogHealth.HEALTHY);
+        assertThat(existing.getChangelogLastError()).isNull();
+        assertThat(existing.getChangelogLastErrorAt()).isNull();
+        assertThat(existing.getChangelogLastPolledAt()).isNull();
+    }
+
+    @Test
+    void updateLink_whitespaceOnlyBaseDnEdit_keepsCursor_andStoresTrimmed() {
+        SyncLink existing = changelogLink(ChangelogFormat.OUD_COOKIE_CHANGELOG, "cn=changelog");
+        when(directoryRepo.existsById(any())).thenReturn(true);
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateLink(existing.getId(),
+                linkReq(SyncCaptureMode.CHANGELOG, ChangelogFormat.OUD_COOKIE_CHANGELOG, "  cn=changelog "));
+
+        assertThat(existing.getChangelogBaseDn()).isEqualTo("cn=changelog");
+        assertThat(existing.getChangelogCursorToken()).isEqualTo("42");
+    }
+
+    @Test
+    void updateLink_sameFeed_keepsCursor() {
+        SyncLink existing = changelogLink(ChangelogFormat.OUD_COOKIE_CHANGELOG, "cn=changelog");
+        existing.setChangelogCursorToken("dc=example,dc=com:0000018c2f3a1b2c00010000000a;");
+        when(directoryRepo.existsById(any())).thenReturn(true);
+        when(linkRepo.findById(existing.getId())).thenReturn(Optional.of(existing));
+        when(linkRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service.updateLink(existing.getId(),
+                linkReq(SyncCaptureMode.CHANGELOG, ChangelogFormat.OUD_COOKIE_CHANGELOG, "cn=changelog"));
+
+        assertThat(existing.getChangelogCursorToken())
+                .isEqualTo("dc=example,dc=com:0000018c2f3a1b2c00010000000a;");
+    }
+
+    private static final UUID SRC_DIR = UUID.randomUUID();
+    private static final UUID DST_DIR = UUID.randomUUID();
+
+    private static SyncLink changelogLink(ChangelogFormat format, String baseDn) {
+        SyncLink l = new SyncLink();
+        l.setId(UUID.randomUUID());
+        l.setSourceDirId(SRC_DIR);
+        l.setTargetDirId(DST_DIR);
+        l.setCaptureMode(SyncCaptureMode.CHANGELOG);
+        l.setChangelogFormat(format);
+        l.setChangelogBaseDn(baseDn);
+        l.setChangelogCursorToken("42");
+        l.setChangelogLastChangeNumber(42L);
+        l.setChangelogSourceLastChangeNumber(50L);
+        return l;
     }
 }

@@ -335,6 +335,85 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect(params.objectType).toBe('USER')
   })
 
+  it('pins a new admin job to the picked profile\'s OU', async () => {
+    hoisted.selectedProfile = { targetUserDn: 'ou=people,dc=example,dc=com' }
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('DISABLED_ACCOUNTS')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params.scopeBaseDn).toBe('ou=people,dc=example,dc=com')
+  })
+
+  it.each(['USERS_IN_BRANCH', 'MISSING_DATA'])(
+    'leaves scopeBaseDn off a %s job so the backend derives it from the branch',
+    async (type) => {
+      hoisted.selectedProfile = { targetUserDn: 'ou=people,dc=example,dc=com' }
+      const reports = await import('@/api/reports')
+      const wrapper = mountView()
+      await flushPromises()
+      await wrapper.find('summary').trigger('click')
+      await flushPromises()
+
+      await wrapper.find('#rj-job-report-type').setValue(type)
+      if (type === 'MISSING_DATA') await wrapper.find('#rj-job-attributes').setValue('mail')
+      await wrapper.find('form').trigger('submit')
+      await flushPromises()
+
+      const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+      expect(params).toHaveProperty('branchDn')
+      expect(params).not.toHaveProperty('scopeBaseDn')
+    },
+  )
+
+  it('does not add a profile scope to a superadmin\'s new job', async () => {
+    hoisted.isSuperadmin = true
+    hoisted.selectedProfile = { targetUserDn: 'ou=people,dc=example,dc=com' }
+    const reports = await import('@/api/reports')
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.find('summary').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('#rj-job-report-type').setValue('DISABLED_ACCOUNTS')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    const params = (reports.createReportJob as unknown as Mock).mock.calls[0][1].reportParams
+    expect(params).not.toHaveProperty('scopeBaseDn')
+  })
+
+  it('keeps the scope an edited job already stores', async () => {
+    hoisted.selectedProfile = { targetUserDn: 'ou=other,dc=example,dc=com' }
+    const reports = await import('@/api/reports')
+    ;(reports.listReportJobs as unknown as Mock).mockResolvedValue({
+      data: { content: [
+        { id: 'job-1', name: 'Weekly', reportType: 'DISABLED_ACCOUNTS', cronExpression: '0 8 * * 1',
+          enabled: true, timezone: 'UTC', outputFormat: 'CSV', deliveryMethod: 'EMAIL', recipientEmail: 'a@b.com',
+          reportParams: { scopeBaseDn: 'ou=people,dc=example,dc=com' } },
+      ] },
+    })
+    const wrapper = mountView()
+    await flushPromises()
+    await scheduledJobsButton(wrapper)!.trigger('click')
+    await flushPromises()
+
+    await wrapper.findAll('button').find(b => b.text() === 'Edit')!.trigger('click')
+    await flushPromises()
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(reports.updateReportJob).toHaveBeenCalled()
+    const params = (reports.updateReportJob as unknown as Mock).mock.calls[0][2].reportParams
+    expect(params.scopeBaseDn).toBe('ou=people,dc=example,dc=com')
+  })
+
   it('triggers an immediate run via the Run now button', async () => {
     const reports = await import('@/api/reports')
     // reports.js is untyped JS; cast to the loose Mock surface so the

@@ -4,6 +4,8 @@ package com.ldapportal.ldap.sync;
 import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.entity.SyncSet;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
+import com.ldapportal.exception.ConflictException;
 import com.ldapportal.repository.SyncSetRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,7 +25,10 @@ import java.util.UUID;
  *
  * <p>Each tick reconciles sets whose {@code reconcile_last_run_at + cadence} has
  * elapsed, where cadence is the set's {@code reconcileCadenceSeconds} or the
- * global default. Gated on {@code DIRECTORY_SYNC}.
+ * global default, and sets with a pending reconcile request (raised by the
+ * changelog poller on a seed or gap): at once when no reconcile has attempted
+ * it yet, or after {@link #REQUEST_RETRY_SPACING} when the last attempt's source
+ * enumeration didn't complete. Gated on {@code DIRECTORY_SYNC}.
  */
 @Component
 @Slf4j
@@ -32,18 +37,23 @@ public class SyncReconcileScheduler {
     private final SyncSetRepository syncSetRepo;
     private final MembershipReconciler reconciler;
     private final SyncContentVerifier verifier;
+    private final SyncReconcileHistory history;
     private final EntitlementService entitlementService;
     private final long defaultCadenceSeconds;
+    /** Minimum gap between retries of a reconcile request an incomplete run didn't handle. */
+    static final Duration REQUEST_RETRY_SPACING = Duration.ofMinutes(5);
 
     public SyncReconcileScheduler(SyncSetRepository syncSetRepo,
                                   MembershipReconciler reconciler,
                                   SyncContentVerifier verifier,
+                                  SyncReconcileHistory history,
                                   EntitlementService entitlementService,
                                   @Value("${ldapportal.sync.reconcile.default-cadence-seconds:3600}")
                                   long defaultCadenceSeconds) {
         this.syncSetRepo = syncSetRepo;
         this.reconciler = reconciler;
         this.verifier = verifier;
+        this.history = history;
         this.entitlementService = entitlementService;
         this.defaultCadenceSeconds = defaultCadenceSeconds;
     }
@@ -62,8 +72,11 @@ public class SyncReconcileScheduler {
                     continue;
                 }
                 try {
-                    reconciler.reconcile(set.getId());
+                    reconciler.reconcile(set.getId(), SyncReconcileTrigger.SCHEDULED, null);
                     recordDrift(set.getId());
+                } catch (ConflictException running) {
+                    // Another instance (or a manual run) holds the set's reconcile lease.
+                    log.debug("Sync set {}: reconcile already running elsewhere; skipped", set.getId());
                 } catch (Exception ex) {
                     log.error("Scheduled reconcile of sync set {} failed: {}", set.getId(), ex.toString());
                 }
@@ -87,6 +100,7 @@ public class SyncReconcileScheduler {
             if (v.sourceComplete() && v.targetComplete()) {
                 syncSetRepo.recordVerifyResult(setId, OffsetDateTime.now(),
                         v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
+                history.recordDrift(setId, v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
             }
         } catch (Exception ex) {
             log.warn("Scheduled content verify of sync set {} failed: {}", setId, ex.toString());
@@ -94,7 +108,17 @@ public class SyncReconcileScheduler {
     }
 
     private boolean isDue(SyncSet set, OffsetDateTime now) {
+        // A request no reconcile has attempted yet: run now.
+        if (set.getReconcileRequestSeq() > set.getReconcileAttemptedSeq()) {
+            return true;
+        }
         if (set.getReconcileLastRunAt() == null) {
+            return true;
+        }
+        // Attempted but not handled (the enumeration didn't complete): retry, but
+        // spaced out so a persistently failing source isn't re-enumerated every tick.
+        if (set.getReconcileRequestSeq() > set.getReconcileHandledSeq()
+                && !set.getReconcileLastRunAt().plus(REQUEST_RETRY_SPACING).isAfter(now)) {
             return true;
         }
         long cadence = set.getReconcileCadenceSeconds() != null

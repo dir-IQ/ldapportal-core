@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.core.entitlement.Entitled;
 import com.ldapportal.core.entitlement.Entitlement;
@@ -19,6 +20,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -94,14 +96,87 @@ public class SyncSetController {
 
     @PostMapping("/{id}/reconcile")
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
-    public Map<String, Integer> reconcile(@PathVariable UUID id) {
-        return Map.of("enumerated", service.reconcileNow(id));
+    public Map<String, Integer> reconcile(@PathVariable UUID id, @AuthenticationPrincipal AuthPrincipal principal) {
+        return Map.of("enumerated", service.reconcileNow(id, principal != null ? principal.username() : null));
+    }
+
+    /**
+     * The set's most recent reconcile runs, newest first: trigger, scan
+     * completeness, and per-outcome counts (no attribute values).
+     */
+    /**
+     * Everything recorded about one reconcile run: its counts and timing, the
+     * instance that ran it, the set's settings at the time, failures grouped by
+     * reason, sample target DNs per outcome (DNs only), and the drift found by
+     * the verification after it.
+     */
+    @GetMapping("/{id}/reconcile-runs/{runId}")
+    public com.ldapportal.dto.sync.SyncReconcileRunDetail reconcileRun(@PathVariable UUID id,
+                                                                     @PathVariable UUID runId) {
+        return service.reconcileRun(id, runId);
+    }
+
+    @GetMapping("/{id}/reconcile-runs")
+    public List<com.ldapportal.dto.sync.SyncReconcileRunResponse> reconcileRuns(
+            @PathVariable UUID id, @RequestParam(defaultValue = "10") int limit) {
+        return service.reconcileRuns(id, Math.min(Math.max(limit, 1), 20));
+    }
+
+    /**
+     * Re-check the target (e.g. after restoring it from a backup): the next
+     * reconcile re-reads every applied entry instead of trusting what the set
+     * last wrote, and re-applies the ones that differ. Queues that reconcile.
+     */
+    @PostMapping("/{id}/recheck-target")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncRecheckResult recheckTarget(
+            @PathVariable UUID id, @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.recheckTarget(id, principal != null ? principal.username() : null);
     }
 
     /** Dry-run preview of a reconcile (counts + sample deletions, no writes). */
     @GetMapping("/{id}/preview")
     public com.ldapportal.dto.sync.SyncReconcilePreview preview(@PathVariable UUID id) {
         return service.previewReconcile(id);
+    }
+
+    /**
+     * The latest per-entry dry-run preview of the set: progress while it runs,
+     * its summary once complete. Manage-only, like the entries: a preview shows
+     * attribute values.
+     */
+    @GetMapping("/{id}/preview/run")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncPreviewStatus previewStatus(@PathVariable UUID id) {
+        return service.previewStatus(id);
+    }
+
+    /**
+     * Start a per-entry dry-run preview in the background: plans the whole set
+     * and predicts what a reconcile would do to each entry. No directory writes;
+     * works for a disabled set. Joins the run already in progress, if any.
+     */
+    @PostMapping("/{id}/preview/run")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public ResponseEntity<com.ldapportal.dto.sync.SyncPreviewStatus> startPreview(
+            @PathVariable UUID id, @AuthenticationPrincipal AuthPrincipal principal) {
+        return ResponseEntity.accepted()
+                .body(service.startPreview(id, principal != null ? principal.username() : null));
+    }
+
+    /**
+     * One page of the set's completed preview (add / modify with attribute
+     * changes / move / delete / review), ordered by target DN.
+     * {@code changesOnly} leaves out entries that wouldn't change.
+     */
+    @GetMapping("/{id}/preview/entries")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncPreviewPage previewEntries(
+            @PathVariable UUID id,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size,
+            @RequestParam(defaultValue = "true") boolean changesOnly) {
+        return service.previewEntries(id, page, size, changesOnly);
     }
 
     /**
@@ -118,6 +193,19 @@ public class SyncSetController {
     public ResponseEntity<Void> recompute(@PathVariable UUID id, @Valid @RequestBody RecomputeKeyRequest req) {
         service.recompute(id, req.key());
         return ResponseEntity.accepted().build();
+    }
+
+    /**
+     * Approve a delete held for review: deletes the identity's target entry now,
+     * whatever the delete policy or guard (the source is re-read first; an entry
+     * back in scope is refused with 400).
+     */
+    @PostMapping("/{id}/memberships/{identity}/approve-delete")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncDeleteApproval approveDelete(
+            @PathVariable UUID id, @PathVariable String identity,
+            @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.approveDelete(id, identity, principal);
     }
 
     @DeleteMapping("/{id}/memberships/{identity}")

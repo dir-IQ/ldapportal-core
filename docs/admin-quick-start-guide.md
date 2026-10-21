@@ -287,6 +287,7 @@ Base DN:  dc=corp,dc=local
 |---------|----------|
 | "Test Connection" fails | Check host/port reachability from the Docker container. Try: `docker exec ldap-admin-app wget -qO- ldap://your-host:389` |
 | Zero users/groups found | Verify the Base DN matches your directory structure. Use the **Directory Browser** (superadmin sidebar) to explore the tree. |
+| Directory has several top-level roots (suffixes) | Keep one connection: put the main root in Base DN and the others under **Additional base DNs**. See [multi-root-directories.md](multi-root-directories.md). |
 | SSL certificate errors | Enable "Trust all certificates" for testing, or paste your CA certificate PEM in the directory settings. |
 | Login fails after setup | Check that the bootstrap password hasn't been changed. If locked out, reset via the database. |
 | Audit log is empty | Audit events are recorded for admin actions. Log in and perform an operation (e.g., search users) to generate entries. |
@@ -318,7 +319,17 @@ Base DN:  dc=corp,dc=local
   already a member, not found, out of scope…) before anything is written. Member changes
   on existing groups follow the same approval, separation-of-duties and audit rules as
   editing a group by hand, so an add to a group that requires approval is queued; a new
-  group gets its members in the create itself. At most 2,000 member changes per file.
+  group gets its members in the create itself, each checked against separation-of-duties
+  policies first (a blocked member is left out). At most 2,000 member changes per file.
   Needs **bulk.import**; a file that lists any members also needs **group.manage_members**
   (checked for the requester before a file is queued for approval, and for the approver
   when it runs).
+  **Per-row permissions** (user and group imports): beyond **bulk.import**, each row needs
+  the permission its single-entry equivalent needs, and a row that lacks one fails on its
+  own while the rest of the file runs. Creating a user needs **user.create**; overwriting an
+  existing one needs **user.edit**, plus **user.reset_password** to change its password and
+  **user.enable_disable** to change its account-control attribute (a new user's initial
+  password is part of creating it). Creating a group needs **group.create_delete**; changing
+  an existing group's attributes needs **group.edit**. Preview shows these as row issues. An
+  import that runs after approval needs each permission from both the requester and the
+  approver.

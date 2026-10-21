@@ -63,7 +63,7 @@ public class LdapUserService {
      *
      * @param dc         directory connection to query
      * @param filter     LDAP filter, e.g. {@code (&(objectClass=inetOrgPerson)(cn=jo*))}
-     * @param baseDn     search base (null falls back to the connection's base DN)
+     * @param baseDn     search base (null searches every root of the connection)
      * @param attributes attributes to retrieve; empty array retrieves all user attributes
      * @return matching users, paged using the connection's configured page size
      */
@@ -83,7 +83,8 @@ public class LdapUserService {
      *
      * @param dc         directory connection to query
      * @param filter     LDAP filter
-     * @param baseDn     search base (null falls back to the connection's base DN)
+     * @param baseDn     search base (null searches every root of the connection,
+     *                   in order, until {@code maxResults} is reached)
      * @param maxResults maximum number of entries to return
      * @param attributes attributes to retrieve; empty array retrieves all user attributes
      * @return up to {@code maxResults} matching users
@@ -117,7 +118,26 @@ public class LdapUserService {
                                         int maxResults,
                                         boolean enrich,
                                         String... attributes) {
-        String searchBase = baseDn != null ? baseDn : dc.getBaseDn();
+        if (baseDn != null) {
+            return searchUsersUnder(dc, filter, baseDn, maxResults, enrich, attributes);
+        }
+        List<LdapUser> merged = new ArrayList<>();
+        for (String root : dc.getBaseDns()) {
+            int remaining = maxResults - merged.size();
+            if (remaining <= 0) {
+                break;
+            }
+            merged.addAll(searchUsersUnder(dc, filter, root, remaining, enrich, attributes));
+        }
+        return merged;
+    }
+
+    private List<LdapUser> searchUsersUnder(DirectoryConnection dc,
+                                            String filter,
+                                            String searchBase,
+                                            int maxResults,
+                                            boolean enrich,
+                                            String... attributes) {
         // Clamp the page size: no point asking for more entries per page than the total limit
         int pageSize = Math.min(dc.getPagingSize(), maxResults);
         List<LdapUser> results = new ArrayList<>();
@@ -177,8 +197,8 @@ public class LdapUserService {
     }
 
     /**
-     * Counts users under {@code baseDn} (or the connection's base DN when
-     * {@code null}) using the directory's effective user filter.
+     * Counts users under {@code baseDn} (or under every root of the connection
+     * when {@code null}) using the directory's effective user filter.
      *
      * <p>Unlike {@code searchUsers(...).size()} this never maps entries to
      * {@link LdapUser} or runs the read-enricher chain — it asks only for DNs
@@ -197,10 +217,18 @@ public class LdapUserService {
      * value of {@code max} means "at least {@code max}".
      */
     public long countUsers(DirectoryConnection dc, String filter, String baseDn, long max) {
-        String searchBase = baseDn != null ? baseDn : dc.getBaseDn();
         int pageSize = Math.max(1, dc.getPagingSize());
-        return connectionFactory.withConnection(dc,
-                conn -> LdapEntryCounter.count(conn, searchBase, filter, pageSize, max));
+        List<String> bases = baseDn != null ? List.of(baseDn) : dc.getBaseDns();
+        long total = 0;
+        for (String searchBase : bases) {
+            long remaining = max - total;
+            if (remaining <= 0) {
+                break;
+            }
+            total += connectionFactory.withConnection(dc,
+                    conn -> LdapEntryCounter.count(conn, searchBase, filter, pageSize, remaining));
+        }
+        return total;
     }
 
     /**
@@ -210,7 +238,7 @@ public class LdapUserService {
      *
      * @param dc         directory connection
      * @param filter     LDAP filter
-     * @param baseDn     search base (null falls back to the connection's base DN)
+     * @param baseDn     search base (null streams every root of the connection, in order)
      * @param consumer   called once per matching entry as results arrive
      * @param attributes attributes to retrieve; empty array retrieves all
      */
@@ -240,7 +268,17 @@ public class LdapUserService {
                                Consumer<LdapUser> consumer,
                                boolean enrich,
                                String... attributes) {
-        String searchBase = baseDn != null ? baseDn : dc.getBaseDn();
+        for (String searchBase : baseDn != null ? List.of(baseDn) : dc.getBaseDns()) {
+            processUsersUnder(dc, filter, searchBase, consumer, enrich, attributes);
+        }
+    }
+
+    private void processUsersUnder(DirectoryConnection dc,
+                                   String filter,
+                                   String searchBase,
+                                   Consumer<LdapUser> consumer,
+                                   boolean enrich,
+                                   String... attributes) {
         int pageSize = dc.getPagingSize();
 
         connectionFactory.withConnection(dc, conn -> {

@@ -15,7 +15,7 @@ const set = {
 const membership = {
   syncSetId: 'set-1', identity: '1111', sourceDn: 'uid=a,ou=people,dc=src',
   targetDn: 'uid=a,ou=Users,dc=dst', state: 'REVIEW', failReason: 'ambiguous',
-  lastSrcCursor: null, lastScanEpoch: null,
+  lastSrcCursor: null, lastScanEpoch: null, reviewKind: null as string | null,
 }
 const page = (content: unknown[]) => ({
   data: { content, totalElements: content.length, totalPages: 1, number: 0, size: 50 },
@@ -24,8 +24,13 @@ const page = (content: unknown[]) => ({
 vi.mock('@/api/sync', () => ({
   listMemberships: vi.fn(() => Promise.resolve(page([membership]))),
   reconcileSet: vi.fn(() => Promise.resolve({ data: { enumerated: 3 } })),
+  recheckTarget: vi.fn(() => Promise.resolve({ data: { entries: 5, reconcileQueued: true } })),
+  listReconcileRuns: vi.fn(() => Promise.resolve({ data: [] })),
   recomputeKey: vi.fn(() => Promise.resolve({ data: undefined })),
   dismissMembership: vi.fn(() => Promise.resolve({ data: undefined })),
+  approveDelete: vi.fn(() => Promise.resolve({
+    data: { outcome: 'DELETE', targetDirectoryId: 'dir-2', targetDn: 'uid=a,ou=Users,dc=dst', message: null },
+  })),
   verifyContents: vi.fn(() => Promise.resolve({
     data: {
       sourceMembers: 5, targetEntries: 4, inSync: 3,
@@ -37,7 +42,16 @@ vi.mock('@/api/sync', () => ({
   })),
 }))
 
+const confirmMock = vi.hoisted(() => vi.fn(() => Promise.resolve(true)))
+vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => confirmMock }))
+
 import * as syncApi from '@/api/sync'
+
+/** List exactly one membership row, overriding the default fixture's fields. */
+function withRow(over: Partial<typeof membership>) {
+  ;(syncApi.listMemberships as unknown as { mockResolvedValue: (v: unknown) => void })
+    .mockResolvedValue(page([{ ...membership, ...over }]))
+}
 
 function open() {
   return mount(MembershipInventoryModal, {
@@ -52,6 +66,7 @@ describe('MembershipInventoryModal', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    withRow({}) // tests below override the listed row; start each from the fixture
     document.body.innerHTML = ''
   })
 
@@ -96,6 +111,97 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
+  it('labels a held delete "Delete target" and approves it after a danger confirm', async () => {
+    withRow({ reviewKind: 'PENDING_DELETE', failReason: 'scope-exit held for review (deletePolicy=REVIEW)' })
+    const wrapper = open()
+    await flushPromises()
+    expect(byText('Keep entry, stop syncing')).toBeTruthy()
+    expect(byText('Re-check')).toBeTruthy()
+    byText('Delete target')!.click()
+    await flushPromises()
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ danger: true, confirmLabel: 'Delete entry' }))
+    expect(syncApi.approveDelete).toHaveBeenCalledWith('set-1', '1111')
+    wrapper.unmount()
+  })
+
+  it('does not delete when the confirm is cancelled', async () => {
+    withRow({ reviewKind: 'PENDING_DELETE' })
+    confirmMock.mockResolvedValueOnce(false)
+    const wrapper = open()
+    await flushPromises()
+    byText('Delete target')!.click()
+    await flushPromises()
+    expect(syncApi.approveDelete).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('"Keep entry, stop syncing" dismisses the row after confirming', async () => {
+    withRow({ reviewKind: 'PENDING_DELETE' })
+    const wrapper = open()
+    await flushPromises()
+    byText('Keep entry, stop syncing')!.click()
+    await flushPromises()
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: 'Keep and stop syncing' }))
+    expect(syncApi.dismissMembership).toHaveBeenCalledWith('set-1', '1111')
+    wrapper.unmount()
+  })
+
+  it('names the recompute for the row: Retry match, Retry, Re-sync', async () => {
+    for (const [over, label] of [
+      [{ state: 'REVIEW', reviewKind: 'AMBIGUOUS_MATCH' }, 'Retry match'],
+      [{ state: 'FAILED', reviewKind: null }, 'Retry'],
+      [{ state: 'APPLIED', reviewKind: null, failReason: null }, 'Re-sync'],
+    ] as const) {
+      vi.clearAllMocks()
+      document.body.innerHTML = ''
+      withRow(over as Partial<typeof membership>)
+      const wrapper = open()
+      await flushPromises()
+      const btn = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+        .find((b) => b.textContent?.trim() === label)
+      expect(btn, label).toBeTruthy()
+      btn!.click()
+      await flushPromises()
+      expect(syncApi.recomputeKey).toHaveBeenCalledWith('set-1', '1111')
+      expect(byText('Delete target')).toBeUndefined()
+      wrapper.unmount()
+    }
+  })
+
+  it('"Stop tracking" asks first and dismisses only when confirmed', async () => {
+    withRow({ state: 'FAILED', reviewKind: null })
+    confirmMock.mockResolvedValueOnce(false)
+    const wrapper = open()
+    await flushPromises()
+    byText('Stop tracking')!.click()
+    await flushPromises()
+    expect(syncApi.dismissMembership).not.toHaveBeenCalled()
+    byText('Stop tracking')!.click()
+    await flushPromises()
+    expect(syncApi.dismissMembership).toHaveBeenCalledWith('set-1', '1111')
+    wrapper.unmount()
+  })
+
+  it('Re-check target confirms first, then queues the re-check', async () => {
+    const wrapper = open()
+    await flushPromises()
+    byText('Re-check target')!.click()
+    await flushPromises()
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: 'Re-check target' }))
+    expect(syncApi.recheckTarget).toHaveBeenCalledWith('set-1')
+    wrapper.unmount()
+  })
+
+  it('Re-check target does nothing when the confirm is cancelled', async () => {
+    confirmMock.mockResolvedValueOnce(false)
+    const wrapper = open()
+    await flushPromises()
+    byText('Re-check target')!.click()
+    await flushPromises()
+    expect(syncApi.recheckTarget).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
   it('Verify contents calls the API and renders the mismatch summary', async () => {
     const wrapper = open()
     await flushPromises()
@@ -106,6 +212,17 @@ describe('MembershipInventoryModal', () => {
     expect(txt).toContain('Content verification')
     expect(txt).toContain('uid=gone,ou=Users,dc=dst') // sample missing DN
     expect(txt).toContain('uid=drift,ou=Users,dc=dst') // sample drift DN
+    wrapper.unmount()
+  })
+
+  it('Reconcile now reloads the reconcile history once the run finishes', async () => {
+    const wrapper = open()
+    await flushPromises()
+    expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(1)
+    byText('Reconcile now')!.click()
+    await flushPromises()
+    expect(syncApi.reconcileSet).toHaveBeenCalledWith('set-1')
+    expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(2)
     wrapper.unmount()
   })
 

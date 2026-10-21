@@ -46,6 +46,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 /**
  * CSV parsing and generation service for bulk user import and export operations.
@@ -234,6 +235,32 @@ public class BulkUserService {
                                       char fieldDelimiter,
                                       boolean passthroughUnmapped,
                                       UserImportGroups groups) throws IOException {
+        return importCsv(dc, csvInput, parentDn, targetKeyAttr, conflictHandling, columnMappings,
+                objectClasses, skipHeaderRow, dnSourceColumn, profileContext, requiredAttrs,
+                errorHandling, fieldDelimiter, passthroughUnmapped, groups, BulkImportPermissions.ALL);
+    }
+
+    /**
+     * Full import variant. {@code permissions} decides, row by row, whether the
+     * admin may create the user or overwrite the existing one (see
+     * {@link BulkImportPermissions}); a row it refuses is an error, the rest run.
+     */
+    public BulkImportResult importCsv(DirectoryConnection dc,
+                                      InputStream csvInput,
+                                      String parentDn,
+                                      String targetKeyAttr,
+                                      ConflictHandling conflictHandling,
+                                      List<CsvColumnMappingDto> columnMappings,
+                                      List<String> objectClasses,
+                                      boolean skipHeaderRow,
+                                      String dnSourceColumn,
+                                      ProfileContext profileContext,
+                                      List<String> requiredAttrs,
+                                      ImportErrorHandling errorHandling,
+                                      char fieldDelimiter,
+                                      boolean passthroughUnmapped,
+                                      UserImportGroups groups,
+                                      BulkImportPermissions permissions) throws IOException {
         if (dc.getDirectoryType() == DirectoryType.ENTRA_ID) {
             throw new IllegalArgumentException("This feature is not supported for Entra ID directories");
         }
@@ -247,7 +274,9 @@ public class BulkUserService {
         // errors" and "the import is blocked" stay in lockstep.
         if (errorHandling == ImportErrorHandling.ABORT_ON_ERROR) {
             List<BulkImportRowResult> validation =
-                    validateRows(rows, colToAttr, targetKeyAttr, parentDn, dnSourceColumn, requiredAttrs);
+                    validateRows(rows, colToAttr, targetKeyAttr, parentDn, dnSourceColumn, requiredAttrs,
+                            conflictHandling == ConflictHandling.OVERWRITE, permissions,
+                            dn -> userService.entryExists(dc, dn));
             long errs = countByStatus(validation, BulkImportRowResult.Status.ERROR);
             if (errs > 0) {
                 log.info("Bulk import aborted: {} of {} rows have errors (errorHandling=ABORT_ON_ERROR)",
@@ -263,7 +292,8 @@ public class BulkUserService {
         for (Map<String, String> row : rows) {
             rowNum++;
             BulkImportRowResult result = processRow(dc, row, colToAttr, targetKeyAttr,
-                    parentDn, conflictHandling, objectClasses, dnSourceColumn, rowNum, profileContext);
+                    parentDn, conflictHandling, objectClasses, dnSourceColumn, rowNum, profileContext,
+                    permissions);
             rowResults.add(withGroupChanges(result, row, colToAttr, dnSourceColumn, groups));
         }
 
@@ -290,7 +320,10 @@ public class BulkUserService {
                                                    String targetKeyAttr,
                                                    String parentDn,
                                                    String dnSourceColumn,
-                                                   List<String> requiredAttrs) {
+                                                   List<String> requiredAttrs,
+                                                   boolean overwrite,
+                                                   BulkImportPermissions permissions,
+                                                   Predicate<String> userExists) {
         boolean dnFromColumn = dnSourceColumn != null && !dnSourceColumn.isBlank();
         List<String> required = requiredAttrs == null ? List.of() : requiredAttrs;
         List<BulkImportRowResult> out = new ArrayList<>();
@@ -301,9 +334,10 @@ public class BulkUserService {
 
             String dn = null;
             String error = null;
+            Set<String> rdnAttrs = Set.of(targetKeyAttr);
             try {
                 dn = resolveDn(row, dnSourceColumn, targetKeyAttr, firstOrNull(valuesFor(attrs, targetKeyAttr)), parentDn);
-                if (dnFromColumn) ensureRdnAttributes(dn, attrs);
+                if (dnFromColumn) rdnAttrs = ensureRdnAttributes(dn, attrs);
             } catch (IllegalArgumentException ex) {
                 error = ex.getMessage();
             }
@@ -315,6 +349,9 @@ public class BulkUserService {
                 if (!missing.isEmpty()) {
                     error = "Missing required attribute(s): " + String.join(", ", missing);
                 }
+            }
+            if (error == null) {
+                error = permissionProblem(dn, attrs, rdnAttrs, overwrite, permissions, userExists);
             }
 
             out.add(error != null
@@ -412,6 +449,31 @@ public class BulkUserService {
                                                   char fieldDelimiter,
                                                   boolean passthroughUnmapped,
                                                   UserImportGroups groups) throws IOException {
+        return previewImport(csvInput, parentDn, targetKeyAttr, columnMappings, skipHeaderRow,
+                requiredAttrs, dnSourceColumn, fieldDelimiter, passthroughUnmapped, groups,
+                false, BulkImportPermissions.ALL, dn -> false);
+    }
+
+    /**
+     * Preview variant that also reports, per row, an import the admin's
+     * permissions would refuse (creating without {@code user.create},
+     * overwriting without {@code user.edit}, …) in the row's message.
+     * {@code userExists} is only consulted when {@code permissions} could
+     * refuse a row.
+     */
+    public BulkImportPreviewResult previewImport(InputStream csvInput,
+                                                  String parentDn,
+                                                  String targetKeyAttr,
+                                                  List<CsvColumnMappingDto> columnMappings,
+                                                  boolean skipHeaderRow,
+                                                  List<String> requiredAttrs,
+                                                  String dnSourceColumn,
+                                                  char fieldDelimiter,
+                                                  boolean passthroughUnmapped,
+                                                  UserImportGroups groups,
+                                                  boolean overwrite,
+                                                  BulkImportPermissions permissions,
+                                                  Predicate<String> userExists) throws IOException {
 
         CsvColumnMap colToAttr = CsvColumnMap.of(columnMappings, passthroughUnmapped);
         List<Map<String, String>> rows = CsvUtils.parse(csvInput, skipHeaderRow, fieldDelimiter);
@@ -438,17 +500,22 @@ public class BulkUserService {
             // import container, column not in the file); shown on the row so
             // "missing dn" never hides the real reason.
             String dnProblem = null;
+            Set<String> rdnAttrs = Set.of(targetKeyAttr);
             try {
                 dn = resolveDn(row, dnSourceColumn, targetKeyAttr, firstOrNull(valuesFor(attrs, targetKeyAttr)), parentDn);
                 // An explicit DN supplies the RDN attribute(s); reflect them in the
                 // attribute set so the required-attribute check matches the import,
                 // which injects them before the add.
                 if (dnFromColumn) {
-                    ensureRdnAttributes(dn, attrs);
+                    rdnAttrs = ensureRdnAttributes(dn, attrs);
                 }
             } catch (IllegalArgumentException ex) {
                 dn = null;
                 dnProblem = ex.getMessage();
+            }
+            // A row the admin's permissions refuse says why, like a DN problem.
+            if (dnProblem == null) {
+                dnProblem = permissionProblem(dn, attrs, rdnAttrs, overwrite, permissions, userExists);
             }
 
             // Compare attrs (case-insensitive) against the required set.
@@ -684,7 +751,8 @@ public class BulkUserService {
                                            List<String> objectClasses,
                                            String dnSourceColumn,
                                            int rowNum,
-                                           ProfileContext profileContext) {
+                                           ProfileContext profileContext,
+                                           BulkImportPermissions permissions) {
         boolean dnFromColumn = dnSourceColumn != null && !dnSourceColumn.isBlank();
 
         // Build ldapAttribute→[value] map from the CSV row
@@ -737,6 +805,15 @@ public class BulkUserService {
         }
 
         try {
+            // Without user.create, look the user up first: an existing one may
+            // still be overwritten (or skipped), a new one is refused.
+            if (!permissions.createUsers()) {
+                if (!userService.entryExists(dc, dn)) {
+                    return BulkImportRowResult.error(rowNum, dn,
+                            permissions.userRowProblem(false, false, List.of()));
+                }
+                return existingUser(dc, dn, attrMap, rdnAttrsLower, conflictHandling, rowNum, permissions);
+            }
             // Optimistic create: attempt the add first and handle the ENTRY_ALREADY_EXISTS
             // result code inline.  This avoids a separate getUser() existence check per row
             // (which would double the number of LDAP round-trips for large imports).
@@ -756,28 +833,64 @@ public class BulkUserService {
                 if (!isEntryAlreadyExists(ex)) {
                     throw ex; // not a duplicate — propagate
                 }
-                // Entry exists — apply conflict strategy
-                if (conflictHandling == ConflictHandling.OVERWRITE) {
-                    List<Modification> mods = attrMap.entrySet().stream()
-                            .filter(e -> !rdnAttrsLower.contains(e.getKey().toLowerCase(Locale.ROOT)))
-                            .map(e -> new Modification(
-                                    ModificationType.REPLACE,
-                                    e.getKey(),
-                                    e.getValue().toArray(new String[0])))
-                            .toList();
-                    if (!mods.isEmpty()) {
-                        userService.updateUser(dc, dn, mods);
-                    }
-                    return BulkImportRowResult.updated(rowNum, dn);
-                } else {
-                    // SKIP or PROMPT — no action taken
-                    return BulkImportRowResult.skipped(rowNum, dn, skippedExistingMessage(conflictHandling));
-                }
+                return existingUser(dc, dn, attrMap, rdnAttrsLower, conflictHandling, rowNum, permissions);
             }
         } catch (Exception ex) {
             log.warn("Row {} failed [dn={}]: {}", rowNum, dn, ex.getMessage());
             return BulkImportRowResult.error(rowNum, dn, ex.getMessage());
         }
+    }
+
+    /**
+     * A row whose user already exists: skipped, or — under OVERWRITE —
+     * updated with the row's attributes (never the naming ones), when the
+     * admin may edit users and change every attribute the row writes.
+     */
+    private BulkImportRowResult existingUser(DirectoryConnection dc, String dn,
+                                             Map<String, List<String>> attrMap,
+                                             Set<String> rdnAttrsLower,
+                                             ConflictHandling conflictHandling,
+                                             int rowNum,
+                                             BulkImportPermissions permissions) {
+        if (conflictHandling != ConflictHandling.OVERWRITE) {
+            // SKIP or PROMPT — no action taken
+            return BulkImportRowResult.skipped(rowNum, dn, skippedExistingMessage(conflictHandling));
+        }
+        List<String> written = attrMap.keySet().stream()
+                .filter(a -> !rdnAttrsLower.contains(a.toLowerCase(Locale.ROOT)))
+                .toList();
+        String problem = permissions.userRowProblem(true, true, written);
+        if (problem != null) {
+            return BulkImportRowResult.error(rowNum, dn, problem);
+        }
+        List<Modification> mods = attrMap.entrySet().stream()
+                .filter(e -> !rdnAttrsLower.contains(e.getKey().toLowerCase(Locale.ROOT)))
+                .map(e -> new Modification(
+                        ModificationType.REPLACE,
+                        e.getKey(),
+                        e.getValue().toArray(new String[0])))
+                .toList();
+        if (!mods.isEmpty()) {
+            userService.updateUser(dc, dn, mods);
+        }
+        return BulkImportRowResult.updated(rowNum, dn);
+    }
+
+    /**
+     * Why the admin may not import this row, or {@code null}. Looks the user up
+     * only when {@code permissions} could refuse the row, so an admin holding
+     * every feature costs no extra reads.
+     */
+    private static String permissionProblem(String dn, Map<String, List<String>> attrs,
+                                            Set<String> rdnAttrs, boolean overwrite,
+                                            BulkImportPermissions permissions,
+                                            Predicate<String> userExists) {
+        if (dn == null || !permissions.restrictsUsers(overwrite)) return null;
+        Set<String> rdnLower = lowerKeys(rdnAttrs);
+        List<String> written = attrs.keySet().stream()
+                .filter(a -> !rdnLower.contains(a.toLowerCase(Locale.ROOT)))
+                .toList();
+        return permissions.userRowProblem(userExists.test(dn), overwrite, written);
     }
 
     /**

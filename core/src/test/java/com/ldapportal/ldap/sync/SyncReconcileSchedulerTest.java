@@ -5,6 +5,8 @@ import com.ldapportal.core.entitlement.Entitlement;
 import com.ldapportal.core.entitlement.EntitlementService;
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.SyncSet;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
+import com.ldapportal.exception.ConflictException;
 import com.ldapportal.repository.SyncSetRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,13 +40,14 @@ class SyncReconcileSchedulerTest {
     @Mock private SyncSetRepository syncSetRepo;
     @Mock private MembershipReconciler reconciler;
     @Mock private SyncContentVerifier verifier;
+    @Mock private SyncReconcileHistory history;
     @Mock private EntitlementService entitlementService;
 
     private SyncReconcileScheduler scheduler;
 
     @BeforeEach
     void setUp() {
-        scheduler = new SyncReconcileScheduler(syncSetRepo, reconciler, verifier, entitlementService, 3600L);
+        scheduler = new SyncReconcileScheduler(syncSetRepo, reconciler, verifier, history, entitlementService, 3600L);
         when(entitlementService.has(Entitlement.DIRECTORY_SYNC)).thenReturn(true);
     }
 
@@ -58,8 +61,29 @@ class SyncReconcileSchedulerTest {
 
         scheduler.reconcileDueSets();
 
-        verify(reconciler).reconcile(id);
+        verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
         verify(syncSetRepo).recordVerifyResult(eq(id), any(), eq(2), eq(1), eq(0));
+        // ...and on the run it follows, so the run shows the drift it left behind.
+        verify(history).recordDrift(id, 2, 1, 0);
+    }
+
+    @Test
+    void setReconcilingElsewhere_isSkippedWithoutAVerify_andTheSweepContinues() {
+        UUID busy = UUID.randomUUID();
+        UUID free = UUID.randomUUID();
+        SyncSet a = new SyncSet();
+        a.setId(busy);
+        SyncSet b = new SyncSet();
+        b.setId(free);
+        when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(a, b));
+        when(reconciler.reconcile(busy, SyncReconcileTrigger.SCHEDULED, null))
+                .thenThrow(new ConflictException("A reconcile of this sync set is already running."));
+        when(verifier.verify(free)).thenReturn(result(0, 0, 0, true, true));
+
+        scheduler.reconcileDueSets();
+
+        verify(verifier, never()).verify(busy);
+        verify(reconciler).reconcile(free, SyncReconcileTrigger.SCHEDULED, null);
     }
 
     @Test
@@ -72,8 +96,65 @@ class SyncReconcileSchedulerTest {
 
         scheduler.reconcileDueSets();
 
-        verify(reconciler).reconcile(id);
+        verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
         verify(syncSetRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+    }
+
+    @Test
+    void pendingReconcileRequest_makesARecentlyReconciledSetDue() {
+        UUID id = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(id);
+        set.setReconcileLastRunAt(java.time.OffsetDateTime.now()); // cadence not elapsed
+        set.setReconcileRequestSeq(3);
+        set.setReconcileAttemptedSeq(2);
+        set.setReconcileHandledSeq(2);                             // one request, not yet attempted
+        when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(set));
+        when(verifier.verify(id)).thenReturn(result(0, 0, 0, true, true));
+
+        scheduler.reconcileDueSets();
+
+        verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
+    }
+
+    @Test
+    void handledReconcileRequest_recentRun_isNotDue() {
+        UUID id = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(id);
+        set.setReconcileLastRunAt(java.time.OffsetDateTime.now());
+        set.setReconcileRequestSeq(3);
+        set.setReconcileAttemptedSeq(3);
+        set.setReconcileHandledSeq(3);
+        when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(set));
+
+        scheduler.reconcileDueSets();
+
+        verify(reconciler, never()).reconcile(any(), any(), any());
+    }
+
+    @Test
+    void unhandledRequest_isRetriedOnlyAfterTheRetrySpacing() {
+        // Attempted by a reconcile whose enumeration didn't complete: not
+        // handled. A retry waits REQUEST_RETRY_SPACING after that run, so a
+        // persistently failing source isn't re-enumerated every tick.
+        UUID id = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(id);
+        set.setReconcileRequestSeq(3);
+        set.setReconcileAttemptedSeq(3);
+        set.setReconcileHandledSeq(2);
+        set.setReconcileLastRunAt(java.time.OffsetDateTime.now().minusMinutes(1));
+        when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(set));
+        when(verifier.verify(id)).thenReturn(result(0, 0, 0, true, true));
+
+        scheduler.reconcileDueSets();
+        verify(reconciler, never()).reconcile(any(), any(), any());
+
+        set.setReconcileLastRunAt(java.time.OffsetDateTime.now()
+                .minus(SyncReconcileScheduler.REQUEST_RETRY_SPACING).minusSeconds(1));
+        scheduler.reconcileDueSets();
+        verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
     }
 
     @Test

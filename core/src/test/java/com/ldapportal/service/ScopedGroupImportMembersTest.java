@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -65,7 +66,16 @@ class ScopedGroupImportMembersTest {
                 (memberDn, memberUid, changes) -> {
                     written.add(new Object[]{memberDn, memberUid, changes});
                     return MembershipChangeResult.of(List.of(MembershipChangeResult.Item.applied(changes.get(0))));
+                },
+                (memberDn, groupDn) -> {
+                    if (memberDn.startsWith("uid=blocked")) throw new SodViolationException("conflicts with Auditors");
+                    if (memberDn.startsWith("uid=broken")) throw new IllegalStateException("gate unavailable");
                 });
+    }
+
+    /** Stands in for the governance addon's exception, which core can't import. */
+    static final class SodViolationException extends RuntimeException {
+        SodViolationException(String message) { super(message); }
     }
 
     private static LdapUser user(String dn) {
@@ -166,5 +176,27 @@ class ScopedGroupImportMembersTest {
         assertThat(written.get(0)[1]).isEqualTo("alice");
         assertThat(written.get(0)[2]).isEqualTo(List.of(new MembershipChangeRequest.Change(
                 "cn=g,ou=groups,dc=example,dc=com", "memberUid", MembershipChangeRequest.Op.ADD)));
+    }
+
+    // ── Separation-of-duties gate for a new group's members ──────────────────
+
+    private static final String GROUP = "cn=eng,ou=groups,dc=example,dc=com";
+
+    @Test
+    void blockedInitialMember_isNullWhenTheGateAllows() {
+        assertThat(members.blockedInitialMember(Member.of(ALICE, "alice"), GROUP)).isNull();
+    }
+
+    @Test
+    void blockedInitialMember_returnsTheSodMessage() {
+        Member blocked = Member.of("uid=blocked,ou=people,dc=example,dc=com", "blocked");
+        assertThat(members.blockedInitialMember(blocked, GROUP)).isEqualTo("conflicts with Auditors");
+    }
+
+    @Test
+    void blockedInitialMember_rethrowsAnyOtherFailure() {
+        Member broken = Member.of("uid=broken,ou=people,dc=example,dc=com", "broken");
+        assertThatThrownBy(() -> members.blockedInitialMember(broken, GROUP))
+                .isInstanceOf(IllegalStateException.class).hasMessage("gate unavailable");
     }
 }

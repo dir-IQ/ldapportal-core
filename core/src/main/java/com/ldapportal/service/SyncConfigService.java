@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.service;
 
+import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.dto.sync.MembershipResponse;
 import com.ldapportal.dto.sync.SyncLinkRequest;
 import com.ldapportal.dto.sync.SyncLinkResponse;
@@ -9,13 +10,20 @@ import com.ldapportal.dto.sync.SyncSetResponse;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
+import com.ldapportal.entity.enums.AuditAction;
+import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
+import com.ldapportal.entity.enums.SyncChangelogHealth;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.sync.MembershipReconciler;
+import com.ldapportal.ldap.sync.RecomputeEngine;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
 import com.ldapportal.ldap.sync.SyncContentVerifier;
+import com.ldapportal.ldap.sync.SyncPreviewService;
+import com.ldapportal.ldap.sync.SyncReconcileHistory;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.MembershipRepository;
 import com.ldapportal.repository.MembershipStateCount;
@@ -37,6 +45,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -63,6 +72,10 @@ public class SyncConfigService {
     private final MembershipReconciler reconciler;
     private final SyncContentVerifier verifier;
     private final RecomputeEnqueuer enqueuer;
+    private final SyncPreviewService previewService;
+    private final SyncReconcileHistory reconcileHistory;
+    private final RecomputeEngine engine;
+    private final AuditService auditService;
 
     // ── Links ────────────────────────────────────────────────────────────────
 
@@ -109,8 +122,22 @@ public class SyncConfigService {
         l.setEnabled(req.enabled());
         l.setCaptureMode(mode);
         if (mode == SyncCaptureMode.CHANGELOG) {
+            String baseDn = req.changelogBaseDn().trim();
+            // A cursor is only meaningful for the feed that issued it (a DSEE
+            // changeNumber is not an OUD cookie), so a feed change restarts it,
+            // along with the old feed's health and error.
+            if (l.getChangelogFormat() != req.changelogFormat()
+                    || !Objects.equals(l.getChangelogBaseDn(), baseDn)) {
+                l.setChangelogCursorToken(null);
+                l.setChangelogLastChangeNumber(null);
+                l.setChangelogSourceLastChangeNumber(null);
+                l.setChangelogHealth(SyncChangelogHealth.HEALTHY);
+                l.setChangelogLastError(null);
+                l.setChangelogLastErrorAt(null);
+                l.setChangelogLastPolledAt(null);
+            }
             l.setChangelogFormat(req.changelogFormat());
-            l.setChangelogBaseDn(req.changelogBaseDn());
+            l.setChangelogBaseDn(baseDn);
         } else {
             // APP_INTERCEPT leaves changelog config null (DB cfg constraint).
             l.setChangelogFormat(null);
@@ -131,6 +158,11 @@ public class SyncConfigService {
         if (req.captureMode() == SyncCaptureMode.CHANGELOG) {
             if (req.changelogFormat() == null) {
                 throw new IllegalArgumentException("changelogFormat is required for CHANGELOG capture");
+            }
+            if (req.changelogFormat() != ChangelogFormat.DSEE_CHANGELOG
+                    && req.changelogFormat() != ChangelogFormat.OUD_COOKIE_CHANGELOG) {
+                throw new IllegalArgumentException("changelogFormat " + req.changelogFormat()
+                        + " is not supported for CHANGELOG capture (use DSEE_CHANGELOG or OUD_COOKIE_CHANGELOG)");
             }
             if (req.changelogBaseDn() == null || req.changelogBaseDn().isBlank()) {
                 throw new IllegalArgumentException("changelogBaseDn is required for CHANGELOG capture");
@@ -235,6 +267,7 @@ public class SyncConfigService {
         }
         requireValidDn(req.objectScopeBaseDn(), "objectScopeBaseDn");
         requireValidDn(req.targetBaseDn(), "targetBaseDn");
+        requireExplicitBaseOnMultiRoot(req);
         if (req.applicabilityFilter() != null && !req.applicabilityFilter().isBlank()) {
             try {
                 Filter.create(req.applicabilityFilter());
@@ -243,6 +276,34 @@ public class SyncConfigService {
             }
         }
         validateTransformRules(req.transformRules());
+    }
+
+    /**
+     * A blank source scope or target base falls back to the directory's base
+     * DN. On a directory with several roots that's just the primary one, which
+     * is rarely what was meant — so require the base explicitly there.
+     */
+    private void requireExplicitBaseOnMultiRoot(SyncSetRequest req) {
+        boolean noScope = req.objectScopeBaseDn() == null || req.objectScopeBaseDn().isBlank();
+        boolean noTarget = req.targetBaseDn() == null || req.targetBaseDn().isBlank();
+        if (!noScope && !noTarget) {
+            return;
+        }
+        linkRepo.findById(req.linkId()).ifPresent(link -> {
+            if (noScope && isMultiRoot(link.getSourceDirId())) {
+                throw new IllegalArgumentException("The source directory has more than one base DN: "
+                        + "set the source scope base DN for this sync set.");
+            }
+            if (noTarget && isMultiRoot(link.getTargetDirId())) {
+                throw new IllegalArgumentException("The target directory has more than one base DN: "
+                        + "set the target base DN for this sync set.");
+            }
+        });
+    }
+
+    private boolean isMultiRoot(UUID directoryId) {
+        return directoryId != null && directoryRepo.findById(directoryId)
+                .map(com.ldapportal.ldap.DirectoryRoots::isMultiRoot).orElse(false);
     }
 
     /**
@@ -315,25 +376,80 @@ public class SyncConfigService {
         return membershipRepo.search(syncSetId, state, term, pageable).map(MembershipResponse::of);
     }
 
-    /** Run a synchronous reconcile of the set; returns the number of source identities enumerated. */
-    public int reconcileNow(UUID syncSetId) {
+    /**
+     * Run a synchronous reconcile of the set, recorded in its history as a manual
+     * run by {@code requestedBy}; returns the number of source identities enumerated.
+     */
+    public int reconcileNow(UUID syncSetId, String requestedBy) {
         requireSet(syncSetId);
-        int enumerated = reconciler.reconcile(syncSetId);
+        int enumerated = reconciler.reconcile(syncSetId, SyncReconcileTrigger.MANUAL, requestedBy);
         // Refresh the cached drift snapshot so the dashboard reflects the post-reconcile
         // state, mirroring the scheduled sweep (reconcile → re-verify). Guarded: the
         // reconcile already applied, so a verify hiccup must not fail the operation.
         try {
-            refreshDriftSnapshot(syncSetId);
+            refreshDriftSnapshot(syncSetId, true);
         } catch (Exception ex) {
             log.warn("Post-reconcile drift refresh for sync set {} failed: {}", syncSetId, ex.toString());
         }
         return enumerated;
     }
 
+    /**
+     * Re-check the set's target, e.g. after it was restored from a backup: forget
+     * what the set last wrote for each applied entry, so the next reconcile reads
+     * every target entry and re-applies the ones that no longer match, then ask
+     * for that reconcile. Writes nothing to the directories itself. The
+     * reconcile runs on the scheduler's next tick, under the set's reconcile
+     * lease; a reconcile already running finishes first and the requested one
+     * follows it.
+     */
+    public com.ldapportal.dto.sync.SyncRecheckResult recheckTarget(UUID syncSetId, String requestedBy) {
+        SyncSet set = requireSet(syncSetId);
+        int entries = membershipRepo.forgetAppliedContent(syncSetId, new byte[0]);
+        setRepo.requestReconcileOfSet(syncSetId);
+        log.info("Sync set {}: target re-check requested by {}; {} applied entries will be re-read",
+                syncSetId, requestedBy, entries);
+        // A reconcile only runs for an enabled set on an enabled link.
+        boolean willRun = set.isEnabled()
+                && linkRepo.findById(set.getLinkId()).map(SyncLink::isEnabled).orElse(false);
+        return new com.ldapportal.dto.sync.SyncRecheckResult(entries, willRun);
+    }
+
+    /** Everything recorded about one reconcile run of the set (404 when it isn't one of the set's runs). */
+    public com.ldapportal.dto.sync.SyncReconcileRunDetail reconcileRun(UUID syncSetId, UUID runId) {
+        requireSet(syncSetId);
+        return reconcileHistory.detail(syncSetId, runId);
+    }
+
+    /** The set's most recent reconcile runs, newest first (at most {@code limit}). */
+    public List<com.ldapportal.dto.sync.SyncReconcileRunResponse> reconcileRuns(UUID syncSetId, int limit) {
+        requireSet(syncSetId);
+        return reconcileHistory.recent(syncSetId, limit);
+    }
+
     /** Dry-run preview of what a reconcile would change (no target writes). */
     public com.ldapportal.dto.sync.SyncReconcilePreview previewReconcile(UUID syncSetId) {
         requireSet(syncSetId);
         return reconciler.preview(syncSetId);
+    }
+
+    /** The set's latest per-entry dry-run preview: progress, or the summary once complete. */
+    public com.ldapportal.dto.sync.SyncPreviewStatus previewStatus(UUID syncSetId) {
+        requireSet(syncSetId);
+        return previewService.status(syncSetId);
+    }
+
+    /** Start a per-entry dry-run preview in the background (joins one already running). */
+    public com.ldapportal.dto.sync.SyncPreviewStatus startPreview(UUID syncSetId, String requestedBy) {
+        requireSet(syncSetId);
+        return previewService.start(syncSetId, requestedBy);
+    }
+
+    /** One page of the set's completed per-entry preview (what a reconcile would do to each entry). */
+    public com.ldapportal.dto.sync.SyncPreviewPage previewEntries(UUID syncSetId, int page, int size,
+                                                                 boolean changesOnly) {
+        requireSet(syncSetId);
+        return previewService.page(syncSetId, page, size, changesOnly);
     }
 
     /**
@@ -344,7 +460,7 @@ public class SyncConfigService {
      */
     public com.ldapportal.dto.sync.SyncVerifyResult verifyContents(UUID syncSetId) {
         requireSet(syncSetId);
-        return refreshDriftSnapshot(syncSetId);
+        return refreshDriftSnapshot(syncSetId, false);
     }
 
     /**
@@ -352,12 +468,18 @@ public class SyncConfigService {
      * set for the dashboard. Only a complete scan is persisted — a partial
      * enumeration would record misleadingly low counts over a previously good
      * snapshot. Shared by the verify endpoint and the post-reconcile refresh.
+     *
+     * @param afterReconcile also record the result on the reconcile run it follows
      */
-    private com.ldapportal.dto.sync.SyncVerifyResult refreshDriftSnapshot(UUID syncSetId) {
+    private com.ldapportal.dto.sync.SyncVerifyResult refreshDriftSnapshot(UUID syncSetId, boolean afterReconcile) {
         com.ldapportal.dto.sync.SyncVerifyResult result = verifier.verify(syncSetId);
         if (result.sourceComplete() && result.targetComplete()) {
             setRepo.recordVerifyResult(syncSetId, java.time.OffsetDateTime.now(),
                     result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
+            if (afterReconcile) {
+                reconcileHistory.recordDrift(syncSetId,
+                        result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
+            }
         }
         return result;
     }
@@ -370,6 +492,23 @@ public class SyncConfigService {
             throw new IllegalArgumentException("key (source DN or identity) is required");
         }
         enqueuer.enqueue(syncSetId, key.trim(), null);
+    }
+
+    /**
+     * Approve a delete held for review: delete the identity's target entry now,
+     * regardless of the set's delete policy or the delete guard. Audited as an
+     * {@code ENTRY_DELETE} on the target directory when the entry is removed.
+     */
+    public com.ldapportal.dto.sync.SyncDeleteApproval approveDelete(UUID syncSetId, String identity,
+                                                                    AuthPrincipal principal) {
+        requireSet(syncSetId);
+        com.ldapportal.dto.sync.SyncDeleteApproval result = engine.approveDelete(syncSetId, identity);
+        if (result.outcome() == com.ldapportal.dto.sync.SyncPreviewAction.DELETE && principal != null) {
+            auditService.record(principal, result.targetDirectoryId(), AuditAction.ENTRY_DELETE,
+                    result.targetDn(), Map.of("source", "directory-sync", "operation", "approved-review-delete",
+                            "syncSetId", syncSetId.toString(), "identity", identity));
+        }
+        return result;
     }
 
     /** Dismiss a quarantined (or any) membership row — drop the index entry without touching the target. */
