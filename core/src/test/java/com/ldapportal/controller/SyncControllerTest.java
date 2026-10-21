@@ -148,6 +148,40 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void deleteLink_superadmin_deletesAsThePrincipal() throws Exception {
+        mockMvc.perform(delete(LINKS + "/" + LINK).with(authentication(superadminAuth())))
+                .andExpect(status().isNoContent());
+        org.mockito.Mockito.verify(service).deleteLink(eq(LINK),
+                org.mockito.ArgumentMatchers.argThat(p -> p != null && "superadmin".equals(p.username())));
+    }
+
+    @Test
+    void deleteLink_adminRole_returns403() throws Exception {
+        mockMvc.perform(delete(LINKS + "/" + LINK).with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void deleteSet_superadmin_deletesAsThePrincipal() throws Exception {
+        mockMvc.perform(delete(SETS + "/" + SET).with(authentication(superadminAuth())))
+                .andExpect(status().isNoContent());
+        org.mockito.Mockito.verify(service).deleteSet(eq(SET),
+                org.mockito.ArgumentMatchers.argThat(p -> p != null && "superadmin".equals(p.username())));
+    }
+
+    @Test
+    void deleteImpact_superadmin_returnsTheCounts() throws Exception {
+        given(service.deleteImpact(SET)).willReturn(
+                new com.ldapportal.dto.sync.SyncSetDeleteImpact("people", 876, 3, 12, List.of("groups")));
+        mockMvc.perform(get(SETS + "/" + SET + "/delete-impact").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.managed").value(876))
+                .andExpect(jsonPath("$.pendingReview").value(3))
+                .andExpect(jsonPath("$.reconcileRuns").value(12))
+                .andExpect(jsonPath("$.otherSets[0]").value("groups"));
+    }
+
+    @Test
     void deleteSet_adminRole_returns403() throws Exception {
         mockMvc.perform(delete(SETS + "/" + SET).with(authentication(adminAuth())))
                 .andExpect(status().isForbidden());

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.controller.superadmin;
 
+import com.ldapportal.auth.AuthPrincipal;
 import com.ldapportal.auth.RequiresSuperadminPermission;
 import com.ldapportal.core.entitlement.Entitled;
 import com.ldapportal.core.entitlement.Entitlement;
@@ -13,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -56,8 +58,8 @@ public class SyncLinkController {
 
     @DeleteMapping("/{id}")
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
-    public ResponseEntity<Void> delete(@PathVariable UUID id) {
-        service.deleteLink(id);
+    public ResponseEntity<Void> delete(@PathVariable UUID id, @AuthenticationPrincipal AuthPrincipal principal) {
+        service.deleteLink(id, principal);
         return ResponseEntity.noContent().build();
     }
 }

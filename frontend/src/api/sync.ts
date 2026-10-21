@@ -120,6 +120,20 @@ export const updateSyncSet = (id: string, data: SyncSetPayload) =>
   client.put<SyncSet>(`/superadmin/sync/sets/${id}`, data)
 export const deleteSyncSet = (id: string) => client.delete(`/superadmin/sync/sets/${id}`)
 
+/** What deleting a set would discard: its index rows, undecided reviews and run history. */
+export interface SyncSetDeleteImpact {
+  name: string
+  /** Target entries the set manages (any state); they stay on the target, unmanaged. */
+  managed: number
+  /** Rows held for review (e.g. quarantined deletes), discarded undecided. */
+  pendingReview: number
+  reconcileRuns: number
+  /** The other sync sets, whose DN references are remapped through every set's index. */
+  otherSets: string[]
+}
+export const getSyncSetDeleteImpact = (id: string) =>
+  client.get<SyncSetDeleteImpact>(`/superadmin/sync/sets/${id}/delete-impact`)
+
 /** Default excluded attributes (operational + password values) — seeds the editor. */
 export const getExcludedAttributeDefaults = () =>
   client.get<string[]>('/superadmin/sync/sets/excluded-attribute-defaults')

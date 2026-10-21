@@ -87,10 +87,15 @@ public class IsvaConfigProbeService {
         Boolean schemaValid = validateSchema(dir, cfg, warnings, disallowed, missingRequired);
 
         if (cfg.getTopologyMode() == IsvaTopologyMode.INLINE) {
-            // Inline mode: no separate DIT to check. The user
-            // entries themselves carry sec* attrs; nothing
-            // dedicated to probe beyond the schema check above.
-            warnings.add("Inline mode — no management DIT to probe.");
+            // Inline mode: the user entries themselves carry sec* attrs.
+            // The management DIT is optional here — only importing groups
+            // into IVIA needs it — so just check its group container.
+            if (cfg.effectiveGroupContainerDn() == null) {
+                warnings.add("Inline mode — no management DIT configured, so groups can't be "
+                        + "imported into IVIA from here.");
+            } else {
+                checkGroupContainer(dir, cfg, warnings);
+            }
             return new ProbeResult(true, true, schemaValid,
                     disallowed, missingRequired, warnings);
         }
@@ -108,17 +113,26 @@ public class IsvaConfigProbeService {
         boolean sampleFound = false;
 
         try {
-            reachable = checkReachable(dir, managementDit);
-            if (reachable) {
-                sampleFound = sampleSecUserExists(dir, managementDit, warnings);
+            String userContainer = cfg.effectiveUserContainerDn();
+            boolean ditReadable = checkReachable(dir, managementDit);
+            reachable = ditReadable && checkReachable(dir, userContainer);
+            if (!ditReadable) {
+                warnings.add("Could not read " + managementDit + " — check the bind "
+                        + "DN's permissions and that the DIT exists in this directory.");
+            } else if (!reachable) {
+                warnings.add("Could not read the user container " + userContainer
+                        + " — check it exists (secUser entries are created there) and "
+                        + "that the bind DN can read it.");
+            } else {
+                sampleFound = sampleSecUserExists(dir, userContainer, warnings);
                 if (!sampleFound) {
-                    warnings.add("No `secUser` entries found under " + managementDit
+                    warnings.add("No `secUser` entries found under " + userContainer
                             + " yet. This is normal on a fresh install — provision "
                             + "a user via the wizard, then re-run the probe.");
                 }
-            } else {
-                warnings.add("Could not read " + managementDit + " — check the bind "
-                        + "DN's permissions and that the DIT exists in this directory.");
+            }
+            if (ditReadable) {
+                checkGroupContainer(dir, cfg, warnings);
             }
         } catch (Exception e) {
             // Surface as a warning rather than a 500 so the operator
@@ -368,6 +382,20 @@ public class IsvaConfigProbeService {
      * Read the base entry of the management DIT. Returns true if
      * the entry exists and the bind DN can read it.
      */
+    /**
+     * Warns (never fails the probe) when the group container can't be read:
+     * only importing groups into IVIA and the "Require secGroup" check use it.
+     */
+    private void checkGroupContainer(DirectoryConnection dir, VendorIntegrationIsvaConfig cfg,
+                                     List<String> warnings) {
+        String groupContainer = cfg.effectiveGroupContainerDn();
+        if (!checkReachable(dir, groupContainer)) {
+            warnings.add("Could not read the group container " + groupContainer
+                    + " — importing groups into IVIA (and the \"Require secGroup\" check) "
+                    + "needs it to exist and be readable.");
+        }
+    }
+
     private boolean checkReachable(DirectoryConnection dir, String baseDn) {
         return connectionFactory.withConnection(dir, conn -> {
             try {

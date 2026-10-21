@@ -309,18 +309,20 @@ import ExcludedAttributesEditor from '@/components/sync/ExcludedAttributesEditor
 import MembershipInventoryModal from '@/components/sync/MembershipInventoryModal.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
+import { useConfirm } from '@/composables/useConfirm'
 import { listDirectories } from '@/api/directories'
 import {
   listSyncLinks, createSyncLink, updateSyncLink, deleteSyncLink,
-  listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet, getExcludedAttributeDefaults,
+  listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet, getSyncSetDeleteImpact, getExcludedAttributeDefaults,
   previewReconcile,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
-  type SyncTransformRule, type SyncReconcilePreview, type MembershipState,
+  type SyncTransformRule, type SyncReconcilePreview, type MembershipState, type SyncSetDeleteImpact,
 } from '@/api/sync'
 
 interface DirOption { id: string; displayName: string }
 
 const notif = useNotificationStore()
+const confirm = useConfirm()
 const auth = useAuthStore()
 // VIEW_DIRECTORY_SYNC shows links, sets, and previews; every write control
 // needs MANAGE_DIRECTORY_SYNC (enforced server-side as well).
@@ -467,6 +469,35 @@ async function saveLink() {
   }
 }
 async function removeLink(link: SyncLink) {
+  // The server refuses to delete a link that still has sets; say so up
+  // front rather than asking to confirm a delete that would fail.
+  let setCount: number | null = null
+  try {
+    setCount = (await listSyncSets(link.id)).data.length
+  } catch {
+    // Unknown: confirm anyway; the server still refuses if there are sets.
+  }
+  if (setCount) {
+    notif.error(`Delete the link's ${setCount === 1 ? 'sync set' : `${setCount} sync sets`} first.`)
+    return
+  }
+  const lines = [
+    `Delete sync link "${link.displayName}" (${dirName(link.sourceDirId)} → ${dirName(link.targetDirId)})?`,
+    '',
+    '• Neither directory is changed.',
+  ]
+  if (link.captureMode === 'CHANGELOG') {
+    lines.push('• Its position in the source changelog is discarded: a link created to replace it '
+      + 'starts afresh rather than resuming where this one stopped.')
+  }
+  lines.push('', 'This can\'t be undone.')
+  const ok = await confirm({
+    title: 'Delete sync link',
+    message: lines.join('\n'),
+    confirmLabel: 'Delete link',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await deleteSyncLink(link.id)
     notif.success('Link deleted')
@@ -620,7 +651,54 @@ async function doSaveSet() {
     notif.error(errMsg(e))
   }
 }
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n.toLocaleString()} ${n === 1 ? one : many}`
+}
+
+/** The confirmation text: what the delete discards and what it leaves behind. */
+function deleteSetMessage(name: string, impact: SyncSetDeleteImpact | null): string {
+  if (!impact) {
+    return `Delete sync set "${name}"? Its membership index, reconcile history and any entries held `
+      + 'for review are deleted. Entries it wrote stay on the target, no longer managed. '
+      + 'This can\'t be undone.'
+  }
+  const lines = [`Delete sync set "${impact.name}"?`, '']
+  lines.push(impact.managed > 0
+    ? `• ${plural(impact.managed, 'entry', 'entries')} it manages stay on the target, no longer managed: `
+      + 'nothing will update or delete them.'
+    : '• It manages no target entries.')
+  if (impact.pendingReview > 0) {
+    lines.push(`• ${plural(impact.pendingReview, 'entry', 'entries')} held for review `
+      + `${impact.pendingReview === 1 ? 'is' : 'are'} discarded without a decision.`)
+  }
+  if (impact.reconcileRuns > 0) {
+    lines.push(`• ${plural(impact.reconcileRuns, 'recorded reconcile run')} ${impact.reconcileRuns === 1 ? 'is' : 'are'} deleted.`)
+  }
+  if (impact.otherSets.length > 0 && impact.managed > 0) {
+    const shown = impact.otherSets.slice(0, 5).join(', ')
+    const more = impact.otherSets.length > 5 ? ` and ${impact.otherSets.length - 5} more` : ''
+    lines.push(`• Other sync sets (${shown}${more}) remap DN references (member, manager, …) through `
+      + 'every set\'s entries: a reference to an entry only this set mirrors is dropped from their '
+      + 'targets on their next recompute.')
+  }
+  lines.push('', 'This can\'t be undone.')
+  return lines.join('\n')
+}
+
 async function removeSet(s: SyncSet) {
+  let impact: SyncSetDeleteImpact | null = null
+  try {
+    impact = (await getSyncSetDeleteImpact(s.id)).data
+  } catch {
+    // Still confirm, without the counts.
+  }
+  const ok = await confirm({
+    title: 'Delete sync set',
+    message: deleteSetMessage(s.name, impact),
+    confirmLabel: 'Delete set',
+    danger: true,
+  })
+  if (!ok) return
   try {
     await deleteSyncSet(s.id)
     notif.success('Sync set deleted')

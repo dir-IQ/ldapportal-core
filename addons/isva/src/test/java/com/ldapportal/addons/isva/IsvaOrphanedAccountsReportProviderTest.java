@@ -189,6 +189,8 @@ class IsvaOrphanedAccountsReportProviderTest {
         cfg.setTopologyMode(mode);
         if (mode == IsvaTopologyMode.LINKED) {
             cfg.setManagementDitBaseDn(MGMT_BASE);
+            // secUser entries sit directly under this DIT in the fixture.
+            cfg.setUserContainerDn(MGMT_BASE);
         }
         return cfg;
     }

@@ -570,6 +570,8 @@ class IsvaAccountServiceTest {
         c.setEnabled(enabled);
         c.setTopologyMode(IsvaTopologyMode.LINKED);
         c.setManagementDitBaseDn(MGMT_BASE);
+        // secUser entries sit directly under this DIT in the fixture.
+        c.setUserContainerDn(MGMT_BASE);
         c.setSecuserRdnAttribute("secUUID");
         c.setSecAuthority("Default");
         c.setDefaultValidUntilYears(100);

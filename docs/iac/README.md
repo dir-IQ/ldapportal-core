@@ -217,8 +217,11 @@ feature override requires a matching `profileRole` on the same profile.
 `enabled`, `topologyMode` (`INLINE` | `LINKED`), `secAuthority`,
 `defaultValidUntilYears` (≥1),
 `requireSecGroup`, `secuserObjectClasses` (string array; applies to both modes,
-`secUser` is normalized in if omitted). Linked-mode
-only: `managementDitBaseDn` (**required when `LINKED`**), `secuserRdnAttribute`
+`secUser` is normalized in if omitted), `managementDitBaseDn` (the IVIA
+management DIT, **required when `LINKED`**, optional when `INLINE`, where it's
+used only to import groups), `userContainerDn` / `groupContainerDn` (blank =
+`cn=Users` / `cn=Groups` below the management DIT). Linked-mode only:
+`secuserRdnAttribute`
 (free-form, default `secUUID`), `secuserRdnValueSource` (`GENERATED_UUID` |
 `UID`, default `GENERATED_UUID`), `groupMemberTarget`.
 (There's no delete-policy field: the `secUser` account mirrors the

@@ -113,7 +113,7 @@ public class IsvaUserReadEnricher implements UserReadEnricher {
         // Request exactly the attributes we'll surface — keeps the
         // wire payload tight even when a batch is big.
         SearchRequest req = new SearchRequest(
-                cfg.getManagementDitBaseDn(),
+                cfg.effectiveUserContainerDn(),
                 SearchScope.SUB,
                 filter,
                 SEC_ATTRS);
@@ -136,7 +136,7 @@ public class IsvaUserReadEnricher implements UserReadEnricher {
             } catch (LDAPException e) {
                 throw new LdapOperationException(
                         "Joined-read failed: secUser batch lookup against "
-                                + cfg.getManagementDitBaseDn() + " errored", e);
+                                + cfg.effectiveUserContainerDn() + " errored", e);
             }
         });
     }
@@ -180,12 +180,12 @@ public class IsvaUserReadEnricher implements UserReadEnricher {
         if (cfg.getTopologyMode() != IsvaTopologyMode.LINKED) {
             return null;
         }
-        if (cfg.getManagementDitBaseDn() == null || cfg.getManagementDitBaseDn().isBlank()) {
+        if (cfg.effectiveUserContainerDn() == null || cfg.effectiveUserContainerDn().isBlank()) {
             // Defensive: DB CHECK constraint should prevent this, but
             // null-tolerant here avoids a confusing NullPointerException
             // deep in the filter builder.
             log.warn("Linked-mode ISVA config for directory {} has null "
-                    + "management_dit_base_dn — skipping joined-read.",
+                    + "management DIT / user container — skipping joined-read.",
                     dir.getDisplayName());
             return null;
         }

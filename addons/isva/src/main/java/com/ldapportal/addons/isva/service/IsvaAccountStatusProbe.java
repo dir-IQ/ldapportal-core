@@ -95,7 +95,7 @@ public class IsvaAccountStatusProbe {
                                           VendorIntegrationIsvaConfig cfg,
                                           SearchResultEntry demographic) {
         Optional<String> secUserDn = linkedUserLookup.findSecUserDn(
-                dir, cfg.getManagementDitBaseDn(), demographic.getDN());
+                dir, cfg.effectiveUserContainerDn(), demographic.getDN());
         if (secUserDn.isEmpty()) {
             return IsvaAccountStatus.orphaned(IsvaTopologyMode.LINKED);
         }

@@ -75,6 +75,8 @@
           <!-- No max-width cap: the DN truncates against the column's actual
                width, so a widened column shows the full value. -->
           <span class="min-w-0 truncate" :title="value as string">{{ value }}</span>
+          <span v-if="isIviaImported(value as string)" class="badge-blue shrink-0"
+                :title="`Imported into ${IVIA_NAME}`">{{ IVIA_ABBR }}</span>
           <CopyButton
             :text="value as string"
             class="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
@@ -102,6 +104,8 @@
       <template #cell-actions="{ row }">
         <ActionMenu :items="[
           { label: 'Members', onClick: () => openMembers(row as unknown as GroupRow), hidden: !can.viewMembers },
+          { label: `Import into ${IVIA_ABBR}`, onClick: () => openIviaImport(row as unknown as GroupRow),
+            hidden: !canImportIntoIvia(row as unknown as GroupRow) },
           { label: 'Delete',  onClick: () => confirmDelete(row as unknown as GroupRow), danger: true, hidden: !can.createDelete },
         ]">
           <template #primary>
@@ -169,6 +173,25 @@
       <template #footer>
         <button @click="showEdit = false" class="btn-neutral">Cancel</button>
         <button @click="doEdit" :disabled="saving" class="btn-primary">{{ saving ? 'Saving…' : 'Save' }}</button>
+      </template>
+    </AppModal>
+
+    <!-- Import into IVIA: registers the group with IVIA (a secGroup entry in
+         the IVIA group container), as pdadmin group import does. The group
+         itself is not changed. -->
+    <AppModal v-model="showIviaImport" :title="`Import into ${IVIA_ABBR}`" size="md">
+      <p class="text-sm text-gray-600 mb-3">
+        Registers <span class="font-mono break-all">{{ iviaImportTarget?.dn }}</span> with
+        {{ IVIA_NAME }}, as <code>pdadmin group import</code> does, so {{ IVIA_ABBR }} access
+        rules can use it and its members get it at sign-in. The group itself isn't changed.
+      </p>
+      <FormField :label="`${IVIA_ABBR} group name`" v-model="iviaImportName"
+                 placeholder="Defaults to the group's cn" />
+      <template #footer>
+        <button @click="showIviaImport = false" class="btn-neutral">Cancel</button>
+        <button @click="doIviaImport" :disabled="iviaImporting" class="btn-primary">
+          {{ iviaImporting ? 'Importing…' : 'Import' }}
+        </button>
       </template>
     </AppModal>
 
@@ -257,6 +280,9 @@ import CopyButton from '@/components/CopyButton.vue'
 import { validateDn } from '@/utils/attributeValidation'
 import { resolveGroupMembers, type MemberAttr } from '@/utils/groupMembers'
 import ProfilePill from '@/components/ProfilePill.vue'
+import { useAuthStore } from '@/stores/auth'
+import { getIsvaGroupRegistrations, importIsvaGroup } from '@/api/isvaGroup'
+import { IVIA_ABBR, IVIA_NAME } from '@/constants/productNames'
 
 interface ProfileLite {
   id: string
@@ -338,6 +364,66 @@ const groups        = ref<GroupRow[]>([])
 const capHit = computed(() => groups.value.length >= FETCH_LIMIT)
 const filterText    = ref('')
 const showCreate    = ref(false)
+
+// ── IVIA group import ──────────────────────────────────────────────────
+// Only when the IVIA addon is present; the directory's own IVIA state comes
+// from one registrations call per load (enabled=false → no IVIA controls).
+const auth = useAuthStore()
+interface IviaGroupState { enabled: boolean, canImport: boolean, imported: Set<string> }
+const ivia = ref<IviaGroupState | null>(null)
+const showIviaImport = ref(false)
+const iviaImportTarget = ref<GroupRow | null>(null)
+const iviaImportName = ref('')
+const iviaImporting = ref(false)
+
+/** Comparable form of a DN: case and spaces after commas don't matter. */
+function dnKey(dn: string): string {
+  return dn.trim().toLowerCase().replace(/\s*,\s*/g, ',')
+}
+
+function isIviaImported(dn: string): boolean {
+  return ivia.value?.imported.has(dnKey(dn)) === true
+}
+
+function canImportIntoIvia(row: GroupRow): boolean {
+  return can.value.edit && ivia.value?.enabled === true && ivia.value.canImport && !isIviaImported(row.dn)
+}
+
+async function loadIviaRegistrations(): Promise<void> {
+  ivia.value = null
+  if (!auth.isIsvaIntegrationEnabled || groups.value.length === 0) return
+  try {
+    const { data } = await getIsvaGroupRegistrations(dirId, groups.value.map(g => g.dn))
+    ivia.value = { enabled: data.enabled, canImport: data.canImport, imported: new Set(data.registered.map(dnKey)) }
+  } catch {
+    // No IVIA badges or actions; the group list itself is unaffected.
+    ivia.value = null
+  }
+}
+
+function openIviaImport(row: GroupRow): void {
+  iviaImportTarget.value = row
+  iviaImportName.value = row.cn ?? ''
+  showIviaImport.value = true
+}
+
+async function doIviaImport(): Promise<void> {
+  const target = iviaImportTarget.value
+  if (!target) return
+  iviaImporting.value = true
+  try {
+    await importIsvaGroup(dirId, target.dn, iviaImportName.value)
+    ivia.value?.imported.add(dnKey(target.dn))
+    showIviaImport.value = false
+    notif.success(`Imported ${target.cn || target.dn} into ${IVIA_ABBR}`)
+  } catch (e) {
+    // Keep the dialog open: a taken name can be changed and retried.
+    const err = e as { response?: { data?: { detail?: string } }, message?: string }
+    notif.error(err.response?.data?.detail || err.message || `Import into ${IVIA_ABBR} failed`)
+  } finally {
+    iviaImporting.value = false
+  }
+}
 // Step-1 profile picker for "New Group" — mirrors UserListView so an
 // admin with more than one profile picks the target OU explicitly
 // before the form opens.
@@ -528,6 +614,7 @@ async function load() {
       return row as unknown as GroupRow
     })
   })
+  void loadIviaRegistrations()
 }
 
 /**

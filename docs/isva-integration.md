@@ -77,15 +77,28 @@ in the directory list (`/superadmin/directories`). Field by field:
 | Field | What it controls |
 |-------|------------------|
 | **Enabled** | Master switch. With this off the interceptor is dormant and provisioning behaves identically to a no-ISVA directory. Use this to stage a config before enabling. |
-| **Topology mode** | `INLINE` vs `LINKED` (see above). Toggling from one to the other clears the linked-only fields below so a stale value can't haunt you. |
+| **Topology mode** | `INLINE` vs `LINKED` (see above). The linked-only settings below are ignored in inline mode. The management DIT and its containers apply to both modes (inline uses them only to import groups). |
 | **Account lifecycle** *(not a setting — automatic)* | The `secUser` account mirrors the demographic entry's lifecycle, so there's no delete-policy knob to choose. **Disabling** a user flips `secAcctValid=FALSE` on its `secUser` (and, when the overlay includes `secValidUntil`, stamps it to `now`); **re-enabling** flips it back to `TRUE` (and pushes `secValidUntil` back out to its configured expiry); **Deleting** a user removes its `secUser` too — inline is a single DEL of the shared entry; linked DELs the paired secUser then the demographic entry. |
-| **Require secGroup** | When on, every group-membership write first checks the target group for `objectClass: secGroup` (ISVA's group representation) and refuses with a 422 when it's missing — the LDAP write would succeed but ISVA would silently ignore the membership. Remediate by adding the secGroup overlay to the group (`pdadmin group import`) or turning the flag off. A group the bind can't read is let through; the write then fails (or succeeds) on the server's own verdict. Off (the default) matches deployments that manage groups outside of ISVA. |
+| **Require groups to be imported into IVIA** *(`requireSecGroup`)* | When on, every group-membership write first checks that IVIA knows the target group, and refuses with a 422 when it doesn't: the LDAP write would succeed, but IVIA would silently ignore the membership. A group counts as imported when either of these holds:<br>• a `secGroup` entry in the **group container** has a `secDN` pointing at it. This is what `pdadmin group import` and **Import into IVIA** write (see [Importing groups into IVIA](#importing-groups-into-ivia)).<br>• the group itself carries `objectClass: secGroup`.<br>To fix a refusal, import the group or turn the setting off. If the check can't be made (the group can't be read and the registration lookup fails), the write is allowed through and the server decides. Off (the default) suits deployments that manage groups outside IVIA. |
 | **secUser object classes** | The objectClass set written to the secUser identity — overlaid onto the demographic entry (inline) or stamped on the paired entry (linked). `secUser` is always present (re-added if you remove it); add others your schema needs, e.g. `eUser` to bring in `principalName`. Applies to both modes. |
 | **secUser attributes** | The unified table of every `sec*` attribute a grant writes — one row each, with an **On** toggle, a **value kind** (Literal / Computed), and the **value**. `secLoginType` and `secAuthority` are MUST on IBM's stock `secUser`, so they're always on and can't be unticked (their values stay editable — usually `Default`). The historical default set is `secLogin`, `secAcctValid`, `secPwdValid`, `secValidUntil`, `secPwdLastChanged`; three **opt-in identity attributes** — `secUUID`, `principalName`, `secDomainId` — are off by default (not every schema permits them). Untick any your directory's `secUser` schema forbids, or every grant fails with `attribute <x> is not allowed by objectClass secUser`; **Probe** detects mismatches. A **Literal** value is written verbatim (`TRUE`, `Default`). A **Computed** value is an expression evaluated per user: `${user.<attr>}` reads a demographic attribute (e.g. `${user.uid}`), `${sec.<attr>}` reads another `secUser` attribute in the table (e.g. `${sec.secAuthority}`), and `uuid()` / `now()` / `nowPlusYears(n)` cover generated and timestamp values. Literal text passes through, so `secDomainId` = `${sec.secAuthority}%${user.uid}` yields e.g. `Default%jdoe` (the `%` is literal). `${sec.*}` references resolve in dependency order; a reference to a disabled attribute is rejected. Applies to both modes. |
-| **Management DIT base DN** *(linked only)* | The subtree under which secUser entries live (e.g. `secAuthority=Default,o=acme,c=us`). The bind DN needs write access here. Required when topology mode is LINKED — the server will reject a save without it. |
+| **Management DIT base DN** | The IVIA management DIT itself, i.e. the `secAuthority=…` entry (e.g. `secAuthority=Default,o=acme,c=us`), not a container below it. **Required in linked mode**; a save without it is rejected. Optional in inline mode, where it's needed only to import groups. The bind DN needs write access to the containers below. |
+| **User container** *(linked only)* | Where paired secUser entries are created and looked up. Blank = `cn=Users,<management DIT>`, IVIA's own users container. |
+| **Group container** | Where groups imported into IVIA are registered, each as a `secGroup` entry. Also searched by the "Require groups to be imported" check. Blank = `cn=Groups,<management DIT>`, the container `pdadmin group import` writes to. |
 | **secUser RDN attribute** *(linked only)* | The attribute that names secUser entries — free-form. `secUUID` (default) and `secLogin` are the stock choices; any attribute your configured object classes permit works (e.g. `principalName` from `eUser`). |
 | **RDN value source** *(linked only)* | Where the RDN value comes from, independent of the attribute name. `GENERATED_UUID` (default) mints an opaque UUID per user; `UID` mirrors the user's `uid` (a rename then forces a directory rename). `secUUID`+`GENERATED_UUID` and `secLogin`/`principalName`+`UID` are the natural pairings. |
 | **Group member target** *(linked only)* | `DEMOGRAPHIC_DN` writes the user's demographic DN into group member attributes; `SECUSER_DN` writes the paired secUser DN. The right answer depends on how your ACLs resolve group membership — ISVA's own ACLs follow `SECUSER_DN`, but if your application checks groups against demographic DNs, use that instead. |
+
+**Upgrading.** Before the user and group containers existed, secUser
+entries were created directly under **Management DIT base DN**, so linked
+configs usually pointed it at the users container. The upgrade migration
+(`V509`) keeps every config writing where it did:
+- `cn=Users,<root>` becomes management DIT `<root>`, and the user container
+  defaults to the same `cn=Users,<root>`.
+- Any other value stays as the management DIT and is also set explicitly as
+  the user container.
+- Either way, the group container defaults to `cn=Groups` below the
+  management DIT. Check it on the config page before importing groups.
 
 ### Deployment setting: exposed topology modes
 
@@ -171,6 +184,52 @@ compensating delete of the just-added demographic).
 pre-populated with vendor-appropriate defaults. The same configuration drives
 user/group classification in search and the dashboards.
 
+## Importing groups into IVIA
+
+A group created in LDAP Portal (or anywhere outside IVIA) is an ordinary
+LDAP group until IVIA registers it. Until then, IVIA access rules can't
+name it, and it doesn't appear in a member's credential or `iv-groups`.
+`pdadmin group import <name> <groupDN>` registers a group by creating a
+separate entry in the management DIT's group container. The group itself
+is left unchanged:
+
+```
+dn: cn=<IVIA group name>,cn=Groups,secAuthority=Default,<suffix>
+objectClass: top
+objectClass: secGroup
+cn: <IVIA group name>
+secAuthority: Default
+secDN: <the group's DN>
+secHasPolicy: FALSE
+secUUID: <generated UUID>
+```
+
+**Import into IVIA**, a row action on the admin **Groups** page, writes the
+same entry:
+
+- **Where it appears:** only on directories with an active IVIA
+  integration and a group container, i.e. a management DIT is set.
+- **Who can use it:** admins with `group.edit`, on groups within their
+  scope.
+- **The name:** defaults to the group's `cn` and can be changed. IVIA
+  group names are unique in the group container, so a name that's already
+  taken is refused with a 409 (`ivia_group_name_taken`).
+- **Groups already imported** carry an **IVIA** badge and don't offer the
+  action. A second import is refused with `ivia_group_already_imported`.
+- **Audit:** recorded as `group.update` with `detail.source = ivia`,
+  `ivia_op = group_import`, `iviaGroupName` and `registrationDn`.
+
+API: `GET /api/v1/directories/{id}/isva-group?dn=…` (status, `group.read`),
+`POST …/isva-group/registrations` with `{"dns": [...]}` (which of a page of
+groups are imported, `group.read`), and `POST …/isva-group/import?dn=…` with
+an optional `{"name": "…"}` body (`group.edit`).
+
+Not covered yet:
+- **Removing a registration.** This is the equivalent of
+  `pdadmin group delete` without `-registry`; use `pdadmin`.
+- **Deleting a group in LDAP Portal** doesn't remove its registration
+  entry; remove it with `pdadmin group delete`.
+
 ## Verifying it works
 
 After saving the config:
@@ -241,7 +300,8 @@ directory. Apply `secschema.ldif` (see Prerequisites) and re-probe.
 
 **Probe fails with "management DIT not reachable" in linked mode.**
 Either the bind DN doesn't have read access under
-`managementDitBaseDn`, or the DN itself is wrong. SSH into a host
+`managementDitBaseDn`, or the DN itself is wrong. A separate warning names
+the user container or group container when one of those can't be read. SSH into a host
 with `ldapsearch` and run a manual bind against the management
 subtree to isolate which.
 

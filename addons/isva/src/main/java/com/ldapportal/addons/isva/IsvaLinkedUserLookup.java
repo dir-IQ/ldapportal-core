@@ -57,8 +57,9 @@ public class IsvaLinkedUserLookup {
      *                             keeps both DITs on the same LDAP
      *                             server even when topologically
      *                             separated).
-     * @param managementDitBaseDn  search base, from
-     *                             {@code vendor_integration_isva_config}.
+     * @param managementDitBaseDn  search base: the config's secUser
+     *                             container
+     *                             ({@code VendorIntegrationIsvaConfig#effectiveUserContainerDn}).
      * @param demographicDn        the demographic-entry DN whose
      *                             paired secUser is being looked up.
      */
