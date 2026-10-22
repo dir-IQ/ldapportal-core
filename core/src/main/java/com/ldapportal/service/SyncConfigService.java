@@ -7,6 +7,7 @@ import com.ldapportal.dto.sync.SyncLinkRequest;
 import com.ldapportal.dto.sync.SyncLinkResponse;
 import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncSetResponse;
+import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
@@ -335,9 +336,15 @@ public class SyncConfigService {
     }
 
     /**
-     * A blank source scope or target base falls back to the directory's base
-     * DN. On a directory with several roots that's just the primary one, which
-     * is rarely what was meant — so require the base explicitly there.
+     * A blank source scope falls back to the source directory's base DN. On a
+     * directory with several roots that's just the primary one, which is rarely
+     * what was meant — so require the scope explicitly there.
+     *
+     * <p>A blank target base means "the same DNs as on the source": entries are
+     * placed at their source DNs, under the source scope base. On a target with
+     * several roots that's fine as long as that base lies under one of them;
+     * otherwise the entries would have nowhere to go, so the target base must
+     * be set.
      */
     private void requireExplicitBaseOnMultiRoot(SyncSetRequest req) {
         boolean noScope = req.objectScopeBaseDn() == null || req.objectScopeBaseDn().isBlank();
@@ -346,20 +353,26 @@ public class SyncConfigService {
             return;
         }
         linkRepo.findById(req.linkId()).ifPresent(link -> {
-            if (noScope && isMultiRoot(link.getSourceDirId())) {
+            DirectoryConnection source = directory(link.getSourceDirId());
+            if (noScope && source != null && com.ldapportal.ldap.DirectoryRoots.isMultiRoot(source)) {
                 throw new IllegalArgumentException("The source directory has more than one base DN: "
                         + "set the source scope base DN for this sync set.");
             }
-            if (noTarget && isMultiRoot(link.getTargetDirId())) {
-                throw new IllegalArgumentException("The target directory has more than one base DN: "
-                        + "set the target base DN for this sync set.");
+            DirectoryConnection target = directory(link.getTargetDirId());
+            if (noTarget && target != null && com.ldapportal.ldap.DirectoryRoots.isMultiRoot(target)) {
+                String sameAsSource = noScope ? (source != null ? source.getBaseDn() : null)
+                        : req.objectScopeBaseDn().trim();
+                if (!com.ldapportal.ldap.DirectoryRoots.isWithin(target, sameAsSource)) {
+                    throw new IllegalArgumentException("A blank target base DN places entries at their source "
+                            + "DNs, but " + (sameAsSource != null ? "'" + sameAsSource + "'" : "the source base")
+                            + " isn't under any of the target directory's base DNs: set the target base DN.");
+                }
             }
         });
     }
 
-    private boolean isMultiRoot(UUID directoryId) {
-        return directoryId != null && directoryRepo.findById(directoryId)
-                .map(com.ldapportal.ldap.DirectoryRoots::isMultiRoot).orElse(false);
+    private DirectoryConnection directory(UUID directoryId) {
+        return directoryId == null ? null : directoryRepo.findById(directoryId).orElse(null);
     }
 
     /**
