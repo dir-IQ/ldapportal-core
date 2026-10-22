@@ -433,6 +433,60 @@ class LdapOperationServiceTest {
                 .containsEntry("mail", List.of("sm@example.com"));
     }
 
+    // ── create read-back (replication lag behind a load balancer) ────────────
+
+    @Test
+    void createUser_readBackMissesThenSucceeds_returnsTheEntry() {
+        service.readBackDelaysMs = new long[] {0, 0, 0};
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String dn = "uid=new,ou=people,dc=example,dc=com";
+        when(userService.getUser(dc, dn))
+                .thenThrow(new ResourceNotFoundException("LDAP user", dn))
+                .thenReturn(new LdapUser(dn, Map.of("uid", List.of("new"), "entryUUID", List.of("u-1"))));
+
+        LdapEntryResponse result = service.createUser(dirId, adminPrincipal(),
+                new CreateEntryRequest(dn, Map.of("uid", List.of("new"))));
+
+        assertThat(result.attributes()).containsEntry("entryUUID", List.of("u-1"));
+        verify(userService, org.mockito.Mockito.times(2)).getUser(dc, dn);
+    }
+
+    @Test
+    void createUser_entryNeverVisible_respondsWithSubmittedAttributesMinusPasswords_andStillAudits() {
+        service.readBackDelaysMs = new long[] {0, 0};
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String dn = "uid=new,ou=people,dc=example,dc=com";
+        when(userService.getUser(dc, dn)).thenThrow(new ResourceNotFoundException("LDAP user", dn));
+
+        LdapEntryResponse result = service.createUser(dirId, adminPrincipal(),
+                new CreateEntryRequest(dn, Map.of("uid", List.of("new"), "userPassword", List.of("s3cret"))));
+
+        assertThat(result.dn()).isEqualTo(dn);
+        assertThat(result.attributes()).containsEntry("uid", List.of("new")).doesNotContainKey("userPassword");
+        verify(userService, org.mockito.Mockito.times(3)).getUser(dc, dn);
+        verify(auditService).record(any(), eq(dirId),
+                eq(com.ldapportal.entity.enums.AuditAction.USER_CREATE), eq(dn), any());
+    }
+
+    @Test
+    void createGroup_entryNeverVisible_respondsWithSubmittedAttributes_andStillAudits() {
+        service.readBackDelaysMs = new long[] {0};
+        DirectoryConnection dc = enabledDir(true);
+        when(dirRepo.findById(dirId)).thenReturn(Optional.of(dc));
+        String dn = "cn=new,ou=groups,dc=example,dc=com";
+        when(groupService.getGroup(dc, dn)).thenThrow(new ResourceNotFoundException("LDAP group", dn));
+
+        LdapEntryResponse result = service.createGroup(dirId, adminPrincipal(),
+                new CreateEntryRequest(dn, Map.of("cn", List.of("new"),
+                        "objectClass", List.of("groupOfNames"))));
+
+        assertThat(result.attributes()).containsEntry("cn", List.of("new"));
+        verify(auditService).record(any(), eq(dirId),
+                eq(com.ldapportal.entity.enums.AuditAction.GROUP_CREATE), eq(dn), any());
+    }
+
     @Test
     void updateUser_malformedMailAttribute_throwsAndSkipsWrite() {
         String dn = "uid=jsmith,ou=people,dc=example,dc=com";

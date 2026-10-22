@@ -283,6 +283,7 @@ Base DN:  dc=corp,dc=local
 | "Test Connection" fails | Check host/port reachability from the Docker container. Try: `docker exec ldap-admin-app wget -qO- ldap://your-host:389` |
 | Zero users/groups found | Verify the Base DN matches your directory structure. Use the **Directory Browser** (superadmin sidebar) to explore the tree. |
 | Directory has several top-level roots (suffixes) | Keep one connection: put the main root in Base DN and the others under **Additional base DNs**. See [multi-root-directories.md](multi-root-directories.md). |
+| A just-created user or group "doesn't exist", or is missing from the next page you open | The directory is replicated and a load balancer spreads LDAP Portal's connections across the replicas, so a read can reach one the change hasn't replicated to yet. Creates now retry the read-back briefly and still succeed, but later reads can still lag. Point **Host** at one server and **Secondary Host** at another (failover rather than round-robin), give the load balancer source-IP affinity or active/passive routing, or enable the directory's assured replication. |
 | SSL certificate errors | Enable "Trust all certificates" for testing, or paste your CA certificate PEM in the directory settings. |
 | Login fails after setup | Check that the bootstrap password hasn't been changed. If locked out, reset via the database. |
 | Audit log is empty | Audit events are recorded for admin actions. Log in and perform an operation (e.g., search users) to generate entries. |
