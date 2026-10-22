@@ -109,7 +109,7 @@
           { label: `Remove from ${IVIA_ABBR}`, onClick: () => removeFromIvia(row as unknown as GroupRow),
             danger: true, hidden: !canRemoveFromIvia(row as unknown as GroupRow) },
           { label: 'Delete',  onClick: () => confirmDelete(row as unknown as GroupRow), danger: true, hidden: !can.createDelete },
-        ]">
+        ]" :inline-threshold="1">
           <template #primary>
             <button v-if="can.viewMembers" @click="openMembers(row as unknown as GroupRow)" class="btn-secondary btn-compact">Members</button>
           </template>
