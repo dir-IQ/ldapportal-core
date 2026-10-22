@@ -3,6 +3,7 @@ package com.ldapportal.service;
 
 import com.ldapportal.core.governance.MembershipGate;
 import com.ldapportal.auth.AuthPrincipal;
+import com.ldapportal.ldap.model.LdapEntry;
 import com.ldapportal.ldap.validation.DnValidator;
 import com.ldapportal.ldap.validation.LdapAttributeValidator;
 import com.ldapportal.ldap.validation.NamingAttributes;
@@ -470,12 +471,13 @@ public class LdapOperationService {
         LdapAttributeValidator.validateSyntax(dc.getDirectoryType(), req.attributes(), inputTypes);
 
         userService.createUser(dc, req.dn(), req.attributes(), profileId);
-        LdapEntryResponse result = LdapEntryResponse.from(userService.getUser(dc, req.dn()));
+        // Audit as soon as the add succeeds, so a failed read-back can't drop it.
         Map<String, Object> detail = new java.util.LinkedHashMap<>();
         detail.put("attributes", req.attributes().keySet());
         if (profileId != null) detail.put("profileId", profileId.toString());
         auditService.record(principal, directoryId, AuditAction.USER_CREATE, req.dn(), detail);
-        return result;
+        String createdDn = req.dn();
+        return readBackCreated(createdDn, req.attributes(), () -> userService.getUser(dc, createdDn));
     }
 
     public LdapEntryResponse updateUser(UUID directoryId, AuthPrincipal principal,
@@ -839,10 +841,52 @@ public class LdapOperationService {
         LdapAttributeValidator.validateSyntax(dc.getDirectoryType(), req.attributes(), Map.of());
 
         groupService.createGroup(dc, req.dn(), req.attributes());
-        LdapEntryResponse result = LdapEntryResponse.from(groupService.getGroup(dc, req.dn()));
         auditService.record(principal, directoryId, AuditAction.GROUP_CREATE, req.dn(),
                 Map.of("attributes", req.attributes().keySet()));
-        return result;
+        return readBackCreated(req.dn(), req.attributes(), () -> groupService.getGroup(dc, req.dn()));
+    }
+
+    /** Waits between read-back attempts of a just-created entry (~1.85 s in all). */
+    long[] readBackDelaysMs = {100, 250, 500, 1000};
+
+    /** Password attributes left out of a response built from the submitted values. */
+    private static final Set<String> READ_BACK_HIDDEN = Set.of(
+            "userpassword", "authpassword", "unicodepwd");
+
+    /**
+     * Reads back an entry this request just created, for the response. On a
+     * replicated directory behind a load balancer the read can reach a replica
+     * the add hasn't reached yet (the pool hands out whichever connection is
+     * free), so a miss is retried briefly. If the entry still isn't visible,
+     * the response is built from the submitted attributes, minus password
+     * values, rather than reporting a create that succeeded as a failure.
+     */
+    private LdapEntryResponse readBackCreated(String dn, Map<String, List<String>> submitted,
+                                              java.util.function.Supplier<? extends LdapEntry> read) {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                return LdapEntryResponse.from(read.get());
+            } catch (ResourceNotFoundException e) {
+                if (attempt >= readBackDelaysMs.length) {
+                    break;
+                }
+                try {
+                    Thread.sleep(readBackDelaysMs[attempt]);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        log.warn("Created {} but could not read it back (replication lag on a load-balanced "
+                + "directory?); responding with the submitted attributes", dn);
+        Map<String, List<String>> attributes = new java.util.LinkedHashMap<>();
+        submitted.forEach((name, values) -> {
+            if (!READ_BACK_HIDDEN.contains(name.toLowerCase(Locale.ROOT))) {
+                attributes.put(name, List.copyOf(values));
+            }
+        });
+        return new LdapEntryResponse(dn, attributes);
     }
 
     public void deleteGroup(UUID directoryId, AuthPrincipal principal, String dn) {
