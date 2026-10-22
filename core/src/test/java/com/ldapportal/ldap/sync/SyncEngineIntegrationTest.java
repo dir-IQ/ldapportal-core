@@ -286,6 +286,55 @@ class SyncEngineIntegrationTest {
                 .isEqualTo(groupHashBefore);
     }
 
+    // ── DN form: placement keeps the source's case; formatting alone isn't a change ──
+
+    @Test
+    void placementAndReferences_keepTheSourceCase_andFormattingAloneIsNotAChange() throws Exception {
+        String jsmithSrc = "uid=JSmith," + SRC_PEOPLE;
+        source.add(new Entry(jsmithSrc,
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", "JSmith"), new Attribute("cn", "John Smith"), new Attribute("sn", "Smith"),
+                new Attribute("employeeType", "staff")));
+        engine.process(peopleSet.getId(), jsmithSrc);
+        String jsmithDst = "uid=JSmith," + DST_USERS;
+        Membership user = membershipRepo.findAllBySyncSetId(peopleSet.getId()).get(0);
+        assertThat(user.getTargetDn()).isEqualTo(jsmithDst); // not uid=jsmith,…
+        assertThat(target.getEntry(jsmithDst).getParsedDN().getRDN().toString()).isEqualTo("uid=JSmith");
+
+        String engSrc = "cn=Eng Team," + SRC_GROUPS;
+        source.add(new Entry(engSrc, new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("cn", "Eng Team"), new Attribute("member", jsmithSrc)));
+        engine.process(groupsSet.getId(), engSrc);
+        String engDst = "cn=Eng Team," + DST_GROUPS;
+        // The rewritten reference reads as on the source (the old placement lower-cased it).
+        assertThat(target.getEntry(engDst).getAttributeValue("member")).isEqualTo(jsmithDst);
+
+        // The target holds the same DN in another form (as an LDIF load might),
+        // and the group's content hash is stale, so the engine reads and diffs it.
+        String otherForm = "UID=jsmith, OU=users,DC=dst,DC=com";
+        target.modify(engDst, new Modification(ModificationType.REPLACE, "member", otherForm));
+        Membership group = membershipRepo.findAllBySyncSetId(groupsSet.getId()).get(0);
+        group.setContentHash(new byte[0]);
+        membershipRepo.save(group);
+
+        RecomputeOutcome groupOutcome = engine.process(groupsSet.getId(), engSrc, false);
+
+        assertThat(groupOutcome.action()).isEqualTo(com.ldapportal.dto.sync.SyncPreviewAction.NO_CHANGE);
+        assertThat(target.getEntry(engDst).getAttributeValue("member")).isEqualTo(otherForm); // not rewritten
+
+        // A row written before the fix holds the lower-cased target DN: the same
+        // entry, so it converges in place rather than being renamed.
+        user = membershipRepo.findAllBySyncSetId(peopleSet.getId()).get(0);
+        user.setTargetDn("uid=jsmith," + DST_USERS.toLowerCase());
+        user.setContentHash(new byte[0]);
+        membershipRepo.save(user);
+
+        RecomputeOutcome userOutcome = engine.process(peopleSet.getId(), jsmithSrc, false);
+
+        assertThat(userOutcome.action()).isEqualTo(com.ldapportal.dto.sync.SyncPreviewAction.NO_CHANGE);
+        assertThat(target.getEntry(jsmithDst)).isNotNull();
+    }
+
     // ── Cross-link references (IVIA secDN: c=admin secUser → c=us demographic) ──
 
     @Test
