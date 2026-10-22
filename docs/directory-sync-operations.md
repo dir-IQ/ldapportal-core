@@ -307,14 +307,25 @@ same on every replica — but audit sources don't read cookie mode today.)
    converges as a MODDN**, not a destructive delete+recreate.
 2. **Evaluate membership** via `MembershipFunction`: applicability filter →
    placement (DN rewrite) → projected attributes (transform rules + source
-   anchor + DN-reference remapping).
+   anchor + DN-reference remapping). Placement replaces the source scope base
+   with the target base and keeps the RDNs below it **as the source writes
+   them** (case, escaping), so a target entry — and every `member` / `secDN`
+   reference rewritten to it — reads exactly as on the source.
 3. **Diff** against the `sync_membership` row.
 4. **Hash gate** — if the projection's content hash and target DN are unchanged
    and the row is `APPLIED`, do nothing (no target read/write). This keeps
    reads-per-transition near 1 at rest and **terminates closure cascades**.
 5. **Apply** the idempotent operation (add / modify / moddn / delete) under
    `withConnectionUnreplicated` (engine writes are *uncaptured*, so they don't
-   loop back into the queue).
+   loop back into the queue). A MODIFY is computed by reading the target and
+   comparing values: DN-valued attributes (the set's reference attributes, and
+   any the target schema gives DN syntax) by **canonical DN**, so a reference
+   that differs only in form — `cn=A, o=B` vs `cn=a,o=b` — is not a change;
+   every other value **exactly**, so an edit that only changes case (`john` →
+   `John`) still replicates. Attribute aliases are resolved through the target
+   schema (read once per directory, cached 10 minutes). A change of DN form
+   alone is not a move either. The same comparison drives the dry-run preview
+   and **Verify contents**.
 6. **Commit** the index row: `APPLIED`, `FAILED` (+ reason), or `REVIEW`.
 7. **Closure fan-out** — if the target changed, re-enqueue referrers found by a
    source reverse-query over `referenceAttributes`, hash-terminated. The query

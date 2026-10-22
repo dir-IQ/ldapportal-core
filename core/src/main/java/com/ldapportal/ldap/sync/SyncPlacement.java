@@ -5,6 +5,7 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.SyncSet;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.LDAPException;
+import com.unboundid.ldap.sdk.RDN;
 
 /**
  * Computes the target DN for a source entry (a prefix-rewrite of the source base
@@ -19,6 +20,11 @@ import com.unboundid.ldap.sdk.LDAPException;
  *       replaced with {@code targetBaseDn}. DN-canonical comparison via the
  *       UnboundID parser tolerates spacing/case variants.</li>
  * </ul>
+ *
+ * <p>The RDNs kept from the source DN keep their own form (case, escaping),
+ * so the target entry — and every DN reference rewritten to it, like
+ * {@code member} or {@code secDN} — reads exactly as on the source. Only the
+ * spacing between RDNs is tidied.</p>
  */
 public final class SyncPlacement {
 
@@ -57,13 +63,16 @@ public final class SyncPlacement {
             if (!source.isDescendantOf(scope, true)) {
                 return null;
             }
-            String sourceNorm = source.toNormalizedString();
-            String scopeNorm = scope.toNormalizedString();
-            if (sourceNorm.equals(scopeNorm)) {
+            RDN[] sourceRdns = source.getRDNs();
+            int kept = sourceRdns.length - scope.getRDNs().length;
+            if (kept == 0) {
                 return targetBase;
             }
-            String prefix = sourceNorm.substring(0, sourceNorm.length() - scopeNorm.length() - 1);
-            return prefix + "," + targetBase;
+            StringBuilder dn = new StringBuilder();
+            for (int i = 0; i < kept; i++) {
+                dn.append(sourceRdns[i]).append(',');
+            }
+            return dn.append(targetBase).toString();
         } catch (LDAPException ex) {
             return null;
         }
