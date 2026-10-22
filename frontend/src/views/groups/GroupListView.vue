@@ -103,7 +103,7 @@
       </template>
       <template #cell-actions="{ row }">
         <ActionMenu :items="[
-          { label: 'Members', onClick: () => openMembers(row as unknown as GroupRow), hidden: !can.viewMembers },
+          { label: 'Edit', onClick: () => openEdit(row as unknown as GroupRow), hidden: !can.edit },
           { label: `Import into ${IVIA_ABBR}`, onClick: () => openIviaImport(row as unknown as GroupRow),
             hidden: !canImportIntoIvia(row as unknown as GroupRow) },
           { label: `Remove from ${IVIA_ABBR}`, onClick: () => removeFromIvia(row as unknown as GroupRow),
@@ -111,7 +111,7 @@
           { label: 'Delete',  onClick: () => confirmDelete(row as unknown as GroupRow), danger: true, hidden: !can.createDelete },
         ]">
           <template #primary>
-            <button v-if="can.edit" @click="openEdit(row as unknown as GroupRow)" class="btn-secondary btn-compact">Edit</button>
+            <button v-if="can.viewMembers" @click="openMembers(row as unknown as GroupRow)" class="btn-secondary btn-compact">Members</button>
           </template>
         </ActionMenu>
       </template>

@@ -60,7 +60,7 @@ const stubs = {
   },
   ActionMenu: {
     props: ['items'],
-    template: `<div><slot name="primary" /><button v-for="it in items.filter(i => !i.hidden)"
+    template: `<div><span data-slot="primary"><slot name="primary" /></span><button v-for="it in items.filter(i => !i.hidden)"
                  :key="it.label" :data-action="it.label">{{ it.label }}</button></div>`,
   },
 }
@@ -82,6 +82,18 @@ describe('GroupListView feature gating', () => {
     expect(t).toContain('Edit')
     expect(t).toContain('Members')
     expect(t).toContain('Delete')
+  })
+
+  it('shows only Members as a button, with Edit and Delete in the ... menu', async () => {
+    state.features = ['group.read', 'group.create_delete', 'group.edit', 'group.manage_members']
+    const wrapper = mount(GroupListView, { global: { stubs } })
+    await flushPromises()
+    const row = wrapper.find('[data-slot="primary"]')
+    expect(row.findAll('button').map(b => b.text())).toEqual(['Members'])
+    const menu = wrapper.findAll('[data-action]').map(b => b.attributes('data-action'))
+    expect(menu).toContain('Edit')
+    expect(menu).toContain('Delete')
+    expect(menu).not.toContain('Members')
   })
 
   it('hides write actions for a read-only feature set', async () => {
@@ -116,7 +128,7 @@ describe('GroupListView members drawer', () => {
     AppModal: { props: ['modelValue'], template: '<div v-if="modelValue" data-testid="modal"><slot /></div>' },
     ActionMenu: {
       props: ['items'],
-      template: `<div><button v-for="it in items.filter(i => !i.hidden)" :key="it.label"
+      template: `<div><slot name="primary" /><button v-for="it in items.filter(i => !i.hidden)" :key="it.label"
                    :data-action="it.label" @click="it.onClick()">{{ it.label }}</button></div>`,
     },
   }
@@ -125,7 +137,8 @@ describe('GroupListView members drawer', () => {
     state.features = features
     const wrapper = mount(GroupListView, { global: { stubs: drawerStubs } })
     await flushPromises()
-    await wrapper.find('[data-action="Members"]').trigger('click')
+    const members = wrapper.findAll('button').find(b => b.text() === 'Members')
+    await members!.trigger('click')
     await flushPromises()
     return wrapper
   }
