@@ -1,22 +1,41 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.unboundid.asn1.ASN1OctetString;
+import com.unboundid.ldap.matchingrules.DistinguishedNameMatchingRule;
+import com.unboundid.ldap.matchingrules.MatchingRule;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Entry;
+import com.unboundid.ldap.sdk.LDAPException;
 import com.unboundid.ldap.sdk.Modification;
 import com.unboundid.ldap.sdk.ModificationType;
+import com.unboundid.ldap.sdk.schema.AttributeTypeDefinition;
+import com.unboundid.ldap.sdk.schema.Schema;
 
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Computes the {@link Modification}s that converge an existing target entry to
  * the projected desired attribute set. Reading the target and diffing (rather
  * than blindly replaying a source delta) keeps MODIFY exact and idempotent:
  * re-applying the same desired state yields an empty modification list.
+ *
+ * <p>DN-valued attributes — the set's reference attributes, and any the target
+ * schema gives DN syntax — are compared by canonical DN, the way the directory
+ * matches them: {@code secDN: cn=A, o=B} and {@code cn=a,o=b} name the same
+ * entry, so no MODIFY is made for the DN's form alone. Every other value is
+ * compared exactly, so an edit that only changes case ({@code john} →
+ * {@code John}) still replicates even where the attribute matches case-ignore.
+ * Attribute names are matched through the schema (aliases, case).
  *
  * <p>Excluded attributes (operational + the sync set's configured exclusions,
  * e.g. password values) are never touched — neither replaced nor deleted.
@@ -26,20 +45,35 @@ public final class TargetEntryDiffer {
     private TargetEntryDiffer() {
     }
 
+    /** Exact comparison, no schema and no known DN attributes. */
+    public static List<Modification> diff(Entry target, List<Attribute> desired,
+                                          Set<String> protectedAttrs) {
+        return diff(target, desired, protectedAttrs, null, List.of());
+    }
+
     /**
      * @param protectedAttrs lower-cased attribute names that must never be
      *                       deleted from the target (the sync set's effective
      *                       exclusions — see {@link SyncExcludedAttributes})
+     * @param schema         the target directory's schema, or {@code null}
+     * @param dnAttrs        attributes known to hold DNs (the set's reference
+     *                       attributes), compared by canonical DN even without
+     *                       a schema
      */
-    public static List<Modification> diff(Entry target, List<Attribute> desired,
-                                          Set<String> protectedAttrs) {
+    public static List<Modification> diff(Entry target, List<Attribute> desired, Set<String> protectedAttrs,
+                                          Schema schema, Collection<String> dnAttrs) {
         List<Modification> mods = new ArrayList<>();
-        Set<String> desiredNames = new LinkedHashSet<>();
+        Map<String, Attribute> targetByName = new LinkedHashMap<>();
+        for (Attribute a : target.getAttributes()) {
+            targetByName.putIfAbsent(canonicalName(a.getName(), schema), a);
+        }
+        Set<String> desiredNames = new HashSet<>();
 
         for (Attribute d : desired) {
-            desiredNames.add(d.getName().toLowerCase(Locale.ROOT));
-            Attribute current = target.getAttribute(d.getName());
-            if (current == null || !sameValues(current, d)) {
+            String key = canonicalName(d.getName(), schema);
+            desiredNames.add(key);
+            Attribute current = targetByName.get(key);
+            if (current == null || !sameValues(current, d, schema, dnAttrs)) {
                 mods.add(new Modification(ModificationType.REPLACE, d.getName(), d.getValues()));
             }
         }
@@ -48,7 +82,7 @@ public final class TargetEntryDiffer {
             String lower = current.getName().toLowerCase(Locale.ROOT);
             // Leave attributes the desired set keeps, and never delete an excluded
             // attribute (operational, or a sync-set exclusion like userPassword).
-            if (desiredNames.contains(lower) || protectedAttrs.contains(lower)) {
+            if (desiredNames.contains(canonicalName(current.getName(), schema)) || protectedAttrs.contains(lower)) {
                 continue;
             }
             mods.add(new Modification(ModificationType.DELETE, current.getName()));
@@ -56,9 +90,75 @@ public final class TargetEntryDiffer {
         return mods;
     }
 
-    private static boolean sameValues(Attribute a, Attribute b) {
-        Set<String> av = new LinkedHashSet<>(List.of(a.getValues()));
-        Set<String> bv = new LinkedHashSet<>(List.of(b.getValues()));
-        return av.equals(bv);
+    /**
+     * The attribute's identity for matching: its schema name (so an alias
+     * matches its primary name), lower-cased, plus its options in a stable
+     * order ({@code cn;lang-en} is a different attribute from {@code cn}).
+     */
+    static String canonicalName(String name, Schema schema) {
+        String base = Attribute.getBaseName(name);
+        if (schema != null) {
+            AttributeTypeDefinition type = schema.getAttributeType(base);
+            if (type != null) {
+                base = type.getNameOrOID();
+            }
+        }
+        StringBuilder key = new StringBuilder(base.toLowerCase(Locale.ROOT));
+        Set<String> options = new TreeSet<>();
+        for (String option : Attribute.getOptions(name)) {
+            options.add(option.toLowerCase(Locale.ROOT));
+        }
+        for (String option : options) {
+            key.append(';').append(option);
+        }
+        return key.toString();
+    }
+
+    private static boolean sameValues(Attribute current, Attribute desired, Schema schema,
+                                      Collection<String> dnAttrs) {
+        MatchingRule rule = matchingRule(desired.getBaseName(), schema, dnAttrs);
+        if (rule != null) {
+            Set<String> a = normalized(current, rule);
+            Set<String> b = normalized(desired, rule);
+            if (a != null && b != null) {
+                return a.equals(b);
+            }
+        }
+        return exact(current).equals(exact(desired));
+    }
+
+    /** DN equality for a DN-valued attribute; {@code null} (an exact comparison) for any other. */
+    private static MatchingRule matchingRule(String baseName, Schema schema, Collection<String> dnAttrs) {
+        for (String dnAttr : dnAttrs) {
+            if (dnAttr.equalsIgnoreCase(baseName)) {
+                return DistinguishedNameMatchingRule.getInstance();
+            }
+        }
+        if (schema == null || schema.getAttributeType(baseName) == null) {
+            return null;
+        }
+        MatchingRule rule = MatchingRule.selectEqualityMatchingRule(baseName, schema);
+        return rule instanceof DistinguishedNameMatchingRule ? rule : null;
+    }
+
+    /** The values in the rule's normalized form, or {@code null} when one can't be normalized. */
+    private static Set<String> normalized(Attribute attr, MatchingRule rule) {
+        Set<String> out = new HashSet<>();
+        for (byte[] value : attr.getValueByteArrays()) {
+            try {
+                out.add(rule.normalize(new ASN1OctetString(value)).stringValue());
+            } catch (LDAPException ex) {
+                return null; // e.g. a value that isn't a valid DN: compare exactly instead
+            }
+        }
+        return out;
+    }
+
+    private static Set<String> exact(Attribute attr) {
+        Set<String> out = new HashSet<>();
+        for (byte[] value : attr.getValueByteArrays()) {
+            out.add(Arrays.toString(value));
+        }
+        return out;
     }
 }

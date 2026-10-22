@@ -127,4 +127,18 @@ class SyncContentVerifierTest {
         assertThat(r.sourceComplete()).isFalse();
         assertThat(r.targetComplete()).isTrue();
     }
+
+    @Test
+    void aDnReferenceDifferingOnlyInForm_isInSync_notDrift() {
+        var expected = expectedMap("cn=sec,dc=t",
+                expected("cn=sec,dc=t", new Attribute("secDN", "cn=IVIA_Import_Test,o=Groups,c=us")));
+        Map<String, Entry> actual = Map.of("cn=sec,dc=t",
+                new Entry("cn=sec,dc=t", new Attribute("secDN", "cn=ivia_import_test, o=groups,c=us")));
+
+        SyncVerifyResult r = SyncContentVerifier.compare(expected, actual, EXCLUDED, true, true, null,
+                List.of("secDN"));
+
+        assertThat(r.inSync()).isEqualTo(1);
+        assertThat(r.contentMismatches()).isZero();
+    }
 }
