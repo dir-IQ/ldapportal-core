@@ -154,9 +154,11 @@
                      placeholder="entryUUID / objectGUID (default by type)"
                      help="Source attribute used as each entry's stable identity (e.g. entryUUID, objectGUID). Leave blank to use the directory type's default. Avoid mutable attributes like mail." />
           <FormField label="Source scope base DN" v-model="setForm.objectScopeBaseDn"
-                     help="Base DN under the source directory to enumerate entries from. Combined with the source scope below." />
+                     placeholder="directory base DN"
+                     help="Base DN under the source directory to enumerate entries from. Combined with the source scope below. Leave blank for the source directory's base DN (required when it has more than one)." />
           <FormField label="Target base DN" v-model="setForm.targetBaseDn"
-                     help="Base DN under the target directory where matched entries are created and placed." />
+                     placeholder="same as source"
+                     help="Base DN under the target directory where matched entries are created and placed; the part of each DN below the source scope base is kept. Leave blank to place entries at the same DNs as on the source, which needs the source scope base DN to be under one of the target directory's base DNs." />
           <FormField label="Applicability filter (RFC 4515)" v-model="setForm.applicabilityFilter"
                      placeholder="(&(objectClass=inetOrgPerson)(employeeType=staff))"
                      help="LDAP filter selecting which source entries belong to this set. Only matching entries are synced." />

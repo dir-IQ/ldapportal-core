@@ -209,11 +209,7 @@ public class SyncContentVerifier {
      * target directory base.
      */
     private static String targetBase(Context ctx) {
-        if (ctx.set.getTargetBaseDn() != null) {
-            return ctx.set.getTargetBaseDn();
-        }
-        return ctx.set.getObjectScopeBaseDn() != null
-                ? ctx.set.getObjectScopeBaseDn() : ctx.target.getBaseDn();
+        return SyncPlacement.effectiveTargetBase(ctx.set, ctx.target);
     }
 
     /** The set's applicability filter, or a presence filter when none is configured. */

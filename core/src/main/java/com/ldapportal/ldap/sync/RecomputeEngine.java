@@ -1009,7 +1009,7 @@ public class RecomputeEngine {
     /** Target DNs carrying {@code anchorAttr=identity} (brownfield correlation). */
     private List<String> searchTargetByAnchor(DirectoryConnection target, SyncSet set,
                                               String anchorAttr, String identity) {
-        String base = set.getTargetBaseDn() != null ? set.getTargetBaseDn() : target.getBaseDn();
+        String base = SyncPlacement.effectiveTargetBase(set, target);
         return connectionFactory.withConnectionUnreplicated(target, conn -> {
             try {
                 SearchRequest req = new SearchRequest(base, SearchScope.SUB,

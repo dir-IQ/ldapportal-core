@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.SyncSet;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.LDAPException;
@@ -13,7 +14,8 @@ import com.unboundid.ldap.sdk.RDN;
  *
  * <ul>
  *   <li>No target base, or no source base: identity placement (target DN ==
- *       source DN).</li>
+ *       source DN) — a blank target base means "the same DNs as on the
+ *       source", under the source scope base.</li>
  *   <li>Otherwise: the source DN's tail matching {@code objectScopeBaseDn} is
  *       replaced with {@code targetBaseDn}. DN-canonical comparison via the
  *       UnboundID parser tolerates spacing/case variants.</li>
@@ -27,6 +29,22 @@ import com.unboundid.ldap.sdk.RDN;
 public final class SyncPlacement {
 
     private SyncPlacement() {
+    }
+
+    /**
+     * Where the set's entries live on the target: the target base DN, or —
+     * left blank, entries keep their source DNs — the source scope base DN,
+     * or failing that the target directory's base DN. Used for target-side
+     * searches (verification, brownfield anchor correlation).
+     */
+    public static String effectiveTargetBase(SyncSet set, DirectoryConnection target) {
+        if (set.getTargetBaseDn() != null && !set.getTargetBaseDn().isBlank()) {
+            return set.getTargetBaseDn();
+        }
+        if (set.getObjectScopeBaseDn() != null && !set.getObjectScopeBaseDn().isBlank()) {
+            return set.getObjectScopeBaseDn();
+        }
+        return target.getBaseDn();
     }
 
     /**

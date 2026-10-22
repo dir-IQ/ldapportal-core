@@ -290,6 +290,47 @@ class SyncConfigServiceTest {
                 .hasMessageContaining("source scope base DN");
     }
 
+    /** A link from a single-root source to a target with two roots (c=us and o=partners). */
+    private UUID linkToMultiRootTarget() {
+        UUID linkId = UUID.randomUUID();
+        UUID srcId = UUID.randomUUID();
+        UUID dstId = UUID.randomUUID();
+        SyncLink link = new SyncLink();
+        link.setSourceDirId(srcId);
+        link.setTargetDirId(dstId);
+        com.ldapportal.entity.DirectoryConnection single = new com.ldapportal.entity.DirectoryConnection();
+        single.setBaseDn("c=us");
+        com.ldapportal.entity.DirectoryConnection multi = new com.ldapportal.entity.DirectoryConnection();
+        multi.setBaseDn("c=us");
+        multi.setAdditionalBaseDns(new java.util.ArrayList<>(List.of("o=partners")));
+        when(linkRepo.existsById(linkId)).thenReturn(true);
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+        org.mockito.Mockito.lenient().when(directoryRepo.findById(srcId)).thenReturn(Optional.of(single));
+        when(directoryRepo.findById(dstId)).thenReturn(Optional.of(multi));
+        org.mockito.Mockito.lenient().when(setRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        return linkId;
+    }
+
+    @Test
+    void blankTargetBase_onAMultiRootTarget_isAccepted_whenTheSourceScopeIsUnderOneOfItsRoots() {
+        UUID linkId = linkToMultiRootTarget();
+        SyncSetRequest sameDns = new SyncSetRequest(linkId, "groups", "o=groups,c=us", null, null, null,
+                null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
+
+        assertThat(service.createSet(sameDns).targetBaseDn()).isNull(); // entries keep their source DNs
+    }
+
+    @Test
+    void blankTargetBase_onAMultiRootTarget_isRefused_whenTheSourceScopeIsUnderNoneOfItsRoots() {
+        UUID linkId = linkToMultiRootTarget();
+        SyncSetRequest elsewhere = new SyncSetRequest(linkId, "groups", "o=groups,dc=elsewhere", null, null, null,
+                null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
+
+        assertThatThrownBy(() -> service.createSet(elsewhere))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("'o=groups,dc=elsewhere' isn't under any of the target directory's base DNs");
+    }
+
     @Test
     void recheckTarget_forgetsAppliedContent_andRequestsAReconcile() {
         UUID setId = UUID.randomUUID();
