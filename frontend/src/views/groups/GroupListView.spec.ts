@@ -85,15 +85,25 @@ describe('GroupListView feature gating', () => {
   })
 
   it('shows only Members as a button, with Edit and Delete in the ... menu', async () => {
+    // Real ActionMenu: it keeps up to inlineThreshold buttons inline (3 by
+    // default), so a stub would hide extra actions spilling out of the menu.
     state.features = ['group.read', 'group.create_delete', 'group.edit', 'group.manage_members']
-    const wrapper = mount(GroupListView, { global: { stubs } })
+    const { ActionMenu: _stubbed, ...withRealMenu } = stubs
+    const wrapper = mount(GroupListView, { global: { stubs: withRealMenu }, attachTo: document.body })
     await flushPromises()
-    const row = wrapper.find('[data-slot="primary"]')
-    expect(row.findAll('button').map(b => b.text())).toEqual(['Members'])
-    const menu = wrapper.findAll('[data-action]').map(b => b.attributes('data-action'))
+
+    const rowButtons = wrapper.findAll('button').filter(b => b.attributes('aria-label') !== 'Row actions')
+    const labels = rowButtons.map(b => b.text())
+    expect(labels).toContain('Members')
+    expect(labels).not.toContain('Edit')
+    expect(labels).not.toContain('Delete')
+
+    await wrapper.find('button[aria-label="Row actions"]').trigger('click')
+    await flushPromises()
+    const menu = document.body.textContent ?? ''
     expect(menu).toContain('Edit')
     expect(menu).toContain('Delete')
-    expect(menu).not.toContain('Members')
+    wrapper.unmount()
   })
 
   it('hides write actions for a read-only feature set', async () => {
