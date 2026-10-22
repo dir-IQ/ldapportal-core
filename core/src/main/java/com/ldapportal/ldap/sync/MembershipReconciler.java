@@ -134,7 +134,7 @@ public class MembershipReconciler {
             if (ctx == null) {
                 return 0;
             }
-            SyncReconcileHistory.Run run = history.start(syncSetId, trigger, requestedBy);
+            SyncReconcileHistory.Run run = history.start(ctx.set, ctx.link.getTargetDirId(), trigger, requestedBy);
             try {
                 int enumerated = reconcile(ctx, run, lease);
                 history.complete(run, membershipRepo.countBySyncSetId(syncSetId));
@@ -168,7 +168,7 @@ public class MembershipReconciler {
                 history.record(run, engine.process(syncSetId, p.entry.getDN(), guard.tripped()));
             } catch (Exception ex) {
                 faults++;
-                history.fault(run, ex);
+                history.fault(run, ex, p.entry.getDN());
                 log.warn("Sync set {}: reconcile recompute of {} faulted ({}); continuing",
                         syncSetId, p.entry.getDN(), ex.toString());
             } finally {
@@ -182,7 +182,7 @@ public class MembershipReconciler {
                     history.record(run, engine.process(syncSetId, row.getIdentity(), guard.tripped()));
                 } catch (Exception ex) {
                     faults++;
-                    history.fault(run, ex);
+                    history.fault(run, ex, row.getIdentity());
                     log.warn("Sync set {}: reconcile sweep of identity {} faulted ({}); continuing",
                             syncSetId, row.getIdentity(), ex.toString());
                 }

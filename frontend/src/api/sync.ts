@@ -71,6 +71,11 @@ export interface SyncSet {
   reconcileCadenceSeconds: number | null
   reconcileLastRunAt: string | null
   enabled: boolean
+  /**
+   * Keep every changed or flagged entry's DN in each run's history (CSV
+   * download), not just the first samples per outcome.
+   */
+  recordAllDns: boolean
   createdAt: string
   updatedAt: string
   version: number
@@ -139,14 +144,16 @@ export const getExcludedAttributeDefaults = () =>
   client.get<string[]>('/superadmin/sync/sets/excluded-attribute-defaults')
 
 /**
- * One recorded reconcile run of a set. The outcome counters mirror
- * SyncPreviewAction, so a run compares directly with its preview.
- * `status` FAILED covers both an aborted run (`error`) and one whose server
- * stopped mid-run.
+ * One recorded run of a set: a reconcile (SCHEDULED / MANUAL), or an
+ * INCREMENTAL pass — the changes the recompute worker applied between
+ * reconciles (changelog, in-app edits), kept when it did something. The
+ * outcome counters mirror SyncPreviewAction, so a run compares directly with
+ * its preview. `status` FAILED covers both an aborted run (`error`) and one
+ * whose server stopped mid-run.
  */
 export interface SyncReconcileRun {
   id: string
-  trigger: 'SCHEDULED' | 'MANUAL'
+  trigger: 'SCHEDULED' | 'MANUAL' | 'INCREMENTAL'
   requestedBy: string | null
   status: 'RUNNING' | 'COMPLETE' | 'FAILED'
   startedAt: string
@@ -184,6 +191,8 @@ export interface SyncReconcileRun {
   verifyMissing: number | null
   verifyOrphan: number | null
   verifyMismatch: number | null
+  /** Every changed or flagged entry's DN was kept: downloadable with `downloadReconcileRunEntries`. */
+  allDnsRecorded: boolean
 }
 
 /** The set's settings and delete-guard limits as the run saw them. */
@@ -222,9 +231,21 @@ export interface SyncReconcileRunDetail {
 export const getReconcileRun = (setId: string, runId: string) =>
   client.get<SyncReconcileRunDetail>(`/superadmin/sync/sets/${setId}/reconcile-runs/${runId}`)
 
-/** A set's most recent reconcile runs, newest first. */
-export const listReconcileRuns = (setId: string, limit = 10) =>
-  client.get<SyncReconcileRun[]>(`/superadmin/sync/sets/${setId}/reconcile-runs`, { params: { limit } })
+/** Which runs `listReconcileRuns` returns; omit for both. */
+export type SyncRunKind = 'RECONCILE' | 'INCREMENTAL'
+
+/** A set's most recent runs, newest first: reconciles, incremental passes, or both. */
+export const listReconcileRuns = (setId: string, limit = 10, kind?: SyncRunKind) =>
+  client.get<SyncReconcileRun[]>(`/superadmin/sync/sets/${setId}/reconcile-runs`,
+    { params: kind ? { limit, kind } : { limit } })
+
+/**
+ * Every entry a run changed or flagged, as CSV (`outcome,dn,reason`) — for a
+ * run with `allDnsRecorded`. A FAULT row carries the source DN or identity.
+ */
+export const downloadReconcileRunEntries = (setId: string, runId: string) =>
+  client.get<Blob>(`/superadmin/sync/sets/${setId}/reconcile-runs/${runId}/entries.csv`,
+    { responseType: 'blob' })
 
 /** Dry-run summary of what a reconcile of a sync set would change (no writes). */
 export interface SyncReconcilePreview {

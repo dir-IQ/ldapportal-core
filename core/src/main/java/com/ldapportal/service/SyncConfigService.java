@@ -288,6 +288,9 @@ public class SyncConfigService {
         s.setExcludedAttributes(normalizeExcludedAttributes(req.excludedAttributes()));
         s.setReconcileCadenceSeconds(req.reconcileCadenceSeconds());
         s.setEnabled(req.enabled());
+        if (req.recordAllDns() != null) {
+            s.setRecordAllDns(req.recordAllDns());
+        }
     }
 
     /**
@@ -474,10 +477,46 @@ public class SyncConfigService {
         return reconcileHistory.detail(syncSetId, runId);
     }
 
-    /** The set's most recent reconcile runs, newest first (at most {@code limit}). */
-    public List<com.ldapportal.dto.sync.SyncReconcileRunResponse> reconcileRuns(UUID syncSetId, int limit) {
+    /**
+     * The set's most recent runs, newest first (at most {@code limit}):
+     * reconciles, incremental passes, or both when {@code kind} is {@code null}.
+     */
+    public List<com.ldapportal.dto.sync.SyncReconcileRunResponse> reconcileRuns(
+            UUID syncSetId, int limit, com.ldapportal.ldap.sync.SyncReconcileHistory.RunKind kind) {
         requireSet(syncSetId);
-        return reconcileHistory.recent(syncSetId, limit);
+        return reconcileHistory.recent(syncSetId, limit, kind);
+    }
+
+    /** Check a run's entries can be downloaded (see {@link #writeRunEntriesCsv}), before streaming them. */
+    public void requireRunEntries(UUID syncSetId, UUID runId) {
+        requireSet(syncSetId);
+        reconcileHistory.requireAllDnsRecorded(syncSetId, runId);
+    }
+
+    /**
+     * Every entry a run changed or flagged, as CSV ({@code outcome,dn,reason}),
+     * in processing order. Only for a run whose set was recording all DNs.
+     */
+    public void writeRunEntriesCsv(UUID syncSetId, UUID runId, java.io.Writer out) {
+        requireSet(syncSetId);
+        List<String> headers = List.of("outcome", "dn", "reason");
+        try {
+            com.ldapportal.util.CsvUtils.writeHeader(out, headers);
+            reconcileHistory.entries(syncSetId, runId, e -> {
+                Map<String, String> row = new java.util.HashMap<>();
+                row.put("outcome", e.outcome());
+                row.put("dn", e.targetDn());
+                row.put("reason", e.reason() != null ? e.reason() : "");
+                try {
+                    com.ldapportal.util.CsvUtils.writeRow(out, headers, row);
+                } catch (java.io.IOException ex) {
+                    throw new java.io.UncheckedIOException(ex);
+                }
+            });
+            out.flush();
+        } catch (java.io.IOException ex) {
+            throw new java.io.UncheckedIOException(ex);
+        }
     }
 
     /** Dry-run preview of what a reconcile would change (no target writes). */

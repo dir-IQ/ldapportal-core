@@ -71,12 +71,12 @@ class SyncControllerTest extends BaseControllerTest {
 
     private SyncSetRequest setReq() {
         return new SyncSetRequest(LINK, "people", "ou=people,dc=src", null, null, "ou=Users,dc=dst",
-                "(objectClass=inetOrgPerson)", null, null, null, null, null, null, true);
+                "(objectClass=inetOrgPerson)", null, null, null, null, null, null, true, null);
     }
 
     private SyncSetResponse setResp() {
         return new SyncSetResponse(SET, LINK, "people", "ou=people,dc=src", null, null, "ou=Users,dc=dst",
-                null, null, null, null, null, null, null, null, true, OffsetDateTime.now(), OffsetDateTime.now(), 0L,
+                null, null, null, null, null, null, null, null, true, false, OffsetDateTime.now(), OffsetDateTime.now(), 0L,
                 java.util.Map.of());
     }
 
@@ -228,11 +228,11 @@ class SyncControllerTest extends BaseControllerTest {
     @Test
     void reconcileRuns_superadmin_returnsHistory_withClampedLimit() throws Exception {
         UUID runId = UUID.randomUUID();
-        given(service.reconcileRuns(SET, 20)).willReturn(List.of(new SyncReconcileRunResponse(
+        given(service.reconcileRuns(SET, 20, null)).willReturn(List.of(new SyncReconcileRunResponse(
                 runId, SyncReconcileTrigger.MANUAL, "superadmin", SyncReconcileRunStatus.COMPLETE,
                 OffsetDateTime.now(), OffsetDateTime.now(), true, 4741, 876, 4741L, 4741,
                 3, 1, 0, 0, 0, 3865, 0, 872, 0, 0, 0, false, null, null,
-                "app-2", OffsetDateTime.now(), null, null, null, null)));
+                "app-2", OffsetDateTime.now(), null, null, null, null, false)));
         mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs").param("limit", "500")
                         .with(authentication(superadminAuth())))
                 .andExpect(status().isOk())
@@ -243,13 +243,56 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void reconcileRuns_kindFilter_isPassedThrough() throws Exception {
+        given(service.reconcileRuns(SET, 10, com.ldapportal.ldap.sync.SyncReconcileHistory.RunKind.INCREMENTAL))
+                .willReturn(List.of());
+        mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs").param("kind", "INCREMENTAL")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk());
+        org.mockito.Mockito.verify(service).reconcileRuns(SET, 10,
+                com.ldapportal.ldap.sync.SyncReconcileHistory.RunKind.INCREMENTAL);
+    }
+
+    @Test
+    void reconcileRunEntries_returnsTheRunsCsv() throws Exception {
+        UUID runId = UUID.randomUUID();
+        org.mockito.BDDMockito.willAnswer(inv -> {
+            java.io.Writer w = inv.getArgument(2);
+            w.write("\"outcome\",\"dn\",\"reason\"\r\n\"MODIFY\",\"uid=a,dc=dst\",\"\"\r\n");
+            w.flush();
+            return null;
+        }).given(service).writeRunEntriesCsv(eq(SET), eq(runId), any());
+
+        mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs/" + runId + "/entries.csv")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+                        .string("Content-Disposition", "attachment; filename=\"sync-run-" + runId + ".csv\""))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                        .string(org.hamcrest.Matchers.containsString("\"MODIFY\",\"uid=a,dc=dst\"")));
+        org.mockito.Mockito.verify(service).requireRunEntries(SET, runId);
+    }
+
+    @Test
+    void reconcileRunEntries_ofARunThatKeptOnlySamples_is400() throws Exception {
+        UUID runId = UUID.randomUUID();
+        willThrow(new IllegalArgumentException("This run kept only sample DNs"))
+                .given(service).requireRunEntries(SET, runId);
+
+        mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs/" + runId + "/entries.csv")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isBadRequest());
+        org.mockito.Mockito.verify(service, org.mockito.Mockito.never()).writeRunEntriesCsv(any(), any(), any());
+    }
+
+    @Test
     void reconcileRun_superadmin_returnsDetail() throws Exception {
         UUID runId = UUID.randomUUID();
         SyncReconcileRunResponse run = new SyncReconcileRunResponse(
                 runId, SyncReconcileTrigger.SCHEDULED, null, SyncReconcileRunStatus.COMPLETE,
                 OffsetDateTime.now(), OffsetDateTime.now(), true, 10, 8, 9L, 10,
                 1, 0, 0, 0, 0, 0, 0, 7, 2, 0, 0, false, null, null,
-                "app-1", OffsetDateTime.now(), OffsetDateTime.now(), 0, 1, 0);
+                "app-1", OffsetDateTime.now(), OffsetDateTime.now(), 0, 1, 0, true);
         given(service.reconcileRun(SET, runId)).willReturn(new SyncReconcileRunDetail(run,
                 new SyncRunSettings("REVIEW", null, null, null, "ou=Users,dc=dst", null, null, null, 50, 20, 20),
                 List.of(new SyncRunFailureReason("apply failed: NO_SUCH_OBJECT", 2, "apply failed: NO_SUCH_OBJECT — x")),

@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import ReconcileRunDetail from './ReconcileRunDetail.vue'
 import type { SyncReconcileRun, SyncReconcileRunDetail } from '@/api/sync'
 
-vi.mock('@/api/sync', () => ({ getReconcileRun: vi.fn() }))
+vi.mock('@/api/sync', () => ({ getReconcileRun: vi.fn(), downloadReconcileRunEntries: vi.fn() }))
+vi.mock('@/composables/useApi', () => ({ downloadBlob: vi.fn() }))
 
 import * as syncApi from '@/api/sync'
+import { downloadBlob } from '@/composables/useApi'
 
 const getRun = syncApi.getReconcileRun as unknown as ReturnType<typeof vi.fn>
 
@@ -18,6 +21,7 @@ const run: SyncReconcileRun = {
   unchanged: 840, failed: 2, faulted: 1, skipped: 0, guardTripped: false, guardReason: null, error: null,
   instanceName: 'ldapportal-7f9c', plannedAt: '2026-10-20T10:01:10Z',
   verifiedAt: '2026-10-20T10:03:00Z', verifyMissing: 2, verifyOrphan: 0, verifyMismatch: 0,
+  allDnsRecorded: false,
 }
 
 function detail(over: Partial<SyncReconcileRunDetail> = {}): SyncReconcileRunDetail {
@@ -40,7 +44,10 @@ function detail(over: Partial<SyncReconcileRunDetail> = {}): SyncReconcileRunDet
 }
 
 describe('ReconcileRunDetail', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+  })
 
   it('shows where and how long it ran, every count, and the drift after it', async () => {
     getRun.mockResolvedValue({ data: detail() })
@@ -89,5 +96,45 @@ describe('ReconcileRunDetail', () => {
     expect(wrapper.find('[role="alert"]').text()).toBe('Reconcile run not found')
     await wrapper.find('[aria-label="Close run details"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('offers the full entry list as CSV when the run recorded every DN', async () => {
+    getRun.mockResolvedValue({ data: detail({ run: { ...run, allDnsRecorded: true } }) })
+    const blob = new Blob(['outcome,dn,reason'])
+    ;(syncApi.downloadReconcileRunEntries as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({ data: blob })
+    const wrapper = mount(ReconcileRunDetail, { props: { setId: 'set-1', runId: 'run-1' } })
+    await flushPromises()
+
+    await wrapper.findAll('button').find((b) => b.text() === 'Download all entries (CSV)')!.trigger('click')
+    await flushPromises()
+
+    expect(syncApi.downloadReconcileRunEntries).toHaveBeenCalledWith('set-1', 'run-1')
+    expect(downloadBlob).toHaveBeenCalledWith(blob, 'sync-run-run-1.csv')
+    expect(wrapper.text()).not.toContain('Record every DN')
+  })
+
+  it('points to "Record every DN" when the samples were cut short', async () => {
+    getRun.mockResolvedValue({ data: detail() }) // 30 added, 2 sampled
+    const wrapper = mount(ReconcileRunDetail, { props: { setId: 'set-1', runId: 'run-1' } })
+    await flushPromises()
+    expect(wrapper.findAll('button').some((b) => b.text().includes('Download all entries'))).toBe(false)
+    expect(wrapper.text()).toContain('Up to 25 DNs per outcome are kept')
+    expect(wrapper.text()).toContain('Record every DN')
+  })
+
+  it('leaves out the scan, verification and settings for an incremental pass', async () => {
+    getRun.mockResolvedValue({ data: detail({
+      run: { ...run, trigger: 'INCREMENTAL', completeScan: false, plannedAt: run.startedAt, verifiedAt: null },
+      settings: null,
+    }) })
+    const wrapper = mount(ReconcileRunDetail, { props: { setId: 'set-1', runId: 'run-1' } })
+    await flushPromises()
+    const txt = wrapper.text()
+    expect(txt).toContain('Incremental')
+    expect(txt).not.toContain('Source scan')
+    expect(txt).not.toContain('Managed before')
+    expect(txt).not.toContain('content verification')
+    expect(txt).not.toContain('Settings at run time')
+    expect(txt).not.toContain('source scan did not complete')
   })
 })

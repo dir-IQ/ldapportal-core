@@ -83,7 +83,7 @@ class SyncConfigServiceTest {
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
         return new SyncSetRequest(UUID.randomUUID(), "people", null, null, null, null, null, null, null,
-                SyncDeletePolicy.DELETE, rules, null, null, true);
+                SyncDeletePolicy.DELETE, rules, null, null, true, null);
     }
 
     @Test
@@ -131,6 +131,45 @@ class SyncConfigServiceTest {
         assertThat(stored.get(0).getTargetAttr()).isEqualTo("sAMAccountName");
         assertThat(stored.get(1).getTargetAttr()).isNull();
         assertThat(stored.get(1).getValueTemplate()).isEqualTo("Mr ${value}");
+    }
+
+    @Test
+    void recordAllDns_isSetWhenGiven_andLeftAloneWhenNull() {
+        when(linkRepo.existsById(any())).thenReturn(true);
+        when(setRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        SyncSetRequest base = req(List.of());
+        SyncSetRequest on = new SyncSetRequest(base.linkId(), base.name(), null, null, null, null, null, null,
+                null, base.deletePolicy(), null, null, null, true, true);
+
+        assertThat(service.createSet(on).recordAllDns()).isTrue();
+        assertThat(service.createSet(base).recordAllDns()).isFalse();
+
+        UUID setId = UUID.randomUUID();
+        SyncSet existing = new SyncSet();
+        existing.setRecordAllDns(true);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(existing));
+        assertThat(service.updateSet(setId, base).recordAllDns()).isTrue(); // null: unchanged
+    }
+
+    @Test
+    void writeRunEntriesCsv_writesOneQuotedRowPerEntry() {
+        UUID setId = UUID.randomUUID();
+        UUID runId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        org.mockito.Mockito.doAnswer(inv -> {
+            java.util.function.Consumer<com.ldapportal.ldap.sync.SyncRunEntryStore.Entry> sink = inv.getArgument(2);
+            sink.accept(new com.ldapportal.ldap.sync.SyncRunEntryStore.Entry(0, "ADD", "uid=a,dc=dst", null));
+            sink.accept(new com.ldapportal.ldap.sync.SyncRunEntryStore.Entry(1, "ERROR", "uid=b,dc=dst",
+                    "apply failed: \"quoted\""));
+            return null;
+        }).when(reconcileHistory).entries(eq(setId), eq(runId), any());
+        java.io.StringWriter out = new java.io.StringWriter();
+
+        service.writeRunEntriesCsv(setId, runId, out);
+
+        assertThat(out.toString()).isEqualTo("\"outcome\",\"dn\",\"reason\"\r\n"
+                + "\"ADD\",\"uid=a,dc=dst\",\"\"\r\n"
+                + "\"ERROR\",\"uid=b,dc=dst\",\"apply failed: \"\"quoted\"\"\"\r\n");
     }
 
     @Test
@@ -245,7 +284,7 @@ class SyncConfigServiceTest {
         org.mockito.Mockito.lenient().when(directoryRepo.findById(dstId)).thenReturn(Optional.of(single));
 
         SyncSetRequest noScope = new SyncSetRequest(linkId, "people", null, null, null, "ou=Users,dc=dst,dc=com",
-                null, null, null, SyncDeletePolicy.DELETE, null, null, null, true);
+                null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
         assertThatThrownBy(() -> service.createSet(noScope))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("source scope base DN");
