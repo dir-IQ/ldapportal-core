@@ -161,4 +161,8 @@ public class SyncReconcileRun {
 
     @Column(name = "verify_mismatch")
     private Integer verifyMismatch;
+
+    /** Whether every entry's DN was kept (the set's record-all-DNs flag at run time). */
+    @Column(name = "all_dns_recorded", nullable = false)
+    private boolean allDnsRecorded;
 }

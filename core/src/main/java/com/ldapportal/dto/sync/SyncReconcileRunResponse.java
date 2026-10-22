@@ -43,6 +43,8 @@ import java.util.UUID;
  * @param verifyMissing  members missing on the target after the run (with {@code verifiedAt})
  * @param verifyOrphan   target entries with no source member after the run
  * @param verifyMismatch entries whose content still differed after the run
+ * @param allDnsRecorded whether every changed or flagged entry's DN was kept
+ *                       (downloadable), not just the samples
  */
 public record SyncReconcileRunResponse(
         UUID id,
@@ -75,5 +77,6 @@ public record SyncReconcileRunResponse(
         OffsetDateTime verifiedAt,
         Integer verifyMissing,
         Integer verifyOrphan,
-        Integer verifyMismatch) {
+        Integer verifyMismatch,
+        boolean allDnsRecorded) {
 }

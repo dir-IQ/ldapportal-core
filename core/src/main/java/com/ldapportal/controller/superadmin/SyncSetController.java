@@ -12,17 +12,24 @@ import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncSetResponse;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SuperadminPermission;
+import com.ldapportal.ldap.sync.SyncReconcileHistory;
 import com.ldapportal.service.SyncConfigService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.ByteArrayOutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -122,10 +129,36 @@ public class SyncSetController {
         return service.reconcileRun(id, runId);
     }
 
+    /**
+     * Every entry the run changed or flagged, as CSV ({@code outcome,dn,reason})
+     * in processing order — for a run whose set was recording all DNs (400
+     * otherwise). A {@code FAULT} row carries the source DN or identity whose
+     * recompute threw, since it never reached a target DN.
+     */
+    @GetMapping(value = "/{id}/reconcile-runs/{runId}/entries.csv", produces = "text/csv")
+    public ResponseEntity<byte[]> reconcileRunEntries(@PathVariable UUID id, @PathVariable UUID runId) {
+        // Built in memory like the other CSV exports, rather than streamed: a
+        // StreamingResponseBody completes on an async dispatch, which the
+        // security filter chain doesn't authorize. Rows are read in pages.
+        service.requireRunEntries(id, runId);
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        Writer writer = new OutputStreamWriter(bytes, StandardCharsets.UTF_8);
+        service.writeRunEntriesCsv(id, runId, writer);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"sync-run-" + runId + ".csv\"")
+                .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                .body(bytes.toByteArray());
+    }
+
+    /**
+     * The set's most recent runs, newest first. {@code kind} narrows them to
+     * {@code RECONCILE} runs or {@code INCREMENTAL} passes; both when absent.
+     */
     @GetMapping("/{id}/reconcile-runs")
     public List<com.ldapportal.dto.sync.SyncReconcileRunResponse> reconcileRuns(
-            @PathVariable UUID id, @RequestParam(defaultValue = "10") int limit) {
-        return service.reconcileRuns(id, Math.min(Math.max(limit, 1), 20));
+            @PathVariable UUID id, @RequestParam(defaultValue = "10") int limit,
+            @RequestParam(required = false) SyncReconcileHistory.RunKind kind) {
+        return service.reconcileRuns(id, Math.min(Math.max(limit, 1), 20), kind);
     }
 
     /**

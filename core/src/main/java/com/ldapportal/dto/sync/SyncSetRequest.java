@@ -33,5 +33,8 @@ public record SyncSetRequest(
         // (operational + password values); a list (incl. empty) is used verbatim.
         List<@Size(max = 255) String> excludedAttributes,
         @Min(60) Long reconcileCadenceSeconds,
-        boolean enabled) {
+        boolean enabled,
+        // Keep every changed or flagged entry's DN in each run's history, not
+        // just the samples. null => unchanged on update, off on create.
+        Boolean recordAllDns) {
 }

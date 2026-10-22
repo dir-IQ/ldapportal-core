@@ -1,9 +1,11 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!--
-  Everything recorded about one reconcile run: where and when it ran (scan vs.
-  apply time), every count, warnings, the drift the verification after it found,
-  failures grouped by reason, sample target DNs per outcome, and the set's
-  settings at the time. Shown inline under the run summary; emits `close`.
+  Everything recorded about one run: where and when it ran (scan vs. apply
+  time), every count, warnings, the drift the verification after it found,
+  failures grouped by reason, sample target DNs per outcome (or a CSV of every
+  one, when the set records all DNs), and the set's settings at the time. An
+  incremental pass has no source scan, verification or settings snapshot, so
+  those are left out. Shown inline under the run summary; emits `close`.
 -->
 <template>
   <section class="rounded border border-gray-200 bg-gray-50 px-3 py-2 space-y-3" aria-label="Reconcile run details">
@@ -38,7 +40,7 @@
 
       <p v-for="w in runWarnings(detail.run)" :key="w" class="text-amber-700">{{ w }}</p>
       <p v-if="detail.run.error" class="text-rose-700">{{ detail.run.error }}</p>
-      <p :class="drift ? 'text-gray-700' : 'text-gray-500'">
+      <p v-if="!incremental" :class="drift ? 'text-gray-700' : 'text-gray-500'">
         {{ drift ?? 'No content verification was recorded after this run.' }}
       </p>
 
@@ -52,8 +54,19 @@
         </ul>
       </div>
 
+      <div v-if="detail.run.allDnsRecorded" class="flex flex-wrap items-center gap-2">
+        <button type="button" class="btn-neutral btn-compact" :disabled="downloading" @click="downloadEntries">
+          {{ downloading ? 'Downloading…' : 'Download all entries (CSV)' }}
+        </button>
+        <span class="text-xs text-gray-500">Every entry this run changed or flagged, with its outcome.</span>
+      </div>
+
       <div v-if="sampleGroups.length">
         <h4 class="text-xs font-semibold uppercase text-gray-500 mb-1">Sample entries</h4>
+        <p v-if="!detail.run.allDnsRecorded && truncated" class="text-xs text-gray-500 mb-1">
+          Up to {{ detail.sampleLimit }} DNs per outcome are kept. To keep every DN in future runs, turn on
+          <span class="font-medium">Record every DN</span> in the sync set's settings.
+        </p>
         <details v-for="g in sampleGroups" :key="g.action" class="mb-1">
           <summary class="cursor-pointer text-gray-700">
             {{ g.label }} — {{ g.dns.length < g.total ? `first ${g.dns.length} of ${g.total}` : g.total }}
@@ -64,7 +77,7 @@
         </details>
       </div>
 
-      <div>
+      <div v-if="!incremental">
         <h4 class="text-xs font-semibold uppercase text-gray-500 mb-1">Settings at run time</h4>
         <dl v-if="settingsRows.length" class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
           <div v-for="s in settingsRows" :key="s.label">
@@ -81,40 +94,65 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { formatAbsoluteTime } from '@/composables/useRelativeTime'
-import { getReconcileRun, type SyncPreviewAction, type SyncReconcileRunDetail } from '@/api/sync'
+import { downloadBlob } from '@/composables/useApi'
+import { useNotificationStore } from '@/stores/notifications'
 import {
-  OUTCOME_LABELS, driftSummary, elapsed, errMsg, outcomeTotal, runWarnings, statusLabel, triggerLabel,
+  downloadReconcileRunEntries, getReconcileRun, type SyncPreviewAction, type SyncReconcileRunDetail,
+} from '@/api/sync'
+import {
+  OUTCOME_LABELS, driftSummary, elapsed, errMsg, isIncremental, outcomeTotal, runWarnings, statusLabel,
+  triggerLabel,
 } from './reconcileRunFormat'
 
 const props = defineProps<{ setId: string; runId: string }>()
 const emit = defineEmits<{ close: [] }>()
 
+const notif = useNotificationStore()
+
 const detail = ref<SyncReconcileRunDetail | null>(null)
 const loading = ref(false)
 const loadError = ref<string | null>(null)
+const downloading = ref(false)
+
+const incremental = computed(() => (detail.value ? isIncremental(detail.value.run) : false))
 
 const overview = computed(() => {
   const r = detail.value?.run
   if (!r) return []
+  const timing = incremental.value
+    ? [{ label: 'Took', value: elapsed(r.startedAt, r.finishedAt) }]
+    : [
+        { label: 'Source scan', value: elapsed(r.startedAt, r.plannedAt) },
+        { label: 'Applying', value: elapsed(r.plannedAt, r.finishedAt) },
+        { label: 'Total', value: elapsed(r.startedAt, r.finishedAt) },
+      ]
   return [
     { label: 'Status', value: statusLabel(r.status) },
     { label: 'Trigger', value: triggerLabel(r) },
     { label: 'Ran on', value: r.instanceName ?? '—' },
     { label: 'Finished', value: r.finishedAt ? formatAbsoluteTime(r.finishedAt) : '—' },
-    { label: 'Source scan', value: elapsed(r.startedAt, r.plannedAt) },
-    { label: 'Applying', value: elapsed(r.plannedAt, r.finishedAt) },
-    { label: 'Total', value: elapsed(r.startedAt, r.finishedAt) },
+    ...timing,
   ]
 })
 
 const counts = computed(() => {
   const r = detail.value?.run
   if (!r) return []
+  // An incremental pass recomputes queued entries, not a source scan; its
+  // managed count is only taken at the end.
+  const population = incremental.value
+    ? [
+        { label: 'Processed', n: r.processed, tone: '' },
+        { label: 'Managed after', n: r.managedAfter ?? 0, tone: '' },
+      ]
+    : [
+        { label: 'Source entries', n: r.sourceCount, tone: '' },
+        { label: 'Processed', n: r.processed, tone: '' },
+        { label: 'Managed before', n: r.managedBefore, tone: '' },
+        { label: 'Managed after', n: r.managedAfter ?? 0, tone: '' },
+      ]
   return [
-    { label: 'Source entries', n: r.sourceCount, tone: '' },
-    { label: 'Processed', n: r.processed, tone: '' },
-    { label: 'Managed before', n: r.managedBefore, tone: '' },
-    { label: 'Managed after', n: r.managedAfter ?? 0, tone: '' },
+    ...population,
     { label: 'Added', n: r.added, tone: 'text-emerald-700' },
     { label: 'Modified', n: r.modified, tone: 'text-blue-700' },
     { label: 'Moved', n: r.moved, tone: 'text-blue-700' },
@@ -140,6 +178,21 @@ const sampleGroups = computed(() => {
     .filter((a) => (d.samples[a]?.length ?? 0) > 0)
     .map((a) => ({ action: a, label: OUTCOME_LABELS[a], dns: d.samples[a] ?? [], total: outcomeTotal(d.run, a) }))
 })
+
+/** Some outcome has more entries than its samples show. */
+const truncated = computed(() => sampleGroups.value.some((g) => g.dns.length < g.total))
+
+async function downloadEntries() {
+  downloading.value = true
+  try {
+    const { data } = await downloadReconcileRunEntries(props.setId, props.runId)
+    downloadBlob(data, `sync-run-${props.runId}.csv`)
+  } catch (e) {
+    notif.error(errMsg(e, 'Could not download the run entries'))
+  } finally {
+    downloading.value = false
+  }
+}
 
 const settingsRows = computed(() => {
   const s = detail.value?.settings

@@ -30,6 +30,7 @@ public record SyncSetResponse(
         Long reconcileCadenceSeconds,
         OffsetDateTime reconcileLastRunAt,
         boolean enabled,
+        boolean recordAllDns,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         Long version,
@@ -47,7 +48,7 @@ public record SyncSetResponse(
                 s.getReferenceAttributes(), s.getSourceAnchorAttribute(), s.getDeletePolicy(),
                 s.getTransformRules(), s.getExcludedAttributes(),
                 s.getReconcileCadenceSeconds(), s.getReconcileLastRunAt(),
-                s.isEnabled(), s.getCreatedAt(), s.getUpdatedAt(), s.getVersion(),
+                s.isEnabled(), s.isRecordAllDns(), s.getCreatedAt(), s.getUpdatedAt(), s.getVersion(),
                 stateCounts == null ? Map.of() : stateCounts);
     }
 }

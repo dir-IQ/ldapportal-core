@@ -229,6 +229,12 @@
           </label>
           <HelpTip text="New sets start disabled. When off, this set is not reconciled or applied, and existing target entries are left untouched." />
         </div>
+        <div class="flex items-center gap-1">
+          <label class="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" v-model="setForm.recordAllDns" class="rounded" /> Record every DN
+          </label>
+          <HelpTip text="Keep every changed or flagged entry's DN in each run's history, downloadable as CSV from the run's details. When off, only the first 25 DNs per outcome are kept. A large run stores one row per entry." />
+        </div>
 
         <!-- Dry-run preview (existing sets only — needs a persisted set to plan against). -->
         <div v-if="editingSet" class="rounded-lg border border-gray-200 p-3 space-y-2">
@@ -535,6 +541,7 @@ interface SetForm {
   // null ⇒ use the engine defaults (operational + password values).
   excludedAttributes: string[] | null
   enabled: boolean
+  recordAllDns: boolean
 }
 const showSetModal = ref(false)
 const editingSet = ref<SyncSet | null>(null)
@@ -548,6 +555,7 @@ function blankSet(): SetForm {
     // Safe defaults: quarantine deletes for review, and start disabled so the
     // operator validates (and can Preview the impact) before turning it on.
     deletePolicy: 'REVIEW', objectScope: null, transformRules: [], excludedAttributes: null, enabled: false,
+    recordAllDns: false,
   }
 }
 function openSetModal(s?: SyncSet) {
@@ -562,6 +570,7 @@ function openSetModal(s?: SyncSet) {
         transformRules: (s.transformRules ?? []).map((r) => ({ ...r })),
         excludedAttributes: s.excludedAttributes ? [...s.excludedAttributes] : null,
         enabled: s.enabled,
+        recordAllDns: s.recordAllDns,
       }
     : blankSet()
   previewResult.value = null
@@ -599,6 +608,7 @@ function toPayload(f: SetForm): SyncSetPayload {
     excludedAttributes: f.excludedAttributes,
     reconcileCadenceSeconds: f.reconcileCadenceSeconds.trim() ? Number(f.reconcileCadenceSeconds) : null,
     enabled: f.enabled,
+    recordAllDns: f.recordAllDns,
   }
 }
 // ── Dry-run preview + enable confirmation ──
