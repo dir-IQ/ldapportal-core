@@ -5,7 +5,8 @@
 # see nginx.conf.template for the per-platform values.
 #
 # Build context is frontend/:
-#   docker build -f frontend/Dockerfile -t ldapportal-frontend:dev frontend/
+#   docker build -f frontend/Dockerfile -t ldapportal-frontend:dev \
+#     --build-arg BUILD_SHA=$(git rev-parse --short=7 HEAD) frontend/
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -16,7 +17,12 @@ COPY . .
 # (e.g. a WebSEAL junction) exposes the app under a URL prefix. Baked into
 # the bundle, so build one image per prefix. See docs/deployment-webseal-dual-frontend.md §3.5.
 ARG VITE_BASE_PATH=/
-RUN VITE_BASE_PATH="$VITE_BASE_PATH" npm run build
+# Build identity, baked into the bundle for the sidebar build stamp: the
+# image tag (e.g. 1.4.2) and the commit. The build context has no .git, so
+# without BUILD_SHA the bundle's SHA reads "dev". Both may be left empty.
+ARG IMAGE_VERSION=""
+ARG BUILD_SHA=""
+RUN VITE_BASE_PATH="$VITE_BASE_PATH" IMAGE_VERSION="$IMAGE_VERSION" BUILD_SHA="$BUILD_SHA" npm run build
 
 FROM nginx:alpine
 # Pull every Alpine package patch that landed after the upstream nginx

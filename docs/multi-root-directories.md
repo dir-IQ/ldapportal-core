@@ -72,11 +72,13 @@ authorized OUs still shows only those OUs.
   single-root directories too: before this change a duplicate login value
   silently signed in as the first match. Make the login attribute unique, or
   use a more specific one.
-- **Directory sync sets** on a multi-root source or target must name their
-  **Source scope base DN** and **Target base DN** explicitly; leaving them
-  blank (which means "the directory's base DN" on a single-root connection)
-  is rejected on save, because it would silently pick just the first root.
-  Use one sync set per root you want to mirror.
+- **Directory sync sets** on a multi-root **source** must name their
+  **Source scope base DN**: leaving it blank (which means "the directory's
+  base DN" on a single-root connection) is rejected on save, because it would
+  silently pick just the first root. Use one sync set per root you want to
+  mirror. On a multi-root **target**, a blank **Target base DN** means the
+  entries keep their source DNs; that's accepted when the source scope base DN
+  lies under one of the target's roots, and rejected otherwise.
 - **Adding a root to a directory that already has sync sets** doesn't change
   those sets: one with a blank source scope (or, when the directory is a sync
   target, a blank target base) keeps using the primary base DN only. The save

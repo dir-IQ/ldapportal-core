@@ -49,7 +49,8 @@ export function runWarnings(r: SyncReconcileRun): string[] {
     w.push(`${r.skipped} entr${r.skipped === 1 ? 'y was' : 'ies were'} skipped: the set or link was `
       + 'disabled while the run was in progress.')
   }
-  if (r.status !== 'RUNNING' && !r.completeScan) {
+  // An incremental pass applies queued changes; it never scans the whole source.
+  if (r.status !== 'RUNNING' && !r.completeScan && !isIncremental(r)) {
     w.push('The source scan did not complete, so no deletions were made.')
   }
   if (r.guardTripped) {
@@ -69,8 +70,14 @@ export function statusBadge(s: SyncReconcileRun['status']): string {
   return { RUNNING: 'badge-blue', COMPLETE: 'badge-green', FAILED: 'badge-red' }[s]
 }
 
+/** A recompute-worker pass between reconciles, not a reconcile. */
+export function isIncremental(r: SyncReconcileRun): boolean {
+  return r.trigger === 'INCREMENTAL'
+}
+
 export function triggerLabel(r: SyncReconcileRun): string {
   if (r.trigger === 'SCHEDULED') return 'Scheduled'
+  if (r.trigger === 'INCREMENTAL') return 'Incremental'
   return r.requestedBy ? `Manual (${r.requestedBy})` : 'Manual'
 }
 

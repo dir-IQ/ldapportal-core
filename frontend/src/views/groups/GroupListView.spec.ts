@@ -37,7 +37,10 @@ vi.mock('@/api/csvTemplates', () => ({ exportGroupCsv: vi.fn() }))
 vi.mock('@/api/isvaGroup', () => ({
   getIsvaGroupRegistrations: vi.fn(),
   importIsvaGroup: vi.fn(),
+  removeIsvaGroup: vi.fn(),
 }))
+const confirmApi = vi.hoisted(() => ({ confirm: vi.fn() }))
+vi.mock('@/composables/useConfirm', () => ({ useConfirm: () => confirmApi.confirm }))
 vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ data: [] }) }))
 
 // The view registers an unsaved-changes guard (and reads the sidebar
@@ -46,7 +49,7 @@ beforeEach(() => setActivePinia(createPinia()))
 
 import GroupListView from './GroupListView.vue'
 import { createGroup, updateGroup, addGroupMembersBulk, removeGroupMembersBulk, searchGroups } from '@/api/groups'
-import { getIsvaGroupRegistrations, importIsvaGroup } from '@/api/isvaGroup'
+import { getIsvaGroupRegistrations, importIsvaGroup, removeIsvaGroup } from '@/api/isvaGroup'
 
 const stubs = {
   LdapFilterBuilder: true, RecentSearches: true, AppModal: true, FormField: true,
@@ -57,7 +60,7 @@ const stubs = {
   },
   ActionMenu: {
     props: ['items'],
-    template: `<div><slot name="primary" /><button v-for="it in items.filter(i => !i.hidden)"
+    template: `<div><span data-slot="primary"><slot name="primary" /></span><button v-for="it in items.filter(i => !i.hidden)"
                  :key="it.label" :data-action="it.label">{{ it.label }}</button></div>`,
   },
 }
@@ -79,6 +82,28 @@ describe('GroupListView feature gating', () => {
     expect(t).toContain('Edit')
     expect(t).toContain('Members')
     expect(t).toContain('Delete')
+  })
+
+  it('shows only Members as a button, with Edit and Delete in the ... menu', async () => {
+    // Real ActionMenu: it keeps up to inlineThreshold buttons inline (3 by
+    // default), so a stub would hide extra actions spilling out of the menu.
+    state.features = ['group.read', 'group.create_delete', 'group.edit', 'group.manage_members']
+    const { ActionMenu: _stubbed, ...withRealMenu } = stubs
+    const wrapper = mount(GroupListView, { global: { stubs: withRealMenu }, attachTo: document.body })
+    await flushPromises()
+
+    const rowButtons = wrapper.findAll('button').filter(b => b.attributes('aria-label') !== 'Row actions')
+    const labels = rowButtons.map(b => b.text())
+    expect(labels).toContain('Members')
+    expect(labels).not.toContain('Edit')
+    expect(labels).not.toContain('Delete')
+
+    await wrapper.find('button[aria-label="Row actions"]').trigger('click')
+    await flushPromises()
+    const menu = document.body.textContent ?? ''
+    expect(menu).toContain('Edit')
+    expect(menu).toContain('Delete')
+    wrapper.unmount()
   })
 
   it('hides write actions for a read-only feature set', async () => {
@@ -113,7 +138,7 @@ describe('GroupListView members drawer', () => {
     AppModal: { props: ['modelValue'], template: '<div v-if="modelValue" data-testid="modal"><slot /></div>' },
     ActionMenu: {
       props: ['items'],
-      template: `<div><button v-for="it in items.filter(i => !i.hidden)" :key="it.label"
+      template: `<div><slot name="primary" /><button v-for="it in items.filter(i => !i.hidden)" :key="it.label"
                    :data-action="it.label" @click="it.onClick()">{{ it.label }}</button></div>`,
     },
   }
@@ -122,7 +147,8 @@ describe('GroupListView members drawer', () => {
     state.features = features
     const wrapper = mount(GroupListView, { global: { stubs: drawerStubs } })
     await flushPromises()
-    await wrapper.find('[data-action="Members"]').trigger('click')
+    const members = wrapper.findAll('button').find(b => b.text() === 'Members')
+    await members!.trigger('click')
     await flushPromises()
     return wrapper
   }
@@ -365,7 +391,7 @@ describe('GroupListView import into IVIA', () => {
     const wrapper = await mountIvia(['CN=staff, OU=groups, DC=x'])
 
     expect(getIsvaGroupRegistrations).toHaveBeenCalledWith('d1', [STAFF, OPS])
-    expect(row(wrapper, STAFF).text()).toContain('IVIA')
+    expect(row(wrapper, STAFF).find('.badge-blue').text()).toBe('IVIA')
     expect(row(wrapper, STAFF).find('[data-action="Import into IVIA"]').exists()).toBe(false)
     expect(row(wrapper, OPS).find('[data-action="Import into IVIA"]').exists()).toBe(true)
   })
@@ -405,7 +431,7 @@ describe('GroupListView import into IVIA', () => {
     await flushPromises()
 
     expect(importIsvaGroup).toHaveBeenCalledWith('d1', OPS, 'Operations')
-    expect(row(wrapper, OPS).text()).toContain('IVIA')
+    expect(row(wrapper, OPS).find('.badge-blue').text()).toBe('IVIA')
     expect(row(wrapper, OPS).find('[data-action="Import into IVIA"]').exists()).toBe(false)
   })
 
@@ -419,5 +445,39 @@ describe('GroupListView import into IVIA', () => {
     expect(importIsvaGroup).toHaveBeenCalledWith('d1', OPS, 'ops')
     expect(row(wrapper, OPS).find('[data-action="Import into IVIA"]').exists()).toBe(true)
   })
-})
 
+  it('offers Remove from IVIA only on imported groups', async () => {
+    const wrapper = await mountIvia([STAFF])
+
+    expect(row(wrapper, STAFF).find('[data-action="Remove from IVIA"]').exists()).toBe(true)
+    expect(row(wrapper, OPS).find('[data-action="Remove from IVIA"]').exists()).toBe(false)
+  })
+
+  it('removes after confirming, then offers the import again', async () => {
+    confirmApi.confirm.mockResolvedValue(true)
+    vi.mocked(removeIsvaGroup).mockResolvedValue({ data: { registered: false } } as never)
+    const wrapper = await mountIvia([STAFF])
+
+    await row(wrapper, STAFF).find('[data-action="Remove from IVIA"]').trigger('click')
+    await flushPromises()
+
+    const opts = confirmApi.confirm.mock.calls[0][0]
+    expect(opts).toMatchObject({ confirmLabel: 'Remove from IVIA', danger: true })
+    expect(opts.message).toContain('Remove "staff" from IBM Verify Identity Access?')
+    expect(opts.message).toContain('The LDAP group and its members are not changed')
+    expect(removeIsvaGroup).toHaveBeenCalledWith('d1', STAFF)
+    expect(row(wrapper, STAFF).find('.badge-blue').exists()).toBe(false)
+    expect(row(wrapper, STAFF).find('[data-action="Import into IVIA"]').exists()).toBe(true)
+  })
+
+  it('does nothing when the removal is cancelled', async () => {
+    confirmApi.confirm.mockResolvedValue(false)
+    const wrapper = await mountIvia([STAFF])
+
+    await row(wrapper, STAFF).find('[data-action="Remove from IVIA"]').trigger('click')
+    await flushPromises()
+
+    expect(removeIsvaGroup).not.toHaveBeenCalled()
+    expect(row(wrapper, STAFF).find('[data-action="Remove from IVIA"]').exists()).toBe(true)
+  })
+})

@@ -238,6 +238,7 @@ publish-backend:
   script:
     - IMAGE="$ECR_REGISTRY/ldapportal-community-plus-isva"
     - docker build -f docker/community-plus-isva/Dockerfile
+        --build-arg "IMAGE_VERSION=$CI_COMMIT_TAG"
         -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" .
     - docker push "$IMAGE:$CI_COMMIT_TAG"
     - docker push "$IMAGE:latest"
@@ -251,6 +252,8 @@ publish-frontend:
   script:
     - IMAGE="$ECR_REGISTRY/ldapportal-frontend"
     - docker build -f frontend/Dockerfile
+        --build-arg "IMAGE_VERSION=$CI_COMMIT_TAG"
+        --build-arg "BUILD_SHA=$CI_COMMIT_SHORT_SHA"
         -t "$IMAGE:$CI_COMMIT_TAG" -t "$IMAGE:latest" frontend
     - docker push "$IMAGE:$CI_COMMIT_TAG"
     - docker push "$IMAGE:latest"
@@ -268,6 +271,14 @@ package-backend:
     matrix:
       - EDITION: [community-plus-isva]
 ```
+
+> **Version shown in the app:** the sidebar build stamp (`FE <tag> · BE <tag>`)
+> reads each image's tag from the `IMAGE_VERSION` build arg above, baked in at
+> build time. Kubernetes doesn't tell a container which tag it was pulled by,
+> so the overlay's `newTag` alone doesn't reach the stamp. An image built
+> without the arg shows its commit SHA instead (the frontend reads `dev` unless
+> `BUILD_SHA` is also passed). Retagging an existing image doesn't change what
+> it reports.
 
 > **Build-order reminder:** the backend Dockerfile **`COPY`s a host-built JAR**
 > from `distribution/community-plus-isva/target/`. The `package` stage must run

@@ -756,6 +756,43 @@ class IsvaProvisioningInterceptorTest {
 
     // ── helpers ────────────────────────────────────────────────────
 
+    // ── group delete ────────────────────────────────────────────────
+
+    @Test
+    void groupDelete_noConfigRow_isBaselineSingleDel() {
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.empty());
+
+        DeletePlan plan = interceptor.planGroupDelete(dir, "cn=eng,dc=x", ProvisioningContext.empty());
+
+        assertThat(plan.steps()).containsExactly(DeleteStep.of("cn=eng,dc=x"));
+        org.mockito.Mockito.verifyNoInteractions(groupShapeCheck);
+    }
+
+    @Test
+    void groupDelete_registeredGroup_alsoDeletesTheRegistrationBestEffort() {
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(linkedConfig()));
+        when(groupShapeCheck.findRegistrationDn(eq(dir), any(), eq("cn=eng,dc=x")))
+                .thenReturn(Optional.of("cn=eng,cn=Groups,secAuthority=Default"));
+
+        DeletePlan plan = interceptor.planGroupDelete(dir, "cn=eng,dc=x", ProvisioningContext.empty());
+
+        // Group first (ABORT), so a failed group DEL leaves the registration alone.
+        assertThat(plan.steps()).containsExactly(
+                DeleteStep.of("cn=eng,dc=x"),
+                new DeleteStep("cn=eng,cn=Groups,secAuthority=Default", StepFailurePolicy.CONTINUE));
+    }
+
+    @Test
+    void groupDelete_unregisteredGroup_isBaselineSingleDel() {
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(inlineConfig()));
+        when(groupShapeCheck.findRegistrationDn(eq(dir), any(), eq("cn=eng,dc=x")))
+                .thenReturn(Optional.empty());
+
+        DeletePlan plan = interceptor.planGroupDelete(dir, "cn=eng,dc=x", ProvisioningContext.empty());
+
+        assertThat(plan.steps()).containsExactly(DeleteStep.of("cn=eng,dc=x"));
+    }
+
     private VendorIntegrationIsvaConfig inlineConfig() {
         VendorIntegrationIsvaConfig cfg = new VendorIntegrationIsvaConfig();
         cfg.setDirectoryConnectionId(dir.getId());

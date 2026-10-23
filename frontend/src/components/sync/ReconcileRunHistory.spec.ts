@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import ReconcileRunHistory from './ReconcileRunHistory.vue'
 import type { SyncReconcileRun } from '@/api/sync'
 
@@ -20,24 +21,28 @@ function run(over: Partial<SyncReconcileRun> = {}): SyncReconcileRun {
     forgotten: 0, unchanged: 872, failed: 0, faulted: 0, skipped: 0,
     guardTripped: false, guardReason: null, error: null,
     instanceName: 'app-2', plannedAt: '2026-10-20T10:00:40Z',
-    verifiedAt: null, verifyMissing: null, verifyOrphan: null, verifyMismatch: null,
+    verifiedAt: null, verifyMissing: null, verifyOrphan: null, verifyMismatch: null, allDnsRecorded: false,
     ...over,
   }
 }
 
 const listRuns = syncApi.listReconcileRuns as unknown as ReturnType<typeof vi.fn>
-const resolveRuns = (runs: SyncReconcileRun[]) => listRuns.mockResolvedValue({ data: runs })
+/** Reconciles for the summary and history; incremental passes for their own list. */
+const resolveRuns = (runs: SyncReconcileRun[], incremental: SyncReconcileRun[] = []) =>
+  listRuns.mockImplementation((_set: string, _limit: number, kind?: string) =>
+    Promise.resolve({ data: kind === 'INCREMENTAL' ? incremental : runs }))
 
 describe('ReconcileRunHistory', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    setActivePinia(createPinia())
   })
 
   it('summarises the latest run: trigger, duration, counts, managed before → after', async () => {
     resolveRuns([run()])
     const wrapper = mount(ReconcileRunHistory, { props: { setId: 'set-1' } })
     await flushPromises()
-    expect(syncApi.listReconcileRuns).toHaveBeenCalledWith('set-1')
+    expect(syncApi.listReconcileRuns).toHaveBeenCalledWith('set-1', 10, 'RECONCILE')
     const txt = wrapper.text()
     expect(txt).toContain('Completed')
     expect(txt).toContain('Manual (alice)')
@@ -96,7 +101,7 @@ describe('ReconcileRunHistory', () => {
     await flushPromises()
     await wrapper.setProps({ refreshKey: 1 })
     await flushPromises()
-    expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(2)
+    expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(4) // reconciles + incremental, twice
   })
 
   it('shows the load error inline', async () => {
@@ -133,5 +138,29 @@ describe('ReconcileRunHistory', () => {
 
     await wrapper.find('[aria-label="Close run details"]').trigger('click')
     expect(wrapper.find('[aria-label="Reconcile run details"]').exists()).toBe(false)
+  })
+
+  it('lists incremental passes separately, keeping the summary on the last reconcile', async () => {
+    const pass = run({
+      id: 'inc-1', trigger: 'INCREMENTAL', requestedBy: null, completeScan: false,
+      added: 0, modified: 2, noChange: 0, unchanged: 0, managedBefore: 4741, managedAfter: 4741,
+    })
+    resolveRuns([run()], [pass])
+    const wrapper = mount(ReconcileRunHistory, { props: { setId: 'set-1' } })
+    await flushPromises()
+    expect(syncApi.listReconcileRuns).toHaveBeenCalledWith('set-1', 20, 'INCREMENTAL')
+    expect(wrapper.text()).toContain('Manual (alice)') // the summary is the reconcile
+
+    await wrapper.findAll('button').find((b) => b.text().includes('Incremental changes (1)'))!.trigger('click')
+    expect(wrapper.text()).toContain('Changes applied between reconciles')
+    expect(wrapper.text()).toContain('~2')
+  })
+
+  it('shows incremental passes even before the first reconcile', async () => {
+    resolveRuns([], [run({ id: 'inc-1', trigger: 'INCREMENTAL', requestedBy: null, completeScan: false })])
+    const wrapper = mount(ReconcileRunHistory, { props: { setId: 'set-1' } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('No reconcile has been recorded')
+    expect(wrapper.findAll('button').some((b) => b.text().includes('Incremental changes (1)'))).toBe(true)
   })
 })

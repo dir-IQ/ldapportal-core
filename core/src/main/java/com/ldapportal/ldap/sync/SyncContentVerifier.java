@@ -81,6 +81,7 @@ public class SyncContentVerifier {
     private final IdentityStrategyRegistry identityStrategies;
     private final LdapConnectionFactory connectionFactory;
     private final MembershipFunction membershipFunction;
+    private final SyncTargetSchemas targetSchemas;
 
     /** Verify the live source/target contents of a sync set and report mismatches. */
     public SyncVerifyResult verify(UUID syncSetId) {
@@ -121,7 +122,8 @@ public class SyncContentVerifier {
         }
 
         Set<String> excluded = SyncExcludedAttributes.effectiveFor(ctx.set);
-        return compare(expected, actual, excluded, sourceComplete, targetComplete);
+        return compare(expected, actual, excluded, sourceComplete, targetComplete,
+                targetSchemas.forDirectory(ctx.target), SyncReferenceAttributes.forSet(ctx.set));
     }
 
     /**
@@ -130,6 +132,16 @@ public class SyncContentVerifier {
      */
     static SyncVerifyResult compare(Map<String, Expected> expected, Map<String, Entry> actual,
                                     Set<String> excluded, boolean sourceComplete, boolean targetComplete) {
+        return compare(expected, actual, excluded, sourceComplete, targetComplete, null, List.of());
+    }
+
+    /**
+     * As above, comparing DN-valued attributes by canonical DN (see
+     * {@link TargetEntryDiffer}) — so a reference's form alone isn't drift.
+     */
+    static SyncVerifyResult compare(Map<String, Expected> expected, Map<String, Entry> actual,
+                                    Set<String> excluded, boolean sourceComplete, boolean targetComplete,
+                                    com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs) {
         int inSync = 0;
         List<String> missing = new ArrayList<>();
         List<String> mismatches = new ArrayList<>();
@@ -139,7 +151,8 @@ public class SyncContentVerifier {
                 missing.add(en.getValue().displayDn());
                 continue;
             }
-            List<Modification> mods = TargetEntryDiffer.diff(target, en.getValue().desired(), excluded);
+            List<Modification> mods = TargetEntryDiffer.diff(target, en.getValue().desired(), excluded,
+                    schema, dnAttrs);
             if (mods.isEmpty()) {
                 inSync++;
             } else {
@@ -196,11 +209,7 @@ public class SyncContentVerifier {
      * target directory base.
      */
     private static String targetBase(Context ctx) {
-        if (ctx.set.getTargetBaseDn() != null) {
-            return ctx.set.getTargetBaseDn();
-        }
-        return ctx.set.getObjectScopeBaseDn() != null
-                ? ctx.set.getObjectScopeBaseDn() : ctx.target.getBaseDn();
+        return SyncPlacement.effectiveTargetBase(ctx.set, ctx.target);
     }
 
     /** The set's applicability filter, or a presence filter when none is configured. */

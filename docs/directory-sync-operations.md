@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history, brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes; 2026-10-21).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the opt-in full DN list, audited sync writes, brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes; 2026-10-22).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -138,12 +138,13 @@ issued it. The base DN is stored trimmed.
 | **Source scope base DN** | Base DN under the source to enumerate / match against. Blank → the directory's own base DN (required when the directory has [several roots](multi-root-directories.md)). |
 | **Source scope** | LDAP scope under the base: `SUB` (default), `ONE`, `BASE`. |
 | **Applicability filter** | RFC 4515 filter selecting which source entries belong, e.g. `(&(objectClass=inetOrgPerson)(employeeType=staff))`. Validated for syntax at save. |
-| **Target base DN** | Base DN under the target where matched entries are placed. Required when the target directory has [several roots](multi-root-directories.md). |
+| **Target base DN** | Base DN under the target where matched entries are placed; the part of each DN below the source scope base is kept. Blank → entries keep their **source DNs** (the source scope base, or the source directory's base when that's blank too). On a target with [several roots](multi-root-directories.md), blank is accepted only when that base lies under one of the target's roots. |
 | **Reference attributes** (csv) | DN-valued attributes whose values are rewritten to target DNs and whose referrers are re-driven on change, e.g. `member,uniqueMember,manager`. Blank → `member,uniqueMember,manager,owner,secDN`. Values are resolved through the membership index of **every** link (the referrer's own link first), so a reference into a subtree mirrored by another link — an IVIA `secDN` under `c=admin` pointing at a `c=us` entry when OUD exposes each suffix as its own directory connection — still remaps. A referent no link has synced is dropped until it lands; one that different links mirror to *different* target DNs is ambiguous and dropped (logged). |
 | **Source anchor attribute** | Target attribute that stores the source identity, used to **adopt** pre-existing target entries (brownfield). Ambiguity → REVIEW. See §6. |
 | **Delete policy** | `DELETE` (remove target when an entry leaves membership) or `REVIEW` (quarantine for an operator instead of auto-deleting). |
 | **Reconcile cadence (seconds)** | How often this set is fully reconciled. Blank → global default (`3600`). |
 | **Attribute mapping** | Optional transform rules: `sourceAttr` → `targetAttr` (blank = same name), `valueTemplate` (blank = passthrough; `${value}` substitutes). |
+| **Record every DN** (`recordAllDns`) | Keep every changed or flagged entry's DN in each run's history (downloadable as CSV), not just the 25 samples per outcome. Off by default: a large run then stores one row per entry. Applies to runs that start after it's turned on. See §5, *Run history*. |
 
 Validation (`SyncConfigService.validateSet`): base DNs must parse; the filter
 must compile; transform rules require a valid LDAP `sourceAttr`, no duplicate
@@ -306,14 +307,25 @@ same on every replica — but audit sources don't read cookie mode today.)
    converges as a MODDN**, not a destructive delete+recreate.
 2. **Evaluate membership** via `MembershipFunction`: applicability filter →
    placement (DN rewrite) → projected attributes (transform rules + source
-   anchor + DN-reference remapping).
+   anchor + DN-reference remapping). Placement replaces the source scope base
+   with the target base and keeps the RDNs below it **as the source writes
+   them** (case, escaping), so a target entry — and every `member` / `secDN`
+   reference rewritten to it — reads exactly as on the source.
 3. **Diff** against the `sync_membership` row.
 4. **Hash gate** — if the projection's content hash and target DN are unchanged
    and the row is `APPLIED`, do nothing (no target read/write). This keeps
    reads-per-transition near 1 at rest and **terminates closure cascades**.
 5. **Apply** the idempotent operation (add / modify / moddn / delete) under
    `withConnectionUnreplicated` (engine writes are *uncaptured*, so they don't
-   loop back into the queue).
+   loop back into the queue). A MODIFY is computed by reading the target and
+   comparing values: DN-valued attributes (the set's reference attributes, and
+   any the target schema gives DN syntax) by **canonical DN**, so a reference
+   that differs only in form — `cn=A, o=B` vs `cn=a,o=b` — is not a change;
+   every other value **exactly**, so an edit that only changes case (`john` →
+   `John`) still replicates. Attribute aliases are resolved through the target
+   schema (read once per directory, cached 10 minutes). A change of DN form
+   alone is not a move either. The same comparison drives the dry-run preview
+   and **Verify contents**.
 6. **Commit** the index row: `APPLIED`, `FAILED` (+ reason), or `REVIEW`.
 7. **Closure fan-out** — if the target changed, re-enqueue referrers found by a
    source reverse-query over `referenceAttributes`, hash-terminated. The query
@@ -353,6 +365,18 @@ server that stopped and reads as `FAILED`. The newest
 deleting the set removes them. A disabled or unavailable set's reconcile is a
 no-op and is not recorded.
 
+**Incremental passes:** the changes applied *between* reconciles — each
+recompute-worker pass over the queue (changelog records, in-app edits, closure
+fan-out) — are recorded too, one `INCREMENTAL` run per set per pass, with the
+same counts, samples, failures and instance. A pass is kept only when it did
+something: wrote to the target, held an entry for review, forgot one, or
+failed or errored on one; a pass that found everything already applied leaves
+no row. They're pruned separately from reconciles
+(`ldapportal.sync.reconcile.incremental-history-per-set`, default 50 per set),
+so a busy changelog can't push the reconcile runs out. An incremental pass has
+no source scan, delete guard, settings snapshot or verification; its managed
+count is taken at the end.
+
 Each run also keeps: the **instance** (host name; `HOSTNAME`, i.e. the pod
 name under Kubernetes) that ran it; **when the plan was ready**, so scan time
 (start → plan) and apply time (plan → finish) are separate; the set's
@@ -362,6 +386,27 @@ example); up to 25 **sample target DNs per outcome** (DNs only, no attribute
 values); and the **drift** found by the content verification that runs right
 after a scheduled or manual reconcile (missing / orphaned / content drift),
 when that verification's scans completed.
+
+**Every DN (opt-in):** with the set's **Record every DN** on, a run also keeps
+every entry it changed or flagged — every outcome but *unchanged*, in
+processing order, with the reason for a failure or review — in
+`sync_reconcile_run_entry`, downloadable as CSV (`outcome,dn,reason`) from the
+run's details. A `FAULT` row carries the source DN or identity whose recompute
+threw, since it never reached a target DN. Off by default because a large run
+stores one row per entry; runs recorded while it was off keep only the
+samples. The rows go with their run (pruning and set deletion cascade).
+
+**Audit:** every target write a run makes — reconcile or incremental — is an
+audit record on the **target** directory: `entry.create`, `entry.update`,
+`entry.move` or `entry.delete`, with no actor (the engine writes with its own
+bind account, whoever started the run) and `detail.source = directory-sync`,
+`detail.operation = reconcile | incremental`, `detail.trigger`,
+`detail.syncSetId` and `detail.runId`. The run's id is also the records'
+**correlation id**, so the audit log can pull up one run's writes together.
+Outcomes that wrote nothing (already matched, held for review, forgotten,
+failed) aren't audited; the run history counts them. A held delete an operator
+approves is audited separately with the operator as actor (§6). An initial
+reconcile of a large set writes one audit record per entry it adds.
 
 **Target ownership:** a target DN has exactly one owning index row per set
 (`sync_membership` is unique on `(sync_set_id, target_dn)`). When an identity
@@ -443,10 +488,12 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   managed rows before → after, and warnings for an incomplete scan, a tripped
   delete guard, faulted entries, or entries skipped because the set was
   disabled mid-run, plus the instance that ran it, scan vs. apply time, and the
-  drift found right after it. **Recent runs** lists up to the last 10.
+  drift found right after it. **Recent runs** lists up to the last 10
+  reconciles; **Incremental changes** lists the last 20 passes between them.
   **Details** (or a click on a run) shows everything recorded about that run:
   every count, failures grouped by reason, sample DNs per outcome, and the
-  settings it ran with. Refreshes after **Reconcile now**.
+  settings it ran with — plus **Download all entries (CSV)** when the run
+  recorded every DN. Refreshes after **Reconcile now**.
 - **Untracked search** — searching a DN/identity that isn't tracked offers
   `Recompute "<term>"` to pull it in on demand.
 - **Verify contents** — a belts-and-suspenders check that re-reads *both*
@@ -539,8 +586,9 @@ GET    /api/v1/superadmin/sync/sets/{id}/preview/run      # latest run: status (
 GET    /api/v1/superadmin/sync/sets/{id}/preview/entries?page=&size=&changesOnly=   # page of the completed run (404 if none); size 1..200 (default 50), changesOnly default true; a page past the end returns the last page; manage permission
 GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source↔target compare (no writes)
 POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}; recorded as a MANUAL run
-GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs?limit=   # recent reconcile runs, newest first; limit 1..20 (default 10)
-GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}  # one run in full: summary, settings, failureReasons, samples (404 if not this set's run)
+GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs?limit=&kind=   # recent runs, newest first; limit 1..20 (default 10); kind RECONCILE | INCREMENTAL (default both)
+GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}  # one run in full: summary, settings, failureReasons, samples, allDnsRecorded (404 if not this set's run)
+GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}/entries.csv   # every entry the run changed or flagged: outcome,dn,reason (400 if the run kept only samples)
 POST   /api/v1/superadmin/sync/sets/{id}/recompute        # body {"key": "<dn-or-identity>"} → 202
 POST   /api/v1/superadmin/sync/sets/{id}/recheck-target   # forget applied content hashes + request a reconcile → {"entries", "reconcileQueued"}; manage permission
 DELETE /api/v1/superadmin/sync/sets/{id}/memberships/{identity}   # dismiss ("stop tracking")
@@ -594,6 +642,8 @@ e.g. `ldapportal.sync.worker.fixed-delay-ms` → `LDAPPORTAL_SYNC_WORKER_FIXED_D
 | `ldapportal.sync.reconcile.initial-delay-ms` | `120000` | Delay before first reconcile sweep. |
 | `ldapportal.sync.reconcile.tick-ms` | `60000` | Reconcile sweep tick (checks which sets are *due*). |
 | `ldapportal.sync.reconcile.default-cadence-seconds` | `3600` | Default per-set reconcile cadence (overridden per set). |
+| `ldapportal.sync.reconcile.history-per-set` | `20` | Reconcile runs kept per set. |
+| `ldapportal.sync.reconcile.incremental-history-per-set` | `50` | Incremental passes kept per set (pruned separately from reconciles). |
 | `ldapportal.sync.changelog.fixed-delay-ms` | `15000` | Changelog poll interval. |
 | (constant) changelog page | `500` | Records per changelog search. |
 | (constant) pages per pass | `20` (or `5s`, whichever first) | Per link per poll; more pending → `LAGGING`. The poller shares the app's single scheduler thread, so this also bounds how long a busy link delays other scheduled jobs. |
@@ -633,6 +683,8 @@ leader election needed.
 | `sync_set` | selection + projection config per set; reconcile cadence, last run, and the reconcile request counters (`reconcile_request_seq` / `reconcile_attempted_seq` / `reconcile_handled_seq`). |
 | `sync_membership` | one row per identity per set: source/target DN, content hash, state, fail reason, scan epoch, version. (Renamed from `membership` in `V7`.) |
 | `recompute_request` | coalescing trigger queue, PK `(sync_set_id, request_key)`. |
+| `sync_reconcile_run` | run history: reconciles and incremental passes, with counts, samples and failures. |
+| `sync_reconcile_run_entry` | every DN a run changed or flagged, PK `(run_id, seq)`; written only while the set records every DN. |
 
 Deleting a set cascades its `sync_membership` + `recompute_request` rows (FK
 `ON DELETE CASCADE`). A link can't be deleted until its sets are deleted.
@@ -645,6 +697,12 @@ Deleting a set cascades its `sync_membership` + `recompute_request` rows (FK
 each) — it does **not** grow per change like an event log. `recompute_request`
 is self-draining and PK-deduped; a persistent backlog there means the worker is
 behind (raise throughput or lower batch latency).
+
+`sync_reconcile_run_entry` grows with **Record every DN**: one row per changed
+or flagged entry per kept run, so roughly *entries changed per run × runs
+kept*. A first reconcile of a large set is the big one; later runs record only
+what changed. Turn the flag off, or lower the history knobs, to cap it. The
+audit log grows by one record per target write, flag or not.
 
 ---
 

@@ -77,6 +77,7 @@ public class RecomputeEngine {
     private final LdapConnectionFactory connectionFactory;
     private final ClosureResolver closureResolver;
     private final MembershipReferenceResolvers referenceResolvers;
+    private final SyncTargetSchemas targetSchemas;
 
     /** The real side effects: target directory writes + index commits. */
     private final Effects live = new LiveEffects();
@@ -388,7 +389,7 @@ public class RecomputeEngine {
 
         // Hash gate: nothing changed in the projection → no target read/write.
         if (current != null && current.getState() == MembershipState.APPLIED
-                && targetDn.equalsIgnoreCase(current.getTargetDn())
+                && SyncDnUtil.sameDn(targetDn, current.getTargetDn())
                 && java.util.Arrays.equals(hash, current.getContentHash())) {
             if (!sourceDn.equalsIgnoreCase(current.getSourceDn())) {
                 fx.refreshSourceDn(current, sourceDn);
@@ -403,8 +404,10 @@ public class RecomputeEngine {
         // in the index remembering it (the row would only ever name the new DN).
         // A rename that "fails" because the old entry is already gone is fine —
         // the ADD below recreates it, exactly as a crash-recovery replay would.
+        // Same DN in another form (case, spacing — e.g. a row written before
+        // placement kept the source's RDN case) is not a move.
         if (current != null && current.getTargetDn() != null
-                && !targetDn.equalsIgnoreCase(current.getTargetDn())) {
+                && !SyncDnUtil.sameDn(targetDn, current.getTargetDn())) {
             String oldTargetDn = current.getTargetDn();
             ApplyOutcome mv = fx.modifyDn(target, oldTargetDn, targetDn);
             if (!LdapResultInterpreter.success(mv.code()) && readTarget(target, oldTargetDn) != null) {
@@ -415,6 +418,10 @@ public class RecomputeEngine {
         }
 
         java.util.Set<String> protectedAttrs = SyncExcludedAttributes.effectiveFor(set);
+        // DN-valued attributes compare as DNs, so a reference that differs only
+        // in form (case, spacing) isn't rewritten; other values compare exactly.
+        com.unboundid.ldap.sdk.schema.Schema schema = targetSchemas.forDirectory(target);
+        List<String> dnAttrs = SyncReferenceAttributes.forSet(set);
         Entry tgt = fx.readTarget(target, targetDn);
         ApplyOutcome res;
         if (tgt == null) {
@@ -423,11 +430,11 @@ public class RecomputeEngine {
                 tgt = fx.readTarget(target, targetDn);
                 res = (tgt == null) ? res
                         : fx.modify(target, targetDn,
-                                TargetEntryDiffer.diff(tgt, decision.desiredAttrs(), protectedAttrs), tgt);
+                                TargetEntryDiffer.diff(tgt, decision.desiredAttrs(), protectedAttrs, schema, dnAttrs), tgt);
             }
         } else {
             res = fx.modify(target, targetDn,
-                    TargetEntryDiffer.diff(tgt, decision.desiredAttrs(), protectedAttrs), tgt);
+                    TargetEntryDiffer.diff(tgt, decision.desiredAttrs(), protectedAttrs, schema, dnAttrs), tgt);
         }
 
         if (!LdapResultInterpreter.success(res.code())) {
@@ -1002,7 +1009,7 @@ public class RecomputeEngine {
     /** Target DNs carrying {@code anchorAttr=identity} (brownfield correlation). */
     private List<String> searchTargetByAnchor(DirectoryConnection target, SyncSet set,
                                               String anchorAttr, String identity) {
-        String base = set.getTargetBaseDn() != null ? set.getTargetBaseDn() : target.getBaseDn();
+        String base = SyncPlacement.effectiveTargetBase(set, target);
         return connectionFactory.withConnectionUnreplicated(target, conn -> {
             try {
                 SearchRequest req = new SearchRequest(base, SearchScope.SUB,

@@ -39,6 +39,14 @@ else
   MVNW := ./mvnw
 endif
 
+# Commit the frontend image is built from, passed to `docker compose build`
+# (compose.yaml → frontend build arg) because the frontend/ build context has
+# no .git. Without it the sidebar build stamp shows the bundle SHA as "dev".
+ifndef BUILD_SHA
+  BUILD_SHA := $(shell git rev-parse --short=7 HEAD)
+endif
+export BUILD_SHA
+
 # Default — print available targets.
 help:  ## Show this help.
 	@grep -hE '^[a-zA-Z_-]+:.*?##' $(MAKEFILE_LIST) | sort | awk -F'[:#][:#]?' '{printf "  \033[36m%-22s\033[0m %s\n", $$1, $$NF}'

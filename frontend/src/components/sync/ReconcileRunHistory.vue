@@ -3,9 +3,11 @@
   What the set's reconcile runs actually did: the latest run's summary (trigger,
   instance, timing, outcome counts, managed before → after, drift after the run,
   and any incomplete-scan / delete-guard / mid-run-disable warnings), with the
-  recent history behind a toggle. "Details" or a click on a history row opens
-  ReconcileRunDetail for that run. Reloads when the set changes or the parent
-  bumps `refreshKey` (e.g. after "Reconcile now").
+  recent history behind a toggle. The changes applied between reconciles
+  (incremental passes: changelog, in-app edits) are listed behind their own
+  toggle, so they never push the reconciles out of view. "Details" or a click
+  on a history row opens ReconcileRunDetail for that run. Reloads when the set
+  changes or the parent bumps `refreshKey` (e.g. after "Reconcile now").
 -->
 <template>
   <div class="rounded border border-gray-200 px-3 py-2 text-sm space-y-1.5">
@@ -18,6 +20,10 @@
         <button v-if="runs.length > 1" type="button" class="btn-neutral btn-compact"
                 :aria-expanded="showHistory" @click="showHistory = !showHistory">
           {{ showHistory ? 'Hide recent runs' : `Recent runs (${runs.length})` }}
+        </button>
+        <button v-if="incrementalRuns.length" type="button" class="btn-neutral btn-compact"
+                :aria-expanded="showIncremental" @click="showIncremental = !showIncremental">
+          {{ showIncremental ? 'Hide incremental changes' : `Incremental changes (${incrementalRuns.length})` }}
         </button>
       </div>
     </div>
@@ -75,10 +81,27 @@
         </template>
         <template #cell-instance="{ row }">{{ row.instanceName ?? '—' }}</template>
       </DataTable>
-
-      <ReconcileRunDetail v-if="selectedRunId && setId" :set-id="setId" :run-id="selectedRunId"
-                          @close="selectedRunId = null" />
     </template>
+
+    <!-- Changes applied between reconciles; shown even before the first reconcile. -->
+    <template v-if="showIncremental && incrementalRuns.length">
+      <p class="text-gray-600">Changes applied between reconciles (changelog, in-app edits), one row per pass.</p>
+      <DataTable :columns="incrementalCols" :rows="incrementalRuns" row-key="id"
+                 empty-text="No incremental changes." empty-icon="folder"
+                 :highlight-key="selectedRunId ?? undefined" @row-click="(r) => (selectedRunId = r.id)">
+        <template #cell-startedAt="{ row }"><RelativeTime :value="row.startedAt" /></template>
+        <template #cell-instance="{ row }">{{ row.instanceName ?? '—' }}</template>
+        <template #cell-changes="{ row }">
+          <span class="tabular-nums" :title="outcomeCounts(row).map((c) => `${c.label}: ${c.n}`).join(', ')">
+            {{ changeSummary(row) }}
+          </span>
+        </template>
+        <template #cell-managed="{ row }"><span class="tabular-nums">{{ row.managedAfter ?? '—' }}</span></template>
+      </DataTable>
+    </template>
+
+    <ReconcileRunDetail v-if="selectedRunId && setId" :set-id="setId" :run-id="selectedRunId"
+                        @close="selectedRunId = null" />
   </div>
 </template>
 
@@ -98,10 +121,14 @@ const props = defineProps<{
   refreshKey?: number
 }>()
 
+/** Reconciles (scheduled / manual), newest first. */
 const runs = ref<SyncReconcileRun[]>([])
+/** Incremental passes between reconciles, newest first. */
+const incrementalRuns = ref<SyncReconcileRun[]>([])
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 const showHistory = ref(false)
+const showIncremental = ref(false)
 const selectedRunId = ref<string | null>(null)
 
 const last = computed<SyncReconcileRun | null>(() => runs.value[0] ?? null)
@@ -115,6 +142,13 @@ const cols = [
   { key: 'managed', label: 'Managed' },
 ]
 
+const incrementalCols = [
+  { key: 'startedAt', label: 'Started' },
+  { key: 'instance', label: 'Ran on' },
+  { key: 'changes', label: 'Changes' },
+  { key: 'managed', label: 'Managed after' },
+]
+
 /** Compact "+3 ~1 −0 …" summary for the history table. */
 function changeSummary(r: SyncReconcileRun): string {
   const parts = [`+${r.added}`, `~${r.modified + r.moved}`, `−${r.deleted}`]
@@ -126,13 +160,18 @@ function changeSummary(r: SyncReconcileRun): string {
 async function load() {
   if (!props.setId) {
     runs.value = []
+    incrementalRuns.value = []
     return
   }
   loading.value = true
   loadError.value = null
   try {
-    const { data } = await listReconcileRuns(props.setId)
-    runs.value = data
+    const [reconciles, incremental] = await Promise.all([
+      listReconcileRuns(props.setId, 10, 'RECONCILE'),
+      listReconcileRuns(props.setId, 20, 'INCREMENTAL'),
+    ])
+    runs.value = reconciles.data
+    incrementalRuns.value = incremental.data
   } catch (e) {
     loadError.value = errMsg(e, 'Could not load reconcile history')
   } finally {
@@ -142,6 +181,7 @@ async function load() {
 
 watch(() => props.setId, () => {
   showHistory.value = false
+  showIncremental.value = false
   selectedRunId.value = null
   load()
 }, { immediate: true })

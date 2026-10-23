@@ -11,3 +11,8 @@
  *  the build couldn't read .git (release tarball, etc.). Used by the
  *  deployment-skew banner to compare against the backend's reported SHA. */
 declare const __BUILD_SHA__: string
+
+/** The frontend image's tag (IMAGE_VERSION build arg, e.g. "1.4.2"). Empty
+ *  when the bundle was built without one (local `npm run build`, untagged
+ *  `docker compose build`). Shown in the sidebar build stamp. */
+declare const __IMAGE_VERSION__: string

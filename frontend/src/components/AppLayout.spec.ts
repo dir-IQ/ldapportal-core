@@ -20,6 +20,9 @@ const state = vi.hoisted(() => ({
   playbooksEnabled: true,   // ApplicationSettings.playbooksEnabled as /auth/me reports it
   approvalsEnabled: false,  // global approvals master switch
   features: null as string[] | null,  // /auth/me feature set; null = every feature
+  // What useVersionCheck reports: both builds' tags (null = untagged) and SHAs.
+  version: { clientSha: 'abc', clientImageVersion: null as string | null,
+    serverSha: '', serverImageVersion: '', skew: false },
 }))
 const hasFeature = (v: string) => state.features === null || state.features.includes(v)
 
@@ -36,7 +39,11 @@ vi.mock('@/composables/usePermissions', () => ({ usePermissions: () => ({ hasFea
 vi.mock('@/stores/settings', () => ({ useSettingsStore: () => ({ init: vi.fn(), appName: 'LDAPPortal' }) }))
 vi.mock('@/composables/useKeyboardShortcuts', () => ({ useKeyboardShortcuts: () => ({ showHelp: ref(false) }) }))
 vi.mock('@/composables/useVersionCheck', () => ({
-  useVersionCheck: () => ({ clientSha: 'abc', serverSha: ref(''), serverImageVersion: ref(''), skewDetected: ref(false) }),
+  useVersionCheck: () => ({
+    clientSha: state.version.clientSha, clientImageVersion: state.version.clientImageVersion,
+    serverSha: ref(state.version.serverSha), serverImageVersion: ref(state.version.serverImageVersion),
+    skewDetected: ref(state.version.skew),
+  }),
 }))
 vi.mock('@/api/auth', () => ({
   myProfiles: vi.fn().mockResolvedValue({ data: [
@@ -266,5 +273,37 @@ describe('AppLayout profile picker', () => {
     expect(router.currentRoute.value.path).toBe('/directories/d2/users')
     expect(state.mounts).toEqual(['d1', 'd2'])
     w.unmount()
+  })
+})
+
+describe('sidebar build stamp', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    state.version = { clientSha: 'abc', clientImageVersion: null, serverSha: '', serverImageVersion: '', skew: false }
+  })
+
+  function stamp(wrapper: ReturnType<typeof mount>) {
+    return wrapper.find('[title^="Frontend image"]')
+  }
+
+  it('shows the frontend and backend image tags', async () => {
+    state.version = { clientSha: 'abc1234', clientImageVersion: '1.4.2',
+      serverSha: 'abc1234', serverImageVersion: '1.4.2', skew: false }
+
+    const el = stamp(await mountOnUsers())
+
+    expect(el.text()).toBe('FE 1.4.2 · BE 1.4.2')
+    expect(el.attributes('title')).toBe('Frontend image 1.4.2 (abc1234) · backend image 1.4.2 (abc1234)')
+    expect(el.classes()).not.toContain('text-amber-300/80')
+  })
+
+  it('falls back to each build\'s SHA when its image has no tag', async () => {
+    state.version = { clientSha: 'abc1234', clientImageVersion: null,
+      serverSha: 'def5678', serverImageVersion: '', skew: true }
+
+    const el = stamp(await mountOnUsers())
+
+    expect(el.text()).toBe('FE abc1234 · BE def5678')
+    expect(el.classes()).toContain('text-amber-300/80')
   })
 })

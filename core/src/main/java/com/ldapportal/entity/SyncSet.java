@@ -175,6 +175,14 @@ public class SyncSet {
     @Column(name = "enabled", nullable = false)
     private boolean enabled = true;
 
+    /**
+     * Keep every changed or flagged entry's DN in each run's history, not just
+     * the first samples per outcome (downloadable as CSV). Off by default: a
+     * large run then stores one row per entry.
+     */
+    @Column(name = "record_all_dns", nullable = false)
+    private boolean recordAllDns;
+
     // ── Last content-verification snapshot (drift, cached for the dashboard) ─────
     // SyncContentVerifier re-reads both directories, so its result is too costly
     // to compute on every dashboard load; the scheduled reconcile and a manual

@@ -154,9 +154,11 @@
                      placeholder="entryUUID / objectGUID (default by type)"
                      help="Source attribute used as each entry's stable identity (e.g. entryUUID, objectGUID). Leave blank to use the directory type's default. Avoid mutable attributes like mail." />
           <FormField label="Source scope base DN" v-model="setForm.objectScopeBaseDn"
-                     help="Base DN under the source directory to enumerate entries from. Combined with the source scope below." />
+                     placeholder="directory base DN"
+                     help="Base DN under the source directory to enumerate entries from. Combined with the source scope below. Leave blank for the source directory's base DN (required when it has more than one)." />
           <FormField label="Target base DN" v-model="setForm.targetBaseDn"
-                     help="Base DN under the target directory where matched entries are created and placed." />
+                     placeholder="same as source"
+                     help="Base DN under the target directory where matched entries are created and placed; the part of each DN below the source scope base is kept. Leave blank to place entries at the same DNs as on the source, which needs the source scope base DN to be under one of the target directory's base DNs." />
           <FormField label="Applicability filter (RFC 4515)" v-model="setForm.applicabilityFilter"
                      placeholder="(&(objectClass=inetOrgPerson)(employeeType=staff))"
                      help="LDAP filter selecting which source entries belong to this set. Only matching entries are synced." />
@@ -228,6 +230,12 @@
             <input type="checkbox" v-model="setForm.enabled" class="rounded" /> Enabled
           </label>
           <HelpTip text="New sets start disabled. When off, this set is not reconciled or applied, and existing target entries are left untouched." />
+        </div>
+        <div class="flex items-center gap-1">
+          <label class="flex items-center gap-2 text-sm text-gray-700">
+            <input type="checkbox" v-model="setForm.recordAllDns" class="rounded" /> Record every DN
+          </label>
+          <HelpTip text="Keep every changed or flagged entry's DN in each run's history, downloadable as CSV from the run's details. When off, only the first 25 DNs per outcome are kept. A large run stores one row per entry." />
         </div>
 
         <!-- Dry-run preview (existing sets only — needs a persisted set to plan against). -->
@@ -535,6 +543,7 @@ interface SetForm {
   // null ⇒ use the engine defaults (operational + password values).
   excludedAttributes: string[] | null
   enabled: boolean
+  recordAllDns: boolean
 }
 const showSetModal = ref(false)
 const editingSet = ref<SyncSet | null>(null)
@@ -548,6 +557,7 @@ function blankSet(): SetForm {
     // Safe defaults: quarantine deletes for review, and start disabled so the
     // operator validates (and can Preview the impact) before turning it on.
     deletePolicy: 'REVIEW', objectScope: null, transformRules: [], excludedAttributes: null, enabled: false,
+    recordAllDns: false,
   }
 }
 function openSetModal(s?: SyncSet) {
@@ -562,6 +572,7 @@ function openSetModal(s?: SyncSet) {
         transformRules: (s.transformRules ?? []).map((r) => ({ ...r })),
         excludedAttributes: s.excludedAttributes ? [...s.excludedAttributes] : null,
         enabled: s.enabled,
+        recordAllDns: s.recordAllDns,
       }
     : blankSet()
   previewResult.value = null
@@ -599,6 +610,7 @@ function toPayload(f: SetForm): SyncSetPayload {
     excludedAttributes: f.excludedAttributes,
     reconcileCadenceSeconds: f.reconcileCadenceSeconds.trim() ? Number(f.reconcileCadenceSeconds) : null,
     enabled: f.enabled,
+    recordAllDns: f.recordAllDns,
   }
 }
 // ── Dry-run preview + enable confirmation ──

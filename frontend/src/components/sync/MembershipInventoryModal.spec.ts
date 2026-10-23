@@ -9,7 +9,7 @@ const set = {
   identityKey: null, targetBaseDn: null, applicabilityFilter: null, referenceAttributes: null,
   sourceAnchorAttribute: null, deletePolicy: 'DELETE' as const, transformRules: null,
   excludedAttributes: null, reconcileCadenceSeconds: null,
-  reconcileLastRunAt: null, enabled: true, createdAt: '', updatedAt: '', version: 0,
+  reconcileLastRunAt: null, enabled: true, recordAllDns: false, createdAt: '', updatedAt: '', version: 0,
   stateCounts: { APPLIED: 5, FAILED: 2, REVIEW: 1 },
 }
 const membership = {
@@ -218,11 +218,12 @@ describe('MembershipInventoryModal', () => {
   it('Reconcile now reloads the reconcile history once the run finishes', async () => {
     const wrapper = open()
     await flushPromises()
-    expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(1)
+    // Each load fetches the reconciles and the incremental passes.
+    expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(2)
     byText('Reconcile now')!.click()
     await flushPromises()
     expect(syncApi.reconcileSet).toHaveBeenCalledWith('set-1')
-    expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(2)
+    expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(4)
     wrapper.unmount()
   })
 

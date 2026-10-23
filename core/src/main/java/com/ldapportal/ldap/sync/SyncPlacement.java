@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.SyncSet;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.LDAPException;
+import com.unboundid.ldap.sdk.RDN;
 
 /**
  * Computes the target DN for a source entry (a prefix-rewrite of the source base
@@ -12,15 +14,37 @@ import com.unboundid.ldap.sdk.LDAPException;
  *
  * <ul>
  *   <li>No target base, or no source base: identity placement (target DN ==
- *       source DN).</li>
+ *       source DN) — a blank target base means "the same DNs as on the
+ *       source", under the source scope base.</li>
  *   <li>Otherwise: the source DN's tail matching {@code objectScopeBaseDn} is
  *       replaced with {@code targetBaseDn}. DN-canonical comparison via the
  *       UnboundID parser tolerates spacing/case variants.</li>
  * </ul>
+ *
+ * <p>The RDNs kept from the source DN keep their own form (case, escaping),
+ * so the target entry — and every DN reference rewritten to it, like
+ * {@code member} or {@code secDN} — reads exactly as on the source. Only the
+ * spacing between RDNs is tidied.</p>
  */
 public final class SyncPlacement {
 
     private SyncPlacement() {
+    }
+
+    /**
+     * Where the set's entries live on the target: the target base DN, or —
+     * left blank, entries keep their source DNs — the source scope base DN,
+     * or failing that the target directory's base DN. Used for target-side
+     * searches (verification, brownfield anchor correlation).
+     */
+    public static String effectiveTargetBase(SyncSet set, DirectoryConnection target) {
+        if (set.getTargetBaseDn() != null && !set.getTargetBaseDn().isBlank()) {
+            return set.getTargetBaseDn();
+        }
+        if (set.getObjectScopeBaseDn() != null && !set.getObjectScopeBaseDn().isBlank()) {
+            return set.getObjectScopeBaseDn();
+        }
+        return target.getBaseDn();
     }
 
     /**
@@ -39,13 +63,16 @@ public final class SyncPlacement {
             if (!source.isDescendantOf(scope, true)) {
                 return null;
             }
-            String sourceNorm = source.toNormalizedString();
-            String scopeNorm = scope.toNormalizedString();
-            if (sourceNorm.equals(scopeNorm)) {
+            RDN[] sourceRdns = source.getRDNs();
+            int kept = sourceRdns.length - scope.getRDNs().length;
+            if (kept == 0) {
                 return targetBase;
             }
-            String prefix = sourceNorm.substring(0, sourceNorm.length() - scopeNorm.length() - 1);
-            return prefix + "," + targetBase;
+            StringBuilder dn = new StringBuilder();
+            for (int i = 0; i < kept; i++) {
+                dn.append(sourceRdns[i]).append(',');
+            }
+            return dn.append(targetBase).toString();
         } catch (LDAPException ex) {
             return null;
         }
