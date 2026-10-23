@@ -403,7 +403,7 @@ class SyncControllerTest extends BaseControllerTest {
     private static com.ldapportal.dto.sync.SyncPreviewStatus runningStatus() {
         return new com.ldapportal.dto.sync.SyncPreviewStatus(RUN,
                 com.ldapportal.entity.enums.SyncPreviewRunStatus.RUNNING, "superadmin", OffsetDateTime.now(),
-                null, 40, 100, false, null, 0, 0, 0, 0, false, null, false, null);
+                null, 40, 100, false, null, 0, 0, 0, 0, false, null, false, null, java.util.Map.of());
     }
 
     @Test

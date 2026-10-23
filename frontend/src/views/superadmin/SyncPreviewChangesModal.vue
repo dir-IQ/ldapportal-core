@@ -225,7 +225,12 @@ function adopt(status: SyncPreviewStatus) {
   }
 }
 
-async function refresh() {
+/**
+ * Read the latest run. On opening ({@code opening}), a set with no run, or
+ * whose run no longer describes it, gets a fresh one straight away; the
+ * outdated result stays on screen, flagged, until the new one replaces it.
+ */
+async function refresh(opening = false) {
   try {
     const { data } = await getPreviewRun(props.setId)
     if (disposed || !props.modelValue) return
@@ -234,6 +239,7 @@ async function refresh() {
       await start()
     } else {
       adopt(data)
+      if (opening && data.outdated) await start()
     }
   } catch (e) {
     if (disposed || !props.modelValue) return
@@ -289,7 +295,8 @@ async function load(target: number) {
   }
 }
 
-// Read the latest run each time the dialog opens; start one if the set has none.
+// Read the latest run each time the dialog opens; start one if the set has
+// none, or if the latest is outdated.
 watch(() => props.modelValue, (open) => {
   stopPolling()
   pageTicket++
@@ -297,7 +304,7 @@ watch(() => props.modelValue, (open) => {
   loading.value = false
   run.value = null
   result.value = null
-  if (open) void refresh()
+  if (open) void refresh(true)
 }, { immediate: true })
 
 onBeforeUnmount(() => {

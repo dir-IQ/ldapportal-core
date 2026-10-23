@@ -484,7 +484,19 @@ public class SyncPreviewService {
                 run.getFinishedAt(), run.getProcessed(), run.getTotal(), outdated, error,
                 run.getSourceCount(), run.getManagedCount(), run.getActionableCount(),
                 done ? run.getTotal() - run.getActionableCount() : 0,
-                run.isGuardTripped(), run.getGuardReason(), run.isCompleteScan(), run.getNote());
+                run.isGuardTripped(), run.getGuardReason(), run.isCompleteScan(), run.getNote(),
+                done ? actionCounts(run.getRunId()) : Map.of());
+    }
+
+    /** Outcome name → entries, in the action enum's order (zero counts left out). */
+    private Map<String, Long> actionCounts(UUID runId) {
+        Map<SyncPreviewAction, Long> byAction = new java.util.EnumMap<>(SyncPreviewAction.class);
+        for (Object[] row : entryRepo.countByAction(runId)) {
+            byAction.put((SyncPreviewAction) row[0], (Long) row[1]);
+        }
+        Map<String, Long> out = new java.util.LinkedHashMap<>();
+        byAction.forEach((action, n) -> out.put(action.name(), n));
+        return out;
     }
 
     /**

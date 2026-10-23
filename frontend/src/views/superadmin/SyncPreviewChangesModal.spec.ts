@@ -52,6 +52,7 @@ function run(overrides: Partial<SyncPreviewStatus> = {}): SyncPreviewStatus {
     processed: 4, total: 4, outdated: false, error: null,
     sourceCount: 4, managedCount: 3, actionableCount: 2, unchangedCount: 2,
     guardTripped: false, guardReason: null, completeScan: true, note: null,
+    actionCounts: { MODIFY: 1, ERROR: 1, UNCHANGED: 2 },
     ...overrides,
   }
 }
@@ -302,6 +303,17 @@ describe('SyncPreviewChangesModal', () => {
     expect(w.text()).toContain('Delete guard would trip: planned deletions (60) exceed the absolute cap of 50')
     expect(w.text()).toContain('Source enumeration failed (timeout)')
     expect(w.text()).toContain('since this preview ran')
+  })
+
+  it('replaces an outdated run with a fresh one when it opens', async () => {
+    api.getPreviewRun.mockResolvedValue(ok(run({ outdated: true })))
+    api.startPreviewRun.mockResolvedValue(ok(run({ runId: 'run-2', status: 'RUNNING', processed: 0 })))
+    api.previewEntries.mockResolvedValue(ok(page()))
+    const w = mountModal()
+    await flushPromises()
+
+    expect(api.startPreviewRun).toHaveBeenCalledTimes(1)
+    expect(w.text()).toContain('Running…')
   })
 
   it('shows why a run failed', async () => {

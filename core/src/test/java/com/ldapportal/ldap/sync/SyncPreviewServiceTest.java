@@ -186,6 +186,9 @@ class SyncPreviewServiceTest {
             assertThat(sn.added()).containsExactly("Smith");
         });
         assertThat(preview.status(set.getId()).unchangedCount()).isEqualTo(1); // bob
+        // The summary's per-outcome counts are the stored entries', so they match the list.
+        assertThat(preview.status(set.getId()).actionCounts())
+                .containsExactly(Map.entry("MODIFY", 1L), Map.entry("UNCHANGED", 1L));
 
         SyncPreviewPage all = preview.page(set.getId(), 0, 50, false);
         assertThat(all.entries()).extracting(SyncPreviewEntry::action)

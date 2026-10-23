@@ -258,21 +258,6 @@ export const downloadReconcileRunEntries = (setId: string, runId: string) =>
   client.get<Blob>(`/superadmin/sync/sets/${setId}/reconcile-runs/${runId}/entries.csv`,
     { responseType: 'blob' })
 
-/** Dry-run summary of what a reconcile of a sync set would change (no writes). */
-export interface SyncReconcilePreview {
-  sourceCount: number
-  managedCount: number
-  plannedAdds: number
-  plannedDeletes: number
-  sampleDeleteDns: string[]
-  guardTripped: boolean
-  guardReason: string | null
-  completeScan: boolean
-}
-
-export const previewReconcile = (setId: string) =>
-  client.get<SyncReconcilePreview>(`/superadmin/sync/sets/${setId}/preview`)
-
 /** What a reconcile would do to one entry (from a dry run of the engine). */
 export type SyncPreviewAction =
   | 'ADD' | 'MODIFY' | 'MOVE' | 'DELETE' | 'REVIEW' | 'NO_CHANGE' | 'FORGET' | 'UNCHANGED' | 'ERROR'
@@ -320,6 +305,11 @@ export interface SyncPreviewStatus {
   guardReason: string | null
   completeScan: boolean
   note: string | null
+  /**
+   * Entries per outcome, counted from the stored entries once the run is
+   * complete (empty before), so they match what Show changes lists.
+   */
+  actionCounts: Partial<Record<SyncPreviewAction, number>>
 }
 
 /** One page of a completed preview, ordered by target DN (parents first). */

@@ -4,6 +4,7 @@ package com.ldapportal.dto.sync;
 import com.ldapportal.entity.enums.SyncPreviewRunStatus;
 
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -29,6 +30,8 @@ import java.util.UUID;
  * @param guardReason     why, when {@code guardTripped}
  * @param completeScan    false when source enumeration failed or stopped (no deletes would happen)
  * @param note            explanation of an incomplete scan
+ * @param actionCounts    entries per outcome ({@code SyncPreviewAction} name → count),
+ *                        counted from the stored entries once complete; empty before
  */
 public record SyncPreviewStatus(
         UUID runId,
@@ -47,10 +50,11 @@ public record SyncPreviewStatus(
         boolean guardTripped,
         String guardReason,
         boolean completeScan,
-        String note) {
+        String note,
+        Map<String, Long> actionCounts) {
 
     public static SyncPreviewStatus none() {
         return new SyncPreviewStatus(null, null, null, null, null, 0, 0, false, null,
-                0, 0, 0, 0, false, null, false, null);
+                0, 0, 0, 0, false, null, false, null, Map.of());
     }
 }

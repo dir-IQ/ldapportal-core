@@ -63,9 +63,12 @@ vi.mock('@/api/sync', () => ({
     reconcileIntervalSeconds: 3600,
     excludedAttributes: ['userPassword', 'entryUUID'],
   } })),
-  previewReconcile: vi.fn(() => Promise.resolve({ data: {
-    sourceCount: 3, managedCount: 3, plannedAdds: 0, plannedDeletes: 0,
-    sampleDeleteDns: [], guardTripped: false, guardReason: null, completeScan: true,
+  getPreviewRun: vi.fn(() => Promise.resolve({ data: { runId: null, status: null, actionCounts: {} } })),
+  startPreviewRun: vi.fn(() => Promise.resolve({ data: {
+    runId: 'run-1', status: 'COMPLETE', requestedBy: 'ann', startedAt: '', finishedAt: '', processed: 5,
+    total: 5, outdated: false, error: null, sourceCount: 5, managedCount: 3, actionableCount: 2,
+    unchangedCount: 3, guardTripped: false, guardReason: null, completeScan: true, note: null,
+    actionCounts: { ADD: 1, DELETE: 1, NO_CHANGE: 2, UNCHANGED: 1 },
   } })),
   listMemberships: vi.fn(() => Promise.resolve({
     data: { content: [membership], totalElements: 8, totalPages: 1, number: 0, size: 50 },
@@ -250,7 +253,11 @@ describe('DirectorySyncView', () => {
 
       button('Preview impact')!.click()
       await flushPromises()
-      expect(syncApi.previewReconcile).toHaveBeenCalledWith('set-1')
+      // The summary comes from the per-entry run Show changes lists, so the two agree.
+      expect(syncApi.startPreviewRun).toHaveBeenCalledWith('set-1')
+      expect(document.querySelector('[data-testid="impact-counts"]')!.textContent!.replace(/\s+/g, ' '))
+        .toContain('Would add: 1 · Would modify: 0 · Would move: 0 · Would delete: 1 · Held for review: 0 · '
+          + 'Errors: 0 · No change: 3')
       wrapper.unmount()
     })
 
@@ -319,6 +326,39 @@ describe('DirectorySyncView', () => {
       expect(field('Reference attributes').placeholder).toBe('Leave blank for the default (see ⓘ)')
       expect(field('Target base DN').placeholder).toBe('Leave blank for the default (see ⓘ)')
       expect(document.body.textContent).not.toContain('Record every DN')
+      wrapper.unmount()
+    })
+
+    it('shows the latest preview run when it opens, with the same counts Show changes lists', async () => {
+      vi.mocked(syncApi.getPreviewRun).mockResolvedValueOnce({ data: {
+        runId: 'run-0', status: 'COMPLETE', processed: 4, total: 4, outdated: true, error: null,
+        sourceCount: 4, managedCount: 4, actionableCount: 1, unchangedCount: 3, guardTripped: false,
+        guardReason: null, completeScan: true, note: null, actionCounts: { MODIFY: 1, UNCHANGED: 3 },
+      } } as never)
+      const wrapper = await openEditor('Edit')
+
+      expect(document.querySelector('[data-testid="impact-counts"]')!.textContent).toContain('Would modify: 1')
+      expect(document.body.textContent).toContain('Preview again for current counts')
+      wrapper.unmount()
+    })
+
+    it('asks before enabling a set when its preview run would delete entries', async () => {
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [{ ...set, enabled: false }] } as never)
+      const wrapper = await openEditor('Edit')
+      const enabled = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+        .find((c) => c.parentElement?.textContent?.includes('Enabled'))!
+      enabled.checked = true
+      enabled.dispatchEvent(new Event('change'))
+      await flushPromises()
+      await submit()
+
+      expect(syncApi.startPreviewRun).toHaveBeenCalledWith('set-1')
+      expect(syncApi.updateSyncSet).not.toHaveBeenCalled()
+      expect(document.body.textContent).toContain('1 target entry(ies) would be deleted.')
+      button('Enable anyway')!.click()
+      await flushPromises()
+      expect(syncApi.updateSyncSet).toHaveBeenCalledWith('set-1', expect.objectContaining({ enabled: true }))
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set] } as never)
       wrapper.unmount()
     })
 

@@ -238,13 +238,14 @@
 
         <!-- Dry-run preview (existing sets only — needs a persisted set to plan
              against). Both buttons run on the saved set, so they wait for a save
-             while the form holds edits. -->
+             while the form holds edits. They share one run: the counts here are
+             that run's entries, the ones Show changes lists. -->
         <div v-if="editingSet" class="rounded-lg border border-gray-200 p-3 space-y-2">
           <div class="flex items-center justify-between">
             <span class="text-sm font-medium text-gray-700">Impact preview</span>
             <div class="flex items-center gap-2">
-              <button type="button" class="btn-secondary btn-compact" :disabled="previewLoading || setDirty"
-                      @click="runPreview">{{ previewLoading ? 'Checking…' : 'Preview impact' }}</button>
+              <button type="button" class="btn-secondary btn-compact" :disabled="previewBusy || setDirty"
+                      @click="runPreview">{{ previewBusy ? 'Checking…' : 'Preview impact' }}</button>
               <button v-if="canManage" type="button" class="btn-secondary btn-compact" :disabled="setDirty"
                       @click="showChanges = true">
                 Show changes
@@ -254,37 +255,43 @@
           <p v-if="setDirty" class="text-xs text-gray-500">
             Save your changes to preview them. The preview runs on the saved set.
           </p>
-          <div v-if="previewResult" class="text-xs text-gray-600 space-y-1">
+          <p v-else-if="impact?.status === 'RUNNING'" class="text-xs text-gray-500">
+            Checking every entry against the target… {{ impact.processed }} of {{ impact.total || '…' }}
+          </p>
+          <p v-else-if="impact?.status === 'FAILED'" class="text-xs text-rose-700">
+            The preview failed: {{ impact.error }}
+          </p>
+          <div v-else-if="impact?.status === 'COMPLETE'" class="text-xs text-gray-600 space-y-1">
             <p>
-              Source entries: <span class="font-medium">{{ previewResult.sourceCount }}</span> ·
-              Managed: <span class="font-medium">{{ previewResult.managedCount }}</span> ·
-              Would add: <span class="font-medium text-emerald-700">{{ previewResult.plannedAdds }}</span> ·
-              Would delete:
-              <span class="font-medium" :class="previewResult.plannedDeletes > 0 ? 'text-rose-700' : 'text-gray-700'">
-                {{ previewResult.plannedDeletes }}
-              </span>
+              Source entries: <span class="font-medium">{{ impact.sourceCount }}</span> ·
+              Managed: <span class="font-medium">{{ impact.managedCount }}</span>
             </p>
-            <p v-if="!previewResult.completeScan" class="text-amber-600">
-              Source enumeration failed — no deletions would run this cycle.
+            <p data-testid="impact-counts">
+              <template v-for="(c, i) in impactCounts" :key="c.label">
+                <template v-if="i"> · </template>{{ c.label }}:
+                <span class="font-medium" :class="c.n > 0 ? c.tone : 'text-gray-700'">{{ c.n }}</span>
+              </template>
             </p>
-            <p v-if="previewResult.guardTripped" class="text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-              Delete guard would trip: {{ previewResult.guardReason }}. These deletions would be
-              held for review, not applied.
+            <p v-if="impact.outdated" class="text-amber-700">
+              The set or its directories changed after this preview ran. Preview again for current counts.
             </p>
-            <ul v-if="previewResult.sampleDeleteDns.length" class="font-mono text-[11px] text-gray-500 list-disc pl-4">
-              <li v-for="dn in previewResult.sampleDeleteDns" :key="dn">{{ dn }}</li>
-            </ul>
+            <p v-if="!impact.completeScan" class="text-amber-600">
+              {{ impact.note ?? 'Source enumeration failed.' }} No deletions would run this cycle.
+            </p>
+            <p v-if="impact.guardTripped" class="text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+              Delete guard would trip: {{ impact.guardReason }}. The deletions would be held for review, not applied.
+            </p>
           </div>
         </div>
 
         <!-- Enable confirmation: surfaced when turning a set on would delete entries. -->
-        <div v-if="confirmEnable && previewResult"
+        <div v-if="confirmEnable && impact?.status === 'COMPLETE'"
              class="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 space-y-2">
           <p class="font-semibold">Enabling this set will affect existing target entries.</p>
           <p>
-            {{ previewResult.guardTripped
-              ? `${previewResult.plannedDeletes} deletion(s) would be held for review (delete guard).`
-              : `${previewResult.plannedDeletes} target entry(ies) would be deleted.` }}
+            {{ impact.guardTripped
+              ? 'The delete guard would trip, so the planned deletions would be held for review.'
+              : `${impactCount('DELETE')} target entry(ies) would be deleted.` }}
             Review the preview above before continuing.
           </p>
           <div class="flex justify-end gap-2">
@@ -311,7 +318,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import PageContainer from '@/components/PageContainer.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -330,9 +337,9 @@ import { listDirectories } from '@/api/directories'
 import {
   listSyncLinks, createSyncLink, updateSyncLink, deleteSyncLink,
   listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet, getSyncSetDeleteImpact, getSyncSetDefaults,
-  previewReconcile,
+  getPreviewRun, startPreviewRun,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
-  type SyncTransformRule, type SyncReconcilePreview, type MembershipState, type SyncSetDeleteImpact,
+  type SyncTransformRule, type SyncPreviewStatus, type SyncPreviewAction, type MembershipState, type SyncSetDeleteImpact,
   type SyncSetDefaults, type SyncLoggingLevel,
 } from '@/api/sync'
 import { DEFAULT_PLACEHOLDER, syncSetHelp } from '@/components/sync/syncSetHelp'
@@ -599,10 +606,11 @@ function openSetModal(s?: SyncSet) {
   setForm.value = s ? formFromSet(s) : blankSet()
   // A new set is dirty from the start: nothing has been saved yet.
   savedSetSnapshot.value = s ? setSnapshot(setForm.value) : ''
-  previewResult.value = null
+  impact.value = null
   confirmEnable.value = false
   showChanges.value = false
   showSetModal.value = true
+  void loadLatestPreview()
 }
 // Trim rows, drop blank-source rows, and collapse blank target/template to null
 // (the engine reads null target as "same name" and null template as passthrough).
@@ -638,26 +646,86 @@ function toPayload(f: SetForm): SyncSetPayload {
   }
 }
 // ── Dry-run preview + enable confirmation ──
-const previewResult = ref<SyncReconcilePreview | null>(null)
-const previewLoading = ref(false)
+// One per-entry preview run backs the summary here and the Show changes list,
+// so the two can't disagree.
+const impact = ref<SyncPreviewStatus | null>(null)
+const startingPreview = ref<boolean>(false)
+const previewBusy = computed<boolean>(() => startingPreview.value || impact.value?.status === 'RUNNING')
 // Per-entry dry run (what a reconcile would do to each entry), in its own dialog.
 const showChanges = ref<boolean>(false)
 const confirmEnable = ref(false) // showing the "enable will delete N" confirmation
+const PREVIEW_POLL_MS = 1000
+// Bumped whenever the run being followed stops mattering (dialog reopened or
+// closed, set saved), so a poll still in flight drops its result.
+let previewTicket = 0
 
-async function runPreview() {
+function impactCount(action: SyncPreviewAction): number {
+  return impact.value?.actionCounts?.[action] ?? 0
+}
+const impactCounts = computed(() => [
+  { label: 'Would add', n: impactCount('ADD'), tone: 'text-emerald-700' },
+  { label: 'Would modify', n: impactCount('MODIFY'), tone: 'text-sky-700' },
+  { label: 'Would move', n: impactCount('MOVE'), tone: 'text-sky-700' },
+  { label: 'Would delete', n: impactCount('DELETE'), tone: 'text-rose-700' },
+  { label: 'Held for review', n: impactCount('REVIEW'), tone: 'text-amber-700' },
+  { label: 'Errors', n: impactCount('ERROR'), tone: 'text-rose-700' },
+  { label: 'No change', n: impactCount('NO_CHANGE') + impactCount('UNCHANGED') + impactCount('FORGET'),
+    tone: 'text-gray-700' },
+])
+
+/** Follow a run until it finishes (or stops mattering); resolves with its last status. */
+async function followPreview(status: SyncPreviewStatus, ticket: number): Promise<SyncPreviewStatus | null> {
+  let current = status
+  while (current.status === 'RUNNING') {
+    await new Promise((resolve) => setTimeout(resolve, PREVIEW_POLL_MS))
+    if (ticket !== previewTicket || !editingSet.value) return null
+    current = (await getPreviewRun(editingSet.value.id)).data
+    if (ticket !== previewTicket) return null
+    impact.value = current
+  }
+  return current
+}
+
+/** Start a fresh run (or join the one running) and wait for it. */
+async function runPreview(): Promise<SyncPreviewStatus | null> {
   if (!editingSet.value) return null
-  previewLoading.value = true
+  const ticket = ++previewTicket
+  startingPreview.value = true
   try {
-    const { data } = await previewReconcile(editingSet.value.id)
-    previewResult.value = data
-    return data
+    const { data } = await startPreviewRun(editingSet.value.id)
+    if (ticket !== previewTicket) return null
+    impact.value = data
+    startingPreview.value = false
+    return await followPreview(data, ticket)
   } catch (e) {
     notif.error(errMsg(e))
     return null
   } finally {
-    previewLoading.value = false
+    startingPreview.value = false
   }
 }
+
+/** Show the set's latest run, if any (following it when it's still running). */
+async function loadLatestPreview(): Promise<void> {
+  if (!editingSet.value) return
+  const ticket = ++previewTicket
+  try {
+    const { data } = await getPreviewRun(editingSet.value.id)
+    if (ticket !== previewTicket) return
+    impact.value = data.status ? data : null
+    if (data.status === 'RUNNING') await followPreview(data, ticket)
+  } catch {
+    // The summary is a convenience: without it the panel just offers Preview impact.
+  }
+}
+
+// Show changes may start a fresh run (when the latest is outdated): pick it up here.
+watch(showChanges, (open) => {
+  if (!open && showSetModal.value) void loadLatestPreview()
+})
+watch(showSetModal, (open) => {
+  if (!open) previewTicket++
+})
 
 async function saveSet() {
   // Turning an existing set on is the moment deletions could start. Preview the
@@ -666,7 +734,7 @@ async function saveSet() {
   const enabling = !!editingSet.value && setForm.value.enabled && !editingSet.value.enabled
   if (enabling && !confirmEnable.value) {
     const p = await runPreview()
-    if (p && (p.plannedDeletes > 0 || p.guardTripped)) {
+    if (p?.status === 'COMPLETE' && ((p.actionCounts?.DELETE ?? 0) > 0 || p.guardTripped)) {
       confirmEnable.value = true
       return
     }
@@ -688,7 +756,8 @@ async function doSaveSet() {
     editingSet.value = data
     setForm.value = formFromSet(data)
     savedSetSnapshot.value = setSnapshot(setForm.value)
-    previewResult.value = null // it described the configuration before this save
+    previewTicket++
+    impact.value = null // it described the configuration before this save
     confirmEnable.value = false
     notif.success(creating ? 'Sync set created' : 'Sync set updated')
     await refreshHealth()

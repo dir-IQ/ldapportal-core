@@ -512,10 +512,15 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   set, so they're unavailable while the form holds unsaved edits. Saving a new
   set turns the editor into its edit view, with the previews available.
   **Close**, ×, or Escape asks before discarding unsaved edits.
-- **Impact preview** (set editor) — counts of what a reconcile would add and
-  delete, plus sample DNs to be deleted. Works on a **disabled** set, and runs
-  automatically as the confirmation step when you enable a set: if any deletes
-  are planned (or the delete guard would trip) you're asked before it turns on.
+- **Impact preview** (set editor) — **Preview impact** starts the same
+  per-entry run that **Show changes** lists (or joins the one already running)
+  and shows its counts per outcome: would add, modify, move or delete, held for
+  review, errors and no change. The counts are taken from the run's stored
+  entries, so they always match the list. The editor shows the set's latest
+  run when it opens, flagged when it's outdated. Works on a **disabled** set,
+  and runs automatically as the confirmation step when you enable a set: if
+  the run would delete entries (or the delete guard would trip) you're asked
+  before it turns on.
 - **Show changes** (set editor; needs *manage directory sync*) — the full,
   paged list of what a reconcile would do to **each entry**: **Add**,
   **Modify**, **Move**, **Delete**, **Review**, **No change**, **Forget**,
@@ -536,7 +541,8 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
     value as drift.
 
   - **A background run.** Opening the dialog shows the set's latest preview, or
-    starts one if there is none; **Run again** starts a fresh one. A run scans
+    starts one if there is none or the latest is outdated; **Run again** starts
+    a fresh one. A run scans
     the source once, dry-runs every entry and stores the result, so paging
     reads a fixed snapshot — every page comes from the same plan, and nothing
     is re-scanned. The dialog shows progress while it runs. One run per set at
