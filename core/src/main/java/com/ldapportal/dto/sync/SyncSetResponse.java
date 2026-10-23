@@ -4,6 +4,7 @@ package com.ldapportal.dto.sync;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncScope;
 
 import java.time.OffsetDateTime;
@@ -30,7 +31,7 @@ public record SyncSetResponse(
         Long reconcileCadenceSeconds,
         OffsetDateTime reconcileLastRunAt,
         boolean enabled,
-        boolean recordAllDns,
+        SyncLoggingLevel loggingLevel,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
         Long version,
@@ -48,7 +49,7 @@ public record SyncSetResponse(
                 s.getReferenceAttributes(), s.getSourceAnchorAttribute(), s.getDeletePolicy(),
                 s.getTransformRules(), s.getExcludedAttributes(),
                 s.getReconcileCadenceSeconds(), s.getReconcileLastRunAt(),
-                s.isEnabled(), s.isRecordAllDns(), s.getCreatedAt(), s.getUpdatedAt(), s.getVersion(),
+                s.isEnabled(), s.getLoggingLevel(), s.getCreatedAt(), s.getUpdatedAt(), s.getVersion(),
                 stateCounts == null ? Map.of() : stateCounts);
     }
 }

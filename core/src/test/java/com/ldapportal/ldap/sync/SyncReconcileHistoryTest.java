@@ -9,6 +9,7 @@ import com.ldapportal.dto.sync.SyncRunFailureReason;
 import com.ldapportal.dto.sync.SyncRunSettings;
 import com.ldapportal.entity.SyncReconcileRun;
 import com.ldapportal.entity.SyncSet;
+import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncReconcileRunStatus;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.repository.SyncReconcileRunRepository;
@@ -42,10 +43,11 @@ class SyncReconcileHistoryTest {
     private static final int KEEP_INCREMENTAL = 50;
     private static final UUID TARGET_DIR = UUID.randomUUID();
 
-    private static SyncSet set(boolean recordAllDns) {
+    /** A set at the detailed logging level when {@code detailed}, else at summary. */
+    private static SyncSet set(boolean detailed) {
         SyncSet s = new SyncSet();
         s.setId(SET);
-        s.setRecordAllDns(recordAllDns);
+        s.setLoggingLevel(detailed ? SyncLoggingLevel.DETAILED : SyncLoggingLevel.SUMMARY);
         return s;
     }
 
@@ -188,7 +190,7 @@ class SyncReconcileHistoryTest {
 
     @Test
     void samples_keepTheFirstDnsPerOutcome_upToTheLimit_butNotUnchanged() {
-        SyncReconcileHistory.Run run = history.start(set(false), TARGET_DIR, SyncReconcileTrigger.SCHEDULED, null);
+        SyncReconcileHistory.Run run = history.start(set(true), TARGET_DIR, SyncReconcileTrigger.SCHEDULED, null);
         for (int i = 0; i < SyncReconcileHistory.SAMPLE_LIMIT + 5; i++) {
             history.record(run, outcome(SyncPreviewAction.ADD, "uid=u" + i + ",dc=dst", null));
         }
@@ -269,7 +271,7 @@ class SyncReconcileHistoryTest {
     // ── full DN list ─────────────────────────────────────────────────────────
 
     @Test
-    void recordAllDns_keepsEveryChangedOrFlaggedEntry_inOrder_beyondTheSamples() {
+    void detailed_keepsEveryChangedOrFlaggedEntry_inOrder_beyondTheSamples() {
         SyncReconcileHistory.Run run = history.start(set(true), TARGET_DIR, SyncReconcileTrigger.SCHEDULED, null);
         int many = SyncReconcileHistory.SAMPLE_LIMIT + 10;
         for (int i = 0; i < many; i++) {
@@ -297,17 +299,21 @@ class SyncReconcileHistoryTest {
     }
 
     @Test
-    void withoutRecordAllDns_onlySamplesAreKept() {
+    void summary_keepsCountsOnly_noDns() {
         SyncReconcileHistory.Run run = history.start(set(false), TARGET_DIR, SyncReconcileTrigger.SCHEDULED, null);
         history.record(run, outcome(SyncPreviewAction.ADD, "uid=a,dc=dst", null));
+        history.record(run, outcome(SyncPreviewAction.ERROR, "uid=bad,dc=dst", "apply failed: OTHER"));
         history.complete(run, 1);
 
         verify(entryStore, never()).append(any(), any());
         assertThat(run.row().isAllDnsRecorded()).isFalse();
+        assertThat(run.row().getSamples()).isNull();
+        assertThat(run.row().getAdded()).isEqualTo(1);
+        assertThat(run.row().getFailed()).isEqualTo(1);
     }
 
     @Test
-    void entries_ofARunThatKeptOnlySamples_isRefused() {
+    void entries_ofARunThatKeptNoDns_isRefused() {
         SyncReconcileRun r = new SyncReconcileRun();
         r.setId(UUID.randomUUID());
         r.setSyncSetId(SET);

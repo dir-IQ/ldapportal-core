@@ -110,16 +110,24 @@ describe('ReconcileRunDetail', () => {
 
     expect(syncApi.downloadReconcileRunEntries).toHaveBeenCalledWith('set-1', 'run-1')
     expect(downloadBlob).toHaveBeenCalledWith(blob, 'sync-run-run-1.csv')
-    expect(wrapper.text()).not.toContain('Record every DN')
+    expect(wrapper.text()).not.toContain('Logging level')
   })
 
-  it('points to "Record every DN" when the samples were cut short', async () => {
+  it('points to the Detailed logging level when an older run\'s samples were cut short', async () => {
     getRun.mockResolvedValue({ data: detail() }) // 30 added, 2 sampled
     const wrapper = mount(ReconcileRunDetail, { props: { setId: 'set-1', runId: 'run-1' } })
     await flushPromises()
     expect(wrapper.findAll('button').some((b) => b.text().includes('Download all entries'))).toBe(false)
-    expect(wrapper.text()).toContain('Up to 25 DNs per outcome are kept')
-    expect(wrapper.text()).toContain('Record every DN')
+    expect(wrapper.text()).toContain('This run kept up to 25 DNs per outcome')
+    expect(wrapper.text()).toContain('Logging level to Detailed')
+  })
+
+  it('says a summary-level run kept counts only', async () => {
+    getRun.mockResolvedValue({ data: detail({ samples: {} }) }) // 30 added, no DNs kept
+    const wrapper = mount(ReconcileRunDetail, { props: { setId: 'set-1', runId: 'run-1' } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('This run kept counts only (Summary logging)')
+    expect(wrapper.text()).not.toContain('Sample entries')
   })
 
   it('leaves out the scan, verification and settings for an incremental pass', async () => {

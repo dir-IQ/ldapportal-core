@@ -70,13 +70,20 @@ public class MembershipFunction {
             return MembershipDecision.out(identity);
         }
 
-        List<Attribute> desired = project(set, strategy, entry, identity, resolver);
-        byte[] hash = SyncContentHash.of(targetDn, desired);
-        return MembershipDecision.in(identity, targetDn, desired, hash);
+        Projection projected = project(set, strategy, entry, identity, resolver);
+        byte[] hash = SyncContentHash.of(targetDn, projected.attrs());
+        return MembershipDecision.in(identity, targetDn, projected.attrs(), hash, projected.held());
     }
 
-    private List<Attribute> project(SyncSet set, IdentityStrategy strategy, Entry entry,
-                                    String identity, ReferenceResolver resolver) {
+    /**
+     * The projected attributes, plus the reference attributes none of whose
+     * values could be translated yet (target name → untranslated source DNs).
+     */
+    private record Projection(List<Attribute> attrs, Map<String, List<String>> held) {
+    }
+
+    private Projection project(SyncSet set, IdentityStrategy strategy, Entry entry,
+                               String identity, ReferenceResolver resolver) {
         Set<String> excluded = SyncExcludedAttributes.effectiveFor(set);
         List<String> refAttrs = SyncReferenceAttributes.forSet(set);
         String idAttr = SyncIdentity.attribute(set, strategy);
@@ -84,6 +91,7 @@ public class MembershipFunction {
         // the same target name.
         Map<String, List<String>> byTarget = new LinkedHashMap<>();
         Map<String, String> targetCase = new LinkedHashMap<>();
+        Map<String, List<String>> unresolved = new LinkedHashMap<>();
 
         for (Attribute a : entry.getAttributes()) {
             String name = a.getName();
@@ -106,6 +114,10 @@ public class MembershipFunction {
                     resolver.resolveTargetDn(v).ifPresent(values::add);
                 }
                 if (values.isEmpty()) {
+                    // Nothing translated: note it, so the target's current value is
+                    // kept rather than deleted until a referent lands.
+                    unresolved.computeIfAbsent(m.targetAttr(), k -> new ArrayList<>())
+                            .addAll(List.of(a.getValues()));
                     continue;
                 }
             } else {
@@ -125,7 +137,15 @@ public class MembershipFunction {
         List<Attribute> out = new ArrayList<>(byTarget.size());
         byTarget.forEach((key, values) ->
                 out.add(new Attribute(targetCase.get(key), values.toArray(new String[0]))));
-        return out;
+        // Held only when the attribute ends up with no values at all: another
+        // source attribute mapped onto the same target may have supplied some.
+        Map<String, List<String>> held = new LinkedHashMap<>();
+        unresolved.forEach((name, dns) -> {
+            if (!byTarget.containsKey(name.toLowerCase(Locale.ROOT))) {
+                held.put(name, List.copyOf(dns));
+            }
+        });
+        return new Projection(out, held.isEmpty() ? Map.of() : held);
     }
 
     private static void addValues(Map<String, List<String>> byTarget,

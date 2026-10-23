@@ -149,48 +149,51 @@
               :dirty="setDirty">
       <form id="sync-set-form" class="space-y-3" @submit.prevent="saveSet">
         <div class="grid grid-cols-2 gap-3">
-          <FormField label="Name" v-model="setForm.name" required
-                     help="A label for this sync set, shown in the inventory and logs. Does not affect matching." />
+          <FormField label="Name" v-model="setForm.name" required :help="help.name" />
           <FormField label="Identity key (attribute)" v-model="setForm.identityKey"
-                     placeholder="entryUUID / objectGUID (default by type)"
-                     help="Source attribute used as each entry's stable identity (e.g. entryUUID, objectGUID). Leave blank to use the directory type's default. Avoid mutable attributes like mail." />
-          <FormField label="Source scope base DN" v-model="setForm.objectScopeBaseDn"
-                     placeholder="directory base DN"
-                     help="Base DN under the source directory to enumerate entries from. Combined with the source scope below. Leave blank for the source directory's base DN (required when it has more than one)." />
+                     :placeholder="DEFAULT_PLACEHOLDER" :help="help.identityKey" />
+          <FormField label="Source base DN" v-model="setForm.objectScopeBaseDn" required
+                     :help="help.sourceBaseDn" />
           <FormField label="Target base DN" v-model="setForm.targetBaseDn"
-                     placeholder="same as source"
-                     help="Base DN under the target directory where matched entries are created and placed; the part of each DN below the source scope base is kept. Leave blank to place entries at the same DNs as on the source, which needs the source scope base DN to be under one of the target directory's base DNs." />
-          <FormField label="Applicability filter (RFC 4515)" v-model="setForm.applicabilityFilter"
-                     placeholder="(&(objectClass=inetOrgPerson)(employeeType=staff))"
-                     help="LDAP filter selecting which source entries belong to this set. Only matching entries are synced." />
+                     :placeholder="DEFAULT_PLACEHOLDER" :help="help.targetBaseDn" />
+          <FormField class="col-span-2" label="Applicability filter (RFC 4515)" v-model="setForm.applicabilityFilter"
+                     type="textarea" :rows="3" :placeholder="DEFAULT_PLACEHOLDER" :help="help.applicabilityFilter" />
           <FormField label="Reference attributes (csv)" v-model="setForm.referenceAttributes"
-                     placeholder="member,uniqueMember,manager"
-                     help="Comma-separated DN-valued attributes whose references are rewritten and closed across the set (e.g. member, uniqueMember, manager)." />
+                     :placeholder="DEFAULT_PLACEHOLDER" :help="help.referenceAttributes" />
           <FormField label="Source anchor attribute" v-model="setForm.sourceAnchorAttribute"
-                     help="Target attribute holding the source identity, used to adopt pre-existing target entries (brownfield). Ambiguous matches are quarantined for review." />
-          <FormField label="Reconcile cadence (seconds)" v-model="setForm.reconcileCadenceSeconds"
-                     type="number" placeholder="default"
-                     help="How often this set is fully reconciled against the source. Leave blank to use the global default." />
+                     :placeholder="DEFAULT_PLACEHOLDER" :help="help.sourceAnchorAttribute" />
+          <FormField label="Reconcile interval (seconds)" v-model="setForm.reconcileCadenceSeconds"
+                     type="number" :placeholder="DEFAULT_PLACEHOLDER" :help="help.reconcileInterval" />
           <div>
             <div class="flex items-center mb-1">
-              <label class="block text-sm font-medium text-gray-700">Delete policy</label>
-              <HelpTip text="What happens when an entry leaves scope: Delete removes the target entry; Review quarantines it for an operator to resolve." />
+              <label for="sync-set-delete-policy" class="block text-sm font-medium text-gray-700">Delete policy</label>
+              <HelpTip :text="help.deletePolicy" />
             </div>
-            <select v-model="setForm.deletePolicy" aria-label="Delete policy" class="input">
+            <select id="sync-set-delete-policy" v-model="setForm.deletePolicy" class="input">
               <option value="DELETE">Delete</option>
               <option value="REVIEW">Review (quarantine)</option>
             </select>
           </div>
           <div>
             <div class="flex items-center mb-1">
-              <label class="block text-sm font-medium text-gray-700">Source scope</label>
-              <HelpTip text="LDAP search scope under the base DN: Subtree (all descendants), One level (immediate children), or Base (the base entry only)." />
+              <label for="sync-set-source-scope" class="block text-sm font-medium text-gray-700">Source scope</label>
+              <HelpTip :text="help.sourceScope" />
             </div>
-            <select v-model="setForm.objectScope" aria-label="Source scope" class="input">
+            <select id="sync-set-source-scope" v-model="setForm.objectScope" class="input">
               <option :value="null">Default (subtree)</option>
               <option value="SUB">Subtree</option>
               <option value="ONE">One level</option>
               <option value="BASE">Base</option>
+            </select>
+          </div>
+          <div>
+            <div class="flex items-center mb-1">
+              <label for="sync-set-logging-level" class="block text-sm font-medium text-gray-700">Logging level</label>
+              <HelpTip :text="help.loggingLevel" />
+            </div>
+            <select id="sync-set-logging-level" v-model="setForm.loggingLevel" class="input">
+              <option value="SUMMARY">Summary</option>
+              <option value="DETAILED">Detailed</option>
             </select>
           </div>
         </div>
@@ -231,12 +234,6 @@
             <input type="checkbox" v-model="setForm.enabled" class="rounded" /> Enabled
           </label>
           <HelpTip text="New sets start disabled. When off, this set is not reconciled or applied, and existing target entries are left untouched." />
-        </div>
-        <div class="flex items-center gap-1">
-          <label class="flex items-center gap-2 text-sm text-gray-700">
-            <input type="checkbox" v-model="setForm.recordAllDns" class="rounded" /> Record every DN
-          </label>
-          <HelpTip text="Keep every changed or flagged entry's DN in each run's history, downloadable as CSV from the run's details. When off, only the first 25 DNs per outcome are kept. A large run stores one row per entry." />
         </div>
 
         <!-- Dry-run preview (existing sets only — needs a persisted set to plan
@@ -332,11 +329,13 @@ import { useConfirm } from '@/composables/useConfirm'
 import { listDirectories } from '@/api/directories'
 import {
   listSyncLinks, createSyncLink, updateSyncLink, deleteSyncLink,
-  listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet, getSyncSetDeleteImpact, getExcludedAttributeDefaults,
+  listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet, getSyncSetDeleteImpact, getSyncSetDefaults,
   previewReconcile,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
   type SyncTransformRule, type SyncReconcilePreview, type MembershipState, type SyncSetDeleteImpact,
+  type SyncSetDefaults, type SyncLoggingLevel,
 } from '@/api/sync'
+import { DEFAULT_PLACEHOLDER, syncSetHelp } from '@/components/sync/syncSetHelp'
 
 interface DirOption { id: string; displayName: string }
 
@@ -554,13 +553,16 @@ interface SetForm {
   // null ⇒ use the engine defaults (operational + password values).
   excludedAttributes: string[] | null
   enabled: boolean
-  recordAllDns: boolean
+  loggingLevel: SyncLoggingLevel
 }
 const showSetModal = ref(false)
 const editingSet = ref<SyncSet | null>(null)
 const setForm = ref<SetForm>(blankSet())
-// Backend-driven default exclusion list, used to seed/show the editor.
-const excludedDefaults = ref<string[]>([])
+// What the engine uses for blank fields (backend-driven): the info tips list
+// these, and the excluded-attribute editor seeds from its list.
+const setDefaults = ref<SyncSetDefaults | null>(null)
+const help = computed(() => syncSetHelp(setDefaults.value))
+const excludedDefaults = computed<string[]>(() => setDefaults.value?.excludedAttributes ?? [])
 function blankSet(): SetForm {
   return {
     name: '', identityKey: '', objectScopeBaseDn: '', targetBaseDn: '', applicabilityFilter: '',
@@ -568,7 +570,7 @@ function blankSet(): SetForm {
     // Safe defaults: quarantine deletes for review, and start disabled so the
     // operator validates (and can Preview the impact) before turning it on.
     deletePolicy: 'REVIEW', objectScope: null, transformRules: [], excludedAttributes: null, enabled: false,
-    recordAllDns: false,
+    loggingLevel: 'SUMMARY',
   }
 }
 function formFromSet(s: SyncSet): SetForm {
@@ -581,7 +583,7 @@ function formFromSet(s: SyncSet): SetForm {
     transformRules: (s.transformRules ?? []).map((r) => ({ ...r })),
     excludedAttributes: s.excludedAttributes ? [...s.excludedAttributes] : null,
     enabled: s.enabled,
-    recordAllDns: s.recordAllDns,
+    loggingLevel: s.loggingLevel ?? 'SUMMARY',
   }
 }
 // Unsaved-changes tracking: the form is dirty while what it would send differs
@@ -632,7 +634,7 @@ function toPayload(f: SetForm): SyncSetPayload {
     excludedAttributes: f.excludedAttributes,
     reconcileCadenceSeconds: f.reconcileCadenceSeconds.trim() ? Number(f.reconcileCadenceSeconds) : null,
     enabled: f.enabled,
-    recordAllDns: f.recordAllDns,
+    loggingLevel: f.loggingLevel,
   }
 }
 // ── Dry-run preview + enable confirmation ──
@@ -815,10 +817,10 @@ async function applyDeepLink() {
 onMounted(async () => {
   try {
     const [dirs, defaults] = await Promise.all([
-      listDirectories(), getExcludedAttributeDefaults(), loadLinks(), loadSetHealth(),
+      listDirectories(), getSyncSetDefaults(), loadLinks(), loadSetHealth(),
     ])
     directories.value = dirs.data.map((d) => ({ id: d.id ?? '', displayName: d.displayName ?? '' }))
-    excludedDefaults.value = defaults.data
+    setDefaults.value = defaults.data
     // links + set health are loaded above, so the deep link can resolve its target.
     await applyDeepLink()
   } catch (e) {

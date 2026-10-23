@@ -24,7 +24,7 @@ class SyncContentVerifierTest {
     private static final Set<String> EXCLUDED = Set.of();
 
     private static SyncContentVerifier.Expected expected(String dn, Attribute... attrs) {
-        return new SyncContentVerifier.Expected(dn, List.of(attrs));
+        return new SyncContentVerifier.Expected(dn, List.of(attrs), java.util.Set.of());
     }
 
     private static Map<String, SyncContentVerifier.Expected> expectedMap(String dn,
@@ -49,6 +49,19 @@ class SyncContentVerifierTest {
         assertThat(r.contentMismatches()).isZero();
         assertThat(r.sourceMembers()).isEqualTo(1);
         assertThat(r.targetEntries()).isEqualTo(1);
+    }
+
+    @Test
+    void heldReference_keptOnTheTarget_isNotDrift() {
+        var expected = expectedMap("cn=eng,dc=t", new SyncContentVerifier.Expected("cn=eng,dc=t",
+                List.of(new Attribute("cn", "eng")), Set.of("secdn")));
+        Map<String, Entry> actual = Map.of("cn=eng,dc=t",
+                new Entry("cn=eng,dc=t", new Attribute("cn", "eng"), new Attribute("secDN", "cn=eng,o=native")));
+
+        SyncVerifyResult r = SyncContentVerifier.compare(expected, actual, EXCLUDED, true, true);
+
+        assertThat(r.inSync()).isEqualTo(1);
+        assertThat(r.contentMismatches()).isZero();
     }
 
     @Test

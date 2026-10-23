@@ -2,6 +2,7 @@
 package com.ldapportal.entity;
 
 import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncScope;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -54,8 +55,8 @@ public class SyncSet {
     @Column(name = "name", nullable = false)
     private String name;
 
-    /** Base DN bounding source enumeration (a performance hint, not the selector). */
-    @Column(name = "object_scope_base_dn")
+    /** Base DN bounding source enumeration (a performance hint, not the selector). Required. */
+    @Column(name = "object_scope_base_dn", nullable = false)
     private String objectScopeBaseDn;
 
     @Enumerated(EnumType.STRING)
@@ -176,12 +177,13 @@ public class SyncSet {
     private boolean enabled = true;
 
     /**
-     * Keep every changed or flagged entry's DN in each run's history, not just
-     * the first samples per outcome (downloadable as CSV). Off by default: a
-     * large run then stores one row per entry.
+     * How much of each run the history keeps: counts only, or also every
+     * changed or flagged entry's DN (downloadable as CSV). Summary by default:
+     * a detailed large run stores one row per entry.
      */
-    @Column(name = "record_all_dns", nullable = false)
-    private boolean recordAllDns;
+    @Enumerated(EnumType.STRING)
+    @Column(name = "logging_level", nullable = false, length = 16)
+    private SyncLoggingLevel loggingLevel = SyncLoggingLevel.SUMMARY;
 
     // ── Last content-verification snapshot (drift, cached for the dashboard) ─────
     // SyncContentVerifier re-reads both directories, so its result is too costly

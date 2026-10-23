@@ -2795,7 +2795,8 @@ export interface components {
             /** Format: int64 */
             reconcileCadenceSeconds?: number;
             enabled?: boolean;
-            recordAllDns?: boolean;
+            /** @enum {string} */
+            loggingLevel?: "SUMMARY" | "DETAILED";
         };
         SyncTransformRule: {
             sourceAttr?: string;
@@ -2825,7 +2826,8 @@ export interface components {
             /** Format: date-time */
             reconcileLastRunAt?: string;
             enabled?: boolean;
-            recordAllDns?: boolean;
+            /** @enum {string} */
+            loggingLevel?: "SUMMARY" | "DETAILED";
             /** Format: date-time */
             createdAt?: string;
             /** Format: date-time */

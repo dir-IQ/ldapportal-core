@@ -10,6 +10,7 @@ import com.ldapportal.dto.sync.SyncRunFailureReason;
 import com.ldapportal.dto.sync.SyncRunSettings;
 import com.ldapportal.entity.SyncReconcileRun;
 import com.ldapportal.entity.SyncSet;
+import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncReconcileRunStatus;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.exception.ResourceNotFoundException;
@@ -35,7 +36,8 @@ import java.util.function.Consumer;
 /**
  * Records each reconcile run of a sync set — what started it, where and when it
  * ran, the set's settings, whether the source scan completed, what it did to
- * each entry (counts, sample DNs, failures grouped by reason), and the drift the
+ * each entry (counts, failures grouped by reason and, at the set's detailed
+ * logging level, the entries' DNs), and the drift the
  * verification after it found — so an operator can see what a past reconcile
  * actually did.
  *
@@ -44,9 +46,11 @@ import java.util.function.Consumer;
  * when a pass did something (see {@link #startIncremental}) and pruned
  * separately, so a busy changelog can't push the reconcile runs out.
  *
- * <p>Every target write a run makes is audited ({@link SyncWriteAuditor}). When
- * the set records all DNs, every entry the run changed or flagged is kept too,
- * beyond the {@link #SAMPLE_LIMIT} samples per outcome ({@link SyncRunEntryStore}).
+ * <p>Every target write a run makes is audited ({@link SyncWriteAuditor}). At
+ * the {@link SyncLoggingLevel#DETAILED detailed} logging level, every entry the
+ * run changed or flagged is kept too: up to {@link #SAMPLE_LIMIT} per outcome on
+ * the run, and all of them in {@link SyncRunEntryStore}. At
+ * {@link SyncLoggingLevel#SUMMARY summary} the run keeps its counts only.
  *
  * <p>Bookkeeping only: a failure to write the history is logged and swallowed,
  * never allowed to fail the reconcile it describes. Counts are flushed with a
@@ -164,7 +168,7 @@ public class SyncReconcileHistory {
         row.setStartedAt(now);
         row.setHeartbeatAt(now);
         row.setInstanceName(instanceName);
-        row.setAllDnsRecorded(set.isRecordAllDns());
+        row.setAllDnsRecorded(set.getLoggingLevel() == SyncLoggingLevel.DETAILED);
         return new Run(row, targetDirectoryId, deferred);
     }
 
@@ -202,7 +206,7 @@ public class SyncReconcileHistory {
                 case UNCHANGED -> r.setUnchanged(r.getUnchanged() + 1);
                 case ERROR -> r.setFailed(r.getFailed() + 1);
             }
-            if (SAMPLED.contains(outcome.action()) && outcome.targetDn() != null) {
+            if (SAMPLED.contains(outcome.action()) && outcome.targetDn() != null && r.isAllDnsRecorded()) {
                 List<String> dns = run.samples.computeIfAbsent(outcome.action().name(), k -> new ArrayList<>());
                 if (dns.size() < SAMPLE_LIMIT) {
                     dns.add(outcome.targetDn());
@@ -315,7 +319,7 @@ public class SyncReconcileHistory {
      * order: every one, when its set recorded all DNs.
      *
      * @throws ResourceNotFoundException when the run isn't one of the set's
-     * @throws IllegalArgumentException when the run kept only samples
+     * @throws IllegalArgumentException when the run didn't keep its DNs
      */
     public void entries(UUID syncSetId, UUID runId, Consumer<SyncRunEntryStore.Entry> sink) {
         requireAllDnsRecorded(syncSetId, runId);
@@ -327,15 +331,15 @@ public class SyncReconcileHistory {
      * a download can fail with a proper status before it starts streaming.
      *
      * @throws ResourceNotFoundException when the run isn't one of the set's
-     * @throws IllegalArgumentException when the run kept only samples
+     * @throws IllegalArgumentException when the run didn't keep its DNs
      */
     public void requireAllDnsRecorded(UUID syncSetId, UUID runId) {
         SyncReconcileRun r = runRepo.findById(runId)
                 .filter(run -> run.getSyncSetId().equals(syncSetId))
                 .orElseThrow(() -> new ResourceNotFoundException("Reconcile run not found"));
         if (!r.isAllDnsRecorded()) {
-            throw new IllegalArgumentException("This run kept only sample DNs: its sync set wasn't recording "
-                    + "every DN when it ran.");
+            throw new IllegalArgumentException("This run didn't keep its entries' DNs: its sync set's logging "
+                    + "level wasn't Detailed when it ran.");
         }
     }
 

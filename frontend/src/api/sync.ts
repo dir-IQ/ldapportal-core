@@ -72,10 +72,11 @@ export interface SyncSet {
   reconcileLastRunAt: string | null
   enabled: boolean
   /**
-   * Keep every changed or flagged entry's DN in each run's history (CSV
-   * download), not just the first samples per outcome.
+   * How much of each run the history keeps: SUMMARY keeps counts and failure
+   * reasons only; DETAILED also keeps every changed or flagged entry's DN
+   * (CSV download).
    */
-  recordAllDns: boolean
+  loggingLevel: SyncLoggingLevel
   createdAt: string
   updatedAt: string
   version: number
@@ -140,8 +141,18 @@ export const getSyncSetDeleteImpact = (id: string) =>
   client.get<SyncSetDeleteImpact>(`/superadmin/sync/sets/${id}/delete-impact`)
 
 /** Default excluded attributes (operational + password values) — seeds the editor. */
-export const getExcludedAttributeDefaults = () =>
-  client.get<string[]>('/superadmin/sync/sets/excluded-attribute-defaults')
+export type SyncLoggingLevel = 'SUMMARY' | 'DETAILED'
+
+/** What the engine uses for each sync-set field left blank (the editor's info tips list these). */
+export interface SyncSetDefaults {
+  /** Identity attribute per source directory type (DirectoryType name → attribute). */
+  identityKeyByDirectoryType: Record<string, string>
+  referenceAttributes: string[]
+  /** This server's reconcile interval for sets that don't set one. */
+  reconcileIntervalSeconds: number
+  excludedAttributes: string[]
+}
+export const getSyncSetDefaults = () => client.get<SyncSetDefaults>('/superadmin/sync/sets/defaults')
 
 /**
  * One recorded run of a set: a reconcile (SCHEDULED / MANUAL), or an

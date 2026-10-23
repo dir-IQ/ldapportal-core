@@ -35,7 +35,8 @@ const set = {
   id: 'set-1', linkId: 'link-1', name: 'people', objectScopeBaseDn: 'ou=people,dc=src',
   objectScope: 'SUB', identityKey: null, targetBaseDn: 'ou=Users,dc=dst', applicabilityFilter: null,
   referenceAttributes: null, sourceAnchorAttribute: null, deletePolicy: 'DELETE', transformRules: null,
-  reconcileCadenceSeconds: null, reconcileLastRunAt: null, enabled: true, createdAt: '', updatedAt: '', version: 0,
+  reconcileCadenceSeconds: null, reconcileLastRunAt: null, enabled: true, loggingLevel: 'SUMMARY',
+  createdAt: '', updatedAt: '', version: 0,
   stateCounts: { APPLIED: 5, FAILED: 2, REVIEW: 1 },
 }
 const membership = {
@@ -56,7 +57,12 @@ vi.mock('@/api/sync', () => ({
   getSyncSetDeleteImpact: vi.fn(() => Promise.resolve({ data: {
     name: 'people', managed: 876, pendingReview: 3, reconcileRuns: 12, otherSets: ['groups'],
   } })),
-  getExcludedAttributeDefaults: vi.fn(() => Promise.resolve({ data: ['userPassword', 'entryUUID'] })),
+  getSyncSetDefaults: vi.fn(() => Promise.resolve({ data: {
+    identityKeyByDirectoryType: { OPENLDAP: 'entryUUID', GENERIC: 'entryUUID', ACTIVE_DIRECTORY: 'objectGUID' },
+    referenceAttributes: ['member', 'uniqueMember', 'manager', 'owner', 'secDN'],
+    reconcileIntervalSeconds: 3600,
+    excludedAttributes: ['userPassword', 'entryUUID'],
+  } })),
   previewReconcile: vi.fn(() => Promise.resolve({ data: {
     sourceCount: 3, managedCount: 3, plannedAdds: 0, plannedDeletes: 0,
     sampleDeleteDns: [], guardTripped: false, guardReason: null, completeScan: true,
@@ -254,6 +260,7 @@ describe('DirectorySyncView', () => {
       expect(button('Preview impact')).toBeUndefined()
 
       await type('Name', 'groups')
+      await type('Source base DN', 'ou=groups,dc=src')
       await submit()
 
       expect(syncApi.createSyncSet).toHaveBeenCalledTimes(1)
@@ -279,6 +286,39 @@ describe('DirectorySyncView', () => {
       await flushPromises()
       expect(document.body.textContent).not.toContain('Edit sync set')
       expect(syncApi.updateSyncSet).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('sends the logging level, and the filter as typed over several lines', async () => {
+      const wrapper = await openEditor('Edit')
+      const level = document.getElementById('sync-set-logging-level') as HTMLSelectElement
+      expect(level.value).toBe('SUMMARY')
+      level.value = 'DETAILED'
+      level.dispatchEvent(new Event('change'))
+      const filter = field('Applicability filter')
+      expect(filter.tagName).toBe('TEXTAREA')
+      filter.value = '(&(objectClass=secGroup)\n  (!(cn=iv-admin)))'
+      filter.dispatchEvent(new Event('input'))
+      await flushPromises()
+      await submit()
+
+      expect(syncApi.updateSyncSet).toHaveBeenCalledWith('set-1', expect.objectContaining({
+        loggingLevel: 'DETAILED',
+        applicabilityFilter: '(&(objectClass=secGroup)\n  (!(cn=iv-admin)))', // the server joins the lines
+      }))
+      wrapper.unmount()
+    })
+
+    it('marks the source base DN required and points blank fields at their defaults', async () => {
+      const wrapper = await openEditor('+ New Set')
+      const labels = Array.from(document.querySelectorAll('label')).map((l) => l.textContent?.trim() ?? '')
+      expect(labels).toContain('Source base DN *')
+      expect(labels).toContain('Reconcile interval (seconds)')
+      expect(labels.some((l) => l.includes('cadence'))).toBe(false)
+      expect(field('Source base DN').placeholder).toBe('')
+      expect(field('Reference attributes').placeholder).toBe('Leave blank for the default (see ⓘ)')
+      expect(field('Target base DN').placeholder).toBe('Leave blank for the default (see ⓘ)')
+      expect(document.body.textContent).not.toContain('Record every DN')
       wrapper.unmount()
     })
 

@@ -101,7 +101,8 @@ public class SyncContentVerifier {
                 var decision = membershipFunction.evaluate(ctx.set, ctx.strategy, e, resolver);
                 if (decision.member() && decision.targetDn() != null) {
                     expected.put(normDn(decision.targetDn()),
-                            new Expected(decision.targetDn(), decision.desiredAttrs()));
+                            new Expected(decision.targetDn(), decision.desiredAttrs(),
+                                    decision.heldAttributeNames()));
                 }
             }
         } catch (Exception ex) {
@@ -151,7 +152,10 @@ public class SyncContentVerifier {
                 missing.add(en.getValue().displayDn());
                 continue;
             }
-            List<Modification> mods = TargetEntryDiffer.diff(target, en.getValue().desired(), excluded,
+            // A held reference (its referent isn't synced yet) is kept on the
+            // target by the engine, so it isn't drift either.
+            Set<String> untouched = en.getValue().held().isEmpty() ? excluded : union(excluded, en.getValue().held());
+            List<Modification> mods = TargetEntryDiffer.diff(target, en.getValue().desired(), untouched,
                     schema, dnAttrs);
             if (mods.isEmpty()) {
                 inSync++;
@@ -287,7 +291,14 @@ public class SyncContentVerifier {
         }
     }
 
-    record Expected(String displayDn, List<Attribute> desired) {
+    /** {@code held}: lower-cased reference attributes the engine keeps as they are on the target. */
+    record Expected(String displayDn, List<Attribute> desired, Set<String> held) {
+    }
+
+    private static Set<String> union(Set<String> a, Set<String> b) {
+        Set<String> out = new java.util.HashSet<>(a);
+        out.addAll(b);
+        return out;
     }
 
     private record Context(SyncSet set, SyncLink link, DirectoryConnection source,

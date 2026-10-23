@@ -40,6 +40,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -417,7 +418,11 @@ public class RecomputeEngine {
             }
         }
 
-        java.util.Set<String> protectedAttrs = SyncExcludedAttributes.effectiveFor(set);
+        // Never touched on the target: the set's exclusions, and reference
+        // attributes held because none of their values translate yet (their
+        // current target value is kept until a referent lands).
+        java.util.Set<String> protectedAttrs = new java.util.HashSet<>(SyncExcludedAttributes.effectiveFor(set));
+        protectedAttrs.addAll(decision.heldAttributeNames());
         // DN-valued attributes compare as DNs, so a reference that differs only
         // in form (case, spacing) isn't rewritten; other values compare exactly.
         com.unboundid.ldap.sdk.schema.Schema schema = targetSchemas.forDirectory(target);
@@ -471,7 +476,44 @@ public class RecomputeEngine {
         String sourceDn = entry != null ? entry.getDN() : (current != null ? current.getSourceDn() : null);
         String fallbackDn = decision.member() ? decision.targetDn()
                 : (current != null ? current.getTargetDn() : null);
-        return rec.toEntry(identity, sourceDn, fallbackDn);
+        return withHeldNote(rec.toEntry(identity, sourceDn, fallbackDn), decision);
+    }
+
+    /** Outcomes that write (or keep) the projected attributes, where a held reference shows. */
+    private static final java.util.Set<SyncPreviewAction> PROJECTING = java.util.EnumSet.of(
+            SyncPreviewAction.ADD, SyncPreviewAction.MODIFY, SyncPreviewAction.MOVE, SyncPreviewAction.NO_CHANGE);
+
+    /**
+     * Say which reference attributes were held back — kept as they are on the
+     * target, or left out of an add — because the entries they point to aren't
+     * synced yet. Without the note a kept value would look like an oversight.
+     */
+    static SyncPreviewEntry withHeldNote(SyncPreviewEntry e, MembershipDecision decision) {
+        if (!decision.member() || decision.heldReferences().isEmpty() || e.reason() != null
+                || !PROJECTING.contains(e.action())) {
+            return e;
+        }
+        String note = heldNote(decision.heldReferences(), e.action() == SyncPreviewAction.ADD);
+        return new SyncPreviewEntry(e.identity(), e.sourceDn(), e.targetDn(), e.previousTargetDn(), e.action(),
+                note, e.changes());
+    }
+
+    /** DNs a held-reference note names before it shortens the list. */
+    static final int HELD_NOTE_DNS = 3;
+
+    static String heldNote(java.util.Map<String, List<String>> held, boolean adding) {
+        List<String> parts = new ArrayList<>();
+        held.forEach((attr, dns) -> {
+            String target = dns.size() == 1
+                    ? dns.get(0) + ", which isn't synced yet"
+                    : dns.size() + " entries that aren't synced yet (" + String.join("; ", dns.subList(0,
+                            Math.min(dns.size(), HELD_NOTE_DNS))) + (dns.size() > HELD_NOTE_DNS ? "; …" : "") + ")";
+            String once = dns.size() == 1 ? " once that entry is synced." : " once they're synced.";
+            parts.add(adding
+                    ? attr + " left out: it points to " + target + ". The sync adds it" + once
+                    : attr + " kept as it is on the target: it points to " + target + ". The sync updates it" + once);
+        });
+        return String.join(" ", parts);
     }
 
     /**

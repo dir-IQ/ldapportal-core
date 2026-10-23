@@ -16,7 +16,8 @@
     <Teleport to="body">
       <Transition name="tooltip-fade">
         <div v-if="visible" ref="tip" role="tooltip"
-             class="fixed z-[60] w-56 bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg pointer-events-none"
+             :class="['fixed z-[60] bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-lg pointer-events-none',
+                      'whitespace-pre-line', text.length > 160 ? 'w-80' : 'w-56']"
              :style="tipStyle">
           {{ text }}
         </div>

@@ -280,7 +280,7 @@ public class SyncConfigService {
         s.setObjectScope(req.objectScope());
         s.setIdentityKey(blankToNull(req.identityKey()));
         s.setTargetBaseDn(blankToNull(req.targetBaseDn()));
-        s.setApplicabilityFilter(blankToNull(req.applicabilityFilter()));
+        s.setApplicabilityFilter(normalizeFilter(req.applicabilityFilter()));
         s.setReferenceAttributes(blankToNull(req.referenceAttributes()));
         s.setSourceAnchorAttribute(blankToNull(req.sourceAnchorAttribute()));
         // Default to the safe REVIEW policy (quarantine deletes) when unspecified.
@@ -289,8 +289,8 @@ public class SyncConfigService {
         s.setExcludedAttributes(normalizeExcludedAttributes(req.excludedAttributes()));
         s.setReconcileCadenceSeconds(req.reconcileCadenceSeconds());
         s.setEnabled(req.enabled());
-        if (req.recordAllDns() != null) {
-            s.setRecordAllDns(req.recordAllDns());
+        if (req.loggingLevel() != null) {
+            s.setLoggingLevel(req.loggingLevel());
         }
     }
 
@@ -322,12 +322,16 @@ public class SyncConfigService {
         if (!linkRepo.existsById(req.linkId())) {
             throw new IllegalArgumentException("Sync link not found");
         }
+        if (req.objectScopeBaseDn() == null || req.objectScopeBaseDn().isBlank()) {
+            throw new IllegalArgumentException("Source base DN is required.");
+        }
         requireValidDn(req.objectScopeBaseDn(), "objectScopeBaseDn");
         requireValidDn(req.targetBaseDn(), "targetBaseDn");
-        requireExplicitBaseOnMultiRoot(req);
-        if (req.applicabilityFilter() != null && !req.applicabilityFilter().isBlank()) {
+        requireBasesWithinRoots(req);
+        String filter = normalizeFilter(req.applicabilityFilter());
+        if (filter != null) {
             try {
-                Filter.create(req.applicabilityFilter());
+                Filter.create(filter);
             } catch (LDAPException e) {
                 throw new IllegalArgumentException("Invalid applicabilityFilter: " + e.getMessage());
             }
@@ -336,37 +340,28 @@ public class SyncConfigService {
     }
 
     /**
-     * A blank source scope falls back to the source directory's base DN. On a
-     * directory with several roots that's just the primary one, which is rarely
-     * what was meant — so require the scope explicitly there.
+     * The source base DN must lie under one of the source directory's base DNs,
+     * or the set would enumerate nothing.
      *
      * <p>A blank target base means "the same DNs as on the source": entries are
-     * placed at their source DNs, under the source scope base. On a target with
-     * several roots that's fine as long as that base lies under one of them;
-     * otherwise the entries would have nowhere to go, so the target base must
-     * be set.
+     * placed at their source DNs, under the source base. That needs the source
+     * base to lie under one of the target directory's base DNs too; otherwise the
+     * entries would have nowhere to go, so the target base must be set.
      */
-    private void requireExplicitBaseOnMultiRoot(SyncSetRequest req) {
-        boolean noScope = req.objectScopeBaseDn() == null || req.objectScopeBaseDn().isBlank();
+    private void requireBasesWithinRoots(SyncSetRequest req) {
+        String sourceBase = req.objectScopeBaseDn().trim();
         boolean noTarget = req.targetBaseDn() == null || req.targetBaseDn().isBlank();
-        if (!noScope && !noTarget) {
-            return;
-        }
         linkRepo.findById(req.linkId()).ifPresent(link -> {
             DirectoryConnection source = directory(link.getSourceDirId());
-            if (noScope && source != null && com.ldapportal.ldap.DirectoryRoots.isMultiRoot(source)) {
-                throw new IllegalArgumentException("The source directory has more than one base DN: "
-                        + "set the source scope base DN for this sync set.");
+            if (source != null && !com.ldapportal.ldap.DirectoryRoots.isWithin(source, sourceBase)) {
+                throw new IllegalArgumentException("The source base DN '" + sourceBase
+                        + "' isn't under any of the source directory's base DNs.");
             }
             DirectoryConnection target = directory(link.getTargetDirId());
-            if (noTarget && target != null && com.ldapportal.ldap.DirectoryRoots.isMultiRoot(target)) {
-                String sameAsSource = noScope ? (source != null ? source.getBaseDn() : null)
-                        : req.objectScopeBaseDn().trim();
-                if (!com.ldapportal.ldap.DirectoryRoots.isWithin(target, sameAsSource)) {
-                    throw new IllegalArgumentException("A blank target base DN places entries at their source "
-                            + "DNs, but " + (sameAsSource != null ? "'" + sameAsSource + "'" : "the source base")
-                            + " isn't under any of the target directory's base DNs: set the target base DN.");
-                }
+            if (noTarget && target != null && !com.ldapportal.ldap.DirectoryRoots.isWithin(target, sourceBase)) {
+                throw new IllegalArgumentException("A blank target base DN places entries at their source "
+                        + "DNs, but '" + sourceBase + "' isn't under any of the target directory's base DNs: "
+                        + "set the target base DN.");
             }
         });
     }
@@ -637,6 +632,21 @@ public class SyncConfigService {
 
     private static String blankToNull(String s) {
         return (s == null || s.isBlank()) ? null : s.trim();
+    }
+
+    /**
+     * The applicability filter as the engine evaluates it. The editor lets a
+     * long filter be laid out over several lines, but an LDAP filter allows no
+     * whitespace between its components, so each line break and the whitespace
+     * around it is removed (whitespace within a line, such as in a value, is
+     * kept). Blank → {@code null} (every entry in scope).
+     */
+    static String normalizeFilter(String filter) {
+        if (filter == null) {
+            return null;
+        }
+        String joined = filter.replaceAll("\\s*\\R\\s*", "").trim();
+        return joined.isEmpty() ? null : joined;
     }
 
     private static void requireValidDn(String dn, String field) {

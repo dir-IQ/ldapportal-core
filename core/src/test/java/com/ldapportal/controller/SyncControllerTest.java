@@ -52,6 +52,7 @@ class SyncControllerTest extends BaseControllerTest {
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
     @MockitoBean SyncConfigService service;
+    @MockitoBean com.ldapportal.ldap.sync.SyncSetDefaultsProvider defaultsProvider;
 
     private static final UUID LINK = UUID.fromString("10000000-0000-0000-0000-000000000001");
     private static final UUID SET = UUID.fromString("20000000-0000-0000-0000-000000000002");
@@ -76,7 +77,8 @@ class SyncControllerTest extends BaseControllerTest {
 
     private SyncSetResponse setResp() {
         return new SyncSetResponse(SET, LINK, "people", "ou=people,dc=src", null, null, "ou=Users,dc=dst",
-                null, null, null, null, null, null, null, null, true, false, OffsetDateTime.now(), OffsetDateTime.now(), 0L,
+                null, null, null, null, null, null, null, null, true,
+                com.ldapportal.entity.enums.SyncLoggingLevel.SUMMARY, OffsetDateTime.now(), OffsetDateTime.now(), 0L,
                 java.util.Map.of());
     }
 
@@ -179,6 +181,26 @@ class SyncControllerTest extends BaseControllerTest {
                 .andExpect(jsonPath("$.pendingReview").value(3))
                 .andExpect(jsonPath("$.reconcileRuns").value(12))
                 .andExpect(jsonPath("$.otherSets[0]").value("groups"));
+    }
+
+    @Test
+    void setDefaults_listsWhatTheEngineFallsBackTo() throws Exception {
+        given(defaultsProvider.defaults()).willReturn(new com.ldapportal.dto.sync.SyncSetDefaults(
+                java.util.Map.of("ACTIVE_DIRECTORY", "objectGUID"), List.of("member", "secDN"), 3600,
+                List.of("userPassword")));
+
+        mockMvc.perform(get(SETS + "/defaults").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.identityKeyByDirectoryType.ACTIVE_DIRECTORY").value("objectGUID"))
+                .andExpect(jsonPath("$.referenceAttributes[1]").value("secDN"))
+                .andExpect(jsonPath("$.reconcileIntervalSeconds").value(3600))
+                .andExpect(jsonPath("$.excludedAttributes[0]").value("userPassword"));
+    }
+
+    @Test
+    void setDefaults_adminRole_returns403() throws Exception {
+        mockMvc.perform(get(SETS + "/defaults").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
     }
 
     @Test

@@ -150,6 +150,42 @@ class MembershipFunctionTest {
     }
 
     @Test
+    void referenceWithNoTranslatableValue_isHeld_notProjected() {
+        SyncSet set = baseSet();
+        set.setObjectScopeBaseDn("ou=groups,dc=src");
+        set.setTargetBaseDn("ou=Groups,dc=dst");
+        set.setReferenceAttributes("member,secDN");
+        Entry registration = new Entry("cn=eng,ou=groups,dc=src",
+                new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("entryUUID", "9999"),
+                new Attribute("cn", "eng"),
+                new Attribute("member", "uid=alice,ou=people,dc=src", "uid=bob,ou=people,dc=src"),
+                new Attribute("secDN", "cn=eng,o=native,dc=src"));
+        ReferenceResolver resolver = dn -> dn.startsWith("uid=alice")
+                ? Optional.of("uid=alice,ou=Users,dc=dst") : Optional.empty();
+
+        MembershipDecision d = fn.evaluate(set, strategy, registration, resolver);
+
+        // secDN: nothing translated → held, with the untranslated DN.
+        assertThat(d.desiredAttrs()).noneMatch(a -> a.getName().equalsIgnoreCase("secDN"));
+        assertThat(d.heldReferences()).containsOnlyKeys("secDN");
+        assertThat(d.heldReferences().get("secDN")).containsExactly("cn=eng,o=native,dc=src");
+        assertThat(d.heldAttributeNames()).containsExactly("secdn");
+        // member: one value translated → projected as before, not held.
+        assertThat(vals(d, "member")).containsExactly("uid=alice,ou=Users,dc=dst");
+    }
+
+    @Test
+    void everyReferenceTranslated_holdsNothing() {
+        SyncSet set = baseSet();
+        set.setReferenceAttributes("secDN");
+        Entry e = person().duplicate();
+        e.setAttribute("secDN", "uid=alice,ou=people,dc=src");
+        MembershipDecision d = fn.evaluate(set, strategy, e, dn -> Optional.of("uid=alice,ou=Users,dc=dst"));
+        assertThat(d.heldReferences()).isEmpty();
+    }
+
+    @Test
     void contentHash_isStableForEquivalentEntries() {
         byte[] h1 = fn.evaluate(baseSet(), strategy, person(), none()).contentHash();
         byte[] h2 = fn.evaluate(baseSet(), strategy, person(), none()).contentHash();
