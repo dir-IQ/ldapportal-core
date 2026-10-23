@@ -134,19 +134,23 @@ issued it. The base DN is stored trimmed.
 | Field | Meaning |
 |---|---|
 | **Name** | Label only; does not affect matching. |
-| **Identity key** | Source attribute used as each entry's stable identity (`entryUUID`, `objectGUID`, …). Blank → directory-type default. **Avoid mutable attributes like `mail`** — identity must never change for the same entry. |
-| **Source scope base DN** | Base DN under the source to enumerate / match against. Blank → the directory's own base DN (required when the directory has [several roots](multi-root-directories.md)). |
+| **Identity key** | Source attribute whose value identifies each entry for as long as it's synced; the sync matches a source entry to its target entry by it, across renames and moves. Blank → the source directory type's default: `entryUUID` (OpenLDAP, Oracle Unified Directory, IBM Directory Server, Generic LDAP), `objectGUID` (Active Directory), `id` (Entra ID). **Avoid mutable attributes like `mail`**: identity must never change for the same entry. |
+| **Source base DN** | **Required.** Base DN under the source to read entries from, together with the source scope. Must be under one of the source directory's base DNs ([several roots](multi-root-directories.md): one set per root you want to sync). Sets saved before this field was required were given the source directory's base DN, which is what a blank meant. |
 | **Source scope** | LDAP scope under the base: `SUB` (default), `ONE`, `BASE`. |
-| **Applicability filter** | RFC 4515 filter selecting which source entries belong, e.g. `(&(objectClass=inetOrgPerson)(employeeType=staff))`. Validated for syntax at save. |
-| **Target base DN** | Base DN under the target where matched entries are placed; the part of each DN below the source scope base is kept. Blank → entries keep their **source DNs** (the source scope base, or the source directory's base when that's blank too). On a target with [several roots](multi-root-directories.md), blank is accepted only when that base lies under one of the target's roots. |
-| **Reference attributes** (csv) | DN-valued attributes whose values are rewritten to target DNs and whose referrers are re-driven on change, e.g. `member,uniqueMember,manager`. Blank → `member,uniqueMember,manager,owner,secDN`. Values are resolved through the membership index of **every** link (the referrer's own link first), so a reference into a subtree mirrored by another link — an IVIA `secDN` under `c=admin` pointing at a `c=us` entry when OUD exposes each suffix as its own directory connection — still remaps. A referent no link has synced is dropped until it lands; one that different links mirror to *different* target DNs is ambiguous and dropped (logged). |
-| **Source anchor attribute** | Target attribute that stores the source identity, used to **adopt** pre-existing target entries (brownfield). Ambiguity → REVIEW. See §6. |
-| **Delete policy** | `DELETE` (remove target when an entry leaves membership) or `REVIEW` (quarantine for an operator instead of auto-deleting). |
-| **Reconcile cadence (seconds)** | How often this set is fully reconciled. Blank → global default (`3600`). |
+| **Applicability filter** | RFC 4515 filter selecting which source entries belong, e.g. `(&(objectClass=inetOrgPerson)(employeeType=staff))`. Blank → every entry under the source base DN. The editor's field takes several lines; an LDAP filter allows no whitespace between components, so line breaks and the whitespace around them are removed on save (the stored filter is one line). Validated for syntax at save. |
+| **Target base DN** | Base DN under the target where matched entries are placed; the part of each DN below the source base DN is kept (source base `ou=people,o=src`, target base `ou=Users,o=dst`: `uid=jo,ou=people,o=src` → `uid=jo,ou=Users,o=dst`). Blank → entries keep their **source DNs**, which needs the source base DN to lie under one of the target directory's base DNs (checked on save). |
+| **Reference attributes** (csv) | Attributes whose values are the DNs of other entries (a group's `member`, a user's `manager`). Blank → `member,uniqueMember,manager,owner,secDN`; a list replaces the defaults rather than adding to them. For each of these attributes the sync: **translates** each value to the DN its referent was synced to, through the membership index of **every** link (the referrer's own link first), so a reference into a subtree mirrored by another link — an IVIA `secDN` under `c=admin` pointing at a `c=us` entry when OUD exposes each suffix as its own directory connection — still remaps; **leaves out** a value whose referent no link has synced (or that different links mirror to *different* target DNs: ambiguous, logged); **re-drives** the referrers when a referent is synced, moved or renamed; and **compares** values as DNs, so case or spacing alone isn't a change. If *none* of an attribute's values translate, the target's current value is **kept** rather than deleted, and the preview says so (see §5). |
+| **Source anchor attribute** | Target attribute where the sync writes each entry's source identity. On an entry's first sync the target is searched for that value: an entry carrying it is **adopted** (updated, and moved to its planned DN if elsewhere) instead of a duplicate being added. More than one match, or an entry without the anchor already at the planned DN → REVIEW (§6). Blank → no anchor: entries are matched by planned DN only (an entry already there is updated to match the source) and nothing extra is written. Set it when target entries may already carry the source identity (from an earlier sync or migration) or may sit at different DNs on the target, e.g. `employeeNumber`; the attribute must be allowed by the target entries' object classes and not used for anything else. |
+| **Delete policy** | `DELETE` (remove target when an entry leaves membership) or `REVIEW` (quarantine for an operator instead of auto-deleting). Default `REVIEW`. |
+| **Reconcile interval (seconds)** | How often this set is fully reconciled. Blank → this server's default, `ldapportal.sync.reconcile.default-cadence-seconds` (`3600`). Stored as `reconcileCadenceSeconds`. |
 | **Attribute mapping** | Optional transform rules: `sourceAttr` → `targetAttr` (blank = same name), `valueTemplate` (blank = passthrough; `${value}` substitutes). |
-| **Record every DN** (`recordAllDns`) | Keep every changed or flagged entry's DN in each run's history (downloadable as CSV), not just the 25 samples per outcome. Off by default: a large run then stores one row per entry. Applies to runs that start after it's turned on. See §5, *Run history*. |
+| **Logging level** (`loggingLevel`) | How much of each run the run history keeps. **Summary** (default): counts and failure reasons only. **Detailed**: also every changed or flagged entry's DN (up to 25 per outcome on the run, all of them downloadable as CSV); a large run stores one row per entry. Applies to runs that start after it changes. See §5, *Run history*. |
 
-Validation (`SyncConfigService.validateSet`): base DNs must parse; the filter
+The editor's info tips list these defaults from `GET /api/v1/superadmin/sync/sets/defaults`
+(`SyncSetDefaultsProvider`), so they match the engine and the server's configuration.
+
+Validation (`SyncConfigService.validateSet`): a source base DN is required and
+must lie under one of the source directory's roots; base DNs must parse; the filter
 must compile; transform rules require a valid LDAP `sourceAttr`, no duplicate
 source attrs (first-wins would silently shadow), valid `targetAttr`, and a
 `valueTemplate` containing no token other than `${value}`.
@@ -382,19 +386,21 @@ name under Kubernetes) that ran it; **when the plan was ready**, so scan time
 (start → plan) and apply time (plan → finish) are separate; the set's
 **settings and delete-guard limits** at run time; **failed and errored entries
 grouped by reason** (the reason up to its `—` detail, with a count and one full
-example); up to 25 **sample target DNs per outcome** (DNs only, no attribute
-values); and the **drift** found by the content verification that runs right
+example); at the **Detailed** logging level, up to 25 **sample target DNs per
+outcome** (DNs only, no attribute values); and the **drift** found by the content verification that runs right
 after a scheduled or manual reconcile (missing / orphaned / content drift),
 when that verification's scans completed.
 
-**Every DN (opt-in):** with the set's **Record every DN** on, a run also keeps
+**Logging level:** at **Summary** (the default) a run keeps its counts and
+failure reasons and no DNs. At **Detailed** it also keeps the samples above and
 every entry it changed or flagged — every outcome but *unchanged*, in
 processing order, with the reason for a failure or review — in
 `sync_reconcile_run_entry`, downloadable as CSV (`outcome,dn,reason`) from the
 run's details. A `FAULT` row carries the source DN or identity whose recompute
-threw, since it never reached a target DN. Off by default because a large run
-stores one row per entry; runs recorded while it was off keep only the
-samples. The rows go with their run (pruning and set deletion cascade).
+threw, since it never reached a target DN. A large detailed run stores one row
+per entry. Runs recorded before this setting existed keep whatever they kept
+then (samples, and every DN where *Record every DN* was on; those sets were
+moved to Detailed). The rows go with their run (pruning and set deletion cascade).
 
 **Audit:** every target write a run makes — reconcile or incremental — is an
 audit record on the **target** directory: `entry.create`, `entry.update`,
@@ -491,9 +497,9 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   drift found right after it. **Recent runs** lists up to the last 10
   reconciles; **Incremental changes** lists the last 20 passes between them.
   **Details** (or a click on a run) shows everything recorded about that run:
-  every count, failures grouped by reason, sample DNs per outcome, and the
-  settings it ran with — plus **Download all entries (CSV)** when the run
-  recorded every DN. Refreshes after **Reconcile now**.
+  every count, failures grouped by reason, sample DNs per outcome (Detailed
+  logging), and the settings it ran with — plus **Download all entries (CSV)**
+  when the run recorded every DN. Refreshes after **Reconcile now**.
 - **Untracked search** — searching a DN/identity that isn't tracked offers
   `Recompute "<term>"` to pull it in on demand.
 - **Verify contents** — a belts-and-suspenders check that re-reads *both*
@@ -501,12 +507,21 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   catches drift the index believes is already converged). Reports counts of
   in-sync / **missing on target** / **orphaned on target** / **content drift**
   entries, with sample DNs for each. Read-only; never writes.
-- **Impact preview** (set editor) — counts of what a reconcile would add and
-  delete, plus sample DNs to be deleted. Works on a **disabled** set, and runs
-  automatically as the confirmation step when you enable a set: if any deletes
-  are planned (or the delete guard would trip) you're asked before it turns on.
-- **Show changes** (set editor; needs *manage directory sync*) — the full,
-  paged list of what a reconcile would do to **each entry**: **Add**,
+- **Saving in the set editor.** **Save** keeps the editor open, so you can
+  edit, save and preview in one place. The preview runs on the **saved** set,
+  so Preview impact is unavailable while the form holds unsaved edits. Saving a
+  new set turns the editor into its edit view, with the preview available.
+  **Close**, ×, or Escape asks before discarding unsaved edits.
+- **Impact preview** (set editor) — the editor shows the set's latest
+  preview run: when it ran and who started it, and its counts per outcome
+  (would add, modify, move or delete, held for review, errors and no change),
+  flagged *Preview again for current counts* when it's outdated. The counts
+  are taken from the run's stored entries, so they always match its list.
+  Works on a **disabled** set, and runs automatically as the confirmation step
+  when you enable a set: if the run would delete entries (or the delete guard
+  would trip) you're asked before it turns on.
+- **Preview impact** (set editor; needs *manage directory sync*) — opens the
+  full, paged list of what a reconcile would do to **each entry**: **Add**,
   **Modify**, **Move**, **Delete**, **Review**, **No change**, **Forget**,
   **Unchanged**, or **Error**. Click a row for the attribute-level changes
   (values removed `−` and added `+`), the source DN, the previous DN of a move,
@@ -514,8 +529,19 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   hides entries that won't change: **Unchanged** (already applied, or already
   held for review) and **No change** (the target already matches). Details:
 
+  - **A reference that can't be translated yet.** When none of a reference
+    attribute's values point to a synced entry (say, an IVIA registration's
+    `secDN` whose group isn't synced), the target's current value is kept,
+    not deleted. The entry shows the note *"secDN kept as it is on the target:
+    it points to …, which isn't synced yet"*, and is **No change** if that was
+    its only difference (untick *Changes only* to see it). A new entry is added
+    without the attribute (*"secDN left out"*). The sync writes the value once
+    the entry it points to is synced. **Verify contents** doesn't count a kept
+    value as drift.
+
   - **A background run.** Opening the dialog shows the set's latest preview, or
-    starts one if there is none; **Run again** starts a fresh one. A run scans
+    starts one if there is none or the latest is outdated; **Run again** starts
+    a fresh one. A run scans
     the source once, dry-runs every entry and stores the result, so paging
     reads a fixed snapshot — every page comes from the same plan, and nothing
     is re-scanned. The dialog shows progress while it runs. One run per set at
@@ -641,7 +667,7 @@ e.g. `ldapportal.sync.worker.fixed-delay-ms` → `LDAPPORTAL_SYNC_WORKER_FIXED_D
 | (constant) stale-claim threshold | `10m` | Reclaim requests left claimed by a crashed worker. |
 | `ldapportal.sync.reconcile.initial-delay-ms` | `120000` | Delay before first reconcile sweep. |
 | `ldapportal.sync.reconcile.tick-ms` | `60000` | Reconcile sweep tick (checks which sets are *due*). |
-| `ldapportal.sync.reconcile.default-cadence-seconds` | `3600` | Default per-set reconcile cadence (overridden per set). |
+| `ldapportal.sync.reconcile.default-cadence-seconds` | `3600` | Default per-set reconcile interval (overridden per set). |
 | `ldapportal.sync.reconcile.history-per-set` | `20` | Reconcile runs kept per set. |
 | `ldapportal.sync.reconcile.incremental-history-per-set` | `50` | Incremental passes kept per set (pruned separately from reconciles). |
 | `ldapportal.sync.changelog.fixed-delay-ms` | `15000` | Changelog poll interval. |
@@ -698,11 +724,11 @@ each) — it does **not** grow per change like an event log. `recompute_request`
 is self-draining and PK-deduped; a persistent backlog there means the worker is
 behind (raise throughput or lower batch latency).
 
-`sync_reconcile_run_entry` grows with **Record every DN**: one row per changed
+`sync_reconcile_run_entry` grows with the **Detailed** logging level: one row per changed
 or flagged entry per kept run, so roughly *entries changed per run × runs
 kept*. A first reconcile of a large set is the big one; later runs record only
-what changed. Turn the flag off, or lower the history knobs, to cap it. The
-audit log grows by one record per target write, flag or not.
+what changed. Set the logging level to Summary, or lower the history knobs, to
+cap it. The audit log grows by one record per target write, whatever the level.
 
 ---
 

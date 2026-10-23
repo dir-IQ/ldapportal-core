@@ -186,6 +186,9 @@ class SyncPreviewServiceTest {
             assertThat(sn.added()).containsExactly("Smith");
         });
         assertThat(preview.status(set.getId()).unchangedCount()).isEqualTo(1); // bob
+        // The summary's per-outcome counts are the stored entries', so they match the list.
+        assertThat(preview.status(set.getId()).actionCounts())
+                .containsExactly(Map.entry("MODIFY", 1L), Map.entry("UNCHANGED", 1L));
 
         SyncPreviewPage all = preview.page(set.getId(), 0, 50, false);
         assertThat(all.entries()).extracting(SyncPreviewEntry::action)
@@ -389,6 +392,38 @@ class SyncPreviewServiceTest {
     }
 
     @Test
+    void aReferenceToAnUnsyncedEntry_isKeptOnTheTarget_withANote() throws Exception {
+        // Both point their manager at an entry outside the set's scope, which no
+        // link syncs, so the reference can't be translated.
+        String boss = "uid=boss,ou=elsewhere," + SRC_BASE;
+        addPerson("alice");
+        source.modify("uid=alice," + SRC_PEOPLE, new Modification(ModificationType.ADD, "manager", boss));
+        addPerson("bob");
+        source.modify("uid=bob," + SRC_PEOPLE, new Modification(ModificationType.ADD, "manager", boss));
+        // alice is already on the target, identical, with her manager set there.
+        String targetBoss = "uid=boss,ou=elsewhere," + DST_BASE;
+        target.add(new Entry("uid=alice," + DST_USERS,
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", "alice"), new Attribute("cn", "alice"), new Attribute("sn", "alice"),
+                new Attribute("manager", targetBoss)));
+
+        Map<String, SyncPreviewEntry> byDn = byTargetDn(previewAll());
+
+        SyncPreviewEntry alice = byDn.get(("uid=alice," + DST_USERS).toLowerCase());
+        assertThat(alice.action()).isEqualTo(SyncPreviewAction.NO_CHANGE); // manager isn't deleted
+        assertThat(alice.reason()).isEqualTo("manager kept as it is on the target: it points to " + boss
+                + ", which isn't synced yet. The sync updates it once that entry is synced.");
+        SyncPreviewEntry bob = byDn.get(("uid=bob," + DST_USERS).toLowerCase());
+        assertThat(bob.action()).isEqualTo(SyncPreviewAction.ADD);
+        assertThat(bob.changes()).noneMatch(c -> c.attribute().equalsIgnoreCase("manager"));
+        assertThat(bob.reason()).startsWith("manager left out: it points to " + boss);
+
+        // A real reconcile keeps it too.
+        reconciler.reconcile(set.getId());
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("manager")).isEqualTo(targetBoss);
+    }
+
+    @Test
     void aTargetOwnedByAnotherIdentity_isForgotten_notDeleted() throws Exception {
         addPerson("alice");
         reconciler.reconcile(set.getId());
@@ -523,6 +558,11 @@ class SyncPreviewServiceTest {
         assertThat(status.status()).as("preview run status (%s)", status.error())
                 .isEqualTo(SyncPreviewRunStatus.COMPLETE);
         return preview.page(set.getId(), page, size, changesOnly);
+    }
+
+    /** Run a fresh preview to completion and read every entry, unchanged ones included. */
+    private SyncPreviewPage previewAll() {
+        return previewEntries(0, 50, false);
     }
 
     private static Map<String, SyncPreviewEntry> byTargetDn(SyncPreviewPage p) {

@@ -72,10 +72,11 @@ export interface SyncSet {
   reconcileLastRunAt: string | null
   enabled: boolean
   /**
-   * Keep every changed or flagged entry's DN in each run's history (CSV
-   * download), not just the first samples per outcome.
+   * How much of each run the history keeps: SUMMARY keeps counts and failure
+   * reasons only; DETAILED also keeps every changed or flagged entry's DN
+   * (CSV download).
    */
-  recordAllDns: boolean
+  loggingLevel: SyncLoggingLevel
   createdAt: string
   updatedAt: string
   version: number
@@ -140,8 +141,18 @@ export const getSyncSetDeleteImpact = (id: string) =>
   client.get<SyncSetDeleteImpact>(`/superadmin/sync/sets/${id}/delete-impact`)
 
 /** Default excluded attributes (operational + password values) — seeds the editor. */
-export const getExcludedAttributeDefaults = () =>
-  client.get<string[]>('/superadmin/sync/sets/excluded-attribute-defaults')
+export type SyncLoggingLevel = 'SUMMARY' | 'DETAILED'
+
+/** What the engine uses for each sync-set field left blank (the editor's info tips list these). */
+export interface SyncSetDefaults {
+  /** Identity attribute per source directory type (DirectoryType name → attribute). */
+  identityKeyByDirectoryType: Record<string, string>
+  referenceAttributes: string[]
+  /** This server's reconcile interval for sets that don't set one. */
+  reconcileIntervalSeconds: number
+  excludedAttributes: string[]
+}
+export const getSyncSetDefaults = () => client.get<SyncSetDefaults>('/superadmin/sync/sets/defaults')
 
 /**
  * One recorded run of a set: a reconcile (SCHEDULED / MANUAL), or an
@@ -247,21 +258,6 @@ export const downloadReconcileRunEntries = (setId: string, runId: string) =>
   client.get<Blob>(`/superadmin/sync/sets/${setId}/reconcile-runs/${runId}/entries.csv`,
     { responseType: 'blob' })
 
-/** Dry-run summary of what a reconcile of a sync set would change (no writes). */
-export interface SyncReconcilePreview {
-  sourceCount: number
-  managedCount: number
-  plannedAdds: number
-  plannedDeletes: number
-  sampleDeleteDns: string[]
-  guardTripped: boolean
-  guardReason: string | null
-  completeScan: boolean
-}
-
-export const previewReconcile = (setId: string) =>
-  client.get<SyncReconcilePreview>(`/superadmin/sync/sets/${setId}/preview`)
-
 /** What a reconcile would do to one entry (from a dry run of the engine). */
 export type SyncPreviewAction =
   | 'ADD' | 'MODIFY' | 'MOVE' | 'DELETE' | 'REVIEW' | 'NO_CHANGE' | 'FORGET' | 'UNCHANGED' | 'ERROR'
@@ -309,6 +305,11 @@ export interface SyncPreviewStatus {
   guardReason: string | null
   completeScan: boolean
   note: string | null
+  /**
+   * Entries per outcome, counted from the stored entries once the run is
+   * complete (empty before), so they match what Show changes lists.
+   */
+  actionCounts: Partial<Record<SyncPreviewAction, number>>
 }
 
 /** One page of a completed preview, ordered by target DN (parents first). */

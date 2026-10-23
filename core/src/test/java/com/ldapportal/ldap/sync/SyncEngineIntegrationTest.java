@@ -902,6 +902,7 @@ class SyncEngineIntegrationTest {
 
     @Test
     void reconcile_recordsDetails_instanceTimingSettingsAndSampleDns() throws Exception {
+        detailedLogging();
         addPerson("alice", "staff", "alice@src");
         addPerson("bob", "staff", "bob@src");
         reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
@@ -925,6 +926,7 @@ class SyncEngineIntegrationTest {
 
     @Test
     void reconcile_groupsFailuresByReason() throws Exception {
+        detailedLogging();
         addPerson("alice", "staff", "alice@src");
         addPerson("bob", "staff", "bob@src");
         target.delete(DST_USERS); // every placement's parent is missing
@@ -940,6 +942,28 @@ class SyncEngineIntegrationTest {
             assertThat(r.example()).contains("ou=Users");
         });
         assertThat(detail.samples().get("ERROR")).hasSize(2);
+    }
+
+    @Test
+    void reconcile_atSummaryLogging_keepsCountsAndReasons_butNoDns() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        target.delete(DST_USERS); // the placement's parent is missing
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        SyncReconcileRunDetail detail = history.detail(peopleSet.getId(), runRepo.findAll().get(0).getId());
+        assertThat(detail.run().failed()).isEqualTo(1);
+        assertThat(detail.failureReasons()).singleElement()
+                .satisfies(r -> assertThat(r.reason()).isEqualTo("apply failed: 32 (no such object)"));
+        assertThat(detail.samples()).isEmpty();
+        assertThat(detail.run().allDnsRecorded()).isFalse();
+    }
+
+    /** Keep every changed or flagged entry's DN in the people set's runs. */
+    private void detailedLogging() {
+        SyncSet s = setRepo.findById(peopleSet.getId()).orElseThrow();
+        s.setLoggingLevel(com.ldapportal.entity.enums.SyncLoggingLevel.DETAILED);
+        peopleSet = setRepo.save(s);
     }
 
     @Test

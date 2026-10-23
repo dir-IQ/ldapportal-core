@@ -61,11 +61,17 @@
         <span class="text-xs text-gray-500">Every entry this run changed or flagged, with its outcome.</span>
       </div>
 
+      <p v-if="countsOnly" class="text-xs text-gray-500">
+        This run kept counts only (<span class="font-medium">Summary</span> logging). To keep the DNs of the
+        entries runs change or flag, set the sync set's <span class="font-medium">Logging level</span> to
+        <span class="font-medium">Detailed</span>.
+      </p>
+
       <div v-if="sampleGroups.length">
         <h4 class="text-xs font-semibold uppercase text-gray-500 mb-1">Sample entries</h4>
         <p v-if="!detail.run.allDnsRecorded && truncated" class="text-xs text-gray-500 mb-1">
-          Up to {{ detail.sampleLimit }} DNs per outcome are kept. To keep every DN in future runs, turn on
-          <span class="font-medium">Record every DN</span> in the sync set's settings.
+          This run kept up to {{ detail.sampleLimit }} DNs per outcome. To keep every DN in future runs, set the
+          sync set's <span class="font-medium">Logging level</span> to <span class="font-medium">Detailed</span>.
         </p>
         <details v-for="g in sampleGroups" :key="g.action" class="mb-1">
           <summary class="cursor-pointer text-gray-700">
@@ -182,6 +188,13 @@ const sampleGroups = computed(() => {
 /** Some outcome has more entries than its samples show. */
 const truncated = computed(() => sampleGroups.value.some((g) => g.dns.length < g.total))
 
+/** A summary-level run that changed or flagged entries but, by design, kept none of their DNs. */
+const countsOnly = computed<boolean>(() => {
+  const d = detail.value
+  if (!d || d.run.allDnsRecorded || sampleGroups.value.length) return false
+  return SAMPLE_ORDER.some((a) => outcomeTotal(d.run, a) > 0)
+})
+
 async function downloadEntries() {
   downloading.value = true
   try {
@@ -199,13 +212,13 @@ const settingsRows = computed(() => {
   if (!s) return []
   const rows: { label: string; value: string }[] = [
     { label: 'Delete policy', value: s.deletePolicy ?? '—' },
-    { label: 'Source scope base DN', value: s.objectScopeBaseDn ?? '(directory base)' },
+    { label: 'Source base DN', value: s.objectScopeBaseDn ?? '(directory base)' },
     { label: 'Source scope', value: s.objectScope ?? 'SUB (default)' },
     { label: 'Applicability filter', value: s.applicabilityFilter ?? '—' },
-    { label: 'Target base DN', value: s.targetBaseDn ?? '(directory base)' },
+    { label: 'Target base DN', value: s.targetBaseDn ?? '(same as source)' },
     { label: 'Identity key', value: s.identityKey ?? '(type default)' },
     { label: 'Source anchor attribute', value: s.sourceAnchorAttribute ?? '—' },
-    { label: 'Reconcile cadence', value: s.reconcileCadenceSeconds != null ? `${s.reconcileCadenceSeconds}s` : '(global default)' },
+    { label: 'Reconcile interval', value: s.reconcileCadenceSeconds != null ? `${s.reconcileCadenceSeconds}s` : '(server default)' },
     {
       label: 'Delete guard',
       value: `more than ${s.guardMaxDeletes} deletes, or more than ${s.guardMaxDeletePercent}% of a managed set `

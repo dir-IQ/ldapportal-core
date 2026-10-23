@@ -9,7 +9,7 @@ const set = {
   identityKey: null, targetBaseDn: null, applicabilityFilter: null, referenceAttributes: null,
   sourceAnchorAttribute: null, deletePolicy: 'DELETE' as const, transformRules: null,
   excludedAttributes: null, reconcileCadenceSeconds: null,
-  reconcileLastRunAt: null, enabled: true, recordAllDns: false, createdAt: '', updatedAt: '', version: 0,
+  reconcileLastRunAt: null, enabled: true, loggingLevel: 'SUMMARY' as const, createdAt: '', updatedAt: '', version: 0,
   stateCounts: { APPLIED: 5, FAILED: 2, REVIEW: 1 },
 }
 const membership = {

@@ -48,6 +48,7 @@ import java.util.UUID;
 public class SyncSetController {
 
     private final SyncConfigService service;
+    private final com.ldapportal.ldap.sync.SyncSetDefaultsProvider defaultsProvider;
 
     @GetMapping
     public List<SyncSetResponse> list(@RequestParam(required = false) UUID linkId) {
@@ -62,6 +63,16 @@ public class SyncSetController {
     @GetMapping("/excluded-attribute-defaults")
     public List<String> excludedAttributeDefaults() {
         return com.ldapportal.ldap.sync.SyncExcludedAttributes.DEFAULT_EXCLUDED;
+    }
+
+    /**
+     * What the engine uses for each field left blank: the editor's info tips
+     * list these, so they stay in lock-step with the engine and this server's
+     * configuration.
+     */
+    @GetMapping("/defaults")
+    public com.ldapportal.dto.sync.SyncSetDefaults defaults() {
+        return defaultsProvider.defaults();
     }
 
     @PostMapping

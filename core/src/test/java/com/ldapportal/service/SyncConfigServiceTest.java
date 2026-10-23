@@ -18,6 +18,7 @@ import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.entity.enums.SyncChangelogHealth;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
@@ -82,8 +83,8 @@ class SyncConfigServiceTest {
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
-        return new SyncSetRequest(UUID.randomUUID(), "people", null, null, null, null, null, null, null,
-                SyncDeletePolicy.DELETE, rules, null, null, true, null);
+        return new SyncSetRequest(UUID.randomUUID(), "people", "ou=people,dc=src,dc=com", null, null, null,
+                null, null, null, SyncDeletePolicy.DELETE, rules, null, null, true, null);
     }
 
     @Test
@@ -134,21 +135,47 @@ class SyncConfigServiceTest {
     }
 
     @Test
-    void recordAllDns_isSetWhenGiven_andLeftAloneWhenNull() {
+    void loggingLevel_isSetWhenGiven_summaryOnCreate_andLeftAloneWhenNull() {
         when(linkRepo.existsById(any())).thenReturn(true);
         when(setRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         SyncSetRequest base = req(List.of());
-        SyncSetRequest on = new SyncSetRequest(base.linkId(), base.name(), null, null, null, null, null, null,
-                null, base.deletePolicy(), null, null, null, true, true);
+        SyncSetRequest detailed = new SyncSetRequest(base.linkId(), base.name(), base.objectScopeBaseDn(), null,
+                null, null, null, null, null, base.deletePolicy(), null, null, null, true, SyncLoggingLevel.DETAILED);
 
-        assertThat(service.createSet(on).recordAllDns()).isTrue();
-        assertThat(service.createSet(base).recordAllDns()).isFalse();
+        assertThat(service.createSet(detailed).loggingLevel()).isEqualTo(SyncLoggingLevel.DETAILED);
+        assertThat(service.createSet(base).loggingLevel()).isEqualTo(SyncLoggingLevel.SUMMARY);
 
         UUID setId = UUID.randomUUID();
         SyncSet existing = new SyncSet();
-        existing.setRecordAllDns(true);
+        existing.setLoggingLevel(SyncLoggingLevel.DETAILED);
         when(setRepo.findById(setId)).thenReturn(Optional.of(existing));
-        assertThat(service.updateSet(setId, base).recordAllDns()).isTrue(); // null: unchanged
+        assertThat(service.updateSet(setId, base).loggingLevel()).isEqualTo(SyncLoggingLevel.DETAILED); // null: unchanged
+    }
+
+    @Test
+    void applicabilityFilter_laidOutOverSeveralLines_isStoredAsOneLine() {
+        when(linkRepo.existsById(any())).thenReturn(true);
+        when(setRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        SyncSetRequest base = req(List.of());
+        SyncSetRequest multiline = new SyncSetRequest(base.linkId(), base.name(), base.objectScopeBaseDn(), null,
+                null, null, "(&(objectClass=secGroup)\n  (!(|(cn=iv-admin)\r\n      (cn=John Smith))))\n", null, null,
+                base.deletePolicy(), null, null, null, true, null);
+
+        assertThat(service.createSet(multiline).applicabilityFilter())
+                .isEqualTo("(&(objectClass=secGroup)(!(|(cn=iv-admin)(cn=John Smith))))");
+    }
+
+    @Test
+    void sourceBaseDn_isRequired() {
+        when(linkRepo.existsById(any())).thenReturn(true);
+        SyncSetRequest base = req(List.of());
+        SyncSetRequest blank = new SyncSetRequest(base.linkId(), base.name(), "  ", null, null, null, null, null,
+                null, base.deletePolicy(), null, null, null, true, null);
+
+        assertThatThrownBy(() -> service.createSet(blank))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Source base DN is required.");
+        verify(setRepo, never()).save(any());
     }
 
     @Test
@@ -283,14 +310,23 @@ class SyncConfigServiceTest {
         when(directoryRepo.findById(srcId)).thenReturn(Optional.of(multi));
         org.mockito.Mockito.lenient().when(directoryRepo.findById(dstId)).thenReturn(Optional.of(single));
 
-        SyncSetRequest noScope = new SyncSetRequest(linkId, "people", null, null, null, "ou=Users,dc=dst,dc=com",
-                null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
-        assertThatThrownBy(() -> service.createSet(noScope))
+        SyncSetRequest outside = new SyncSetRequest(linkId, "people", "ou=people,dc=other", null, null,
+                "ou=Users,dc=dst,dc=com", null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
+        assertThatThrownBy(() -> service.createSet(outside))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("source scope base DN");
+                .hasMessageContaining("'ou=people,dc=other' isn't under any of the source directory's base DNs");
+
+        // Under either of the source's roots is fine.
+        org.mockito.Mockito.lenient().when(setRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        SyncSetRequest secondRoot = new SyncSetRequest(linkId, "partners", "ou=people,o=partners", null, null,
+                "ou=Users,dc=dst,dc=com", null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
+        assertThat(service.createSet(secondRoot).objectScopeBaseDn()).isEqualTo("ou=people,o=partners");
     }
 
-    /** A link from a single-root source to a target with two roots (c=us and o=partners). */
+    /**
+     * A link from a source with roots c=us and dc=elsewhere to a target with
+     * roots c=us and o=partners.
+     */
     private UUID linkToMultiRootTarget() {
         UUID linkId = UUID.randomUUID();
         UUID srcId = UUID.randomUUID();
@@ -298,14 +334,15 @@ class SyncConfigServiceTest {
         SyncLink link = new SyncLink();
         link.setSourceDirId(srcId);
         link.setTargetDirId(dstId);
-        com.ldapportal.entity.DirectoryConnection single = new com.ldapportal.entity.DirectoryConnection();
-        single.setBaseDn("c=us");
+        com.ldapportal.entity.DirectoryConnection source = new com.ldapportal.entity.DirectoryConnection();
+        source.setBaseDn("c=us");
+        source.setAdditionalBaseDns(new java.util.ArrayList<>(List.of("dc=elsewhere")));
         com.ldapportal.entity.DirectoryConnection multi = new com.ldapportal.entity.DirectoryConnection();
         multi.setBaseDn("c=us");
         multi.setAdditionalBaseDns(new java.util.ArrayList<>(List.of("o=partners")));
         when(linkRepo.existsById(linkId)).thenReturn(true);
         when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
-        org.mockito.Mockito.lenient().when(directoryRepo.findById(srcId)).thenReturn(Optional.of(single));
+        org.mockito.Mockito.lenient().when(directoryRepo.findById(srcId)).thenReturn(Optional.of(source));
         when(directoryRepo.findById(dstId)).thenReturn(Optional.of(multi));
         org.mockito.Mockito.lenient().when(setRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         return linkId;

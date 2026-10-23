@@ -35,7 +35,8 @@ const set = {
   id: 'set-1', linkId: 'link-1', name: 'people', objectScopeBaseDn: 'ou=people,dc=src',
   objectScope: 'SUB', identityKey: null, targetBaseDn: 'ou=Users,dc=dst', applicabilityFilter: null,
   referenceAttributes: null, sourceAnchorAttribute: null, deletePolicy: 'DELETE', transformRules: null,
-  reconcileCadenceSeconds: null, reconcileLastRunAt: null, enabled: true, createdAt: '', updatedAt: '', version: 0,
+  reconcileCadenceSeconds: null, reconcileLastRunAt: null, enabled: true, loggingLevel: 'SUMMARY',
+  createdAt: '', updatedAt: '', version: 0,
   stateCounts: { APPLIED: 5, FAILED: 2, REVIEW: 1 },
 }
 const membership = {
@@ -56,10 +57,21 @@ vi.mock('@/api/sync', () => ({
   getSyncSetDeleteImpact: vi.fn(() => Promise.resolve({ data: {
     name: 'people', managed: 876, pendingReview: 3, reconcileRuns: 12, otherSets: ['groups'],
   } })),
-  getExcludedAttributeDefaults: vi.fn(() => Promise.resolve({ data: ['userPassword', 'entryUUID'] })),
-  previewReconcile: vi.fn(() => Promise.resolve({ data: {
-    sourceCount: 3, managedCount: 3, plannedAdds: 0, plannedDeletes: 0,
-    sampleDeleteDns: [], guardTripped: false, guardReason: null, completeScan: true,
+  getSyncSetDefaults: vi.fn(() => Promise.resolve({ data: {
+    identityKeyByDirectoryType: { OPENLDAP: 'entryUUID', GENERIC: 'entryUUID', ACTIVE_DIRECTORY: 'objectGUID' },
+    referenceAttributes: ['member', 'uniqueMember', 'manager', 'owner', 'secDN'],
+    reconcileIntervalSeconds: 3600,
+    excludedAttributes: ['userPassword', 'entryUUID'],
+  } })),
+  getPreviewRun: vi.fn(() => Promise.resolve({ data: { runId: null, status: null, actionCounts: {} } })),
+  previewEntries: vi.fn(() => Promise.resolve({ data: {
+    entries: [], page: 0, size: 50, totalEntries: 0, totalPages: 0, changesOnly: true, runId: 'run-1',
+  } })),
+  startPreviewRun: vi.fn(() => Promise.resolve({ data: {
+    runId: 'run-1', status: 'COMPLETE', requestedBy: 'ann', startedAt: '2026-10-23T03:00:00Z', finishedAt: '2026-10-23T03:00:05Z', processed: 5,
+    total: 5, outdated: false, error: null, sourceCount: 5, managedCount: 3, actionableCount: 2,
+    unchangedCount: 3, guardTripped: false, guardReason: null, completeScan: true, note: null,
+    actionCounts: { ADD: 1, DELETE: 1, NO_CHANGE: 2, UNCHANGED: 1 },
   } })),
   listMemberships: vi.fn(() => Promise.resolve({
     data: { content: [membership], totalElements: 8, totalPages: 1, number: 0, size: 50 },
@@ -184,6 +196,197 @@ describe('DirectorySyncView', () => {
     expect(wrapper.text()).toContain('people') // nested sets shown
     expect(syncApi.listMemberships).not.toHaveBeenCalled() // no inventory modal
     wrapper.unmount()
+  })
+
+  describe('the set editor', () => {
+    const buttons = () => Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+    const button = (text: string) => buttons().find((b) => b.textContent?.trim() === text)
+    const field = (label: string) => {
+      const l = Array.from(document.querySelectorAll('label')).find((x) => x.textContent?.includes(label))!
+      return document.getElementById((l as HTMLLabelElement).htmlFor) as HTMLInputElement
+    }
+    const type = async (label: string, value: string) => {
+      const input = field(label)
+      input.value = value
+      input.dispatchEvent(new Event('input'))
+      await flushPromises()
+    }
+    const submit = async () => {
+      document.getElementById('sync-set-form')!.dispatchEvent(new Event('submit'))
+      await flushPromises()
+    }
+
+    async function openEditor(action: 'Edit' | '+ New Set') {
+      const wrapper = mount(DirectorySyncView, { attachTo: document.body })
+      await flushPromises()
+      await wrapper.find('tbody tr').trigger('click') // select link
+      await flushPromises()
+      const matches = buttons().filter((b) => b.textContent?.trim() === action)
+      matches[matches.length - 1].click() // the set row's Edit, not the link's
+      await flushPromises()
+      return wrapper
+    }
+
+    it('holds the preview buttons until edits are saved', async () => {
+      const wrapper = await openEditor('Edit')
+      expect(button('Preview impact')!.disabled).toBe(false)
+      expect(button('Save')!.disabled).toBe(true) // nothing to save yet
+
+      await type('Reference attributes', 'member,uniqueMember,manager,owner')
+      expect(button('Preview impact')!.disabled).toBe(true)
+      expect(button('Show changes')).toBeUndefined() // one button: Preview impact opens the list
+      expect(document.body.textContent).toContain('Save your changes to preview them')
+      wrapper.unmount()
+    })
+
+    it('saves without closing, then enables the preview', async () => {
+      const saved = { ...set, referenceAttributes: 'member,uniqueMember,manager,owner' }
+      vi.mocked(syncApi.updateSyncSet).mockResolvedValueOnce({ data: saved } as never)
+      const wrapper = await openEditor('Edit')
+
+      await type('Reference attributes', 'member,uniqueMember,manager,owner')
+      await submit()
+
+      expect(syncApi.updateSyncSet).toHaveBeenCalledWith('set-1',
+        expect.objectContaining({ referenceAttributes: 'member,uniqueMember,manager,owner' }))
+      expect(document.body.textContent).toContain('Edit sync set') // still open
+      expect(field('Reference attributes').value).toBe('member,uniqueMember,manager,owner')
+      expect(button('Preview impact')!.disabled).toBe(false)
+      expect(button('Save')!.disabled).toBe(true)
+
+      // Preview impact opens the per-entry list, which runs a fresh preview (the set has none).
+      const complete = (await syncApi.startPreviewRun('set-1')).data
+      vi.mocked(syncApi.startPreviewRun).mockClear()
+      vi.mocked(syncApi.getPreviewRun)
+        .mockResolvedValueOnce({ data: { runId: null, status: null, actionCounts: {} } } as never)
+        .mockResolvedValueOnce({ data: complete } as never)
+      button('Preview impact')!.click()
+      await flushPromises()
+      expect(document.body.textContent).toContain('Planned changes — people')
+      expect(syncApi.startPreviewRun).toHaveBeenCalledWith('set-1')
+
+      // Closing it leaves that run's counts in the editor: the same run the list showed.
+      const closes = Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="Close"]'))
+      closes[closes.length - 1].click()
+      await flushPromises()
+      expect(document.body.textContent).not.toContain('Planned changes — people')
+      expect(document.querySelector('[data-testid="impact-counts"]')!.textContent!.replace(/\s+/g, ' '))
+        .toContain('Would add: 1 · Would modify: 0 · Would move: 0 · Would delete: 1 · Held for review: 0 · '
+          + 'Errors: 0 · No change: 3')
+      expect(document.body.textContent).toContain('Last preview:')
+      expect(document.body.textContent).toContain('by ann')
+      wrapper.unmount()
+    })
+
+    it('turns a created set into an editable one with the preview available', async () => {
+      const wrapper = await openEditor('+ New Set')
+      expect(document.body.textContent).toContain('New sync set')
+      expect(button('Preview impact')).toBeUndefined()
+
+      await type('Name', 'groups')
+      await type('Source base DN', 'ou=groups,dc=src')
+      await submit()
+
+      expect(syncApi.createSyncSet).toHaveBeenCalledTimes(1)
+      expect(document.body.textContent).toContain('Edit sync set')
+      expect(button('Preview impact')!.disabled).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('asks before Close discards unsaved edits', async () => {
+      const wrapper = await openEditor('Edit')
+      await type('Reference attributes', 'member')
+
+      button('Close')!.click()
+      await flushPromises()
+      expect(document.body.textContent).toContain('Discard unsaved changes?')
+      button('Keep editing')!.click()
+      await flushPromises()
+      expect(field('Reference attributes').value).toBe('member')
+
+      button('Close')!.click()
+      await flushPromises()
+      button('Discard')!.click()
+      await flushPromises()
+      expect(document.body.textContent).not.toContain('Edit sync set')
+      expect(syncApi.updateSyncSet).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('sends the logging level, and the filter as typed over several lines', async () => {
+      const wrapper = await openEditor('Edit')
+      const level = document.getElementById('sync-set-logging-level') as HTMLSelectElement
+      expect(level.value).toBe('SUMMARY')
+      level.value = 'DETAILED'
+      level.dispatchEvent(new Event('change'))
+      const filter = field('Applicability filter')
+      expect(filter.tagName).toBe('TEXTAREA')
+      filter.value = '(&(objectClass=secGroup)\n  (!(cn=iv-admin)))'
+      filter.dispatchEvent(new Event('input'))
+      await flushPromises()
+      await submit()
+
+      expect(syncApi.updateSyncSet).toHaveBeenCalledWith('set-1', expect.objectContaining({
+        loggingLevel: 'DETAILED',
+        applicabilityFilter: '(&(objectClass=secGroup)\n  (!(cn=iv-admin)))', // the server joins the lines
+      }))
+      wrapper.unmount()
+    })
+
+    it('marks the source base DN required and points blank fields at their defaults', async () => {
+      const wrapper = await openEditor('+ New Set')
+      const labels = Array.from(document.querySelectorAll('label')).map((l) => l.textContent?.trim() ?? '')
+      expect(labels).toContain('Source base DN *')
+      expect(labels).toContain('Reconcile interval (seconds)')
+      expect(labels.some((l) => l.includes('cadence'))).toBe(false)
+      expect(field('Source base DN').placeholder).toBe('')
+      expect(field('Reference attributes').placeholder).toBe('Leave blank for the default (see ⓘ)')
+      expect(field('Target base DN').placeholder).toBe('Leave blank for the default (see ⓘ)')
+      expect(document.body.textContent).not.toContain('Record every DN')
+      wrapper.unmount()
+    })
+
+    it('shows the latest preview run when it opens, with the same counts Show changes lists', async () => {
+      vi.mocked(syncApi.getPreviewRun).mockResolvedValueOnce({ data: {
+        runId: 'run-0', status: 'COMPLETE', processed: 4, total: 4, outdated: true, error: null,
+        sourceCount: 4, managedCount: 4, actionableCount: 1, unchangedCount: 3, guardTripped: false,
+        guardReason: null, completeScan: true, note: null, actionCounts: { MODIFY: 1, UNCHANGED: 3 },
+      } } as never)
+      const wrapper = await openEditor('Edit')
+
+      expect(document.querySelector('[data-testid="impact-counts"]')!.textContent).toContain('Would modify: 1')
+      expect(document.body.textContent).toContain('Preview again for current counts')
+      wrapper.unmount()
+    })
+
+    it('asks before enabling a set when its preview run would delete entries', async () => {
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [{ ...set, enabled: false }] } as never)
+      const wrapper = await openEditor('Edit')
+      const enabled = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+        .find((c) => c.parentElement?.textContent?.includes('Enabled'))!
+      enabled.checked = true
+      enabled.dispatchEvent(new Event('change'))
+      await flushPromises()
+      await submit()
+
+      expect(syncApi.startPreviewRun).toHaveBeenCalledWith('set-1')
+      expect(syncApi.updateSyncSet).not.toHaveBeenCalled()
+      expect(document.body.textContent).toContain('1 target entry(ies) would be deleted.')
+      button('Enable anyway')!.click()
+      await flushPromises()
+      expect(syncApi.updateSyncSet).toHaveBeenCalledWith('set-1', expect.objectContaining({ enabled: true }))
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set] } as never)
+      wrapper.unmount()
+    })
+
+    it('closes straight away when nothing changed', async () => {
+      const wrapper = await openEditor('Edit')
+      button('Close')!.click()
+      await flushPromises()
+      expect(document.body.textContent).not.toContain('Discard unsaved changes?')
+      expect(document.body.textContent).not.toContain('Edit sync set')
+      wrapper.unmount()
+    })
   })
 
   describe('deleting a set', () => {
