@@ -145,8 +145,9 @@
     </AppModal>
 
     <!-- ── Set editor ──────────────────────────────────────────────────────── -->
-    <AppModal v-model="showSetModal" :title="editingSet ? 'Edit sync set' : 'New sync set'" size="lg">
-      <form class="space-y-3" @submit.prevent="saveSet">
+    <AppModal v-model="showSetModal" :title="editingSet ? 'Edit sync set' : 'New sync set'" size="lg"
+              :dirty="setDirty">
+      <form id="sync-set-form" class="space-y-3" @submit.prevent="saveSet">
         <div class="grid grid-cols-2 gap-3">
           <FormField label="Name" v-model="setForm.name" required
                      help="A label for this sync set, shown in the inventory and logs. Does not affect matching." />
@@ -238,19 +239,24 @@
           <HelpTip text="Keep every changed or flagged entry's DN in each run's history, downloadable as CSV from the run's details. When off, only the first 25 DNs per outcome are kept. A large run stores one row per entry." />
         </div>
 
-        <!-- Dry-run preview (existing sets only — needs a persisted set to plan against). -->
+        <!-- Dry-run preview (existing sets only — needs a persisted set to plan
+             against). Both buttons run on the saved set, so they wait for a save
+             while the form holds edits. -->
         <div v-if="editingSet" class="rounded-lg border border-gray-200 p-3 space-y-2">
           <div class="flex items-center justify-between">
             <span class="text-sm font-medium text-gray-700">Impact preview</span>
             <div class="flex items-center gap-2">
-              <button type="button" class="btn-secondary btn-compact" :disabled="previewLoading"
+              <button type="button" class="btn-secondary btn-compact" :disabled="previewLoading || setDirty"
                       @click="runPreview">{{ previewLoading ? 'Checking…' : 'Preview impact' }}</button>
-              <button v-if="canManage" type="button" class="btn-secondary btn-compact"
+              <button v-if="canManage" type="button" class="btn-secondary btn-compact" :disabled="setDirty"
                       @click="showChanges = true">
                 Show changes
               </button>
             </div>
           </div>
+          <p v-if="setDirty" class="text-xs text-gray-500">
+            Save your changes to preview them. The preview runs on the saved set.
+          </p>
           <div v-if="previewResult" class="text-xs text-gray-600 space-y-1">
             <p>
               Source entries: <span class="font-medium">{{ previewResult.sourceCount }}</span> ·
@@ -290,11 +296,16 @@
           </div>
         </div>
 
-        <div class="flex justify-end gap-2 pt-2">
-          <button type="button" class="btn-neutral" @click="showSetModal = false">Cancel</button>
-          <button type="submit" class="btn-primary">{{ editingSet ? 'Save' : 'Create' }}</button>
-        </div>
       </form>
+      <!-- Save keeps the dialog open so the impact preview can run on what was
+           just saved; Close goes through AppModal's unsaved-changes guard. -->
+      <template #footer="{ close }">
+        <button type="button" class="btn-neutral" @click="close()">Close</button>
+        <button type="submit" form="sync-set-form" class="btn-primary"
+                :disabled="savingSet || (!!editingSet && !setDirty)">
+          {{ savingSet ? 'Saving…' : editingSet ? 'Save' : 'Create' }}
+        </button>
+      </template>
     </AppModal>
 
     <SyncPreviewChangesModal v-if="editingSet" v-model="showChanges"
@@ -560,21 +571,32 @@ function blankSet(): SetForm {
     recordAllDns: false,
   }
 }
+function formFromSet(s: SyncSet): SetForm {
+  return {
+    name: s.name, identityKey: s.identityKey ?? '', objectScopeBaseDn: s.objectScopeBaseDn ?? '',
+    targetBaseDn: s.targetBaseDn ?? '', applicabilityFilter: s.applicabilityFilter ?? '',
+    referenceAttributes: s.referenceAttributes ?? '', sourceAnchorAttribute: s.sourceAnchorAttribute ?? '',
+    reconcileCadenceSeconds: s.reconcileCadenceSeconds != null ? String(s.reconcileCadenceSeconds) : '',
+    deletePolicy: s.deletePolicy, objectScope: s.objectScope,
+    transformRules: (s.transformRules ?? []).map((r) => ({ ...r })),
+    excludedAttributes: s.excludedAttributes ? [...s.excludedAttributes] : null,
+    enabled: s.enabled,
+    recordAllDns: s.recordAllDns,
+  }
+}
+// Unsaved-changes tracking: the form is dirty while what it would send differs
+// from what it held when it was opened or last saved.
+const savedSetSnapshot = ref<string>('')
+const savingSet = ref<boolean>(false)
+function setSnapshot(f: SetForm): string {
+  return JSON.stringify(toPayload(f))
+}
+const setDirty = computed<boolean>(() => showSetModal.value && setSnapshot(setForm.value) !== savedSetSnapshot.value)
 function openSetModal(s?: SyncSet) {
   editingSet.value = s ?? null
-  setForm.value = s
-    ? {
-        name: s.name, identityKey: s.identityKey ?? '', objectScopeBaseDn: s.objectScopeBaseDn ?? '',
-        targetBaseDn: s.targetBaseDn ?? '', applicabilityFilter: s.applicabilityFilter ?? '',
-        referenceAttributes: s.referenceAttributes ?? '', sourceAnchorAttribute: s.sourceAnchorAttribute ?? '',
-        reconcileCadenceSeconds: s.reconcileCadenceSeconds != null ? String(s.reconcileCadenceSeconds) : '',
-        deletePolicy: s.deletePolicy, objectScope: s.objectScope,
-        transformRules: (s.transformRules ?? []).map((r) => ({ ...r })),
-        excludedAttributes: s.excludedAttributes ? [...s.excludedAttributes] : null,
-        enabled: s.enabled,
-        recordAllDns: s.recordAllDns,
-      }
-    : blankSet()
+  setForm.value = s ? formFromSet(s) : blankSet()
+  // A new set is dirty from the start: nothing has been saved yet.
+  savedSetSnapshot.value = s ? setSnapshot(setForm.value) : ''
   previewResult.value = null
   confirmEnable.value = false
   showChanges.value = false
@@ -650,17 +672,28 @@ async function saveSet() {
   await doSaveSet()
 }
 
+// Saves and keeps the dialog open: the form is reseeded from what the server
+// stored, and a new set becomes an existing one, so the impact preview can run
+// on it straight away.
 async function doSaveSet() {
+  const creating = !editingSet.value
+  savingSet.value = true
   try {
     const payload = toPayload(setForm.value)
-    if (editingSet.value) await updateSyncSet(editingSet.value.id, payload)
-    else await createSyncSet(payload)
-    notif.success(editingSet.value ? 'Sync set updated' : 'Sync set created')
+    const { data } = editingSet.value
+      ? await updateSyncSet(editingSet.value.id, payload)
+      : await createSyncSet(payload)
+    editingSet.value = data
+    setForm.value = formFromSet(data)
+    savedSetSnapshot.value = setSnapshot(setForm.value)
+    previewResult.value = null // it described the configuration before this save
     confirmEnable.value = false
-    showSetModal.value = false
+    notif.success(creating ? 'Sync set created' : 'Sync set updated')
     await refreshHealth()
   } catch (e) {
     notif.error(errMsg(e))
+  } finally {
+    savingSet.value = false
   }
 }
 function plural(n: number, one: string, many = `${one}s`): string {

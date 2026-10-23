@@ -186,6 +186,112 @@ describe('DirectorySyncView', () => {
     wrapper.unmount()
   })
 
+  describe('the set editor', () => {
+    const buttons = () => Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+    const button = (text: string) => buttons().find((b) => b.textContent?.trim() === text)
+    const field = (label: string) => {
+      const l = Array.from(document.querySelectorAll('label')).find((x) => x.textContent?.includes(label))!
+      return document.getElementById((l as HTMLLabelElement).htmlFor) as HTMLInputElement
+    }
+    const type = async (label: string, value: string) => {
+      const input = field(label)
+      input.value = value
+      input.dispatchEvent(new Event('input'))
+      await flushPromises()
+    }
+    const submit = async () => {
+      document.getElementById('sync-set-form')!.dispatchEvent(new Event('submit'))
+      await flushPromises()
+    }
+
+    async function openEditor(action: 'Edit' | '+ New Set') {
+      const wrapper = mount(DirectorySyncView, { attachTo: document.body })
+      await flushPromises()
+      await wrapper.find('tbody tr').trigger('click') // select link
+      await flushPromises()
+      const matches = buttons().filter((b) => b.textContent?.trim() === action)
+      matches[matches.length - 1].click() // the set row's Edit, not the link's
+      await flushPromises()
+      return wrapper
+    }
+
+    it('holds the preview buttons until edits are saved', async () => {
+      const wrapper = await openEditor('Edit')
+      expect(button('Preview impact')!.disabled).toBe(false)
+      expect(button('Save')!.disabled).toBe(true) // nothing to save yet
+
+      await type('Reference attributes', 'member,uniqueMember,manager,owner')
+      expect(button('Preview impact')!.disabled).toBe(true)
+      expect(button('Show changes')!.disabled).toBe(true)
+      expect(document.body.textContent).toContain('Save your changes to preview them')
+      wrapper.unmount()
+    })
+
+    it('saves without closing, then enables the preview', async () => {
+      const saved = { ...set, referenceAttributes: 'member,uniqueMember,manager,owner' }
+      vi.mocked(syncApi.updateSyncSet).mockResolvedValueOnce({ data: saved } as never)
+      const wrapper = await openEditor('Edit')
+
+      await type('Reference attributes', 'member,uniqueMember,manager,owner')
+      await submit()
+
+      expect(syncApi.updateSyncSet).toHaveBeenCalledWith('set-1',
+        expect.objectContaining({ referenceAttributes: 'member,uniqueMember,manager,owner' }))
+      expect(document.body.textContent).toContain('Edit sync set') // still open
+      expect(field('Reference attributes').value).toBe('member,uniqueMember,manager,owner')
+      expect(button('Preview impact')!.disabled).toBe(false)
+      expect(button('Save')!.disabled).toBe(true)
+
+      button('Preview impact')!.click()
+      await flushPromises()
+      expect(syncApi.previewReconcile).toHaveBeenCalledWith('set-1')
+      wrapper.unmount()
+    })
+
+    it('turns a created set into an editable one with the preview available', async () => {
+      const wrapper = await openEditor('+ New Set')
+      expect(document.body.textContent).toContain('New sync set')
+      expect(button('Preview impact')).toBeUndefined()
+
+      await type('Name', 'groups')
+      await submit()
+
+      expect(syncApi.createSyncSet).toHaveBeenCalledTimes(1)
+      expect(document.body.textContent).toContain('Edit sync set')
+      expect(button('Preview impact')!.disabled).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('asks before Close discards unsaved edits', async () => {
+      const wrapper = await openEditor('Edit')
+      await type('Reference attributes', 'member')
+
+      button('Close')!.click()
+      await flushPromises()
+      expect(document.body.textContent).toContain('Discard unsaved changes?')
+      button('Keep editing')!.click()
+      await flushPromises()
+      expect(field('Reference attributes').value).toBe('member')
+
+      button('Close')!.click()
+      await flushPromises()
+      button('Discard')!.click()
+      await flushPromises()
+      expect(document.body.textContent).not.toContain('Edit sync set')
+      expect(syncApi.updateSyncSet).not.toHaveBeenCalled()
+      wrapper.unmount()
+    })
+
+    it('closes straight away when nothing changed', async () => {
+      const wrapper = await openEditor('Edit')
+      button('Close')!.click()
+      await flushPromises()
+      expect(document.body.textContent).not.toContain('Discard unsaved changes?')
+      expect(document.body.textContent).not.toContain('Edit sync set')
+      wrapper.unmount()
+    })
+  })
+
   describe('deleting a set', () => {
     // Render the row menu's items as plain buttons so the test can click "Delete".
     const stubs = {

@@ -501,6 +501,11 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   catches drift the index believes is already converged). Reports counts of
   in-sync / **missing on target** / **orphaned on target** / **content drift**
   entries, with sample DNs for each. Read-only; never writes.
+- **Saving in the set editor.** **Save** keeps the editor open, so you can
+  edit, save and preview in one place. Both previews below run on the **saved**
+  set, so they're unavailable while the form holds unsaved edits. Saving a new
+  set turns the editor into its edit view, with the previews available.
+  **Close**, ×, or Escape asks before discarding unsaved edits.
 - **Impact preview** (set editor) — counts of what a reconcile would add and
   delete, plus sample DNs to be deleted. Works on a **disabled** set, and runs
   automatically as the confirmation step when you enable a set: if any deletes
