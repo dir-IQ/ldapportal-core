@@ -4,6 +4,7 @@ package com.ldapportal.ldap;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.DirectoryObjectClassDefaults;
 import com.ldapportal.ldap.model.LdapGroup;
+import com.ldapportal.util.CsvUtils;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.LDAPException;
 
@@ -28,6 +29,13 @@ import java.util.Map;
  * (the user import accepts either).</p>
  */
 public final class UserGroupIndex {
+
+    /**
+     * Key (and CSV header) of the groups column that user exports and the
+     * user-listing reports add. The user import reads a column of this name
+     * back as group memberships.
+     */
+    public static final String COLUMN = "groups";
 
     private final Map<String, List<String>> byMemberDn = new HashMap<>();
     private final Map<String, List<String>> byMemberUid = new HashMap<>();
@@ -81,6 +89,26 @@ public final class UserGroupIndex {
                 if (!out.contains(label)) out.add(label);
             }
         }
+        return out;
+    }
+
+    /**
+     * The groups-column cell for a user: {@link #groupsOf} joined as a
+     * multi-value cell ({@code |}, a literal pipe escaped), the form the
+     * user import reads back.
+     */
+    public String cell(String userDn, String uid) {
+        return CsvUtils.joinMultiValue(groupsOf(userDn, uid));
+    }
+
+    /**
+     * {@code columns} with the groups column last. A column that happens to be
+     * called {@value #COLUMN} (any case) gives way to it.
+     */
+    public static List<String> withColumn(List<String> columns) {
+        List<String> out = new ArrayList<>(columns);
+        out.removeIf(c -> c.equalsIgnoreCase(COLUMN));
+        out.add(COLUMN);
         return out;
     }
 
