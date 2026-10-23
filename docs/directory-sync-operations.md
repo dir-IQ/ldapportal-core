@@ -508,21 +508,20 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   in-sync / **missing on target** / **orphaned on target** / **content drift**
   entries, with sample DNs for each. Read-only; never writes.
 - **Saving in the set editor.** **Save** keeps the editor open, so you can
-  edit, save and preview in one place. Both previews below run on the **saved**
-  set, so they're unavailable while the form holds unsaved edits. Saving a new
-  set turns the editor into its edit view, with the previews available.
+  edit, save and preview in one place. The preview runs on the **saved** set,
+  so Preview impact is unavailable while the form holds unsaved edits. Saving a
+  new set turns the editor into its edit view, with the preview available.
   **Close**, ×, or Escape asks before discarding unsaved edits.
-- **Impact preview** (set editor) — **Preview impact** starts the same
-  per-entry run that **Show changes** lists (or joins the one already running)
-  and shows its counts per outcome: would add, modify, move or delete, held for
-  review, errors and no change. The counts are taken from the run's stored
-  entries, so they always match the list. The editor shows the set's latest
-  run when it opens, flagged when it's outdated. Works on a **disabled** set,
-  and runs automatically as the confirmation step when you enable a set: if
-  the run would delete entries (or the delete guard would trip) you're asked
-  before it turns on.
-- **Show changes** (set editor; needs *manage directory sync*) — the full,
-  paged list of what a reconcile would do to **each entry**: **Add**,
+- **Impact preview** (set editor) — the editor shows the set's latest
+  preview run: when it ran and who started it, and its counts per outcome
+  (would add, modify, move or delete, held for review, errors and no change),
+  flagged *Preview again for current counts* when it's outdated. The counts
+  are taken from the run's stored entries, so they always match its list.
+  Works on a **disabled** set, and runs automatically as the confirmation step
+  when you enable a set: if the run would delete entries (or the delete guard
+  would trip) you're asked before it turns on.
+- **Preview impact** (set editor; needs *manage directory sync*) — opens the
+  full, paged list of what a reconcile would do to **each entry**: **Add**,
   **Modify**, **Move**, **Delete**, **Review**, **No change**, **Forget**,
   **Unchanged**, or **Error**. Click a row for the attribute-level changes
   (values removed `−` and added `+`), the source DN, the previous DN of a move,

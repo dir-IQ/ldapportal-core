@@ -64,8 +64,11 @@ vi.mock('@/api/sync', () => ({
     excludedAttributes: ['userPassword', 'entryUUID'],
   } })),
   getPreviewRun: vi.fn(() => Promise.resolve({ data: { runId: null, status: null, actionCounts: {} } })),
+  previewEntries: vi.fn(() => Promise.resolve({ data: {
+    entries: [], page: 0, size: 50, totalEntries: 0, totalPages: 0, changesOnly: true, runId: 'run-1',
+  } })),
   startPreviewRun: vi.fn(() => Promise.resolve({ data: {
-    runId: 'run-1', status: 'COMPLETE', requestedBy: 'ann', startedAt: '', finishedAt: '', processed: 5,
+    runId: 'run-1', status: 'COMPLETE', requestedBy: 'ann', startedAt: '2026-10-23T03:00:00Z', finishedAt: '2026-10-23T03:00:05Z', processed: 5,
     total: 5, outdated: false, error: null, sourceCount: 5, managedCount: 3, actionableCount: 2,
     unchangedCount: 3, guardTripped: false, guardReason: null, completeScan: true, note: null,
     actionCounts: { ADD: 1, DELETE: 1, NO_CHANGE: 2, UNCHANGED: 1 },
@@ -231,7 +234,7 @@ describe('DirectorySyncView', () => {
 
       await type('Reference attributes', 'member,uniqueMember,manager,owner')
       expect(button('Preview impact')!.disabled).toBe(true)
-      expect(button('Show changes')!.disabled).toBe(true)
+      expect(button('Show changes')).toBeUndefined() // one button: Preview impact opens the list
       expect(document.body.textContent).toContain('Save your changes to preview them')
       wrapper.unmount()
     })
@@ -251,13 +254,27 @@ describe('DirectorySyncView', () => {
       expect(button('Preview impact')!.disabled).toBe(false)
       expect(button('Save')!.disabled).toBe(true)
 
+      // Preview impact opens the per-entry list, which runs a fresh preview (the set has none).
+      const complete = (await syncApi.startPreviewRun('set-1')).data
+      vi.mocked(syncApi.startPreviewRun).mockClear()
+      vi.mocked(syncApi.getPreviewRun)
+        .mockResolvedValueOnce({ data: { runId: null, status: null, actionCounts: {} } } as never)
+        .mockResolvedValueOnce({ data: complete } as never)
       button('Preview impact')!.click()
       await flushPromises()
-      // The summary comes from the per-entry run Show changes lists, so the two agree.
+      expect(document.body.textContent).toContain('Planned changes — people')
       expect(syncApi.startPreviewRun).toHaveBeenCalledWith('set-1')
+
+      // Closing it leaves that run's counts in the editor: the same run the list showed.
+      const closes = Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="Close"]'))
+      closes[closes.length - 1].click()
+      await flushPromises()
+      expect(document.body.textContent).not.toContain('Planned changes — people')
       expect(document.querySelector('[data-testid="impact-counts"]')!.textContent!.replace(/\s+/g, ' '))
         .toContain('Would add: 1 · Would modify: 0 · Would move: 0 · Would delete: 1 · Held for review: 0 · '
           + 'Errors: 0 · No change: 3')
+      expect(document.body.textContent).toContain('Last preview:')
+      expect(document.body.textContent).toContain('by ann')
       wrapper.unmount()
     })
 

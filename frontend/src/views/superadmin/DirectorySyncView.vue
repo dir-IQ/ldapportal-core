@@ -237,23 +237,20 @@
         </div>
 
         <!-- Dry-run preview (existing sets only — needs a persisted set to plan
-             against). Both buttons run on the saved set, so they wait for a save
-             while the form holds edits. They share one run: the counts here are
-             that run's entries, the ones Show changes lists. -->
+             against). Preview impact opens the per-entry view, which runs on the
+             saved set, so it waits for a save while the form holds edits. This
+             panel shows the latest run's counts: the entries that view lists. -->
         <div v-if="editingSet" class="rounded-lg border border-gray-200 p-3 space-y-2">
           <div class="flex items-center justify-between">
             <span class="text-sm font-medium text-gray-700">Impact preview</span>
-            <div class="flex items-center gap-2">
-              <button type="button" class="btn-secondary btn-compact" :disabled="previewBusy || setDirty"
-                      @click="runPreview">{{ previewBusy ? 'Checking…' : 'Preview impact' }}</button>
-              <button v-if="canManage" type="button" class="btn-secondary btn-compact" :disabled="setDirty"
-                      @click="showChanges = true">
-                Show changes
-              </button>
-            </div>
+            <button v-if="canManage" type="button" class="btn-secondary btn-compact" :disabled="setDirty"
+                    @click="showChanges = true">Preview impact</button>
           </div>
           <p v-if="setDirty" class="text-xs text-gray-500">
             Save your changes to preview them. The preview runs on the saved set.
+          </p>
+          <p v-else-if="!impact" class="text-xs text-gray-500">
+            No preview yet. Preview impact checks every entry against the target and lists what a reconcile would do.
           </p>
           <p v-else-if="impact?.status === 'RUNNING'" class="text-xs text-gray-500">
             Checking every entry against the target… {{ impact.processed }} of {{ impact.total || '…' }}
@@ -262,6 +259,7 @@
             The preview failed: {{ impact.error }}
           </p>
           <div v-else-if="impact?.status === 'COMPLETE'" class="text-xs text-gray-600 space-y-1">
+            <p class="text-gray-500">{{ impactRanAt }}</p>
             <p>
               Source entries: <span class="font-medium">{{ impact.sourceCount }}</span> ·
               Managed: <span class="font-medium">{{ impact.managedCount }}</span>
@@ -646,11 +644,15 @@ function toPayload(f: SetForm): SyncSetPayload {
   }
 }
 // ── Dry-run preview + enable confirmation ──
-// One per-entry preview run backs the summary here and the Show changes list,
+// One per-entry preview run backs the summary here and the Preview impact list,
 // so the two can't disagree.
 const impact = ref<SyncPreviewStatus | null>(null)
-const startingPreview = ref<boolean>(false)
-const previewBusy = computed<boolean>(() => startingPreview.value || impact.value?.status === 'RUNNING')
+const impactRanAt = computed<string>(() => {
+  const at = impact.value?.finishedAt ?? impact.value?.startedAt
+  if (!at) return ''
+  const by = impact.value?.requestedBy
+  return `Last preview: ${new Date(at).toLocaleString()}${by ? ` by ${by}` : ''}.`
+})
 // Per-entry dry run (what a reconcile would do to each entry), in its own dialog.
 const showChanges = ref<boolean>(false)
 const confirmEnable = ref(false) // showing the "enable will delete N" confirmation
@@ -686,22 +688,18 @@ async function followPreview(status: SyncPreviewStatus, ticket: number): Promise
   return current
 }
 
-/** Start a fresh run (or join the one running) and wait for it. */
+/** Start a fresh run (or join the one running) and wait for it: the enable confirmation's check. */
 async function runPreview(): Promise<SyncPreviewStatus | null> {
   if (!editingSet.value) return null
   const ticket = ++previewTicket
-  startingPreview.value = true
   try {
     const { data } = await startPreviewRun(editingSet.value.id)
     if (ticket !== previewTicket) return null
     impact.value = data
-    startingPreview.value = false
     return await followPreview(data, ticket)
   } catch (e) {
     notif.error(errMsg(e))
     return null
-  } finally {
-    startingPreview.value = false
   }
 }
 
@@ -719,7 +717,8 @@ async function loadLatestPreview(): Promise<void> {
   }
 }
 
-// Show changes may start a fresh run (when the latest is outdated): pick it up here.
+// The per-entry view starts a fresh run when the latest is missing or outdated:
+// show what it ran once it closes.
 watch(showChanges, (open) => {
   if (!open && showSetModal.value) void loadLatestPreview()
 })
