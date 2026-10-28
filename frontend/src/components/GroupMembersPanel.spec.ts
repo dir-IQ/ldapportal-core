@@ -38,7 +38,7 @@ describe('GroupMembersPanel', () => {
     expect(w.find('[data-testid="group-members-panel"]').exists()).toBe(false)
   })
 
-  it('lists groupOfUniqueNames members with RDN and parent split apart', () => {
+  it('lists groupOfUniqueNames members as their DNs, as stored', () => {
     const w = mountWith({
       objectClass: ['groupOfUniqueNames', 'top'],
       cn: ['engineering'],
@@ -48,18 +48,15 @@ describe('GroupMembersPanel', () => {
     expect(w.text()).toContain('uniqueMember')
     const rows = w.findAll('li')
     expect(rows).toHaveLength(3)
-    expect(rows[0].find('span.font-medium').text()).toBe('uid=alice')
-    expect(rows[0].text()).toContain('ou=People,dc=example,dc=com')
+    expect(rows[0].find('[data-testid="member-value"]').text()).toBe(MEMBERS[0])
+    // No RDN / parent split, no em-dash.
+    expect(rows[0].text()).not.toContain('—')
   })
 
-  it('keeps an escaped comma inside the RDN', () => {
-    const w = mountWith({
-      objectClass: ['groupOfNames'],
-      member: ['cn=Doe\\, Jane,ou=People,dc=example,dc=com'],
-    })
-    const row = w.find('li')
-    expect(row.find('span.font-medium').text()).toBe('cn=Doe\\, Jane')
-    expect(row.findAll('span')[2].text()).toBe('ou=People,dc=example,dc=com')
+  it('shows a DN exactly as stored, escaped commas and spacing included', () => {
+    const dn = 'cn=Doe\\, Jane, ou=People,dc=example,dc=com'
+    const w = mountWith({ objectClass: ['groupOfNames'], member: [dn] })
+    expect(w.find('[data-testid="member-value"]').text()).toBe(dn)
   })
 
   it('accepts the lower-cased attribute keys the search mapper produces', () => {
