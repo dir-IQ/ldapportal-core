@@ -158,12 +158,13 @@
           <span v-else-if="isDateColumn(col.key, value)" :title="formatFullDate(value as string)" class="font-mono whitespace-nowrap">
             {{ formatRelativeDate(value as string) }}
           </span>
-          <!-- DN columns (truncate) -->
-          <span v-else-if="isDnColumn(col.key, value)" :title="value as string" class="font-mono truncate block max-w-xs">
-            {{ truncateDn(value as string) }}
+          <!-- DN columns: the whole DN, ellipsized at the column's width (no
+               max-width cap), so widening the column shows more of it. -->
+          <span v-else-if="isDnColumn(col.key, value)" :title="value as string" class="font-mono truncate block">
+            {{ value }}
           </span>
           <!-- Default -->
-          <span v-else class="font-mono truncate block max-w-xs">{{ value }}</span>
+          <span v-else :title="typeof value === 'string' ? value : undefined" class="font-mono truncate block">{{ value }}</span>
         </template>
       </ResultsTable>
     </section>
@@ -422,7 +423,7 @@ import { actionLabel } from '@/components/dashboard/auditLabels'
 import { downloadBlob } from '@/composables/useApi'
 import {
   friendlyColumnName, formatRelativeDate, formatFullDate,
-  truncateDn, looksLikeTimestamp, looksLikeDn,
+  looksLikeTimestamp, looksLikeDn,
   integrityTypeBadgeClass, friendlyIntegrityType, sourceBadgeClass,
   DATE_COLUMNS, HIDDEN_COLUMNS,
 } from '@/composables/useReportFormatting'
