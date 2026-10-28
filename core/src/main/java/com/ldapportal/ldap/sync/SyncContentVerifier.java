@@ -102,7 +102,7 @@ public class SyncContentVerifier {
                 if (decision.member() && decision.targetDn() != null) {
                     expected.put(normDn(decision.targetDn()),
                             new Expected(decision.targetDn(), decision.desiredAttrs(),
-                                    decision.heldAttributeNames()));
+                                    decision.heldAttributeNames(), decision.unresolvedReferences()));
                 }
             }
         } catch (Exception ex) {
@@ -155,8 +155,11 @@ public class SyncContentVerifier {
             // A held reference (its referent isn't synced yet) is kept on the
             // target by the engine, so it isn't drift either.
             Set<String> untouched = en.getValue().held().isEmpty() ? excluded : union(excluded, en.getValue().held());
-            List<Modification> mods = TargetEntryDiffer.diff(target, en.getValue().desired(), untouched,
-                    schema, dnAttrs);
+            // An untranslated reference the target already has exactly is kept by
+            // the engine (a member whose entry isn't synced yet), so not drift.
+            List<Attribute> desired = TargetEntryDiffer.keepUnresolved(en.getValue().desired(),
+                    en.getValue().unresolved(), target).desired();
+            List<Modification> mods = TargetEntryDiffer.diff(target, desired, untouched, schema, dnAttrs);
             if (mods.isEmpty()) {
                 inSync++;
             } else {
@@ -291,8 +294,17 @@ public class SyncContentVerifier {
         }
     }
 
-    /** {@code held}: lower-cased reference attributes the engine keeps as they are on the target. */
-    record Expected(String displayDn, List<Attribute> desired, Set<String> held) {
+    /**
+     * {@code held}: lower-cased reference attributes the engine keeps as they are
+     * on the target; {@code unresolved}: per attribute, the source DNs that didn't
+     * translate, which the engine keeps where the target has them exactly.
+     */
+    record Expected(String displayDn, List<Attribute> desired, Set<String> held,
+                    Map<String, List<String>> unresolved) {
+
+        Expected(String displayDn, List<Attribute> desired, Set<String> held) {
+            this(displayDn, desired, held, Map.of());
+        }
     }
 
     private static Set<String> union(Set<String> a, Set<String> b) {

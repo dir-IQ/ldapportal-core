@@ -43,6 +43,23 @@ class SyncPreviewValuesTest {
     }
 
     @Test
+    void dnValuedReplace_listsOnlyMembersReallyLostOrGained_notReformattedOnes() {
+        Entry before = new Entry("cn=g,dc=x", new Attribute("member",
+                "uid=a, ou=People, dc=x", "uid=b, ou=People, dc=x", "uid=gone, ou=People, dc=x"));
+        List<Modification> mods = List.of(new Modification(ModificationType.REPLACE, "member",
+                "uid=a,ou=People,dc=x", "uid=b,ou=People,dc=x", "uid=new,ou=People,dc=x"));
+
+        List<SyncPreviewAttributeChange> changes = SyncPreviewValues.forModify(before, mods, null, List.of("member"));
+
+        assertThat(changes).singleElement().satisfies(c -> {
+            assertThat(c.removed()).containsExactly("uid=gone, ou=People, dc=x");
+            assertThat(c.added()).containsExactly("uid=new,ou=People,dc=x");
+        });
+        // Without knowing member holds DNs, every reformatted value shows.
+        assertThat(SyncPreviewValues.forModify(before, mods).get(0).removed()).hasSize(3);
+    }
+
+    @Test
     void attributeRemoval_listsTheValuesLost() {
         Entry before = new Entry("uid=a,dc=x", new Attribute("description", "gone"));
 
