@@ -84,6 +84,11 @@ export const checkIntegrity = (dirId, baseDn, checks) =>
     params: { baseDn: baseDn || undefined, checks: checks.join(',') },
   })
 
+// Removes broken member references an integrity check reported, each given as
+// { groupDn, attribute, value }. The server re-checks each one first.
+export const removeBrokenReferences = (dirId, references) =>
+  client.post(`${base(dirId)}/integrity-check/remove-broken-references`, { references })
+
 export const browseObjectClasses = (dirId) =>
   client.get(`${base(dirId)}/schema/object-classes`)
 

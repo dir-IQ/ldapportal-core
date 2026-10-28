@@ -63,15 +63,36 @@
           </button>
 
           <div v-if="expandedGroups.has(group.type)">
+            <!-- Broken references can be removed from their groups (re-checked server-side first). -->
+            <div v-if="group.type === 'BROKEN_MEMBER' && canRemove"
+                 class="flex items-center justify-between gap-3 px-5 py-2 bg-red-50 border-t border-red-100">
+              <span class="text-xs text-gray-600">
+                {{ selectedCount }} of {{ removableIssues.length }} selected
+              </span>
+              <button class="btn-danger btn-sm" :disabled="!selectedCount || removing"
+                      @click="confirmRemove">
+                {{ removing ? 'Removing\u2026' : 'Remove broken references' }}
+              </button>
+            </div>
             <table class="w-full text-sm">
               <thead>
                 <tr class="bg-gray-50 border-y border-gray-100">
+                  <th v-if="group.type === 'BROKEN_MEMBER' && canRemove" class="w-8 py-2 pl-5">
+                    <input type="checkbox" class="rounded border-gray-300" aria-label="Select all broken references"
+                           :checked="allSelected" :indeterminate="selectedCount > 0 && !allSelected"
+                           @change="toggleAll(($event.target as HTMLInputElement).checked)" />
+                  </th>
                   <th class="text-left py-2 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/2">DN</th>
                   <th class="text-left py-2 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider w-1/2">Description</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-50">
                 <tr v-for="(issue, i) in group.issues" :key="i" class="hover:bg-blue-50">
+                  <td v-if="group.type === 'BROKEN_MEMBER' && canRemove" class="w-8 py-2 pl-5">
+                    <input v-if="isRemovable(issue)" type="checkbox" class="rounded border-gray-300"
+                           :aria-label="`Select ${issue.value} in ${issue.dn}`"
+                           :checked="selected.has(issueKey(issue))" @change="toggle(issue)" />
+                  </td>
                   <td class="py-2 px-5 font-mono text-[13px] text-blue-600 break-all cursor-pointer" @click="goToBrowser(issue.dn)">
                     {{ issue.dn }}
                   </td>
@@ -90,8 +111,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
+import { useConfirm } from '@/composables/useConfirm'
 import { listDirectories } from '@/api/directories'
-import { checkIntegrity } from '@/api/browse'
+import { checkIntegrity, removeBrokenReferences } from '@/api/browse'
 import DnPicker from '@/components/DnPicker.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import type { components } from '@/api/openapi'
@@ -102,6 +125,24 @@ interface IntegrityIssue {
   type: string
   dn: string
   description: string
+  /** BROKEN_MEMBER only: the attribute holding the reference, and the missing DN as stored. */
+  attribute?: string | null
+  value?: string | null
+}
+
+type RemoveStatus = 'REMOVED' | 'KEPT_ENTRY_EXISTS' | 'ALREADY_GONE' | 'FAILED'
+
+interface RemoveOutcome {
+  groupDn: string
+  attribute: string
+  value: string
+  status: RemoveStatus
+  message: string | null
+}
+
+interface RemoveResult {
+  removed: number
+  outcomes: RemoveOutcome[]
 }
 
 interface IntegrityReport {
@@ -127,6 +168,12 @@ function errMsg(e: unknown, fallback = 'Something went wrong'): string {
 
 const router = useRouter()
 const notif  = useNotificationStore()
+const auth   = useAuthStore()
+const confirm = useConfirm()
+
+// Removing references writes to the directory, which takes MANAGE_DIRECTORY_DATA
+// (the API enforces it too); running the check doesn't.
+const canRemove = computed<boolean>(() => auth.hasSuperadminPermission('superadmin.manage_directory_data'))
 
 const directories = ref<Directory[]>([])
 const loadingDirs = ref(false)
@@ -134,6 +181,10 @@ const running     = ref(false)
 const hasRun      = ref(false)
 const report      = ref<IntegrityReport>({ issues: [] })
 const expandedGroups = ref<Set<string>>(new Set())
+// The report and directory the selection belongs to: the check that produced it.
+const checkedDirectoryId = ref<string>('')
+const selected = ref<Set<string>>(new Set())
+const removing = ref<boolean>(false)
 
 const availableChecks = [
   { value: 'BROKEN_MEMBER',  label: 'Broken member references' },
@@ -176,6 +227,79 @@ function typeColor(type: string) {
   }
 }
 
+function isRemovable(issue: IntegrityIssue): boolean {
+  return issue.type === 'BROKEN_MEMBER' && !!issue.attribute && !!issue.value
+}
+
+function issueKey(issue: IntegrityIssue): string {
+  return `${issue.dn}\u0000${issue.attribute}\u0000${issue.value}`
+}
+
+const removableIssues = computed<IntegrityIssue[]>(() => report.value.issues.filter(isRemovable))
+const selectedCount = computed<number>(() => removableIssues.value.filter(i => selected.value.has(issueKey(i))).length)
+const allSelected = computed<boolean>(() =>
+  removableIssues.value.length > 0 && selectedCount.value === removableIssues.value.length)
+
+function toggle(issue: IntegrityIssue) {
+  const s = new Set(selected.value)
+  const key = issueKey(issue)
+  if (s.has(key)) s.delete(key)
+  else s.add(key)
+  selected.value = s
+}
+
+function toggleAll(on: boolean) {
+  selected.value = on ? new Set(removableIssues.value.map(issueKey)) : new Set()
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
+async function confirmRemove() {
+  const refs = removableIssues.value.filter(i => selected.value.has(issueKey(i)))
+  if (!refs.length || !checkedDirectoryId.value) return
+  const groups = new Set(refs.map(i => i.dn)).size
+  const ok = await confirm({
+    title: 'Remove broken references?',
+    message: `This removes ${plural(refs.length, 'member reference', 'member references')} from `
+      + `${plural(groups, 'group', 'groups')}. Each one is checked again first: a reference whose entry `
+      + 'exists now is kept. A group that would be left with no members may be refused by the server.',
+    confirmLabel: 'Remove references',
+    danger: true,
+  })
+  if (!ok) return
+  removing.value = true
+  try {
+    const { data } = await removeBrokenReferences(checkedDirectoryId.value,
+      refs.map(i => ({ groupDn: i.dn, attribute: i.attribute, value: i.value })))
+    reportRemoval(data as RemoveResult)
+    selected.value = new Set()
+    await runCheck()
+  } catch (e) {
+    notif.error(errMsg(e))
+  } finally {
+    removing.value = false
+  }
+}
+
+function reportRemoval(result: RemoveResult) {
+  const count = (status: RemoveStatus) => result.outcomes.filter(o => o.status === status).length
+  const parts = [`Removed ${plural(result.removed, 'reference', 'references')}.`]
+  const kept = count('KEPT_ENTRY_EXISTS')
+  const gone = count('ALREADY_GONE')
+  if (kept) parts.push(`Kept ${kept}: the entry exists now.`)
+  if (gone) parts.push(`${gone} already gone.`)
+  const failed = result.outcomes.filter(o => o.status === 'FAILED')
+  if (failed.length) {
+    const groups = new Set(failed.map(o => o.groupDn))
+    notif.error(`${parts.join(' ')} ${plural(failed.length, 'reference', 'references')} in `
+      + `${plural(groups.size, 'group', 'groups')} couldn't be removed: ${failed[0].message ?? 'the server refused'}`)
+  } else {
+    notif.success(parts.join(' '))
+  }
+}
+
 function toggleGroup(type: string) {
   const s = new Set(expandedGroups.value)
   if (s.has(type)) s.delete(type)
@@ -190,6 +314,8 @@ async function runCheck() {
   try {
     const { data } = await checkIntegrity(form.value.directoryId, form.value.baseDn, form.value.checks)
     report.value = data
+    checkedDirectoryId.value = form.value.directoryId
+    selected.value = new Set()
     hasRun.value = true
     // Auto-expand all groups that have issues
     expandedGroups.value = new Set(groupedIssues.value.map(g => g.type))
