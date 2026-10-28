@@ -11,6 +11,8 @@ import com.ldapportal.entity.enums.MembershipState;
 public enum SyncReviewKind {
     /** The entry left scope; deleting its target entry waits for an operator. */
     PENDING_DELETE,
+    /** Hold for review is All updates: an add, attribute update or move of the target entry waits for an operator. */
+    PENDING_UPDATE,
     /** Brownfield adoption found more than one target entry carrying the source anchor. */
     AMBIGUOUS_MATCH,
     /** An entry that doesn't carry the source anchor already sits at the placement DN. */
@@ -20,6 +22,8 @@ public enum SyncReviewKind {
 
     /** Reason prefix of a held scope-exit (delete). */
     public static final String PENDING_DELETE_PREFIX = "scope-exit held for review";
+    /** Reason prefix of a held add, update or move. */
+    public static final String PENDING_UPDATE_PREFIX = "update held for review";
     /** Reason prefix of an ambiguous anchor correlation. */
     public static final String AMBIGUOUS_MATCH_PREFIX = "ambiguous:";
     /** Reason prefix of an occupied placement DN. */
@@ -35,6 +39,9 @@ public enum SyncReviewKind {
         }
         if (reason.startsWith(PENDING_DELETE_PREFIX)) {
             return PENDING_DELETE;
+        }
+        if (reason.startsWith(PENDING_UPDATE_PREFIX)) {
+            return PENDING_UPDATE;
         }
         if (reason.startsWith(AMBIGUOUS_MATCH_PREFIX)) {
             return AMBIGUOUS_MATCH;

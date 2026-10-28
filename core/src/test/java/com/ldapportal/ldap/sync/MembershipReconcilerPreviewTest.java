@@ -7,7 +7,7 @@ import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.SslMode;
-import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncHoldForReview;
 import com.ldapportal.entity.enums.SyncScope;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.MembershipRepository;
@@ -100,7 +100,7 @@ class MembershipReconcilerPreviewTest {
         s.setObjectScope(SyncScope.SUB);
         s.setTargetBaseDn(DST_USERS);
         s.setApplicabilityFilter("(objectClass=inetOrgPerson)");
-        s.setDeletePolicy(SyncDeletePolicy.DELETE);
+        s.setHoldForReview(SyncHoldForReview.NONE);
         set = setRepo.save(s);
 
         // Converge once while enabled, so the set manages alice and bob.

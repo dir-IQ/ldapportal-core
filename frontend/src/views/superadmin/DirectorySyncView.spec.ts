@@ -34,7 +34,7 @@ const link = {
 const set = {
   id: 'set-1', linkId: 'link-1', name: 'people', objectScopeBaseDn: 'ou=people,dc=src',
   objectScope: 'SUB', identityKey: null, targetBaseDn: 'ou=Users,dc=dst', applicabilityFilter: null,
-  referenceAttributes: null, sourceAnchorAttribute: null, deletePolicy: 'DELETE', transformRules: null,
+  referenceAttributes: null, sourceAnchorAttribute: null, holdForReview: 'NONE', transformRules: null,
   reconcileCadenceSeconds: null, reconcileLastRunAt: null, enabled: true, loggingLevel: 'SUMMARY',
   createdAt: '', updatedAt: '', version: 0,
   stateCounts: { APPLIED: 5, FAILED: 2, REVIEW: 1 },
@@ -330,6 +330,27 @@ describe('DirectorySyncView', () => {
         loggingLevel: 'DETAILED',
         applicabilityFilter: '(&(objectClass=secGroup)\n  (!(cn=iv-admin)))', // the server joins the lines
       }))
+      wrapper.unmount()
+    })
+
+    it('offers Hold for review as None, All updates, Deletes only, and sends the choice', async () => {
+      const wrapper = await openEditor('Edit')
+      const hold = document.getElementById('sync-set-hold-for-review') as HTMLSelectElement
+      expect(Array.from(hold.options).map((o) => o.textContent?.trim()))
+        .toEqual(['None', 'All updates', 'Deletes only'])
+      expect(hold.value).toBe('NONE')
+      hold.value = 'ALL'
+      hold.dispatchEvent(new Event('change'))
+      await flushPromises()
+      await submit()
+
+      expect(syncApi.updateSyncSet).toHaveBeenCalledWith('set-1', expect.objectContaining({ holdForReview: 'ALL' }))
+      wrapper.unmount()
+    })
+
+    it('defaults a new set to holding deletes only', async () => {
+      const wrapper = await openEditor('+ New Set')
+      expect((document.getElementById('sync-set-hold-for-review') as HTMLSelectElement).value).toBe('DELETES')
       wrapper.unmount()
     })
 

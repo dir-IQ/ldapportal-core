@@ -7,7 +7,7 @@ import MembershipInventoryModal from './MembershipInventoryModal.vue'
 const set = {
   id: 'set-1', linkId: 'link-1', name: 'people', objectScopeBaseDn: null, objectScope: 'SUB' as const,
   identityKey: null, targetBaseDn: null, applicabilityFilter: null, referenceAttributes: null,
-  sourceAnchorAttribute: null, deletePolicy: 'DELETE' as const, transformRules: null,
+  sourceAnchorAttribute: null, holdForReview: 'NONE' as const, transformRules: null,
   excludedAttributes: null, reconcileCadenceSeconds: null,
   reconcileLastRunAt: null, enabled: true, loggingLevel: 'SUMMARY' as const, createdAt: '', updatedAt: '', version: 0,
   stateCounts: { APPLIED: 5, FAILED: 2, REVIEW: 1 },
@@ -30,6 +30,9 @@ vi.mock('@/api/sync', () => ({
   dismissMembership: vi.fn(() => Promise.resolve({ data: undefined })),
   approveDelete: vi.fn(() => Promise.resolve({
     data: { outcome: 'DELETE', targetDirectoryId: 'dir-2', targetDn: 'uid=a,ou=Users,dc=dst', message: null },
+  })),
+  approveUpdate: vi.fn(() => Promise.resolve({
+    data: { outcome: 'MODIFY', targetDirectoryId: 'dir-2', targetDn: 'uid=a,ou=Users,dc=dst', message: null },
   })),
   verifyContents: vi.fn(() => Promise.resolve({
     data: {
@@ -112,7 +115,7 @@ describe('MembershipInventoryModal', () => {
   })
 
   it('labels a held delete "Delete target" and approves it after a danger confirm', async () => {
-    withRow({ reviewKind: 'PENDING_DELETE', failReason: 'scope-exit held for review (deletePolicy=REVIEW)' })
+    withRow({ reviewKind: 'PENDING_DELETE', failReason: 'scope-exit held for review (holdForReview=DELETES)' })
     const wrapper = open()
     await flushPromises()
     expect(byText('Keep entry, stop syncing')).toBeTruthy()
@@ -132,6 +135,32 @@ describe('MembershipInventoryModal', () => {
     byText('Delete target')!.click()
     await flushPromises()
     expect(syncApi.approveDelete).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('labels a held update "Apply update" and approves it after confirming', async () => {
+    withRow({ reviewKind: 'PENDING_UPDATE', failReason: 'update held for review (update mail)' })
+    const wrapper = open()
+    await flushPromises()
+    expect(byText('Re-check')).toBeTruthy()
+    expect(byText('Stop tracking')).toBeTruthy()
+    byText('Apply update')!.click()
+    await flushPromises()
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({
+      confirmLabel: 'Apply update', message: expect.stringContaining('update held for review (update mail)'),
+    }))
+    expect(syncApi.approveUpdate).toHaveBeenCalledWith('set-1', '1111')
+    wrapper.unmount()
+  })
+
+  it('does not apply a held update when the confirm is cancelled', async () => {
+    withRow({ reviewKind: 'PENDING_UPDATE' })
+    confirmMock.mockResolvedValueOnce(false)
+    const wrapper = open()
+    await flushPromises()
+    byText('Apply update')!.click()
+    await flushPromises()
+    expect(syncApi.approveUpdate).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 

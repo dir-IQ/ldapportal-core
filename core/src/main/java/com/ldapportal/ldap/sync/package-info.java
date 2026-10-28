@@ -74,7 +74,7 @@
  *       {@code applicabilityFilter}), how they are placed ({@code targetBaseDn}),
  *       transformed ({@code transformRules}), correlated ({@code identityKey}),
  *       which attributes are DN references ({@code referenceAttributes}), the
- *       {@code sourceAnchorAttribute}, the {@code deletePolicy}, and the reconcile
+ *       {@code sourceAnchorAttribute}, {@code holdForReview}, and the reconcile
  *       cadence.</li>
  *   <li>{@link com.ldapportal.entity.SyncTransformRule} — an attribute
  *       rename + {@code ${value}} template, stored as JSON on the set.</li>
@@ -130,7 +130,7 @@
  *       the failure is isolated to this identity and never blocks others.</li>
  *   <li><b>REVIEW</b> — quarantined for an operator decision rather than risking a
  *       destructive or ambiguous write: a scope-exit under
- *       {@code deletePolicy=REVIEW}, an ambiguous brownfield anchor match, or an
+ *       {@code holdForReview} DELETES or ALL, any other write under ALL, an ambiguous brownfield anchor match, or an
  *       unanchored entry already sitting at the placement DN.</li>
  * </ul>
  * An OUT decision with no row, or a converged DELETE, removes the row entirely.

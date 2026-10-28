@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.entity;
 
-import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncHoldForReview;
 import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncScope;
 import jakarta.persistence.Column;
@@ -33,7 +33,7 @@ import java.util.UUID;
  * correlates a source entry to its {@link Membership} row.
  *
  * <p>Phase 1 fills the projection/selection config the engine consumes
- * (placement, applicability, transform, reference attributes, delete policy).
+ * (placement, applicability, transform, reference attributes, hold for review).
  * The rich management surface (DTO/validation/controller/UI, brownfield) lands
  * in Phase 2 on top of these columns.
  */
@@ -99,11 +99,11 @@ public class SyncSet {
     @Column(name = "source_anchor_attribute")
     private String sourceAnchorAttribute;
 
-    // Safe default: quarantine scope-exit deletions for operator review rather
-    // than applying them. An operator opts into hard DELETE per set.
+    // Safe default: hold scope-exit deletions for operator review rather than
+    // applying them. An operator opts out (NONE) or holds every write (ALL).
     @Enumerated(EnumType.STRING)
-    @Column(name = "delete_policy", nullable = false)
-    private SyncDeletePolicy deletePolicy = SyncDeletePolicy.REVIEW;
+    @Column(name = "hold_for_review", nullable = false)
+    private SyncHoldForReview holdForReview = SyncHoldForReview.DELETES;
 
     /**
      * How often anti-entropy reconcile runs for this set, in seconds. Null => the

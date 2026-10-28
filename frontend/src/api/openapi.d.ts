@@ -2789,7 +2789,7 @@ export interface components {
             referenceAttributes?: string;
             sourceAnchorAttribute?: string;
             /** @enum {string} */
-            deletePolicy?: "DELETE" | "REVIEW";
+            holdForReview?: "NONE" | "DELETES" | "ALL";
             transformRules?: components["schemas"]["SyncTransformRule"][];
             excludedAttributes?: string[];
             /** Format: int64 */
@@ -2818,7 +2818,7 @@ export interface components {
             referenceAttributes?: string;
             sourceAnchorAttribute?: string;
             /** @enum {string} */
-            deletePolicy?: "DELETE" | "REVIEW";
+            holdForReview?: "NONE" | "DELETES" | "ALL";
             transformRules?: components["schemas"]["SyncTransformRule"][];
             excludedAttributes?: string[];
             /** Format: int64 */

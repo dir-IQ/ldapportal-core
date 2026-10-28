@@ -380,7 +380,7 @@ public class MembershipReconciler {
     /** The set's settings and guard limits as this run sees them, kept with the run's record. */
     private static SyncRunSettings settingsOf(SyncSet set) {
         return new SyncRunSettings(
-                set.getDeletePolicy() != null ? set.getDeletePolicy().name() : null,
+                set.getHoldForReview() != null ? set.getHoldForReview().name() : null,
                 set.getObjectScopeBaseDn(),
                 set.getObjectScope() != null ? set.getObjectScope().name() : null,
                 set.getApplicabilityFilter(),

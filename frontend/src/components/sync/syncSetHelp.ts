@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-import type { SyncSetDefaults } from '@/api/sync'
+import type { SyncHoldForReview, SyncSetDefaults } from '@/api/sync'
 
 /** Shown in a field that falls back to a default when left blank. */
 export const DEFAULT_PLACEHOLDER = 'Leave blank for the default (see ⓘ)'
+
+/** Hold for review's labels, in the order the editor lists them. */
+export const HOLD_FOR_REVIEW_LABELS: Record<SyncHoldForReview, string> = {
+  NONE: 'None',
+  ALL: 'All updates',
+  DELETES: 'Deletes only',
+}
 
 const DIRECTORY_TYPE_LABELS: Record<string, string> = {
   GENERIC: 'Generic LDAP',
@@ -62,8 +69,8 @@ export function syncSetHelp(defaults: SyncSetDefaults | null) {
 
     applicabilityFilter:
       'LDAP filter (RFC 4515) choosing which entries under the source base DN belong to this set. Only matching '
-      + 'entries are synced. An entry that stops matching leaves the set, and the delete policy decides what '
-      + 'happens to its target entry.\n\n'
+      + 'entries are synced. An entry that stops matching leaves the set, and hold for review decides whether its '
+      + 'target entry is deleted at once or the delete waits for review.\n\n'
       + 'A long filter can be laid out over several lines: line breaks, and the spaces around them, are removed '
       + 'when it\'s saved.\n\n'
       + 'Default: every entry under the source base DN.',
@@ -104,10 +111,17 @@ export function syncSetHelp(defaults: SyncSetDefaults | null) {
       + or((d) => `Default: ${d.reconcileIntervalSeconds} seconds (${duration(d.reconcileIntervalSeconds)}), `
         + 'this server\'s setting.', 'Default: this server\'s setting.'),
 
-    deletePolicy:
-      'What happens to the target entry when an entry leaves the set (deleted on the source, moved out of '
-      + 'scope, or no longer matching the filter). Delete removes it; Review holds it for an operator to '
-      + 'approve or dismiss.\n\nDefault: Review.',
+    holdForReview:
+      'Which changes to the target wait for an operator to approve them, in the set\'s inventory, instead of '
+      + 'being made as soon as the sync finds them.\n'
+      + '• None: every change is made, deletes included.\n'
+      + '• All updates: every change waits: adding an entry, updating its attributes, moving or renaming it, '
+      + 'and deleting it. Approving an update applies the source entry as it is then, not as it was when the '
+      + 'update was held. A held update the source no longer needs clears itself.\n'
+      + '• Deletes only: deleting an entry that leaves the set (deleted on the source, moved out of scope, or '
+      + 'no longer matching the filter) waits; every other change is made.\n'
+      + 'The impact preview lists held changes as held for review, with what they would change.\n\n'
+      + 'Default: Deletes only.',
 
     sourceScope:
       'How far below the source base DN to read: Subtree (every entry below it), One level (its immediate '

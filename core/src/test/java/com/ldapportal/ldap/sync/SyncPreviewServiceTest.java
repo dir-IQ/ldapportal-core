@@ -19,7 +19,7 @@ import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.SslMode;
-import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncHoldForReview;
 import com.ldapportal.entity.enums.SyncPreviewRunStatus;
 import com.ldapportal.entity.enums.SyncScope;
 import com.ldapportal.repository.DirectoryConnectionRepository;
@@ -137,7 +137,7 @@ class SyncPreviewServiceTest {
         s.setObjectScope(SyncScope.SUB);
         s.setTargetBaseDn(DST_USERS);
         s.setApplicabilityFilter("(|(objectClass=inetOrgPerson)(objectClass=groupOfNames))");
-        s.setDeletePolicy(SyncDeletePolicy.DELETE);
+        s.setHoldForReview(SyncHoldForReview.NONE);
         set = setRepo.save(s);
     }
 
@@ -208,13 +208,37 @@ class SyncPreviewServiceTest {
         });
 
         SyncSet s = setRepo.findById(set.getId()).orElseThrow();
-        s.setDeletePolicy(SyncDeletePolicy.REVIEW);
+        s.setHoldForReview(SyncHoldForReview.DELETES);
         setRepo.save(s);
 
         assertThat(previewEntries(0, 50, true).entries()).singleElement().satisfies(e -> {
             assertThat(e.action()).isEqualTo(SyncPreviewAction.REVIEW);
-            assertThat(e.reason()).contains("deletePolicy=REVIEW");
+            assertThat(e.reason()).contains("holdForReview=DELETES");
         });
+    }
+
+    @Test
+    void holdAllUpdates_previewsHeldWritesAsReview_withTheChangesTheyHold() throws Exception {
+        addPerson("alice");
+        reconciler.reconcile(set.getId());
+        SyncSet s = setRepo.findById(set.getId()).orElseThrow();
+        s.setHoldForReview(SyncHoldForReview.ALL);
+        setRepo.save(s);
+        addPerson("bob");
+        source.modify("uid=alice," + SRC_PEOPLE, new Modification(ModificationType.REPLACE, "sn", "Smith"));
+
+        Map<String, SyncPreviewEntry> byDn = byTargetDn(previewEntries(0, 50, true));
+
+        SyncPreviewEntry alice = byDn.get(("uid=alice," + DST_USERS).toLowerCase());
+        assertThat(alice.action()).isEqualTo(SyncPreviewAction.REVIEW);
+        assertThat(alice.reason()).isEqualTo("update held for review (update sn)");
+        assertThat(changeOf(alice, "sn").added()).containsExactly("Smith");
+        SyncPreviewEntry bob = byDn.get(("uid=bob," + DST_USERS).toLowerCase());
+        assertThat(bob.action()).isEqualTo(SyncPreviewAction.REVIEW);
+        assertThat(bob.reason()).isEqualTo("update held for review (add)");
+        assertThat(changeOf(bob, "sn").added()).containsExactly("bob");
+        // Read-only.
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("sn")).isEqualTo("alice");
     }
 
     @Test
@@ -370,7 +394,7 @@ class SyncPreviewServiceTest {
     @Test
     void changesOnly_hidesEntriesAlreadyHeldForReview_andTargetsThatAlreadyMatch() throws Exception {
         SyncSet s = setRepo.findById(set.getId()).orElseThrow();
-        s.setDeletePolicy(SyncDeletePolicy.REVIEW);
+        s.setHoldForReview(SyncHoldForReview.DELETES);
         set = setRepo.save(s);
         addPerson("alice");
         addPerson("bob");
@@ -547,7 +571,7 @@ class SyncPreviewServiceTest {
         other.setObjectScopeBaseDn("ou=others," + SRC_BASE);
         other.setObjectScope(SyncScope.SUB);
         other.setTargetBaseDn(DST_USERS);
-        other.setDeletePolicy(SyncDeletePolicy.DELETE);
+        other.setHoldForReview(SyncHoldForReview.NONE);
         other = setRepo.save(other);
         Membership owner = new Membership();
         owner.setSyncSetId(other.getId());

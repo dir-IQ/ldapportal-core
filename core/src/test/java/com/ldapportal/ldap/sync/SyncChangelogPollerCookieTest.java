@@ -9,7 +9,7 @@ import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.SslMode;
 import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.entity.enums.SyncChangelogHealth;
-import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncHoldForReview;
 import com.ldapportal.entity.enums.SyncScope;
 import com.ldapportal.ldap.changelog.OudCookieChangelogStrategy;
 import com.ldapportal.repository.DirectoryConnectionRepository;
@@ -124,7 +124,7 @@ class SyncChangelogPollerCookieTest {
         s.setObjectScope(SyncScope.SUB);
         s.setTargetBaseDn(DST_USERS);
         s.setApplicabilityFilter("(objectClass=inetOrgPerson)");
-        s.setDeletePolicy(SyncDeletePolicy.DELETE);
+        s.setHoldForReview(SyncHoldForReview.NONE);
         peopleSet = setRepo.save(s);
     }
 

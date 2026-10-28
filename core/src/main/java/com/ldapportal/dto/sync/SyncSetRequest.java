@@ -2,7 +2,7 @@
 package com.ldapportal.dto.sync;
 
 import com.ldapportal.entity.SyncTransformRule;
-import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncHoldForReview;
 import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncScope;
 import jakarta.validation.constraints.Min;
@@ -28,7 +28,7 @@ public record SyncSetRequest(
         @Size(max = 2000) String applicabilityFilter,
         @Size(max = 1000) String referenceAttributes,
         @Size(max = 255) String sourceAnchorAttribute,
-        SyncDeletePolicy deletePolicy,
+        SyncHoldForReview holdForReview,
         List<SyncTransformRule> transformRules,
         // Attributes excluded from projection/diff. null => engine defaults
         // (operational + password values); a list (incl. empty) is used verbatim.

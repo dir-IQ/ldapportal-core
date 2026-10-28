@@ -6,13 +6,13 @@ import com.ldapportal.dto.sync.SyncPreviewAction;
 import com.ldapportal.dto.sync.SyncPreviewAttributeChange;
 import com.ldapportal.dto.sync.SyncPreviewEntry;
 import com.ldapportal.dto.sync.SyncReviewKind;
+import com.ldapportal.dto.sync.SyncUpdateApproval;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.MembershipId;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.MembershipState;
-import com.ldapportal.entity.enums.SyncDeletePolicy;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.annotation.LdapWriteAuthorized;
 import com.ldapportal.ldap.sync.identity.IdentityStrategy;
@@ -105,6 +105,14 @@ public class RecomputeEngine {
      *         directory is missing
      */
     public RecomputeOutcome process(UUID syncSetId, String key, boolean suppressDeletes) {
+        return process(syncSetId, key, suppressDeletes, false);
+    }
+
+    /**
+     * @param releaseHold when true, adds, updates and moves are applied even when
+     *                    the set holds them for review: an operator approved them
+     */
+    private RecomputeOutcome process(UUID syncSetId, String key, boolean suppressDeletes, boolean releaseHold) {
         SyncSet set = syncSetRepo.findById(syncSetId).orElse(null);
         if (set == null || !set.isEnabled()) {
             return null;
@@ -123,7 +131,7 @@ public class RecomputeEngine {
 
         for (int attempt = 1; ; attempt++) {
             try {
-                return processOnce(set, link, source, target, strategy, key, suppressDeletes);
+                return processOnce(set, link, source, target, strategy, key, suppressDeletes, releaseHold);
             } catch (OptimisticLockingFailureException | DataIntegrityViolationException race) {
                 if (attempt >= MAX_OPTIMISTIC_RETRIES) {
                     // Propagate rather than return: a normal return would let the
@@ -141,7 +149,7 @@ public class RecomputeEngine {
 
     /**
      * An operator approves a delete held for review: delete the identity's target
-     * entry now, whatever the set's delete policy or the reconcile's delete guard
+     * entry now, whatever the set's hold for review setting or the reconcile's delete guard
      * said — the operator is the approval. The source is re-read first, so an
      * entry that came back into scope is refused rather than deleted, and the
      * ownership check still applies: a target entry another live identity owns is
@@ -203,6 +211,38 @@ public class RecomputeEngine {
     }
 
     /**
+     * An operator approves an add, update or move held for review (hold for
+     * review is All updates): recompute the identity now with the hold released,
+     * so the target entry is brought in line with the source as it is now, not
+     * as it was when the write was held. Should the entry have left the set
+     * since, its delete is held for review in turn (a held add, never written,
+     * is forgotten).
+     *
+     * @throws IllegalArgumentException when the set or link is disabled or the
+     *         row isn't a held update
+     */
+    public SyncUpdateApproval approveUpdate(UUID syncSetId, String identity) {
+        SyncSet set = syncSetRepo.findById(syncSetId)
+                .orElseThrow(() -> new IllegalArgumentException("Sync set not found"));
+        SyncLink link = syncLinkRepo.findById(set.getLinkId()).orElse(null);
+        if (!set.isEnabled() || link == null || !link.isEnabled()) {
+            throw new IllegalArgumentException("Enable the sync set and its link to apply an update.");
+        }
+        Membership current = membershipRepo.findById(new MembershipId(syncSetId, identity)).orElse(null);
+        if (current == null
+                || SyncReviewKind.of(current.getState(), current.getFailReason()) != SyncReviewKind.PENDING_UPDATE) {
+            throw new IllegalArgumentException("This entry has no update waiting for review.");
+        }
+        RecomputeOutcome out = process(syncSetId, identity, false, true);
+        if (out == null) {
+            throw new IllegalArgumentException("The sync link's source or target directory is missing.");
+        }
+        log.info("Sync set {}: operator-approved update of identity {}: {} {}", syncSetId, identity,
+                out.action(), out.targetDn());
+        return new SyncUpdateApproval(out.action(), link.getTargetDirId(), out.targetDn(), out.reason());
+    }
+
+    /**
      * One convergence attempt (the body the optimistic-retry loop wraps).
      *
      * <p>The {@code key} can be either a source DN (from the changelog / app
@@ -226,7 +266,7 @@ public class RecomputeEngine {
      */
     private RecomputeOutcome processOnce(SyncSet set, SyncLink link, DirectoryConnection source,
                              DirectoryConnection target, IdentityStrategy strategy, String key,
-                             boolean suppressDeletes) {
+                             boolean suppressDeletes, boolean releaseHold) {
         // ── Resolve the current source entry and the identity ──
         Entry entry;
         String identity;
@@ -265,7 +305,8 @@ public class RecomputeEngine {
                 : (current != null ? current.getSourceDn() : null);
 
         LiveRecorder rec = new LiveRecorder();
-        boolean changed = apply(set, target, identity, current, decision, entry, suppressDeletes, rec);
+        boolean holdUpdates = set.getHoldForReview().holdsUpdates() && !releaseHold;
+        boolean changed = apply(set, target, identity, current, decision, entry, suppressDeletes, holdUpdates, rec);
         if (changed && changedSourceDn != null) {
             closureResolver.fanOut(link, changedSourceDn);
         }
@@ -284,7 +325,7 @@ public class RecomputeEngine {
      *
      * <p>Decision tree:
      * <ul>
-     *   <li><b>OUT</b>: no row → no-op; {@code deletePolicy=REVIEW} → quarantine
+     *   <li><b>OUT</b>: no row → no-op; {@code holdForReview} DELETES or ALL → quarantine
      *       the pending delete; otherwise DELETE the target (a NO_SUCH_OBJECT is
      *       treated as already-converged) and drop the index row.</li>
      *   <li><b>IN, brownfield</b>: on a first encounter (or while in REVIEW) with a
@@ -300,7 +341,9 @@ public class RecomputeEngine {
      *       reconcile attributes.</li>
      *   <li><b>IN, apply</b>: read target → ADD (falling through to MODIFY on
      *       ENTRY_ALREADY_EXISTS) or MODIFY via {@link TargetEntryDiffer}; on
-     *       success upsert the row APPLIED, on failure mark it FAILED.</li>
+     *       success upsert the row APPLIED, on failure mark it FAILED. With
+     *       {@code holdUpdates} the writes are held instead ({@link HeldUpdates}):
+     *       the row goes to REVIEW naming what would be written.</li>
      * </ul>
      *
      * <p>Every write — to the target or the index — goes through {@code fx}, so the
@@ -312,7 +355,7 @@ public class RecomputeEngine {
      */
     private boolean apply(SyncSet set, DirectoryConnection target, String identity,
                           Membership current, MembershipDecision decision, Entry entry,
-                          boolean suppressDeletes, Effects fx) {
+                          boolean suppressDeletes, boolean holdUpdates, Effects fx) {
         if (!decision.member()) {
             if (current == null) {
                 return false; // (OUT, none) — no-op
@@ -330,16 +373,25 @@ public class RecomputeEngine {
                 fx.dropRow(set, identity);
                 return false;
             }
-            if (suppressDeletes || set.getDeletePolicy() == SyncDeletePolicy.REVIEW) {
+            // A held add was never written: there's no target entry to delete.
+            SyncReviewKind heldKind = SyncReviewKind.of(current.getState(), current.getFailReason());
+            if (heldKind == SyncReviewKind.PENDING_UPDATE && HELD_ADD_REASON.equals(current.getFailReason())) {
+                fx.dropRow(set, identity);
+                return false;
+            }
+            if (suppressDeletes || set.getHoldForReview().holdsDeletes()) {
                 // Quarantine the pending delete so it surfaces in the inventory for
                 // an operator decision, rather than deleting. suppressDeletes is the
-                // reconciler's blast-radius / zero-enumeration guard tripping.
-                if (current.getState() != MembershipState.REVIEW) {
+                // reconciler's blast-radius / zero-enumeration guard tripping. A
+                // held update gives way to the held delete; another review (a
+                // brownfield conflict) stays as it is.
+                if (current.getState() != MembershipState.REVIEW || heldKind == SyncReviewKind.PENDING_UPDATE) {
                     fx.review(set, identity, current.getSourceDn(), current.getTargetDn(),
                             current.getContentHash(),
                             suppressDeletes
                                     ? SyncReviewKind.PENDING_DELETE_PREFIX + " (delete guard tripped)"
-                                    : SyncReviewKind.PENDING_DELETE_PREFIX + " (deletePolicy=REVIEW)");
+                                    : SyncReviewKind.PENDING_DELETE_PREFIX + " (holdForReview="
+                                            + set.getHoldForReview() + ")");
                 }
                 return false;
             }
@@ -387,6 +439,13 @@ public class RecomputeEngine {
                         SyncReviewKind.PLACEMENT_CONFLICT_PREFIX + " " + targetDn);
                 return false;
             }
+        }
+
+        // Hold for review (All updates): from here on, every target write is
+        // recorded rather than made, and the row is held naming them.
+        HeldUpdates held = holdUpdates ? new HeldUpdates(fx, fx instanceof PreviewRecorder, current) : null;
+        if (held != null) {
+            fx = held;
         }
 
         // Hash gate: nothing changed in the projection → no target read/write.
@@ -448,7 +507,7 @@ public class RecomputeEngine {
             return false;
         }
         fx.applied(set, identity, sourceDn, targetDn, hash, current);
-        return true;
+        return held == null || !held.holding();
     }
 
     /**
@@ -480,8 +539,9 @@ public class RecomputeEngine {
     /**
      * Predict what a reconcile would do for one identity, without writing to the
      * target or the index: runs {@link #apply} with a {@link PreviewRecorder}, so
-     * every branch — brownfield correlation, the hash gate, ownership checks, the
-     * delete policy and guard — is the live code, with live target reads.
+     * every branch — brownfield correlation, the hash gate, ownership checks, hold
+     * for review and the delete guard — is the live code, with live target reads.
+     * A held update is a {@code REVIEW} entry that still lists the changes it holds.
      *
      * @param current         the identity's index row, or {@code null} when untracked;
      *                        a detached copy (the adoption branch may change it)
@@ -497,7 +557,8 @@ public class RecomputeEngine {
                 ? membershipFunction.evaluate(set, strategy, entry, resolver)
                 : MembershipDecision.out(identity);
         PreviewRecorder rec = new PreviewRecorder(resolver);
-        apply(set, target, identity, current, decision, entry, suppressDeletes, rec);
+        apply(set, target, identity, current, decision, entry, suppressDeletes,
+                set.getHoldForReview().holdsUpdates(), rec);
         String sourceDn = entry != null ? entry.getDN() : (current != null ? current.getSourceDn() : null);
         String fallbackDn = decision.member() ? decision.targetDn()
                 : (current != null ? current.getTargetDn() : null);
@@ -723,15 +784,16 @@ public class RecomputeEngine {
             if (deleteDn != null) {
                 return entry(identity, sourceDn, deleteDn, null, SyncPreviewAction.DELETE, null, List.of());
             }
+            List<SyncPreviewAttributeChange> changes = addAttrs != null
+                    ? SyncPreviewValues.forAdd(addAttrs)
+                    : (modifyChanges != null ? modifyChanges : List.of());
             if (reviewReason != null) {
-                return entry(identity, sourceDn, reviewDn, null, SyncPreviewAction.REVIEW, reviewReason, List.of());
+                // A held update (hold for review) recorded the writes it holds.
+                return entry(identity, sourceDn, reviewDn, moveFrom, SyncPreviewAction.REVIEW, reviewReason, changes);
             }
             if (failedReason != null) {
                 return entry(identity, sourceDn, failedDn, null, SyncPreviewAction.ERROR, failedReason, List.of());
             }
-            List<SyncPreviewAttributeChange> changes = addAttrs != null
-                    ? SyncPreviewValues.forAdd(addAttrs)
-                    : (modifyChanges != null ? modifyChanges : List.of());
             if (moveTo != null) {
                 return entry(identity, sourceDn, moveTo, moveFrom, SyncPreviewAction.MOVE, null, changes);
             }
@@ -782,6 +844,137 @@ public class RecomputeEngine {
                                               SyncPreviewAction action, String reason,
                                               List<SyncPreviewAttributeChange> changes) {
             return new SyncPreviewEntry(identity, sourceDn, targetDn, previous, action, reason, changes);
+        }
+    }
+
+    /** The reason of a held add: the only write held for an entry the target doesn't have yet. */
+    static final String HELD_ADD_REASON = SyncReviewKind.PENDING_UPDATE_PREFIX + " (add)";
+
+    /** Attribute names a held update's reason lists before it shortens the list. */
+    static final int HELD_UPDATE_ATTRS = 5;
+
+    /**
+     * Holds {@link #apply}'s target writes for review (hold for review is All
+     * updates). Each add, non-empty modify and move is noted and reported as a
+     * success, so the apply walks on exactly as after the write; where it would
+     * mark the row APPLIED, the row is held for review instead, naming what
+     * would be written. Nothing to write (the target already matches) still
+     * marks the row APPLIED, so a held update the source no longer needs clears
+     * itself.
+     *
+     * <p>Live, the writes are dropped, and a held row keeps the target DN and
+     * content hash it had: the target entry hasn't moved or changed. In a dry
+     * run they reach the {@link PreviewRecorder}, so the preview lists the
+     * changes the hold is waiting on.
+     */
+    private final class HeldUpdates implements Effects {
+        private final Effects inner;
+        private final boolean dryRun;
+        /** The row as the apply found it (or adopted), whose DN and hash a held row keeps. */
+        private final Membership current;
+        /** What the held writes would do, in order. */
+        private final List<String> writes = new ArrayList<>();
+        private String moveFrom;
+        private String moveTo;
+
+        HeldUpdates(Effects inner, boolean dryRun, Membership current) {
+            this.inner = inner;
+            this.dryRun = dryRun;
+            this.current = current;
+        }
+
+        boolean holding() {
+            return !writes.isEmpty();
+        }
+
+        @Override
+        public Entry readTarget(DirectoryConnection target, String dn) {
+            if (dryRun || moveTo == null || !SyncDnUtil.sameDn(dn, moveTo)) {
+                return inner.readTarget(target, dn);
+            }
+            // The held move wasn't made: diff against the entry where it is,
+            // as the server would present it after the MODDN.
+            Entry existing = inner.readTarget(target, moveFrom);
+            return existing == null ? null : PreviewRecorder.renamed(existing, moveTo);
+        }
+
+        @Override
+        public ApplyOutcome add(DirectoryConnection target, String dn, List<Attribute> attrs) {
+            writes.add("add");
+            return dryRun ? inner.add(target, dn, attrs) : ok(ResultCode.SUCCESS);
+        }
+
+        @Override
+        public ApplyOutcome modify(DirectoryConnection target, String dn, List<Modification> mods, Entry before) {
+            if (mods.isEmpty()) {
+                return inner.modify(target, dn, mods, before);
+            }
+            java.util.Set<String> names = new java.util.LinkedHashSet<>();
+            for (Modification m : mods) {
+                names.add(m.getAttributeName());
+            }
+            List<String> shown = new ArrayList<>(names).subList(0, Math.min(names.size(), HELD_UPDATE_ATTRS));
+            writes.add("update " + String.join(", ", shown) + (names.size() > HELD_UPDATE_ATTRS ? ", …" : ""));
+            return dryRun ? inner.modify(target, dn, mods, before) : ok(ResultCode.SUCCESS);
+        }
+
+        @Override
+        public ApplyOutcome modifyDn(DirectoryConnection target, String oldDn, String newDn) {
+            writes.add("move to " + newDn);
+            moveFrom = oldDn;
+            moveTo = newDn;
+            return dryRun ? inner.modifyDn(target, oldDn, newDn) : ok(ResultCode.SUCCESS);
+        }
+
+        @Override
+        public ApplyOutcome delete(DirectoryConnection target, String dn) {
+            return inner.delete(target, dn); // the delete hold is apply's own (OUT branch)
+        }
+
+        @Override
+        public void applied(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash,
+                            Membership row) {
+            if (writes.isEmpty()) {
+                inner.applied(set, identity, sourceDn, targetDn, hash, row);
+                return;
+            }
+            String reason = SyncReviewKind.PENDING_UPDATE_PREFIX + " (" + String.join("; ", writes) + ")";
+            boolean existing = !dryRun && current != null && current.getTargetDn() != null;
+            inner.review(set, identity, sourceDn, existing ? current.getTargetDn() : targetDn,
+                    existing ? current.getContentHash() : hash, reason);
+        }
+
+        @Override
+        public void review(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash,
+                           String reason) {
+            inner.review(set, identity, sourceDn, targetDn, hash, reason);
+        }
+
+        @Override
+        public void failed(SyncSet set, String identity, String sourceDn, String targetDn, byte[] hash,
+                           String reason) {
+            inner.failed(set, identity, sourceDn, targetDn, hash, reason);
+        }
+
+        @Override
+        public void dropRow(SyncSet set, String identity) {
+            inner.dropRow(set, identity);
+        }
+
+        @Override
+        public void refreshSourceDn(Membership row, String sourceDn) {
+            inner.refreshSourceDn(row, sourceDn);
+        }
+
+        @Override
+        public void diffed(com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs,
+                           java.util.Map<String, List<String>> kept) {
+            inner.diffed(schema, dnAttrs, kept);
+        }
+
+        @Override
+        public boolean leavesItsSet(String sourceDn) {
+            return inner.leavesItsSet(sourceDn);
         }
     }
 

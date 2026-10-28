@@ -247,7 +247,7 @@ public class SyncSetController {
 
     /**
      * Approve a delete held for review: deletes the identity's target entry now,
-     * whatever the delete policy or guard (the source is re-read first; an entry
+     * whatever the hold for review setting or guard (the source is re-read first; an entry
      * back in scope is refused with 400).
      */
     @PostMapping("/{id}/memberships/{identity}/approve-delete")
@@ -256,6 +256,18 @@ public class SyncSetController {
             @PathVariable UUID id, @PathVariable String identity,
             @AuthenticationPrincipal AuthPrincipal principal) {
         return service.approveDelete(id, identity, principal);
+    }
+
+    /**
+     * Approve an add, update or move held for review: recomputes the identity
+     * now with the hold released, applying the source's current state.
+     */
+    @PostMapping("/{id}/memberships/{identity}/approve-update")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public com.ldapportal.dto.sync.SyncUpdateApproval approveUpdate(
+            @PathVariable UUID id, @PathVariable String identity,
+            @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.approveUpdate(id, identity, principal);
     }
 
     @DeleteMapping("/{id}/memberships/{identity}")

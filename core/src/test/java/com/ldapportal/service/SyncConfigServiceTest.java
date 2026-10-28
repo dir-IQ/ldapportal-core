@@ -8,6 +8,7 @@ import com.ldapportal.dto.sync.SyncLinkRequest;
 import com.ldapportal.dto.sync.SyncPreviewAction;
 import com.ldapportal.dto.sync.SyncRecheckResult;
 import com.ldapportal.dto.sync.SyncSetRequest;
+import com.ldapportal.dto.sync.SyncUpdateApproval;
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
@@ -17,7 +18,7 @@ import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.entity.enums.SyncChangelogHealth;
-import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncHoldForReview;
 import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.ldap.sync.MembershipReconciler;
@@ -84,7 +85,7 @@ class SyncConfigServiceTest {
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
         return new SyncSetRequest(UUID.randomUUID(), "people", "ou=people,dc=src,dc=com", null, null, null,
-                null, null, null, SyncDeletePolicy.DELETE, rules, null, null, true, null);
+                null, null, null, SyncHoldForReview.NONE, rules, null, null, true, null);
     }
 
     @Test
@@ -140,7 +141,7 @@ class SyncConfigServiceTest {
         when(setRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         SyncSetRequest base = req(List.of());
         SyncSetRequest detailed = new SyncSetRequest(base.linkId(), base.name(), base.objectScopeBaseDn(), null,
-                null, null, null, null, null, base.deletePolicy(), null, null, null, true, SyncLoggingLevel.DETAILED);
+                null, null, null, null, null, base.holdForReview(), null, null, null, true, SyncLoggingLevel.DETAILED);
 
         assertThat(service.createSet(detailed).loggingLevel()).isEqualTo(SyncLoggingLevel.DETAILED);
         assertThat(service.createSet(base).loggingLevel()).isEqualTo(SyncLoggingLevel.SUMMARY);
@@ -159,7 +160,7 @@ class SyncConfigServiceTest {
         SyncSetRequest base = req(List.of());
         SyncSetRequest multiline = new SyncSetRequest(base.linkId(), base.name(), base.objectScopeBaseDn(), null,
                 null, null, "(&(objectClass=secGroup)\n  (!(|(cn=iv-admin)\r\n      (cn=John Smith))))\n", null, null,
-                base.deletePolicy(), null, null, null, true, null);
+                base.holdForReview(), null, null, null, true, null);
 
         assertThat(service.createSet(multiline).applicabilityFilter())
                 .isEqualTo("(&(objectClass=secGroup)(!(|(cn=iv-admin)(cn=John Smith))))");
@@ -170,7 +171,7 @@ class SyncConfigServiceTest {
         when(linkRepo.existsById(any())).thenReturn(true);
         SyncSetRequest base = req(List.of());
         SyncSetRequest blank = new SyncSetRequest(base.linkId(), base.name(), "  ", null, null, null, null, null,
-                null, base.deletePolicy(), null, null, null, true, null);
+                null, base.holdForReview(), null, null, null, true, null);
 
         assertThatThrownBy(() -> service.createSet(blank))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -311,7 +312,7 @@ class SyncConfigServiceTest {
         org.mockito.Mockito.lenient().when(directoryRepo.findById(dstId)).thenReturn(Optional.of(single));
 
         SyncSetRequest outside = new SyncSetRequest(linkId, "people", "ou=people,dc=other", null, null,
-                "ou=Users,dc=dst,dc=com", null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
+                "ou=Users,dc=dst,dc=com", null, null, null, SyncHoldForReview.NONE, null, null, null, true, null);
         assertThatThrownBy(() -> service.createSet(outside))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("'ou=people,dc=other' isn't under any of the source directory's base DNs");
@@ -319,7 +320,7 @@ class SyncConfigServiceTest {
         // Under either of the source's roots is fine.
         org.mockito.Mockito.lenient().when(setRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         SyncSetRequest secondRoot = new SyncSetRequest(linkId, "partners", "ou=people,o=partners", null, null,
-                "ou=Users,dc=dst,dc=com", null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
+                "ou=Users,dc=dst,dc=com", null, null, null, SyncHoldForReview.NONE, null, null, null, true, null);
         assertThat(service.createSet(secondRoot).objectScopeBaseDn()).isEqualTo("ou=people,o=partners");
     }
 
@@ -352,7 +353,7 @@ class SyncConfigServiceTest {
     void blankTargetBase_onAMultiRootTarget_isAccepted_whenTheSourceScopeIsUnderOneOfItsRoots() {
         UUID linkId = linkToMultiRootTarget();
         SyncSetRequest sameDns = new SyncSetRequest(linkId, "groups", "o=groups,c=us", null, null, null,
-                null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
+                null, null, null, SyncHoldForReview.NONE, null, null, null, true, null);
 
         assertThat(service.createSet(sameDns).targetBaseDn()).isNull(); // entries keep their source DNs
     }
@@ -361,7 +362,7 @@ class SyncConfigServiceTest {
     void blankTargetBase_onAMultiRootTarget_isRefused_whenTheSourceScopeIsUnderNoneOfItsRoots() {
         UUID linkId = linkToMultiRootTarget();
         SyncSetRequest elsewhere = new SyncSetRequest(linkId, "groups", "o=groups,dc=elsewhere", null, null, null,
-                null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
+                null, null, null, SyncHoldForReview.NONE, null, null, null, true, null);
 
         assertThatThrownBy(() -> service.createSet(elsewhere))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -555,6 +556,35 @@ class SyncConfigServiceTest {
                 SyncPreviewAction.ERROR, UUID.randomUUID(), "uid=a,dc=dst", "delete failed: 50"));
 
         service.approveDelete(setId, "id-1", admin);
+
+        verify(auditService, never()).record(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void approveUpdate_auditsTheWriteItMade() {
+        UUID setId = UUID.randomUUID();
+        UUID targetDir = UUID.randomUUID();
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(engine.approveUpdate(setId, "id-1")).thenReturn(new SyncUpdateApproval(
+                SyncPreviewAction.ADD, targetDir, "uid=a,dc=dst", null));
+
+        service.approveUpdate(setId, "id-1", admin);
+
+        verify(auditService).record(eq(admin), eq(targetDir), eq(AuditAction.ENTRY_CREATE), eq("uid=a,dc=dst"),
+                eq(java.util.Map.of("source", "directory-sync", "operation", "approved-review-update",
+                        "syncSetId", setId.toString(), "identity", "id-1")));
+    }
+
+    @Test
+    void approveUpdate_doesNotAudit_whenNothingWasWritten() {
+        UUID setId = UUID.randomUUID();
+        AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(engine.approveUpdate(setId, "id-1")).thenReturn(new SyncUpdateApproval(
+                SyncPreviewAction.REVIEW, UUID.randomUUID(), "uid=a,dc=dst", "scope-exit held for review"));
+
+        service.approveUpdate(setId, "id-1", admin);
 
         verify(auditService, never()).record(any(), any(), any(), any(), any());
     }

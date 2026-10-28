@@ -13,9 +13,9 @@ public enum SyncPreviewAction {
     MODIFY,
     /** Rename/move the target entry (placement changed), possibly with attribute changes. */
     MOVE,
-    /** Delete the target entry (left the set; delete policy DELETE). */
+    /** Delete the target entry (left the set; hold for review NONE). */
     DELETE,
-    /** Held for an operator: delete policy REVIEW, the delete guard, or a brownfield ambiguity. */
+    /** Held for an operator: hold for review (a delete, or under ALL any write), the delete guard, or a brownfield ambiguity. */
     REVIEW,
     /** The engine would apply it, but the target already matches: no target write. */
     NO_CHANGE,

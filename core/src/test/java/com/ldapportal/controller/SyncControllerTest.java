@@ -17,6 +17,7 @@ import com.ldapportal.dto.sync.SyncRunFailureReason;
 import com.ldapportal.dto.sync.SyncRunSettings;
 import com.ldapportal.dto.sync.SyncSetRequest;
 import com.ldapportal.dto.sync.SyncSetResponse;
+import com.ldapportal.dto.sync.SyncUpdateApproval;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.entity.enums.SyncReconcileRunStatus;
@@ -248,6 +249,34 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void approveUpdate_superadmin_returnsOutcome() throws Exception {
+        UUID targetDir = UUID.randomUUID();
+        given(service.approveUpdate(eq(SET), eq("id-1"), any())).willReturn(
+                new SyncUpdateApproval(SyncPreviewAction.MODIFY, targetDir, "uid=a,dc=dst", null));
+        mockMvc.perform(post(SETS + "/" + SET + "/memberships/id-1/approve-update")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.outcome").value("MODIFY"))
+                .andExpect(jsonPath("$.targetDn").value("uid=a,dc=dst"));
+    }
+
+    @Test
+    void approveUpdate_notAHeldUpdate_returns400() throws Exception {
+        given(service.approveUpdate(eq(SET), eq("id-1"), any()))
+                .willThrow(new IllegalArgumentException("This entry has no update waiting for review."));
+        mockMvc.perform(post(SETS + "/" + SET + "/memberships/id-1/approve-update")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void approveUpdate_adminRole_returns403() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/memberships/id-1/approve-update")
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void reconcileRuns_superadmin_returnsHistory_withClampedLimit() throws Exception {
         UUID runId = UUID.randomUUID();
         given(service.reconcileRuns(SET, 20, null)).willReturn(List.of(new SyncReconcileRunResponse(
@@ -322,7 +351,7 @@ class SyncControllerTest extends BaseControllerTest {
         mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs/" + runId).with(authentication(superadminAuth())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.run.instanceName").value("app-1"))
-                .andExpect(jsonPath("$.settings.deletePolicy").value("REVIEW"))
+                .andExpect(jsonPath("$.settings.holdForReview").value("DELETES"))
                 .andExpect(jsonPath("$.failureReasons[0].count").value(2))
                 .andExpect(jsonPath("$.samples.ADD[0]").value("uid=a,dc=dst"));
     }

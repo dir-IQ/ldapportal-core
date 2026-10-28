@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.dto.sync;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+
 /**
  * A sync set's settings as a reconcile run saw them, kept with the run so its
  * behaviour can be explained after the set is edited.
  *
- * @param deletePolicy             DELETE or REVIEW
+ * @param holdForReview            NONE, DELETES or ALL (a run saved before hold for review
+ *                                 replaced the delete policy reads its {@code deletePolicy}:
+ *                                 DELETE as NONE, REVIEW as DELETES)
  * @param objectScopeBaseDn        source scope base DN ({@code null} = the directory's base)
  * @param objectScope              source search scope ({@code null} = subtree)
  * @param applicabilityFilter      source filter selecting members
@@ -18,7 +22,7 @@ package com.ldapportal.dto.sync;
  * @param guardMinPopulation       …applied once the managed set is at least this large
  */
 public record SyncRunSettings(
-        String deletePolicy,
+        @JsonAlias("deletePolicy") String holdForReview,
         String objectScopeBaseDn,
         String objectScope,
         String applicabilityFilter,
@@ -29,4 +33,12 @@ public record SyncRunSettings(
         int guardMaxDeletes,
         int guardMaxDeletePercent,
         int guardMinPopulation) {
+
+    public SyncRunSettings {
+        if ("DELETE".equals(holdForReview)) {
+            holdForReview = "NONE";
+        } else if ("REVIEW".equals(holdForReview)) {
+            holdForReview = "DELETES";
+        }
+    }
 }
