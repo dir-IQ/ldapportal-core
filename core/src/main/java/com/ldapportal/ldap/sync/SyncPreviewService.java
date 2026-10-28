@@ -347,6 +347,7 @@ public class SyncPreviewService {
         }
         List<Item> items = new ArrayList<>();
         Map<String, String> plannedPlacement = new HashMap<>();
+        Set<String> plannedOut = new HashSet<>(); // source DNs this plan takes out of the set
         Set<String> seen = new HashSet<>();
         int identified = 0;
         int deletes = 0;
@@ -374,6 +375,7 @@ public class SyncPreviewService {
             if (placement.member()) {
                 plannedPlacement.put(SyncDnUtil.normalize(e.getDN()), placement.targetDn());
             } else if (row != null) {
+                plannedOut.add(SyncDnUtil.normalize(e.getDN()));
                 deletes++;
             } else {
                 continue; // in scope but not in the set, and never synced: a reconcile ignores it
@@ -389,7 +391,7 @@ public class SyncPreviewService {
             }
         }
         MembershipReconciler.Guard guard = MembershipReconciler.guardFor(complete, identified, rows.size(), deletes);
-        ReferenceResolver resolver = plannedResolver(referenceResolvers.forLink(link), plannedPlacement);
+        ReferenceResolver resolver = plannedResolver(referenceResolvers.forLink(link), plannedPlacement, plannedOut);
         items.sort(Comparator.comparing(Item::sortKey));
 
         // ── Dry-run every entry, storing the results in display order ──
@@ -419,19 +421,33 @@ public class SyncPreviewService {
     }
 
     /**
-     * Index first, then this plan's own placements. Index lookups are memoised:
-     * the same referent (a popular group member) is resolved once per run.
+     * This plan first, then the index: a referent the plan places resolves to
+     * where the plan puts it (a move shows its referrers rewritten), and one the
+     * plan takes out of the set doesn't resolve (its referrers lose it, as after
+     * the reconcile's closure fan-out). Only the rest go to the index; those
+     * lookups are memoised, so a popular group member is resolved once per run.
      */
-    private static ReferenceResolver plannedResolver(ReferenceResolver index, Map<String, String> plannedPlacement) {
+    static ReferenceResolver plannedResolver(ReferenceResolver index, Map<String, String> plannedPlacement,
+                                             Set<String> plannedOut) {
         Map<String, Optional<String>> resolved = new HashMap<>();
-        return dn -> {
-            String norm = SyncDnUtil.normalize(dn);
-            Optional<String> hit = resolved.get(norm);
-            if (hit == null) {
-                hit = index.resolveTargetDn(dn);
-                resolved.put(norm, hit);
+        return new ReferenceResolver() {
+            @Override
+            public Optional<String> resolveTargetDn(String dn) {
+                String norm = SyncDnUtil.normalize(dn);
+                String planned = plannedPlacement.get(norm);
+                if (planned != null) {
+                    return Optional.of(planned);
+                }
+                if (plannedOut.contains(norm)) {
+                    return Optional.empty();
+                }
+                return resolved.computeIfAbsent(norm, k -> index.resolveTargetDn(dn));
             }
-            return hit.isPresent() ? hit : Optional.ofNullable(plannedPlacement.get(norm));
+
+            @Override
+            public boolean leavesItsSet(String dn) {
+                return plannedOut.contains(SyncDnUtil.normalize(dn));
+            }
         };
     }
 

@@ -136,15 +136,10 @@ final class SyncPreviewValues {
 
     /** {@link #minus} with values compared as DNs (a value that isn't a valid DN compares as written). */
     private static List<String> minusDns(List<String> a, List<String> b) {
-        com.unboundid.ldap.matchingrules.MatchingRule rule =
-                com.unboundid.ldap.matchingrules.DistinguishedNameMatchingRule.getInstance();
-        Set<String> drop = new java.util.HashSet<>();
-        for (String v : b) {
-            drop.add(TargetEntryDiffer.normalizeOrExact(rule, v));
-        }
+        Set<String> drop = TargetEntryDiffer.dnKeys(b);
         List<String> out = new ArrayList<>();
         for (String v : a) {
-            if (!drop.contains(TargetEntryDiffer.normalizeOrExact(rule, v))) {
+            if (!drop.contains(TargetEntryDiffer.normalizeOrExact(TargetEntryDiffer.DN_RULE, v))) {
                 out.add(v);
             }
         }

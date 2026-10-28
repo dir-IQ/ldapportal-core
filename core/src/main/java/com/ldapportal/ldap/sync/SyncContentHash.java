@@ -32,6 +32,19 @@ public final class SyncContentHash {
     }
 
     public static byte[] of(String targetDn, List<Attribute> desiredAttrs) {
+        return of(targetDn, desiredAttrs, java.util.Map.of());
+    }
+
+    /**
+     * As {@link #of(String, List)}, also covering the reference values that
+     * couldn't be translated (attribute → source DNs). They aren't in the
+     * desired attributes, yet whether the target keeps them depends on them:
+     * without them a source that drops such a member would hash the same, the
+     * hash gate would skip the entry, and the target would keep the member for
+     * good. An entry with none hashes exactly as before.
+     */
+    public static byte[] of(String targetDn, List<Attribute> desiredAttrs,
+                            java.util.Map<String, List<String>> untranslated) {
         StringBuilder canonical = new StringBuilder();
         lengthPrefixed(canonical, targetDn == null ? "" : targetDn.toLowerCase(Locale.ROOT));
 
@@ -48,6 +61,26 @@ public final class SyncContentHash {
         }
         attrLines.sort(null);
         for (String line : attrLines) {
+            lengthPrefixed(canonical, line);
+        }
+        // A separate section (no attribute name contains NUL), so these can't
+        // collide with a projected attribute of the same name.
+        List<String> refLines = new ArrayList<>(untranslated.size());
+        untranslated.forEach((name, dns) -> {
+            List<String> values = new ArrayList<>(dns.size());
+            for (String dn : dns) {
+                values.add(SyncDnUtil.normalize(dn));
+            }
+            values.sort(null);
+            StringBuilder line = new StringBuilder();
+            lengthPrefixed(line, "\u0000untranslated:" + name.toLowerCase(Locale.ROOT));
+            for (String v : values) {
+                lengthPrefixed(line, v);
+            }
+            refLines.add(line.toString());
+        });
+        refLines.sort(null);
+        for (String line : refLines) {
             lengthPrefixed(canonical, line);
         }
 

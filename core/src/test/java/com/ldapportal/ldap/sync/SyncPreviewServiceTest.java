@@ -433,6 +433,78 @@ class SyncPreviewServiceTest {
         assertThat(changeOf(changed, "member").added()).isEmpty();
     }
 
+    /** alice and bob on both sides, and group staff listing them plus {@code extra} on both sides. */
+    private void staffOnBothSides(String... extra) throws Exception {
+        addPerson("alice");
+        addPerson("bob");
+        List<String> src = new java.util.ArrayList<>(List.of("uid=alice," + SRC_PEOPLE, "uid=bob," + SRC_PEOPLE));
+        List<String> dst = new java.util.ArrayList<>(List.of("uid=alice," + DST_USERS, "uid=bob," + DST_USERS));
+        src.addAll(List.of(extra));
+        dst.addAll(List.of(extra));
+        source.add(new Entry("cn=staff," + SRC_PEOPLE, new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("cn", "staff"), new Attribute("member", src)));
+        target.add(new Entry("cn=staff," + DST_USERS, new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("cn", "staff"), new Attribute("member", dst)));
+    }
+
+    @Test
+    void aKeptUnsyncedMember_isRemoved_onceTheSourceDropsIt() throws Exception {
+        String stray = "secAuthority=default,cn=foo";
+        staffOnBothSides(stray);
+        reconciler.reconcile(set.getId());
+        assertThat(target.getEntry("cn=staff," + DST_USERS).getAttributeValues("member")).contains(stray);
+
+        source.modify("cn=staff," + SRC_PEOPLE, new Modification(ModificationType.DELETE, "member", stray));
+
+        // Its removal changes the group's content hash, so the group isn't skipped.
+        SyncPreviewEntry staff = byTargetDn(previewAll()).get(("cn=staff," + DST_USERS).toLowerCase());
+        assertThat(staff.action()).isEqualTo(SyncPreviewAction.MODIFY);
+        assertThat(changeOf(staff, "member").removed()).containsExactly(stray);
+        reconciler.reconcile(set.getId());
+        assertThat(target.getEntry("cn=staff," + DST_USERS).getAttributeValues("member")).doesNotContain(stray);
+    }
+
+    @Test
+    void aMemberWhoseEntryTheSyncDeletes_isRemovedFromItsGroups_notKept() throws Exception {
+        staffOnBothSides();
+        reconciler.reconcile(set.getId());
+        // bob leaves the set (the filter now excludes him) but stays in the source group.
+        SyncSet s = setRepo.findById(set.getId()).orElseThrow();
+        s.setApplicabilityFilter("(|(&(objectClass=inetOrgPerson)(!(uid=bob)))(objectClass=groupOfNames))");
+        set = setRepo.save(s);
+
+        Map<String, SyncPreviewEntry> byDn = byTargetDn(previewAll());
+        assertThat(byDn.get(("uid=bob," + DST_USERS).toLowerCase()).action()).isEqualTo(SyncPreviewAction.DELETE);
+        SyncPreviewEntry staff = byDn.get(("cn=staff," + DST_USERS).toLowerCase());
+        assertThat(staff.action()).isEqualTo(SyncPreviewAction.MODIFY);
+        assertThat(changeOf(staff, "member").removed()).containsExactly("uid=bob," + DST_USERS);
+
+        reconciler.reconcile(set.getId());
+        reconciler.reconcile(set.getId()); // the group, re-driven once bob's entry is gone
+        assertThat(target.getEntry("uid=bob," + DST_USERS)).isNull();
+        assertThat(target.getEntry("cn=staff," + DST_USERS).getAttributeValues("member"))
+                .containsExactly("uid=alice," + DST_USERS);
+    }
+
+    @Test
+    void membersMovedByThisPlan_showTheirGroupsRewritten() throws Exception {
+        staffOnBothSides();
+        reconciler.reconcile(set.getId());
+        // The set now places entries under ou=Staff: the plan moves alice, bob and the group.
+        target.add(new Entry("ou=Staff," + DST_BASE, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "Staff")));
+        SyncSet s = setRepo.findById(set.getId()).orElseThrow();
+        s.setTargetBaseDn("ou=Staff," + DST_BASE);
+        set = setRepo.save(s);
+
+        SyncPreviewEntry staff = byTargetDn(previewAll()).get(("cn=staff,ou=Staff," + DST_BASE).toLowerCase());
+
+        // The members resolve to where this plan puts them, not to the index's old DNs.
+        assertThat(staff.action()).isEqualTo(SyncPreviewAction.MOVE);
+        assertThat(changeOf(staff, "member").added())
+                .containsExactlyInAnyOrder("uid=alice,ou=Staff," + DST_BASE, "uid=bob,ou=Staff," + DST_BASE);
+    }
+
     @Test
     void aReferenceToAnUnsyncedEntry_isKeptOnTheTarget_withANote() throws Exception {
         // Both point their manager at an entry outside the set's scope, which no

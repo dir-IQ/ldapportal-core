@@ -386,6 +386,9 @@ class SyncEngineIntegrationTest {
         engine.process(accountsSet.getId(), daveSrc);
         assertThat(target2.getEntry(daveDst).getAttributeValue("manager"))
                 .isEqualTo("uid=alice," + DST_USERS);
+
+        // Verify contents resolves it the same way (across links), so dave isn't drift.
+        assertThat(verifier.verify(accountsSet.getId()).contentMismatches()).isZero();
     }
 
     // ── Verify: a correctly-synced set reports in-sync (references included) ─────

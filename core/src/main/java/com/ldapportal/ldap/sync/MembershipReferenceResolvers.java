@@ -53,9 +53,30 @@ public class MembershipReferenceResolvers {
         return srcDn -> resolve(ownSets, srcDn);
     }
 
+    /**
+     * The same resolution over one snapshot of the whole index, loaded once:
+     * for resolving a set's every reference in one pass (content verification)
+     * without a lookup per value.
+     */
+    public ReferenceResolver snapshot(SyncLink link) {
+        Set<UUID> ownSets = syncSetRepo.findAllByLinkId(link.getId()).stream()
+                .map(SyncSet::getId)
+                .collect(Collectors.toSet());
+        Map<String, List<Membership>> bySource = new java.util.HashMap<>();
+        for (Membership m : membershipRepo.findAll()) {
+            if (m.getSourceDn() != null) {
+                bySource.computeIfAbsent(SyncDnUtil.normalize(m.getSourceDn()), k -> new java.util.ArrayList<>())
+                        .add(m);
+            }
+        }
+        return srcDn -> resolve(ownSets, srcDn, bySource.getOrDefault(SyncDnUtil.normalize(srcDn), List.of()));
+    }
+
     private Optional<String> resolve(Set<UUID> ownSets, String srcDn) {
-        String norm = SyncDnUtil.normalize(srcDn);
-        List<Membership> rows = membershipRepo.findAllBySourceDn(norm);
+        return resolve(ownSets, srcDn, membershipRepo.findAllBySourceDn(SyncDnUtil.normalize(srcDn)));
+    }
+
+    private static Optional<String> resolve(Set<UUID> ownSets, String srcDn, List<Membership> rows) {
         if (rows.isEmpty()) {
             return Optional.empty();
         }
