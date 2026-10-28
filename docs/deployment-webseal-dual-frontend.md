@@ -273,6 +273,17 @@ scheduled report, saving preferences). Verify one of these after applying
 the ACL; if it is denied, check which action your WebSEAL version maps PATCH
 to.
 
+**The portal sends no DELETE request bodies.** WebSEAL, like many reverse
+proxies, doesn't reliably forward the body of a DELETE. Removing a group
+member therefore sends the member in the query string
+(`DELETE …/groups/members?dn=…&memberAttribute=…&memberValue=…`), and
+removing several at once is a POST (`…/groups/members/bulk/remove`). Older
+portal versions put the member in a DELETE body; behind WebSEAL that body was
+dropped and the portal answered **400** ("Request body is malformed or
+contains an invalid value") even with `d` granted. A 400 here comes from the
+portal, a 403 from WebSEAL's ACL. API clients that still send the old DELETE
+body keep working where no proxy strips it.
+
 ---
 
 ## 4. Account provisioning
