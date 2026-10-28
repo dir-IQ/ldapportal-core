@@ -134,4 +134,42 @@ class TargetEntryDifferTest {
         assertThat(TargetEntryDiffer.diff(target, List.of(new Attribute("owner", "NOT A DN")), Set.of(), null,
                 List.of("owner"))).hasSize(1);
     }
+
+    @Test
+    void keepUnresolved_keepsAMemberTheTargetHasExactly_soNothingChanges() {
+        // secAuthority=default,cn=foo points at no synced entry, but both groups list it.
+        Entry target = new Entry("cn=g,o=t", new Attribute("cn", "g"), new Attribute("member",
+                "uid=a, ou=People, o=t", "secAuthority=default, cn=foo"));
+        List<Attribute> desired = List.of(new Attribute("cn", "g"), new Attribute("member", "uid=a,ou=People,o=t"));
+
+        TargetEntryDiffer.Kept kept = TargetEntryDiffer.keepUnresolved(desired,
+                java.util.Map.of("member", List.of("secAuthority=default,cn=foo")), target);
+
+        assertThat(kept.kept()).containsExactly(
+                java.util.Map.entry("member", List.of("secAuthority=default, cn=foo")));
+        assertThat(TargetEntryDiffer.diff(target, kept.desired(), Set.of(), null, List.of("member"))).isEmpty();
+    }
+
+    @Test
+    void keepUnresolved_stillRemovesAMemberTheSourceNoLongerLists() {
+        Entry target = new Entry("cn=g,o=t", new Attribute("member",
+                "uid=a,o=t", "uid=removed,o=t", "uid=unsynced,o=t"));
+        List<Attribute> desired = List.of(new Attribute("member", "uid=a,o=t"));
+
+        TargetEntryDiffer.Kept kept = TargetEntryDiffer.keepUnresolved(desired,
+                java.util.Map.of("member", List.of("uid=unsynced,o=t")), target);
+
+        List<Modification> mods = TargetEntryDiffer.diff(target, kept.desired(), Set.of(), null, List.of("member"));
+        assertThat(mods).singleElement().satisfies(m ->
+                assertThat(m.getValues()).containsExactlyInAnyOrder("uid=a,o=t", "uid=unsynced,o=t"));
+    }
+
+    @Test
+    void keepUnresolved_withNothingUnresolved_changesNothing() {
+        List<Attribute> desired = List.of(new Attribute("member", "uid=a,o=t"));
+        TargetEntryDiffer.Kept kept = TargetEntryDiffer.keepUnresolved(desired, java.util.Map.of(),
+                new Entry("cn=g,o=t", new Attribute("member", "uid=b,o=t")));
+        assertThat(kept.desired()).isSameAs(desired);
+        assertThat(kept.kept()).isEmpty();
+    }
 }

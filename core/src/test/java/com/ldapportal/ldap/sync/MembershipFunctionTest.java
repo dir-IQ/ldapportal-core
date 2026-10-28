@@ -171,8 +171,11 @@ class MembershipFunctionTest {
         assertThat(d.heldReferences()).containsOnlyKeys("secDN");
         assertThat(d.heldReferences().get("secDN")).containsExactly("cn=eng,o=native,dc=src");
         assertThat(d.heldAttributeNames()).containsExactly("secdn");
-        // member: one value translated → projected as before, not held.
+        // member: one value translated → projected, and bob noted as unresolved
+        // (kept where the target already has him).
         assertThat(vals(d, "member")).containsExactly("uid=alice,ou=Users,dc=dst");
+        assertThat(d.unresolvedReferences()).containsExactly(
+                java.util.Map.entry("member", List.of("uid=bob,ou=people,dc=src")));
     }
 
     @Test

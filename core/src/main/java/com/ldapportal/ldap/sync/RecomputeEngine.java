@@ -434,12 +434,11 @@ public class RecomputeEngine {
             if (LdapResultInterpreter.addNeedsModify(res.code())) {
                 tgt = fx.readTarget(target, targetDn);
                 res = (tgt == null) ? res
-                        : fx.modify(target, targetDn,
-                                TargetEntryDiffer.diff(tgt, decision.desiredAttrs(), protectedAttrs, schema, dnAttrs), tgt);
+                        : fx.modify(target, targetDn, diffAgainst(tgt, decision, protectedAttrs, schema, dnAttrs, fx),
+                                tgt);
             }
         } else {
-            res = fx.modify(target, targetDn,
-                    TargetEntryDiffer.diff(tgt, decision.desiredAttrs(), protectedAttrs, schema, dnAttrs), tgt);
+            res = fx.modify(target, targetDn, diffAgainst(tgt, decision, protectedAttrs, schema, dnAttrs, fx), tgt);
         }
 
         if (!LdapResultInterpreter.success(res.code())) {
@@ -448,6 +447,25 @@ public class RecomputeEngine {
         }
         fx.applied(set, identity, sourceDn, targetDn, hash, current);
         return true;
+    }
+
+    /**
+     * The modifications converging {@code tgt} on the projection. A reference
+     * value that doesn't translate yet stays where the target already has it
+     * exactly (see {@link TargetEntryDiffer#keepUnresolved}): a group member
+     * whose entry isn't synced isn't removed. What was kept is reported to
+     * {@code fx}, for the preview's note.
+     */
+    private static List<Modification> diffAgainst(Entry tgt, MembershipDecision decision,
+                                                  java.util.Set<String> protectedAttrs,
+                                                  com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs,
+                                                  Effects fx) {
+        TargetEntryDiffer.Kept kept = TargetEntryDiffer.keepUnresolved(decision.desiredAttrs(),
+                decision.unresolvedReferences(), tgt);
+        if (!kept.kept().isEmpty()) {
+            fx.keptReferences(kept.kept());
+        }
+        return TargetEntryDiffer.diff(tgt, kept.desired(), protectedAttrs, schema, dnAttrs);
     }
 
     // ── Dry run (impact preview) ───────────────────────────────────────────────
@@ -471,12 +489,12 @@ public class RecomputeEngine {
         MembershipDecision decision = entry != null
                 ? membershipFunction.evaluate(set, strategy, entry, resolver)
                 : MembershipDecision.out(identity);
-        PreviewRecorder rec = new PreviewRecorder();
+        PreviewRecorder rec = new PreviewRecorder(set);
         apply(set, target, identity, current, decision, entry, suppressDeletes, rec);
         String sourceDn = entry != null ? entry.getDN() : (current != null ? current.getSourceDn() : null);
         String fallbackDn = decision.member() ? decision.targetDn()
                 : (current != null ? current.getTargetDn() : null);
-        return withHeldNote(rec.toEntry(identity, sourceDn, fallbackDn), decision);
+        return withHeldNote(rec.toEntry(identity, sourceDn, fallbackDn), decision, rec.kept);
     }
 
     /** Outcomes that write (or keep) the projected attributes, where a held reference shows. */
@@ -484,18 +502,74 @@ public class RecomputeEngine {
             SyncPreviewAction.ADD, SyncPreviewAction.MODIFY, SyncPreviewAction.MOVE, SyncPreviewAction.NO_CHANGE);
 
     /**
-     * Say which reference attributes were held back — kept as they are on the
-     * target, or left out of an add — because the entries they point to aren't
-     * synced yet. Without the note a kept value would look like an oversight.
+     * Say which reference values were held back — kept as they are on the
+     * target, or left out — because the entries they point to aren't synced
+     * yet. Without the note a kept value would look like an oversight, and a
+     * left-out one like a lost member.
+     *
+     * @param kept per attribute, the target values {@link #apply} kept although
+     *             they don't translate yet
      */
-    static SyncPreviewEntry withHeldNote(SyncPreviewEntry e, MembershipDecision decision) {
-        if (!decision.member() || decision.heldReferences().isEmpty() || e.reason() != null
-                || !PROJECTING.contains(e.action())) {
+    static SyncPreviewEntry withHeldNote(SyncPreviewEntry e, MembershipDecision decision,
+                                         java.util.Map<String, List<String>> kept) {
+        if (!decision.member() || e.reason() != null || !PROJECTING.contains(e.action())
+                || (decision.heldReferences().isEmpty() && decision.unresolvedReferences().isEmpty())) {
             return e;
         }
-        String note = heldNote(decision.heldReferences(), e.action() == SyncPreviewAction.ADD);
+        boolean adding = e.action() == SyncPreviewAction.ADD;
+        List<String> parts = new ArrayList<>();
+        if (!decision.heldReferences().isEmpty()) {
+            parts.add(heldNote(decision.heldReferences(), adding));
+        }
+        decision.unresolvedReferences().forEach((attr, dns) -> {
+            List<String> keptHere = kept.getOrDefault(attr, List.of());
+            List<String> leftOut = new ArrayList<>();
+            for (String dn : dns) {
+                if (!containsDn(keptHere, dn)) {
+                    leftOut.add(dn);
+                }
+            }
+            if (!keptHere.isEmpty()) {
+                parts.add(partialNote(attr, keptHere, true));
+            }
+            if (!leftOut.isEmpty()) {
+                parts.add(partialNote(attr, leftOut, false));
+            }
+        });
+        if (parts.isEmpty()) {
+            return e;
+        }
         return new SyncPreviewEntry(e.identity(), e.sourceDn(), e.targetDn(), e.previousTargetDn(), e.action(),
-                note, e.changes());
+                String.join(" ", parts), e.changes());
+    }
+
+    private static boolean containsDn(List<String> values, String dn) {
+        for (String v : values) {
+            if (SyncDnUtil.sameDn(v, dn)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A note for some values of an attribute that also has translated ones. */
+    static String partialNote(String attr, List<String> dns, boolean kept) {
+        String values = dns.size() == 1 ? "1 value" : dns.size() + " values";
+        String them = dns.size() == 1 ? "it" : "them";
+        String once = dns.size() == 1 ? " once that entry is synced." : " once they're synced.";
+        return kept
+                ? attr + ": kept " + values + " as on the target, pointing to " + unsynced(dns)
+                        + ". The sync updates " + them + once
+                : attr + ": left out " + values + " pointing to " + unsynced(dns)
+                        + ". The sync adds " + them + once;
+    }
+
+    /** "X, which isn't synced yet", or "N entries that aren't synced yet (a; b; c; …)". */
+    private static String unsynced(List<String> dns) {
+        return dns.size() == 1
+                ? dns.get(0) + ", which isn't synced yet"
+                : dns.size() + " entries that aren't synced yet (" + String.join("; ", dns.subList(0,
+                        Math.min(dns.size(), HELD_NOTE_DNS))) + (dns.size() > HELD_NOTE_DNS ? "; …" : "") + ")";
     }
 
     /** DNs a held-reference note names before it shortens the list. */
@@ -504,10 +578,7 @@ public class RecomputeEngine {
     static String heldNote(java.util.Map<String, List<String>> held, boolean adding) {
         List<String> parts = new ArrayList<>();
         held.forEach((attr, dns) -> {
-            String target = dns.size() == 1
-                    ? dns.get(0) + ", which isn't synced yet"
-                    : dns.size() + " entries that aren't synced yet (" + String.join("; ", dns.subList(0,
-                            Math.min(dns.size(), HELD_NOTE_DNS))) + (dns.size() > HELD_NOTE_DNS ? "; …" : "") + ")";
+            String target = unsynced(dns);
             String once = dns.size() == 1 ? " once that entry is synced." : " once they're synced.";
             parts.add(adding
                     ? attr + " left out: it points to " + target + ". The sync adds it" + once
@@ -521,6 +592,9 @@ public class RecomputeEngine {
      * success, so the decision path continues exactly as after a successful write.
      */
     private final class PreviewRecorder implements Effects {
+        private final SyncSet set;
+        /** Per attribute, the untranslated reference values the apply kept on the target. */
+        private java.util.Map<String, List<String>> kept = java.util.Map.of();
         private String addDn;
         private List<Attribute> addAttrs;
         private String modifyDn;
@@ -534,6 +608,15 @@ public class RecomputeEngine {
         private String failedReason;
         private boolean applied;
         private boolean droppedRow;
+
+        PreviewRecorder(SyncSet set) {
+            this.set = set;
+        }
+
+        @Override
+        public void keptReferences(java.util.Map<String, List<String>> keptValues) {
+            kept = keptValues;
+        }
 
         @Override
         public Entry readTarget(DirectoryConnection target, String dn) {
@@ -557,7 +640,10 @@ public class RecomputeEngine {
         public ApplyOutcome modify(DirectoryConnection target, String dn, List<Modification> mods, Entry before) {
             if (!mods.isEmpty()) {
                 modifyDn = dn;
-                modifyChanges = SyncPreviewValues.forModify(before, mods);
+                // DN values listed by DN, so a value only reformatted (spacing,
+                // case) by a REPLACE isn't shown as removed and added back.
+                modifyChanges = SyncPreviewValues.forModify(before, mods, targetSchemas.forDirectory(target),
+                        SyncReferenceAttributes.forSet(set));
             }
             return ok(ResultCode.SUCCESS);
         }
@@ -706,6 +792,10 @@ public class RecomputeEngine {
         void dropRow(SyncSet set, String identity);
 
         void refreshSourceDn(Membership current, String sourceDn);
+
+        /** Untranslated reference values kept on the target (per attribute); only the preview notes them. */
+        default void keptReferences(java.util.Map<String, List<String>> kept) {
+        }
     }
 
     private final class LiveEffects implements Effects {

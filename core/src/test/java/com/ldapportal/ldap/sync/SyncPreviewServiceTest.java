@@ -392,6 +392,48 @@ class SyncPreviewServiceTest {
     }
 
     @Test
+    void anIdenticalGroup_withAnUnsyncedMember_andSpacedMemberDns_isNoChange() throws Exception {
+        String stray = "secAuthority=default,cn=foo"; // a member pointing at no synced entry
+        addPerson("alice");
+        addPerson("bob");
+        source.add(new Entry("cn=staff," + SRC_PEOPLE,
+                new Attribute("objectClass", "top", "groupOfNames"), new Attribute("cn", "staff"),
+                new Attribute("member", "uid=alice, ou=people, " + SRC_BASE, "uid=bob, ou=people, " + SRC_BASE,
+                        stray)));
+        for (String uid : List.of("alice", "bob")) {
+            target.add(new Entry("uid=" + uid + "," + DST_USERS,
+                    new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                    new Attribute("uid", uid), new Attribute("cn", uid), new Attribute("sn", uid)));
+        }
+        // The same group on the target, its member DNs written with spaces too.
+        target.add(new Entry("cn=staff," + DST_USERS,
+                new Attribute("objectClass", "top", "groupOfNames"), new Attribute("cn", "staff"),
+                new Attribute("member", "uid=alice, ou=Users, " + DST_BASE, "uid=bob, ou=Users, " + DST_BASE,
+                        stray)));
+
+        SyncPreviewEntry staff = byTargetDn(previewAll()).get(("cn=staff," + DST_USERS).toLowerCase());
+
+        // The stray member is kept, and spacing alone isn't a change.
+        assertThat(staff.action()).isEqualTo(SyncPreviewAction.NO_CHANGE);
+        assertThat(staff.reason()).isEqualTo("member: kept 1 value as on the target, pointing to " + stray
+                + ", which isn't synced yet. The sync updates it once that entry is synced.");
+
+        // A real reconcile leaves the group alone.
+        reconciler.reconcile(set.getId());
+        assertThat(target.getEntry("cn=staff," + DST_USERS).getAttributeValues("member"))
+                .containsExactlyInAnyOrder("uid=alice, ou=Users, " + DST_BASE, "uid=bob, ou=Users, " + DST_BASE,
+                        stray);
+
+        // A member removed on the source is still removed, and the list shows only that one.
+        source.modify("cn=staff," + SRC_PEOPLE,
+                new Modification(ModificationType.DELETE, "member", "uid=bob, ou=people, " + SRC_BASE));
+        SyncPreviewEntry changed = byTargetDn(previewAll()).get(("cn=staff," + DST_USERS).toLowerCase());
+        assertThat(changed.action()).isEqualTo(SyncPreviewAction.MODIFY);
+        assertThat(changeOf(changed, "member").removed()).containsExactly("uid=bob, ou=Users, " + DST_BASE);
+        assertThat(changeOf(changed, "member").added()).isEmpty();
+    }
+
+    @Test
     void aReferenceToAnUnsyncedEntry_isKeptOnTheTarget_withANote() throws Exception {
         // Both point their manager at an entry outside the set's scope, which no
         // link syncs, so the reference can't be translated.

@@ -71,6 +71,19 @@ final class SyncPreviewValues {
      * the server applies, so a REPLACE shows exactly what it drops and adds.
      */
     static List<SyncPreviewAttributeChange> forModify(Entry before, List<Modification> mods) {
+        return forModify(before, mods, null, List.of());
+    }
+
+    /**
+     * As {@link #forModify(Entry, List)}, comparing DN-valued attributes (the
+     * set's reference attributes, and DN syntax in {@code schema}) as DNs: a
+     * REPLACE that writes {@code uid=a,ou=x} over {@code uid=a, ou=x} doesn't
+     * list it as removed and added back, only the members actually lost or
+     * gained.
+     */
+    static List<SyncPreviewAttributeChange> forModify(Entry before, List<Modification> mods,
+                                                      com.unboundid.ldap.sdk.schema.Schema schema,
+                                                      java.util.Collection<String> dnAttrs) {
         Entry after;
         try {
             after = Entry.applyModifications(before, true, mods);
@@ -87,8 +100,9 @@ final class SyncPreviewValues {
         for (String name : touched.values()) {
             List<String> was = values(before.getAttribute(name));
             List<String> now = values(after.getAttribute(name));
-            List<String> removed = minus(was, now);
-            List<String> added = minus(now, was);
+            boolean asDns = TargetEntryDiffer.isDnValued(name, schema, dnAttrs);
+            List<String> removed = asDns ? minusDns(was, now) : minus(was, now);
+            List<String> added = asDns ? minusDns(now, was) : minus(now, was);
             if (!removed.isEmpty() || !added.isEmpty()) {
                 out.add(change(name, removed, added));
             }
@@ -116,6 +130,23 @@ final class SyncPreviewValues {
         List<String> out = new ArrayList<>(a.size());
         for (byte[] raw : a.getValueByteArrays()) {
             out.add(StaticUtils.isValidUTF8(raw) ? StaticUtils.toUTF8String(raw) : binary(raw.length));
+        }
+        return out;
+    }
+
+    /** {@link #minus} with values compared as DNs (a value that isn't a valid DN compares as written). */
+    private static List<String> minusDns(List<String> a, List<String> b) {
+        com.unboundid.ldap.matchingrules.MatchingRule rule =
+                com.unboundid.ldap.matchingrules.DistinguishedNameMatchingRule.getInstance();
+        Set<String> drop = new java.util.HashSet<>();
+        for (String v : b) {
+            drop.add(TargetEntryDiffer.normalizeOrExact(rule, v));
+        }
+        List<String> out = new ArrayList<>();
+        for (String v : a) {
+            if (!drop.contains(TargetEntryDiffer.normalizeOrExact(rule, v))) {
+                out.add(v);
+            }
         }
         return out;
     }

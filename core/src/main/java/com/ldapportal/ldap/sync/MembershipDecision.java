@@ -27,26 +27,36 @@ import java.util.Set;
  *                     DNs. The target's current values of these attributes are
  *                     kept rather than deleted; a closure trigger re-drives the
  *                     entry once a referent lands (IN only, never null).
+ * @param unresolvedReferences reference attributes projected with some values
+ *                     but not all: the source DNs that couldn't be translated
+ *                     yet, keyed by target attribute name. A target value that
+ *                     is already exactly one of these DNs is kept (see
+ *                     {@link TargetEntryDiffer#keepUnresolved}), so a member
+ *                     isn't removed just because its entry isn't synced (IN
+ *                     only, never null).
  */
 public record MembershipDecision(boolean member,
                                  String identity,
                                  String targetDn,
                                  List<Attribute> desiredAttrs,
                                  byte[] contentHash,
-                                 Map<String, List<String>> heldReferences) {
+                                 Map<String, List<String>> heldReferences,
+                                 Map<String, List<String>> unresolvedReferences) {
 
     public static MembershipDecision out(String identity) {
-        return new MembershipDecision(false, identity, null, null, null, Map.of());
+        return new MembershipDecision(false, identity, null, null, null, Map.of(), Map.of());
     }
 
     public static MembershipDecision in(String identity, String targetDn,
                                         List<Attribute> desiredAttrs, byte[] contentHash) {
-        return in(identity, targetDn, desiredAttrs, contentHash, Map.of());
+        return in(identity, targetDn, desiredAttrs, contentHash, Map.of(), Map.of());
     }
 
     public static MembershipDecision in(String identity, String targetDn, List<Attribute> desiredAttrs,
-                                        byte[] contentHash, Map<String, List<String>> heldReferences) {
-        return new MembershipDecision(true, identity, targetDn, desiredAttrs, contentHash, heldReferences);
+                                        byte[] contentHash, Map<String, List<String>> heldReferences,
+                                        Map<String, List<String>> unresolvedReferences) {
+        return new MembershipDecision(true, identity, targetDn, desiredAttrs, contentHash, heldReferences,
+                unresolvedReferences);
     }
 
     /**

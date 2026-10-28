@@ -65,6 +65,20 @@ class SyncContentVerifierTest {
     }
 
     @Test
+    void unresolvedMember_theTargetHasExactly_isNotDrift() {
+        var expected = expectedMap("cn=g,dc=t", new SyncContentVerifier.Expected("cn=g,dc=t",
+                List.of(new Attribute("member", "uid=a,dc=t")), Set.of(),
+                Map.of("member", List.of("secAuthority=default,cn=foo"))));
+        Map<String, Entry> actual = Map.of("cn=g,dc=t", new Entry("cn=g,dc=t",
+                new Attribute("member", "uid=a, dc=t", "secAuthority=default, cn=foo")));
+
+        SyncVerifyResult r = SyncContentVerifier.compare(expected, actual, EXCLUDED, true, true, null,
+                List.of("member"));
+
+        assertThat(r.inSync()).isEqualTo(1);
+    }
+
+    @Test
     void memberAbsentFromTarget_isMissing() {
         var expected = expectedMap("uid=jo,ou=people,dc=t",
                 expected("uid=jo,ou=people,dc=t", new Attribute("cn", "Jo")));
