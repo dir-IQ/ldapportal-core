@@ -1,6 +1,6 @@
 # Referential Integrity Checker
 
-**Status:** Shipped (broken-member, orphaned-entry and empty-group checks; removal of broken member references; 2026-10-28).
+**Status:** Shipped (broken-member, orphaned-entry and empty-group checks; removal of broken member references; IVIA `secDN` reference check; 2026-10-28).
 
 The superadmin **Referential Integrity Checker** scans a directory for
 references that point nowhere and entries that have lost their place, and can
@@ -16,8 +16,15 @@ directory), and the checks to run:
 | **Broken member references** | A group's `member` or `uniqueMember` value naming a DN no entry has. Values are compared as DNs, so one that differs from the entry's DN only in case or spacing isn't broken. A member under another root of the same directory isn't broken either. |
 | **Orphaned entries** | An entry whose parent doesn't exist. Each searched root is exempt. |
 | **Empty groups** | A `groupOfNames`, `groupOfUniqueNames` or `posixGroup` with no members. |
+| **Broken references (secDN)** | *Offered only on a directory with an active linked-mode IVIA configuration.* An IVIA account (a `secUser` under the configured user container in the management DIT) whose `secDN` names no entry, or that has no `secDN` at all. The same scan as the **Orphaned IVIA accounts** report. With a base DN, only accounts whose `secDN` (or the account itself) is under it are listed; accounts with no `secDN` are then left out. These aren't removed from here: fix the account's `secDN`, or remove the orphaned account, on the directory. |
 
 Any superadmin can run a check; each run is audited as `integrity.check`.
+The checks a directory offers come from
+`GET /api/v1/superadmin/directories/{id}/browse/integrity-check/checks`
+(`[{"type","attributes"}]`); `BROKEN_REFERENCE` is listed only where an addon
+contributes a reference check for that directory (the IVIA addon's `secDN`
+check, through the core `IntegrityCheckContributor` SPI), and is requested
+like the others (`checks=…,BROKEN_REFERENCE`).
 
 A check run with a base DN loads only the DNs under that base, so a group
 member that lives elsewhere in the directory is reported as broken. Removing

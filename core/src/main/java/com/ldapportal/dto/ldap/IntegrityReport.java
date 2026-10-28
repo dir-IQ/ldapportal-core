@@ -11,10 +11,12 @@ import java.util.List;
 public record IntegrityReport(List<IntegrityIssue> issues) {
 
     /**
-     * @param attribute for a {@code BROKEN_MEMBER}, the attribute holding the
-     *                  reference ({@code member} or {@code uniqueMember}); else {@code null}
-     * @param value     for a {@code BROKEN_MEMBER}, the referenced DN that doesn't
-     *                  exist, as the group stores it; else {@code null}
+     * @param attribute for a {@code BROKEN_MEMBER} or {@code BROKEN_REFERENCE}, the
+     *                  attribute holding the reference ({@code member},
+     *                  {@code uniqueMember}, or e.g. {@code secDN}); else {@code null}
+     * @param value     for those types, the referenced DN that doesn't exist, as the
+     *                  entry stores it ({@code null} for a required reference that is
+     *                  missing altogether); else {@code null}
      */
     public record IntegrityIssue(
             IssueType type,
@@ -30,6 +32,12 @@ public record IntegrityReport(List<IntegrityIssue> issues) {
 
     public enum IssueType {
         BROKEN_MEMBER,
+        /**
+         * Another DN-valued attribute names a DN no entry has, e.g. an IVIA
+         * account's {@code secDN}. Checked by addon-contributed
+         * {@link com.ldapportal.core.integrity.IntegrityCheckContributor}s.
+         */
+        BROKEN_REFERENCE,
         ORPHANED_ENTRY,
         EMPTY_GROUP
     }

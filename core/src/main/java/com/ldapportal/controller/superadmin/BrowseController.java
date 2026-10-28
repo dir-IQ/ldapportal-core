@@ -385,6 +385,21 @@ public class BrowseController {
 
     // ── Integrity Check ─────────────────────────────────────────────────────
 
+    /**
+     * The checks the directory offers, each with the attributes it checks
+     * (empty for the structural ones). {@code BROKEN_REFERENCE} is listed only
+     * where an addon contributes a reference check for this directory, e.g.
+     * IVIA {@code secDN} on a directory with an IVIA configuration.
+     */
+    @GetMapping("/integrity-check/checks")
+    public List<Map<String, Object>> integrityChecks(@PathVariable UUID directoryId) {
+        DirectoryConnection dc = loadDirectory(directoryId);
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        integrityCheckService.availableChecks(dc).forEach((type, attrs) ->
+                out.add(Map.of("type", type.name(), "attributes", attrs)));
+        return out;
+    }
+
     @PostMapping("/integrity-check")
     public IntegrityReport integrityCheck(
             @PathVariable UUID directoryId,

@@ -118,4 +118,22 @@ class BrowseControllerIntegrityTest extends BaseControllerTest {
                         .with(authentication(adminAuth())))
                 .andExpect(status().isForbidden());
     }
+
+    @Test
+    void checks_listWhatTheDirectoryOffers_withTheAttributesChecked() throws Exception {
+        directoryExists();
+        java.util.Map<com.ldapportal.dto.ldap.IntegrityReport.IssueType, List<String>> checks =
+                new java.util.LinkedHashMap<>();
+        checks.put(com.ldapportal.dto.ldap.IntegrityReport.IssueType.BROKEN_MEMBER, List.of("member", "uniqueMember"));
+        checks.put(com.ldapportal.dto.ldap.IntegrityReport.IssueType.BROKEN_REFERENCE, List.of("secDN"));
+        when(integrityCheckService.availableChecks(any())).thenReturn(checks);
+
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .get("/api/v1/superadmin/directories/{id}/browse/integrity-check/checks", dirId)
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].type").value("BROKEN_MEMBER"))
+                .andExpect(jsonPath("$[1].type").value("BROKEN_REFERENCE"))
+                .andExpect(jsonPath("$[1].attributes[0]").value("secDN"));
+    }
 }
