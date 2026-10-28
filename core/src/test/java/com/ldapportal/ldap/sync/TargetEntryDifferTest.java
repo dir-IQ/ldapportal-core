@@ -143,10 +143,12 @@ class TargetEntryDifferTest {
         List<Attribute> desired = List.of(new Attribute("cn", "g"), new Attribute("member", "uid=a,ou=People,o=t"));
 
         TargetEntryDiffer.Kept kept = TargetEntryDiffer.keepUnresolved(desired,
-                java.util.Map.of("member", List.of("secAuthority=default,cn=foo")), target);
+                java.util.Map.of("member", java.util.Map.of("secAuthority=default,cn=foo",
+                        "secAuthority=default,cn=foo")), target);
 
+        // The source DN it was kept for.
         assertThat(kept.kept()).containsExactly(
-                java.util.Map.entry("member", List.of("secAuthority=default, cn=foo")));
+                java.util.Map.entry("member", List.of("secAuthority=default,cn=foo")));
         assertThat(TargetEntryDiffer.diff(target, kept.desired(), Set.of(), null, List.of("member"))).isEmpty();
     }
 
@@ -157,7 +159,7 @@ class TargetEntryDifferTest {
         List<Attribute> desired = List.of(new Attribute("member", "uid=a,o=t"));
 
         TargetEntryDiffer.Kept kept = TargetEntryDiffer.keepUnresolved(desired,
-                java.util.Map.of("member", List.of("uid=unsynced,o=t")), target);
+                java.util.Map.of("member", java.util.Map.of("uid=unsynced,o=t", "uid=unsynced,o=t")), target);
 
         List<Modification> mods = TargetEntryDiffer.diff(target, kept.desired(), Set.of(), null, List.of("member"));
         assertThat(mods).singleElement().satisfies(m ->
@@ -171,5 +173,20 @@ class TargetEntryDifferTest {
                 new Entry("cn=g,o=t", new Attribute("member", "uid=b,o=t")));
         assertThat(kept.desired()).isSameAs(desired);
         assertThat(kept.kept()).isEmpty();
+    }
+
+    @Test
+    void keepUnresolved_keepsTheCandidateTargetDn_notTheSourceDn() {
+        // A member whose last write failed, under a rewritten target base: the
+        // target knows it as uid=x,ou=Users,o=dst, not as its source DN.
+        Entry target = new Entry("cn=g,o=dst", new Attribute("member", "uid=a,ou=Users,o=dst", "uid=x,ou=Users,o=dst"));
+        List<Attribute> desired = List.of(new Attribute("member", "uid=a,ou=Users,o=dst"));
+
+        TargetEntryDiffer.Kept kept = TargetEntryDiffer.keepUnresolved(desired,
+                java.util.Map.of("member", java.util.Map.of("uid=x,ou=people,o=src", "uid=x,ou=Users,o=dst")),
+                target);
+
+        assertThat(kept.kept()).containsExactly(java.util.Map.entry("member", List.of("uid=x,ou=people,o=src")));
+        assertThat(TargetEntryDiffer.diff(target, kept.desired(), Set.of(), null, List.of("member"))).isEmpty();
     }
 }

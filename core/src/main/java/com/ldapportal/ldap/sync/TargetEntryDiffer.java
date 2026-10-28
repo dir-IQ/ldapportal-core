@@ -129,69 +129,92 @@ public final class TargetEntryDiffer {
 
     /**
      * The values a diff should aim for once reference values that don't
-     * translate yet are accounted for: for each attribute in {@code unresolved}
-     * that the desired set projects, the target's values that are exactly one
-     * of the untranslated source DNs (compared as DNs) are added back. A member
-     * whose entry isn't synced is then left where it is instead of removed;
-     * one the source no longer lists is still removed.
+     * translate yet are accounted for: for each attribute the desired set
+     * projects, a target value that is exactly one of the candidate target DNs
+     * (compared as DNs; see {@link UntranslatedReferenceTargets}) is added
+     * back. A member whose entry isn't synced is then left where it is instead
+     * of removed; one the source no longer lists is still removed.
      *
-     * @param unresolved target attribute name → source DNs that didn't translate
+     * @param candidates attribute → (untranslated source DN → target DN it may be kept as)
      * @return the desired attributes to diff against, and per attribute the
-     *         target values that were kept
+     *         source DNs whose values were kept
      */
-    public static Kept keepUnresolved(List<Attribute> desired, Map<String, List<String>> unresolved, Entry target) {
-        if (unresolved.isEmpty() || target == null) {
+    public static Kept keepUnresolved(List<Attribute> desired, Map<String, Map<String, String>> candidates,
+                                      Entry target) {
+        if (candidates.isEmpty() || target == null) {
             return new Kept(desired, Map.of());
         }
-        MatchingRule rule = DistinguishedNameMatchingRule.getInstance();
         List<Attribute> out = new ArrayList<>(desired.size());
         Map<String, List<String>> kept = new LinkedHashMap<>();
         for (Attribute d : desired) {
-            List<String> dns = valuesFor(unresolved, d.getBaseName());
-            Attribute current = dns == null ? null : target.getAttribute(d.getName());
+            Map<String, String> bySource = valuesFor(candidates, d.getBaseName());
+            Attribute current = bySource == null ? null : target.getAttribute(d.getName());
             if (current == null) {
                 out.add(d);
                 continue;
             }
-            Set<String> wanted = new HashSet<>();
-            for (String dn : dns) {
-                String n = normalizeOrNull(rule, dn);
+            // Candidate target DN (normalized) → the source DN it stands for.
+            Map<String, String> wanted = new LinkedHashMap<>();
+            bySource.forEach((source, targetDn) -> {
+                String n = normalizeOrNull(DN_RULE, targetDn);
                 if (n != null) {
-                    wanted.add(n);
+                    wanted.putIfAbsent(n, source);
                 }
-            }
-            Set<String> have = new HashSet<>();
-            for (String v : d.getValues()) {
-                have.add(normalizeOrExact(rule, v));
-            }
-            List<String> values = new ArrayList<>(List.of(d.getValues()));
-            List<String> keptHere = new ArrayList<>();
+            });
+            // Scan the target first: most groups have no candidate to keep, and
+            // then their (possibly many) desired values needn't be normalized.
+            Map<String, String> hits = new LinkedHashMap<>(); // target value → source DN
             for (String v : current.getValues()) {
-                String n = normalizeOrNull(rule, v);
-                if (n != null && wanted.contains(n) && have.add(n)) {
-                    values.add(v);
-                    keptHere.add(v);
+                String n = normalizeOrNull(DN_RULE, v);
+                if (n != null && wanted.containsKey(n)) {
+                    hits.putIfAbsent(v, wanted.get(n));
                 }
             }
-            if (keptHere.isEmpty()) {
+            if (hits.isEmpty()) {
+                out.add(d);
+                continue;
+            }
+            Set<String> have = dnKeys(List.of(d.getValues()));
+            List<String> values = new ArrayList<>(List.of(d.getValues()));
+            List<String> keptSources = new ArrayList<>();
+            hits.forEach((value, source) -> {
+                if (have.add(normalizeOrExact(DN_RULE, value))) {
+                    values.add(value);
+                    keptSources.add(source);
+                }
+            });
+            if (keptSources.isEmpty()) {
                 out.add(d);
             } else {
                 out.add(new Attribute(d.getName(), values.toArray(new String[0])));
-                kept.put(d.getName(), keptHere);
+                kept.put(d.getName(), keptSources);
             }
         }
         return new Kept(out, kept.isEmpty() ? Map.of() : kept);
     }
 
     /**
-     * Desired attributes after {@link #keepUnresolved}, and the target values it
-     * kept per attribute (empty when none).
+     * Desired attributes after {@link #keepUnresolved}, and per attribute the
+     * untranslated source DNs whose target values were kept (empty when none).
      */
     public record Kept(List<Attribute> desired, Map<String, List<String>> kept) {
     }
 
-    private static List<String> valuesFor(Map<String, List<String>> byName, String baseName) {
-        for (Map.Entry<String, List<String>> e : byName.entrySet()) {
+    /** DN equality, for values compared as DNs. */
+    static final MatchingRule DN_RULE = DistinguishedNameMatchingRule.getInstance();
+
+    /** The values' DN-normalized forms (a value that isn't a valid DN as written). */
+    static Set<String> dnKeys(Collection<String> values) {
+        Set<String> out = new HashSet<>();
+        for (String v : values) {
+            out.add(normalizeOrExact(DN_RULE, v));
+        }
+        return out;
+    }
+
+    /** The entry for {@code baseName} in {@code byName}, matching names case-insensitively. */
+    private static <V> V valuesFor(Map<String, V> byName, String baseName) {
+        for (Map.Entry<String, V> e : byName.entrySet()) {
             if (Attribute.getBaseName(e.getKey()).equalsIgnoreCase(baseName)) {
                 return e.getValue();
             }

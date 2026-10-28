@@ -32,7 +32,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -82,6 +81,8 @@ public class SyncContentVerifier {
     private final LdapConnectionFactory connectionFactory;
     private final MembershipFunction membershipFunction;
     private final SyncTargetSchemas targetSchemas;
+    private final MembershipReferenceResolvers referenceResolvers;
+    private final UntranslatedReferenceTargets untranslatedTargets;
 
     /** Verify the live source/target contents of a sync set and report mismatches. */
     public SyncVerifyResult verify(UUID syncSetId) {
@@ -93,16 +94,14 @@ public class SyncContentVerifier {
         // Source side: enumerate + project members, keyed by normalized target DN.
         // Reference attributes resolve through the index exactly as the engine does,
         // so the desired image matches what was actually applied (see class doc).
-        ReferenceResolver resolver = referenceResolver(ctx);
-        Map<String, Expected> expected = new LinkedHashMap<>();
+        ReferenceResolver resolver = referenceResolvers.snapshot(ctx.link);
+        Map<String, MembershipDecision> members = new LinkedHashMap<>();
         boolean sourceComplete = true;
         try {
             for (SearchResultEntry e : enumerateSource(ctx)) {
                 var decision = membershipFunction.evaluate(ctx.set, ctx.strategy, e, resolver);
                 if (decision.member() && decision.targetDn() != null) {
-                    expected.put(normDn(decision.targetDn()),
-                            new Expected(decision.targetDn(), decision.desiredAttrs(),
-                                    decision.heldAttributeNames(), decision.unresolvedReferences()));
+                    members.put(normDn(decision.targetDn()), decision);
                 }
             }
         } catch (Exception ex) {
@@ -121,6 +120,18 @@ public class SyncContentVerifier {
             log.warn("Sync set {}: target enumeration failed during verify ({})", syncSetId, ex.toString());
             targetComplete = false;
         }
+
+        // Untranslated references are kept as the engine keeps them, which can
+        // depend on whether an entry exists on the target (see
+        // UntranslatedReferenceTargets): check the enumerated entries first,
+        // then read the target for one outside them.
+        UntranslatedReferenceTargets.Lookup lookup = untranslatedTargets.forSet(ctx.set);
+        Map<String, Boolean> exists = new HashMap<>();
+        java.util.function.Predicate<String> targetExists = dn -> actual.containsKey(normDn(dn))
+                || exists.computeIfAbsent(normDn(dn), k -> readExists(ctx, dn));
+        Map<String, Expected> expected = new LinkedHashMap<>();
+        members.forEach((key, d) -> expected.put(key, new Expected(d.targetDn(), d.desiredAttrs(),
+                d.heldAttributeNames(), lookup.candidates(d.unresolvedReferences(), targetExists))));
 
         Set<String> excluded = SyncExcludedAttributes.effectiveFor(ctx.set);
         return compare(expected, actual, excluded, sourceComplete, targetComplete,
@@ -158,7 +169,7 @@ public class SyncContentVerifier {
             // An untranslated reference the target already has exactly is kept by
             // the engine (a member whose entry isn't synced yet), so not drift.
             List<Attribute> desired = TargetEntryDiffer.keepUnresolved(en.getValue().desired(),
-                    en.getValue().unresolved(), target).desired();
+                    en.getValue().keepCandidates(), target).desired();
             List<Modification> mods = TargetEntryDiffer.diff(target, desired, untouched, schema, dnAttrs);
             if (mods.isEmpty()) {
                 inSync++;
@@ -235,24 +246,13 @@ public class SyncContentVerifier {
 
     // ── helpers ────────────────────────────────────────────────────────────────
 
-    /**
-     * The engine's DN-reference resolver, rebuilt from the membership index: a
-     * source DN value maps to its target DN across all sets on the link (an
-     * unsynced referent resolves to empty and is dropped from the projection,
-     * mirroring {@code RecomputeEngine}). Preloaded into a map to avoid an N+1
-     * lookup while projecting the whole scope.
-     */
-    private ReferenceResolver referenceResolver(Context ctx) {
-        Map<String, String> targetBySource = new HashMap<>();
-        for (SyncSet s : syncSetRepo.findAllByLinkId(ctx.link.getId())) {
-            for (Membership m : membershipRepo.findAllBySyncSetId(s.getId())) {
-                // Mirror the engine: only an APPLIED row's target DN is a valid reference.
-                if (m.getSourceDn() != null && MembershipReferenceResolvers.isLive(m)) {
-                    targetBySource.putIfAbsent(SyncDnUtil.normalize(m.getSourceDn()), m.getTargetDn());
-                }
-            }
+    /** Whether an entry exists at {@code dn} on the target (a read failure counts as no). */
+    private boolean readExists(Context ctx, String dn) {
+        try {
+            return connectionFactory.withConnectionUnreplicated(ctx.target, conn -> conn.getEntry(dn, "1.1") != null);
+        } catch (Exception ex) {
+            return false;
         }
-        return srcDn -> Optional.ofNullable(targetBySource.get(SyncDnUtil.normalize(srcDn)));
     }
 
     private Context loadContext(UUID syncSetId) {
@@ -296,15 +296,12 @@ public class SyncContentVerifier {
 
     /**
      * {@code held}: lower-cased reference attributes the engine keeps as they are
-     * on the target; {@code unresolved}: per attribute, the source DNs that didn't
-     * translate, which the engine keeps where the target has them exactly.
+     * on the target; {@code keepCandidates}: per attribute, each untranslated
+     * source DN mapped to the target DN the engine keeps it as where the target
+     * has it (see {@link UntranslatedReferenceTargets}).
      */
     record Expected(String displayDn, List<Attribute> desired, Set<String> held,
-                    Map<String, List<String>> unresolved) {
-
-        Expected(String displayDn, List<Attribute> desired, Set<String> held) {
-            this(displayDn, desired, held, Map.of());
-        }
+                    Map<String, Map<String, String>> keepCandidates) {
     }
 
     private static Set<String> union(Set<String> a, Set<String> b) {

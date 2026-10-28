@@ -71,7 +71,9 @@ public class MembershipFunction {
         }
 
         Projection projected = project(set, strategy, entry, identity, resolver);
-        byte[] hash = SyncContentHash.of(targetDn, projected.attrs());
+        java.util.Map<String, List<String>> untranslated = new LinkedHashMap<>(projected.held());
+        untranslated.putAll(projected.unresolved());
+        byte[] hash = SyncContentHash.of(targetDn, projected.attrs(), untranslated);
         return MembershipDecision.in(identity, targetDn, projected.attrs(), hash, projected.held(),
                 projected.unresolved());
     }
@@ -121,7 +123,11 @@ public class MembershipFunction {
                     if (translated.isPresent()) {
                         values.add(translated.get());
                     } else {
-                        unresolved.computeIfAbsent(m.targetAttr(), k -> new ArrayList<>()).add(v);
+                        // One entry per target attribute whatever the case it's
+                        // written in (two mappings may target "Member" and "member").
+                        String key = targetCase.computeIfAbsent(m.targetAttr().toLowerCase(Locale.ROOT),
+                                k -> m.targetAttr());
+                        unresolved.computeIfAbsent(key, k -> new ArrayList<>()).add(v);
                     }
                 }
                 if (values.isEmpty()) {

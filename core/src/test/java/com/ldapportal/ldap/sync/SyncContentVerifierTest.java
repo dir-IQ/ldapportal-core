@@ -24,7 +24,7 @@ class SyncContentVerifierTest {
     private static final Set<String> EXCLUDED = Set.of();
 
     private static SyncContentVerifier.Expected expected(String dn, Attribute... attrs) {
-        return new SyncContentVerifier.Expected(dn, List.of(attrs), java.util.Set.of());
+        return new SyncContentVerifier.Expected(dn, List.of(attrs), java.util.Set.of(), Map.of());
     }
 
     private static Map<String, SyncContentVerifier.Expected> expectedMap(String dn,
@@ -54,7 +54,7 @@ class SyncContentVerifierTest {
     @Test
     void heldReference_keptOnTheTarget_isNotDrift() {
         var expected = expectedMap("cn=eng,dc=t", new SyncContentVerifier.Expected("cn=eng,dc=t",
-                List.of(new Attribute("cn", "eng")), Set.of("secdn")));
+                List.of(new Attribute("cn", "eng")), Set.of("secdn"), Map.of()));
         Map<String, Entry> actual = Map.of("cn=eng,dc=t",
                 new Entry("cn=eng,dc=t", new Attribute("cn", "eng"), new Attribute("secDN", "cn=eng,o=native")));
 
@@ -68,7 +68,7 @@ class SyncContentVerifierTest {
     void unresolvedMember_theTargetHasExactly_isNotDrift() {
         var expected = expectedMap("cn=g,dc=t", new SyncContentVerifier.Expected("cn=g,dc=t",
                 List.of(new Attribute("member", "uid=a,dc=t")), Set.of(),
-                Map.of("member", List.of("secAuthority=default,cn=foo"))));
+                Map.of("member", Map.of("secAuthority=default,cn=foo", "secAuthority=default,cn=foo"))));
         Map<String, Entry> actual = Map.of("cn=g,dc=t", new Entry("cn=g,dc=t",
                 new Attribute("member", "uid=a, dc=t", "secAuthority=default, cn=foo")));
 

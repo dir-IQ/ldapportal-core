@@ -79,6 +79,7 @@ public class RecomputeEngine {
     private final ClosureResolver closureResolver;
     private final MembershipReferenceResolvers referenceResolvers;
     private final SyncTargetSchemas targetSchemas;
+    private final UntranslatedReferenceTargets untranslatedTargets;
 
     /** The real side effects: target directory writes + index commits. */
     private final Effects live = new LiveEffects();
@@ -434,11 +435,12 @@ public class RecomputeEngine {
             if (LdapResultInterpreter.addNeedsModify(res.code())) {
                 tgt = fx.readTarget(target, targetDn);
                 res = (tgt == null) ? res
-                        : fx.modify(target, targetDn, diffAgainst(tgt, decision, protectedAttrs, schema, dnAttrs, fx),
-                                tgt);
+                        : fx.modify(target, targetDn, diffAgainst(set, target, tgt, decision, protectedAttrs, schema,
+                                dnAttrs, fx), tgt);
             }
         } else {
-            res = fx.modify(target, targetDn, diffAgainst(tgt, decision, protectedAttrs, schema, dnAttrs, fx), tgt);
+            res = fx.modify(target, targetDn,
+                    diffAgainst(set, target, tgt, decision, protectedAttrs, schema, dnAttrs, fx), tgt);
         }
 
         if (!LdapResultInterpreter.success(res.code())) {
@@ -452,19 +454,24 @@ public class RecomputeEngine {
     /**
      * The modifications converging {@code tgt} on the projection. A reference
      * value that doesn't translate yet stays where the target already has it
-     * exactly (see {@link TargetEntryDiffer#keepUnresolved}): a group member
-     * whose entry isn't synced isn't removed. What was kept is reported to
-     * {@code fx}, for the preview's note.
+     * as the DN {@link UntranslatedReferenceTargets} gives it (see
+     * {@link TargetEntryDiffer#keepUnresolved}): a group member whose entry
+     * isn't synced isn't removed, while one whose entry the sync deleted is.
+     * {@code fx} is told how the diff compared values, and what was kept, for
+     * the preview.
      */
-    private static List<Modification> diffAgainst(Entry tgt, MembershipDecision decision,
-                                                  java.util.Set<String> protectedAttrs,
-                                                  com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs,
-                                                  Effects fx) {
-        TargetEntryDiffer.Kept kept = TargetEntryDiffer.keepUnresolved(decision.desiredAttrs(),
-                decision.unresolvedReferences(), tgt);
-        if (!kept.kept().isEmpty()) {
-            fx.keptReferences(kept.kept());
+    private List<Modification> diffAgainst(SyncSet set, DirectoryConnection target, Entry tgt,
+                                           MembershipDecision decision, java.util.Set<String> protectedAttrs,
+                                           com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs,
+                                           Effects fx) {
+        TargetEntryDiffer.Kept kept = new TargetEntryDiffer.Kept(decision.desiredAttrs(), java.util.Map.of());
+        if (!decision.unresolvedReferences().isEmpty()) {
+            java.util.Map<String, java.util.Map<String, String>> candidates = untranslatedTargets.forSet(set)
+                    .candidates(decision.unresolvedReferences(), dn -> fx.readTarget(target, dn) != null,
+                            fx::leavesItsSet);
+            kept = TargetEntryDiffer.keepUnresolved(decision.desiredAttrs(), candidates, tgt);
         }
+        fx.diffed(schema, dnAttrs, kept.kept());
         return TargetEntryDiffer.diff(tgt, kept.desired(), protectedAttrs, schema, dnAttrs);
     }
 
@@ -489,7 +496,7 @@ public class RecomputeEngine {
         MembershipDecision decision = entry != null
                 ? membershipFunction.evaluate(set, strategy, entry, resolver)
                 : MembershipDecision.out(identity);
-        PreviewRecorder rec = new PreviewRecorder(set);
+        PreviewRecorder rec = new PreviewRecorder(resolver);
         apply(set, target, identity, current, decision, entry, suppressDeletes, rec);
         String sourceDn = entry != null ? entry.getDN() : (current != null ? current.getSourceDn() : null);
         String fallbackDn = decision.member() ? decision.targetDn()
@@ -507,8 +514,8 @@ public class RecomputeEngine {
      * yet. Without the note a kept value would look like an oversight, and a
      * left-out one like a lost member.
      *
-     * @param kept per attribute, the target values {@link #apply} kept although
-     *             they don't translate yet
+     * @param kept per attribute, the untranslated source DNs whose target
+     *             values {@link #apply} kept
      */
     static SyncPreviewEntry withHeldNote(SyncPreviewEntry e, MembershipDecision decision,
                                          java.util.Map<String, List<String>> kept) {
@@ -522,7 +529,7 @@ public class RecomputeEngine {
             parts.add(heldNote(decision.heldReferences(), adding));
         }
         decision.unresolvedReferences().forEach((attr, dns) -> {
-            List<String> keptHere = kept.getOrDefault(attr, List.of());
+            List<String> keptHere = keptFor(kept, attr);
             List<String> leftOut = new ArrayList<>();
             for (String dn : dns) {
                 if (!containsDn(keptHere, dn)) {
@@ -541,6 +548,15 @@ public class RecomputeEngine {
         }
         return new SyncPreviewEntry(e.identity(), e.sourceDn(), e.targetDn(), e.previousTargetDn(), e.action(),
                 String.join(" ", parts), e.changes());
+    }
+
+    private static List<String> keptFor(java.util.Map<String, List<String>> kept, String attr) {
+        for (java.util.Map.Entry<String, List<String>> e : kept.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(attr)) {
+                return e.getValue();
+            }
+        }
+        return List.of();
     }
 
     private static boolean containsDn(List<String> values, String dn) {
@@ -592,9 +608,22 @@ public class RecomputeEngine {
      * success, so the decision path continues exactly as after a successful write.
      */
     private final class PreviewRecorder implements Effects {
-        private final SyncSet set;
-        /** Per attribute, the untranslated reference values the apply kept on the target. */
+        /** Per attribute, the untranslated source DNs whose target values the apply kept. */
         private java.util.Map<String, List<String>> kept = java.util.Map.of();
+        /** How the apply's diff compared values: the change list compares them the same way. */
+        private com.unboundid.ldap.sdk.schema.Schema schema;
+        private List<String> dnAttrs = List.of();
+        /** The preview's resolver: it knows which referents its plan takes out. */
+        private final ReferenceResolver resolver;
+
+        PreviewRecorder(ReferenceResolver resolver) {
+            this.resolver = resolver;
+        }
+
+        @Override
+        public boolean leavesItsSet(String sourceDn) {
+            return resolver.leavesItsSet(sourceDn);
+        }
         private String addDn;
         private List<Attribute> addAttrs;
         private String modifyDn;
@@ -609,12 +638,11 @@ public class RecomputeEngine {
         private boolean applied;
         private boolean droppedRow;
 
-        PreviewRecorder(SyncSet set) {
-            this.set = set;
-        }
-
         @Override
-        public void keptReferences(java.util.Map<String, List<String>> keptValues) {
+        public void diffed(com.unboundid.ldap.sdk.schema.Schema diffSchema, List<String> diffDnAttrs,
+                           java.util.Map<String, List<String>> keptValues) {
+            schema = diffSchema;
+            dnAttrs = diffDnAttrs;
             kept = keptValues;
         }
 
@@ -642,8 +670,7 @@ public class RecomputeEngine {
                 modifyDn = dn;
                 // DN values listed by DN, so a value only reformatted (spacing,
                 // case) by a REPLACE isn't shown as removed and added back.
-                modifyChanges = SyncPreviewValues.forModify(before, mods, targetSchemas.forDirectory(target),
-                        SyncReferenceAttributes.forSet(set));
+                modifyChanges = SyncPreviewValues.forModify(before, mods, schema, dnAttrs);
             }
             return ok(ResultCode.SUCCESS);
         }
@@ -793,8 +820,18 @@ public class RecomputeEngine {
 
         void refreshSourceDn(Membership current, String sourceDn);
 
-        /** Untranslated reference values kept on the target (per attribute); only the preview notes them. */
-        default void keptReferences(java.util.Map<String, List<String>> kept) {
+        /**
+         * The diff about to be applied compared values with this schema and
+         * these DN-valued attributes, and kept these untranslated source DNs
+         * (per attribute). Only the preview uses it, for its change list and note.
+         */
+        default void diffed(com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs,
+                            java.util.Map<String, List<String>> kept) {
+        }
+
+        /** Whether a referent's target entry is about to be deleted (a preview's plan); see {@link ReferenceResolver#leavesItsSet}. */
+        default boolean leavesItsSet(String sourceDn) {
+            return false;
         }
     }
 
