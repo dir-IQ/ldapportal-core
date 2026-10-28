@@ -53,18 +53,6 @@ export function formatFullDate(iso) {
 }
 
 /**
- * Extract the first RDN value from a DN for compact display.
- * e.g. "cn=John Smith,ou=People,dc=example,dc=com" → "John Smith"
- */
-export function truncateDn(dn) {
-  if (!dn || !dn.includes('=')) return dn || ''
-  const firstEquals = dn.indexOf('=')
-  const firstComma = dn.indexOf(',')
-  if (firstComma === -1) return dn.substring(firstEquals + 1)
-  return dn.substring(firstEquals + 1, firstComma)
-}
-
-/**
  * Map of LDAP attribute names → friendly display labels.
  */
 const LDAP_COLUMN_MAP = {
