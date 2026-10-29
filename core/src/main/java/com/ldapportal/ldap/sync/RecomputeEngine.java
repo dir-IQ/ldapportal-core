@@ -501,7 +501,8 @@ public class RecomputeEngine {
         String sourceDn = entry != null ? entry.getDN() : (current != null ? current.getSourceDn() : null);
         String fallbackDn = decision.member() ? decision.targetDn()
                 : (current != null ? current.getTargetDn() : null);
-        return withHeldNote(rec.toEntry(identity, sourceDn, fallbackDn), decision, rec.kept);
+        boolean applied = current != null && current.getState() == MembershipState.APPLIED;
+        return withHeldNote(rec.toEntry(identity, sourceDn, fallbackDn), decision, rec.kept, applied);
     }
 
     /** Outcomes that write (or keep) the projected attributes, where a held reference shows. */
@@ -519,8 +520,31 @@ public class RecomputeEngine {
      */
     static SyncPreviewEntry withHeldNote(SyncPreviewEntry e, MembershipDecision decision,
                                          java.util.Map<String, List<String>> kept) {
-        if (!decision.member() || e.reason() != null || !PROJECTING.contains(e.action())
+        return withHeldNote(e, decision, kept, false);
+    }
+
+    /**
+     * As {@link #withHeldNote(SyncPreviewEntry, MembershipDecision, java.util.Map)},
+     * and also for an {@code UNCHANGED} entry the set already applied
+     * ({@code applied}): the hash gate skips it without reading the target, so
+     * the note can't say which values the target holds, only which aren't
+     * written. Without it, a group whose new members aren't synced reads as
+     * unchanged with no reason.
+     */
+    static SyncPreviewEntry withHeldNote(SyncPreviewEntry e, MembershipDecision decision,
+                                         java.util.Map<String, List<String>> kept, boolean applied) {
+        if (!decision.member() || e.reason() != null
                 || (decision.heldReferences().isEmpty() && decision.unresolvedReferences().isEmpty())) {
+            return e;
+        }
+        if (e.action() == SyncPreviewAction.UNCHANGED && applied) {
+            List<String> parts = new ArrayList<>();
+            decision.heldReferences().forEach((attr, dns) -> parts.add(notWrittenNote(attr, dns)));
+            decision.unresolvedReferences().forEach((attr, dns) -> parts.add(notWrittenNote(attr, dns)));
+            return new SyncPreviewEntry(e.identity(), e.sourceDn(), e.targetDn(), e.previousTargetDn(), e.action(),
+                    String.join(" ", parts), e.changes());
+        }
+        if (!PROJECTING.contains(e.action())) {
             return e;
         }
         boolean adding = e.action() == SyncPreviewAction.ADD;
@@ -578,6 +602,15 @@ public class RecomputeEngine {
                         + ". The sync updates " + them + once
                 : attr + ": left out " + values + " pointing to " + unsynced(dns)
                         + ". The sync adds " + them + once;
+    }
+
+    /** A note for reference values an unchanged entry's sync doesn't write, the target unread. */
+    static String notWrittenNote(String attr, List<String> dns) {
+        String values = dns.size() == 1 ? "1 value" : dns.size() + " values";
+        String them = dns.size() == 1 ? "it" : "them";
+        String once = dns.size() == 1 ? " once that entry is synced." : " once they're synced.";
+        return attr + ": " + values + " not written, pointing to " + unsynced(dns)
+                + ". The sync writes " + them + once;
     }
 
     /** "X, which isn't synced yet", or "N entries that aren't synced yet (a; b; c; …)". */
