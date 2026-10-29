@@ -296,9 +296,14 @@ const actionGroups = computed<ActionGroup[]>(() => {
   return groups
 })
 
+// Detail keys left out of the table: internal ids the record also carries by
+// name (a directory-sync record names its sync set). The CSV export keeps them.
+const HIDDEN_DETAIL_KEYS = new Set(['syncSetId'])
+
 function formatDetail(detail: unknown): string {
   if (!detail || typeof detail !== 'object') return ''
   return Object.entries(detail as Record<string, unknown>)
+    .filter(([k]) => !HIDDEN_DETAIL_KEYS.has(k))
     .map(([k, v]) => `${k}: ${v}`).join('\n')
 }
 

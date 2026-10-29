@@ -337,13 +337,29 @@ class SyncReconcileHistoryTest {
 
         history.record(run, add);
 
-        verify(auditor).audit(TARGET_DIR, SET, run.id(), SyncReconcileTrigger.MANUAL, add);
+        verify(auditor).audit(TARGET_DIR, SET, run.id(), SyncReconcileTrigger.MANUAL, SyncAuditLabels.NONE, add);
+    }
+
+    @Test
+    void record_auditsWithTheNamesResolvedWhenTheRunStarted() {
+        SyncAuditLabels labels = new SyncAuditLabels("people", "HR LDAP", "Corp AD");
+        org.mockito.Mockito.when(auditor.labelsFor(any())).thenReturn(labels);
+        SyncReconcileHistory.Run run = history.start(set(false), TARGET_DIR, SyncReconcileTrigger.MANUAL, "alice");
+        RecomputeOutcome add = outcome(SyncPreviewAction.ADD, "uid=a,dc=dst", null);
+        RecomputeOutcome modify = outcome(SyncPreviewAction.MODIFY, "uid=b,dc=dst", null);
+
+        history.record(run, add);
+        history.record(run, modify);
+
+        verify(auditor).labelsFor(any());
+        verify(auditor).audit(TARGET_DIR, SET, run.id(), SyncReconcileTrigger.MANUAL, labels, add);
+        verify(auditor).audit(TARGET_DIR, SET, run.id(), SyncReconcileTrigger.MANUAL, labels, modify);
     }
 
     @Test
     void auditFailures_neverFailTheRun() {
         org.mockito.Mockito.doThrow(new RuntimeException("audit down")).when(auditor)
-                .audit(any(), any(), any(), any(), any());
+                .audit(any(), any(), any(), any(), any(), any());
         SyncReconcileHistory.Run run = history.start(set(false), TARGET_DIR, SyncReconcileTrigger.SCHEDULED, null);
 
         assertThatCode(() -> history.record(run, outcome(SyncPreviewAction.ADD, "uid=a,dc=dst", null)))
@@ -394,7 +410,7 @@ class SyncReconcileHistoryTest {
 
         history.record(run, delete);
 
-        verify(auditor).audit(TARGET_DIR, SET, run.id(), SyncReconcileTrigger.INCREMENTAL, delete);
+        verify(auditor).audit(TARGET_DIR, SET, run.id(), SyncReconcileTrigger.INCREMENTAL, SyncAuditLabels.NONE, delete);
     }
 
     @Test

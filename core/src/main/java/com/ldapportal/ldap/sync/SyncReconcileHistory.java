@@ -169,7 +169,7 @@ public class SyncReconcileHistory {
         row.setHeartbeatAt(now);
         row.setInstanceName(instanceName);
         row.setAllDnsRecorded(set.getLoggingLevel() == SyncLoggingLevel.DETAILED);
-        return new Run(row, targetDirectoryId, deferred);
+        return new Run(row, targetDirectoryId, labelsFor(set), deferred);
     }
 
     /** The plan is known: record its shape and the settings it ran with, before any entry is applied. */
@@ -382,10 +382,20 @@ public class SyncReconcileHistory {
     private void audit(Run run, RecomputeOutcome outcome) {
         try {
             auditor.audit(run.targetDirectoryId, run.row.getSyncSetId(), run.row.getId(), run.row.getTrigger(),
-                    outcome);
+                    run.labels, outcome);
         } catch (Exception ex) {
             log.warn("Sync set {}: could not audit the write to {}: {}",
                     run.row.getSyncSetId(), outcome.targetDn(), ex.toString());
+        }
+    }
+
+    private SyncAuditLabels labelsFor(SyncSet set) {
+        try {
+            SyncAuditLabels labels = auditor.labelsFor(set);
+            return labels != null ? labels : SyncAuditLabels.NONE;
+        } catch (Exception ex) {
+            log.warn("Sync set {}: could not resolve the names for its audit records: {}", set.getId(), ex.toString());
+            return SyncAuditLabels.NONE;
         }
     }
 
@@ -479,6 +489,8 @@ public class SyncReconcileHistory {
         private final SyncReconcileRun row;
         /** The directory the run writes to, for the audit records. */
         private final UUID targetDirectoryId;
+        /** The set and directory names its audit records carry. */
+        private final SyncAuditLabels labels;
         /** Outcome name → sample target DNs. */
         private final Map<String, List<String>> samples = new LinkedHashMap<>();
         /** Reason kind → count and one full example. */
@@ -491,9 +503,10 @@ public class SyncReconcileHistory {
         /** It wrote to the target or flagged an entry. */
         private boolean noteworthy;
 
-        private Run(SyncReconcileRun row, UUID targetDirectoryId, boolean deferred) {
+        private Run(SyncReconcileRun row, UUID targetDirectoryId, SyncAuditLabels labels, boolean deferred) {
             this.row = row;
             this.targetDirectoryId = targetDirectoryId;
+            this.labels = labels;
             this.deferred = deferred;
         }
 
