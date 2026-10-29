@@ -254,7 +254,7 @@ class SyncControllerTest extends BaseControllerTest {
                 runId, SyncReconcileTrigger.MANUAL, "superadmin", SyncReconcileRunStatus.COMPLETE,
                 OffsetDateTime.now(), OffsetDateTime.now(), true, 4741, 876, 4741L, 4741,
                 3, 1, 0, 0, 0, 3865, 0, 872, 0, 0, 0, false, null, null,
-                "app-2", OffsetDateTime.now(), null, null, null, null, false)));
+                "app-2", OffsetDateTime.now(), null, null, null, null, false, 0, null, null, OffsetDateTime.now())));
         mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs").param("limit", "500")
                         .with(authentication(superadminAuth())))
                 .andExpect(status().isOk())
@@ -308,17 +308,58 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void activity_returnsTheRunningReconcile_andContentCheck_withProgress() throws Exception {
+        UUID runId = UUID.randomUUID();
+        SyncReconcileRunResponse run = new SyncReconcileRunResponse(
+                runId, SyncReconcileTrigger.MANUAL, "superadmin", SyncReconcileRunStatus.RUNNING,
+                OffsetDateTime.now(), null, false, 120, 80, null, 37,
+                0, 0, 0, 0, 0, 0, 0, 30, 0, 0, 0, false, null, null,
+                "app-1", OffsetDateTime.now(), null, null, null, null, false, 7,
+                com.ldapportal.entity.enums.SyncReconcilePhase.APPLYING, "cn=staff,ou=groups,dc=src",
+                OffsetDateTime.now());
+        var verify = new com.ldapportal.dto.sync.SyncVerifyProgressStatus(UUID.randomUUID(),
+                com.ldapportal.entity.enums.SyncPreviewRunStatus.RUNNING,
+                com.ldapportal.entity.enums.SyncVerifyPhase.TARGET, 500, 0, null, null,
+                OffsetDateTime.now(), OffsetDateTime.now(), null);
+        given(service.activity(SET)).willReturn(new com.ldapportal.dto.sync.SyncSetActivity(run, verify,
+                OffsetDateTime.now()));
+        mockMvc.perform(get(SETS + "/" + SET + "/activity").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reconcile.phase").value("APPLYING"))
+                .andExpect(jsonPath("$.reconcile.currentDn").value("cn=staff,ou=groups,dc=src"))
+                .andExpect(jsonPath("$.reconcile.notInSet").value(7))
+                .andExpect(jsonPath("$.verify.phase").value("TARGET"))
+                .andExpect(jsonPath("$.asOf").exists());
+    }
+
+    @Test
+    void notInSet_returnsThePage_withTheSearch() throws Exception {
+        given(service.notInSet(SET, "bob", 0, 50)).willReturn(new com.ldapportal.dto.sync.SyncNotInSetPage(
+                UUID.randomUUID(), OffsetDateTime.now(), false, 3, List.of(), List.of(
+                        new com.ldapportal.dto.sync.SyncNotInSetPage.Entry("uid=bob,ou=people,dc=src", "FILTER",
+                                "Doesn't match the applicability filter")), 1, 0, 50, 25));
+        mockMvc.perform(get(SETS + "/" + SET + "/not-in-set").param("q", "bob")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(3))
+                .andExpect(jsonPath("$.entries[0].sourceDn").value("uid=bob,ou=people,dc=src"))
+                .andExpect(jsonPath("$.entries[0].label").value("Doesn't match the applicability filter"));
+    }
+
+    @Test
     void reconcileRun_superadmin_returnsDetail() throws Exception {
         UUID runId = UUID.randomUUID();
         SyncReconcileRunResponse run = new SyncReconcileRunResponse(
                 runId, SyncReconcileTrigger.SCHEDULED, null, SyncReconcileRunStatus.COMPLETE,
                 OffsetDateTime.now(), OffsetDateTime.now(), true, 10, 8, 9L, 10,
                 1, 0, 0, 0, 0, 0, 0, 7, 2, 0, 0, false, null, null,
-                "app-1", OffsetDateTime.now(), OffsetDateTime.now(), 0, 1, 0, true);
+                "app-1", OffsetDateTime.now(), OffsetDateTime.now(), 0, 1, 0, true, 3, null, null, OffsetDateTime.now());
         given(service.reconcileRun(SET, runId)).willReturn(new SyncReconcileRunDetail(run,
                 new SyncRunSettings("REVIEW", null, null, null, "ou=Users,dc=dst", null, null, null, 50, 20, 20),
                 List.of(new SyncRunFailureReason("apply failed: NO_SUCH_OBJECT", 2, "apply failed: NO_SUCH_OBJECT — x")),
-                java.util.Map.of("ADD", List.of("uid=a,dc=dst")), 25));
+                java.util.Map.of("ADD", List.of("uid=a,dc=dst")), 25,
+                List.of(new com.ldapportal.dto.sync.SyncNotInSetGroup("FILTER",
+                        "Doesn't match the applicability filter", 3, List.of("ou=people,dc=src")))));
         mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs/" + runId).with(authentication(superadminAuth())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.run.instanceName").value("app-1"))

@@ -57,6 +57,14 @@
         <template v-if="last.managedAfter !== null">
           → <span class="font-medium tabular-nums">{{ last.managedAfter }}</span>
         </template>
+        <template v-if="last.notInSet > 0">
+          ·
+          <button type="button" class="text-blue-600 hover:underline"
+                  title="In-scope source entries this set doesn't manage, and why"
+                  @click="emit('show-not-in-set')">
+            <span class="font-medium tabular-nums">{{ last.notInSet }}</span> not in set
+          </button>
+        </template>
       </p>
       <p v-if="driftSummary(last)" class="text-gray-600">{{ driftSummary(last) }}</p>
       <p v-for="w in runWarnings(last)" :key="w" class="text-amber-700">{{ w }}</p>
@@ -120,6 +128,8 @@ const props = defineProps<{
   /** Bump to reload, e.g. after a manual reconcile finished. */
   refreshKey?: number
 }>()
+/** `show-not-in-set`: the operator asked why some source entries aren't managed. */
+const emit = defineEmits<{ 'show-not-in-set': [] }>()
 
 /** Reconciles (scheduled / manual), newest first. */
 const runs = ref<SyncReconcileRun[]>([])

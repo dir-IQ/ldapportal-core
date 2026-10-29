@@ -64,6 +64,7 @@ class SyncConfigServiceTest {
     @Mock private SyncSetRepository setRepo;
     @Mock private MembershipRepository membershipRepo;
     @Mock private DirectoryConnectionRepository directoryRepo;
+    @Mock private com.ldapportal.ldap.sync.SyncVerifyProgressTracker verifyProgress;
     @Mock private MembershipReconciler reconciler;
     @Mock private SyncContentVerifier verifier;
     @Mock private RecomputeEnqueuer enqueuer;
@@ -79,7 +80,7 @@ class SyncConfigServiceTest {
     void setUp() {
         service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo,
                 reconciler, verifier, enqueuer, previewService, reconcileHistory, engine, auditService,
-                reconcileRunRepo);
+                reconcileRunRepo, verifyProgress);
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {

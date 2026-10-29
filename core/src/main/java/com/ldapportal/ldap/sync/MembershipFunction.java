@@ -3,6 +3,7 @@ package com.ldapportal.ldap.sync;
 
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
+import com.ldapportal.entity.enums.SyncNotInSetReason;
 import com.ldapportal.ldap.sync.identity.IdentityStrategy;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Entry;
@@ -52,7 +53,7 @@ public class MembershipFunction {
         if (filter != null && !filter.isBlank()) {
             try {
                 if (!Filter.create(filter).matchesEntry(entry)) {
-                    return MembershipDecision.out(identity);
+                    return MembershipDecision.out(identity, SyncNotInSetReason.FILTER);
                 }
             } catch (LDAPException ex) {
                 // A filter that cannot be evaluated is a fault, not an OUT: an OUT
@@ -67,7 +68,7 @@ public class MembershipFunction {
 
         String targetDn = SyncPlacement.targetDn(set, entry.getDN());
         if (targetDn == null) {
-            return MembershipDecision.out(identity);
+            return MembershipDecision.out(identity, SyncNotInSetReason.PLACEMENT);
         }
 
         Projection projected = project(set, strategy, entry, identity, resolver);

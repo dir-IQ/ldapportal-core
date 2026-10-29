@@ -3,6 +3,7 @@ package com.ldapportal.ldap.sync;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ldapportal.dto.sync.SyncNotInSetGroup;
 import com.ldapportal.dto.sync.SyncPreviewAction;
 import com.ldapportal.dto.sync.SyncReconcileRunDetail;
 import com.ldapportal.dto.sync.SyncReconcileRunResponse;
@@ -11,11 +12,15 @@ import com.ldapportal.dto.sync.SyncRunSettings;
 import com.ldapportal.entity.SyncReconcileRun;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.SyncLoggingLevel;
+import com.ldapportal.entity.enums.SyncNotInSetReason;
+import com.ldapportal.entity.enums.SyncReconcilePhase;
 import com.ldapportal.entity.enums.SyncReconcileRunStatus;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.repository.SyncReconcileRunRepository;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
@@ -31,6 +36,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -81,6 +90,8 @@ public class SyncReconcileHistory {
             SyncPreviewAction.REVIEW, SyncPreviewAction.FORGET, SyncPreviewAction.ERROR);
     /** Outcome recorded in the entry list for a recompute that threw. */
     static final String FAULT = "FAULT";
+    /** Outcome recorded in the entry list for an in-scope source entry the set doesn't manage. */
+    static final String NOT_IN_SET = "NOT_IN_SET";
 
     private final SyncReconcileRunRepository runRepo;
     private final SyncRunEntryStore entryStore;
@@ -90,7 +101,23 @@ public class SyncReconcileHistory {
     private final int keepPerSet;
     private final int keepIncrementalPerSet;
     private final String instanceName;
+    /**
+     * Reconciles running on this instance (run id → run), whose progress
+     * {@link #flushProgress} writes on its own short interval: a run flushes
+     * its counts only every {@link #HEARTBEAT_INTERVAL}, and one slow entry
+     * (a large group) would otherwise show nothing for its whole duration.
+     */
+    private final Map<UUID, Run> live = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService progressFlusher;
 
+    /** As the full constructor, with progress written every second. */
+    public SyncReconcileHistory(SyncReconcileRunRepository runRepo, SyncRunEntryStore entryStore,
+                                SyncWriteAuditor auditor, ObjectMapper objectMapper, long staleAfterMs,
+                                int keepPerSet, int keepIncrementalPerSet) {
+        this(runRepo, entryStore, auditor, objectMapper, staleAfterMs, keepPerSet, keepIncrementalPerSet, 1000);
+    }
+
+    @Autowired
     public SyncReconcileHistory(SyncReconcileRunRepository runRepo,
                                 SyncRunEntryStore entryStore,
                                 SyncWriteAuditor auditor,
@@ -98,7 +125,8 @@ public class SyncReconcileHistory {
                                 @Value("${ldapportal.sync.reconcile.run-stale-after-ms:900000}") long staleAfterMs,
                                 @Value("${ldapportal.sync.reconcile.history-per-set:20}") int keepPerSet,
                                 @Value("${ldapportal.sync.reconcile.incremental-history-per-set:50}")
-                                int keepIncrementalPerSet) {
+                                int keepIncrementalPerSet,
+                                @Value("${ldapportal.sync.reconcile.progress-ms:1000}") long progressMs) {
         this.runRepo = runRepo;
         this.entryStore = entryStore;
         this.auditor = auditor;
@@ -107,6 +135,51 @@ public class SyncReconcileHistory {
         this.keepPerSet = Math.max(1, keepPerSet);
         this.keepIncrementalPerSet = Math.max(1, keepIncrementalPerSet);
         this.instanceName = resolveInstanceName();
+        this.progressFlusher = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "sync-reconcile-progress");
+            t.setDaemon(true);
+            return t;
+        });
+        long every = Math.max(1, progressMs);
+        this.progressFlusher.scheduleWithFixedDelay(this::flushProgress, every, every, TimeUnit.MILLISECONDS);
+    }
+
+    @PreDestroy
+    void shutdown() {
+        progressFlusher.shutdownNow();
+    }
+
+    /**
+     * Write how far each reconcile running on this instance has got, and the
+     * entry it's on, when either changed since the last write.
+     */
+    void flushProgress() {
+        OffsetDateTime now = OffsetDateTime.now();
+        live.forEach((id, run) -> {
+            // Held while writing, and taken by complete/fail before their final
+            // save, so a progress write can never land after the run's end.
+            synchronized (run.progressLock) {
+                if (run.finished) {
+                    return;
+                }
+                int processed = run.liveProcessed;
+                SyncReconcilePhase phase = run.livePhase;
+                String currentDn = run.liveDn;
+                if (processed == run.writtenProcessed && phase == run.writtenPhase
+                        && java.util.Objects.equals(currentDn, run.writtenDn)) {
+                    return;
+                }
+                try {
+                    runRepo.progress(id, processed, phase, currentDn, now);
+                    run.writtenProcessed = processed;
+                    run.writtenPhase = phase;
+                    run.writtenDn = currentDn;
+                } catch (Exception ex) {
+                    log.warn("Sync set {}: reconcile progress update failed: {}",
+                            run.row.getSyncSetId(), ex.toString());
+                }
+            }
+        });
     }
 
     /**
@@ -116,8 +189,54 @@ public class SyncReconcileHistory {
      */
     public Run start(SyncSet set, UUID targetDirectoryId, SyncReconcileTrigger trigger, String requestedBy) {
         Run run = newRun(set, targetDirectoryId, trigger, requestedBy, false);
+        run.livePhase = SyncReconcilePhase.SCANNING;
+        run.row.setPhase(SyncReconcilePhase.SCANNING);
         save(run);
+        run.writtenPhase = SyncReconcilePhase.SCANNING;
+        live.put(run.row.getId(), run);
         return run;
+    }
+
+    /** No progress write lands after this: the run is about to record its end. */
+    private void stopProgress(Run run) {
+        synchronized (run.progressLock) {
+            run.finished = true;
+            live.remove(run.row.getId());
+        }
+    }
+
+    /** The run moved on to {@code phase}. */
+    public void phase(Run run, SyncReconcilePhase phase) {
+        run.livePhase = phase;
+        run.row.setPhase(phase);
+    }
+
+    /** The run is about to recompute {@code dn} (shown while it's slow, e.g. a large group). */
+    public void current(Run run, String dn) {
+        run.liveDn = dn;
+        run.row.setCurrentDn(dn);
+    }
+
+    /**
+     * Count an in-scope source entry the set doesn't manage, and why: the
+     * reason gap between a run's source entries and the set's managed ones.
+     * Up to {@link #SAMPLE_LIMIT} source DNs per reason are kept whatever the
+     * logging level; every one at {@link SyncLoggingLevel#DETAILED detailed}.
+     */
+    public void notInSet(Run run, String sourceDn, SyncNotInSetReason reason) {
+        SyncReconcileRun r = run.row;
+        r.setProcessed(r.getProcessed() + 1);
+        run.liveProcessed = r.getProcessed();
+        r.setNotInSet(r.getNotInSet() + 1);
+        NotInSetGroup group = run.notInSet.computeIfAbsent(reason, k -> new NotInSetGroup());
+        group.count++;
+        if (group.samples.size() < SAMPLE_LIMIT && sourceDn != null) {
+            group.samples.add(sourceDn);
+        }
+        if (sourceDn != null) {
+            run.keep(NOT_IN_SET, sourceDn, reason.name());
+        }
+        beat(run);
     }
 
     /**
@@ -192,6 +311,7 @@ public class SyncReconcileHistory {
     public void record(Run run, RecomputeOutcome outcome) {
         SyncReconcileRun r = run.row;
         r.setProcessed(r.getProcessed() + 1);
+        run.liveProcessed = r.getProcessed();
         if (outcome == null) {
             r.setSkipped(r.getSkipped() + 1);
         } else {
@@ -231,6 +351,7 @@ public class SyncReconcileHistory {
      */
     public void fault(Run run, Exception ex, String key) {
         run.row.setProcessed(run.row.getProcessed() + 1);
+        run.liveProcessed = run.row.getProcessed();
         run.row.setFaulted(run.row.getFaulted() + 1);
         String msg = ex.getMessage();
         String reason = "recompute error: " + ex.getClass().getSimpleName()
@@ -246,7 +367,10 @@ public class SyncReconcileHistory {
     /** The run reached its end. */
     public void complete(Run run, long managedAfter) {
         OffsetDateTime now = OffsetDateTime.now();
+        stopProgress(run);
         run.row.setStatus(SyncReconcileRunStatus.COMPLETE);
+        run.row.setPhase(null);
+        run.row.setCurrentDn(null);
         run.row.setFinishedAt(now);
         run.row.setHeartbeatAt(now);
         run.row.setManagedAfter(managedAfter);
@@ -257,7 +381,10 @@ public class SyncReconcileHistory {
     /** The run aborted on an unexpected error. */
     public void fail(Run run, Exception ex) {
         OffsetDateTime now = OffsetDateTime.now();
+        stopProgress(run);
         run.row.setStatus(SyncReconcileRunStatus.FAILED);
+        run.row.setPhase(null);
+        run.row.setCurrentDn(null);
         run.row.setFinishedAt(now);
         run.row.setHeartbeatAt(now);
         String msg = ex.getMessage();
@@ -343,6 +470,56 @@ public class SyncReconcileHistory {
         }
     }
 
+    /**
+     * The in-scope source entries the set doesn't manage, as its latest
+     * complete reconcile found them: every one when that run recorded all DNs,
+     * else the samples it kept per reason. Optionally only those whose DN
+     * contains {@code search}.
+     */
+    public com.ldapportal.dto.sync.SyncNotInSetPage notInSet(UUID syncSetId, String search, int page, int size) {
+        int p = Math.max(0, page);
+        int n = Math.max(1, Math.min(size, 200));
+        SyncReconcileRun r = runRepo.findCompletedScans(syncSetId, SyncReconcileTrigger.RECONCILES,
+                PageRequest.of(0, 1)).stream().findFirst().orElse(null);
+        if (r == null) {
+            return new com.ldapportal.dto.sync.SyncNotInSetPage(null, null, false, 0, List.of(), List.of(), 0,
+                    p, n, SAMPLE_LIMIT);
+        }
+        List<SyncNotInSetGroup> groups = notInSetGroups(r);
+        List<com.ldapportal.dto.sync.SyncNotInSetPage.Entry> entries;
+        long matched;
+        if (r.isAllDnsRecorded()) {
+            matched = entryStore.count(r.getId(), NOT_IN_SET, search);
+            entries = entryStore.page(r.getId(), NOT_IN_SET, search, p * n, n).stream()
+                    .map(e -> new com.ldapportal.dto.sync.SyncNotInSetPage.Entry(e.targetDn(), e.reason(),
+                            labelOf(e.reason())))
+                    .toList();
+        } else {
+            String needle = search == null || search.isBlank() ? null : search.trim().toLowerCase(java.util.Locale.ROOT);
+            List<com.ldapportal.dto.sync.SyncNotInSetPage.Entry> all = new ArrayList<>();
+            for (SyncNotInSetGroup g : groups) {
+                for (String dn : g.samples()) {
+                    if (needle == null || dn.toLowerCase(java.util.Locale.ROOT).contains(needle)) {
+                        all.add(new com.ldapportal.dto.sync.SyncNotInSetPage.Entry(dn, g.reason(), g.label()));
+                    }
+                }
+            }
+            matched = all.size();
+            int from = Math.min(all.size(), p * n);
+            entries = List.copyOf(all.subList(from, Math.min(all.size(), from + n)));
+        }
+        return new com.ldapportal.dto.sync.SyncNotInSetPage(r.getId(), r.getFinishedAt(), r.isAllDnsRecorded(),
+                r.getNotInSet(), groups, entries, matched, p, n, SAMPLE_LIMIT);
+    }
+
+    private static String labelOf(String reason) {
+        try {
+            return SyncNotInSetReason.valueOf(reason).label();
+        } catch (Exception ex) {
+            return reason;
+        }
+    }
+
     /** Everything recorded about one run of the set. */
     public SyncReconcileRunDetail detail(UUID syncSetId, UUID runId) {
         SyncReconcileRun r = runRepo.findById(runId)
@@ -352,7 +529,7 @@ public class SyncReconcileHistory {
         SyncRunSettings settings = fromJson(r.getSettings(), new TypeReference<>() { }, null);
         List<SyncRunFailureReason> reasons = fromJson(r.getFailureReasons(), new TypeReference<>() { }, List.of());
         Map<String, List<String>> samples = fromJson(r.getSamples(), new TypeReference<>() { }, Map.of());
-        return new SyncReconcileRunDetail(summary, settings, reasons, samples, SAMPLE_LIMIT);
+        return new SyncReconcileRunDetail(summary, settings, reasons, samples, SAMPLE_LIMIT, notInSetGroups(r));
     }
 
     static SyncReconcileRunResponse toResponse(SyncReconcileRun r, OffsetDateTime staleBefore) {
@@ -368,7 +545,14 @@ public class SyncReconcileHistory {
                 r.getMoved(), r.getDeleted(), r.getHeldForReview(), r.getNoChange(), r.getForgotten(),
                 r.getUnchanged(), r.getFailed(), r.getFaulted(), r.getSkipped(), r.isGuardTripped(),
                 r.getGuardReason(), error, r.getInstanceName(), r.getPlannedAt(), r.getVerifiedAt(),
-                r.getVerifyMissing(), r.getVerifyOrphan(), r.getVerifyMismatch(), r.isAllDnsRecorded());
+                r.getVerifyMissing(), r.getVerifyOrphan(), r.getVerifyMismatch(), r.isAllDnsRecorded(),
+                r.getNotInSet(), status == SyncReconcileRunStatus.RUNNING ? r.getPhase() : null,
+                status == SyncReconcileRunStatus.RUNNING ? r.getCurrentDn() : null, r.getHeartbeatAt());
+    }
+
+    /** A run's not-in-set entries per reason, most first. */
+    List<SyncNotInSetGroup> notInSetGroups(SyncReconcileRun r) {
+        return fromJson(r.getNotInSetReasons(), new TypeReference<List<SyncNotInSetGroup>>() { }, List.of());
     }
 
     private void beat(Run run) {
@@ -406,6 +590,7 @@ public class SyncReconcileHistory {
         try {
             run.row.setSamples(run.samples.isEmpty() ? null : toJson(run.samples));
             run.row.setFailureReasons(run.failures.isEmpty() ? null : toJson(run.failureReasons()));
+            run.row.setNotInSetReasons(run.notInSet.isEmpty() ? null : toJson(run.notInSetGroups()));
             runRepo.save(run.row);
         } catch (Exception ex) {
             log.warn("Sync set {}: could not record reconcile run {}: {}",
@@ -495,6 +680,19 @@ public class SyncReconcileHistory {
         private final Map<String, List<String>> samples = new LinkedHashMap<>();
         /** Reason kind → count and one full example. */
         private final Map<String, FailureGroup> failures = new LinkedHashMap<>();
+        /** Not-in-set entries per reason, with sample source DNs. */
+        private final Map<SyncNotInSetReason, NotInSetGroup> notInSet = new java.util.EnumMap<>(SyncNotInSetReason.class);
+        /** Progress as the worker leaves it, read by {@link #flushProgress}. */
+        private volatile int liveProcessed;
+        private volatile SyncReconcilePhase livePhase;
+        private volatile String liveDn;
+        private final Object progressLock = new Object();
+        /** Set (under {@link #progressLock}) once the run records its end. */
+        private boolean finished;
+        /** What {@link #flushProgress} last wrote (under {@link #progressLock}). */
+        private int writtenProcessed;
+        private SyncReconcilePhase writtenPhase;
+        private String writtenDn;
         /** Entries kept since the last flush (only when the run records all DNs). */
         private final List<SyncRunEntryStore.Entry> pending = new ArrayList<>();
         private int nextSeq;
@@ -535,12 +733,25 @@ public class SyncReconcileHistory {
             failures.computeIfAbsent(kind, k -> new FailureGroup(fullReason)).count++;
         }
 
+        private List<SyncNotInSetGroup> notInSetGroups() {
+            return notInSet.entrySet().stream()
+                    .map(e -> new SyncNotInSetGroup(e.getKey().name(), e.getKey().label(), e.getValue().count,
+                            List.copyOf(e.getValue().samples)))
+                    .sorted(Comparator.comparingInt(SyncNotInSetGroup::count).reversed())
+                    .toList();
+        }
+
         private List<SyncRunFailureReason> failureReasons() {
             return failures.entrySet().stream()
                     .map(e -> new SyncRunFailureReason(e.getKey(), e.getValue().count, e.getValue().example))
                     .sorted(Comparator.comparingInt(SyncRunFailureReason::count).reversed())
                     .toList();
         }
+    }
+
+    private static final class NotInSetGroup {
+        private final List<String> samples = new ArrayList<>();
+        private int count;
     }
 
     private static final class FailureGroup {

@@ -204,7 +204,68 @@ export interface SyncReconcileRun {
   verifyMismatch: number | null
   /** Every changed or flagged entry's DN was kept: downloadable with `downloadReconcileRunEntries`. */
   allDnsRecorded: boolean
+  /** In-scope source entries the set doesn't manage (the applicability filter or placement excludes them). */
+  notInSet: number
+  /** Where a RUNNING run is (else null). */
+  phase: 'SCANNING' | 'APPLYING' | 'SWEEPING' | null
+  /** The entry a RUNNING run is recomputing (else null). */
+  currentDn: string | null
+  /** When the run last reported progress or that it's alive. */
+  heartbeatAt: string | null
 }
+
+/** In-scope source entries a reconcile found that the set doesn't manage, for one reason. */
+export interface SyncNotInSetGroup {
+  reason: 'FILTER' | 'PLACEMENT' | string
+  label: string
+  count: number
+  samples: string[]
+}
+
+/** The not-in-set entries of the set's latest complete reconcile (`GET …/not-in-set`). */
+export interface SyncNotInSetPage {
+  /** null when the set has no complete reconcile yet. */
+  runId: string | null
+  finishedAt: string | null
+  /** Every entry is listed (Detailed logging); otherwise up to `sampleLimit` per reason. */
+  allDnsRecorded: boolean
+  total: number
+  reasons: SyncNotInSetGroup[]
+  entries: { sourceDn: string; reason: string; label: string }[]
+  /** Entries matching the search: the listed ones (not `total`) when only samples were kept. */
+  matched: number
+  page: number
+  size: number
+  sampleLimit: number
+}
+
+/** A set's latest content verification: progress while it runs, and how it ended. */
+export interface SyncVerifyProgress {
+  runId: string
+  status: 'RUNNING' | 'COMPLETE' | 'FAILED'
+  phase: 'SOURCE' | 'TARGET' | 'COMPARING' | 'DONE'
+  processed: number
+  total: number
+  currentDn: string | null
+  error: string | null
+  startedAt: string
+  heartbeatAt: string
+  finishedAt: string | null
+}
+
+/** What a set's inventory actions are doing (`GET …/activity`). */
+export interface SyncSetActivity {
+  reconcile: SyncReconcileRun | null
+  verify: SyncVerifyProgress | null
+  /** The server's time when read: ages the runs' timestamps without the browser's clock. */
+  asOf: string
+}
+
+export const getSyncSetActivity = (setId: string) =>
+  client.get<SyncSetActivity>(`/superadmin/sync/sets/${setId}/activity`)
+
+export const listNotInSet = (setId: string, query: { q?: string; page?: number; size?: number } = {}) =>
+  client.get<SyncNotInSetPage>(`/superadmin/sync/sets/${setId}/not-in-set`, { params: query })
 
 /** The set's settings and delete-guard limits as the run saw them. */
 export interface SyncRunSettings {
@@ -237,6 +298,8 @@ export interface SyncReconcileRunDetail {
   /** Outcome (ADD, MODIFY, …) → up to `sampleLimit` target DNs. */
   samples: Partial<Record<SyncPreviewAction, string[]>>
   sampleLimit: number
+  /** In-scope source entries the set doesn't manage, per reason (most first), with sample DNs. */
+  notInSet: SyncNotInSetGroup[]
 }
 
 export const getReconcileRun = (setId: string, runId: string) =>

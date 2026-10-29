@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries; 2026-10-29).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory; 2026-10-29).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -505,12 +505,42 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   (worst), amber `N review`, green `Healthy`, grey `No data` — derived from
   membership `stateCounts`.
 - **Membership inventory modal** (per set): state-filter chips (All / Applied /
-  Pending / Review / Failed with counts), a search box (identity or DN),
+  Pending / Review / Failed with counts, and **Not in set**, below), a search box (identity or DN),
   per-row Identity / State / Source DN / Target DN / **Reason**, and per-row
   actions named for the row's situation (see §6, *Resolving `REVIEW`*). Header has **Reconcile now**,
   **Re-check target** (see §9, *Target restored from a backup*) and **Verify contents**;
   each button's tooltip says how it differs from the other two (see the
   *Operator triggers cheat-sheet*, §9).
+- **Progress while they run.** **Reconcile now**, **Re-check target** and
+  **Verify contents** show what's happening, updated about every second
+  (`ldapportal.sync.reconcile.progress-ms`, `ldapportal.sync.verify.progress-ms`):
+  - a reconcile: *scanning the source*, then *applying entries: N of M* with a
+    progress bar, then *checking managed entries no longer in the source*,
+    naming the entry it's on (a large group can take a while on its own: each
+    member is looked up);
+  - a content check: *reading the source* (entries read), *reading the
+    target*, then *comparing entries: N of M*, naming the entry it's comparing.
+    **Reconcile now** shows the check that follows it too;
+  - **Re-check target** only queues a reconcile, so it shows *waiting for the
+    next reconcile to start*, then that run's progress, and says what it did
+    when it finishes (it stops waiting after 5 minutes).
+
+  Each line shows the time elapsed and how long ago the run last reported. A
+  reconcile already running when the inventory opens (a scheduled one) shows
+  the same way. `GET …/sets/{id}/activity` returns the latest reconcile and
+  content check with their progress.
+- **Not in set** — why a reconcile's **Source entries** outnumber the set's
+  **Managed** ones: the in-scope source entries the set doesn't manage, because
+  they don't match the **applicability filter** (the scope base and other OUs,
+  entries of other object classes, ones a clause excludes) or **can't be placed**
+  under the target base. Entries without an identity value aren't counted as
+  source entries at all. The chip counts them as of the latest complete
+  reconcile and lists them with the reason; **Last reconcile** shows the count
+  as *N not in set*, a link to the same list. Each run keeps the count per
+  reason and up to 25 source DNs per reason whatever the logging level; at
+  **Detailed** logging it keeps every one, so the list is complete. A run's
+  **Details** show them by reason too. Entries are re-evaluated by every
+  reconcile; this is a snapshot, not live.
 - **Last reconcile** (top of the inventory modal) — the latest recorded run:
   status, trigger, when it started and how long it took, its outcome counts,
   managed rows before → after, and warnings for an incomplete scan, a tripped
@@ -656,6 +686,8 @@ POST   /api/v1/superadmin/sync/sets/{id}/preview/run      # start a per-entry dr
 GET    /api/v1/superadmin/sync/sets/{id}/preview/run      # latest run: status (RUNNING / COMPLETE / FAILED), progress (processed, total, currentDn, heartbeatAt, asOf), summary; manage permission
 GET    /api/v1/superadmin/sync/sets/{id}/preview/entries?page=&size=&changesOnly=   # page of the completed run (404 if none); size 1..200 (default 50), changesOnly default true; a page past the end returns the last page; manage permission
 GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source↔target compare (no writes)
+GET    /api/v1/superadmin/sync/sets/{id}/activity         # latest reconcile run (phase, processed, currentDn, heartbeatAt) + latest content check (phase, processed, total, currentDn), asOf
+GET    /api/v1/superadmin/sync/sets/{id}/not-in-set?q=&page=&size=   # in-scope source entries the set doesn't manage, as of the latest complete reconcile: total, reasons, entries (sourceDn, reason), allDnsRecorded
 POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}; recorded as a MANUAL run
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs?limit=&kind=   # recent runs, newest first; limit 1..20 (default 10); kind RECONCILE | INCREMENTAL (default both)
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}  # one run in full: summary, settings, failureReasons, samples, allDnsRecorded (404 if not this set's run)
