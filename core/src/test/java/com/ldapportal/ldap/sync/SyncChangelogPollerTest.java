@@ -105,7 +105,7 @@ class SyncChangelogPollerTest {
         s.setTargetBaseDn(DST_USERS);
         s.setApplicabilityFilter("(objectClass=inetOrgPerson)");
         // This test asserts a DELETE record removes the target; the default is now REVIEW.
-        s.setDeletePolicy(com.ldapportal.entity.enums.SyncDeletePolicy.DELETE);
+        s.setHoldForReview(com.ldapportal.entity.enums.SyncHoldForReview.NONE);
         peopleSet = setRepo.save(s);
     }
 

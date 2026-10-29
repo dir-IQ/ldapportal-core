@@ -16,7 +16,7 @@ import com.ldapportal.entity.enums.ChangelogFormat;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.entity.enums.SyncChangelogHealth;
-import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncHoldForReview;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.sync.MembershipReconciler;
@@ -283,8 +283,8 @@ public class SyncConfigService {
         s.setApplicabilityFilter(normalizeFilter(req.applicabilityFilter()));
         s.setReferenceAttributes(blankToNull(req.referenceAttributes()));
         s.setSourceAnchorAttribute(blankToNull(req.sourceAnchorAttribute()));
-        // Default to the safe REVIEW policy (quarantine deletes) when unspecified.
-        s.setDeletePolicy(req.deletePolicy() != null ? req.deletePolicy() : SyncDeletePolicy.REVIEW);
+        // Default to the safe hold (deletes wait for review) when unspecified.
+        s.setHoldForReview(req.holdForReview() != null ? req.holdForReview() : SyncHoldForReview.DELETES);
         s.setTransformRules(normalizeTransformRules(req.transformRules()));
         s.setExcludedAttributes(normalizeExcludedAttributes(req.excludedAttributes()));
         s.setReconcileCadenceSeconds(req.reconcileCadenceSeconds());
@@ -596,7 +596,7 @@ public class SyncConfigService {
 
     /**
      * Approve a delete held for review: delete the identity's target entry now,
-     * regardless of the set's delete policy or the delete guard. Audited as an
+     * regardless of the set's hold for review setting or the delete guard. Audited as an
      * {@code ENTRY_DELETE} on the target directory when the entry is removed.
      */
     public com.ldapportal.dto.sync.SyncDeleteApproval approveDelete(UUID syncSetId, String identity,
@@ -606,6 +606,30 @@ public class SyncConfigService {
         if (result.outcome() == com.ldapportal.dto.sync.SyncPreviewAction.DELETE && principal != null) {
             auditService.record(principal, result.targetDirectoryId(), AuditAction.ENTRY_DELETE,
                     result.targetDn(), Map.of("source", "directory-sync", "operation", "approved-review-delete",
+                            "syncSetId", syncSetId.toString(), "identity", identity));
+        }
+        return result;
+    }
+
+    /**
+     * Approve an add, update or move held for review: bring the identity's
+     * target entry in line with the source now. Audited on the target directory
+     * as the write it made ({@code ENTRY_CREATE}, {@code ENTRY_UPDATE} or
+     * {@code ENTRY_MOVE}).
+     */
+    public com.ldapportal.dto.sync.SyncUpdateApproval approveUpdate(UUID syncSetId, String identity,
+                                                                    AuthPrincipal principal) {
+        requireSet(syncSetId);
+        com.ldapportal.dto.sync.SyncUpdateApproval result = engine.approveUpdate(syncSetId, identity);
+        AuditAction action = switch (result.outcome()) {
+            case ADD -> AuditAction.ENTRY_CREATE;
+            case MODIFY -> AuditAction.ENTRY_UPDATE;
+            case MOVE -> AuditAction.ENTRY_MOVE;
+            default -> null;
+        };
+        if (action != null && principal != null) {
+            auditService.record(principal, result.targetDirectoryId(), action,
+                    result.targetDn(), Map.of("source", "directory-sync", "operation", "approved-review-update",
                             "syncSetId", syncSetId.toString(), "identity", identity));
         }
         return result;

@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced; 2026-10-28).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, hold for review of deletes or of every update, audited set and link deletes, references kept while their entries aren't synced; 2026-10-29).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -141,7 +141,7 @@ issued it. The base DN is stored trimmed.
 | **Target base DN** | Base DN under the target where matched entries are placed; the part of each DN below the source base DN is kept (source base `ou=people,o=src`, target base `ou=Users,o=dst`: `uid=jo,ou=people,o=src` → `uid=jo,ou=Users,o=dst`). Blank → entries keep their **source DNs**, which needs the source base DN to lie under one of the target directory's base DNs (checked on save). |
 | **Reference attributes** (csv) | Attributes whose values are the DNs of other entries (a group's `member`, a user's `manager`). Blank → `member,uniqueMember,manager,owner,secDN`; a list replaces the defaults rather than adding to them. For each of these attributes the sync: **translates** each value to the DN its referent was synced to, through the membership index of **every** link (the referrer's own link first), so a reference into a subtree mirrored by another link — an IVIA `secDN` under `c=admin` pointing at a `c=us` entry when OUD exposes each suffix as its own directory connection — still remaps; **leaves out** a value whose referent no link has synced (or that different links mirror to *different* target DNs: ambiguous, logged); **re-drives** the referrers when a referent is synced, moved or renamed; and **compares** values as DNs, so case or spacing alone isn't a change. A value that doesn't translate is still **kept** where the target already holds it (compared as a DN), at: the DN the sync **last recorded** for that entry, in any state (a user whose last write failed, or one under a rewritten target base); else, for an entry inside a set's source scope on this target, its **planned** DN, but only while an entry exists there (one the sync deleted is removed from its groups too); else the DN **as written** (an entry no set covers, or a value naming no entry). A member the source no longer lists is removed, and its removal is part of the content hash, so it isn't skipped. If *none* of an attribute's values translate, the target's whole current value is kept. The preview says so either way (see §5). |
 | **Source anchor attribute** | Target attribute where the sync writes each entry's source identity. On an entry's first sync the target is searched for that value: an entry carrying it is **adopted** (updated, and moved to its planned DN if elsewhere) instead of a duplicate being added. More than one match, or an entry without the anchor already at the planned DN → REVIEW (§6). Blank → no anchor: entries are matched by planned DN only (an entry already there is updated to match the source) and nothing extra is written. Set it when target entries may already carry the source identity (from an earlier sync or migration) or may sit at different DNs on the target, e.g. `employeeNumber`; the attribute must be allowed by the target entries' object classes and not used for anything else. |
-| **Delete policy** | `DELETE` (remove target when an entry leaves membership) or `REVIEW` (quarantine for an operator instead of auto-deleting). Default `REVIEW`. |
+| **Hold for review** | Which target writes wait for an operator's approval in the inventory. **None** (`NONE`): every write is made, deletes included. **All updates** (`ALL`): every write waits — adding an entry, updating its attributes, moving or renaming it, and deleting it. **Deletes only** (`DELETES`): the delete of an entry that leaves membership waits; everything else is made. Default **Deletes only**. Replaces the former *Delete policy* (`DELETE` became None, `REVIEW` Deletes only); runs recorded before the change show the equivalent value. |
 | **Reconcile interval (seconds)** | How often this set is fully reconciled. Blank → this server's default, `ldapportal.sync.reconcile.default-cadence-seconds` (`3600`). Stored as `reconcileCadenceSeconds`. |
 | **Attribute mapping** | Optional transform rules: `sourceAttr` → `targetAttr` (blank = same name), `valueTemplate` (blank = passthrough; `${value}` substitutes). |
 | **Logging level** (`loggingLevel`) | How much of each run the run history keeps. **Summary** (default): counts and failure reasons only. **Detailed**: also every changed or flagged entry's DN (up to 25 per outcome on the run, all of them downloadable as CSV); a large run stores one row per entry. Applies to runs that start after it changes. See §5, *Run history*. |
@@ -462,22 +462,35 @@ Each tracked identity has one `sync_membership` row with a **state**
   `ambiguous: N target entries carry sourceAnchor=<id>`.
 - **Occupied placement DN** — an unanchored entry already sits at the placement
   DN: `unanchored entry already at placement DN <dn>`. The engine won't clobber it.
-- **Held delete** — `deletePolicy=REVIEW` and the entry left membership:
-  `scope-exit held for review (deletePolicy=REVIEW)`; or the reconcile's delete
-  guard tripped: `scope-exit held for review (delete guard tripped)`.
+- **Held delete** — hold for review is Deletes only or All updates and the
+  entry left membership: `scope-exit held for review (holdForReview=DELETES)`
+  (or `=ALL`); or the reconcile's delete guard tripped:
+  `scope-exit held for review (delete guard tripped)`. Rows held before hold for
+  review replaced the delete policy read `(deletePolicy=REVIEW)`.
+- **Held update** — hold for review is All updates and the entry needs a write:
+  `update held for review (<writes>)`, listing them in order — `add`,
+  `update <attributes>`, `move to <dn>` (e.g.
+  `update held for review (move to uid=aadams,ou=Users,dc=dst; update mail)`).
+  Nothing is written: the row keeps the target DN and content hash it had, so
+  it still names the entry where it is. A held update is re-evaluated on every
+  recompute and reconcile: its reason follows the source, a held update the
+  source no longer needs (the target already matches) clears itself back to
+  APPLIED, and one whose entry then leaves membership becomes a held delete — or,
+  for a held add that never reached the target, is simply forgotten.
 
 The engine is **conservative**: it never auto-overwrites or auto-deletes an
 ambiguous target; it quarantines for a human.
 
 The inventory API classifies each `REVIEW` row as `reviewKind`
-`PENDING_DELETE`, `AMBIGUOUS_MATCH`, `PLACEMENT_CONFLICT` (or `OTHER` for an
+`PENDING_DELETE`, `PENDING_UPDATE`, `AMBIGUOUS_MATCH`, `PLACEMENT_CONFLICT` (or `OTHER` for an
 unrecognized reason), and the inventory names each row's actions for it.
 
 ### Resolving `REVIEW` (and the other row actions)
 
 | Row | Actions |
 |---|---|
-| **Held delete** (`PENDING_DELETE`) | **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`). Refused while the set or link is disabled. **Keep entry, stop syncing** — dismiss: the target entry stays but is no longer managed (verification then reports it *orphaned on target*). **Re-check** — recompute: re-applies it if the entry came back into scope; otherwise leaves it held under `deletePolicy=REVIEW`, or deletes it under `DELETE` (a single recompute doesn't apply the guard). |
+| **Held delete** (`PENDING_DELETE`) | **Delete target** — approves the deletion: deletes the target entry now, whatever the set's hold for review setting or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`). Refused while the set or link is disabled. **Keep entry, stop syncing** — dismiss: the target entry stays but is no longer managed (verification then reports it *orphaned on target*). **Re-check** — recompute: re-applies it if the entry came back into scope; otherwise leaves it held under Deletes only or All updates, or deletes it under None (a single recompute doesn't apply the guard). |
+| **Held update** (`PENDING_UPDATE`) | **Apply update** — approves it: recomputes the entry now with the hold released, so the target is brought in line with the source **as it is now** (not as it was when the write was held). The confirmation names the held writes. The outcome is reported: written (add, modify, move), already matching, held again (e.g. the entry has since left membership and its delete is now held), or failed (the row goes FAILED with the reason). A write is audited on the target directory as `entry.create`, `entry.update` or `entry.move` (`detail.source = directory-sync`, `operation = approved-review-update`). Refused while the set or link is disabled. **Re-check** — recompute: re-evaluates it under the hold (it stays held while a write is still needed). **Stop tracking** · there's no bulk approval yet: each held update is approved on its own row. |
 | **Ambiguous match / placement conflict** | **Retry match** (recompute, after cleaning up the conflicting target entries) · **Stop tracking** |
 | **FAILED** | **Retry** (recompute) · **Stop tracking** |
 | **APPLIED / PENDING** | **Re-sync** (recompute) · **Stop tracking** |
@@ -544,7 +557,10 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   (values removed `−` and added `+`), the source DN, the previous DN of a move,
   or the reason an entry would be held for review. *Changes only* (the default)
   hides entries that won't change: **Unchanged** (already applied, or already
-  held for review) and **No change** (the target already matches). Details:
+  held for review) and **No change** (the target already matches). Under hold
+  for review **All updates**, every add, modify and move is listed as
+  **Review** — held already or about to be — with the attribute changes (and
+  the previous DN of a move) it holds. Details:
 
   - **A reference that can't be translated yet.** When none of a reference
     attribute's values point to a synced entry (say, an IVIA registration's
@@ -580,7 +596,7 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
     either directory's connection settings are edited. Changes live sync
     applies between reconciles don't mark it outdated; run it again for those.
   - **How it predicts.** It dry-runs the sync engine's own decision code —
-    brownfield adoption, the hash gate, ownership checks, the delete policy and
+    brownfield adoption, the hash gate, ownership checks, hold for review and
     the delete guard — with real target reads and recorded (not performed)
     writes. Nothing is written to the target or the index, and it works on a
     disabled set or link.

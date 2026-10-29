@@ -15,6 +15,11 @@ class SyncReviewKindTest {
         assertThat(SyncReviewKind.of(MembershipState.REVIEW,
                 "scope-exit held for review (delete guard tripped)")).isEqualTo(SyncReviewKind.PENDING_DELETE);
         assertThat(SyncReviewKind.of(MembershipState.REVIEW,
+                "scope-exit held for review (holdForReview=ALL)")).isEqualTo(SyncReviewKind.PENDING_DELETE);
+        assertThat(SyncReviewKind.of(MembershipState.REVIEW,
+                "update held for review (move to uid=a,dc=dst; update mail)"))
+                .isEqualTo(SyncReviewKind.PENDING_UPDATE);
+        assertThat(SyncReviewKind.of(MembershipState.REVIEW,
                 "ambiguous: 2 target entries carry sourceAnchor=x")).isEqualTo(SyncReviewKind.AMBIGUOUS_MATCH);
         assertThat(SyncReviewKind.of(MembershipState.REVIEW,
                 "unanchored entry already at placement DN uid=a,dc=dst"))

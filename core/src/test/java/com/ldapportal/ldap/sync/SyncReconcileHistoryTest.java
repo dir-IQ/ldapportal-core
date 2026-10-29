@@ -185,7 +185,7 @@ class SyncReconcileHistoryTest {
 
         assertThat(run.row().getInstanceName()).isNotBlank();
         assertThat(run.row().getPlannedAt()).isNotNull();
-        assertThat(run.row().getSettings()).contains("\"deletePolicy\":\"REVIEW\"");
+        assertThat(run.row().getSettings()).contains("\"holdForReview\":\"DELETES\"");
     }
 
     @Test

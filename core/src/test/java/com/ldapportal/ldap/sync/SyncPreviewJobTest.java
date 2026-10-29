@@ -7,7 +7,7 @@ import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.SslMode;
-import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncHoldForReview;
 import com.ldapportal.entity.enums.SyncPreviewRunStatus;
 import com.ldapportal.entity.enums.SyncScope;
 import com.ldapportal.exception.ResourceNotFoundException;
@@ -142,7 +142,7 @@ class SyncPreviewJobTest {
         s.setObjectScope(SyncScope.SUB);
         s.setTargetBaseDn(DST_USERS);
         s.setApplicabilityFilter("(objectClass=inetOrgPerson)");
-        s.setDeletePolicy(SyncDeletePolicy.DELETE);
+        s.setHoldForReview(SyncHoldForReview.NONE);
         set = setRepo.save(s);
     }
 

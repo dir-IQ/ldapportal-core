@@ -28,7 +28,7 @@ function detail(over: Partial<SyncReconcileRunDetail> = {}): SyncReconcileRunDet
   return {
     run,
     settings: {
-      deletePolicy: 'REVIEW', objectScopeBaseDn: 'ou=people,dc=corp', objectScope: 'SUB',
+      holdForReview: 'DELETES', objectScopeBaseDn: 'ou=people,dc=corp', objectScope: 'SUB',
       applicabilityFilter: '(objectClass=inetOrgPerson)', targetBaseDn: 'ou=Users,dc=dmz', identityKey: null,
       sourceAnchorAttribute: null, reconcileCadenceSeconds: null,
       guardMaxDeletes: 50, guardMaxDeletePercent: 20, guardMinPopulation: 20,
@@ -80,6 +80,8 @@ describe('ReconcileRunDetail', () => {
     const wrapper = mount(ReconcileRunDetail, { props: { setId: 'set-1', runId: 'run-1' } })
     await flushPromises()
     expect(wrapper.text()).toContain('(objectClass=inetOrgPerson)')
+    expect(wrapper.text()).toContain('Hold for review')
+    expect(wrapper.text()).toContain('Deletes only')
     expect(wrapper.text()).toContain('more than 50 deletes, or more than 20% of a managed set of at least 20')
 
     getRun.mockResolvedValue({ data: detail({ settings: null, failureReasons: [], samples: {} }) })

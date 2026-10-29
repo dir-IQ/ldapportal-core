@@ -103,8 +103,10 @@ import { formatAbsoluteTime } from '@/composables/useRelativeTime'
 import { downloadBlob } from '@/composables/useApi'
 import { useNotificationStore } from '@/stores/notifications'
 import {
-  downloadReconcileRunEntries, getReconcileRun, type SyncPreviewAction, type SyncReconcileRunDetail,
+  downloadReconcileRunEntries, getReconcileRun, type SyncHoldForReview, type SyncPreviewAction,
+  type SyncReconcileRunDetail,
 } from '@/api/sync'
+import { HOLD_FOR_REVIEW_LABELS } from './syncSetHelp'
 import {
   OUTCOME_LABELS, driftSummary, elapsed, errMsg, isIncremental, outcomeTotal, runWarnings, statusLabel,
   triggerLabel,
@@ -207,11 +209,16 @@ async function downloadEntries() {
   }
 }
 
+function holdLabel(value: string | null): string {
+  if (!value) return '—'
+  return HOLD_FOR_REVIEW_LABELS[value as SyncHoldForReview] ?? value
+}
+
 const settingsRows = computed(() => {
   const s = detail.value?.settings
   if (!s) return []
   const rows: { label: string; value: string }[] = [
-    { label: 'Delete policy', value: s.deletePolicy ?? '—' },
+    { label: 'Hold for review', value: holdLabel(s.holdForReview) },
     { label: 'Source base DN', value: s.objectScopeBaseDn ?? '(directory base)' },
     { label: 'Source scope', value: s.objectScope ?? 'SUB (default)' },
     { label: 'Applicability filter', value: s.applicabilityFilter ?? '—' },

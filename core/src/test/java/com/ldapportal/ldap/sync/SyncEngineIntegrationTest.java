@@ -6,6 +6,7 @@ import com.ldapportal.dto.sync.SyncPreviewAction;
 import com.ldapportal.dto.sync.SyncRecheckResult;
 import com.ldapportal.dto.sync.SyncReconcileRunDetail;
 import com.ldapportal.dto.sync.SyncReviewKind;
+import com.ldapportal.dto.sync.SyncUpdateApproval;
 import com.ldapportal.dto.sync.SyncVerifyResult;
 import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
@@ -16,6 +17,7 @@ import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.DirectoryType;
 import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SslMode;
+import com.ldapportal.entity.enums.SyncHoldForReview;
 import com.ldapportal.entity.enums.SyncReconcileRunStatus;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.entity.enums.SyncScope;
@@ -605,8 +607,8 @@ class SyncEngineIntegrationTest {
     }
 
     @Test
-    void deletePolicyReview_quarantinesScopeExit_retainsTarget() throws Exception {
-        peopleSet.setDeletePolicy(com.ldapportal.entity.enums.SyncDeletePolicy.REVIEW);
+    void holdDeletes_quarantinesScopeExit_retainsTarget() throws Exception {
+        peopleSet.setHoldForReview(com.ldapportal.entity.enums.SyncHoldForReview.DELETES);
         setRepo.save(peopleSet);
         addPerson("alice", "staff", "alice@src");
         engine.process(peopleSet.getId(), dn("alice"));
@@ -622,9 +624,9 @@ class SyncEngineIntegrationTest {
 
     // ── Operator-approved delete of a held scope-exit ──────────────────────────
 
-    /** alice is synced, then leaves scope under deletePolicy=REVIEW: her delete is held. */
+    /** alice is synced, then leaves scope under holdForReview=DELETES: her delete is held. */
     private String holdAliceDeleteForReview() throws Exception {
-        peopleSet.setDeletePolicy(com.ldapportal.entity.enums.SyncDeletePolicy.REVIEW);
+        peopleSet.setHoldForReview(com.ldapportal.entity.enums.SyncHoldForReview.DELETES);
         peopleSet = setRepo.save(peopleSet);
         addPerson("alice", "staff", "alice@src");
         engine.process(peopleSet.getId(), dn("alice"));
@@ -683,6 +685,155 @@ class SyncEngineIntegrationTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Enable the sync set");
         assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+    }
+
+    // ── Hold for review: All updates ─────────────────────────────────────────────
+
+    private void holdAllUpdates() {
+        peopleSet.setHoldForReview(SyncHoldForReview.ALL);
+        peopleSet = setRepo.save(peopleSet);
+    }
+
+    private SyncReviewKind reviewKind(String identityOrUid) {
+        Membership m = membership(identityOrUid);
+        return SyncReviewKind.of(m.getState(), m.getFailReason());
+    }
+
+    @Test
+    void holdAll_heldAdd_isAppliedOnlyOnceApproved() throws Exception {
+        holdAllUpdates();
+        addPerson("alice", "staff", "alice@src");
+
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
+        assertThat(reviewKind("alice")).isEqualTo(SyncReviewKind.PENDING_UPDATE);
+        assertThat(membership("alice").getFailReason()).isEqualTo("update held for review (add)");
+
+        SyncUpdateApproval result = engine.approveUpdate(peopleSet.getId(), membership("alice").getIdentity());
+
+        assertThat(result.outcome()).isEqualTo(SyncPreviewAction.ADD);
+        assertThat(result.targetDn()).isEqualToIgnoringCase("uid=alice," + DST_USERS);
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("mail")).isEqualTo("alice@src");
+        assertThat(membership("alice").getState()).isEqualTo(MembershipState.APPLIED);
+    }
+
+    @Test
+    void holdAll_heldModify_leavesTargetAndRowAsTheyWere() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        byte[] hashBefore = membership("alice").getContentHash();
+        holdAllUpdates();
+
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "mail", "alice@new"));
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("mail")).isEqualTo("alice@src");
+        assertThat(reviewKind("alice")).isEqualTo(SyncReviewKind.PENDING_UPDATE);
+        assertThat(membership("alice").getFailReason()).isEqualTo("update held for review (update mail)");
+        assertThat(membership("alice").getContentHash()).isEqualTo(hashBefore);
+
+        SyncUpdateApproval result = engine.approveUpdate(peopleSet.getId(), membership("alice").getIdentity());
+
+        assertThat(result.outcome()).isEqualTo(SyncPreviewAction.MODIFY);
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("mail")).isEqualTo("alice@new");
+        assertThat(membership("alice").getState()).isEqualTo(MembershipState.APPLIED);
+    }
+
+    @Test
+    void holdAll_heldMove_keepsTheTargetWhereItIs() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        String identity = membership("alice").getIdentity();
+        holdAllUpdates();
+
+        source.modifyDN(dn("alice"), "uid=aadams", true);
+        engine.process(peopleSet.getId(), dn("aadams"));
+
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+        assertThat(target.getEntry("uid=aadams," + DST_USERS)).isNull();
+        assertThat(reviewKind(identity)).isEqualTo(SyncReviewKind.PENDING_UPDATE);
+        // The row still names the entry where it is on the target.
+        assertThat(membership(identity).getTargetDn()).isEqualToIgnoringCase("uid=alice," + DST_USERS);
+        assertThat(membership(identity).getFailReason())
+                .startsWith("update held for review (move to uid=aadams," + DST_USERS);
+
+        SyncUpdateApproval result = engine.approveUpdate(peopleSet.getId(), identity);
+
+        assertThat(result.outcome()).isEqualTo(SyncPreviewAction.MOVE);
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
+        assertThat(target.getEntry("uid=aadams," + DST_USERS)).isNotNull();
+        assertThat(membership(identity).getState()).isEqualTo(MembershipState.APPLIED);
+    }
+
+    @Test
+    void holdAll_heldUpdateTheSourceNoLongerNeeds_clearsItself() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        holdAllUpdates();
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "mail", "alice@new"));
+        engine.process(peopleSet.getId(), dn("alice"));
+        assertThat(reviewKind("alice")).isEqualTo(SyncReviewKind.PENDING_UPDATE);
+
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "mail", "alice@src"));
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        assertThat(membership("alice").getState()).isEqualTo(MembershipState.APPLIED);
+        assertThat(membership("alice").getFailReason()).isNull();
+    }
+
+    @Test
+    void holdAll_alsoHoldsDeletes() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        holdAllUpdates();
+
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "employeeType", "contractor"));
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        assertThat(reviewKind("alice")).isEqualTo(SyncReviewKind.PENDING_DELETE);
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+    }
+
+    @Test
+    void holdAll_heldUpdateOfAnEntryThatLeavesTheSet_becomesAHeldDelete() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        String identity = membership("alice").getIdentity();
+        holdAllUpdates();
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "mail", "alice@new"));
+        engine.process(peopleSet.getId(), dn("alice"));
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "employeeType", "contractor"));
+
+        SyncUpdateApproval result = engine.approveUpdate(peopleSet.getId(), identity);
+
+        assertThat(result.outcome()).isEqualTo(SyncPreviewAction.REVIEW);
+        assertThat(result.message()).startsWith(SyncReviewKind.PENDING_DELETE_PREFIX);
+        assertThat(reviewKind(identity)).isEqualTo(SyncReviewKind.PENDING_DELETE);
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("mail")).isEqualTo("alice@src");
+    }
+
+    @Test
+    void holdAll_heldAddOfAnEntryThatLeavesTheSet_isForgotten() throws Exception {
+        holdAllUpdates();
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "employeeType", "contractor"));
+
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId())).isEmpty();
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNull();
+    }
+
+    @Test
+    void approveUpdate_refusesARowThatIsNotAHeldUpdate() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        assertThatThrownBy(() -> engine.approveUpdate(peopleSet.getId(), membership("alice").getIdentity()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("no update waiting");
     }
 
     // ── identityKey override ─────────────────────────────────────────────────────
@@ -933,7 +1084,7 @@ class SyncEngineIntegrationTest {
 
         assertThat(detail.run().instanceName()).isNotBlank();
         assertThat(detail.run().plannedAt()).isBetween(detail.run().startedAt(), detail.run().finishedAt());
-        assertThat(detail.settings().deletePolicy()).isEqualTo("DELETE");
+        assertThat(detail.settings().holdForReview()).isEqualTo("NONE");
         assertThat(detail.settings().applicabilityFilter()).isEqualTo("(&(objectClass=inetOrgPerson)(employeeType=staff))");
         assertThat(detail.settings().guardMaxDeletes()).isEqualTo(MembershipReconciler.DELETE_GUARD_MAX_ABSOLUTE);
         assertThat(detail.samples().get("ADD")).singleElement().asString().containsIgnoringCase("uid=carol");
@@ -1140,7 +1291,7 @@ class SyncEngineIntegrationTest {
         s.setApplicabilityFilter(filter);
         s.setReferenceAttributes(refAttrs);
         // These lifecycle tests assert hard deletes; the default is now REVIEW.
-        s.setDeletePolicy(com.ldapportal.entity.enums.SyncDeletePolicy.DELETE);
+        s.setHoldForReview(com.ldapportal.entity.enums.SyncHoldForReview.NONE);
         s.setEnabled(true);
         return s;
     }

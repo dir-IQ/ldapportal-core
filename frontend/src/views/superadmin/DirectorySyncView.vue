@@ -67,6 +67,9 @@
             <template #cell-targetBaseDn="{ row: s }">
               <span class="font-mono">{{ s.targetBaseDn || '—' }}</span>
             </template>
+            <template #cell-holdForReview="{ row: s }">
+              {{ HOLD_FOR_REVIEW_LABELS[s.holdForReview as SyncHoldForReview] ?? s.holdForReview }}
+            </template>
             <template #cell-health="{ row: s }">
               <span class="inline-flex items-center gap-1.5 text-xs font-medium"
                     :class="healthSummary(setCounts(s)).tone">
@@ -166,12 +169,11 @@
                      type="number" :placeholder="DEFAULT_PLACEHOLDER" :help="help.reconcileInterval" />
           <div>
             <div class="flex items-center mb-1">
-              <label for="sync-set-delete-policy" class="block text-sm font-medium text-gray-700">Delete policy</label>
-              <HelpTip :text="help.deletePolicy" />
+              <label for="sync-set-hold-for-review" class="block text-sm font-medium text-gray-700">Hold for review</label>
+              <HelpTip :text="help.holdForReview" />
             </div>
-            <select id="sync-set-delete-policy" v-model="setForm.deletePolicy" class="input">
-              <option value="DELETE">Delete</option>
-              <option value="REVIEW">Review (quarantine)</option>
+            <select id="sync-set-hold-for-review" v-model="setForm.holdForReview" class="input">
+              <option v-for="(label, value) in HOLD_FOR_REVIEW_LABELS" :key="value" :value="value">{{ label }}</option>
             </select>
           </div>
           <div>
@@ -338,9 +340,9 @@ import {
   getPreviewRun, startPreviewRun,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
   type SyncTransformRule, type SyncPreviewStatus, type SyncPreviewAction, type MembershipState, type SyncSetDeleteImpact,
-  type SyncSetDefaults, type SyncLoggingLevel,
+  type SyncSetDefaults, type SyncLoggingLevel, type SyncHoldForReview,
 } from '@/api/sync'
-import { DEFAULT_PLACEHOLDER, syncSetHelp } from '@/components/sync/syncSetHelp'
+import { DEFAULT_PLACEHOLDER, HOLD_FOR_REVIEW_LABELS, syncSetHelp } from '@/components/sync/syncSetHelp'
 
 interface DirOption { id: string; displayName: string }
 
@@ -380,7 +382,7 @@ const setCols = [
   { key: 'name', label: 'Name' },
   { key: 'objectScopeBaseDn', label: 'Scope' },
   { key: 'targetBaseDn', label: 'Target base' },
-  { key: 'deletePolicy', label: 'Delete policy' },
+  { key: 'holdForReview', label: 'Hold for review' },
   { key: 'health', label: 'Health' },
   { key: 'enabled', label: 'Enabled' },
 ]
@@ -552,7 +554,7 @@ interface SetForm {
   referenceAttributes: string
   sourceAnchorAttribute: string
   reconcileCadenceSeconds: string
-  deletePolicy: 'DELETE' | 'REVIEW'
+  holdForReview: SyncHoldForReview
   objectScope: SyncSet['objectScope']
   transformRules: SyncTransformRule[]
   // null ⇒ use the engine defaults (operational + password values).
@@ -572,9 +574,9 @@ function blankSet(): SetForm {
   return {
     name: '', identityKey: '', objectScopeBaseDn: '', targetBaseDn: '', applicabilityFilter: '',
     referenceAttributes: '', sourceAnchorAttribute: '', reconcileCadenceSeconds: '',
-    // Safe defaults: quarantine deletes for review, and start disabled so the
+    // Safe defaults: hold deletes for review, and start disabled so the
     // operator validates (and can Preview the impact) before turning it on.
-    deletePolicy: 'REVIEW', objectScope: null, transformRules: [], excludedAttributes: null, enabled: false,
+    holdForReview: 'DELETES', objectScope: null, transformRules: [], excludedAttributes: null, enabled: false,
     loggingLevel: 'SUMMARY',
   }
 }
@@ -584,7 +586,7 @@ function formFromSet(s: SyncSet): SetForm {
     targetBaseDn: s.targetBaseDn ?? '', applicabilityFilter: s.applicabilityFilter ?? '',
     referenceAttributes: s.referenceAttributes ?? '', sourceAnchorAttribute: s.sourceAnchorAttribute ?? '',
     reconcileCadenceSeconds: s.reconcileCadenceSeconds != null ? String(s.reconcileCadenceSeconds) : '',
-    deletePolicy: s.deletePolicy, objectScope: s.objectScope,
+    holdForReview: s.holdForReview, objectScope: s.objectScope,
     transformRules: (s.transformRules ?? []).map((r) => ({ ...r })),
     excludedAttributes: s.excludedAttributes ? [...s.excludedAttributes] : null,
     enabled: s.enabled,
@@ -635,7 +637,7 @@ function toPayload(f: SetForm): SyncSetPayload {
     applicabilityFilter: nn(f.applicabilityFilter),
     referenceAttributes: nn(f.referenceAttributes),
     sourceAnchorAttribute: nn(f.sourceAnchorAttribute),
-    deletePolicy: f.deletePolicy,
+    holdForReview: f.holdForReview,
     transformRules: cleanRules(f.transformRules),
     excludedAttributes: f.excludedAttributes,
     reconcileCadenceSeconds: f.reconcileCadenceSeconds.trim() ? Number(f.reconcileCadenceSeconds) : null,

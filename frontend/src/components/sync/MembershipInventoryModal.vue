@@ -153,6 +153,7 @@ import { useNotificationStore } from '@/stores/notifications'
 import { useConfirm } from '@/composables/useConfirm'
 import {
   listMemberships, reconcileSet, recheckTarget, recomputeKey, dismissMembership, verifyContents, approveDelete,
+  approveUpdate,
   type SyncSet, type Membership, type MembershipState, type SyncVerifyResult,
 } from '@/api/sync'
 
@@ -356,9 +357,10 @@ interface RowAction { label: string; hint: string; danger?: boolean; run: () => 
 
 /**
  * The row's actions, named for what they do in its situation. A held delete
- * gets an explicit "Delete target" (approves it, whatever the delete policy)
- * and "Keep entry, stop syncing"; other rows get a recompute named for its
- * effect, and "Stop tracking" for dismiss.
+ * gets an explicit "Delete target" (approves it, whatever hold for review
+ * says) and "Keep entry, stop syncing"; a held update gets "Apply update";
+ * other rows get a recompute named for its effect, and "Stop tracking" for
+ * dismiss.
  */
 function rowActions(row: Membership): { primary: RowAction; menu: { label: string; onClick: () => void }[] } {
   const stopTracking = { label: 'Stop tracking', onClick: () => confirmStopTracking(row) }
@@ -371,6 +373,19 @@ function rowActions(row: Membership): { primary: RowAction; menu: { label: strin
       menu: [
         { label: 'Keep entry, stop syncing', onClick: () => confirmKeep(row) },
         { label: 'Re-check', onClick: () => recompute(row.identity, 'Re-check') },
+      ],
+    }
+  }
+  if (row.state === 'REVIEW' && row.reviewKind === 'PENDING_UPDATE') {
+    return {
+      primary: {
+        label: 'Apply update', run: () => confirmApproveUpdate(row),
+        hint: 'Hold for review is holding this change. Approve it: the target entry is brought in line with the '
+          + 'source entry as it is now.',
+      },
+      menu: [
+        { label: 'Re-check', onClick: () => recompute(row.identity, 'Re-check') },
+        stopTracking,
       ],
     }
   }
@@ -430,6 +445,36 @@ async function confirmApproveDelete(row: Membership) {
       notif.success(`Kept ${data.targetDn}: another sync identity owns it. Only this row was removed.`)
     } else {
       notif.error(data.message || 'The deletion failed')
+    }
+    await load()
+    emit('changed')
+  } catch (e) {
+    notif.error(errMsg(e))
+  }
+}
+
+async function confirmApproveUpdate(row: Membership) {
+  if (!props.set) return
+  const ok = await confirm({
+    title: 'Apply the held update?',
+    message: `This writes the change to ${row.targetDn} in ${props.targetName} now: `
+      + `${row.failReason ?? 'an update held for review'}. It applies the source entry as it is now, which `
+      + 'may differ from when the update was held.',
+    confirmLabel: 'Apply update',
+  })
+  if (!ok) return
+  try {
+    const { data } = await approveUpdate(props.set.id, row.identity)
+    if (data.outcome === 'ERROR') {
+      notif.error(data.message || 'The update failed')
+    } else if (data.outcome === 'REVIEW') {
+      notif.success(`Held again: ${data.message ?? 'the entry needs another review'}`)
+    } else if (data.outcome === 'NO_CHANGE' || data.outcome === 'UNCHANGED') {
+      notif.success(`${data.targetDn ?? 'The target entry'} already matches the source`)
+    } else if (data.outcome === 'FORGET') {
+      notif.success('The entry is no longer synced. Only this row was removed.')
+    } else {
+      notif.success(`Applied the update to ${data.targetDn}`)
     }
     await load()
     emit('changed')

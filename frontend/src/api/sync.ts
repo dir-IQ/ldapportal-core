@@ -10,7 +10,8 @@ import client from './client'
 
 export type SyncCaptureMode = 'APP_INTERCEPT' | 'CHANGELOG'
 export type SyncScope = 'BASE' | 'ONE' | 'SUB'
-export type SyncDeletePolicy = 'DELETE' | 'REVIEW'
+/** Which target writes wait for an operator's approval: none, every one, or deletes only. */
+export type SyncHoldForReview = 'NONE' | 'ALL' | 'DELETES'
 export type MembershipState = 'APPLIED' | 'PENDING' | 'FAILED' | 'REVIEW'
 export type ChangelogFormat = 'DSEE_CHANGELOG' | 'OPENLDAP_ACCESSLOG' | 'AD_DIRSYNC' | 'OUD_COOKIE_CHANGELOG'
 export type SyncChangelogHealth =
@@ -63,7 +64,7 @@ export interface SyncSet {
   applicabilityFilter: string | null
   referenceAttributes: string | null
   sourceAnchorAttribute: string | null
-  deletePolicy: SyncDeletePolicy
+  holdForReview: SyncHoldForReview
   transformRules: SyncTransformRule[] | null
   // Attributes never copied from source nor deleted from target. null ⇒ engine
   // defaults (operational + password values); a list (incl. []) is used verbatim.
@@ -104,10 +105,11 @@ export interface Membership {
 }
 
 /**
- * Why a row is held for REVIEW: a delete waiting for approval, an ambiguous
- * source-anchor match, an occupied placement DN, or an unrecognized reason.
+ * Why a row is held for REVIEW: a delete or an update (add, attribute update,
+ * move) waiting for approval, an ambiguous source-anchor match, an occupied
+ * placement DN, or an unrecognized reason.
  */
-export type SyncReviewKind = 'PENDING_DELETE' | 'AMBIGUOUS_MATCH' | 'PLACEMENT_CONFLICT' | 'OTHER'
+export type SyncReviewKind = 'PENDING_DELETE' | 'PENDING_UPDATE' | 'AMBIGUOUS_MATCH' | 'PLACEMENT_CONFLICT' | 'OTHER'
 
 // ── Links ──────────────────────────────────────────────────────────────────
 export const listSyncLinks = () => client.get<SyncLink[]>('/superadmin/sync/links')
@@ -208,7 +210,7 @@ export interface SyncReconcileRun {
 
 /** The set's settings and delete-guard limits as the run saw them. */
 export interface SyncRunSettings {
-  deletePolicy: string | null
+  holdForReview: string | null
   objectScopeBaseDn: string | null
   objectScope: string | null
   applicabilityFilter: string | null
@@ -411,7 +413,25 @@ export interface SyncDeleteApproval {
   message: string | null
 }
 
-/** Approve a delete held for review: deletes the target entry now, whatever the delete policy. */
+/** Approve a delete held for review: deletes the target entry now, whatever hold for review says. */
 export const approveDelete = (setId: string, identity: string) =>
   client.post<SyncDeleteApproval>(
     `/superadmin/sync/sets/${setId}/memberships/${encodeURIComponent(identity)}/approve-delete`)
+
+/**
+ * Result of approving a held update: ADD, MODIFY or MOVE (written), NO_CHANGE
+ * (the target already matched), REVIEW (held again, e.g. the entry has since
+ * left the set and its delete is held; `message` says why) or ERROR (the
+ * write failed; the row is now FAILED with `message`).
+ */
+export interface SyncUpdateApproval {
+  outcome: 'ADD' | 'MODIFY' | 'MOVE' | 'NO_CHANGE' | 'REVIEW' | 'ERROR' | 'UNCHANGED' | 'FORGET' | 'DELETE'
+  targetDirectoryId: string
+  targetDn: string | null
+  message: string | null
+}
+
+/** Approve an add, update or move held for review: applies the source's current state now. */
+export const approveUpdate = (setId: string, identity: string) =>
+  client.post<SyncUpdateApproval>(
+    `/superadmin/sync/sets/${setId}/memberships/${encodeURIComponent(identity)}/approve-update`)

@@ -3,7 +3,7 @@ package com.ldapportal.dto.sync;
 
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.SyncTransformRule;
-import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncHoldForReview;
 import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncScope;
 
@@ -24,7 +24,7 @@ public record SyncSetResponse(
         String applicabilityFilter,
         String referenceAttributes,
         String sourceAnchorAttribute,
-        SyncDeletePolicy deletePolicy,
+        SyncHoldForReview holdForReview,
         List<SyncTransformRule> transformRules,
         // Excluded-attribute override; null => engine defaults are in effect.
         List<String> excludedAttributes,
@@ -46,7 +46,7 @@ public record SyncSetResponse(
     public static SyncSetResponse of(SyncSet s, Map<String, Long> stateCounts) {
         return new SyncSetResponse(s.getId(), s.getLinkId(), s.getName(), s.getObjectScopeBaseDn(),
                 s.getObjectScope(), s.getIdentityKey(), s.getTargetBaseDn(), s.getApplicabilityFilter(),
-                s.getReferenceAttributes(), s.getSourceAnchorAttribute(), s.getDeletePolicy(),
+                s.getReferenceAttributes(), s.getSourceAnchorAttribute(), s.getHoldForReview(),
                 s.getTransformRules(), s.getExcludedAttributes(),
                 s.getReconcileCadenceSeconds(), s.getReconcileLastRunAt(),
                 s.isEnabled(), s.getLoggingLevel(), s.getCreatedAt(), s.getUpdatedAt(), s.getVersion(),
