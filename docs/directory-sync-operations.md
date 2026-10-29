@@ -508,7 +508,9 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   Pending / Review / Failed with counts), a search box (identity or DN),
   per-row Identity / State / Source DN / Target DN / **Reason**, and per-row
   actions named for the row's situation (see §6, *Resolving `REVIEW`*). Header has **Reconcile now**,
-  **Re-check target** (see §9, *Target restored from a backup*) and **Verify contents**.
+  **Re-check target** (see §9, *Target restored from a backup*) and **Verify contents**;
+  each button's tooltip says how it differs from the other two (see the
+  *Operator triggers cheat-sheet*, §9).
 - **Last reconcile** (top of the inventory modal) — the latest recorded run:
   status, trigger, when it started and how long it took, its outcome counts,
   managed rows before → after, and warnings for an incomplete scan, a tripped

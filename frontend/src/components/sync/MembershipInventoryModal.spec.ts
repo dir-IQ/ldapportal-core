@@ -182,6 +182,15 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
+  it('explains how Verify contents, Reconcile now and Re-check target differ', async () => {
+    const wrapper = open()
+    await flushPromises()
+    expect(byText('Verify contents')!.title).toMatch(/never writes/)
+    expect(byText('Reconcile now')!.title).toMatch(/Skips entries whose source hasn't changed/)
+    expect(byText('Re-check target')!.title).toMatch(/re-reads every target entry/)
+    wrapper.unmount()
+  })
+
   it('Re-check target confirms first, then queues the re-check', async () => {
     const wrapper = open()
     await flushPromises()

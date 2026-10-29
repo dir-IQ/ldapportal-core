@@ -12,14 +12,18 @@
       <div class="flex items-center justify-between gap-2 flex-wrap -mt-1">
         <p class="text-xs text-gray-500 font-mono">{{ sourceName }} → {{ targetName }}</p>
         <div class="flex items-center gap-2">
-          <button class="btn-secondary btn-compact" :disabled="verifying" @click="verify">
+          <button class="btn-secondary btn-compact" :disabled="verifying"
+                  title="Check only, never writes: reads both directories and compares them directly, without trusting the sync's records. Lists entries missing on the target, orphaned on the target, and with content drift"
+                  @click="verify">
             {{ verifying ? 'Verifying…' : 'Verify contents' }}
           </button>
-          <button class="btn-secondary btn-compact" :disabled="reconciling" @click="reconcile">
+          <button class="btn-secondary btn-compact" :disabled="reconciling"
+                  title="Sync the whole set now instead of waiting for the schedule. Skips entries whose source hasn't changed since the sync last wrote them, so it doesn't repair entries changed or deleted directly on the target"
+                  @click="reconcile">
             {{ reconciling ? 'Reconciling…' : 'Reconcile now' }}
           </button>
           <button class="btn-secondary btn-compact" :disabled="rechecking"
-                  title="Re-read every target entry on the next reconcile, e.g. after the target was restored from a backup"
+                  title="Forget what the sync last wrote, so the next reconcile (within about a minute) re-reads every target entry and repairs those missing or changed on the target, e.g. after a restore from backup or edits made outside the sync. Doesn't remove entries the restore brought back; Verify contents lists them as orphaned"
                   @click="recheck">
             {{ rechecking ? 'Re-checking…' : 'Re-check target' }}
           </button>
