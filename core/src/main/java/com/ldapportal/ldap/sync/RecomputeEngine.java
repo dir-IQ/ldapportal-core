@@ -313,7 +313,7 @@ public class RecomputeEngine {
         String fallbackDn = decision.member() ? decision.targetDn()
                 : (current != null ? current.getTargetDn() : null);
         return new RecomputeOutcome(rec.outcome(), rec.outcomeDn != null ? rec.outcomeDn : fallbackDn,
-                rec.outcomeReason);
+                rec.outcomeReason, List.copyOf(rec.modifiedAttrs));
     }
 
     /**
@@ -1102,6 +1102,8 @@ public class RecomputeEngine {
         private String outcomeDn;
         /** Why the entry was held or failed. */
         private String outcomeReason;
+        /** The attributes successful modifies changed, in the order first changed. */
+        private final java.util.Set<String> modifiedAttrs = new java.util.LinkedHashSet<>();
 
         @Override
         public Entry readTarget(DirectoryConnection target, String dn) {
@@ -1121,7 +1123,12 @@ public class RecomputeEngine {
         @Override
         public ApplyOutcome modify(DirectoryConnection target, String dn, List<Modification> mods, Entry before) {
             ApplyOutcome res = live.modify(target, dn, mods, before);
-            modified |= !mods.isEmpty() && LdapResultInterpreter.success(res.code());
+            if (!mods.isEmpty() && LdapResultInterpreter.success(res.code())) {
+                modified = true;
+                for (Modification m : mods) {
+                    modifiedAttrs.add(m.getAttributeName());
+                }
+            }
             return res;
         }
 

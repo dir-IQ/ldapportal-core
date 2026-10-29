@@ -496,3 +496,35 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
     expect(reports.deleteReportJob).toHaveBeenCalledWith('dir-1', 'job-1')
   })
 })
+
+describe('ReportJobsView — result cells', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    hoisted.hasFeature = vi.fn((_k: string) => true)
+    hoisted.isSuperadmin = false
+    hoisted.selectedProfile = null
+    hoisted.profiles = []
+  })
+
+  it('shows the whole DN, clipped only by the column, so widening a column shows more', async () => {
+    const reports = await import('@/api/reports')
+    const dn = 'uid=jsmith,ou=engineering,ou=people,dc=example,dc=com'
+    ;(reports.runOperationalReportData as unknown as Mock).mockResolvedValueOnce({
+      data: { columns: ['dn', 'mail'], rows: [{ dn, mail: 'jsmith@example.com' }] },
+    })
+    const wrapper = mount(ReportJobsView, {
+      global: { stubs: { AppModal: AppModalSlotStub, ConfirmDialog: true, DnPicker: true, FormField: true } },
+    })
+    await flushPromises()
+
+    await wrapper.findAll('button').find(b => b.text() === 'Run Report')!.trigger('click')
+    await flushPromises()
+
+    const cells = wrapper.findAll('td span.font-mono')
+    const dnCell = cells.find(c => c.attributes('title') === dn)!
+    expect(dnCell.text()).toBe(dn)
+    // No fixed cap: the span truncates against the column's set width.
+    for (const c of cells) expect(c.classes()).not.toContain('max-w-xs')
+  })
+})
+

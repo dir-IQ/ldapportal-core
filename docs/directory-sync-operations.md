@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes, brownfield adoption, cross-link reference resolution, review actions, hold for review of deletes or of every update, audited set and link deletes, references kept while their entries aren't synced; 2026-10-28).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, hold for review of deletes or of every update, audited set and link deletes, references kept while their entries aren't synced; 2026-10-29).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -407,8 +407,25 @@ audit record on the **target** directory: `entry.create`, `entry.update`,
 `entry.move` or `entry.delete`, with no actor (the engine writes with its own
 bind account, whoever started the run) and `detail.source = directory-sync`,
 `detail.operation = reconcile | incremental`, `detail.trigger`,
-`detail.syncSetId` and `detail.runId`. The run's id is also the records'
+`detail.syncSetId` and `detail.runId`. An update also lists the attributes it
+changed, `detail.attributes` (names only, never values; empty for an add or a
+delete). The run's id is also the records'
 **correlation id**, so the audit log can pull up one run's writes together.
+
+**Every sync write in a time period:** on the **Audit Log** page, pick the
+target directory, set **From** / **To**, and set **Source** to **Directory
+sync** (optionally narrow the actions to create / update / move / delete). The
+page shows the newest 200 matching events; **Export CSV** downloads *every*
+matching event (up to 50,000, newest first — if more match, the oldest are left
+out and the page says so; narrow the range and export again). The CSV columns
+are `occurredAt, action, directory, targetDn, actor, actorType, source,
+operation, attributes, correlationId, origin, detail` (`attributes` is
+`|`-joined; `detail` is the full JSON). The same export is
+`GET /api/v1/audit/export.csv` with the log's filters
+(`?directoryId=…&source=directory-sync&from=…&to=…`); its
+`X-Audit-Export-Matched` / `X-Audit-Export-Truncated` headers give the match
+count and whether it was cut short. With no `to`, the window ends when the
+export starts.
 Outcomes that wrote nothing (already matched, held for review, forgotten,
 failed) aren't audited; the run history counts them. A held delete an operator
 approves is audited separately with the operator as actor (§6). An initial

@@ -185,6 +185,20 @@ class SyncEngineIntegrationTest {
         assertThat(target.getEntry("uid=bob," + DST_USERS)).isNotNull(); // now IN -> ADD
     }
 
+    @Test
+    void modify_outcomeNamesTheAttributesItChanged() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        RecomputeOutcome added = engine.process(peopleSet.getId(), dn("alice"), false);
+        assertThat(added.action()).isEqualTo(SyncPreviewAction.ADD);
+        assertThat(added.attributes()).isEmpty();
+
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "mail", "alice@new"));
+        RecomputeOutcome modified = engine.process(peopleSet.getId(), dn("alice"), false);
+
+        assertThat(modified.action()).isEqualTo(SyncPreviewAction.MODIFY);
+        assertThat(modified.attributes()).containsExactly("mail");
+    }
+
     // ── Stable identity => rename is a MODDN, not delete+recreate ────────────────
 
     @Test
