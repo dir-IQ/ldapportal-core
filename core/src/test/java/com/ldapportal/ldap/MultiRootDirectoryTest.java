@@ -80,7 +80,7 @@ class MultiRootDirectoryTest {
                 new com.ldapportal.core.provisioning.ProvisioningInterceptorChain(List.of()),
                 new com.ldapportal.core.provisioning.PlanExecutor(connectionFactory));
         browseService = new LdapBrowseService(connectionFactory);
-        integrityService = new IntegrityCheckService(connectionFactory);
+        integrityService = new IntegrityCheckService(connectionFactory, new LdapBrowseService(connectionFactory));
 
         dc = new DirectoryConnection();
         dc.setId(UUID.randomUUID());
