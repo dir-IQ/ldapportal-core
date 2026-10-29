@@ -2,7 +2,8 @@
 
 **Status:** Shipped (broken-member, orphaned-entry and empty-group checks; removal of broken member references; IVIA `secDN` reference check, also on the Reports page's Integrity Check; 2026-10-29).
 
-The superadmin **Referential Integrity Checker** scans a directory for
+The superadmin **Referential Integrity Checker** (sidebar: **Report →
+Referential Integrity Check**, `/superadmin/integrity`) scans a directory for
 references that point nowhere and entries that have lost their place, and can
 remove the broken group member references it finds.
 

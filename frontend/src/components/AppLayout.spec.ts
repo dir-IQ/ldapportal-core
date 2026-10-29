@@ -8,7 +8,7 @@
  * current profile. A switch into another directory navigates instead, and
  * must not reload the page twice.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createRouter, createMemoryHistory } from 'vue-router'
@@ -17,6 +17,7 @@ import { defineComponent, h, ref } from 'vue'
 const state = vi.hoisted(() => ({
   mounts: [] as string[],   // dirId of every UsersPage mount, in order
   dirty: { value: false },  // what the UsersPage guard reports
+  superadmin: false,
   playbooksEnabled: true,   // ApplicationSettings.playbooksEnabled as /auth/me reports it
   approvalsEnabled: false,  // global approvals master switch
   features: null as string[] | null,  // /auth/me feature set; null = every feature
@@ -28,7 +29,8 @@ const hasFeature = (v: string) => state.features === null || state.features.incl
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
-    isSuperadmin: false, isComplianceEnabled: false, isAlertingEnabled: false,
+    get isSuperadmin() { return state.superadmin },
+    isComplianceEnabled: false, isAlertingEnabled: false,
     isHrEnabled: false, isDirectorySyncEnabled: false,
     get isAnyApprovalEnabled() { return state.approvalsEnabled },
     get isPlaybooksEnabled() { return state.playbooksEnabled },
@@ -305,5 +307,28 @@ describe('sidebar build stamp', () => {
 
     expect(el.text()).toBe('FE abc1234 · BE def5678')
     expect(el.classes()).toContain('text-amber-300/80')
+  })
+})
+
+describe('AppLayout superadmin nav', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    state.mounts = []
+    state.dirty.value = false
+    state.features = null
+    state.superadmin = true
+    document.body.innerHTML = ''
+  })
+  afterEach(() => { state.superadmin = false })
+
+  it('links the Referential Integrity Check right below Operational Reports', async () => {
+    const wrapper = await mountOnUsers()
+    const links = wrapper.findAll('a.nav-item')
+    const labels = links.map(a => a.text().trim())
+    const i = labels.indexOf('Operational Reports')
+    expect(i).toBeGreaterThanOrEqual(0)
+    expect(labels[i + 1]).toBe('Referential Integrity Check')
+    expect(links[i + 1].attributes('href')).toBe('/superadmin/integrity')
+    wrapper.unmount()
   })
 })
