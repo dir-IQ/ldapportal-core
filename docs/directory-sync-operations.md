@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories; 2026-10-29).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked; 2026-10-29).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -578,7 +578,12 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
     a fresh one. A run scans
     the source once, dry-runs every entry and stores the result, so paging
     reads a fixed snapshot — every page comes from the same plan, and nothing
-    is re-scanned. The dialog shows progress while it runs. One run per set at
+    is re-scanned. The dialog shows progress while it runs: entries checked
+    of the total (updated about every second, `ldapportal.sync.preview.progress-ms`),
+    the entry being checked now, the time elapsed, and how long ago the run
+    last reported. A large group can take a while on its own (each member is
+    looked up), so the count can pause on it while *Now checking* names it.
+    One run per set at
     a time (across app instances): starting while one is running joins it. A
     result is marked **outdated** once, after the run started, the set is
     edited or reconciled, its link is pointed at different directories, or
@@ -642,7 +647,7 @@ GET    /api/v1/superadmin/sync/sets/{id}/delete-impact         # what a delete d
 GET    /api/v1/superadmin/sync/sets/{id}/memberships?state=&q=&page=&size=   # size capped 1..200
 GET    /api/v1/superadmin/sync/sets/{id}/preview          # dry-run reconcile plan (index-based, no writes; works on a disabled set/link)
 POST   /api/v1/superadmin/sync/sets/{id}/preview/run      # start a per-entry dry run in the background (joins a running one) → 202 + status; manage permission
-GET    /api/v1/superadmin/sync/sets/{id}/preview/run      # latest run: status (RUNNING / COMPLETE / FAILED), progress, summary; manage permission
+GET    /api/v1/superadmin/sync/sets/{id}/preview/run      # latest run: status (RUNNING / COMPLETE / FAILED), progress (processed, total, currentDn, heartbeatAt, asOf), summary; manage permission
 GET    /api/v1/superadmin/sync/sets/{id}/preview/entries?page=&size=&changesOnly=   # page of the completed run (404 if none); size 1..200 (default 50), changesOnly default true; a page past the end returns the last page; manage permission
 GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source↔target compare (no writes)
 POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}; recorded as a MANUAL run

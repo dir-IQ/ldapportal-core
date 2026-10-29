@@ -49,7 +49,8 @@ function run(overrides: Partial<SyncPreviewStatus> = {}): SyncPreviewStatus {
   return {
     runId: 'run-1', status: 'COMPLETE', requestedBy: 'ann',
     startedAt: '2026-10-20T10:00:00Z', finishedAt: '2026-10-20T10:00:05Z',
-    processed: 4, total: 4, outdated: false, error: null,
+    processed: 4, total: 4, currentDn: null, heartbeatAt: '2026-10-20T10:00:05Z', asOf: '2026-10-20T10:00:06Z',
+    outdated: false, error: null,
     sourceCount: 4, managedCount: 3, actionableCount: 2, unchangedCount: 2,
     guardTripped: false, guardReason: null, completeScan: true, note: null,
     actionCounts: { MODIFY: 1, ERROR: 1, UNCHANGED: 2 },
@@ -146,6 +147,28 @@ describe('SyncPreviewChangesModal', () => {
     await flushPromises()
     expect(api.previewEntries).toHaveBeenCalledWith('set-1', 0, 50, true)
     expect(w.text()).toContain('uid=alice,ou=Users,dc=dst')
+  })
+
+  it('names the entry being checked, with elapsed time and when the run last reported', async () => {
+    vi.useFakeTimers()
+    api.getPreviewRun.mockResolvedValue(ok(run({
+      status: 'RUNNING', processed: 3, total: 12, finishedAt: null,
+      currentDn: 'cn=all-staff,ou=groups,dc=src',
+      startedAt: '2026-10-20T10:00:00Z', heartbeatAt: '2026-10-20T10:01:16Z', asOf: '2026-10-20T10:01:20Z',
+    })))
+    const w = mountModal()
+    await flushPromises()
+
+    expect(w.text()).toContain('Checking entries: 3 of 12')
+    expect(w.text()).toContain('1m 20s elapsed')
+    expect(w.text()).toContain('Now checking cn=all-staff,ou=groups,dc=src')
+    expect(w.text()).toContain('last update 4s ago')
+    expect(w.find('[role="progressbar"]').attributes('aria-valuenow')).toBe('3')
+
+    // The browser's clock is ignored: the times keep ageing from the server's.
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(w.text()).toContain('1m 21s elapsed')
+    w.unmount()
   })
 
   it('stops polling when closed', async () => {

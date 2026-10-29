@@ -294,6 +294,12 @@ export interface SyncPreviewStatus {
   finishedAt: string | null
   processed: number
   total: number
+  /** The entry being dry-run now, while RUNNING (else null). */
+  currentDn: string | null
+  /** When the run last reported progress or that it's alive. */
+  heartbeatAt: string | null
+  /** The server's time when this status was read: ages startedAt / heartbeatAt without the browser's clock. */
+  asOf: string | null
   /** The set was edited or reconciled, or its link or directories changed, after this run started. */
   outdated: boolean
   error: string | null

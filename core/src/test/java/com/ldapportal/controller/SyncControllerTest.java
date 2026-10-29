@@ -403,7 +403,8 @@ class SyncControllerTest extends BaseControllerTest {
     private static com.ldapportal.dto.sync.SyncPreviewStatus runningStatus() {
         return new com.ldapportal.dto.sync.SyncPreviewStatus(RUN,
                 com.ldapportal.entity.enums.SyncPreviewRunStatus.RUNNING, "superadmin", OffsetDateTime.now(),
-                null, 40, 100, false, null, 0, 0, 0, 0, false, null, false, null, java.util.Map.of());
+                null, 40, 100, "cn=all-staff,ou=groups,dc=src", OffsetDateTime.now(), OffsetDateTime.now(), false, null,
+                0, 0, 0, 0, false, null, false, null, java.util.Map.of());
     }
 
     @Test
@@ -413,7 +414,8 @@ class SyncControllerTest extends BaseControllerTest {
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.runId").value(RUN.toString()))
                 .andExpect(jsonPath("$.status").value("RUNNING"))
-                .andExpect(jsonPath("$.processed").value(40));
+                .andExpect(jsonPath("$.processed").value(40))
+                .andExpect(jsonPath("$.currentDn").value("cn=all-staff,ou=groups,dc=src"));
     }
 
     @Test

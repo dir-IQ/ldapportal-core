@@ -85,7 +85,7 @@ public class SyncPreviewService {
 
     public static final int MAX_PAGE_SIZE = 200;
 
-    /** Entries per stored batch; progress is recorded after each. */
+    /** Entries per stored batch. */
     static final int BATCH_SIZE = 100;
 
     static final String INTERRUPTED = "Interrupted: the server running this preview stopped before it finished.";
@@ -114,6 +114,14 @@ public class SyncPreviewService {
     /** Runs executing on this instance (set id → run id), kept alive by {@link #heartbeat}. */
     private final Map<UUID, UUID> active = new ConcurrentHashMap<>();
 
+    /**
+     * Where each run executing on this instance has got to (run id → progress),
+     * written by {@link #flushProgress} on its own short interval rather than
+     * per stored batch: a set of a few slow entries (large groups) would
+     * otherwise show no progress until it finished.
+     */
+    private final Map<UUID, Progress> progress = new ConcurrentHashMap<>();
+
     public SyncPreviewService(SyncSetRepository syncSetRepo,
                               SyncLinkRepository syncLinkRepo,
                               DirectoryConnectionRepository directoryRepo,
@@ -129,6 +137,7 @@ public class SyncPreviewService {
                               @Value("${ldapportal.sync.preview.parallelism:2}") int parallelism,
                               @Value("${ldapportal.sync.preview.stale-after-ms:120000}") long staleAfterMs,
                               @Value("${ldapportal.sync.preview.heartbeat-ms:15000}") long heartbeatMs,
+                              @Value("${ldapportal.sync.preview.progress-ms:1000}") long progressMs,
                               @Value("${ldapportal.sync.preview.retention-hours:24}") long retentionHours) {
         this.syncSetRepo = syncSetRepo;
         this.syncLinkRepo = syncLinkRepo;
@@ -163,6 +172,9 @@ public class SyncPreviewService {
         });
         long every = Math.max(1, heartbeatMs);
         this.heartbeats.scheduleWithFixedDelay(this::heartbeat, every, every, TimeUnit.MILLISECONDS);
+        long progressEvery = Math.max(1, progressMs);
+        this.heartbeats.scheduleWithFixedDelay(this::flushProgress, progressEvery, progressEvery,
+                TimeUnit.MILLISECONDS);
     }
 
     @PreDestroy
@@ -257,6 +269,32 @@ public class SyncPreviewService {
         });
     }
 
+    /**
+     * Record how far each running preview on this instance has got, and which
+     * entry it's on, when either changed since the last write. A run no longer
+     * current is flagged, so its worker stops at its next entry.
+     */
+    void flushProgress() {
+        OffsetDateTime now = OffsetDateTime.now();
+        active.forEach((setId, runId) -> {
+            Progress p = progress.get(runId);
+            if (p == null || !p.changed()) {
+                return;
+            }
+            try {
+                int processed = p.processed;
+                String currentDn = p.currentDn;
+                if (runRepo.progress(setId, runId, processed, p.total, currentDn, now) == 0) {
+                    p.superseded = true;
+                } else {
+                    p.written(processed, currentDn);
+                }
+            } catch (Exception ex) {
+                log.warn("Sync set {}: preview progress update failed: {}", setId, ex.toString());
+            }
+        });
+    }
+
     /** Drop previews past the retention: they hold attribute values and go stale anyway. */
     @Scheduled(fixedDelayString = "${ldapportal.sync.preview.purge-interval-ms:3600000}",
             initialDelayString = "${ldapportal.sync.preview.purge-interval-ms:3600000}")
@@ -311,6 +349,7 @@ public class SyncPreviewService {
             runRepo.fail(syncSetId, runId, OffsetDateTime.now(), "The preview failed: " + message(ex));
         } finally {
             active.remove(syncSetId, runId);
+            progress.remove(runId);
         }
     }
 
@@ -396,11 +435,20 @@ public class SyncPreviewService {
 
         // ── Dry-run every entry, storing the results in display order ──
         int total = items.size();
-        requireCurrent(runRepo.progress(syncSetId, runId, 0, total, OffsetDateTime.now()));
+        String firstDn = total > 0 ? items.get(0).displayDn() : null;
+        requireCurrent(runRepo.progress(syncSetId, runId, 0, total, firstDn, OffsetDateTime.now()));
+        Progress p = new Progress(total, firstDn);
+        progress.put(runId, p);
         List<SyncPreviewEntryRow> batch = new ArrayList<>(BATCH_SIZE);
         long actionable = 0;
         for (int i = 0; i < total; i++) {
-            SyncPreviewEntry entry = dryRun(set, target, strategy, items.get(i), resolver, guard.tripped());
+            if (p.superseded) {
+                throw new Superseded();
+            }
+            Item item = items.get(i);
+            p.currentDn = item.displayDn();
+            SyncPreviewEntry entry = dryRun(set, target, strategy, item, resolver, guard.tripped());
+            p.processed = i + 1;
             boolean listed = isActionable(entry.action());
             if (listed) {
                 actionable++;
@@ -409,7 +457,6 @@ public class SyncPreviewService {
             if (batch.size() == BATCH_SIZE) {
                 entryRepo.saveAll(batch);
                 batch.clear();
-                requireCurrent(runRepo.progress(syncSetId, runId, i + 1, total, OffsetDateTime.now()));
             }
         }
         if (!batch.isEmpty()) {
@@ -496,8 +543,10 @@ public class SyncPreviewService {
         }
         boolean done = status == SyncPreviewRunStatus.COMPLETE;
         boolean outdated = done && isOutdated(run);
+        boolean running = status == SyncPreviewRunStatus.RUNNING;
         return new SyncPreviewStatus(run.getRunId(), status, run.getRequestedBy(), run.getStartedAt(),
-                run.getFinishedAt(), run.getProcessed(), run.getTotal(), outdated, error,
+                run.getFinishedAt(), run.getProcessed(), run.getTotal(),
+                running ? run.getCurrentDn() : null, run.getHeartbeatAt(), OffsetDateTime.now(), outdated, error,
                 run.getSourceCount(), run.getManagedCount(), run.getActionableCount(),
                 done ? run.getTotal() - run.getActionableCount() : 0,
                 run.isGuardTripped(), run.getGuardReason(), run.isCompleteScan(), run.getNote(),
@@ -612,6 +661,46 @@ public class SyncPreviewService {
                     : (row != null && row.getTargetDn() != null ? row.getTargetDn()
                     : (entry != null ? entry.getDN() : identity));
             return hierarchyKey(dn);
+        }
+
+        /** The DN the progress line names: the source entry, or the target entry of one gone from the source. */
+        String displayDn() {
+            if (entry != null) {
+                return entry.getDN();
+            }
+            if (row != null) {
+                return row.getTargetDn() != null ? row.getTargetDn() : row.getSourceDn();
+            }
+            return identity;
+        }
+    }
+
+    /**
+     * A run's progress, updated by its worker as it goes and written by
+     * {@link #flushProgress}; {@code superseded} is set when that write finds
+     * the run no longer current.
+     */
+    private static final class Progress {
+        final int total;
+        volatile int processed;
+        volatile String currentDn;
+        volatile boolean superseded;
+        private int writtenProcessed;
+        private String writtenDn;
+
+        Progress(int total, String currentDn) {
+            this.total = total;
+            this.currentDn = currentDn;
+            this.writtenDn = currentDn; // the worker wrote this before registering
+        }
+
+        boolean changed() {
+            return processed != writtenProcessed || !java.util.Objects.equals(currentDn, writtenDn);
+        }
+
+        void written(int processed, String currentDn) {
+            this.writtenProcessed = processed;
+            this.writtenDn = currentDn;
         }
     }
 }

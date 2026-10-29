@@ -65,7 +65,8 @@ import static org.mockito.Mockito.when;
         "ldapportal.sync.reconcile.initial-delay-ms=3600000",
         "ldapportal.sync.changelog.fixed-delay-ms=3600000",
         "ldapportal.sync.preview.stale-after-ms=600",
-        "ldapportal.sync.preview.heartbeat-ms=50"})
+        "ldapportal.sync.preview.heartbeat-ms=50",
+        "ldapportal.sync.preview.progress-ms=50"})
 class SyncPreviewJobTest {
 
     private static final String SRC_BASE = "dc=src,dc=com";
@@ -93,6 +94,8 @@ class SyncPreviewJobTest {
     private SyncSet set;
     /** Milliseconds each subtree scan of the source takes, to stretch the enumeration. */
     private volatile long scanDelayMs;
+    /** Milliseconds each entry read on the target takes, to stretch one entry's dry run. */
+    private volatile long targetReadDelayMs;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -105,6 +108,7 @@ class SyncPreviewJobTest {
         linkRepo.deleteAll();
         directoryRepo.deleteAll();
         scanDelayMs = 0;
+        targetReadDelayMs = 0;
 
         source = startServer(SRC_BASE, new InMemoryOperationInterceptor() {
             @Override
@@ -118,7 +122,19 @@ class SyncPreviewJobTest {
                 }
             }
         });
-        target = startServer(DST_BASE, null);
+        target = startServer(DST_BASE, new InMemoryOperationInterceptor() {
+            @Override
+            public void processSearchRequest(InMemoryInterceptedSearchRequest request) {
+                if (targetReadDelayMs > 0 && request.getRequest().getScope() == SearchScope.BASE
+                        && request.getRequest().getBaseDN().toLowerCase().endsWith(DST_USERS.toLowerCase())) {
+                    try {
+                        Thread.sleep(targetReadDelayMs);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        });
         source.add(new Entry(SRC_PEOPLE, new Attribute("objectClass", "top", "organizationalUnit"),
                 new Attribute("ou", "people")));
         target.add(new Entry(DST_USERS, new Attribute("objectClass", "top", "organizationalUnit"),
@@ -182,6 +198,35 @@ class SyncPreviewJobTest {
         assertThat(seen).doesNotContain(SyncPreviewRunStatus.FAILED);
         assertThat(status.status()).isEqualTo(SyncPreviewRunStatus.COMPLETE);
         assertThat(status.total()).isEqualTo(1);
+    }
+
+    @Test
+    void aSlowEntry_isNamedInTheProgress_whileItIsChecked() throws Exception {
+        // One entry whose dry run takes well over the progress interval, as a large group does.
+        targetReadDelayMs = 1_500;
+
+        preview.start(set.getId(), "ann");
+
+        SyncPreviewStatus status = preview.status(set.getId());
+        SyncPreviewStatus checking = null;
+        long deadline = System.currentTimeMillis() + 15_000;
+        while (status.status() == SyncPreviewRunStatus.RUNNING && System.currentTimeMillis() < deadline) {
+            if (status.total() > 0 && status.currentDn() != null) {
+                checking = status;
+            }
+            Thread.sleep(50);
+            status = preview.status(set.getId());
+        }
+
+        assertThat(checking).as("a progress read naming the entry being checked").isNotNull();
+        assertThat(checking.currentDn()).isEqualToIgnoringCase("uid=alice," + SRC_PEOPLE);
+        assertThat(checking.processed()).isZero();
+        assertThat(checking.total()).isEqualTo(1);
+        assertThat(checking.heartbeatAt()).isNotNull();
+        assertThat(checking.asOf()).isNotNull();
+        assertThat(status.status()).isEqualTo(SyncPreviewRunStatus.COMPLETE);
+        assertThat(status.processed()).isEqualTo(1);
+        assertThat(status.currentDn()).isNull();
     }
 
     @Test
