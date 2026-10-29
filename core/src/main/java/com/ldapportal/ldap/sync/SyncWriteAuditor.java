@@ -17,7 +17,8 @@ import java.util.UUID;
  * an add, modify, move or delete becomes an {@code entry.*} record on the
  * target directory, with no actor (the engine wrote it, whoever started the
  * run) and the run's id as its correlation id, so a run's writes can be pulled
- * up together from the audit log. Outcomes that wrote nothing (no change,
+ * up together from the audit log. An update also names the attributes it
+ * changed ({@code detail.attributes}; names only, never values). Outcomes that wrote nothing (no change,
  * held for review, forgotten, failed) aren't audited; the run history counts
  * them. Operator-approved review deletes are audited where they happen, with
  * the operator as actor.
@@ -44,6 +45,10 @@ public class SyncWriteAuditor {
         detail.put("trigger", trigger.name());
         detail.put("syncSetId", syncSetId.toString());
         detail.put("runId", runId.toString());
+        if (!outcome.attributes().isEmpty()) {
+            // Which attributes an update (or the update after a move) changed: names only, never values.
+            detail.put("attributes", outcome.attributes());
+        }
         auditService.recordDirectoryEventNoActor(targetDirectoryId, action, outcome.targetDn(), detail, runId);
     }
 
