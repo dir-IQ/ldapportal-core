@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked; 2026-10-29).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries; 2026-10-29).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -563,6 +563,12 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
     target …"*) and the rest are left out (*"member: left out 1 value …"*);
     see *Reference attributes* in §3.2 for which DN it's kept at.
     The sync writes the values once the entries they point to are synced.
+    An entry the set already applied and that hasn't changed since (**Unchanged**,
+    which the preview doesn't re-read on the target) still says which values
+    it doesn't write: *"member: 1 value not written, pointing to …, which isn't
+    synced yet"* — the usual reason a group's new member doesn't appear on the
+    target is that no set has synced (or adopted) that member's entry yet;
+    one that merely exists on the target doesn't count.
     **Verify contents** doesn't count a kept value as drift.
   - **References follow this plan.** A referent this preview places resolves
     to where the plan puts it, and one the plan takes out of the set doesn't
