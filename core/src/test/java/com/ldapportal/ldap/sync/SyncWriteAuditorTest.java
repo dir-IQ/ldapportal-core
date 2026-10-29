@@ -11,6 +11,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -51,6 +52,17 @@ class SyncWriteAuditorTest {
                         "syncSetId", SET.toString(), "runId", RUN.toString())), eq(RUN));
         verify(auditService).recordDirectoryEventNoActor(eq(DIR), eq(AuditAction.ENTRY_DELETE), eq("uid=a,dc=dst"),
                 any(), eq(RUN));
+    }
+
+    @Test
+    void anUpdate_namesTheAttributesItChanged() {
+        auditor.audit(DIR, SET, RUN, SyncReconcileTrigger.INCREMENTAL,
+                new RecomputeOutcome(SyncPreviewAction.MODIFY, "uid=a,dc=dst", null, List.of("mail", "member")));
+
+        verify(auditService).recordDirectoryEventNoActor(DIR, AuditAction.ENTRY_UPDATE, "uid=a,dc=dst",
+                Map.of("source", "directory-sync", "operation", "incremental", "trigger", "INCREMENTAL",
+                        "syncSetId", SET.toString(), "runId", RUN.toString(),
+                        "attributes", List.of("mail", "member")), RUN);
     }
 
     @Test

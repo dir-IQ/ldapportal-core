@@ -11,6 +11,9 @@ import com.ldapportal.service.AuditQueryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -19,6 +22,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.io.ByteArrayOutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Set;
@@ -28,7 +35,8 @@ import java.util.UUID;
  * Audit log query endpoint.
  *
  * <pre>
- *   GET /api/v1/audit — paginated, filterable audit log
+ *   GET /api/v1/audit            — paginated, filterable audit log
+ *   GET /api/v1/audit/export.csv — every matching event as CSV
  * </pre>
  *
  * <p>All filter parameters are optional.  Results are paginated and ordered
@@ -97,6 +105,62 @@ public class AuditLogController {
                 .targetDn(targetDn).source(source).correlationId(correlationId)
                 .from(from).to(to).build();
 
+        Set<UUID> scope = readableDirectories(principal, directoryId, targetDn);
+        if (scope != null) {
+            return queryService.queryForDirectories(scope, criteria, page, size);
+        }
+        return queryService.query(criteria, page, size);
+    }
+
+    /**
+     * Every event the filters match, as CSV (newest first): the same filters
+     * and access rules as {@link #get}, without its page cap, up to
+     * {@link AuditQueryService#MAX_EXPORT_ROWS} rows. When more matched, the
+     * oldest are left out and the {@code X-Audit-Export-Truncated} header is
+     * {@code true}; {@code X-Audit-Export-Matched} gives how many matched.
+     */
+    @GetMapping(value = "/export.csv", produces = "text/csv")
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPERADMIN')")
+    public ResponseEntity<byte[]> export(
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @RequestParam(required = false) UUID directoryId,
+            @RequestParam(required = false) UUID actorId,
+            @RequestParam(required = false) List<AuditAction> action,
+            @RequestParam(required = false) String targetDn,
+            @RequestParam(required = false) String source,
+            @RequestParam(required = false) UUID correlationId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+                    OffsetDateTime from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+                    OffsetDateTime to) {
+
+        AuditQueryCriteria criteria = AuditQueryCriteria.builder()
+                .directoryId(directoryId).actorId(actorId).actions(action)
+                .targetDn(targetDn).source(source).correlationId(correlationId)
+                .from(from).to(to).build();
+        Set<UUID> scope = readableDirectories(principal, directoryId, targetDn);
+
+        // Built in memory like the other CSV exports, rather than streamed: a
+        // StreamingResponseBody completes on an async dispatch, which the
+        // security filter chain doesn't authorize. Rows are read in pages.
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        Writer writer = new OutputStreamWriter(bytes, StandardCharsets.UTF_8);
+        AuditQueryService.ExportResult result = queryService.exportCsv(criteria, scope, writer);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"audit-log.csv\"")
+                .header("X-Audit-Export-Matched", String.valueOf(result.matched()))
+                .header("X-Audit-Export-Truncated", String.valueOf(result.truncated()))
+                .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+                .body(bytes.toByteArray());
+    }
+
+    /**
+     * The directories the caller may read audit events for, when that's a
+     * restriction: {@code null} for a superadmin (any directory), else the
+     * directories their profiles grant. Refuses a {@code directoryId} outside
+     * them, and a {@code targetDn} outside their profiles' OU scope.
+     */
+    private Set<UUID> readableDirectories(AuthPrincipal principal, UUID directoryId, String targetDn) {
         // Non-superadmins can only query their authorized directories
         Set<UUID> authorizedDirs = permissionService.getAuthorizedDirectoryIds(principal);
         if (!authorizedDirs.isEmpty()) {
@@ -127,13 +191,10 @@ public class AuditLogController {
                     }
                 }
             }
-            if (directoryId == null) {
-                // Query each authorized directory and merge — or require directoryId
-                // For now, require non-superadmins to specify a directoryId filter
-                return queryService.queryForDirectories(authorizedDirs, criteria, page, size);
-            }
+            // Without a directoryId, every authorized directory's events.
+            return directoryId == null ? authorizedDirs : null;
         }
 
-        return queryService.query(criteria, page, size);
+        return null;
     }
 }

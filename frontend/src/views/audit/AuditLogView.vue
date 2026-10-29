@@ -33,9 +33,16 @@
     </div>
 
     <!-- Filters -->
-    <div class="bg-white border border-gray-200 rounded-xl p-4 mb-2 grid grid-cols-3 gap-2">
+    <div class="bg-white border border-gray-200 rounded-xl p-4 mb-2 grid grid-cols-4 gap-2">
       <FormField label="From" type="datetime-local" v-model="filters.from" />
       <FormField label="To"   type="datetime-local" v-model="filters.to" />
+      <div class="mb-2">
+        <label for="audit-source" class="block text-sm font-medium text-gray-700 mb-1">Source</label>
+        <select id="audit-source" v-model="filters.source" class="input w-full">
+          <option v-for="opt in SOURCE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+        </select>
+        <p class="text-xs text-gray-400 mt-1">Directory sync: every write a sync run made.</p>
+      </div>
       <div class="mb-2" ref="actionMenuRef">
         <label class="block text-sm font-medium text-gray-700 mb-1">Action</label>
         <div class="relative">
@@ -81,7 +88,10 @@
       <ResultsTable table-key="audit-log" :columns="cols" :rows="tableRows" row-key="id"
         :loading="loading" empty-text="No audit events found" empty-icon="clipboard" :auto-fit-first-view="true">
         <template #toolbar>
-          <button @click="doExportCsv" :disabled="!events.length" class="btn-secondary text-xs">Export CSV</button>
+          <button @click="doExportCsv" :disabled="exporting || needsProfile" class="btn-secondary text-xs"
+                  title="Every event matching the filters, not just the ones shown">
+            {{ exporting ? 'Exporting…' : 'Export CSV' }}
+          </button>
         </template>
         <template #cell-occurredAt="{ value }"><RelativeTime :value="value as string" /></template>
         <template #cell-action="{ value }">
@@ -96,7 +106,8 @@
            rich table sorts/filters/exports that loaded set client-side. When
            the cap is hit, prompt the operator to narrow the filter. -->
       <p v-if="capped" class="text-xs text-gray-500 mt-2">
-        Showing the most recent {{ pageSize }} matching events. Narrow the date range or action filter to see older ones.
+        Showing the most recent {{ pageSize }} matching events. Narrow the filters to see older ones, or use
+        Export CSV: it includes every matching event (up to {{ EXPORT_ROW_LIMIT.toLocaleString() }}).
       </p>
     </template>
   </div>
@@ -110,7 +121,9 @@ import { useApi, downloadBlob } from '@/composables/useApi'
 import { useDirectoryPicker } from '@/composables/useDirectoryPicker'
 import { useAuthStore } from '@/stores/auth'
 import { useProfilePickerStore } from '@/stores/profilePicker'
-import { getAuditLog, getAuditActions } from '@/api/audit'
+import { exportAuditLog, getAuditLog, getAuditActions } from '@/api/audit'
+import { IVIA_ABBR } from '@/constants/productNames'
+import { useNotificationStore } from '@/stores/notifications'
 import { actionLabel, actionColor } from '@/components/dashboard/auditLabels'
 import ResultsTable, { type ColumnDef } from '@/components/ResultsTable.vue'
 import FormField from '@/components/FormField.vue'
@@ -120,7 +133,18 @@ interface AuditFilters {
   from: string
   to: string
   action: string[]
+  /** `detail.source` to match ('' = any). */
+  source: string
 }
+
+// Where events came from, by their `detail.source`.
+const SOURCE_OPTIONS = [
+  { value: '', label: 'All sources' },
+  { value: 'directory-sync', label: 'Directory sync' },
+  { value: 'ivia', label: IVIA_ABBR },
+]
+// The server's cap on one export (AuditQueryService.MAX_EXPORT_ROWS).
+const EXPORT_ROW_LIMIT = 50_000
 
 interface AuditEvent {
   id: string
@@ -178,7 +202,9 @@ const events   = ref<AuditEvent[]>([])
 const pageSize = 200
 const capped   = computed(() => events.value.length >= pageSize)
 
-const filters = ref<AuditFilters>({ from: '', to: '', action: [] })
+const filters = ref<AuditFilters>({ from: '', to: '', action: [], source: '' })
+const exporting = ref<boolean>(false)
+const notif = useNotificationStore()
 
 // ResultsTable column definitions — sortable + resizable, with sensible
 // starting widths. Detail is widest (free-form JSON), When/Action narrow.
@@ -277,7 +303,7 @@ function formatDetail(detail: unknown): string {
 }
 
 function clearFilters(): void {
-  filters.value = { from: '', to: '', action: [] }
+  filters.value = { from: '', to: '', action: [], source: '' }
   // Also drop an active correlation trace so "Clear" means clear
   // everything. When no trace is active this is a no-op (the route
   // watcher won't fire), preserving the apply-on-Filter behaviour.
@@ -305,6 +331,22 @@ async function loadActions(): Promise<void> {
   }
 }
 
+/** The query the filters describe, shared by the log and its export. */
+function filterParams() {
+  return {
+    directoryId:   scopeDirectoryId.value || undefined,
+    // datetime-local yields `YYYY-MM-DDTHH:MM` with no zone, but
+    // the backend's @RequestParam OffsetDateTime requires a zone
+    // offset. Interpret the picker value in the user's local zone
+    // and serialise to ISO with offset (toISOString → UTC `Z`).
+    from:          toIsoZoned(filters.value.from),
+    to:            toIsoZoned(filters.value.to),
+    action:        filters.value.action.length ? filters.value.action : undefined,
+    source:        filters.value.source || undefined,
+    correlationId: correlationId.value || undefined,
+  }
+}
+
 async function load(): Promise<void> {
   // Admin view scopes to the sidebar-selected profile; until one is chosen
   // (e.g. while it loads after mount) there's nothing to query.
@@ -314,19 +356,7 @@ async function load(): Promise<void> {
   }
   try {
     await call(async () => {
-      const params = {
-        page: 0, size: pageSize,
-        directoryId:   scopeDirectoryId.value || undefined,
-        // datetime-local yields `YYYY-MM-DDTHH:MM` with no zone, but
-        // the backend's @RequestParam OffsetDateTime requires a zone
-        // offset. Interpret the picker value in the user's local zone
-        // and serialise to ISO with offset (toISOString → UTC `Z`).
-        from:          toIsoZoned(filters.value.from),
-        to:            toIsoZoned(filters.value.to),
-        action:        filters.value.action.length ? filters.value.action : undefined,
-        correlationId: correlationId.value || undefined,
-      }
-      const { data } = await getAuditLog(params)
+      const { data } = await getAuditLog({ page: 0, size: pageSize, ...filterParams() })
       events.value = data.content ?? data
     })
   } catch {
@@ -334,23 +364,28 @@ async function load(): Promise<void> {
   }
 }
 
-// Client-side CSV of the loaded events (what the table is showing), built from
-// the same flattened rows. No server export endpoint for audit today; the rows
-// are already in memory, so export-what-you-see is the natural behaviour.
-function csvCell(v: string): string {
-  // RFC 4180: quote always; escape embedded quotes by doubling.
-  return '"' + String(v ?? '').replace(/"/g, '""') + '"'
-}
-function doExportCsv(): void {
-  const headers = cols.map(c => c.label ?? c.key)
-  const lines = [headers.map(csvCell).join(',')]
-  for (const r of tableRows.value) {
-    lines.push(cols.map(c => csvCell(
-      c.key === 'action' ? actionLabel(r.action) : String(r[c.key] ?? ''),
-    )).join(','))
+// Server-side CSV of every event the filters match, not just the loaded page:
+// the export has its own, much larger cap, and says when it was cut short.
+async function doExportCsv(): Promise<void> {
+  if (needsProfile.value) return
+  exporting.value = true
+  try {
+    const res = await exportAuditLog(filterParams())
+    downloadBlob(res.data, 'audit-log.csv')
+    const matched = Number(res.headers?.['x-audit-export-matched'] ?? 0)
+    if (res.headers?.['x-audit-export-truncated'] === 'true') {
+      notif.error(`Exported the newest ${EXPORT_ROW_LIMIT.toLocaleString()} of ${matched.toLocaleString()} matching `
+        + 'events. Narrow the date range to export the rest.')
+    } else {
+      notif.success(`Exported ${matched.toLocaleString()} event${matched === 1 ? '' : 's'}`)
+    }
+  } catch (e) {
+    const err = e as { response?: { status?: number } }
+    notif.error(err.response?.status === 403 ? 'You can\'t export audit events for this scope'
+      : 'Could not export the audit log')
+  } finally {
+    exporting.value = false
   }
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv;charset=utf-8' })
-  downloadBlob(blob, 'audit-log.csv')
 }
 
 function clearCorrelation(): void {
