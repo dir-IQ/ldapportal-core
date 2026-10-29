@@ -79,6 +79,11 @@ export const applyLdifPreview = (dirId, previewId, suppressVendorOverlay = false
     excludeOverlayRows,
   })
 
+// The checks a directory offers, as [{ type, attributes }]: the built-in ones,
+// plus BROKEN_REFERENCE where an addon contributes a reference check (e.g. secDN).
+export const listIntegrityChecks = (dirId) =>
+  client.get(`${base(dirId)}/integrity-check/checks`)
+
 export const checkIntegrity = (dirId, baseDn, checks) =>
   client.post(`${base(dirId)}/integrity-check`, null, {
     params: { baseDn: baseDn || undefined, checks: checks.join(',') },

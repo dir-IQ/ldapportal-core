@@ -108,13 +108,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
 import { listDirectories } from '@/api/directories'
-import { checkIntegrity, removeBrokenReferences } from '@/api/browse'
+import { checkIntegrity, listIntegrityChecks, removeBrokenReferences } from '@/api/browse'
 import DnPicker from '@/components/DnPicker.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import type { components } from '@/api/openapi'
@@ -186,11 +186,33 @@ const checkedDirectoryId = ref<string>('')
 const selected = ref<Set<string>>(new Set())
 const removing = ref<boolean>(false)
 
-const availableChecks = [
-  { value: 'BROKEN_MEMBER',  label: 'Broken member references' },
-  { value: 'ORPHANED_ENTRY', label: 'Orphaned entries (missing parent)' },
-  { value: 'EMPTY_GROUP',    label: 'Empty groups (no members)' },
+/** A check the directory offers, and the attributes it checks. */
+interface AvailableCheck {
+  type: string
+  attributes: string[]
+}
+
+const BUILT_IN_CHECKS: AvailableCheck[] = [
+  { type: 'BROKEN_MEMBER', attributes: ['member', 'uniqueMember'] },
+  { type: 'ORPHANED_ENTRY', attributes: [] },
+  { type: 'EMPTY_GROUP', attributes: [] },
 ]
+
+// What the selected directory offers: the built-in checks, plus a reference
+// check (e.g. IVIA secDN) where an addon contributes one for the directory.
+const offeredChecks = ref<AvailableCheck[]>(BUILT_IN_CHECKS)
+
+function checkLabel(c: AvailableCheck): string {
+  switch (c.type) {
+    case 'BROKEN_MEMBER':    return 'Broken member references'
+    case 'ORPHANED_ENTRY':   return 'Orphaned entries (missing parent)'
+    case 'EMPTY_GROUP':      return 'Empty groups (no members)'
+    case 'BROKEN_REFERENCE': return `Broken references (${c.attributes.join(', ')})`
+    default:                 return c.type
+  }
+}
+
+const availableChecks = computed(() => offeredChecks.value.map(c => ({ value: c.type, label: checkLabel(c) })))
 
 const form = ref<CheckForm>({
   directoryId: '',
@@ -212,6 +234,7 @@ const groupedIssues = computed<IssueGroup[]>(() => {
 function typeLabel(type: string) {
   switch (type) {
     case 'BROKEN_MEMBER':  return 'Broken Member References'
+    case 'BROKEN_REFERENCE': return 'Broken References'
     case 'ORPHANED_ENTRY': return 'Orphaned Entries'
     case 'EMPTY_GROUP':    return 'Empty Groups'
     default:               return type
@@ -221,6 +244,7 @@ function typeLabel(type: string) {
 function typeColor(type: string) {
   switch (type) {
     case 'BROKEN_MEMBER':  return 'text-red-700'
+    case 'BROKEN_REFERENCE': return 'text-red-700'
     case 'ORPHANED_ENTRY': return 'text-amber-700'
     case 'EMPTY_GROUP':    return 'text-blue-700'
     default:               return 'text-gray-700'
@@ -329,6 +353,27 @@ async function runCheck() {
 function goToBrowser(dn: string) {
   router.push({ path: '/superadmin/browser', query: { dn } })
 }
+
+// Each directory offers its own checks. A newly offered check starts ticked;
+// a check the directory doesn't offer is dropped from the selection.
+async function loadOfferedChecks(directoryId: string): Promise<void> {
+  if (!directoryId) return
+  const before = new Set(offeredChecks.value.map(c => c.type))
+  try {
+    const { data } = await listIntegrityChecks(directoryId)
+    offeredChecks.value = (data as AvailableCheck[]).length ? data as AvailableCheck[] : BUILT_IN_CHECKS
+  } catch {
+    offeredChecks.value = BUILT_IN_CHECKS
+  }
+  const offered = new Set(offeredChecks.value.map(c => c.type))
+  const kept = form.value.checks.filter(t => offered.has(t))
+  for (const t of offered) {
+    if (!before.has(t) && !kept.includes(t)) kept.push(t)
+  }
+  form.value.checks = kept
+}
+
+watch(() => form.value.directoryId, (id) => { void loadOfferedChecks(id) })
 
 onMounted(async () => {
   loadingDirs.value = true

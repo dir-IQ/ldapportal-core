@@ -22,7 +22,13 @@ const broken = (value: string) => ({
   type: 'BROKEN_MEMBER', dn: STAFF, description: `references non-existent DN: ${value}`,
   attribute: 'member', value,
 })
+const BUILT_IN = [
+  { type: 'BROKEN_MEMBER', attributes: ['member', 'uniqueMember'] },
+  { type: 'ORPHANED_ENTRY', attributes: [] },
+  { type: 'EMPTY_GROUP', attributes: [] },
+]
 vi.mock('@/api/browse', () => ({
+  listIntegrityChecks: vi.fn(() => Promise.resolve({ data: BUILT_IN })),
   checkIntegrity: vi.fn(() => Promise.resolve({
     data: { issues: [broken(GHOST), broken(GONE), { type: 'EMPTY_GROUP', dn: 'cn=empty,dc=example,dc=com',
       description: 'Group has no members', attribute: null, value: null }] },
@@ -118,6 +124,45 @@ describe('IntegrityCheckView', () => {
 
     expect(button('Remove broken references')).toBeUndefined()
     expect(document.querySelector('input[aria-label="Select all broken references"]')).toBeNull()
+    wrapper.unmount()
+  })
+
+  it('offers the directory\'s reference check (secDN), ticked, and lists what it finds without a remove box', async () => {
+    vi.mocked(browseApi.listIntegrityChecks).mockResolvedValueOnce({
+      data: [...BUILT_IN, { type: 'BROKEN_REFERENCE', attributes: ['secDN'] }],
+    } as never)
+    vi.mocked(browseApi.checkIntegrity).mockResolvedValueOnce({
+      data: { issues: [{
+        type: 'BROKEN_REFERENCE', dn: 'secUUID=g,cn=Users,secAuthority=Default',
+        description: "Attribute 'secDN' references non-existent DN: uid=ghost,ou=people,dc=example,dc=com",
+        attribute: 'secDN', value: 'uid=ghost,ou=people,dc=example,dc=com',
+      }] },
+    } as never)
+    const wrapper = mount(IntegrityCheckView, { attachTo: document.body })
+    await flushPromises()
+
+    const label = Array.from(document.querySelectorAll('label'))
+      .find(l => l.textContent?.trim() === 'Broken references (secDN)')!
+    expect(label).toBeTruthy()
+    expect((label.querySelector('input') as HTMLInputElement).checked).toBe(true)
+
+    button('Run Check')!.click()
+    await flushPromises()
+
+    expect(browseApi.checkIntegrity).toHaveBeenCalledWith('dir-1', '', expect.arrayContaining(['BROKEN_REFERENCE']))
+    expect(document.body.textContent).toContain('Broken References')
+    expect(document.body.textContent).toContain('uid=ghost,ou=people,dc=example,dc=com')
+    // Only broken member references can be removed from here.
+    expect(button('Remove broken references')).toBeUndefined()
+    wrapper.unmount()
+  })
+
+  it('offers only the built-in checks where the directory has no reference check', async () => {
+    const wrapper = mount(IntegrityCheckView, { attachTo: document.body })
+    await flushPromises()
+
+    expect(browseApi.listIntegrityChecks).toHaveBeenCalledWith('dir-1')
+    expect(document.body.textContent).not.toContain('Broken references (')
     wrapper.unmount()
   })
 })

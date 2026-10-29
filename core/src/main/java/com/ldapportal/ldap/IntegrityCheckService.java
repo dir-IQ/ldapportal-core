@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap;
 
+import com.ldapportal.core.integrity.IntegrityCheckContributor;
 import com.ldapportal.dto.ldap.IntegrityReport;
 import com.ldapportal.dto.ldap.IntegrityReport.IntegrityIssue;
 import com.ldapportal.dto.ldap.IntegrityReport.IssueType;
@@ -32,6 +33,32 @@ public class IntegrityCheckService {
     private final LdapConnectionFactory connectionFactory;
     /** Writes go through the directory browser's entry modify, an authorized write site. */
     private final LdapBrowseService browseService;
+    /** Addon-contributed reference checks (empty without addons). */
+    private final List<IntegrityCheckContributor> contributors;
+
+    /**
+     * Which checks the directory offers, and for {@code BROKEN_REFERENCE} the
+     * attributes the contributors check (absent when none applies).
+     */
+    public Map<IssueType, List<String>> availableChecks(DirectoryConnection dc) {
+        Map<IssueType, List<String>> out = new LinkedHashMap<>();
+        out.put(IssueType.BROKEN_MEMBER, MEMBER_ATTRIBUTES);
+        out.put(IssueType.ORPHANED_ENTRY, List.of());
+        out.put(IssueType.EMPTY_GROUP, List.of());
+        List<String> referenceAttrs = contributedAttributes(dc);
+        if (!referenceAttrs.isEmpty()) {
+            out.put(IssueType.BROKEN_REFERENCE, referenceAttrs);
+        }
+        return out;
+    }
+
+    private List<String> contributedAttributes(DirectoryConnection dc) {
+        Set<String> attrs = new LinkedHashSet<>();
+        for (IntegrityCheckContributor c : contributors) {
+            attrs.addAll(c.referenceAttributes(dc));
+        }
+        return List.copyOf(attrs);
+    }
 
     private static final int PAGE_SIZE = 500;
 
@@ -44,14 +71,15 @@ public class IntegrityCheckService {
      * @param dc      directory connection
      * @param baseDn  base DN to search under (blank checks every root of the
      *                directory; a member under any root then counts as present)
-     * @param checks  which checks to run (BROKEN_MEMBER, ORPHANED_ENTRY, EMPTY_GROUP)
+     * @param checks  which checks to run (BROKEN_MEMBER, ORPHANED_ENTRY, EMPTY_GROUP, and
+     *                BROKEN_REFERENCE where an addon contributes one)
      * @return report with all issues found
      */
     public IntegrityReport runChecks(DirectoryConnection dc, String baseDn,
                                      Set<IssueType> checks) {
         List<String> searchBases = (baseDn != null && !baseDn.isBlank()) ? List.of(baseDn) : dc.getBaseDns();
 
-        return connectionFactory.withConnection(dc, conn -> {
+        List<IntegrityIssue> report = connectionFactory.withConnection(dc, conn -> {
             List<IntegrityIssue> issues = new ArrayList<>();
 
             // Pre-load all DNs once if needed by broken-member or orphaned
@@ -81,8 +109,43 @@ public class IntegrityCheckService {
             }
 
             log.info("Integrity check on {}: {} issues found", searchBases, issues.size());
-            return new IntegrityReport(issues);
+            return issues;
         });
+        if (checks.contains(IssueType.BROKEN_REFERENCE)) {
+            report.addAll(contributedIssues(dc, baseDn));
+        }
+        return new IntegrityReport(report);
+    }
+
+    /**
+     * The contributors' broken references. With a base DN, only those whose
+     * entry or referenced DN is under it: a reference can live outside the
+     * directory's bases (an IVIA account under its management DIT) while the
+     * entry it should point to is inside them.
+     */
+    private List<IntegrityIssue> contributedIssues(DirectoryConnection dc, String baseDn) {
+        List<IntegrityIssue> found = new ArrayList<>();
+        for (IntegrityCheckContributor c : contributors) {
+            if (!c.referenceAttributes(dc).isEmpty()) {
+                found.addAll(c.brokenReferences(dc));
+            }
+        }
+        if (baseDn == null || baseDn.isBlank()) {
+            return found;
+        }
+        String base = normalizeDn(baseDn);
+        List<IntegrityIssue> scoped = new ArrayList<>();
+        for (IntegrityIssue i : found) {
+            if (isUnder(i.dn(), base) || (i.value() != null && isUnder(i.value(), base))) {
+                scoped.add(i);
+            }
+        }
+        return scoped;
+    }
+
+    private static boolean isUnder(String dn, String normalizedBase) {
+        String n = normalizeDn(dn);
+        return n.equals(normalizedBase) || n.endsWith("," + normalizedBase);
     }
 
     /**

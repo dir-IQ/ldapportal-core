@@ -75,7 +75,7 @@ class IntegrityCheckServiceTest {
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(BIND_PASS);
         connectionFactory = new LdapConnectionFactory(encryptionService);
-        service = new IntegrityCheckService(connectionFactory, new LdapBrowseService(connectionFactory));
+        service = new IntegrityCheckService(connectionFactory, new LdapBrowseService(connectionFactory), List.of());
 
         dc = new DirectoryConnection();
         dc.setId(UUID.randomUUID());
@@ -196,5 +196,62 @@ class IntegrityCheckServiceTest {
         assertThatThrownBy(() -> service.removeBrokenReferences(dc, List.of(
                 new Reference(STAFF, "cn", "staff"))))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    // ── Contributed reference checks (BROKEN_REFERENCE) ─────────────────────
+
+    /** A contributor reporting fixed issues for any directory, like an addon's secDN check. */
+    private static com.ldapportal.core.integrity.IntegrityCheckContributor contributor(IntegrityIssue... issues) {
+        return new com.ldapportal.core.integrity.IntegrityCheckContributor() {
+            @Override
+            public List<String> referenceAttributes(DirectoryConnection dir) {
+                return List.of("secDN");
+            }
+
+            @Override
+            public List<IntegrityIssue> brokenReferences(DirectoryConnection dir) {
+                return List.of(issues);
+            }
+        };
+    }
+
+    private static IntegrityIssue brokenSecDn(String secUserDn, String secDn) {
+        return new IntegrityIssue(IssueType.BROKEN_REFERENCE, secUserDn,
+                "Attribute 'secDN' references non-existent DN: " + secDn, "secDN", secDn);
+    }
+
+    @Test
+    void availableChecks_listBrokenReferenceOnlyWhereAContributorApplies() {
+        assertThat(service.availableChecks(dc)).containsOnlyKeys(
+                IssueType.BROKEN_MEMBER, IssueType.ORPHANED_ENTRY, IssueType.EMPTY_GROUP);
+
+        IntegrityCheckService withAddon = new IntegrityCheckService(connectionFactory,
+                new LdapBrowseService(connectionFactory), List.of(contributor()));
+        assertThat(withAddon.availableChecks(dc)).containsEntry(IssueType.BROKEN_REFERENCE, List.of("secDN"));
+    }
+
+    @Test
+    void brokenReferenceCheck_addsTheContributorsIssues_onlyWhenAskedFor() {
+        IntegrityIssue orphan = brokenSecDn("secUUID=1,cn=Users,secAuthority=Default", "uid=gone," + BASE);
+        IntegrityCheckService withAddon = new IntegrityCheckService(connectionFactory,
+                new LdapBrowseService(connectionFactory), List.of(contributor(orphan)));
+
+        assertThat(withAddon.runChecks(dc, null, EnumSet.of(IssueType.BROKEN_REFERENCE)).issues())
+                .containsExactly(orphan);
+        assertThat(withAddon.runChecks(dc, null, EnumSet.of(IssueType.EMPTY_GROUP)).issues())
+                .noneMatch(i -> i.type() == IssueType.BROKEN_REFERENCE);
+    }
+
+    @Test
+    void brokenReferenceCheck_withABase_keepsIssuesWhoseEntryOrReferenceIsUnderIt() {
+        IntegrityIssue inScope = brokenSecDn("secUUID=1,cn=Users,secAuthority=Default", "uid=gone,ou=people," + BASE);
+        IntegrityIssue elsewhere = brokenSecDn("secUUID=2,cn=Users,secAuthority=Default", "uid=gone,o=other");
+        IntegrityIssue missing = new IntegrityIssue(IssueType.BROKEN_REFERENCE, "secUUID=3,cn=Users,secAuthority=Default",
+                "Attribute 'secDN' is missing", "secDN", null);
+        IntegrityCheckService withAddon = new IntegrityCheckService(connectionFactory,
+                new LdapBrowseService(connectionFactory), List.of(contributor(inScope, elsewhere, missing)));
+
+        assertThat(withAddon.runChecks(dc, "OU=People, " + BASE, EnumSet.of(IssueType.BROKEN_REFERENCE)).issues())
+                .containsExactly(inScope);
     }
 }
