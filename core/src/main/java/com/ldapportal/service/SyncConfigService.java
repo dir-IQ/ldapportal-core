@@ -22,6 +22,7 @@ import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEngine;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
+import com.ldapportal.ldap.sync.SyncAuditLabels;
 import com.ldapportal.ldap.sync.SyncContentVerifier;
 import com.ldapportal.ldap.sync.SyncPreviewService;
 import com.ldapportal.ldap.sync.SyncReconcileHistory;
@@ -121,6 +122,7 @@ public class SyncConfigService {
             Map<String, Object> detail = new java.util.LinkedHashMap<>();
             detail.put("linkId", id.toString());
             detail.put("linkName", l.getDisplayName());
+            SyncAuditLabels.of(null, l, directoryRepo).putInto(detail);
             detail.put("sourceDirId", String.valueOf(l.getSourceDirId()));
             detail.put("targetDirId", String.valueOf(l.getTargetDirId()));
             detail.put("captureMode", String.valueOf(l.getCaptureMode()));
@@ -243,10 +245,11 @@ public class SyncConfigService {
         if (principal != null) {
             // Recorded against the target directory: that's where the set's
             // entries are left behind, now unmanaged.
-            UUID targetDirId = linkRepo.findById(s.getLinkId()).map(SyncLink::getTargetDirId).orElse(null);
+            SyncLink link = linkRepo.findById(s.getLinkId()).orElse(null);
+            UUID targetDirId = link != null ? link.getTargetDirId() : null;
             Map<String, Object> detail = new java.util.LinkedHashMap<>();
+            SyncAuditLabels.of(s.getName(), link, directoryRepo).putInto(detail);
             detail.put("syncSetId", id.toString());
-            detail.put("syncSetName", s.getName());
             detail.put("linkId", String.valueOf(s.getLinkId()));
             detail.put("managedEntries", impact.managed());
             detail.put("pendingReview", impact.pendingReview());
@@ -601,12 +604,17 @@ public class SyncConfigService {
      */
     public com.ldapportal.dto.sync.SyncDeleteApproval approveDelete(UUID syncSetId, String identity,
                                                                     AuthPrincipal principal) {
-        requireSet(syncSetId);
+        SyncSet set = requireSet(syncSetId);
         com.ldapportal.dto.sync.SyncDeleteApproval result = engine.approveDelete(syncSetId, identity);
         if (result.outcome() == com.ldapportal.dto.sync.SyncPreviewAction.DELETE && principal != null) {
+            Map<String, Object> detail = new java.util.LinkedHashMap<>();
+            detail.put("source", "directory-sync");
+            detail.put("operation", "approved-review-delete");
+            SyncAuditLabels.of(set, linkRepo, directoryRepo).putInto(detail);
+            detail.put("syncSetId", syncSetId.toString());
+            detail.put("identity", identity);
             auditService.record(principal, result.targetDirectoryId(), AuditAction.ENTRY_DELETE,
-                    result.targetDn(), Map.of("source", "directory-sync", "operation", "approved-review-delete",
-                            "syncSetId", syncSetId.toString(), "identity", identity));
+                    result.targetDn(), detail);
         }
         return result;
     }
