@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, preview progress naming the entry being checked; 2026-10-29).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked; 2026-10-29).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -407,9 +407,12 @@ audit record on the **target** directory: `entry.create`, `entry.update`,
 `entry.move` or `entry.delete`, with no actor (the engine writes with its own
 bind account, whoever started the run) and `detail.source = directory-sync`,
 `detail.operation = reconcile | incremental`, `detail.trigger`,
-`detail.syncSetId` and `detail.runId`. An update also lists the attributes it
-changed, `detail.attributes` (names only, never values; empty for an add or a
-delete). The run's id is also the records'
+`detail.syncSetName`, `detail.sourceDirectory` and `detail.targetDirectory`
+(the set's name and the link's directories' display names, as they were when
+the run started), `detail.syncSetId` and `detail.runId`. An update also lists
+the attributes it changed, `detail.attributes` (names only, never values;
+empty for an add or a delete). The Audit Log table shows the names and leaves
+out `syncSetId`; the CSV export's `detail` JSON keeps it. The run's id is also the records'
 **correlation id**, so the audit log can pull up one run's writes together.
 
 **Every sync write in a time period:** on the **Audit Log** page, pick the
@@ -477,7 +480,7 @@ unrecognized reason), and the inventory names each row's actions for it.
 
 | Row | Actions |
 |---|---|
-| **Held delete** (`PENDING_DELETE`) | **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`). Refused while the set or link is disabled. **Keep entry, stop syncing** — dismiss: the target entry stays but is no longer managed (verification then reports it *orphaned on target*). **Re-check** — recompute: re-applies it if the entry came back into scope; otherwise leaves it held under `deletePolicy=REVIEW`, or deletes it under `DELETE` (a single recompute doesn't apply the guard). |
+| **Held delete** (`PENDING_DELETE`) | **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`, with the set and directory names as for a run's writes). Refused while the set or link is disabled. **Keep entry, stop syncing** — dismiss: the target entry stays but is no longer managed (verification then reports it *orphaned on target*). **Re-check** — recompute: re-applies it if the entry came back into scope; otherwise leaves it held under `deletePolicy=REVIEW`, or deletes it under `DELETE` (a single recompute doesn't apply the guard). |
 | **Ambiguous match / placement conflict** | **Retry match** (recompute, after cleaning up the conflicting target entries) · **Stop tracking** |
 | **FAILED** | **Retry** (recompute) · **Stop tracking** |
 | **APPLIED / PENDING** | **Re-sync** (recompute) · **Stop tracking** |
@@ -849,8 +852,8 @@ Two knock-on effects:
   entry over and rewrites it to match the source, with no review.
 
 The delete is audited as `sync.set_delete` on the link's **target** directory
-(target DN = the set's target base), with `detail` = `syncSetId`,
-`syncSetName`, `linkId`, `managedEntries`, `pendingReview`, `reconcileRuns` —
+(target DN = the set's target base), with `detail` = `syncSetName`,
+`sourceDirectory`, `targetDirectory`, `syncSetId`, `linkId`, `managedEntries`, `pendingReview`, `reconcileRuns` —
 the record outlives the set's own history.
 
 ### Deleting a sync link
@@ -864,7 +867,7 @@ rather than resuming. The UI asks first.
 
 The delete is audited as `sync.link_delete` on the link's **target**
 directory (no target DN), with `detail` = `linkId`, `linkName`,
-`sourceDirId`, `targetDirId`, `captureMode`, and for `CHANGELOG` links
+`sourceDirectory`, `targetDirectory`, `sourceDirId`, `targetDirId`, `captureMode`, and for `CHANGELOG` links
 `changelogFormat`, `changelogBaseDn` and `changelogLastChangeNumber` (when
 set). A refused delete isn't audited.
 

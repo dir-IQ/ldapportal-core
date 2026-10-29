@@ -2,8 +2,11 @@
 package com.ldapportal.ldap.sync;
 
 import com.ldapportal.dto.sync.SyncPreviewAction;
+import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.AuditAction;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
+import com.ldapportal.repository.DirectoryConnectionRepository;
+import com.ldapportal.repository.SyncLinkRepository;
 import com.ldapportal.service.AuditService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -18,7 +21,9 @@ import java.util.UUID;
  * target directory, with no actor (the engine wrote it, whoever started the
  * run) and the run's id as its correlation id, so a run's writes can be pulled
  * up together from the audit log. An update also names the attributes it
- * changed ({@code detail.attributes}; names only, never values). Outcomes that wrote nothing (no change,
+ * changed ({@code detail.attributes}; names only, never values). Each record
+ * also names the sync set and the source and target directories
+ * ({@link SyncAuditLabels}), resolved once per run. Outcomes that wrote nothing (no change,
  * held for review, forgotten, failed) aren't audited; the run history counts
  * them. Operator-approved review deletes are audited where they happen, with
  * the operator as actor.
@@ -28,10 +33,17 @@ import java.util.UUID;
 public class SyncWriteAuditor {
 
     private final AuditService auditService;
+    private final SyncLinkRepository linkRepo;
+    private final DirectoryConnectionRepository directoryRepo;
+
+    /** The names a run's records carry, resolved when the run starts. */
+    public SyncAuditLabels labelsFor(SyncSet set) {
+        return SyncAuditLabels.of(set, linkRepo, directoryRepo);
+    }
 
     /** Record one outcome of a run, if it was a target write. */
     public void audit(UUID targetDirectoryId, UUID syncSetId, UUID runId, SyncReconcileTrigger trigger,
-                      RecomputeOutcome outcome) {
+                      SyncAuditLabels labels, RecomputeOutcome outcome) {
         if (outcome == null || outcome.targetDn() == null || targetDirectoryId == null) {
             return;
         }
@@ -43,6 +55,9 @@ public class SyncWriteAuditor {
         detail.put("source", "directory-sync");
         detail.put("operation", trigger == SyncReconcileTrigger.INCREMENTAL ? "incremental" : "reconcile");
         detail.put("trigger", trigger.name());
+        if (labels != null) {
+            labels.putInto(detail);
+        }
         detail.put("syncSetId", syncSetId.toString());
         detail.put("runId", runId.toString());
         if (!outcome.attributes().isEmpty()) {
