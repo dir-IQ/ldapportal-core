@@ -176,6 +176,7 @@ export function actionBadgeClass(action) {
 export function integrityTypeBadgeClass(type) {
   switch (type) {
     case 'BROKEN_MEMBER':  return 'bg-red-100 text-red-700'
+    case 'BROKEN_REFERENCE': return 'bg-red-100 text-red-700'
     case 'ORPHANED_ENTRY': return 'bg-amber-100 text-amber-700'
     case 'EMPTY_GROUP':    return 'bg-blue-100 text-blue-700'
     default:               return 'bg-gray-100 text-gray-600'
@@ -204,6 +205,7 @@ export function humanizeEnum(val) {
 export function friendlyIntegrityType(type) {
   switch (type) {
     case 'BROKEN_MEMBER':  return 'Broken Member'
+    case 'BROKEN_REFERENCE': return 'Broken Reference'
     case 'ORPHANED_ENTRY': return 'Orphaned Entry'
     case 'EMPTY_GROUP':    return 'Empty Group'
     default:               return type
