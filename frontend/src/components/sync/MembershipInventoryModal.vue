@@ -30,8 +30,12 @@
         </div>
       </div>
 
+      <!-- Live progress of Reconcile now / Re-check target / Verify contents (and a reconcile already running). -->
+      <SyncActivityProgress v-if="progress" v-bind="progress" />
+
       <!-- What the set's last reconcile runs did (counts, warnings, recent history). -->
-      <ReconcileRunHistory :set-id="set?.id ?? null" :refresh-key="historyKey" />
+      <ReconcileRunHistory :set-id="set?.id ?? null" :refresh-key="historyKey"
+                           @show-not-in-set="setStateFilter(NOT_IN_SET)" />
 
       <!--
         Independent verification: re-reads both directories and compares them
@@ -84,9 +88,44 @@
       </div>
 
       <input v-model="search" class="input input-sm w-full"
-             placeholder="Filter by identity or DN…" aria-label="Filter memberships" />
+             :placeholder="notInSetView ? 'Filter by DN…' : 'Filter by identity or DN…'"
+             aria-label="Filter memberships" />
 
-      <DataTable :columns="cols" :rows="rows" :loading="loading" row-key="identity"
+      <!-- In-scope source entries the set doesn't manage, from the latest complete reconcile. -->
+      <template v-if="notInSetView">
+        <div class="text-xs text-gray-600 space-y-0.5">
+          <p v-if="!notInSet?.runId">No complete reconcile has been recorded for this set yet.</p>
+          <template v-else>
+            <p>
+              As of the last complete reconcile<template v-if="notInSet.finishedAt">,
+                <RelativeTime :value="notInSet.finishedAt" /></template>:
+              <span class="font-medium tabular-nums">{{ notInSet.total }}</span> in-scope source
+              {{ notInSet.total === 1 ? 'entry isn\'t' : 'entries aren\'t' }} managed by this set
+              <template v-if="notInSet.reasons.length">
+                —
+                <template v-for="(g, i) in notInSet.reasons" :key="g.reason">
+                  <template v-if="i > 0"> · </template>
+                  <span class="tabular-nums">{{ g.count }}</span> {{ g.label.toLowerCase() }}
+                </template>
+              </template>
+            </p>
+            <p v-if="!notInSet.allDnsRecorded && notInSet.total > notInSet.matched && !search.trim()"
+               class="text-gray-500">
+              Showing up to {{ notInSet.sampleLimit }} examples per reason. To list them all, set the sync set's
+              <span class="font-medium">Logging level</span> to <span class="font-medium">Detailed</span>; the next
+              reconcile keeps every one.
+            </p>
+          </template>
+        </div>
+        <DataTable :columns="notInSetCols" :rows="notInSetRows" :loading="loading" row-key="sourceDn"
+                   empty-text="No not-in-set entries match." empty-icon="users">
+          <template #cell-sourceDn="{ row }">
+            <span class="font-mono">{{ row.sourceDn }}</span>
+          </template>
+        </DataTable>
+      </template>
+
+      <DataTable v-else :columns="cols" :rows="rows" :loading="loading" row-key="identity"
                  empty-text="No membership rows match." empty-icon="users">
         <template #cell-identity="{ row }">
           <span class="font-mono">{{ row.identity }}</span>
@@ -117,7 +156,7 @@
       </DataTable>
 
       <!-- Untracked-key affordance: recompute the search term directly. -->
-      <div v-if="!loading && !rows.length && search.trim()" class="text-center pb-1">
+      <div v-if="!notInSetView && !loading && !rows.length && search.trim()" class="text-center pb-1">
         <button class="btn-secondary btn-compact" @click="recomputeQuery">
           Recompute "{{ search.trim() }}"
         </button>
@@ -148,16 +187,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import AppModal from '@/components/AppModal.vue'
 import DataTable from '@/components/DataTable.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import ReconcileRunHistory from '@/components/sync/ReconcileRunHistory.vue'
+import SyncActivityProgress from '@/components/sync/SyncActivityProgress.vue'
+import RelativeTime from '@/components/RelativeTime.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useConfirm } from '@/composables/useConfirm'
 import {
   listMemberships, reconcileSet, recheckTarget, recomputeKey, dismissMembership, verifyContents, approveDelete,
-  type SyncSet, type Membership, type MembershipState, type SyncVerifyResult,
+  getSyncSetActivity, listNotInSet,
+  type SyncSet, type Membership, type MembershipState, type SyncVerifyResult, type SyncSetActivity,
+  type SyncNotInSetPage,
 } from '@/api/sync'
 
 const show = defineModel<boolean>('show', { default: false })
@@ -179,7 +222,17 @@ const total = ref(0)
 const totalPages = ref(0)
 const page = ref(0)
 const size = ref(50)
-const stateFilter = ref<'' | MembershipState>('')
+/** The chip that lists in-scope source entries the set doesn't manage, instead of membership rows. */
+const NOT_IN_SET = 'NOT_IN_SET' as const
+type StateFilter = '' | MembershipState | typeof NOT_IN_SET
+const stateFilter = ref<StateFilter>('')
+const notInSet = ref<SyncNotInSetPage | null>(null)
+const notInSetView = computed<boolean>(() => stateFilter.value === NOT_IN_SET)
+const notInSetRows = computed(() => notInSet.value?.entries ?? [])
+const notInSetCols = [
+  { key: 'sourceDn', label: 'Source DN' },
+  { key: 'label', label: 'Reason' },
+]
 const search = ref('')
 const loading = ref(false)
 const reconciling = ref(false)
@@ -231,11 +284,14 @@ const chips = computed(() => {
   const c = props.set?.stateCounts ?? {}
   const all = Object.values(c).reduce((a, b) => a + b, 0)
   return [
-    { key: 'all', value: '' as '' | MembershipState, label: 'All', n: all, dot: '', chip: 'bg-gray-100 text-gray-700' },
+    { key: 'all', value: '' as StateFilter, label: 'All', n: all, dot: '', chip: 'bg-gray-100 text-gray-700' },
     ...STATE_ORDER.map((k) => ({
-      key: k, value: k as MembershipState, label: STATE_META[k].label,
+      key: k, value: k as StateFilter, label: STATE_META[k].label,
       n: c[k] ?? 0, dot: STATE_META[k].dot, chip: STATE_META[k].chip,
     })),
+    // Not membership rows: source entries the last complete reconcile found outside the set.
+    { key: NOT_IN_SET, value: NOT_IN_SET as StateFilter, label: 'Not in set', n: notInSet.value?.total ?? 0,
+      dot: 'bg-slate-400', chip: 'bg-slate-50 text-slate-700' },
   ]
 })
 
@@ -246,10 +302,11 @@ function errMsg(e: unknown): string {
 
 async function load() {
   if (!props.set) return
+  if (notInSetView.value) return loadNotInSet()
   loading.value = true
   try {
     const { data } = await listMemberships(props.set.id, {
-      state: stateFilter.value || undefined,
+      state: (stateFilter.value || undefined) as MembershipState | undefined,
       q: search.value.trim() || undefined,
       page: page.value,
       size: size.value,
@@ -264,24 +321,33 @@ async function load() {
   }
 }
 
-function setStateFilter(v: '' | MembershipState) {
+/** The set's not-in-set entries (the chip's count, or the table when its chip is selected). */
+async function loadNotInSet() {
+  if (!props.set) return
+  const listing = notInSetView.value
+  if (listing) loading.value = true
+  try {
+    const { data } = await listNotInSet(props.set.id, listing
+      ? { q: search.value.trim() || undefined, page: page.value, size: size.value }
+      : { page: 0, size: 1 })
+    notInSet.value = data
+    if (listing) {
+      total.value = data.matched
+      totalPages.value = Math.ceil(data.matched / Math.max(1, data.size))
+    }
+  } catch (e) {
+    if (listing) notif.error(errMsg(e))
+  } finally {
+    if (listing) loading.value = false
+  }
+}
+
+function setStateFilter(v: StateFilter) {
   stateFilter.value = v
   page.value = 0
   load()
 }
 
-// Reset and load whenever the modal opens or the set changes. The state filter
-// seeds from `initialState` (deep links open pre-filtered); '' means show all.
-watch([show, () => props.set?.id], ([open]) => {
-  if (open && props.set) {
-    stateFilter.value = props.initialState ?? ''
-    search.value = ''
-    page.value = 0
-    verifyResult.value = null
-    historyKey.value++
-    load()
-  }
-}, { immediate: true })
 watch([size], () => { page.value = 0; load() })
 watch(page, load)
 
@@ -294,16 +360,20 @@ watch(search, () => {
 async function reconcile() {
   if (!props.set) return
   reconciling.value = true
+  watchSince.value = serverNow()
+  watchActivity()
   try {
     const { data } = await reconcileSet(props.set.id)
     notif.success(`Reconcile enumerated ${data.enumerated} source identities`)
     await load()
+    void loadNotInSet()
     emit('changed')
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
     reconciling.value = false
     historyKey.value++ // a failed run is recorded too
+    void refreshActivity()
   }
 }
 /**
@@ -325,9 +395,12 @@ async function recheck() {
   if (!ok) return
   rechecking.value = true
   try {
+    const since = serverNow()
     const { data } = await recheckTarget(props.set.id)
     if (data.reconcileQueued) {
       notif.success(`Re-check queued: the next reconcile (within about a minute) re-reads ${data.entries} entries`)
+      awaitingRecheck.value = { since }
+      watchActivity()
     } else {
       notif.success(`Re-check set up for ${data.entries} entries; it runs once the set and its link are enabled`)
     }
@@ -341,6 +414,8 @@ async function recheck() {
 async function verify() {
   if (!props.set) return
   verifying.value = true
+  watchSince.value = serverNow()
+  watchActivity()
   try {
     const { data } = await verifyContents(props.set.id)
     verifyResult.value = data
@@ -354,8 +429,155 @@ async function verify() {
     notif.error(errMsg(e))
   } finally {
     verifying.value = false
+    void refreshActivity()
   }
 }
+
+// ── Live progress ───────────────────────────────────────────────────────────
+// While an action runs (or a reconcile already is), the set's activity is
+// polled: the latest reconcile run and content check, each with its phase,
+// counts and the entry it's on. Re-check target only queues a reconcile, so it
+// waits for that run to start and finish.
+
+const POLL_MS = 1500
+/** How long Re-check target waits for its reconcile to start before giving up watching. */
+const RECHECK_WAIT_MS = 5 * 60 * 1000
+const activity = ref<SyncSetActivity | null>(null)
+/** Browser-to-server clock offset, from the last activity read. */
+const clockOffset = ref<number>(0)
+/** Server time when the current action was started: older runs aren't its progress. */
+const watchSince = ref<number>(0)
+const awaitingRecheck = ref<{ since: number } | null>(null)
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+
+function serverNow(): number {
+  return Date.now() + clockOffset.value
+}
+
+/** Started at or after `since` (with a little slack for clocks and rounding). */
+function startedSince(at: string | null | undefined, since: number): boolean {
+  return !!at && Date.parse(at) >= since - 5000
+}
+
+const reconcileRunning = computed<boolean>(() => activity.value?.reconcile?.status === 'RUNNING')
+const verifyRunning = computed<boolean>(() =>
+  activity.value?.verify?.status === 'RUNNING' && (verifying.value || reconciling.value))
+const needsWatch = computed<boolean>(() =>
+  reconciling.value || verifying.value || !!awaitingRecheck.value || reconcileRunning.value)
+
+async function refreshActivity() {
+  if (!props.set || !show.value) return
+  try {
+    const { data } = await getSyncSetActivity(props.set.id)
+    activity.value = data
+    clockOffset.value = data.asOf ? Date.parse(data.asOf) - Date.now() : 0
+    checkRecheckDone(data)
+  } catch {
+    // Progress is a nicety: a failed read leaves the last one on screen.
+  }
+  if (needsWatch.value) watchActivity()
+}
+
+function watchActivity() {
+  if (pollTimer !== null || !show.value) return
+  pollTimer = setTimeout(() => {
+    pollTimer = null
+    void refreshActivity()
+  }, POLL_MS)
+}
+
+function stopWatching() {
+  if (pollTimer !== null) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+}
+
+/** Re-check target's reconcile finished: say what it did and refresh the inventory. */
+function checkRecheckDone(data: SyncSetActivity) {
+  const waiting = awaitingRecheck.value
+  if (!waiting) return
+  const run = data.reconcile
+  if (run && startedSince(run.startedAt, waiting.since) && run.status !== 'RUNNING') {
+    awaitingRecheck.value = null
+    if (run.status === 'COMPLETE') {
+      notif.success(`Re-check finished: ${run.added} added, ${run.modified + run.moved} updated, `
+        + `${run.noChange + run.unchanged} already matched`)
+    } else {
+      notif.error(run.error || 'The re-check reconcile failed')
+    }
+    historyKey.value++
+    void load()
+    void loadNotInSet()
+    emit('changed')
+  } else if (!run || !startedSince(run.startedAt, waiting.since)) {
+    if (serverNow() - waiting.since > RECHECK_WAIT_MS) {
+      awaitingRecheck.value = null
+      notif.warning('The re-check reconcile hasn\'t started yet. It runs on the next scheduler tick; '
+        + 'check Last reconcile later.')
+    }
+  }
+}
+
+const RECONCILE_HINT = 'A large group can take a while on its own: each member is looked up.'
+
+/** What the progress line shows now, or null when nothing is running. */
+const progress = computed(() => {
+  const a = activity.value
+  const asOf = a?.asOf ?? null
+  const v = a?.verify
+  if (v && verifyRunning.value && startedSince(v.startedAt, watchSince.value)) {
+    const after = reconciling.value ? ' after the reconcile' : ''
+    const heading = v.phase === 'SOURCE' ? `Checking contents${after}: reading the source (${v.processed} entries read)…`
+      : v.phase === 'TARGET' ? `Checking contents${after}: reading the target…`
+        : `Checking contents${after}: comparing entries: ${v.processed} of ${v.total}…`
+    return {
+      heading, processed: v.processed, total: v.phase === 'COMPARING' ? v.total : null,
+      currentDn: v.currentDn, currentLabel: 'Now comparing',
+      startedAt: v.startedAt, heartbeatAt: v.heartbeatAt, asOf,
+    }
+  }
+  const r = a?.reconcile
+  if (r && r.status === 'RUNNING') {
+    const who = awaitingRecheck.value ? 'Re-check' : r.trigger === 'SCHEDULED' ? 'Scheduled reconcile' : 'Reconcile'
+    const heading = r.phase === 'APPLYING' ? `${who}: applying entries: ${r.processed} of ${r.sourceCount}…`
+      : r.phase === 'SWEEPING'
+        ? `${who}: checking managed entries no longer in the source (${Math.max(0, r.processed - r.sourceCount)} checked)…`
+        : `${who}: scanning the source…`
+    return {
+      heading, processed: r.processed, total: r.phase === 'APPLYING' ? r.sourceCount : null,
+      currentDn: r.currentDn, currentLabel: 'Now checking',
+      startedAt: r.startedAt, heartbeatAt: r.heartbeatAt ?? r.startedAt, asOf,
+      hint: r.phase === 'APPLYING' ? RECONCILE_HINT : '',
+    }
+  }
+  if (awaitingRecheck.value) {
+    return { heading: 'Re-check queued: waiting for the next reconcile to start (within about a minute)…', asOf }
+  }
+  if (reconciling.value) return { heading: 'Starting the reconcile…', asOf }
+  if (verifying.value) return { heading: 'Starting the content check…', asOf }
+  return null
+})
+
+// Reset and load whenever the modal opens or the set changes. The state filter
+// seeds from `initialState` (deep links open pre-filtered); '' means show all.
+watch([show, () => props.set?.id], ([open]) => {
+  if (open && props.set) {
+    stateFilter.value = props.initialState ?? ''
+    search.value = ''
+    page.value = 0
+    verifyResult.value = null
+    notInSet.value = null
+    awaitingRecheck.value = null
+    historyKey.value++
+    load()
+    if (!notInSetView.value) void loadNotInSet()
+    void refreshActivity()
+  } else {
+    stopWatching()
+  }
+}, { immediate: true })
+onBeforeUnmount(stopWatching)
 interface RowAction { label: string; hint: string; danger?: boolean; run: () => void }
 
 /**

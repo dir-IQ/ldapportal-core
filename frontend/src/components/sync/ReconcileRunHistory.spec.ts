@@ -22,6 +22,7 @@ function run(over: Partial<SyncReconcileRun> = {}): SyncReconcileRun {
     guardTripped: false, guardReason: null, error: null,
     instanceName: 'app-2', plannedAt: '2026-10-20T10:00:40Z',
     verifiedAt: null, verifyMissing: null, verifyOrphan: null, verifyMismatch: null, allDnsRecorded: false,
+    notInSet: 0, phase: null, currentDn: null, heartbeatAt: null,
     ...over,
   }
 }
@@ -162,5 +163,23 @@ describe('ReconcileRunHistory', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('No reconcile has been recorded')
     expect(wrapper.findAll('button').some((b) => b.text().includes('Incremental changes (1)'))).toBe(true)
+  })
+
+  it('explains the gap between source entries and managed ones, linking to the not-in-set list', async () => {
+    resolveRuns([run({ sourceCount: 1214, managedAfter: 802, notInSet: 412 })])
+    const wrapper = mount(ReconcileRunHistory, { props: { setId: 'set-1' } })
+    await flushPromises()
+
+    const link = wrapper.findAll('button').find((b) => b.text().includes('not in set'))!
+    expect(link.text()).toBe('412 not in set')
+    await link.trigger('click')
+    expect(wrapper.emitted('show-not-in-set')).toHaveLength(1)
+  })
+
+  it('leaves the link out when every source entry is managed', async () => {
+    resolveRuns([run()])
+    const wrapper = mount(ReconcileRunHistory, { props: { setId: 'set-1' } })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('not in set')
   })
 })

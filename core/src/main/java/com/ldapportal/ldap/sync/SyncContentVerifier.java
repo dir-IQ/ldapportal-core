@@ -6,6 +6,7 @@ import com.ldapportal.entity.DirectoryConnection;
 import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
+import com.ldapportal.entity.enums.SyncVerifyPhase;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.sync.identity.IdentityStrategy;
 import com.ldapportal.ldap.sync.identity.IdentityStrategyRegistry;
@@ -83,13 +84,31 @@ public class SyncContentVerifier {
     private final SyncTargetSchemas targetSchemas;
     private final MembershipReferenceResolvers referenceResolvers;
     private final UntranslatedReferenceTargets untranslatedTargets;
+    private final SyncVerifyProgressTracker progress;
 
-    /** Verify the live source/target contents of a sync set and report mismatches. */
+    /**
+     * Verify the live source/target contents of a sync set and report
+     * mismatches, recording its progress as it goes ({@link SyncVerifyProgressTracker}).
+     */
     public SyncVerifyResult verify(UUID syncSetId) {
         Context ctx = loadContext(syncSetId);
         if (ctx == null) {
             return unavailable("Sync set, link, or source/target directory is unavailable or disabled.");
         }
+        SyncVerifyProgressTracker.Handle tracking = progress.start(syncSetId);
+        try {
+            SyncVerifyResult result = verify(ctx, tracking);
+            tracking.complete();
+            return result;
+        } catch (RuntimeException ex) {
+            String msg = ex.getMessage();
+            tracking.fail(msg == null || msg.isBlank() ? ex.getClass().getSimpleName() : msg);
+            throw ex;
+        }
+    }
+
+    private SyncVerifyResult verify(Context ctx, SyncVerifyProgressTracker.Handle tracking) {
+        UUID syncSetId = ctx.set.getId();
 
         // Source side: enumerate + project members, keyed by normalized target DN.
         // Reference attributes resolve through the index exactly as the engine does,
@@ -98,11 +117,13 @@ public class SyncContentVerifier {
         Map<String, MembershipDecision> members = new LinkedHashMap<>();
         boolean sourceComplete = true;
         try {
+            int read = 0;
             for (SearchResultEntry e : enumerateSource(ctx)) {
                 var decision = membershipFunction.evaluate(ctx.set, ctx.strategy, e, resolver);
                 if (decision.member() && decision.targetDn() != null) {
                     members.put(normDn(decision.targetDn()), decision);
                 }
+                tracking.processed(++read);
             }
         } catch (Exception ex) {
             log.warn("Sync set {}: source enumeration failed during verify ({})", syncSetId, ex.toString());
@@ -112,10 +133,12 @@ public class SyncContentVerifier {
         // Target side: enumerate entries actually present, keyed by normalized DN.
         Map<String, Entry> actual = new LinkedHashMap<>();
         boolean targetComplete = true;
+        tracking.phase(SyncVerifyPhase.TARGET);
         try {
             for (SearchResultEntry e : enumerateTarget(ctx)) {
                 actual.put(normDn(e.getDN()), e);
             }
+            tracking.processed(actual.size());
         } catch (Exception ex) {
             log.warn("Sync set {}: target enumeration failed during verify ({})", syncSetId, ex.toString());
             targetComplete = false;
@@ -134,8 +157,23 @@ public class SyncContentVerifier {
                 d.heldAttributeNames(), lookup.candidates(d.unresolvedReferences(), targetExists))));
 
         Set<String> excluded = SyncExcludedAttributes.effectiveFor(ctx.set);
-        return compare(expected, actual, excluded, sourceComplete, targetComplete,
-                targetSchemas.forDirectory(ctx.target), SyncReferenceAttributes.forSet(ctx.set));
+        tracking.phase(SyncVerifyPhase.COMPARING);
+        tracking.total(expected.size());
+        SyncVerifyResult result = compare(expected, actual, excluded, sourceComplete, targetComplete,
+                targetSchemas.forDirectory(ctx.target), SyncReferenceAttributes.forSet(ctx.set), (n, dn) -> {
+                    tracking.processed(n);
+                    tracking.current(dn);
+                });
+        tracking.processed(expected.size());
+        return result;
+    }
+
+    /** Told as the comparison reaches each expected entry: how many came before it, and its DN. */
+    @FunctionalInterface
+    interface CompareProgress {
+        void at(int compared, String dn);
+
+        CompareProgress NONE = (n, dn) -> { };
     }
 
     /**
@@ -154,10 +192,20 @@ public class SyncContentVerifier {
     static SyncVerifyResult compare(Map<String, Expected> expected, Map<String, Entry> actual,
                                     Set<String> excluded, boolean sourceComplete, boolean targetComplete,
                                     com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs) {
+        return compare(expected, actual, excluded, sourceComplete, targetComplete, schema, dnAttrs,
+                CompareProgress.NONE);
+    }
+
+    static SyncVerifyResult compare(Map<String, Expected> expected, Map<String, Entry> actual,
+                                    Set<String> excluded, boolean sourceComplete, boolean targetComplete,
+                                    com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs,
+                                    CompareProgress progress) {
         int inSync = 0;
+        int compared = 0;
         List<String> missing = new ArrayList<>();
         List<String> mismatches = new ArrayList<>();
         for (Map.Entry<String, Expected> en : expected.entrySet()) {
+            progress.at(compared++, en.getValue().displayDn());
             Entry target = actual.get(en.getKey());
             if (target == null) {
                 missing.add(en.getValue().displayDn());

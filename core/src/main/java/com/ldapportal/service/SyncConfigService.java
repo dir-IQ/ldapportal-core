@@ -79,6 +79,7 @@ public class SyncConfigService {
     private final RecomputeEngine engine;
     private final AuditService auditService;
     private final com.ldapportal.repository.SyncReconcileRunRepository reconcileRunRepo;
+    private final com.ldapportal.ldap.sync.SyncVerifyProgressTracker verifyProgress;
 
     // ── Links ────────────────────────────────────────────────────────────────
 
@@ -496,6 +497,27 @@ public class SyncConfigService {
             UUID syncSetId, int limit, com.ldapportal.ldap.sync.SyncReconcileHistory.RunKind kind) {
         requireSet(syncSetId);
         return reconcileHistory.recent(syncSetId, limit, kind);
+    }
+
+    /**
+     * What the set's inventory actions are doing: its latest reconcile run and
+     * its latest content verification, each with live progress while it runs.
+     */
+    public com.ldapportal.dto.sync.SyncSetActivity activity(UUID syncSetId) {
+        requireSet(syncSetId);
+        var reconcile = reconcileHistory.recent(syncSetId, 1,
+                com.ldapportal.ldap.sync.SyncReconcileHistory.RunKind.RECONCILE).stream().findFirst().orElse(null);
+        return new com.ldapportal.dto.sync.SyncSetActivity(reconcile, verifyProgress.status(syncSetId),
+                java.time.OffsetDateTime.now());
+    }
+
+    /**
+     * The in-scope source entries the set doesn't manage, and why, as its
+     * latest complete reconcile found them.
+     */
+    public com.ldapportal.dto.sync.SyncNotInSetPage notInSet(UUID syncSetId, String search, int page, int size) {
+        requireSet(syncSetId);
+        return reconcileHistory.notInSet(syncSetId, search, page, size);
     }
 
     /** Check a run's entries can be downloaded (see {@link #writeRunEntriesCsv}), before streaming them. */

@@ -54,6 +54,19 @@
         </ul>
       </div>
 
+      <div v-if="detail.notInSet?.length">
+        <h4 class="text-xs font-semibold uppercase text-gray-500 mb-1">Not in set</h4>
+        <p class="text-xs text-gray-500 mb-1">In-scope source entries this set doesn't manage, so no target entry.</p>
+        <details v-for="g in detail.notInSet" :key="g.reason" class="mb-1">
+          <summary class="cursor-pointer text-gray-700">
+            {{ g.label }} — {{ g.samples.length < g.count ? `first ${g.samples.length} of ${g.count}` : g.count }}
+          </summary>
+          <ul class="font-mono text-xs text-gray-600 list-disc pl-5 mt-1">
+            <li v-for="dn in g.samples" :key="dn">{{ dn }}</li>
+          </ul>
+        </details>
+      </div>
+
       <div v-if="detail.run.allDnsRecorded" class="flex flex-wrap items-center gap-2">
         <button type="button" class="btn-neutral btn-compact" :disabled="downloading" @click="downloadEntries">
           {{ downloading ? 'Downloading…' : 'Download all entries (CSV)' }}
@@ -153,6 +166,7 @@ const counts = computed(() => {
       ]
     : [
         { label: 'Source entries', n: r.sourceCount, tone: '' },
+        { label: 'Not in set', n: r.notInSet ?? 0, tone: '' },
         { label: 'Processed', n: r.processed, tone: '' },
         { label: 'Managed before', n: r.managedBefore, tone: '' },
         { label: 'Managed after', n: r.managedAfter ?? 0, tone: '' },

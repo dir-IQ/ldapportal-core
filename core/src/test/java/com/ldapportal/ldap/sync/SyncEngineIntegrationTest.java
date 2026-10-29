@@ -88,6 +88,7 @@ class SyncEngineIntegrationTest {
     @Autowired private RecomputeEnqueuer enqueuer;
     @Autowired private SyncReconcileRunRepository runRepo;
     @Autowired private SyncReconcileHistory history;
+    @Autowired private SyncVerifyProgressTracker verifyProgress;
     @Autowired private com.ldapportal.service.SyncConfigService syncConfigService;
 
     private InMemoryDirectoryServer source;
@@ -450,6 +451,23 @@ class SyncEngineIntegrationTest {
         SyncVerifyResult r = verifier.verify(peopleSet.getId());
         assertThat(r.contentMismatches()).isEqualTo(1);
         assertThat(r.sampleMismatches()).anyMatch(d -> d.contains("uid=alice"));
+    }
+
+    @Test
+    void verify_recordsItsProgress_andHowItEnded() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        verifier.verify(peopleSet.getId());
+
+        var progress = verifyProgress.status(peopleSet.getId());
+        assertThat(progress.status()).isEqualTo(com.ldapportal.entity.enums.SyncPreviewRunStatus.COMPLETE);
+        assertThat(progress.phase()).isEqualTo(com.ldapportal.entity.enums.SyncVerifyPhase.DONE);
+        assertThat(progress.total()).isEqualTo(2); // alice and bob were compared
+        assertThat(progress.processed()).isEqualTo(2);
+        assertThat(progress.finishedAt()).isNotNull();
+        assertThat(progress.currentDn()).isNull();
     }
 
     // ── Reconcile: not-seen sweep removes an orphan left by a missed delete ──────
@@ -912,7 +930,8 @@ class SyncEngineIntegrationTest {
         assertThat(run.getModified()).isEqualTo(1);     // bob
         assertThat(run.getDeleted()).isEqualTo(1);      // alice
         assertThat(run.getNoChange()).isEqualTo(1);     // dave, re-adopted without a write
-        assertThat(run.getUnchanged()).isEqualTo(1);    // the OU: out of scope, never tracked
+        assertThat(run.getUnchanged()).isZero();
+        assertThat(run.getNotInSet()).isEqualTo(1);     // the OU: out of scope, never tracked
         assertThat(run.getFailed() + run.getFaulted() + run.getSkipped() + run.getMoved()
                 + run.getHeldForReview() + run.getForgotten()).isZero();
     }
@@ -974,6 +993,37 @@ class SyncEngineIntegrationTest {
                 .satisfies(r -> assertThat(r.reason()).isEqualTo("apply failed: 32 (no such object)"));
         assertThat(detail.samples()).isEmpty();
         assertThat(detail.run().allDnsRecorded()).isFalse();
+    }
+
+    @Test
+    void reconcile_countsTheSourceEntriesTheSetDoesntManage_andWhy() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "contractor", "bob@src"); // the filter wants employeeType=staff
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+
+        SyncReconcileRun run = runRepo.findAll().get(0);
+        // The gap between the run's source entries and the managed ones is exactly them.
+        assertThat(run.getNotInSet()).isEqualTo(run.getSourceCount() - run.getManagedAfter().intValue());
+        assertThat(run.getManagedAfter()).isEqualTo(1L);
+        SyncReconcileRunDetail detail = history.detail(peopleSet.getId(), run.getId());
+        assertThat(detail.notInSet()).singleElement().satisfies(g -> {
+            assertThat(g.reason()).isEqualTo("FILTER");
+            assertThat(g.count()).isEqualTo(run.getNotInSet());
+            assertThat(g.samples()).anySatisfy(dn -> assertThat(dn).containsIgnoringCase("uid=bob"));
+        });
+        // At Summary logging the inventory lists the samples.
+        var page = history.notInSet(peopleSet.getId(), "bob", 0, 50);
+        assertThat(page.allDnsRecorded()).isFalse();
+        assertThat(page.total()).isEqualTo(run.getNotInSet());
+        assertThat(page.entries()).singleElement().satisfies(e -> {
+            assertThat(e.sourceDn()).containsIgnoringCase("uid=bob");
+            assertThat(e.label()).isEqualTo("Doesn't match the applicability filter");
+        });
+        // Not counted as unchanged, and the run finished with no phase or current entry left.
+        assertThat(run.getUnchanged()).isZero();
+        assertThat(run.getPhase()).isNull();
+        assertThat(run.getCurrentDn()).isNull();
     }
 
     /** Keep every changed or flagged entry's DN in the people set's runs. */

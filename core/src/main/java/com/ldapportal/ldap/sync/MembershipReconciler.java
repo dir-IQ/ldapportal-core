@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.ldap.sync;
 
+import com.ldapportal.dto.sync.SyncPreviewAction;
 import com.ldapportal.dto.sync.SyncReconcilePreview;
 import com.ldapportal.dto.sync.SyncRunSettings;
 import com.ldapportal.entity.DirectoryConnection;
@@ -8,6 +9,8 @@ import com.ldapportal.entity.Membership;
 import com.ldapportal.entity.SyncLink;
 import com.ldapportal.entity.SyncSet;
 import com.ldapportal.entity.enums.MembershipState;
+import com.ldapportal.entity.enums.SyncNotInSetReason;
+import com.ldapportal.entity.enums.SyncReconcilePhase;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.exception.ConflictException;
 import com.ldapportal.ldap.LdapConnectionFactory;
@@ -155,6 +158,7 @@ public class MembershipReconciler {
         lease.beat(); // the source scan can be long
         history.planned(run, plan.entries.size(), plan.managedCount, plan.complete,
                 guard.tripped(), guard.reason(), settingsOf(ctx.set));
+        history.phase(run, SyncReconcilePhase.APPLYING);
 
         long epoch = epochSequence.incrementAndGet();
         int faults = 0;
@@ -164,8 +168,16 @@ public class MembershipReconciler {
             // the sweep for everyone else. It is still stamped as seen — it was
             // enumerated, so it must not become a not-seen delete candidate.
             lease.beat();
+            history.current(run, p.entry.getDN());
             try {
-                history.record(run, engine.process(syncSetId, p.entry.getDN(), guard.tripped()));
+                RecomputeOutcome outcome = engine.process(syncSetId, p.entry.getDN(), guard.tripped());
+                if (p.notInSet != null && outcome != null && outcome.action() == SyncPreviewAction.UNCHANGED) {
+                    // In scope, never tracked and still not a member: the reason
+                    // the run's source entries outnumber the managed ones.
+                    history.notInSet(run, p.entry.getDN(), p.notInSet);
+                } else {
+                    history.record(run, outcome);
+                }
             } catch (Exception ex) {
                 faults++;
                 history.fault(run, ex, p.entry.getDN());
@@ -176,8 +188,10 @@ public class MembershipReconciler {
             }
         }
         if (plan.complete) {
+            history.phase(run, SyncReconcilePhase.SWEEPING);
             for (Membership row : membershipRepo.findNotSeen(syncSetId, epoch)) {
                 lease.beat();
+                history.current(run, row.getTargetDn() != null ? row.getTargetDn() : row.getSourceDn());
                 try {
                     history.record(run, engine.process(syncSetId, row.getIdentity(), guard.tripped()));
                 } catch (Exception ex) {
@@ -238,7 +252,7 @@ public class MembershipReconciler {
                 var decision = membershipFunction.evaluate(ctx.set, ctx.strategy, e, NO_RESOLVER);
                 String identity = decision.identity();
                 if (identity != null && !identity.isBlank()) {
-                    entries.add(new Planned(e, identity, decision.member()));
+                    entries.add(new Planned(e, identity, decision.member(), decision.outReason()));
                 }
             }
             complete = true;
@@ -256,9 +270,13 @@ public class MembershipReconciler {
         Set<String> seen = new HashSet<>();
         int adds = 0;
         List<Membership> deletes = new ArrayList<>();
-        for (Planned p : entries) {
+        for (int i = 0; i < entries.size(); i++) {
+            Planned p = entries.get(i);
             seen.add(p.identity);
             Membership row = byIdentity.get(p.identity);
+            if (row != null && p.notInSet != null) {
+                entries.set(i, p = p.tracked()); // a tracked entry leaving the set is a delete, not "not in set"
+            }
             if (p.member) {
                 if (row == null || row.getState() != MembershipState.APPLIED) {
                     adds++;
@@ -439,7 +457,16 @@ public class MembershipReconciler {
         }
     }
 
-    private record Planned(Entry entry, String identity, boolean member) {
+    /**
+     * One source entry the plan found.
+     *
+     * @param notInSet why it isn't a member, when it isn't one and the set
+     *                 doesn't track it; {@code null} otherwise
+     */
+    private record Planned(Entry entry, String identity, boolean member, SyncNotInSetReason notInSet) {
+        Planned tracked() {
+            return new Planned(entry, identity, member, null);
+        }
     }
 
     private record Plan(List<Planned> entries, long managedCount, int adds,

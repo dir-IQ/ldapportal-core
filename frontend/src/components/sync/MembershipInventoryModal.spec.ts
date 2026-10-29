@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import MembershipInventoryModal from './MembershipInventoryModal.vue'
+import { useNotificationStore } from '@/stores/notifications'
 
 const set = {
   id: 'set-1', linkId: 'link-1', name: 'people', objectScopeBaseDn: null, objectScope: 'SUB' as const,
@@ -21,11 +22,24 @@ const page = (content: unknown[]) => ({
   data: { content, totalElements: content.length, totalPages: 1, number: 0, size: 50 },
 })
 
+const notInSetPage = vi.hoisted(() => (over: Record<string, unknown> = {}) => ({
+  runId: 'run-1', finishedAt: '2026-10-29T10:00:00Z', allDnsRecorded: false, total: 412,
+  reasons: [
+    { reason: 'FILTER', label: "Doesn't match the applicability filter", count: 400, samples: [] },
+    { reason: 'PLACEMENT', label: "Can't be placed under the target base", count: 12, samples: [] },
+  ],
+  entries: [{ sourceDn: 'ou=people,dc=src', reason: 'FILTER', label: "Doesn't match the applicability filter" }],
+  matched: 37, page: 0, size: 50, sampleLimit: 25,
+  ...over,
+}))
+
 vi.mock('@/api/sync', () => ({
   listMemberships: vi.fn(() => Promise.resolve(page([membership]))),
   reconcileSet: vi.fn(() => Promise.resolve({ data: { enumerated: 3 } })),
   recheckTarget: vi.fn(() => Promise.resolve({ data: { entries: 5, reconcileQueued: true } })),
   listReconcileRuns: vi.fn(() => Promise.resolve({ data: [] })),
+  getSyncSetActivity: vi.fn(() => Promise.resolve({ data: { reconcile: null, verify: null, asOf: new Date().toISOString() } })),
+  listNotInSet: vi.fn(() => Promise.resolve({ data: notInSetPage() })),
   recomputeKey: vi.fn(() => Promise.resolve({ data: undefined })),
   dismissMembership: vi.fn(() => Promise.resolve({ data: undefined })),
   approveDelete: vi.fn(() => Promise.resolve({
@@ -252,5 +266,119 @@ describe('MembershipInventoryModal', () => {
     await flushPromises()
     expect(syncApi.recomputeKey).toHaveBeenCalledWith('set-1', 'uid=ghost,dc=x')
     wrapper.unmount()
+  })
+
+  // ── Not in set ─────────────────────────────────────────────────────────────
+
+  it('counts the source entries the set doesn\'t manage, and lists them with the reason', async () => {
+    const wrapper = open()
+    await flushPromises()
+    const chip = byText('Not in set')!
+    expect(chip.textContent).toContain('412')
+
+    chip.click()
+    await flushPromises()
+
+    expect(syncApi.listNotInSet).toHaveBeenLastCalledWith('set-1', expect.objectContaining({ page: 0, size: 50 }))
+    const txt = document.body.textContent ?? ''
+    expect(txt).toContain('412 in-scope source entries aren\'t managed by this set')
+    expect(txt).toContain("400 doesn't match the applicability filter")
+    expect(txt).toContain('ou=people,dc=src')
+    expect(txt).toContain('Showing up to 25 examples per reason')
+    expect(syncApi.listMemberships).toHaveBeenCalledTimes(1) // only the opening load
+    wrapper.unmount()
+  })
+
+  // ── Live progress ──────────────────────────────────────────────────────────
+
+  function deferred<T>() {
+    let resolve!: (v: T) => void
+    const promise = new Promise<T>((r) => { resolve = r })
+    return { promise, resolve }
+  }
+
+  it('Reconcile now shows the run\'s phase, count and the entry it\'s on while it runs', async () => {
+    vi.useFakeTimers()
+    const now = new Date().toISOString()
+    const pending = deferred<{ data: { enumerated: number } }>()
+    vi.mocked(syncApi.reconcileSet).mockReturnValueOnce(pending.promise as never)
+    vi.mocked(syncApi.getSyncSetActivity).mockResolvedValue({ data: {
+      reconcile: {
+        id: 'r1', trigger: 'MANUAL', status: 'RUNNING', startedAt: now, heartbeatAt: now, phase: 'APPLYING',
+        processed: 37, sourceCount: 120, currentDn: 'cn=staff,ou=groups,dc=src',
+      },
+      verify: null, asOf: now,
+    } } as never)
+    const wrapper = open()
+    await flushPromises()
+
+    byText('Reconcile now')!.click()
+    await vi.advanceTimersByTimeAsync(1500)
+
+    const txt = document.body.textContent ?? ''
+    expect(txt).toContain('Reconcile: applying entries: 37 of 120')
+    expect(txt).toContain('Now checking cn=staff,ou=groups,dc=src')
+    expect(txt).toContain('last update')
+    expect(document.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow')).toBe('37')
+
+    pending.resolve({ data: { enumerated: 120 } })
+    vi.mocked(syncApi.getSyncSetActivity).mockResolvedValue({ data: {
+      reconcile: null, verify: null, asOf: new Date().toISOString(),
+    } } as never)
+    await vi.advanceTimersByTimeAsync(1500)
+    expect(document.body.textContent).not.toContain('applying entries')
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('Verify contents shows which phase the check is in and how far it has got', async () => {
+    vi.useFakeTimers()
+    const now = new Date().toISOString()
+    const pending = deferred<unknown>()
+    vi.mocked(syncApi.verifyContents).mockReturnValueOnce(pending.promise as never)
+    vi.mocked(syncApi.getSyncSetActivity).mockResolvedValue({ data: {
+      reconcile: null,
+      verify: { runId: 'v1', status: 'RUNNING', phase: 'COMPARING', processed: 12, total: 40,
+        currentDn: 'uid=bob,ou=Users,dc=dst', error: null, startedAt: now, heartbeatAt: now, finishedAt: null },
+      asOf: now,
+    } } as never)
+    const wrapper = open()
+    await flushPromises()
+
+    byText('Verify contents')!.click()
+    await vi.advanceTimersByTimeAsync(1500)
+
+    const txt = document.body.textContent ?? ''
+    expect(txt).toContain('Checking contents: comparing entries: 12 of 40')
+    expect(txt).toContain('Now comparing uid=bob,ou=Users,dc=dst')
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('Re-check target waits for its reconcile, then says what it did', async () => {
+    vi.useFakeTimers()
+    const wrapper = open()
+    await flushPromises()
+
+    byText('Re-check target')!.click()
+    await flushPromises()
+    expect(document.body.textContent).toContain('waiting for the next reconcile to start')
+
+    const later = new Date(Date.now() + 30_000).toISOString()
+    vi.mocked(syncApi.getSyncSetActivity).mockResolvedValue({ data: {
+      reconcile: {
+        id: 'r2', trigger: 'SCHEDULED', status: 'COMPLETE', startedAt: later, heartbeatAt: later, phase: null,
+        processed: 5, sourceCount: 5, added: 2, modified: 1, moved: 0, noChange: 2, unchanged: 0, error: null,
+      },
+      verify: null, asOf: later,
+    } } as never)
+    const notif = useNotificationStore()
+    const spy = vi.spyOn(notif, 'success')
+    await vi.advanceTimersByTimeAsync(1500)
+
+    expect(spy).toHaveBeenCalledWith('Re-check finished: 2 added, 1 updated, 2 already matched')
+    expect(document.body.textContent).not.toContain('waiting for the next reconcile')
+    wrapper.unmount()
+    vi.useRealTimers()
   })
 })
