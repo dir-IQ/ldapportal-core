@@ -97,4 +97,24 @@ describe('AuditLogView', () => {
     expect(notif.error).toHaveBeenCalledWith(expect.stringContaining('Narrow the date range'))
     wrapper.unmount()
   })
+
+  it('shows a sync record\'s set and directory names, without the sync set id', async () => {
+    vi.mocked(auditApi.getAuditLog).mockResolvedValue({ data: { content: [{
+      id: 'e1', occurredAt: '2026-10-29T10:00:00Z', action: 'entry.create', targetDn: 'uid=a,dc=dst',
+      detail: { source: 'directory-sync', operation: 'reconcile', syncSetName: 'people',
+        sourceDirectory: 'HR LDAP', targetDirectory: 'Corp AD', syncSetId: 'set-1', runId: 'run-1' },
+    }] } } as never)
+    const wrapper = mount(AuditLogView, { attachTo: document.body })
+    await flushPromises()
+    button('Filter')!.click()
+    await flushPromises()
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('syncSetName: people')
+    expect(text).toContain('sourceDirectory: HR LDAP')
+    expect(text).toContain('targetDirectory: Corp AD')
+    expect(text).toContain('runId: run-1')
+    expect(text).not.toContain('syncSetId')
+    wrapper.unmount()
+  })
 })
