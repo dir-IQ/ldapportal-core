@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory; 2026-10-29).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced; 2026-10-30).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -451,11 +451,12 @@ rename again — never an ADD at the new DN that would orphan the old entry.
 ## 6. States — the operator's primary signal
 
 Each tracked identity has one `sync_membership` row with a **state**
-(`MembershipState`):
+(`MembershipState`). The UI shows `APPLIED` as **Synced**; the API, the
+database and the logs keep the `APPLIED` name.
 
 | State | Colour | Meaning | Operator action |
 |---|---|---|---|
-| **APPLIED** | green | Target reflects the projected desired state. | None. |
+| **Synced** (`APPLIED`) | green | The sync wrote the projected desired state to the target and tracks it. It doesn't re-check the target: **Verify contents** does. | None. |
 | **PENDING** | grey | A transition is queued/in-progress. | None unless persistent (see §7). |
 | **FAILED** | red | Last apply failed; this identity is dead-lettered and retried, isolated. The **reason** column carries the server diagnostic. | Fix the cause, then **Retry**. |
 | **REVIEW** | amber | Quarantine: ambiguous correlation or a held delete. | See *Resolving `REVIEW`* below. |
@@ -483,7 +484,7 @@ unrecognized reason), and the inventory names each row's actions for it.
 | **Held delete** (`PENDING_DELETE`) | **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`, with the set and directory names as for a run's writes). Refused while the set or link is disabled. **Keep entry, stop syncing** — dismiss: the target entry stays but is no longer managed (verification then reports it *orphaned on target*). **Re-check** — recompute: re-applies it if the entry came back into scope; otherwise leaves it held under `deletePolicy=REVIEW`, or deletes it under `DELETE` (a single recompute doesn't apply the guard). |
 | **Ambiguous match / placement conflict** | **Retry match** (recompute, after cleaning up the conflicting target entries) · **Stop tracking** |
 | **FAILED** | **Retry** (recompute) · **Stop tracking** |
-| **APPLIED / PENDING** | **Re-sync** (recompute) · **Stop tracking** |
+| **Synced / Pending** (`APPLIED` / `PENDING`) | **Re-sync** (recompute) · **Stop tracking** |
 
 **Stop tracking** (dismiss) drops only the index row — the target isn't touched.
 An in-scope entry is picked up again from scratch by the next reconcile; an
@@ -504,8 +505,8 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
 - **Link / set tables** show a colour-coded **Health** rollup: red `N failed`
   (worst), amber `N review`, green `Healthy`, grey `No data` — derived from
   membership `stateCounts`.
-- **Membership inventory modal** (per set): state-filter chips (All / Applied /
-  Pending / Review / Failed with counts, and **Not in set**, below), a search box (identity or DN),
+- **Membership inventory modal** (per set): state-filter chips (All / Synced /
+  Pending / Review / Failed with counts, each with a tooltip saying what it means, and **Not in set**, below), a search box (identity or DN),
   per-row Identity / State / Source DN / Target DN / **Reason**, and per-row
   actions named for the row's situation (see §6, *Resolving `REVIEW`*). Header has **Reconcile now**,
   **Re-check target** (see §9, *Target restored from a backup*) and **Verify contents**;
