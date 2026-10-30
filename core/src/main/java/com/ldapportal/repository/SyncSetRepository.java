@@ -48,6 +48,20 @@ public interface SyncSetRepository extends JpaRepository<SyncSet, UUID> {
             + "where s.linkId = :linkId and s.enabled = true")
     int requestReconcile(@Param("linkId") UUID linkId);
 
+    /**
+     * Note that a source change is about to be enqueued for the set (see
+     * {@code SyncSet.sourceChangeSeq}). A targeted update, so it never collides
+     * with the config/engine optimistic-lock version.
+     */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.sourceChangeSeq = s.sourceChangeSeq + 1 where s.id = :id")
+    int bumpSourceChange(@Param("id") UUID id);
+
+    /** The set's {@code sourceChangeSeq} as stored now, or {@code null} when the set is gone. */
+    @Query("select s.sourceChangeSeq from SyncSet s where s.id = :id")
+    Long findSourceChangeSeq(@Param("id") UUID id);
+
     /** Ask for a reconcile of one set (see {@link #requestReconcile}); runs once the set is enabled. */
     @Transactional
     @Modifying

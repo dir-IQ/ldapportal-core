@@ -11,6 +11,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,7 +53,50 @@ public class MembershipReferenceResolvers {
         Set<UUID> ownSets = syncSetRepo.findAllByLinkId(link.getId()).stream()
                 .map(SyncSet::getId)
                 .collect(Collectors.toSet());
-        return srcDn -> resolve(ownSets, srcDn);
+        return new ReferenceResolver() {
+            @Override
+            public Optional<String> resolveTargetDn(String srcDn) {
+                return resolve(ownSets, srcDn);
+            }
+
+            @Override
+            public ReferenceResolver prefetched(Collection<String> sourceDns) {
+                Map<String, List<Membership>> bySource = rowsBySource(sourceDns);
+                return srcDn -> {
+                    List<Membership> rows = bySource.get(SyncDnUtil.normalize(srcDn));
+                    return rows != null ? resolve(ownSets, srcDn, rows) : resolve(ownSets, srcDn);
+                };
+            }
+        };
+    }
+
+    /** Source DNs per query in {@link #rowsBySourceDn}. */
+    static final int ROW_BATCH = 500;
+
+    /** The index rows of each of {@code sourceDns}, normalized; an empty list for one with none. */
+    private Map<String, List<Membership>> rowsBySource(Collection<String> sourceDns) {
+        return rowsBySourceDn(membershipRepo, sourceDns);
+    }
+
+    /**
+     * The index rows (of every set) of each of {@code sourceDns}, keyed by the
+     * normalized DN, with an empty list for one that has none: one query per
+     * {@link #ROW_BATCH} DNs rather than one each.
+     */
+    static Map<String, List<Membership>> rowsBySourceDn(MembershipRepository repo, Collection<String> sourceDns) {
+        List<String> normalized = sourceDns.stream().map(SyncDnUtil::normalize).distinct().toList();
+        Map<String, List<Membership>> bySource = new HashMap<>();
+        normalized.forEach(dn -> bySource.put(dn, new ArrayList<>()));
+        for (int from = 0; from < normalized.size(); from += ROW_BATCH) {
+            for (Membership m : repo.findAllBySourceDnIn(
+                    normalized.subList(from, Math.min(normalized.size(), from + ROW_BATCH)))) {
+                List<Membership> rows = bySource.get(m.getSourceDn());
+                if (rows != null) {
+                    rows.add(m);
+                }
+            }
+        }
+        return bySource;
     }
 
     /**
@@ -62,10 +108,10 @@ public class MembershipReferenceResolvers {
         Set<UUID> ownSets = syncSetRepo.findAllByLinkId(link.getId()).stream()
                 .map(SyncSet::getId)
                 .collect(Collectors.toSet());
-        Map<String, List<Membership>> bySource = new java.util.HashMap<>();
+        Map<String, List<Membership>> bySource = new HashMap<>();
         for (Membership m : membershipRepo.findAll()) {
             if (m.getSourceDn() != null) {
-                bySource.computeIfAbsent(SyncDnUtil.normalize(m.getSourceDn()), k -> new java.util.ArrayList<>())
+                bySource.computeIfAbsent(SyncDnUtil.normalize(m.getSourceDn()), k -> new ArrayList<>())
                         .add(m);
             }
         }

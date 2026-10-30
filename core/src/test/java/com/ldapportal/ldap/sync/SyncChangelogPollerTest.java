@@ -119,8 +119,12 @@ class SyncChangelogPollerTest {
     void poll_emitsRecomputePerChange_advancesCursor_andConverges() throws Exception {
         addPerson("alice");
         addPerson("bob");
+        long seqBefore = setRepo.findSourceChangeSeq(peopleSet.getId());
 
         poller.pollOne(link.getId());
+
+        // One page of changes notes the set's source change once, not per record.
+        assertThat(setRepo.findSourceChangeSeq(peopleSet.getId())).isEqualTo(seqBefore + 1);
 
         // Recompute requests enqueued for the changed DNs, cursor advanced.
         assertThat(requestRepo.findAllBySyncSetId(peopleSet.getId())).hasSizeGreaterThanOrEqualTo(2);

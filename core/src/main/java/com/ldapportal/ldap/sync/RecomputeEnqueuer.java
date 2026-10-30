@@ -3,6 +3,7 @@ package com.ldapportal.ldap.sync;
 
 import com.ldapportal.entity.RecomputeRequest;
 import com.ldapportal.repository.RecomputeRequestRepository;
+import com.ldapportal.repository.SyncSetRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
@@ -38,14 +39,51 @@ import java.util.UUID;
 public class RecomputeEnqueuer {
 
     private final RecomputeRequestRepository repo;
+    private final SyncSetRepository syncSetRepo;
     private final TransactionTemplate insertTx;
+    private final TransactionTemplate bumpTx;
 
-    public RecomputeEnqueuer(RecomputeRequestRepository repo, PlatformTransactionManager txManager) {
+    public RecomputeEnqueuer(RecomputeRequestRepository repo, SyncSetRepository syncSetRepo,
+                             PlatformTransactionManager txManager) {
         this.repo = repo;
+        this.syncSetRepo = syncSetRepo;
         this.insertTx = new TransactionTemplate(txManager);
         // Independent of any caller transaction: a duplicate-key rollback here must
         // never mark an enclosing transaction rollback-only.
         this.insertTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        // Likewise for the source-change counter: committed before the request
+        // it guards can be seen, and a failure never fails the caller's write.
+        this.bumpTx = new TransactionTemplate(txManager);
+        this.bumpTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    }
+
+    /**
+     * Note that source changes are about to be enqueued for each of
+     * {@code syncSetIds}: bump each set's source-change counter, once, so a
+     * reconcile that's running stops trusting the entries its scan read (see
+     * {@code RecomputeEngine.reconcileBatch}). Call it before enqueuing the
+     * changes, so the counter has moved before the worker can see them. One
+     * call covers any number of changes to the same set: a reconcile that read
+     * the counter after the bump scanned after those changes were made.
+     *
+     * <p>Each bump commits in a transaction of its own, whatever the caller's,
+     * and a failure is logged, not thrown: a running reconcile then may write an
+     * entry as its scan saw it, and the request enqueued next corrects it.
+     */
+    public void noteSourceChanges(java.util.Collection<UUID> syncSetIds) {
+        for (UUID id : syncSetIds) {
+            try {
+                bumpTx.executeWithoutResult(status -> syncSetRepo.bumpSourceChange(id));
+            } catch (Exception ex) {
+                log.warn("Sync set {}: could not note a source change: {}", id, ex.toString());
+            }
+        }
+    }
+
+    /** Enqueue one change to the source entry at {@code key}, {@link #noteSourceChanges noting} it first. */
+    public void enqueueSourceChange(UUID syncSetId, String key, Long srcCursor) {
+        noteSourceChanges(java.util.List.of(syncSetId));
+        enqueue(syncSetId, key, srcCursor);
     }
 
     public void enqueue(UUID syncSetId, String key, Long srcCursor) {

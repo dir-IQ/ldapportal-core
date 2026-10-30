@@ -114,6 +114,32 @@ class MembershipReferenceResolversTest {
         assertThat(resolvers.forLink(link).resolveTargetDn(SRC_DN)).isEmpty();
     }
 
+    @Test
+    void prefetched_resolvesManyReferentsWithOneQuery_andTheSameAnswers() {
+        String bob = "uid=bob,ou=people,c=us";
+        String carol = "uid=carol,ou=people,c=us";
+        Membership bobRow = row(ownSetId, "uid=bob,ou=users,c=us");
+        bobRow.setSourceDn(SyncDnUtil.normalize(bob));
+        when(membershipRepo.findAllBySourceDnIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(
+                row(otherSetId, "uid=alice,ou=elsewhere,c=us"),
+                row(ownSetId, "uid=alice,ou=users,c=us"),
+                bobRow));
+
+        ReferenceResolver bulk = resolvers.forLink(link).prefetched(List.of(SRC_DN, "UID=Bob, OU=people, C=us", carol));
+
+        assertThat(bulk.resolveTargetDn(SRC_DN)).contains("uid=alice,ou=users,c=us");
+        assertThat(bulk.resolveTargetDn(bob)).contains("uid=bob,ou=users,c=us");
+        assertThat(bulk.resolveTargetDn(carol)).isEmpty();
+        org.mockito.Mockito.verify(membershipRepo, org.mockito.Mockito.times(1))
+                .findAllBySourceDnIn(org.mockito.ArgumentMatchers.anyCollection());
+        org.mockito.Mockito.verify(membershipRepo, org.mockito.Mockito.never())
+                .findAllBySourceDn(org.mockito.ArgumentMatchers.anyString());
+
+        // A DN it wasn't handed still resolves, with a lookup of its own.
+        when(membershipRepo.findAllBySourceDn(SyncDnUtil.normalize("uid=dave,ou=people,c=us"))).thenReturn(List.of());
+        assertThat(bulk.resolveTargetDn("uid=dave,ou=people,c=us")).isEmpty();
+    }
+
     private static Membership row(UUID setId, String targetDn) {
         Membership m = new Membership();
         m.setSyncSetId(setId);
