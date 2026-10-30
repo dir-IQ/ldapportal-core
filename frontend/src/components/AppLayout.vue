@@ -248,7 +248,8 @@
       </div>
 
       <!-- Build identifier: the frontend and backend image tags (e.g.
-           "FE 1.4.2 · BE 1.4.2"), each falling back to its git short-SHA
+           "FE 1.4.2 · BE 1.4.2"), then where the app is deployed when the
+           operator set DEPLOYMENT_LOCATION. Each tag falls back to its git short-SHA
            when the image was built without a tag. Amber when the two
            builds' SHAs differ. Lets a quick glance answer "is this the
            version I think it is?". Hidden when the sidebar is collapsed to
@@ -256,7 +257,7 @@
       <div v-if="!collapsed" class="px-3 py-1.5 border-t border-white/10 text-[10px] font-mono leading-none truncate"
            :class="skewDetected ? 'text-amber-300/80' : 'text-white/70'"
            :title="buildStampTitle">
-        FE {{ frontendStamp }} · BE {{ backendStamp }}
+        FE {{ frontendStamp }} · BE {{ backendStamp }}<template v-if="deploymentLocation"> · {{ deploymentLocation }}</template>
       </div>
     </aside>
 
@@ -356,7 +357,8 @@ const unsavedChanges = useUnsavedChangesStore()
 // Build identifier + skew detector. clientSha comes from
 // vite.config.js's `define` block; serverSha / serverImageVersion are
 // fetched once on first call. See composables/useVersionCheck.ts.
-const { clientSha, clientImageVersion, serverSha, serverImageVersion, skewDetected } = useVersionCheck()
+const { clientSha, clientImageVersion, serverSha, serverImageVersion, deploymentLocation, skewDetected } =
+  useVersionCheck()
 
 // The sidebar build stamp shows each side's image tag when its image was
 // built with one, falling back to that build's git SHA.
@@ -366,7 +368,8 @@ const buildStampTitle = computed(() => {
   const frontend = clientImageVersion ? `${clientImageVersion} (${clientSha})` : clientSha
   const sha = serverSha.value || '…'
   const backend = serverImageVersion.value ? `${serverImageVersion.value} (${sha})` : sha
-  return `Frontend image ${frontend} · backend image ${backend}`
+  const where = deploymentLocation.value ? ` · deployed in ${deploymentLocation.value}` : ''
+  return `Frontend image ${frontend} · backend image ${backend}${where}`
 })
 
 function reloadHard() {

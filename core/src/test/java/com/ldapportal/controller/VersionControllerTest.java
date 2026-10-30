@@ -76,6 +76,18 @@ class VersionControllerTest {
     }
 
     @Test
+    void version_includesTheDeploymentLocationWhenSet_andOmitsItWhenBlank() {
+        VersionController controller = new VersionController();
+        assertThat(controller.version()).doesNotContainKey("deploymentLocation");
+
+        ReflectionTestUtils.setField(controller, "deploymentLocation", "   ");
+        assertThat(controller.version()).doesNotContainKey("deploymentLocation");
+
+        ReflectionTestUtils.setField(controller, "deploymentLocation", " us-east-1 ");
+        assertThat(controller.version().get("deploymentLocation")).isEqualTo("us-east-1");
+    }
+
+    @Test
     void version_fallsBackToUnknownWhenShaPropertyMissing() {
         // Older builds may have BuildProperties without git.sha (e.g. someone
         // ran the build-info goal but not the git-commit-id plugin). Verify
