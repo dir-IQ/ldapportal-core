@@ -64,6 +64,7 @@ class SyncConfigServiceTest {
     @Mock private SyncSetRepository setRepo;
     @Mock private MembershipRepository membershipRepo;
     @Mock private DirectoryConnectionRepository directoryRepo;
+    @Mock private com.ldapportal.ldap.sync.SyncVerifyProgressTracker verifyProgress;
     @Mock private MembershipReconciler reconciler;
     @Mock private SyncContentVerifier verifier;
     @Mock private RecomputeEnqueuer enqueuer;
@@ -79,7 +80,7 @@ class SyncConfigServiceTest {
     void setUp() {
         service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo,
                 reconciler, verifier, enqueuer, previewService, reconcileHistory, engine, auditService,
-                reconcileRunRepo);
+                reconcileRunRepo, verifyProgress);
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
@@ -427,9 +428,13 @@ class SyncConfigServiceTest {
         set.setName("people");
         set.setLinkId(linkId);
         set.setTargetBaseDn("ou=Users,dc=dst");
+        UUID sourceDir = UUID.randomUUID();
         SyncLink link = new SyncLink();
+        link.setSourceDirId(sourceDir);
         link.setTargetDirId(targetDir);
         AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
+        stubDirectoryName(sourceDir, "HR LDAP");
+        stubDirectoryName(targetDir, "Corp AD");
         when(setRepo.findById(setId)).thenReturn(Optional.of(set));
         when(setRepo.findAll()).thenReturn(List.of(set));
         when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
@@ -443,8 +448,10 @@ class SyncConfigServiceTest {
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(setRepo, auditService);
         order.verify(setRepo).delete(set);
         java.util.Map<String, Object> detail = new java.util.LinkedHashMap<>();
-        detail.put("syncSetId", setId.toString());
         detail.put("syncSetName", "people");
+        detail.put("sourceDirectory", "HR LDAP");
+        detail.put("targetDirectory", "Corp AD");
+        detail.put("syncSetId", setId.toString());
         detail.put("linkId", linkId.toString());
         detail.put("managedEntries", 876L);
         detail.put("pendingReview", 3L);
@@ -469,6 +476,8 @@ class SyncConfigServiceTest {
         AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
         when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
         when(setRepo.findAllByLinkId(linkId)).thenReturn(List.of());
+        stubDirectoryName(sourceDir, "HR LDAP");
+        stubDirectoryName(targetDir, "Corp AD");
 
         service.deleteLink(linkId, admin);
 
@@ -477,6 +486,8 @@ class SyncConfigServiceTest {
         java.util.Map<String, Object> detail = new java.util.LinkedHashMap<>();
         detail.put("linkId", linkId.toString());
         detail.put("linkName", "hr->corp");
+        detail.put("sourceDirectory", "HR LDAP");
+        detail.put("targetDirectory", "Corp AD");
         detail.put("sourceDirId", sourceDir.toString());
         detail.put("targetDirId", targetDir.toString());
         detail.put("captureMode", "CHANGELOG");
@@ -534,7 +545,18 @@ class SyncConfigServiceTest {
         UUID setId = UUID.randomUUID();
         UUID targetDir = UUID.randomUUID();
         AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
-        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        UUID linkId = UUID.randomUUID();
+        UUID sourceDir = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setName("people");
+        set.setLinkId(linkId);
+        SyncLink link = new SyncLink();
+        link.setSourceDirId(sourceDir);
+        link.setTargetDirId(targetDir);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+        stubDirectoryName(sourceDir, "HR LDAP");
+        stubDirectoryName(targetDir, "Corp AD");
         when(engine.approveDelete(setId, "id-1")).thenReturn(new SyncDeleteApproval(
                 SyncPreviewAction.DELETE, targetDir, "uid=a,dc=dst", null));
 
@@ -543,6 +565,7 @@ class SyncConfigServiceTest {
         assertThat(result.outcome()).isEqualTo(SyncPreviewAction.DELETE);
         verify(auditService).record(eq(admin), eq(targetDir), eq(AuditAction.ENTRY_DELETE), eq("uid=a,dc=dst"),
                 eq(java.util.Map.of("source", "directory-sync", "operation", "approved-review-delete",
+                        "syncSetName", "people", "sourceDirectory", "HR LDAP", "targetDirectory", "Corp AD",
                         "syncSetId", setId.toString(), "identity", "id-1")));
     }
 
@@ -669,5 +692,11 @@ class SyncConfigServiceTest {
         l.setChangelogLastChangeNumber(42L);
         l.setChangelogSourceLastChangeNumber(50L);
         return l;
+    }
+
+    private void stubDirectoryName(UUID id, String name) {
+        com.ldapportal.entity.DirectoryConnection dc = new com.ldapportal.entity.DirectoryConnection();
+        dc.setDisplayName(name);
+        when(directoryRepo.findById(id)).thenReturn(Optional.of(dc));
     }
 }

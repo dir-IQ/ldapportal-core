@@ -9,7 +9,10 @@ import com.ldapportal.dto.sync.SyncRunFailureReason;
 import com.ldapportal.dto.sync.SyncRunSettings;
 import com.ldapportal.entity.SyncReconcileRun;
 import com.ldapportal.entity.SyncSet;
+import com.ldapportal.dto.sync.SyncNotInSetGroup;
 import com.ldapportal.entity.enums.SyncLoggingLevel;
+import com.ldapportal.entity.enums.SyncNotInSetReason;
+import com.ldapportal.entity.enums.SyncReconcilePhase;
 import com.ldapportal.entity.enums.SyncReconcileRunStatus;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.repository.SyncReconcileRunRepository;
@@ -28,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
@@ -63,8 +67,114 @@ class SyncReconcileHistoryTest {
 
     @BeforeEach
     void setUp() {
+        // Progress is flushed by hand (flushProgress), not by the background interval.
         history = new SyncReconcileHistory(runRepo, entryStore, auditor,
-                new ObjectMapper().findAndRegisterModules(), 900_000, KEEP, KEEP_INCREMENTAL);
+                new ObjectMapper().findAndRegisterModules(), 900_000, KEEP, KEEP_INCREMENTAL, 3_600_000);
+    }
+
+    // ── not in set ───────────────────────────────────────────────────────────
+
+    @Test
+    void notInSet_countsPerReason_withSamples_andAtDetailedKeepsEveryEntry() {
+        SyncReconcileHistory.Run run = history.start(set(true), TARGET_DIR, SyncReconcileTrigger.MANUAL, "ann");
+        int many = SyncReconcileHistory.SAMPLE_LIMIT + 5;
+        for (int i = 0; i < many; i++) {
+            history.notInSet(run, "uid=c" + i + ",ou=people,dc=src", SyncNotInSetReason.FILTER);
+        }
+        history.notInSet(run, "cn=odd,dc=src", SyncNotInSetReason.PLACEMENT);
+        history.complete(run, 3);
+
+        SyncReconcileRun r = run.row();
+        assertThat(r.getNotInSet()).isEqualTo(many + 1);
+        assertThat(r.getProcessed()).isEqualTo(many + 1);
+        assertThat(r.getUnchanged()).isZero();
+        List<SyncNotInSetGroup> groups = history.notInSetGroups(r);
+        assertThat(groups).extracting(SyncNotInSetGroup::reason).containsExactly("FILTER", "PLACEMENT");
+        assertThat(groups.get(0).count()).isEqualTo(many);
+        assertThat(groups.get(0).samples()).hasSize(SyncReconcileHistory.SAMPLE_LIMIT)
+                .first().isEqualTo("uid=c0,ou=people,dc=src");
+        assertThat(groups.get(1).label()).isEqualTo("Can't be placed under the target base");
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<SyncRunEntryStore.Entry>> batch =
+                org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(entryStore, atLeastOnce()).append(eq(run.id()), batch.capture());
+        List<SyncRunEntryStore.Entry> all = batch.getAllValues().stream().flatMap(List::stream).toList();
+        assertThat(all).hasSize(many + 1).allSatisfy(e ->
+                assertThat(e.outcome()).isEqualTo(SyncReconcileHistory.NOT_IN_SET));
+        assertThat(all.get(many)).isEqualTo(new SyncRunEntryStore.Entry(many, SyncReconcileHistory.NOT_IN_SET,
+                "cn=odd,dc=src", "PLACEMENT"));
+    }
+
+    @Test
+    void notInSetPage_whenTheRunKeptEveryDn_pagesTheEntryStore() {
+        SyncReconcileRun r = new SyncReconcileRun();
+        r.setId(UUID.randomUUID());
+        r.setSyncSetId(SET);
+        r.setAllDnsRecorded(true);
+        r.setNotInSet(30);
+        when(runRepo.findCompletedScans(eq(SET), any(), any())).thenReturn(List.of(r));
+        when(entryStore.count(r.getId(), SyncReconcileHistory.NOT_IN_SET, "c1")).thenReturn(11L);
+        when(entryStore.page(r.getId(), SyncReconcileHistory.NOT_IN_SET, "c1", 10, 10)).thenReturn(List.of(
+                new SyncRunEntryStore.Entry(7, SyncReconcileHistory.NOT_IN_SET, "uid=c19,dc=src", "FILTER")));
+
+        var page = history.notInSet(SET, "c1", 1, 10);
+
+        assertThat(page.runId()).isEqualTo(r.getId());
+        assertThat(page.allDnsRecorded()).isTrue();
+        assertThat(page.total()).isEqualTo(30);
+        assertThat(page.matched()).isEqualTo(11);
+        assertThat(page.entries()).singleElement().isEqualTo(new com.ldapportal.dto.sync.SyncNotInSetPage.Entry(
+                "uid=c19,dc=src", "FILTER", "Doesn't match the applicability filter"));
+    }
+
+    @Test
+    void notInSetPage_withNoCompletedReconcile_isEmpty() {
+        when(runRepo.findCompletedScans(eq(SET), any(), any())).thenReturn(List.of());
+
+        var page = history.notInSet(SET, null, 0, 50);
+
+        assertThat(page.runId()).isNull();
+        assertThat(page.entries()).isEmpty();
+    }
+
+    // ── live progress ────────────────────────────────────────────────────────
+
+    @Test
+    void flushProgress_writesTheOutcomeCountsSoFar() {
+        SyncReconcileHistory.Run run = history.start(set(false), TARGET_DIR, SyncReconcileTrigger.MANUAL, "ann");
+        history.phase(run, SyncReconcilePhase.APPLYING);
+        history.record(run, outcome(SyncPreviewAction.UNCHANGED, "uid=a,dc=dst", null));
+        history.record(run, outcome(SyncPreviewAction.UNCHANGED, "uid=b,dc=dst", null));
+        history.record(run, outcome(SyncPreviewAction.ADD, "uid=c,dc=dst", null));
+        history.notInSet(run, "ou=people,dc=src", SyncNotInSetReason.FILTER);
+
+        history.flushProgress();
+
+        verify(runRepo).progress(eq(run.id()), eq(4),
+                eq(new SyncRunCounts(1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1)),
+                eq(SyncReconcilePhase.APPLYING), any(), any());
+    }
+
+    @Test
+    void flushProgress_writesThePhaseAndCurrentEntry_onlyWhenChanged_andNeverAfterTheEnd() {
+        SyncReconcileHistory.Run run = history.start(set(false), TARGET_DIR, SyncReconcileTrigger.MANUAL, "ann");
+        history.phase(run, SyncReconcilePhase.APPLYING);
+        history.current(run, "cn=big,ou=groups,dc=src");
+
+        history.flushProgress();
+        history.flushProgress(); // nothing changed since
+
+        verify(runRepo, times(1)).progress(eq(run.id()), eq(0), eq(SyncRunCounts.NONE),
+                eq(SyncReconcilePhase.APPLYING), eq("cn=big,ou=groups,dc=src"), any());
+
+        history.record(run, outcome(SyncPreviewAction.MODIFY, "cn=big,ou=groups,dc=dst", null));
+        history.complete(run, 1);
+        history.flushProgress();
+
+        verify(runRepo, times(1)).progress(any(), anyInt(), any(), any(), any(), any());
+        assertThat(run.row().getPhase()).isNull();
+        assertThat(run.row().getCurrentDn()).isNull();
     }
 
     @Test
@@ -337,13 +447,29 @@ class SyncReconcileHistoryTest {
 
         history.record(run, add);
 
-        verify(auditor).audit(TARGET_DIR, SET, run.id(), SyncReconcileTrigger.MANUAL, add);
+        verify(auditor).audit(TARGET_DIR, SET, run.id(), SyncReconcileTrigger.MANUAL, SyncAuditLabels.NONE, add);
+    }
+
+    @Test
+    void record_auditsWithTheNamesResolvedWhenTheRunStarted() {
+        SyncAuditLabels labels = new SyncAuditLabels("people", "HR LDAP", "Corp AD");
+        org.mockito.Mockito.when(auditor.labelsFor(any())).thenReturn(labels);
+        SyncReconcileHistory.Run run = history.start(set(false), TARGET_DIR, SyncReconcileTrigger.MANUAL, "alice");
+        RecomputeOutcome add = outcome(SyncPreviewAction.ADD, "uid=a,dc=dst", null);
+        RecomputeOutcome modify = outcome(SyncPreviewAction.MODIFY, "uid=b,dc=dst", null);
+
+        history.record(run, add);
+        history.record(run, modify);
+
+        verify(auditor).labelsFor(any());
+        verify(auditor).audit(TARGET_DIR, SET, run.id(), SyncReconcileTrigger.MANUAL, labels, add);
+        verify(auditor).audit(TARGET_DIR, SET, run.id(), SyncReconcileTrigger.MANUAL, labels, modify);
     }
 
     @Test
     void auditFailures_neverFailTheRun() {
         org.mockito.Mockito.doThrow(new RuntimeException("audit down")).when(auditor)
-                .audit(any(), any(), any(), any(), any());
+                .audit(any(), any(), any(), any(), any(), any());
         SyncReconcileHistory.Run run = history.start(set(false), TARGET_DIR, SyncReconcileTrigger.SCHEDULED, null);
 
         assertThatCode(() -> history.record(run, outcome(SyncPreviewAction.ADD, "uid=a,dc=dst", null)))
@@ -394,7 +520,7 @@ class SyncReconcileHistoryTest {
 
         history.record(run, delete);
 
-        verify(auditor).audit(TARGET_DIR, SET, run.id(), SyncReconcileTrigger.INCREMENTAL, delete);
+        verify(auditor).audit(TARGET_DIR, SET, run.id(), SyncReconcileTrigger.INCREMENTAL, SyncAuditLabels.NONE, delete);
     }
 
     @Test

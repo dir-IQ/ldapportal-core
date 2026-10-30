@@ -506,6 +506,28 @@ class SyncPreviewServiceTest {
     }
 
     @Test
+    void anAppliedGroup_whoseNewMemberIsntSynced_readsUnchanged_withANote() throws Exception {
+        addPerson("alice");
+        addGroup("staff", "uid=alice," + SRC_PEOPLE);
+        reconciler.reconcile(set.getId());
+        reconciler.reconcile(set.getId()); // the group, once alice resolves
+        // A member outside the set's scope, which no link syncs, joins the group;
+        // the sync re-runs the group (as a captured member add does) and has
+        // nothing it can write.
+        String carol = "uid=carol,ou=elsewhere," + SRC_BASE;
+        source.modify("cn=staff," + SRC_PEOPLE, new Modification(ModificationType.ADD, "member", carol));
+        reconciler.reconcile(set.getId());
+
+        SyncPreviewEntry staff = byTargetDn(previewAll()).get(("cn=staff," + DST_USERS).toLowerCase());
+
+        assertThat(staff.action()).isEqualTo(SyncPreviewAction.UNCHANGED);
+        assertThat(staff.reason()).isEqualTo("member: 1 value not written, pointing to " + carol
+                + ", which isn't synced yet. The sync writes it once that entry is synced.");
+        assertThat(target.getEntry("cn=staff," + DST_USERS).getAttributeValues("member"))
+                .containsExactly("uid=alice," + DST_USERS);
+    }
+
+    @Test
     void aReferenceToAnUnsyncedEntry_isKeptOnTheTarget_withANote() throws Exception {
         // Both point their manager at an entry outside the set's scope, which no
         // link syncs, so the reference can't be translated.

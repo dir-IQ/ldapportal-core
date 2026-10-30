@@ -30,7 +30,7 @@ public interface SyncPreviewRunRepository extends JpaRepository<SyncPreviewRun, 
             + "r.requestedBy = :requestedBy, r.startedAt = :now, r.heartbeatAt = :now, r.finishedAt = null, "
             + "r.processed = 0, r.total = 0, r.sourceCount = 0, r.managedCount = 0, r.actionableCount = 0, "
             + "r.guardTripped = false, r.guardReason = null, r.completeScan = false, r.note = null, r.error = null, "
-            + "r.sourceDirId = null, r.targetDirId = null "
+            + "r.sourceDirId = null, r.targetDirId = null, r.currentDn = null "
             + "where r.syncSetId = :setId and (r.status <> com.ldapportal.entity.enums.SyncPreviewRunStatus.RUNNING "
             + "or r.heartbeatAt < :staleBefore)")
     int claim(@Param("setId") UUID setId, @Param("runId") UUID runId, @Param("requestedBy") String requestedBy,
@@ -46,17 +46,19 @@ public interface SyncPreviewRunRepository extends JpaRepository<SyncPreviewRun, 
     /** Record progress. Returns 0 when the run is no longer current (the worker should stop). */
     @Transactional
     @Modifying
-    @Query("update SyncPreviewRun r set r.processed = :processed, r.total = :total, r.heartbeatAt = :now "
+    @Query("update SyncPreviewRun r set r.processed = :processed, r.total = :total, r.currentDn = :currentDn, "
+            + "r.heartbeatAt = :now "
             + "where r.syncSetId = :setId and r.runId = :runId "
             + "and r.status = com.ldapportal.entity.enums.SyncPreviewRunStatus.RUNNING")
     int progress(@Param("setId") UUID setId, @Param("runId") UUID runId, @Param("processed") int processed,
-                 @Param("total") int total, @Param("now") OffsetDateTime now);
+                 @Param("total") int total, @Param("currentDn") String currentDn,
+                 @Param("now") OffsetDateTime now);
 
     /** Mark the run complete with its summary. Returns 0 when it is no longer current. */
     @Transactional
     @Modifying
     @Query("update SyncPreviewRun r set r.status = com.ldapportal.entity.enums.SyncPreviewRunStatus.COMPLETE, "
-            + "r.finishedAt = :now, r.heartbeatAt = :now, r.processed = :total, r.total = :total, "
+            + "r.finishedAt = :now, r.heartbeatAt = :now, r.processed = :total, r.total = :total, r.currentDn = null, "
             + "r.sourceCount = :sourceCount, r.managedCount = :managedCount, r.actionableCount = :actionableCount, "
             + "r.guardTripped = :guardTripped, r.guardReason = :guardReason, r.completeScan = :completeScan, "
             + "r.note = :note, r.sourceDirId = :sourceDirId, r.targetDirId = :targetDirId "
@@ -73,7 +75,7 @@ public interface SyncPreviewRunRepository extends JpaRepository<SyncPreviewRun, 
     @Transactional
     @Modifying
     @Query("update SyncPreviewRun r set r.status = com.ldapportal.entity.enums.SyncPreviewRunStatus.FAILED, "
-            + "r.finishedAt = :now, r.heartbeatAt = :now, r.error = :error "
+            + "r.finishedAt = :now, r.heartbeatAt = :now, r.error = :error, r.currentDn = null "
             + "where r.syncSetId = :setId and r.runId = :runId "
             + "and r.status = com.ldapportal.entity.enums.SyncPreviewRunStatus.RUNNING")
     int fail(@Param("setId") UUID setId, @Param("runId") UUID runId, @Param("now") OffsetDateTime now,

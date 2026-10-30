@@ -34,6 +34,8 @@ import java.util.Set;
  *                     {@link TargetEntryDiffer#keepUnresolved}), so a member
  *                     isn't removed just because its entry isn't synced (IN
  *                     only, never null).
+ * @param outReason    why a present entry with an identity is OUT, or {@code null}
+ *                     (IN, no identity, or an entry gone from the source)
  */
 public record MembershipDecision(boolean member,
                                  String identity,
@@ -41,10 +43,15 @@ public record MembershipDecision(boolean member,
                                  List<Attribute> desiredAttrs,
                                  byte[] contentHash,
                                  Map<String, List<String>> heldReferences,
-                                 Map<String, List<String>> unresolvedReferences) {
+                                 Map<String, List<String>> unresolvedReferences,
+                                 com.ldapportal.entity.enums.SyncNotInSetReason outReason) {
 
     public static MembershipDecision out(String identity) {
-        return new MembershipDecision(false, identity, null, null, null, Map.of(), Map.of());
+        return out(identity, null);
+    }
+
+    public static MembershipDecision out(String identity, com.ldapportal.entity.enums.SyncNotInSetReason reason) {
+        return new MembershipDecision(false, identity, null, null, null, Map.of(), Map.of(), reason);
     }
 
     public static MembershipDecision in(String identity, String targetDn,
@@ -56,7 +63,7 @@ public record MembershipDecision(boolean member,
                                         byte[] contentHash, Map<String, List<String>> heldReferences,
                                         Map<String, List<String>> unresolvedReferences) {
         return new MembershipDecision(true, identity, targetDn, desiredAttrs, contentHash, heldReferences,
-                unresolvedReferences);
+                unresolvedReferences, null);
     }
 
     /**

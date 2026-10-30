@@ -28,4 +28,11 @@ class RecomputeEngineHeldNoteTest {
                 .isEqualTo("member left out: it points to 5 entries that aren't synced yet (uid=a; uid=b; uid=c; …). "
                         + "The sync adds it once they're synced.");
     }
+
+    @Test
+    void anUnchangedEntry_namesTheValuesTheSyncDoesntWrite() {
+        assertThat(RecomputeEngine.notWrittenNote("member", List.of("uid=carol,ou=elsewhere")))
+                .isEqualTo("member: 1 value not written, pointing to uid=carol,ou=elsewhere, which isn't synced "
+                        + "yet. The sync writes it once that entry is synced.");
+    }
 }

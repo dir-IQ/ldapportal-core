@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced; 2026-10-28).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile; 2026-10-30).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -407,9 +407,12 @@ audit record on the **target** directory: `entry.create`, `entry.update`,
 `entry.move` or `entry.delete`, with no actor (the engine writes with its own
 bind account, whoever started the run) and `detail.source = directory-sync`,
 `detail.operation = reconcile | incremental`, `detail.trigger`,
-`detail.syncSetId` and `detail.runId`. An update also lists the attributes it
-changed, `detail.attributes` (names only, never values; empty for an add or a
-delete). The run's id is also the records'
+`detail.syncSetName`, `detail.sourceDirectory` and `detail.targetDirectory`
+(the set's name and the link's directories' display names, as they were when
+the run started), `detail.syncSetId` and `detail.runId`. An update also lists
+the attributes it changed, `detail.attributes` (names only, never values;
+empty for an add or a delete). The Audit Log table shows the names and leaves
+out `syncSetId`; the CSV export's `detail` JSON keeps it. The run's id is also the records'
 **correlation id**, so the audit log can pull up one run's writes together.
 
 **Every sync write in a time period:** on the **Audit Log** page, pick the
@@ -448,11 +451,12 @@ rename again — never an ADD at the new DN that would orphan the old entry.
 ## 6. States — the operator's primary signal
 
 Each tracked identity has one `sync_membership` row with a **state**
-(`MembershipState`):
+(`MembershipState`). The UI shows `APPLIED` as **Synced**; the API, the
+database and the logs keep the `APPLIED` name.
 
 | State | Colour | Meaning | Operator action |
 |---|---|---|---|
-| **APPLIED** | green | Target reflects the projected desired state. | None. |
+| **Synced** (`APPLIED`) | green | The sync wrote the projected desired state to the target and tracks it. It doesn't re-check the target: **Verify contents** does. | None. |
 | **PENDING** | grey | A transition is queued/in-progress. | None unless persistent (see §7). |
 | **FAILED** | red | Last apply failed; this identity is dead-lettered and retried, isolated. The **reason** column carries the server diagnostic. | Fix the cause, then **Retry**. |
 | **REVIEW** | amber | Quarantine: ambiguous correlation or a held delete. | See *Resolving `REVIEW`* below. |
@@ -477,10 +481,10 @@ unrecognized reason), and the inventory names each row's actions for it.
 
 | Row | Actions |
 |---|---|
-| **Held delete** (`PENDING_DELETE`) | **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`). Refused while the set or link is disabled. **Keep entry, stop syncing** — dismiss: the target entry stays but is no longer managed (verification then reports it *orphaned on target*). **Re-check** — recompute: re-applies it if the entry came back into scope; otherwise leaves it held under `deletePolicy=REVIEW`, or deletes it under `DELETE` (a single recompute doesn't apply the guard). |
+| **Held delete** (`PENDING_DELETE`) | **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`, with the set and directory names as for a run's writes). Refused while the set or link is disabled. **Keep entry, stop syncing** — dismiss: the target entry stays but is no longer managed (verification then reports it *orphaned on target*). **Re-check** — recompute: re-applies it if the entry came back into scope; otherwise leaves it held under `deletePolicy=REVIEW`, or deletes it under `DELETE` (a single recompute doesn't apply the guard). |
 | **Ambiguous match / placement conflict** | **Retry match** (recompute, after cleaning up the conflicting target entries) · **Stop tracking** |
 | **FAILED** | **Retry** (recompute) · **Stop tracking** |
-| **APPLIED / PENDING** | **Re-sync** (recompute) · **Stop tracking** |
+| **Synced / Pending** (`APPLIED` / `PENDING`) | **Re-sync** (recompute) · **Stop tracking** |
 
 **Stop tracking** (dismiss) drops only the index row — the target isn't touched.
 An in-scope entry is picked up again from scratch by the next reconcile; an
@@ -501,11 +505,43 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
 - **Link / set tables** show a colour-coded **Health** rollup: red `N failed`
   (worst), amber `N review`, green `Healthy`, grey `No data` — derived from
   membership `stateCounts`.
-- **Membership inventory modal** (per set): state-filter chips (All / Applied /
-  Pending / Review / Failed with counts), a search box (identity or DN),
+- **Membership inventory modal** (per set): state-filter chips (All / Synced /
+  Pending / Review / Failed with counts, each with a tooltip saying what it means, and **Not in set**, below), a search box (identity or DN),
   per-row Identity / State / Source DN / Target DN / **Reason**, and per-row
   actions named for the row's situation (see §6, *Resolving `REVIEW`*). Header has **Reconcile now**,
-  **Re-check target** (see §9, *Target restored from a backup*) and **Verify contents**.
+  **Re-check target** (see §9, *Target restored from a backup*) and **Verify contents**;
+  each button's tooltip says how it differs from the other two (see the
+  *Operator triggers cheat-sheet*, §9).
+- **Progress while they run.** **Reconcile now**, **Re-check target** and
+  **Verify contents** show what's happening, updated about every second
+  (`ldapportal.sync.reconcile.progress-ms`, `ldapportal.sync.verify.progress-ms`):
+  - a reconcile: *scanning the source*, then *applying entries: N of M* with a
+    progress bar, then *checking managed entries no longer in the source*,
+    naming the entry it's on (a large group can take a while on its own: each
+    member is looked up);
+  - a content check: *reading the source* (entries read), *reading the
+    target*, then *comparing entries: N of M*, naming the entry it's comparing.
+    **Reconcile now** shows the check that follows it too;
+  - **Re-check target** only queues a reconcile, so it shows *waiting for the
+    next reconcile to start*, then that run's progress, and says what it did
+    when it finishes (it stops waiting after 5 minutes).
+
+  Each line shows the time elapsed and how long ago the run last reported. A
+  reconcile already running when the inventory opens (a scheduled one) shows
+  the same way. `GET …/sets/{id}/activity` returns the latest reconcile and
+  content check with their progress.
+- **Not in set** — why a reconcile's **Source entries** outnumber the set's
+  **Managed** ones: the in-scope source entries the set doesn't manage, because
+  they don't match the **applicability filter** (the scope base and other OUs,
+  entries of other object classes, ones a clause excludes) or **can't be placed**
+  under the target base. Entries without an identity value aren't counted as
+  source entries at all. The chip counts them as of the latest complete
+  reconcile and lists them with the reason; **Last reconcile** shows the count
+  as *N not in set*, a link to the same list. Each run keeps the count per
+  reason and up to 25 source DNs per reason whatever the logging level; at
+  **Detailed** logging it keeps every one, so the list is complete. A run's
+  **Details** show them by reason too. Entries are re-evaluated by every
+  reconcile; this is a snapshot, not live.
 - **Last reconcile** (top of the inventory modal) — the latest recorded run:
   status, trigger, when it started and how long it took, its outcome counts,
   managed rows before → after, and warnings for an incomplete scan, a tripped
@@ -516,7 +552,11 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   **Details** (or a click on a run) shows everything recorded about that run:
   every count, failures grouped by reason, sample DNs per outcome (Detailed
   logging), and the settings it ran with — plus **Download all entries (CSV)**
-  when the run recorded every DN. Refreshes after **Reconcile now**.
+  when the run recorded every DN. Refreshes after **Reconcile now**. While the
+  latest run is still going (yours or a scheduled one), its counts read *So far
+  (N of M entries)*, Managed shows *→ when the run finishes*, and the box reloads
+  every few seconds until the run ends; the counts are saved about every second
+  (`ldapportal.sync.reconcile.progress-ms`).
 - **Untracked search** — searching a DN/identity that isn't tracked offers
   `Recompute "<term>"` to pull it in on demand.
 - **Verify contents** — a belts-and-suspenders check that re-reads *both*
@@ -558,6 +598,12 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
     target …"*) and the rest are left out (*"member: left out 1 value …"*);
     see *Reference attributes* in §3.2 for which DN it's kept at.
     The sync writes the values once the entries they point to are synced.
+    An entry the set already applied and that hasn't changed since (**Unchanged**,
+    which the preview doesn't re-read on the target) still says which values
+    it doesn't write: *"member: 1 value not written, pointing to …, which isn't
+    synced yet"* — the usual reason a group's new member doesn't appear on the
+    target is that no set has synced (or adopted) that member's entry yet;
+    one that merely exists on the target doesn't count.
     **Verify contents** doesn't count a kept value as drift.
   - **References follow this plan.** A referent this preview places resolves
     to where the plan puts it, and one the plan takes out of the set doesn't
@@ -573,7 +619,12 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
     a fresh one. A run scans
     the source once, dry-runs every entry and stores the result, so paging
     reads a fixed snapshot — every page comes from the same plan, and nothing
-    is re-scanned. The dialog shows progress while it runs. One run per set at
+    is re-scanned. The dialog shows progress while it runs: entries checked
+    of the total (updated about every second, `ldapportal.sync.preview.progress-ms`),
+    the entry being checked now, the time elapsed, and how long ago the run
+    last reported. A large group can take a while on its own (each member is
+    looked up), so the count can pause on it while *Now checking* names it.
+    One run per set at
     a time (across app instances): starting while one is running joins it. A
     result is marked **outdated** once, after the run started, the set is
     edited or reconciled, its link is pointed at different directories, or
@@ -637,9 +688,11 @@ GET    /api/v1/superadmin/sync/sets/{id}/delete-impact         # what a delete d
 GET    /api/v1/superadmin/sync/sets/{id}/memberships?state=&q=&page=&size=   # size capped 1..200
 GET    /api/v1/superadmin/sync/sets/{id}/preview          # dry-run reconcile plan (index-based, no writes; works on a disabled set/link)
 POST   /api/v1/superadmin/sync/sets/{id}/preview/run      # start a per-entry dry run in the background (joins a running one) → 202 + status; manage permission
-GET    /api/v1/superadmin/sync/sets/{id}/preview/run      # latest run: status (RUNNING / COMPLETE / FAILED), progress, summary; manage permission
+GET    /api/v1/superadmin/sync/sets/{id}/preview/run      # latest run: status (RUNNING / COMPLETE / FAILED), progress (processed, total, currentDn, heartbeatAt, asOf), summary; manage permission
 GET    /api/v1/superadmin/sync/sets/{id}/preview/entries?page=&size=&changesOnly=   # page of the completed run (404 if none); size 1..200 (default 50), changesOnly default true; a page past the end returns the last page; manage permission
 GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source↔target compare (no writes)
+GET    /api/v1/superadmin/sync/sets/{id}/activity         # latest reconcile run (phase, processed, currentDn, heartbeatAt) + latest content check (phase, processed, total, currentDn), asOf
+GET    /api/v1/superadmin/sync/sets/{id}/not-in-set?q=&page=&size=   # in-scope source entries the set doesn't manage, as of the latest complete reconcile: total, reasons, entries (sourceDn, reason), allDnsRecorded
 POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}; recorded as a MANUAL run
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs?limit=&kind=   # recent runs, newest first; limit 1..20 (default 10); kind RECONCILE | INCREMENTAL (default both)
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}  # one run in full: summary, settings, failureReasons, samples, allDnsRecorded (404 if not this set's run)
@@ -844,8 +897,8 @@ Two knock-on effects:
   entry over and rewrites it to match the source, with no review.
 
 The delete is audited as `sync.set_delete` on the link's **target** directory
-(target DN = the set's target base), with `detail` = `syncSetId`,
-`syncSetName`, `linkId`, `managedEntries`, `pendingReview`, `reconcileRuns` —
+(target DN = the set's target base), with `detail` = `syncSetName`,
+`sourceDirectory`, `targetDirectory`, `syncSetId`, `linkId`, `managedEntries`, `pendingReview`, `reconcileRuns` —
 the record outlives the set's own history.
 
 ### Deleting a sync link
@@ -859,7 +912,7 @@ rather than resuming. The UI asks first.
 
 The delete is audited as `sync.link_delete` on the link's **target**
 directory (no target DN), with `detail` = `linkId`, `linkName`,
-`sourceDirId`, `targetDirId`, `captureMode`, and for `CHANGELOG` links
+`sourceDirectory`, `targetDirectory`, `sourceDirId`, `targetDirId`, `captureMode`, and for `CHANGELOG` links
 `changelogFormat`, `changelogBaseDn` and `changelogLastChangeNumber` (when
 set). A refused delete isn't audited.
 

@@ -173,6 +173,30 @@ public class SyncSetController {
     }
 
     /**
+     * What the set's inventory actions are doing — its latest reconcile run
+     * and latest content verification, with live progress (phase, counts, the
+     * entry being worked on) while each runs. Polled while Reconcile now,
+     * Re-check target or Verify contents is in progress.
+     */
+    @GetMapping("/{id}/activity")
+    public com.ldapportal.dto.sync.SyncSetActivity activity(@PathVariable UUID id) {
+        return service.activity(id);
+    }
+
+    /**
+     * In-scope source entries the set doesn't manage, and why (applicability
+     * filter, placement), as its latest complete reconcile found them: every
+     * one when that run recorded all DNs, else the samples it kept.
+     */
+    @GetMapping("/{id}/not-in-set")
+    public com.ldapportal.dto.sync.SyncNotInSetPage notInSet(@PathVariable UUID id,
+                                                             @RequestParam(required = false) String q,
+                                                             @RequestParam(defaultValue = "0") int page,
+                                                             @RequestParam(defaultValue = "50") int size) {
+        return service.notInSet(id, q, page, size);
+    }
+
+    /**
      * Re-check the target (e.g. after restoring it from a backup): the next
      * reconcile re-reads every applied entry instead of trusting what the set
      * last wrote, and re-applies the ones that differ. Queues that reconcile.

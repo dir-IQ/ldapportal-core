@@ -22,6 +22,7 @@ const run: SyncReconcileRun = {
   instanceName: 'ldapportal-7f9c', plannedAt: '2026-10-20T10:01:10Z',
   verifiedAt: '2026-10-20T10:03:00Z', verifyMissing: 2, verifyOrphan: 0, verifyMismatch: 0,
   allDnsRecorded: false,
+  notInSet: 0, phase: null, currentDn: null, heartbeatAt: null,
 }
 
 function detail(over: Partial<SyncReconcileRunDetail> = {}): SyncReconcileRunDetail {
@@ -39,6 +40,7 @@ function detail(over: Partial<SyncReconcileRunDetail> = {}): SyncReconcileRunDet
     ],
     samples: { ADD: ['uid=a,ou=Users,dc=dmz', 'uid=b,ou=Users,dc=dmz'], ERROR: ['uid=x,ou=Users,dc=dmz'] },
     sampleLimit: 25,
+    notInSet: [],
     ...over,
   }
 }
@@ -144,5 +146,19 @@ describe('ReconcileRunDetail', () => {
     expect(txt).not.toContain('content verification')
     expect(txt).not.toContain('Settings at run time')
     expect(txt).not.toContain('source scan did not complete')
+  })
+
+  it('lists the source entries the set didn\'t manage, by reason', async () => {
+    getRun.mockResolvedValue({ data: detail({
+      run: { ...run, notInSet: 3 },
+      notInSet: [{ reason: 'FILTER', label: "Doesn't match the applicability filter", count: 3,
+        samples: ['ou=people,dc=src', 'uid=bob,ou=people,dc=src'] }],
+    }) })
+    const wrapper = mount(ReconcileRunDetail, { props: { setId: 'set-1', runId: 'run-1' } })
+    await flushPromises()
+    const txt = wrapper.text()
+    expect(txt).toMatch(/Not in set\s*3/)
+    expect(txt).toContain("Doesn't match the applicability filter — first 2 of 3")
+    expect(txt).toContain('uid=bob,ou=people,dc=src')
   })
 })
