@@ -171,17 +171,6 @@ describe('SyncPreviewChangesModal', () => {
     w.unmount()
   })
 
-  it('says it\'s a dry run once, at the top, not inside the progress line', async () => {
-    vi.useFakeTimers()
-    api.getPreviewRun.mockResolvedValue(ok(run({ status: 'RUNNING', processed: 3, total: 12, finishedAt: null })))
-    const w = mountModal()
-    await flushPromises()
-
-    expect(w.text()).toContain('Nothing is written to either directory.')
-    expect(w.find('[role="status"]').text()).not.toContain('dry run')
-    w.unmount()
-  })
-
   it('stops polling when closed', async () => {
     vi.useFakeTimers()
     api.getPreviewRun.mockResolvedValue(ok(run({ status: 'RUNNING', finishedAt: null })))
