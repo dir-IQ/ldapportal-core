@@ -102,10 +102,11 @@ public class SyncReconcileHistory {
     private final int keepIncrementalPerSet;
     private final String instanceName;
     /**
-     * Reconciles running on this instance (run id → run), whose progress
-     * {@link #flushProgress} writes on its own short interval: a run flushes
-     * its counts only every {@link #HEARTBEAT_INTERVAL}, and one slow entry
-     * (a large group) would otherwise show nothing for its whole duration.
+     * Reconciles running on this instance (run id → run), whose progress —
+     * position and outcome counts so far — {@link #flushProgress} writes on
+     * its own short interval: a run saves its whole row only every
+     * {@link #HEARTBEAT_INTERVAL}, and one slow entry (a large group) would
+     * otherwise show nothing for its whole duration.
      */
     private final Map<UUID, Run> live = new ConcurrentHashMap<>();
     private final ScheduledExecutorService progressFlusher;
@@ -163,6 +164,7 @@ public class SyncReconcileHistory {
                     return;
                 }
                 int processed = run.liveProcessed;
+                SyncRunCounts counts = run.liveCounts;
                 SyncReconcilePhase phase = run.livePhase;
                 String currentDn = run.liveDn;
                 if (processed == run.writtenProcessed && phase == run.writtenPhase
@@ -170,7 +172,7 @@ public class SyncReconcileHistory {
                     return;
                 }
                 try {
-                    runRepo.progress(id, processed, phase, currentDn, now);
+                    runRepo.progress(id, processed, counts, phase, currentDn, now);
                     run.writtenProcessed = processed;
                     run.writtenPhase = phase;
                     run.writtenDn = currentDn;
@@ -236,6 +238,7 @@ public class SyncReconcileHistory {
         if (sourceDn != null) {
             run.keep(NOT_IN_SET, sourceDn, reason.name());
         }
+        run.liveCounts = SyncRunCounts.of(run.row);
         beat(run);
     }
 
@@ -341,6 +344,7 @@ public class SyncReconcileHistory {
                 run.countFailure(outcome.reason() != null ? outcome.reason() : "apply failed");
             }
         }
+        run.liveCounts = SyncRunCounts.of(run.row);
         beat(run);
     }
 
@@ -361,6 +365,7 @@ public class SyncReconcileHistory {
         if (key != null) {
             run.keep(FAULT, key, reason);
         }
+        run.liveCounts = SyncRunCounts.of(run.row);
         beat(run);
     }
 
@@ -684,6 +689,8 @@ public class SyncReconcileHistory {
         private final Map<SyncNotInSetReason, NotInSetGroup> notInSet = new java.util.EnumMap<>(SyncNotInSetReason.class);
         /** Progress as the worker leaves it, read by {@link #flushProgress}. */
         private volatile int liveProcessed;
+        /** Each outcome's count so far, published by the worker after every entry. */
+        private volatile SyncRunCounts liveCounts = SyncRunCounts.NONE;
         private volatile SyncReconcilePhase livePhase;
         private volatile String liveDn;
         private final Object progressLock = new Object();

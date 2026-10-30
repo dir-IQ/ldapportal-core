@@ -182,4 +182,32 @@ describe('ReconcileRunHistory', () => {
     await flushPromises()
     expect(wrapper.text()).not.toContain('not in set')
   })
+
+  it('shows a running reconcile\'s counts as so far, and reloads until it ends', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    listRuns.mockImplementation((_set: string, _limit: number, kind?: string) => {
+      if (kind === 'INCREMENTAL') return Promise.resolve({ data: [] })
+      calls++
+      return Promise.resolve({ data: [calls === 1
+        ? run({ status: 'RUNNING', finishedAt: null, managedAfter: null, processed: 2093, sourceCount: 5276,
+          unchanged: 2093, noChange: 0, added: 0, modified: 0 })
+        : run({ processed: 5276, sourceCount: 5276, managedBefore: 5276, managedAfter: 5276,
+          unchanged: 5276, noChange: 0, added: 0, modified: 0 })] })
+    })
+    const wrapper = mount(ReconcileRunHistory, { props: { setId: 'set-1' } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('So far (2093 of 5276 entries)')
+    expect(wrapper.text()).toContain('when the run finishes')
+
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(wrapper.text()).toContain('Completed')
+    expect(wrapper.text()).not.toContain('So far')
+    expect(wrapper.text()).toMatch(/Managed:\s*5276\s*→\s*5276/)
+
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(calls).toBe(2) // finished: no more reloads
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
 })

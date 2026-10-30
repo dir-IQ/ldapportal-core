@@ -996,6 +996,27 @@ class SyncEngineIntegrationTest {
     }
 
     @Test
+    void progressWrite_recordsARunningRunsCountsSoFar_butNeverAFinishedRun() {
+        SyncReconcileHistory.Run run = history.start(peopleSet, link.getTargetDirId(), SyncReconcileTrigger.MANUAL, "ann");
+        SyncRunCounts soFar = new SyncRunCounts(1, 2, 0, 0, 0, 3, 0, 2093, 0, 0, 0, 4);
+
+        assertThat(runRepo.progress(run.id(), 2103, soFar, com.ldapportal.entity.enums.SyncReconcilePhase.APPLYING,
+                "uid=x,ou=people,dc=src,dc=com", OffsetDateTime.now())).isEqualTo(1);
+
+        SyncReconcileRun row = runRepo.findById(run.id()).orElseThrow();
+        assertThat(row.getProcessed()).isEqualTo(2103);
+        assertThat(row.getUnchanged()).isEqualTo(2093);
+        assertThat(row.getAdded()).isEqualTo(1);
+        assertThat(row.getModified()).isEqualTo(2);
+        assertThat(row.getNoChange()).isEqualTo(3);
+        assertThat(row.getNotInSet()).isEqualTo(4);
+        assertThat(row.getCurrentDn()).isEqualTo("uid=x,ou=people,dc=src,dc=com");
+
+        history.complete(run, 5);
+        assertThat(runRepo.progress(run.id(), 1, SyncRunCounts.NONE, null, null, OffsetDateTime.now())).isZero();
+    }
+
+    @Test
     void reconcile_countsTheSourceEntriesTheSetDoesntManage_andWhy() throws Exception {
         addPerson("alice", "staff", "alice@src");
         addPerson("bob", "contractor", "bob@src"); // the filter wants employeeType=staff

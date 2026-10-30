@@ -141,6 +141,22 @@ class SyncReconcileHistoryTest {
     // ── live progress ────────────────────────────────────────────────────────
 
     @Test
+    void flushProgress_writesTheOutcomeCountsSoFar() {
+        SyncReconcileHistory.Run run = history.start(set(false), TARGET_DIR, SyncReconcileTrigger.MANUAL, "ann");
+        history.phase(run, SyncReconcilePhase.APPLYING);
+        history.record(run, outcome(SyncPreviewAction.UNCHANGED, "uid=a,dc=dst", null));
+        history.record(run, outcome(SyncPreviewAction.UNCHANGED, "uid=b,dc=dst", null));
+        history.record(run, outcome(SyncPreviewAction.ADD, "uid=c,dc=dst", null));
+        history.notInSet(run, "ou=people,dc=src", SyncNotInSetReason.FILTER);
+
+        history.flushProgress();
+
+        verify(runRepo).progress(eq(run.id()), eq(4),
+                eq(new SyncRunCounts(1, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1)),
+                eq(SyncReconcilePhase.APPLYING), any(), any());
+    }
+
+    @Test
     void flushProgress_writesThePhaseAndCurrentEntry_onlyWhenChanged_andNeverAfterTheEnd() {
         SyncReconcileHistory.Run run = history.start(set(false), TARGET_DIR, SyncReconcileTrigger.MANUAL, "ann");
         history.phase(run, SyncReconcilePhase.APPLYING);
@@ -149,14 +165,14 @@ class SyncReconcileHistoryTest {
         history.flushProgress();
         history.flushProgress(); // nothing changed since
 
-        verify(runRepo, times(1)).progress(eq(run.id()), eq(0), eq(SyncReconcilePhase.APPLYING),
-                eq("cn=big,ou=groups,dc=src"), any());
+        verify(runRepo, times(1)).progress(eq(run.id()), eq(0), eq(SyncRunCounts.NONE),
+                eq(SyncReconcilePhase.APPLYING), eq("cn=big,ou=groups,dc=src"), any());
 
         history.record(run, outcome(SyncPreviewAction.MODIFY, "cn=big,ou=groups,dc=dst", null));
         history.complete(run, 1);
         history.flushProgress();
 
-        verify(runRepo, times(1)).progress(any(), anyInt(), any(), any(), any());
+        verify(runRepo, times(1)).progress(any(), anyInt(), any(), any(), any(), any());
         assertThat(run.row().getPhase()).isNull();
         assertThat(run.row().getCurrentDn()).isNull();
     }

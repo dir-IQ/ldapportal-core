@@ -46,6 +46,7 @@
         </template>
       </p>
       <p class="text-gray-600">
+        <span v-if="running" class="text-gray-500">So far ({{ last.processed }} of {{ last.sourceCount }} entries): </span>
         <template v-for="(c, i) in outcomeCounts(last)" :key="c.label">
           <template v-if="i > 0"> · </template>
           {{ c.label }}: <span class="font-medium tabular-nums" :class="c.n > 0 ? c.tone : ''">{{ c.n }}</span>
@@ -57,6 +58,7 @@
         <template v-if="last.managedAfter !== null">
           → <span class="font-medium tabular-nums">{{ last.managedAfter }}</span>
         </template>
+        <template v-else-if="running"> → <span class="text-gray-500">when the run finishes</span></template>
         <template v-if="last.notInSet > 0">
           ·
           <button type="button" class="text-blue-600 hover:underline"
@@ -114,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import DataTable from '@/components/DataTable.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
 import ReconcileRunDetail from '@/components/sync/ReconcileRunDetail.vue'
@@ -142,6 +144,20 @@ const showIncremental = ref(false)
 const selectedRunId = ref<string | null>(null)
 
 const last = computed<SyncReconcileRun | null>(() => runs.value[0] ?? null)
+/** The latest reconcile is still going: its counts are so far, and the summary reloads until it ends. */
+const running = computed<boolean>(() => last.value?.status === 'RUNNING')
+
+/** How often a running reconcile's summary is re-read. */
+const RUNNING_POLL_MS = 3000
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+let disposed = false
+
+function stopPolling() {
+  if (pollTimer !== null) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
+}
 
 const cols = [
   { key: 'startedAt', label: 'Started' },
@@ -168,6 +184,7 @@ function changeSummary(r: SyncReconcileRun): string {
 }
 
 async function load() {
+  stopPolling()
   if (!props.setId) {
     runs.value = []
     incrementalRuns.value = []
@@ -187,7 +204,15 @@ async function load() {
   } finally {
     loading.value = false
   }
+  // A run still going (one this page started, or a scheduled one): keep its
+  // counts current and pick up its final numbers when it ends.
+  if (running.value && !disposed) pollTimer = setTimeout(() => { void load() }, RUNNING_POLL_MS)
 }
+
+onBeforeUnmount(() => {
+  disposed = true
+  stopPolling()
+})
 
 watch(() => props.setId, () => {
   showHistory.value = false

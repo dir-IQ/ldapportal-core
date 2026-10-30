@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory; 2026-10-29).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, live counts for a running reconcile; 2026-10-30).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -551,7 +551,11 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   **Details** (or a click on a run) shows everything recorded about that run:
   every count, failures grouped by reason, sample DNs per outcome (Detailed
   logging), and the settings it ran with — plus **Download all entries (CSV)**
-  when the run recorded every DN. Refreshes after **Reconcile now**.
+  when the run recorded every DN. Refreshes after **Reconcile now**. While the
+  latest run is still going (yours or a scheduled one), its counts read *So far
+  (N of M entries)*, Managed shows *→ when the run finishes*, and the box reloads
+  every few seconds until the run ends; the counts are saved about every second
+  (`ldapportal.sync.reconcile.progress-ms`).
 - **Untracked search** — searching a DN/identity that isn't tracked offers
   `Recompute "<term>"` to pull it in on demand.
 - **Verify contents** — a belts-and-suspenders check that re-reads *both*
