@@ -207,6 +207,39 @@ class MembershipFunctionTest {
         assertThat(fn.evaluate(baseSet(), entra, person(), none()).member()).isFalse();
     }
 
+    @Test
+    void referenceValues_areResolvedFromOnePrefetch() {
+        SyncSet set = baseSet();
+        set.setReferenceAttributes("member,manager");
+        Entry group = new Entry("cn=eng,ou=people,dc=src",
+                new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("entryUUID", "2222-BBBB"),
+                new Attribute("cn", "eng"),
+                new Attribute("member", "uid=a,ou=people,dc=src", "uid=b,ou=people,dc=src"),
+                new Attribute("manager", "uid=c,ou=people,dc=src"));
+        List<java.util.Collection<String>> prefetches = new java.util.ArrayList<>();
+        ReferenceResolver resolver = new ReferenceResolver() {
+            @Override
+            public Optional<String> resolveTargetDn(String dn) {
+                throw new AssertionError("resolved one by one: " + dn);
+            }
+
+            @Override
+            public ReferenceResolver prefetched(java.util.Collection<String> dns) {
+                prefetches.add(List.copyOf(dns));
+                return dn -> dn.startsWith("uid=c,") ? Optional.empty()
+                        : Optional.of(dn.replace("ou=people,dc=src", "ou=Users,dc=dst"));
+            }
+        };
+
+        MembershipDecision d = fn.evaluate(set, strategy, group, resolver);
+
+        assertThat(prefetches).singleElement().satisfies(dns -> assertThat(dns).containsExactlyInAnyOrder(
+                "uid=a,ou=people,dc=src", "uid=b,ou=people,dc=src", "uid=c,ou=people,dc=src"));
+        assertThat(vals(d, "member")).containsExactlyInAnyOrder("uid=a,ou=Users,dc=dst", "uid=b,ou=Users,dc=dst");
+        assertThat(d.heldReferences()).containsKey("manager"); // none of its values translate
+    }
+
     private static String[] vals(MembershipDecision d, String name) {
         for (Attribute a : d.desiredAttrs()) {
             if (a.getName().equalsIgnoreCase(name)) {

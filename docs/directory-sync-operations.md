@@ -371,7 +371,9 @@ can't fail it.
   step 5) is looked up in bulk: one database query for where the sync last
   wrote every such member, then one one-level search per 100 target DNs under
   each parent to see which exist, instead of a query and a target read per
-  member. The same bulk query serves the preview and **Verify contents**.
+  member. The same bulk query serves the preview and **Verify contents**;
+- projecting an entry translates all its reference values (a group's
+  members) through the index with one query per 500 values, not one each.
 
 Each finished reconcile logs where its time went:
 `reconcile of N source entries took …  (source scan …, source reads …, target

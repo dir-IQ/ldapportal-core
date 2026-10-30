@@ -492,6 +492,27 @@ public class SyncPreviewService {
             }
 
             @Override
+            public ReferenceResolver prefetched(java.util.Collection<String> dns) {
+                // Memoise, in one lookup, every one the plan doesn't decide and
+                // this run hasn't resolved yet.
+                List<String> rest = new ArrayList<>();
+                for (String dn : dns) {
+                    String norm = SyncDnUtil.normalize(dn);
+                    if (!plannedPlacement.containsKey(norm) && !plannedOut.contains(norm)
+                            && !resolved.containsKey(norm)) {
+                        rest.add(dn);
+                    }
+                }
+                if (rest.size() > 1) {
+                    ReferenceResolver bulk = index.prefetched(rest);
+                    for (String dn : rest) {
+                        resolved.putIfAbsent(SyncDnUtil.normalize(dn), bulk.resolveTargetDn(dn));
+                    }
+                }
+                return this;
+            }
+
+            @Override
             public boolean leavesItsSet(String dn) {
                 return plannedOut.contains(SyncDnUtil.normalize(dn));
             }
