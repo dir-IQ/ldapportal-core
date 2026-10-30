@@ -29,16 +29,21 @@ public interface SyncReconcileRunRepository extends JpaRepository<SyncReconcileR
             UUID syncSetId, Collection<SyncReconcileTrigger> triggers, Pageable pageable);
 
     /**
-     * Record a running run's progress: entries processed, its phase and the
-     * entry it's on. Only while it's RUNNING, so a late write never touches a
-     * finished run.
+     * Record a running run's progress: entries processed and each outcome's
+     * count so far, its phase and the entry it's on. Only while it's RUNNING,
+     * so a late write never touches a finished run.
      */
     @Transactional
     @Modifying
-    @Query("update SyncReconcileRun r set r.processed = :processed, r.phase = :phase, r.currentDn = :currentDn, "
-            + "r.heartbeatAt = :now where r.id = :id "
+    @Query("update SyncReconcileRun r set r.processed = :processed, r.added = :#{#c.added()}, "
+            + "r.modified = :#{#c.modified()}, r.moved = :#{#c.moved()}, r.deleted = :#{#c.deleted()}, "
+            + "r.heldForReview = :#{#c.heldForReview()}, r.noChange = :#{#c.noChange()}, "
+            + "r.forgotten = :#{#c.forgotten()}, r.unchanged = :#{#c.unchanged()}, r.failed = :#{#c.failed()}, "
+            + "r.faulted = :#{#c.faulted()}, r.skipped = :#{#c.skipped()}, r.notInSet = :#{#c.notInSet()}, "
+            + "r.phase = :phase, r.currentDn = :currentDn, r.heartbeatAt = :now where r.id = :id "
             + "and r.status = com.ldapportal.entity.enums.SyncReconcileRunStatus.RUNNING")
     int progress(@Param("id") UUID id, @Param("processed") int processed,
+                 @Param("c") com.ldapportal.ldap.sync.SyncRunCounts c,
                  @Param("phase") com.ldapportal.entity.enums.SyncReconcilePhase phase,
                  @Param("currentDn") String currentDn, @Param("now") OffsetDateTime now);
 
