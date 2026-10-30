@@ -87,7 +87,8 @@ class SyncEngineIntegrationTest {
     @Autowired private SyncContentVerifier verifier;
     @Autowired private RecomputeEnqueuer enqueuer;
     @Autowired private SyncReconcileRunRepository runRepo;
-    @Autowired private SyncReconcileHistory history;
+    @MockitoSpyBean private SyncReconcileHistory history;
+    @Autowired private org.springframework.transaction.PlatformTransactionManager txManager;
     @Autowired private SyncVerifyProgressTracker verifyProgress;
     @Autowired private com.ldapportal.service.SyncConfigService syncConfigService;
 
@@ -1135,6 +1136,79 @@ class SyncEngineIntegrationTest {
         engine.process(peopleSet.getId(), "uid=" + firstUid + "," + SRC_PEOPLE);
         assertThat(target.getEntry(first.getDN()).getAttributeValue("manager"))
                 .isEqualToIgnoringCase(second.getDN());
+    }
+
+    @Test
+    void reconcile_thatStopsPartWay_stillQueuesTheReferrersOfWhatItChanged() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        source.add(new Entry("cn=eng," + SRC_GROUPS,
+                new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("cn", "eng"),
+                new Attribute("member", dn("alice"))));
+        // The run stops after applying entries, before its sweep.
+        org.mockito.Mockito.doThrow(new IllegalStateException("stopped")).when(history).phase(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(com.ldapportal.entity.enums.SyncReconcilePhase.SWEEPING));
+
+        assertThatThrownBy(() -> reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator"))
+                .hasMessageContaining("stopped");
+
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+        assertThat(requestRepo.findAllBySyncSetId(groupsSet.getId()))
+                .extracting(RecomputeRequest::getRequestKey)
+                .singleElement()
+                .satisfies(k -> assertThat(k).startsWithIgnoringCase("cn=eng,"));
+    }
+
+    @Test
+    void reconcile_queuesAReferrerWhoseOwnRecomputeFailed_evenAfterTheChangeItRefersTo() throws Exception {
+        // The scan returns entries in DN order: alice (under ou=a) before carol
+        // (under ou=sub). carol's target has no parent entry, so her write fails
+        // whenever she's recomputed; she refers to alice, who the run adds first.
+        String aliceDn = "uid=alice,ou=a," + SRC_PEOPLE;
+        source.add(new Entry("ou=a," + SRC_PEOPLE, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "a")));
+        target.add(new Entry("ou=a," + DST_USERS, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "a")));
+        source.add(new Entry(aliceDn,
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", "alice"), new Attribute("cn", "alice"), new Attribute("sn", "alice"),
+                new Attribute("employeeType", "staff")));
+        source.add(new Entry("ou=sub," + SRC_PEOPLE, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "sub")));
+        source.add(new Entry("uid=carol,ou=sub," + SRC_PEOPLE,
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", "carol"), new Attribute("cn", "carol"), new Attribute("sn", "carol"),
+                new Attribute("employeeType", "staff"), new Attribute("manager", aliceDn)));
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+
+        assertThat(target.getEntry("uid=alice,ou=a," + DST_USERS)).isNotNull();
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId()))
+                .anyMatch(m -> m.getState() == MembershipState.FAILED);
+        assertThat(requestRepo.findAllBySyncSetId(peopleSet.getId()))
+                .extracting(RecomputeRequest::getRequestKey)
+                .anyMatch(k -> k.toLowerCase(java.util.Locale.ROOT).startsWith("uid=carol,"));
+    }
+
+    @Test
+    void noteSourceChanges_commitsBeforeTheCallersTransactionDoes() {
+        long before = setRepo.findSourceChangeSeq(peopleSet.getId());
+        org.springframework.transaction.support.TransactionTemplate outer =
+                new org.springframework.transaction.support.TransactionTemplate(txManager);
+        org.springframework.transaction.support.TransactionTemplate other =
+                new org.springframework.transaction.support.TransactionTemplate(txManager);
+        other.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        outer.executeWithoutResult(status -> {
+            enqueuer.noteSourceChanges(List.of(peopleSet.getId()));
+            // Another transaction sees the bump while the caller's is still open.
+            Long seen = other.execute(tx -> setRepo.findSourceChangeSeq(peopleSet.getId()));
+            assertThat(seen).isEqualTo(before + 1);
+            status.setRollbackOnly();
+        });
+        // The caller rolling back doesn't undo it.
+        assertThat(setRepo.findSourceChangeSeq(peopleSet.getId())).isEqualTo(before + 1);
     }
 
     @Test

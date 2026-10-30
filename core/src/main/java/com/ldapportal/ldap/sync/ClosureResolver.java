@@ -65,11 +65,15 @@ public class ClosureResolver {
     /**
      * Fan out once for a reconcile's changes: {@code changed} maps each source
      * DN whose target the run changed to the position of that recompute in the
-     * run, and {@code visited} maps each source DN the run recomputed (in set
-     * {@code runSetId}) to its position. Referrers are found with batched
-     * searches of {@link #DN_BATCH} changed DNs at a time. A referrer in
-     * {@code runSetId} is enqueued only when it was recomputed before a change
-     * it refers to, or not at all; a later recompute already saw the change.
+     * run, and {@code visited} maps each source DN the run recomputed
+     * successfully (in set {@code runSetId}) to its position.
+     *
+     * <p>The changed DNs are taken in the order they changed, {@link #DN_BATCH}
+     * at a time, and each batch is one search returning referrer DNs only. A
+     * referrer in {@code runSetId} that the run recomputed after the batch's
+     * last change has seen every change it could refer to there, and is
+     * skipped; any other referrer is enqueued (one recomputed partway through
+     * the batch's changes may be enqueued without need, never skipped wrongly).
      * Referrers in other sets are always enqueued. {@code beforeSearch} is
      * given the first DN of each batch before it's searched (the reconcile's
      * heartbeat and progress).
@@ -80,6 +84,7 @@ public class ClosureResolver {
             return;
         }
         List<String> dns = new ArrayList<>(changed.keySet());
+        dns.sort(java.util.Comparator.comparing(changed::get));
         forEachSet(link, (set, source) -> {
             List<String> refAttrs = SyncReferenceAttributes.forSet(set);
             if (refAttrs.isEmpty()) {
@@ -91,6 +96,7 @@ public class ClosureResolver {
             Set<String> enqueued = new HashSet<>();
             for (int from = 0; from < dns.size(); from += DN_BATCH) {
                 List<String> chunk = dns.subList(from, Math.min(dns.size(), from + DN_BATCH));
+                int lastChange = changed.get(chunk.get(chunk.size() - 1));
                 beforeSearch.accept(chunk.get(0));
                 List<Filter> ors = new ArrayList<>(refAttrs.size() * chunk.size());
                 for (String attr : refAttrs) {
@@ -99,14 +105,14 @@ public class ClosureResolver {
                     }
                 }
                 try {
+                    // "1.1" => DNs only: a large group matches every batch.
                     List<SearchResultEntry> referrers = connectionFactory.withConnectionUnreplicated(source, conn ->
-                            SyncPagedSearch.all(conn, new SearchRequest(base, scope, Filter.createORFilter(ors),
-                                    refAttrs.toArray(new String[0])), source.getPagingSize()));
+                            SyncPagedSearch.all(conn, new SearchRequest(base, scope, Filter.createORFilter(ors), "1.1"),
+                                    source.getPagingSize()));
                     for (SearchResultEntry e : referrers) {
                         String referrer = SyncDnUtil.normalize(e.getDN());
                         if (!enqueued.contains(referrer)
-                                && needsRecompute(e, referrer, refAttrs, changed, own ? visited.get(referrer) : null,
-                                        own)) {
+                                && needsRecompute(own ? visited.get(referrer) : null, lastChange, own)) {
                             enqueued.add(referrer);
                             enqueuer.enqueue(set.getId(), e.getDN(), null);
                         }
@@ -120,35 +126,12 @@ public class ClosureResolver {
     }
 
     /**
-     * Whether {@code e} refers to a changed DN other than itself, and (in the
-     * run's own set) wasn't recomputed after that change. The search matched
-     * {@code e}, so when none of the values it returned names a changed DN they
-     * are incomplete (AD returns a large {@code member} in ranges, as
-     * {@code member;range=0-1499}) and it's enqueued to be safe.
+     * Whether a referrer matched by a batch whose last change was at
+     * {@code lastChange} must be recomputed: always outside the run's own set;
+     * in it, unless the run recomputed it ({@code visitedAt}) after that change.
      */
-    static boolean needsRecompute(SearchResultEntry e, String referrer, List<String> refAttrs,
-                                  Map<String, Integer> changed, Integer visitedAt, boolean own) {
-        boolean sawChange = false;
-        boolean sawSelf = false;
-        for (String attr : refAttrs) {
-            for (com.unboundid.ldap.sdk.Attribute a : e.getAttributesWithOptions(attr, null)) {
-                for (String value : a.getValues()) {
-                    String ref = SyncDnUtil.normalize(value);
-                    if (ref.equalsIgnoreCase(referrer)) {
-                        sawSelf = true; // don't re-enqueue the entry that just changed
-                        continue;
-                    }
-                    Integer changedAt = changed.get(ref);
-                    if (changedAt != null) {
-                        sawChange = true;
-                        if (!own || visitedAt == null || visitedAt < changedAt) {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        return !sawChange && !sawSelf;
+    static boolean needsRecompute(Integer visitedAt, int lastChange, boolean own) {
+        return !own || visitedAt == null || visitedAt < lastChange;
     }
 
     /** Every enabled set whose source could hold referrers, with that source (see the class doc). */

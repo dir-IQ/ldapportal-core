@@ -358,20 +358,26 @@ can't fail it.
   second, not read again for each entry;
 - the engine is handed the entry the scan already read, instead of reading
   the source again. This holds only while no source change has been enqueued
-  for the set since the scan began (`sync_set.source_change_seq`, bumped by
-  the changelog poller and app-intercept before each enqueue). Once one has,
+  for the set since the scan began (`sync_set.source_change_seq`, bumped in
+  its own transaction by app-intercept before each enqueue, and by the
+  changelog poller once per page of change records). Once one has,
   the rest of the run reads each entry afresh, so a change made during the run
   is never overwritten with what the scan saw;
 - closure fan-out waits until the end of the run (phase *queuing entries that
-  refer to changed ones*). The referrers of everything the run changed are
-  then found with one search per 50 changed entries, not one per change. A
-  referrer the run recomputed *after* the change it refers to is skipped; it
-  already saw it. Every other referrer is queued for the worker;
+  refer to changed ones*), and also runs when the run stops part way, so the
+  changes it did make still reach their referrers. The changed entries are
+  taken in the order they changed, 50 per search, and each search returns
+  referrer DNs only. A referrer in the run's own set that the run recomputed
+  successfully *after* the batch's last change is skipped; it already saw
+  those changes. Every other referrer is queued for the worker, including one
+  whose own recompute failed;
 - a group member that doesn't translate yet (kept as the target has it, §5
   step 5) is looked up in bulk: one database query for where the sync last
   wrote every such member, then one one-level search per 100 target DNs under
   each parent to see which exist, instead of a query and a target read per
-  member. The same bulk query serves the preview and **Verify contents**;
+  member. A search that finds none of its batch while a sample of it (first,
+  middle, last) does exist is not trusted, and that batch is read entry by
+  entry. The same bulk query serves the preview and **Verify contents**;
 - projecting an entry translates all its reference values (a group's
   members) through the index with one query per 500 values, not one each.
 

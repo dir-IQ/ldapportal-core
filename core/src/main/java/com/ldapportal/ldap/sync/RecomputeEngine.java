@@ -150,7 +150,11 @@ public class RecomputeEngine {
             }
             for (int attempt = 1; ; attempt++) {
                 try {
-                    return processOnce(batch, key, attempt == 1 ? scanned : null, suppressDeletes);
+                    RecomputeOutcome outcome = processOnce(batch, key, attempt == 1 ? scanned : null, suppressDeletes);
+                    if (outcome != null && outcome.action() != SyncPreviewAction.ERROR) {
+                        batch.commitVisit();
+                    }
+                    return outcome;
                 } catch (OptimisticLockingFailureException | DataIntegrityViolationException race) {
                     if (attempt >= MAX_OPTIMISTIC_RETRIES) {
                         // Propagate rather than return: a normal return would let the
@@ -329,7 +333,7 @@ public class RecomputeEngine {
             }
             current = membershipRepo.findById(new MembershipId(set.getId(), identity)).orElse(null);
         }
-        batch.visit(entry);
+        batch.visiting(entry);
 
         MembershipDecision decision = entry != null
                 ? membershipFunction.evaluate(set, strategy, entry, batch.resolver)
@@ -1319,6 +1323,7 @@ public class RecomputeEngine {
 
         private void refresh() {
             position++;
+            visiting = null;
             if (System.nanoTime() - loadedAt >= BATCH_REFRESH_NANOS) {
                 load();
             }
@@ -1363,9 +1368,21 @@ public class RecomputeEngine {
             return !sourceChanged;
         }
 
-        private void visit(Entry entry) {
-            if (defersFanOut && entry != null) {
-                visited.put(SyncDnUtil.normalize(entry.getDN()), position);
+        /** The source entry the current recompute read, recorded as visited once it succeeds. */
+        private String visiting;
+
+        private void visiting(Entry entry) {
+            visiting = defersFanOut && entry != null ? SyncDnUtil.normalize(entry.getDN()) : null;
+        }
+
+        /**
+         * The current recompute succeeded: its entry has seen every change made
+         * before it. One that failed or threw hasn't, so a fan-out still queues it.
+         */
+        private void commitVisit() {
+            if (visiting != null) {
+                visited.put(visiting, position);
+                visiting = null;
             }
         }
 
@@ -1396,17 +1413,24 @@ public class RecomputeEngine {
         }
     }
 
-    private static void tallySource(long startNanos) {
-        Timings t = TIMINGS.get();
-        if (t != null) {
-            t.sourceReads += System.nanoTime() - startNanos;
-        }
-    }
+    /** Which directory an LDAP helper's time is counted against. */
+    private enum Side { SOURCE, TARGET }
 
-    private static void tallyTarget(long startNanos) {
-        Timings t = TIMINGS.get();
-        if (t != null) {
-            t.target += System.nanoTime() - startNanos;
+    /** Run {@code op}, adding its wall-clock time to the running {@link Batch}'s {@link Timings}. */
+    private static <T> T timed(Side side, java.util.function.Supplier<T> op) {
+        long t0 = System.nanoTime();
+        try {
+            return op.get();
+        } finally {
+            Timings t = TIMINGS.get();
+            if (t != null) {
+                long spent = System.nanoTime() - t0;
+                if (side == Side.SOURCE) {
+                    t.sourceReads += spent;
+                } else {
+                    t.target += spent;
+                }
+            }
         }
     }
 
@@ -1415,21 +1439,16 @@ public class RecomputeEngine {
     private Entry readSourceByDn(DirectoryConnection source, SyncSet set, String dn, IdentityStrategy strategy) {
         String idAttr = SyncIdentity.attribute(set, strategy);
         String[] attrs = idAttr != null ? new String[]{"*", idAttr} : new String[]{"*"};
-        long t0 = System.nanoTime();
-        try {
-            return connectionFactory.withConnectionUnreplicated(source, conn -> {
-                try {
-                    return conn.getEntry(dn, attrs);
-                } catch (LDAPException e) {
-                    if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
-                        return null;
-                    }
-                    throw e;
+        return timed(Side.SOURCE, () -> connectionFactory.withConnectionUnreplicated(source, conn -> {
+            try {
+                return conn.getEntry(dn, attrs);
+            } catch (LDAPException e) {
+                if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
+                    return null;
                 }
-            });
-        } finally {
-            tallySource(t0);
-        }
+                throw e;
+            }
+        }));
     }
 
     private Entry searchSourceByIdentity(DirectoryConnection source, SyncSet set,
@@ -1441,41 +1460,31 @@ public class RecomputeEngine {
         String base = set.getObjectScopeBaseDn() != null ? set.getObjectScopeBaseDn() : source.getBaseDn();
         SearchScope scope = SyncScopes.searchScope(set);
         com.unboundid.ldap.sdk.Filter f = SyncIdentity.filter(set, strategy, identity);
-        long t0 = System.nanoTime();
-        try {
-            return connectionFactory.withConnectionUnreplicated(source, conn -> {
-                try {
-                    SearchRequest req = new SearchRequest(base, scope, f, "*", idAttr);
-                    List<SearchResultEntry> entries = conn.search(req).getSearchEntries();
-                    return entries.isEmpty() ? null : entries.get(0);
-                } catch (LDAPException e) {
-                    if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
-                        return null;
-                    }
-                    throw e;
+        return timed(Side.SOURCE, () -> connectionFactory.withConnectionUnreplicated(source, conn -> {
+            try {
+                SearchRequest req = new SearchRequest(base, scope, f, "*", idAttr);
+                List<SearchResultEntry> entries = conn.search(req).getSearchEntries();
+                return entries.isEmpty() ? null : entries.get(0);
+            } catch (LDAPException e) {
+                if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
+                    return null;
                 }
-            });
-        } finally {
-            tallySource(t0);
-        }
+                throw e;
+            }
+        }));
     }
 
     private Entry readTarget(DirectoryConnection target, String dn) {
-        long t0 = System.nanoTime();
-        try {
-            return connectionFactory.withConnectionUnreplicated(target, conn -> {
-                try {
-                    return conn.getEntry(dn, "*");
-                } catch (LDAPException e) {
-                    if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
-                        return null;
-                    }
-                    throw e;
+        return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
+            try {
+                return conn.getEntry(dn, "*");
+            } catch (LDAPException e) {
+                if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
+                    return null;
                 }
-            });
-        } finally {
-            tallyTarget(t0);
-        }
+                throw e;
+            }
+        }));
     }
 
     /** Target DNs searched per one-level search in {@link #existingOnTarget}. */
@@ -1485,8 +1494,9 @@ public class RecomputeEngine {
      * Those of {@code dns} an entry exists at on the target. LDAP can't search
      * by DN portably, so the DNs are grouped by parent and each group is one
      * one-level search matching their RDNs ({@link #EXISTS_BATCH} at a time),
-     * instead of a read per DN. A DN that doesn't parse, or a search that
-     * fails other than on a missing parent, falls back to reading the DN.
+     * instead of a read per DN. A DN that doesn't parse, a search that fails
+     * other than on a missing parent, or one that finds none of a batch while a
+     * sample of it does exist, falls back to reading each DN.
      */
     java.util.Set<String> existingOnTarget(DirectoryConnection target, java.util.Set<String> dns) {
         java.util.Set<String> found = new java.util.HashSet<>();
@@ -1512,6 +1522,13 @@ public class RecomputeEngine {
             for (int from = 0; from < children.size(); from += EXISTS_BATCH) {
                 List<String> chunk = children.subList(from, Math.min(children.size(), from + EXISTS_BATCH));
                 java.util.Set<String> present = childrenPresent(target, parent, chunk);
+                if (present != null && present.isEmpty() && anyExists(target, sample(chunk))) {
+                    // The search found none, yet one is there: it can't be trusted
+                    // here (e.g. the bind may read entries but not search their
+                    // naming attribute), so read each DN instead.
+                    log.debug("Bulk existence check under {} found nothing that exists; reading each entry", parent);
+                    present = null;
+                }
                 if (present == null) {
                     for (String dn : chunk) {
                         if (readTarget(target, dn) != null) {
@@ -1528,6 +1545,22 @@ public class RecomputeEngine {
             }
         });
         return found;
+    }
+
+    /** Up to three of {@code dns} (first, middle, last) to check a search that found none of them. */
+    private static List<String> sample(List<String> dns) {
+        java.util.Set<String> picked = new java.util.LinkedHashSet<>(
+                List.of(dns.get(0), dns.get(dns.size() / 2), dns.get(dns.size() - 1)));
+        return new ArrayList<>(picked);
+    }
+
+    private boolean anyExists(DirectoryConnection target, List<String> dns) {
+        for (String dn : dns) {
+            if (readTarget(target, dn) != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -1551,9 +1584,8 @@ public class RecomputeEngine {
         } catch (LDAPException e) {
             return null;
         }
-        long t0 = System.nanoTime();
         try {
-            return connectionFactory.withConnectionUnreplicated(target, conn -> {
+            return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
                 try {
                     SearchRequest req = new SearchRequest(parent, SearchScope.ONE,
                             com.unboundid.ldap.sdk.Filter.createORFilter(rdns), "1.1");
@@ -1565,107 +1597,80 @@ public class RecomputeEngine {
                 } catch (LDAPException e) {
                     return e.getResultCode() == ResultCode.NO_SUCH_OBJECT ? java.util.Set.<String>of() : null;
                 }
-            });
+            }));
         } catch (RuntimeException e) {
             log.debug("Bulk existence check under {} failed ({}); reading each entry", parent, e.toString());
             return null;
-        } finally {
-            tallyTarget(t0);
         }
     }
 
     private ApplyOutcome targetAdd(DirectoryConnection target, String dn, List<Attribute> attrs) {
-        long t0 = System.nanoTime();
-        try {
-            return connectionFactory.withConnectionUnreplicated(target, conn -> {
-                try {
-                    return ok(conn.add(new AddRequest(dn, attrs)).getResultCode());
-                } catch (LDAPException e) {
-                    return failed(e);
-                }
-            });
-        } finally {
-            tallyTarget(t0);
-        }
+        return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
+            try {
+                return ok(conn.add(new AddRequest(dn, attrs)).getResultCode());
+            } catch (LDAPException e) {
+                return failed(e);
+            }
+        }));
     }
 
     /** Target DNs carrying {@code anchorAttr=identity} (brownfield correlation). */
     private List<String> searchTargetByAnchor(DirectoryConnection target, SyncSet set,
                                               String anchorAttr, String identity) {
         String base = SyncPlacement.effectiveTargetBase(set, target);
-        long t0 = System.nanoTime();
-        try {
-            return connectionFactory.withConnectionUnreplicated(target, conn -> {
-                try {
-                    SearchRequest req = new SearchRequest(base, SearchScope.SUB,
-                            com.unboundid.ldap.sdk.Filter.createEqualityFilter(anchorAttr, identity), "1.1");
-                    List<String> dns = new java.util.ArrayList<>();
-                    for (SearchResultEntry e : conn.search(req).getSearchEntries()) {
-                        dns.add(e.getDN());
-                    }
-                    return dns;
-                } catch (LDAPException e) {
-                    if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
-                        return List.of();
-                    }
-                    throw e;
+        return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
+            try {
+                SearchRequest req = new SearchRequest(base, SearchScope.SUB,
+                        com.unboundid.ldap.sdk.Filter.createEqualityFilter(anchorAttr, identity), "1.1");
+                List<String> dns = new java.util.ArrayList<>();
+                for (SearchResultEntry e : conn.search(req).getSearchEntries()) {
+                    dns.add(e.getDN());
                 }
-            });
-        } finally {
-            tallyTarget(t0);
-        }
+                return dns;
+            } catch (LDAPException e) {
+                if (e.getResultCode() == ResultCode.NO_SUCH_OBJECT) {
+                    return List.of();
+                }
+                throw e;
+            }
+        }));
     }
 
     private ApplyOutcome targetModify(DirectoryConnection target, String dn, List<Modification> mods) {
         if (mods.isEmpty()) {
             return ok(ResultCode.SUCCESS);
         }
-        long t0 = System.nanoTime();
-        try {
-            return connectionFactory.withConnectionUnreplicated(target, conn -> {
-                try {
-                    return ok(conn.modify(new ModifyRequest(dn, mods)).getResultCode());
-                } catch (LDAPException e) {
-                    return failed(e);
-                }
-            });
-        } finally {
-            tallyTarget(t0);
-        }
+        return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
+            try {
+                return ok(conn.modify(new ModifyRequest(dn, mods)).getResultCode());
+            } catch (LDAPException e) {
+                return failed(e);
+            }
+        }));
     }
 
     private ApplyOutcome targetDelete(DirectoryConnection target, String dn) {
-        long t0 = System.nanoTime();
-        try {
-            return connectionFactory.withConnectionUnreplicated(target, conn -> {
-                try {
-                    return ok(conn.delete(new DeleteRequest(dn)).getResultCode());
-                } catch (LDAPException e) {
-                    return failed(e);
-                }
-            });
-        } finally {
-            tallyTarget(t0);
-        }
+        return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
+            try {
+                return ok(conn.delete(new DeleteRequest(dn)).getResultCode());
+            } catch (LDAPException e) {
+                return failed(e);
+            }
+        }));
     }
 
     private ApplyOutcome targetModifyDn(DirectoryConnection target, String oldDn, String newDn) {
-        long t0 = System.nanoTime();
-        try {
-            return connectionFactory.withConnectionUnreplicated(target, conn -> {
-                try {
-                    DN newDnParsed = new DN(newDn);
-                    String newRdn = newDnParsed.getRDNString();
-                    DN parent = newDnParsed.getParent();
-                    String newSuperior = parent == null ? null : parent.toString();
-                    return ok(conn.modifyDN(new ModifyDNRequest(oldDn, newRdn, true, newSuperior)).getResultCode());
-                } catch (LDAPException e) {
-                    return failed(e);
-                }
-            });
-        } finally {
-            tallyTarget(t0);
-        }
+        return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
+            try {
+                DN newDnParsed = new DN(newDn);
+                String newRdn = newDnParsed.getRDNString();
+                DN parent = newDnParsed.getParent();
+                String newSuperior = parent == null ? null : parent.toString();
+                return ok(conn.modifyDN(new ModifyDNRequest(oldDn, newRdn, true, newSuperior)).getResultCode());
+            } catch (LDAPException e) {
+                return failed(e);
+            }
+        }));
     }
 
     // ── Apply outcome: the result code plus, on failure, the server's diagnostic

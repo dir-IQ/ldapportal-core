@@ -160,6 +160,7 @@ public class SyncChangelogPoller {
                     ChangelogReadContext ctx = new ChangelogReadContext(link.getChangelogBaseDn(), null, after);
                     Page page = searchPage(conn, strategy.buildSearchRequest(ctx, BATCH));
                     long before = maxCn;
+                    noteChanges(sets, page);
                     for (SearchResultEntry e : page.entries()) {
                         String id = strategy.extractEntryId(e);
                         String dn = strategy.extractTargetDn(e);
@@ -265,6 +266,7 @@ public class SyncChangelogPoller {
                         return CookiePollResult.advanced(position, true);
                     }
                     String before = position;
+                    noteChanges(sets, page);
                     for (SearchResultEntry e : page.entries()) {
                         String cookie = OUD_COOKIE.extractEntryId(e);
                         String dn = OUD_COOKIE.extractTargetDn(e);
@@ -374,12 +376,23 @@ public class SyncChangelogPoller {
      * that set's scope check), and a move OUT of scope still reaches the set
      * through the old DN.
      */
+    /**
+     * Before enqueuing a page of change records: note, once per set rather than
+     * once per record, that source changes are coming (see
+     * {@link RecomputeEnqueuer#noteSourceChanges}).
+     */
+    private void noteChanges(List<SyncSet> sets, Page page) {
+        if (!page.entries().isEmpty()) {
+            enqueuer.noteSourceChanges(sets.stream().map(SyncSet::getId).toList());
+        }
+    }
+
     private void enqueueChanged(List<SyncSet> sets, String dn, String postMoveDn, Long srcCursor) {
         List<String> changedDns = postMoveDn != null ? List.of(dn, postMoveDn) : List.of(dn);
         for (SyncSet set : sets) {
             for (String changed : changedDns) {
                 if (SyncScopes.inScope(set, changed)) {
-                    enqueuer.enqueueSourceChange(set.getId(), changed, srcCursor);
+                    enqueuer.enqueue(set.getId(), changed, srcCursor);
                 }
             }
         }

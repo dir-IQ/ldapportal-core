@@ -70,17 +70,26 @@ public class MembershipReferenceResolvers {
         };
     }
 
-    /** Source DNs per query when {@link ReferenceResolver#prefetched prefetching}. */
-    static final int PREFETCH_BATCH = 500;
+    /** Source DNs per query in {@link #rowsBySourceDn}. */
+    static final int ROW_BATCH = 500;
 
     /** The index rows of each of {@code sourceDns}, normalized; an empty list for one with none. */
     private Map<String, List<Membership>> rowsBySource(Collection<String> sourceDns) {
+        return rowsBySourceDn(membershipRepo, sourceDns);
+    }
+
+    /**
+     * The index rows (of every set) of each of {@code sourceDns}, keyed by the
+     * normalized DN, with an empty list for one that has none: one query per
+     * {@link #ROW_BATCH} DNs rather than one each.
+     */
+    static Map<String, List<Membership>> rowsBySourceDn(MembershipRepository repo, Collection<String> sourceDns) {
         List<String> normalized = sourceDns.stream().map(SyncDnUtil::normalize).distinct().toList();
         Map<String, List<Membership>> bySource = new HashMap<>();
         normalized.forEach(dn -> bySource.put(dn, new ArrayList<>()));
-        for (int from = 0; from < normalized.size(); from += PREFETCH_BATCH) {
-            for (Membership m : membershipRepo.findAllBySourceDnIn(
-                    normalized.subList(from, Math.min(normalized.size(), from + PREFETCH_BATCH)))) {
+        for (int from = 0; from < normalized.size(); from += ROW_BATCH) {
+            for (Membership m : repo.findAllBySourceDnIn(
+                    normalized.subList(from, Math.min(normalized.size(), from + ROW_BATCH)))) {
                 List<Membership> rows = bySource.get(m.getSourceDn());
                 if (rows != null) {
                     rows.add(m);

@@ -75,9 +75,6 @@ public class UntranslatedReferenceTargets {
 
     /** Resolves untranslated source DNs for one referrer set; holds its sets, not its results. */
     public static final class Lookup {
-        /** Source DNs per query for the rows the sync recorded. */
-        static final int ROW_BATCH = 500;
-
         private final Set<UUID> ownSets;
         private final List<SyncSet> sameTarget;
         private final Set<UUID> sameTargetIds = new HashSet<>();
@@ -124,7 +121,7 @@ public class UntranslatedReferenceTargets {
 
         /**
          * As {@link #candidates(Map, Predicate, Predicate)}, with every lookup
-         * made in bulk: one query (per {@link #ROW_BATCH} DNs) for the rows the
+         * made in bulk: one query (per {@link MembershipReferenceResolvers#ROW_BATCH} DNs) for the rows the
          * sync recorded, and one call to {@code existing} for the target DNs
          * whose existence decides, which returns those of them an entry exists at.
          */
@@ -136,7 +133,8 @@ public class UntranslatedReferenceTargets {
             }
             Set<String> referents = new LinkedHashSet<>();
             untranslated.values().forEach(dns -> dns.stream().filter(dn -> !leaving.test(dn)).forEach(referents::add));
-            Map<String, List<Membership>> rowsBySource = rowsBySource(referents);
+            Map<String, List<Membership>> rowsBySource =
+                    MembershipReferenceResolvers.rowsBySourceDn(membershipRepo, referents);
 
             // A DN with nowhere to be kept maps to null; one placed by a set
             // maps to its placement, kept only if the entry exists there.
@@ -177,19 +175,6 @@ public class UntranslatedReferenceTargets {
                     out.put(attr, bySource);
                 }
             });
-            return out;
-        }
-
-        /** The sync's rows for each (normalized) source DN among {@code dns}. */
-        private Map<String, List<Membership>> rowsBySource(Set<String> dns) {
-            List<String> normalized = dns.stream().map(SyncDnUtil::normalize).distinct().toList();
-            Map<String, List<Membership>> out = new HashMap<>();
-            for (int from = 0; from < normalized.size(); from += ROW_BATCH) {
-                for (Membership m : membershipRepo.findAllBySourceDnIn(
-                        normalized.subList(from, Math.min(normalized.size(), from + ROW_BATCH)))) {
-                    out.computeIfAbsent(m.getSourceDn(), k -> new ArrayList<>()).add(m);
-                }
-            }
             return out;
         }
 
