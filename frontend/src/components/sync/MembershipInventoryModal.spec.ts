@@ -332,6 +332,34 @@ describe('MembershipInventoryModal', () => {
     vi.useRealTimers()
   })
 
+  it('Reconcile now says when the run is queuing the entries that refer to changed ones', async () => {
+    vi.useFakeTimers()
+    const now = new Date().toISOString()
+    const pending = deferred<{ data: { enumerated: number } }>()
+    vi.mocked(syncApi.reconcileSet).mockReturnValueOnce(pending.promise as never)
+    vi.mocked(syncApi.getSyncSetActivity).mockResolvedValue({ data: {
+      reconcile: {
+        id: 'r1', trigger: 'MANUAL', status: 'RUNNING', startedAt: now, heartbeatAt: now, phase: 'REFERENCES',
+        processed: 120, sourceCount: 120, currentDn: 'uid=alice,ou=people,dc=src',
+      },
+      verify: null, asOf: now,
+    } } as never)
+    const wrapper = open()
+    await flushPromises()
+
+    byText('Reconcile now')!.click()
+    await vi.advanceTimersByTimeAsync(1500)
+
+    const txt = document.body.textContent ?? ''
+    expect(txt).toContain('Reconcile: queuing entries that refer to changed ones')
+    expect(txt).toContain('Finding referrers of uid=alice,ou=people,dc=src')
+
+    pending.resolve({ data: { enumerated: 120 } })
+    await flushPromises()
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
   it('Verify contents shows which phase the check is in and how far it has got', async () => {
     vi.useFakeTimers()
     const now = new Date().toISOString()

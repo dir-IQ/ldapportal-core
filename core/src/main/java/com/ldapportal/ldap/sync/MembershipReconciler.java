@@ -153,7 +153,14 @@ public class MembershipReconciler {
 
     private int reconcile(Context ctx, SyncReconcileHistory.Run run, Lease lease) {
         UUID syncSetId = ctx.set.getId();
+        long started = System.nanoTime();
+        // Read before the scan: if it moves while the run works, a source change
+        // raced it and the engine stops trusting the scanned entries.
+        Long sourceChangeSeq = syncSetRepo.findSourceChangeSeq(syncSetId);
         Plan plan = computePlan(ctx);
+        long scanNanos = System.nanoTime() - started;
+        RecomputeEngine.Batch batch = engine.reconcileBatch(syncSetId,
+                sourceChangeSeq != null ? sourceChangeSeq : Long.MIN_VALUE);
         Guard guard = evaluateGuard(plan);
         lease.beat(); // the source scan can be long
         history.planned(run, plan.entries.size(), plan.managedCount, plan.complete,
@@ -170,7 +177,7 @@ public class MembershipReconciler {
             lease.beat();
             history.current(run, p.entry.getDN());
             try {
-                RecomputeOutcome outcome = engine.process(syncSetId, p.entry.getDN(), guard.tripped());
+                RecomputeOutcome outcome = engine.process(batch, p.entry.getDN(), p.entry, guard.tripped());
                 if (p.notInSet != null && outcome != null && outcome.action() == SyncPreviewAction.UNCHANGED) {
                     // In scope, never tracked and still not a member: the reason
                     // the run's source entries outnumber the managed ones.
@@ -193,7 +200,7 @@ public class MembershipReconciler {
                 lease.beat();
                 history.current(run, row.getTargetDn() != null ? row.getTargetDn() : row.getSourceDn());
                 try {
-                    history.record(run, engine.process(syncSetId, row.getIdentity(), guard.tripped()));
+                    history.record(run, engine.process(batch, row.getIdentity(), null, guard.tripped()));
                 } catch (Exception ex) {
                     faults++;
                     history.fault(run, ex, row.getIdentity());
@@ -202,6 +209,15 @@ public class MembershipReconciler {
                 }
             }
         }
+        // Closure for what this run changed, once at the end: during the run a
+        // referrer is either recomputed later anyway, or its referent wasn't
+        // synced yet when the change happened.
+        history.phase(run, SyncReconcilePhase.REFERENCES);
+        engine.fanOutDeferred(batch, dn -> {
+            lease.beat();
+            history.current(run, dn);
+        });
+        logTimings(syncSetId, plan.entries.size(), System.nanoTime() - started, scanNanos, batch.timings());
         if (faults > 0) {
             log.warn("Sync set {}: reconcile finished with {} faulted recompute(s); they retry next run",
                     syncSetId, faults);
@@ -219,6 +235,20 @@ public class MembershipReconciler {
         // an attempt and the request is retried.
         syncSetRepo.markReconcileRun(syncSetId, ctx.set.getReconcileRequestSeq(), plan.complete);
         return plan.entries.size();
+    }
+
+    /** Where a reconcile's time went: the first thing to read when a run is slow. */
+    private static void logTimings(UUID syncSetId, int entries, long totalNanos, long scanNanos,
+                                   RecomputeEngine.Timings t) {
+        long other = Math.max(0, totalNanos - scanNanos - t.sourceReadNanos() - t.targetNanos() - t.referenceNanos());
+        log.info("Sync set {}: reconcile of {} source entries took {} (source scan {}, source reads {}, "
+                        + "target reads and writes {}, reference updates {}, index, audit and other work {})",
+                syncSetId, entries, seconds(totalNanos), seconds(scanNanos), seconds(t.sourceReadNanos()),
+                seconds(t.targetNanos()), seconds(t.referenceNanos()), seconds(other));
+    }
+
+    private static String seconds(long nanos) {
+        return String.format(java.util.Locale.ROOT, "%.1fs", nanos / 1e9);
     }
 
     /** Dry-run: what a reconcile would do, computed without writing to the target. */

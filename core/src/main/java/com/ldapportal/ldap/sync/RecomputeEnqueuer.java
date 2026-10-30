@@ -3,6 +3,7 @@ package com.ldapportal.ldap.sync;
 
 import com.ldapportal.entity.RecomputeRequest;
 import com.ldapportal.repository.RecomputeRequestRepository;
+import com.ldapportal.repository.SyncSetRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
@@ -38,14 +39,35 @@ import java.util.UUID;
 public class RecomputeEnqueuer {
 
     private final RecomputeRequestRepository repo;
+    private final SyncSetRepository syncSetRepo;
     private final TransactionTemplate insertTx;
 
-    public RecomputeEnqueuer(RecomputeRequestRepository repo, PlatformTransactionManager txManager) {
+    public RecomputeEnqueuer(RecomputeRequestRepository repo, SyncSetRepository syncSetRepo,
+                             PlatformTransactionManager txManager) {
         this.repo = repo;
+        this.syncSetRepo = syncSetRepo;
         this.insertTx = new TransactionTemplate(txManager);
         // Independent of any caller transaction: a duplicate-key rollback here must
         // never mark an enclosing transaction rollback-only.
         this.insertTx.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    }
+
+    /**
+     * Enqueue a change to the source entry at {@code key}: as {@link #enqueue},
+     * after first bumping the set's source-change counter so a reconcile that's
+     * running stops trusting the entries its scan read (see
+     * {@code RecomputeEngine.reconcileBatch}). Bumped first, so the counter has
+     * moved before the worker can see the request.
+     */
+    public void enqueueSourceChange(UUID syncSetId, String key, Long srcCursor) {
+        try {
+            syncSetRepo.bumpSourceChange(syncSetId);
+        } catch (Exception ex) {
+            // The enqueue below must still happen; a running reconcile then may
+            // write an entry as its scan saw it, and this request corrects it.
+            log.warn("Sync set {}: could not note the source change to {}: {}", syncSetId, key, ex.toString());
+        }
+        enqueue(syncSetId, key, srcCursor);
     }
 
     public void enqueue(UUID syncSetId, String key, Long srcCursor) {

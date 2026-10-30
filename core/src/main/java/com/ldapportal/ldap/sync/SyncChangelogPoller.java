@@ -379,7 +379,7 @@ public class SyncChangelogPoller {
         for (SyncSet set : sets) {
             for (String changed : changedDns) {
                 if (SyncScopes.inScope(set, changed)) {
-                    enqueuer.enqueue(set.getId(), changed, srcCursor);
+                    enqueuer.enqueueSourceChange(set.getId(), changed, srcCursor);
                 }
             }
         }
