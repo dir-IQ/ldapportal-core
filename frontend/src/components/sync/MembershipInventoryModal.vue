@@ -80,7 +80,7 @@
         <button v-for="c in chips" :key="c.key" type="button"
                 class="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full"
                 :class="[c.chip, stateFilter === c.value ? 'ring-2 ring-offset-1 ring-blue-500' : '']"
-                :aria-pressed="stateFilter === c.value"
+                :aria-pressed="stateFilter === c.value" :title="c.hint"
                 @click="setStateFilter(c.value)">
           <span v-if="c.dot" class="w-1.5 h-1.5 rounded-full" :class="c.dot" aria-hidden="true"></span>
           {{ c.label }} <span class="tabular-nums">{{ c.n }}</span>
@@ -131,7 +131,8 @@
           <span class="font-mono">{{ row.identity }}</span>
         </template>
         <template #cell-state="{ row }">
-          <span class="px-2 py-0.5 rounded text-xs" :class="stateClass(row.state)">{{ row.state }}</span>
+          <span class="px-2 py-0.5 rounded text-xs" :class="stateClass(row.state)"
+                :title="STATE_META[row.state]?.hint">{{ stateLabel(row.state) }}</span>
         </template>
         <template #cell-sourceDn="{ row }">
           <span class="font-mono">{{ row.sourceDn }}</span>
@@ -262,12 +263,30 @@ const cols = [
   { key: 'failReason', label: 'Reason' },
 ]
 
-interface ChipMeta { label: string; chip: string; dot: string }
+interface ChipMeta { label: string; chip: string; dot: string; hint: string }
+// Labels for the API's states. APPLIED shows as "Synced": the sync wrote the
+// entry and tracks it; whether the target still matches is what Verify contents checks.
 const STATE_META: Record<string, ChipMeta> = {
-  APPLIED: { label: 'Applied', chip: 'bg-green-50 text-green-700', dot: 'bg-green-600' },
-  PENDING: { label: 'Pending', chip: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400' },
-  REVIEW: { label: 'Review', chip: 'bg-amber-50 text-amber-800', dot: 'bg-amber-500' },
-  FAILED: { label: 'Failed', chip: 'bg-red-50 text-red-700', dot: 'bg-red-600' },
+  APPLIED: {
+    label: 'Synced', chip: 'bg-green-50 text-green-700', dot: 'bg-green-600',
+    hint: 'Written by the sync and tracked. Verify contents checks that the target still matches.',
+  },
+  PENDING: {
+    label: 'Pending', chip: 'bg-gray-100 text-gray-600', dot: 'bg-gray-400',
+    hint: 'Queued: the sync hasn\'t written it yet.',
+  },
+  REVIEW: {
+    label: 'Review', chip: 'bg-amber-50 text-amber-800', dot: 'bg-amber-500',
+    hint: 'Held for an operator decision: an ambiguous match, a placement conflict or a held delete.',
+  },
+  FAILED: {
+    label: 'Failed', chip: 'bg-red-50 text-red-700', dot: 'bg-red-600',
+    hint: 'The last write failed; the Reason column says why. Retried on the next reconcile.',
+  },
+}
+
+function stateLabel(state: MembershipState): string {
+  return STATE_META[state]?.label ?? state
 }
 const STATE_ORDER = ['FAILED', 'REVIEW', 'PENDING', 'APPLIED'] as const
 
@@ -284,14 +303,16 @@ const chips = computed(() => {
   const c = props.set?.stateCounts ?? {}
   const all = Object.values(c).reduce((a, b) => a + b, 0)
   return [
-    { key: 'all', value: '' as StateFilter, label: 'All', n: all, dot: '', chip: 'bg-gray-100 text-gray-700' },
+    { key: 'all', value: '' as StateFilter, label: 'All', n: all, dot: '', chip: 'bg-gray-100 text-gray-700',
+      hint: 'Every entry this set tracks.' },
     ...STATE_ORDER.map((k) => ({
       key: k, value: k as StateFilter, label: STATE_META[k].label,
-      n: c[k] ?? 0, dot: STATE_META[k].dot, chip: STATE_META[k].chip,
+      n: c[k] ?? 0, dot: STATE_META[k].dot, chip: STATE_META[k].chip, hint: STATE_META[k].hint,
     })),
     // Not membership rows: source entries the last complete reconcile found outside the set.
     { key: NOT_IN_SET, value: NOT_IN_SET as StateFilter, label: 'Not in set', n: notInSet.value?.total ?? 0,
-      dot: 'bg-slate-400', chip: 'bg-slate-50 text-slate-700' },
+      dot: 'bg-slate-400', chip: 'bg-slate-50 text-slate-700',
+      hint: 'In-scope source entries this set doesn\'t manage, and why (as of the last complete reconcile).' },
   ]
 })
 
