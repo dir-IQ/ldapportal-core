@@ -366,7 +366,12 @@ can't fail it.
   refer to changed ones*). The referrers of everything the run changed are
   then found with one search per 50 changed entries, not one per change. A
   referrer the run recomputed *after* the change it refers to is skipped; it
-  already saw it. Every other referrer is queued for the worker.
+  already saw it. Every other referrer is queued for the worker;
+- a group member that doesn't translate yet (kept as the target has it, §5
+  step 5) is looked up in bulk: one database query for where the sync last
+  wrote every such member, then one one-level search per 100 target DNs under
+  each parent to see which exist, instead of a query and a target read per
+  member. The same bulk query serves the preview and **Verify contents**.
 
 Each finished reconcile logs where its time went:
 `reconcile of N source entries took …  (source scan …, source reads …, target

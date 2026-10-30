@@ -546,7 +546,7 @@ public class RecomputeEngine {
         TargetEntryDiffer.Kept kept = new TargetEntryDiffer.Kept(decision.desiredAttrs(), java.util.Map.of());
         if (!decision.unresolvedReferences().isEmpty()) {
             java.util.Map<String, java.util.Map<String, String>> candidates = untranslatedTargets.forSet(set)
-                    .candidates(decision.unresolvedReferences(), dn -> fx.readTarget(target, dn) != null,
+                    .candidatesInBulk(decision.unresolvedReferences(), dns -> fx.existingOnTarget(target, dns),
                             fx::leavesItsSet);
             kept = TargetEntryDiffer.keepUnresolved(decision.desiredAttrs(), candidates, tgt);
         }
@@ -770,6 +770,25 @@ public class RecomputeEngine {
         }
 
         @Override
+        public java.util.Set<String> existingOnTarget(DirectoryConnection target, java.util.Set<String> dns) {
+            java.util.Set<String> rest = new java.util.LinkedHashSet<>(dns);
+            java.util.Set<String> found = new java.util.HashSet<>();
+            if (moveTo != null) {
+                // The recorded move's DN can only be read as the dry run sees it.
+                for (String dn : dns) {
+                    if (SyncDnUtil.normalize(dn).equals(SyncDnUtil.normalize(moveTo))) {
+                        rest.remove(dn);
+                        if (readTarget(target, dn) != null) {
+                            found.add(dn);
+                        }
+                    }
+                }
+            }
+            found.addAll(RecomputeEngine.this.existingOnTarget(target, rest));
+            return found;
+        }
+
+        @Override
         public ApplyOutcome add(DirectoryConnection target, String dn, List<Attribute> attrs) {
             addDn = dn;
             addAttrs = attrs;
@@ -912,6 +931,20 @@ public class RecomputeEngine {
          */
         Entry readTarget(DirectoryConnection target, String dn);
 
+        /**
+         * Those of {@code dns} an entry exists at on the target, by
+         * {@link #readTarget}. The live effects look them up in bulk.
+         */
+        default java.util.Set<String> existingOnTarget(DirectoryConnection target, java.util.Set<String> dns) {
+            java.util.Set<String> found = new java.util.HashSet<>();
+            for (String dn : dns) {
+                if (readTarget(target, dn) != null) {
+                    found.add(dn);
+                }
+            }
+            return found;
+        }
+
         ApplyOutcome add(DirectoryConnection target, String dn, List<Attribute> attrs);
 
         /** {@code before} is the target entry the modifications were diffed against. */
@@ -951,6 +984,11 @@ public class RecomputeEngine {
         @Override
         public Entry readTarget(DirectoryConnection target, String dn) {
             return RecomputeEngine.this.readTarget(target, dn);
+        }
+
+        @Override
+        public java.util.Set<String> existingOnTarget(DirectoryConnection target, java.util.Set<String> dns) {
+            return RecomputeEngine.this.existingOnTarget(target, dns);
         }
 
         @Override
@@ -1027,6 +1065,11 @@ public class RecomputeEngine {
         @Override
         public Entry readTarget(DirectoryConnection target, String dn) {
             return live.readTarget(target, dn);
+        }
+
+        @Override
+        public java.util.Set<String> existingOnTarget(DirectoryConnection target, java.util.Set<String> dns) {
+            return live.existingOnTarget(target, dns);
         }
 
         @Override
@@ -1430,6 +1473,102 @@ public class RecomputeEngine {
                     throw e;
                 }
             });
+        } finally {
+            tallyTarget(t0);
+        }
+    }
+
+    /** Target DNs searched per one-level search in {@link #existingOnTarget}. */
+    static final int EXISTS_BATCH = 100;
+
+    /**
+     * Those of {@code dns} an entry exists at on the target. LDAP can't search
+     * by DN portably, so the DNs are grouped by parent and each group is one
+     * one-level search matching their RDNs ({@link #EXISTS_BATCH} at a time),
+     * instead of a read per DN. A DN that doesn't parse, or a search that
+     * fails other than on a missing parent, falls back to reading the DN.
+     */
+    java.util.Set<String> existingOnTarget(DirectoryConnection target, java.util.Set<String> dns) {
+        java.util.Set<String> found = new java.util.HashSet<>();
+        java.util.Map<String, List<String>> byParent = new java.util.LinkedHashMap<>();
+        for (String dn : dns) {
+            try {
+                DN parsed = new DN(dn);
+                DN parent = parsed.getParent();
+                if (parent == null) {
+                    if (readTarget(target, dn) != null) {
+                        found.add(dn);
+                    }
+                    continue;
+                }
+                byParent.computeIfAbsent(parent.toString(), k -> new ArrayList<>()).add(dn);
+            } catch (LDAPException e) {
+                if (readTarget(target, dn) != null) {
+                    found.add(dn);
+                }
+            }
+        }
+        byParent.forEach((parent, children) -> {
+            for (int from = 0; from < children.size(); from += EXISTS_BATCH) {
+                List<String> chunk = children.subList(from, Math.min(children.size(), from + EXISTS_BATCH));
+                java.util.Set<String> present = childrenPresent(target, parent, chunk);
+                if (present == null) {
+                    for (String dn : chunk) {
+                        if (readTarget(target, dn) != null) {
+                            found.add(dn);
+                        }
+                    }
+                    continue;
+                }
+                for (String dn : chunk) {
+                    if (present.contains(SyncDnUtil.normalize(dn))) {
+                        found.add(dn);
+                    }
+                }
+            }
+        });
+        return found;
+    }
+
+    /**
+     * The normalized DNs of the entries directly under {@code parent} whose
+     * RDN is one of {@code children}'s; empty when the parent doesn't exist,
+     * {@code null} when the search failed otherwise.
+     */
+    private java.util.Set<String> childrenPresent(DirectoryConnection target, String parent, List<String> children) {
+        List<com.unboundid.ldap.sdk.Filter> rdns = new ArrayList<>(children.size());
+        try {
+            for (String dn : children) {
+                com.unboundid.ldap.sdk.RDN rdn = new DN(dn).getRDN();
+                String[] names = rdn.getAttributeNames();
+                String[] values = rdn.getAttributeValues();
+                List<com.unboundid.ldap.sdk.Filter> parts = new ArrayList<>(names.length);
+                for (int i = 0; i < names.length; i++) {
+                    parts.add(com.unboundid.ldap.sdk.Filter.createEqualityFilter(names[i], values[i]));
+                }
+                rdns.add(parts.size() == 1 ? parts.get(0) : com.unboundid.ldap.sdk.Filter.createANDFilter(parts));
+            }
+        } catch (LDAPException e) {
+            return null;
+        }
+        long t0 = System.nanoTime();
+        try {
+            return connectionFactory.withConnectionUnreplicated(target, conn -> {
+                try {
+                    SearchRequest req = new SearchRequest(parent, SearchScope.ONE,
+                            com.unboundid.ldap.sdk.Filter.createORFilter(rdns), "1.1");
+                    java.util.Set<String> present = new java.util.HashSet<>();
+                    for (SearchResultEntry e : conn.search(req).getSearchEntries()) {
+                        present.add(SyncDnUtil.normalize(e.getDN()));
+                    }
+                    return present;
+                } catch (LDAPException e) {
+                    return e.getResultCode() == ResultCode.NO_SUCH_OBJECT ? java.util.Set.<String>of() : null;
+                }
+            });
+        } catch (RuntimeException e) {
+            log.debug("Bulk existence check under {} failed ({}); reading each entry", parent, e.toString());
+            return null;
         } finally {
             tallyTarget(t0);
         }

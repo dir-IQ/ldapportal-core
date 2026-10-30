@@ -41,6 +41,9 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
      */
     List<Membership> findAllBySourceDn(String sourceDn);
 
+    /** As {@link #findAllBySourceDn}, for many (normalized) source DNs in one query. */
+    List<Membership> findAllBySourceDnIn(java.util.Collection<String> sourceDns);
+
     /**
      * Every row (any set, any state) whose target DN matches, case-insensitively.
      * The engine's OUT path uses this to refuse deleting a target entry that

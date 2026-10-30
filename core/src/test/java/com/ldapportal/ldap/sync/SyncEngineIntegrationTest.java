@@ -1177,6 +1177,37 @@ class SyncEngineIntegrationTest {
     }
 
     @Test
+    void existingOnTarget_findsEntriesInBulk_acrossParentsAndBatches() throws Exception {
+        java.util.Set<String> asked = new java.util.LinkedHashSet<>();
+        java.util.Set<String> present = new java.util.HashSet<>();
+        // More than one batch under one parent, every other one present.
+        for (int i = 0; i < RecomputeEngine.EXISTS_BATCH + 20; i++) {
+            String dn = "uid=u" + i + "," + DST_USERS;
+            asked.add(dn);
+            if (i % 2 == 0) {
+                target.add(new Entry(dn, new Attribute("objectClass", "top", "person", "organizationalPerson",
+                        "inetOrgPerson"), new Attribute("uid", "u" + i), new Attribute("cn", "u" + i),
+                        new Attribute("sn", "u" + i)));
+                present.add(dn);
+            }
+        }
+        // A multi-valued RDN, a DN written in another form, and a missing parent.
+        String multi = "cn=eng+ou=it," + DST_GROUPS;
+        target.add(new Entry(multi, new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("cn", "eng"), new Attribute("ou", "it"), new Attribute("member", "cn=x")));
+        asked.add(multi);
+        present.add(multi);
+        String otherForm = "UID=U0, OU=Users," + DST_BASE;
+        asked.add(otherForm);
+        present.add(otherForm);
+        asked.add("uid=nobody,ou=Missing," + DST_BASE);
+
+        DirectoryConnection dst = directoryRepo.findById(linkRepo.findById(link.getId()).orElseThrow()
+                .getTargetDirId()).orElseThrow();
+        assertThat(engine.existingOnTarget(dst, asked)).containsExactlyInAnyOrderElementsOf(present);
+    }
+
+    @Test
     void reconcile_survivesAnAdminEditOfTheSetDuringTheRun() throws Exception {
         addPerson("alice", "staff", "alice@src");
         // An admin saves the set (bumping its version) while the reconcile works:
