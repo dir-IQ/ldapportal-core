@@ -90,7 +90,8 @@ describe('MembershipInventoryModal', () => {
     expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', expect.objectContaining({ page: 0, size: 50 }))
     const txt = document.body.textContent ?? ''
     expect(txt).toContain('All') // All chip
-    expect(txt).toContain('Applied')
+    expect(txt).toContain('Synced')
+    expect(txt).not.toContain('Applied')
     expect(txt).toContain('Failed')
     expect(txt).toContain('Membership inventory — people')
     wrapper.unmount()
@@ -380,5 +381,17 @@ describe('MembershipInventoryModal', () => {
     expect(document.body.textContent).not.toContain('waiting for the next reconcile')
     wrapper.unmount()
     vi.useRealTimers()
+  })
+
+  it('labels the states for operators: Synced (APPLIED), with what each means', async () => {
+    withRow({ state: 'APPLIED' })
+    const wrapper = open()
+    await flushPromises()
+    const chip = byText('Synced')!
+    expect(chip.getAttribute('title')).toContain('Verify contents checks that the target still matches')
+    const badge = Array.from(document.querySelectorAll('td span')).find((e) => e.textContent?.trim() === 'Synced')
+    expect(badge).toBeTruthy()
+    expect(document.body.textContent).not.toContain('APPLIED')
+    wrapper.unmount()
   })
 })
