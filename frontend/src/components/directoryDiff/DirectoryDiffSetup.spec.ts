@@ -16,6 +16,16 @@ const api = vi.hoisted(() => ({
   startDirectoryDiff: vi.fn(),
 }))
 vi.mock('@/api/directoryDiff', () => api)
+const auth = vi.hoisted(() => ({ granted: new Set<string>() }))
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ hasSuperadminPermission: (key: string) => auth.granted.has(key) }),
+}))
+const sync = vi.hoisted(() => ({
+  listSyncLinks: vi.fn(),
+  listSyncSets: vi.fn(),
+  getSyncSetDefaults: vi.fn(),
+}))
+vi.mock('@/api/sync', () => sync)
 vi.mock('@/components/DnPicker.vue', () => ({
   default: {
     props: ['modelValue'],
@@ -26,9 +36,30 @@ vi.mock('@/components/DnPicker.vue', () => ({
 
 import DirectoryDiffSetup from './DirectoryDiffSetup.vue'
 import { diffRun } from './fixtures'
+import type { SyncSet } from '@/api/sync'
+
+function syncSet(overrides: Partial<SyncSet>): SyncSet {
+  return {
+    id: 'set', linkId: 'link-1', name: 'Set', objectScopeBaseDn: 'ou=people,dc=a', objectScope: 'SUB',
+    identityKey: null, targetBaseDn: 'ou=Users,dc=b', applicabilityFilter: '(objectClass=inetOrgPerson)',
+    referenceAttributes: null, sourceAnchorAttribute: 'employeeNumber', deletePolicy: 'REVIEW',
+    transformRules: null, excludedAttributes: null, reconcileCadenceSeconds: null, reconcileLastRunAt: null,
+    enabled: true, loggingLevel: 'SUMMARY', createdAt: '', updatedAt: '', version: 0, stateCounts: {},
+    ...overrides,
+  } as SyncSet
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
+  auth.granted.clear()
+  sync.listSyncLinks.mockResolvedValue({ data: [
+    { id: 'link-1', displayName: 'East → West', sourceDirId: 'dir-a', targetDirId: 'dir-b' },
+  ] })
+  sync.listSyncSets.mockResolvedValue({ data: [
+    syncSet({ id: 'set-1', name: 'People' }),
+    syncSet({ id: 'set-2', name: 'Admin', objectScope: 'BASE' }),
+  ] })
+  sync.getSyncSetDefaults.mockResolvedValue({ data: { excludedAttributes: ['userPassword', 'entryUUID'] } })
   api.listDirectoryDiffs.mockResolvedValue({ data: [diffRun(), diffRun({ id: 'run-2', status: 'FAILED', error: 'Boom' })] })
   api.startDirectoryDiff.mockResolvedValue({ data: diffRun({ id: 'run-3', status: 'RUNNING' }) })
 })
@@ -135,5 +166,42 @@ describe('DirectoryDiffSetup', () => {
     const pickers = wrapper.findAll('.dn-picker')
     expect((pickers[0].element as HTMLInputElement).value).toBe('ou=people,dc=a')
     expect((pickers[1].element as HTMLInputElement).value).toBe('ou=Users,dc=b')
+  })
+
+  it('hides the sync set picker without permission to view directory sync', async () => {
+    const wrapper = await mountSetup()
+    expect(wrapper.find('[data-testid="verify-sync-set"]').exists()).toBe(false)
+    expect(sync.listSyncSets).not.toHaveBeenCalled()
+  })
+
+  it('fills the form from a sync set and starts that comparison', async () => {
+    auth.granted.add('superadmin.view_directory_sync')
+    const wrapper = await mountSetup()
+    const options = wrapper.find('#dd-sync-set').findAll('option').map(o => o.text())
+    expect(options).toContain('East → West › People')
+    expect(options.find(o => o.includes('Admin'))).toContain('can’t verify: it syncs a single entry (base scope)')
+
+    await wrapper.find('#dd-sync-set').setValue('set-1')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="sync-set-notes"]').text()).toContain('only entries the sync stamped with employeeNumber')
+
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(api.startDirectoryDiff).toHaveBeenCalledWith({
+      a: { directoryId: 'dir-a', baseDn: 'ou=people,dc=a', scope: 'SUB', filter: '(objectClass=inetOrgPerson)' },
+      b: { directoryId: 'dir-b', baseDn: 'ou=Users,dc=b', scope: 'SUB', filter: '(employeeNumber=*)' },
+      pairBy: 'DN',
+      pairAttribute: null,
+      attributes: [],
+      ignore: ['userPassword', 'entryUUID', 'employeeNumber'],
+    })
+  })
+
+  it('opens filled in from the sync set it was sent', async () => {
+    auth.granted.add('superadmin.view_directory_sync')
+    const wrapper = await mountSetup({ verifySetId: 'set-1' })
+    expect((wrapper.find('#dd-sync-set').element as HTMLSelectElement).value).toBe('set-1')
+    expect((wrapper.find('#dd-a-dir').element as HTMLSelectElement).value).toBe('dir-a')
+    expect((wrapper.findAll('.dn-picker')[1].element as HTMLInputElement).value).toBe('ou=Users,dc=b')
   })
 })

@@ -2,6 +2,22 @@
 <template>
   <div>
     <form class="bg-white border border-gray-200 rounded-xl p-5 mb-6" @submit.prevent="submit">
+      <div v-if="canUseSyncSets" class="mb-5 pb-5 border-b border-gray-200" data-testid="verify-sync-set">
+        <label for="dd-sync-set" class="block text-sm font-semibold text-gray-800 mb-1">Verify a sync set (optional)</label>
+        <p class="text-xs text-gray-500 mb-2">
+          Fills in both sides from a sync set, to check what it should have produced on its target. You can still change anything below.
+        </p>
+        <select id="dd-sync-set" v-model="syncSetId" class="input w-full max-w-xl" @change="applySyncSet(syncSetId)">
+          <option value="">{{ loadingSyncSets ? 'Loading…' : 'Choose a sync set' }}</option>
+          <option v-for="o in syncSetOptions" :key="o.set.id" :value="o.set.id" :disabled="!!o.unsupported">
+            {{ o.label }}<template v-if="o.unsupported"> (can’t verify: {{ o.unsupported }})</template>
+          </option>
+        </select>
+        <ul v-if="syncSetNotes.length" class="mt-2 space-y-0.5 text-xs text-gray-600 list-disc pl-5" data-testid="sync-set-notes">
+          <li v-for="(note, i) in syncSetNotes" :key="i">{{ note }}</li>
+        </ul>
+      </div>
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
         <fieldset v-for="side in sides" :key="side.key" class="border border-gray-200 rounded-lg p-4">
           <legend class="px-1 text-sm font-semibold text-gray-800">
@@ -165,10 +181,13 @@ import {
   type DirectoryDiffPairing, type DirectoryDiffRequest, type DirectoryDiffRun, type DirectoryDiffScope,
   type DirectoryDiffStatus,
 } from '@/api/directoryDiff'
+import { listSyncLinks, listSyncSets, getSyncSetDefaults, type SyncLink, type SyncSet } from '@/api/sync'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
 import DnPicker from '@/components/DnPicker.vue'
 import type { components } from '@/api/openapi'
 import { errMsg, formatTime, n, pairLabel, parseNames } from './directoryDiffFormat'
+import { prefillFromSyncSet, unsupportedReason } from './syncSetPrefill'
 
 type Directory = components['schemas']['DirectorySummaryResponse']
 
@@ -192,6 +211,8 @@ interface SetupForm {
 const props = defineProps<{
   /** A finished run whose settings pre-fill the form ("Run again"). */
   prefill?: DirectoryDiffRun | null
+  /** A sync set to pre-fill the form from ("Verify a sync set"), e.g. from the sync set's page. */
+  verifySetId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -200,6 +221,7 @@ const emit = defineEmits<{
 }>()
 
 const notif = useNotificationStore()
+const auth = useAuthStore()
 
 const sides: { key: 'a' | 'b' }[] = [{ key: 'a' }, { key: 'b' }]
 
@@ -208,6 +230,21 @@ const loadingDirs = ref(false)
 const recent = ref<DirectoryDiffRun[]>([])
 const loadingRecent = ref(false)
 const starting = ref(false)
+
+interface SyncSetOption {
+  set: SyncSet
+  link: SyncLink
+  label: string
+  unsupported: string | null
+}
+
+/** Sync sets are listed only to superadmins who may view directory sync. */
+const canUseSyncSets = computed(() => auth.hasSuperadminPermission('superadmin.view_directory_sync'))
+const syncSetOptions = ref<SyncSetOption[]>([])
+const defaultExcluded = ref<string[]>([])
+const loadingSyncSets = ref(false)
+const syncSetId = ref('')
+const syncSetNotes = ref<string[]>([])
 
 const form = reactive<SetupForm>({
   a: { directoryId: '', baseDn: '', scope: 'SUB', filter: '' },
@@ -277,6 +314,51 @@ async function loadDirectories() {
   }
 }
 
+async function loadSyncSets() {
+  if (!canUseSyncSets.value) return
+  loadingSyncSets.value = true
+  try {
+    const [links, sets, defaults] = await Promise.all([listSyncLinks(), listSyncSets(), getSyncSetDefaults()])
+    const byId = new Map(links.data.map(l => [l.id, l]))
+    defaultExcluded.value = defaults.data.excludedAttributes
+    syncSetOptions.value = sets.data
+      .filter(s => byId.has(s.linkId))
+      .map(s => {
+        const link = byId.get(s.linkId)!
+        return { set: s, link, label: `${link.displayName} › ${s.name}`, unsupported: unsupportedReason(s) }
+      })
+      .sort((x, y) => x.label.localeCompare(y.label))
+    if (props.verifySetId) applySyncSet(props.verifySetId)
+  } catch (e) {
+    notif.error(errMsg(e, 'Could not load sync sets'))
+  } finally {
+    loadingSyncSets.value = false
+  }
+}
+
+/** Fill both sides, pairing and ignore list from a sync set. */
+function applySyncSet(id: string) {
+  const option = syncSetOptions.value.find(o => o.set.id === id)
+  syncSetId.value = option && !option.unsupported ? id : ''
+  syncSetNotes.value = []
+  if (!option) return
+  if (option.unsupported) {
+    notif.error(`${option.label} can’t be verified here: ${option.unsupported}.`)
+    return
+  }
+  const p = prefillFromSyncSet(option.set, option.link, defaultExcluded.value)
+  prefilling = true
+  form.a = { ...p.a }
+  form.b = { ...p.b }
+  form.pairBy = 'DN'
+  form.pairAttribute = ''
+  form.attributeMode = 'ALL'
+  form.only = ''
+  form.ignore = p.ignore.join(', ')
+  syncSetNotes.value = p.notes
+  nextTick(() => { prefilling = false })
+}
+
 async function loadRecent() {
   loadingRecent.value = true
   try {
@@ -323,5 +405,6 @@ function side(s: SideForm) {
 onMounted(() => {
   loadDirectories()
   loadRecent()
+  loadSyncSets()
 })
 </script>

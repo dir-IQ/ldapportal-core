@@ -114,15 +114,40 @@ attribute (`dc=a` vs `dc=b`). That is expected.
 
 ## Using it to check sync
 
-Sync isn't a straight copy, so expect some differences that are intended:
+### Verify a sync set
 
-- **Different tree layout.** If sync places entries under different containers
-  on the target, pairing by DN won't match them. Pair by an attribute that is
-  the same on both sides instead, such as `employeeNumber` or `mail`.
+The quickest way to check a sync set is **Verify a sync set** at the top of the
+form. You can also select **Compare in Directory Diff** in that set's
+membership inventory on the Directory Sync page. Either one fills in the form
+from the set:
+
+| Setting | Filled in as |
+|---|---|
+| Side A | The link's source directory, the set's source base DN, its scope and its applicability filter |
+| Side B | The link's target directory, the set's target base DN (or the source base, when the set keeps DNs), the same scope |
+| Side B filter | `(<anchor>=*)` when the set writes a source anchor, so entries the sync doesn't manage stay out of Only in B |
+| Pairing | By DN, with the source base swapped for the target base, as the set places entries |
+| Ignore | The set's excluded attributes (or the engine defaults), every attribute its transform rules rename or rewrite, and the source anchor |
+
+Notes under the picker explain each of these choices. You can still change
+anything before you select **Compare**. The picker shows only for superadmins
+who may view Directory Sync. A set with base scope can't be verified this way.
+
+The diff never reads the sync's own records. It reads both directories, so a
+sync bug can't hide from it.
+
+### Differences to expect
+
+Some differences are intended, and the shortcut can't remove all of them:
+
 - **Translated references.** `member` values that sync rewrites to other target
   DNs show as different, because the diff only swaps the base DN.
-- **A sync set's excluded attributes** show as only on side A. Add them to
-  **Ignore** to leave them out.
+- **Different tree layout.** If you compare by hand and sync places entries
+  under different containers on the target, pairing by DN won't match them.
+  Pair by an attribute that is the same on both sides instead, such as
+  `employeeNumber` or `mail`.
+- **A sync set's excluded attributes** show as only on side A unless you add
+  them to **Ignore**. Verify a sync set does this for you.
 
 ## Results
 

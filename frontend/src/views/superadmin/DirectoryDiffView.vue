@@ -14,7 +14,7 @@
       {{ pairingLabel(run) }} · started {{ formatTime(run.startedAt) }}<template v-if="run.requestedBy"> by {{ run.requestedBy }}</template>
     </p>
 
-    <DirectoryDiffSetup v-if="!runId" :prefill="prefill" @started="onStarted" @open="openRun" />
+    <DirectoryDiffSetup v-if="!runId" :prefill="prefill" :verify-set-id="verifySetId" @started="onStarted" @open="openRun" />
 
     <template v-else>
       <p v-if="loading && !run" class="text-sm text-gray-500">Loading…</p>
@@ -70,6 +70,9 @@ const prefill = ref<DirectoryDiffRun | null>(null)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 
 const runId = computed<string | null>(() => typeof route.query.run === 'string' ? route.query.run : null)
+/** `?verifySet=<id>` opens the form filled in from that sync set (the sync set's "Compare in Directory Diff"). */
+const verifySetId = computed<string | null>(() =>
+  typeof route.query.verifySet === 'string' ? route.query.verifySet : null)
 
 function stopPolling() {
   if (pollTimer) {
