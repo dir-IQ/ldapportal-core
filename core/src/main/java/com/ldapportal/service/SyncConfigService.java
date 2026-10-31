@@ -463,6 +463,22 @@ public class SyncConfigService {
     }
 
     /**
+     * Ask for a reconcile of the set on the scheduler's next tick, without
+     * waiting for it: e.g. after its filter, scope or placement changed, so the
+     * new configuration is applied now rather than at its next scheduled run.
+     * A reconcile already running finishes first and the requested one follows.
+     *
+     * @return whether it will run: false while the set or its link is disabled
+     *         (it then runs once both are enabled)
+     */
+    public boolean requestReconcile(UUID syncSetId, String requestedBy) {
+        SyncSet set = requireSet(syncSetId);
+        setRepo.requestReconcileOfSet(syncSetId);
+        log.info("Sync set {}: reconcile requested by {}", syncSetId, requestedBy);
+        return set.isEnabled() && linkRepo.findById(set.getLinkId()).map(SyncLink::isEnabled).orElse(false);
+    }
+
+    /**
      * Re-check the set's target, e.g. after it was restored from a backup: forget
      * what the set last wrote for each applied entry, so the next reconcile reads
      * every target entry and re-applies the ones that no longer match, then ask

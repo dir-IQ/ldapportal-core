@@ -77,6 +77,7 @@ vi.mock('@/api/sync', () => ({
     data: { content: [membership], totalElements: 8, totalPages: 1, number: 0, size: 50 },
   })),
   reconcileSet: vi.fn(() => Promise.resolve({ data: { enumerated: 3 } })),
+  requestSyncSetReconcile: vi.fn(() => Promise.resolve({ data: { reconcileQueued: true } })),
   recomputeKey: vi.fn(() => Promise.resolve({ data: undefined })),
   dismissMembership: vi.fn(() => Promise.resolve({ data: undefined })),
 }))
@@ -331,6 +332,49 @@ describe('DirectorySyncView', () => {
         applicabilityFilter: '(&(objectClass=secGroup)\n  (!(cn=iv-admin)))', // the server joins the lines
       }))
       wrapper.unmount()
+    })
+
+    it('offers to reconcile now after a save changes the filter, and queues it on yes', async () => {
+      const saved = { ...set, applicabilityFilter: '(!(uid=svc-*))' }
+      vi.mocked(syncApi.updateSyncSet).mockResolvedValueOnce({ data: saved } as never)
+      confirmApi.confirm.mockResolvedValueOnce(true)
+      const wrapper = await openEditor('Edit')
+
+      await type('Applicability filter', '(!(uid=svc-*))')
+      await submit()
+
+      expect(confirmApi.confirm).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Apply the changes now?', confirmLabel: 'Reconcile now', cancelLabel: 'Later',
+        message: expect.stringContaining('The new applicability filter takes effect at the set\'s next reconcile'),
+      }))
+      expect(syncApi.requestSyncSetReconcile).toHaveBeenCalledWith('set-1')
+      wrapper.unmount()
+    })
+
+    it('leaves the reconcile to its schedule on Later, and doesn\'t ask when nothing it applies changed', async () => {
+      vi.mocked(syncApi.updateSyncSet).mockResolvedValueOnce(
+        { data: { ...set, applicabilityFilter: '(!(uid=svc-*))' } } as never)
+      confirmApi.confirm.mockResolvedValueOnce(false)
+      const wrapper = await openEditor('Edit')
+      await type('Applicability filter', '(!(uid=svc-*))')
+      await submit()
+      expect(confirmApi.confirm).toHaveBeenCalledTimes(1)
+      expect(syncApi.requestSyncSetReconcile).not.toHaveBeenCalled()
+      wrapper.unmount()
+
+      vi.clearAllMocks()
+      document.body.innerHTML = ''
+      vi.mocked(syncApi.updateSyncSet).mockResolvedValueOnce(
+        { data: { ...set, loggingLevel: 'DETAILED' } } as never)
+      const again = await openEditor('Edit')
+      const level = document.getElementById('sync-set-logging-level') as HTMLSelectElement
+      level.value = 'DETAILED'
+      level.dispatchEvent(new Event('change'))
+      await flushPromises()
+      await submit()
+      expect(syncApi.updateSyncSet).toHaveBeenCalled()
+      expect(confirmApi.confirm).not.toHaveBeenCalled()
+      again.unmount()
     })
 
     it('marks the source base DN required and points blank fields at their defaults', async () => {
