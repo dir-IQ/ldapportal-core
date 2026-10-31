@@ -277,6 +277,16 @@ public class MembershipReconciler {
         return String.format(java.util.Locale.ROOT, "%.1fs", nanos / 1e9);
     }
 
+    /**
+     * Whether a reconcile of {@code set}, as loaded, holds its lease: one is
+     * running (on any instance) and heartbeated recently enough not to be
+     * reclaimed.
+     */
+    public static boolean isRunning(SyncSet set, OffsetDateTime now) {
+        return set.getReconcileLeaseToken() != null && set.getReconcileLeaseHeartbeatAt() != null
+                && set.getReconcileLeaseHeartbeatAt().isAfter(now.minus(LEASE_STALE));
+    }
+
     /** Dry-run: what a reconcile would do, computed without writing to the target. */
     public SyncReconcilePreview preview(UUID syncSetId) {
         // A preview never writes, so it plans for a disabled set or link too —

@@ -35,7 +35,7 @@ const notInSetPage = vi.hoisted(() => (over: Record<string, unknown> = {}) => ({
 
 vi.mock('@/api/sync', () => ({
   listMemberships: vi.fn(() => Promise.resolve(page([membership]))),
-  reconcileSet: vi.fn(() => Promise.resolve({ data: { enumerated: 3 } })),
+  startReconcile: vi.fn(() => Promise.resolve({ data: { started: true } })),
   recheckTarget: vi.fn(() => Promise.resolve({ data: { entries: 5, reconcileQueued: true } })),
   listReconcileRuns: vi.fn(() => Promise.resolve({ data: [] })),
   getSyncSetActivity: vi.fn(() => Promise.resolve({ data: { reconcile: null, verify: null, asOf: new Date().toISOString() } })),
@@ -75,6 +75,8 @@ function open() {
 }
 const byText = (t: string) =>
   Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.includes(t))
+const byExactText = (t: string) =>
+  Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.trim() === t)
 
 describe('MembershipInventoryModal', () => {
   beforeEach(() => {
@@ -239,16 +241,85 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
-  it('Reconcile now reloads the reconcile history once the run finishes', async () => {
+  /** The set's activity as getSyncSetActivity returns it: no run, or the given one. */
+  function activityWith(reconcile: Record<string, unknown> | null) {
+    vi.mocked(syncApi.getSyncSetActivity).mockResolvedValue({ data: {
+      reconcile, verify: null, asOf: new Date().toISOString(),
+    } } as never)
+  }
+  const run = (over: Record<string, unknown>) => ({
+    id: 'r1', trigger: 'MANUAL', status: 'RUNNING', startedAt: new Date().toISOString(),
+    heartbeatAt: new Date().toISOString(), phase: 'APPLYING', processed: 0, sourceCount: 120, currentDn: null,
+    added: 0, modified: 0, moved: 0, noChange: 0, unchanged: 0, error: null, ...over,
+  })
+
+  it('Reconcile now starts the run, follows it, then reports it and refreshes the counts', async () => {
+    vi.useFakeTimers()
+    try {
+      activityWith(null)
+      const wrapper = open()
+      await flushPromises()
+      const success = vi.spyOn(useNotificationStore(), 'success')
+      expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(2) // reconciles + incremental passes
+      vi.mocked(syncApi.listMemberships).mockClear()
+      vi.mocked(syncApi.listNotInSet).mockClear()
+
+      byText('Reconcile now')!.click()
+      await flushPromises()
+      expect(syncApi.startReconcile).toHaveBeenCalledWith('set-1')
+      expect(byExactText('Reconciling…')!.disabled).toBe(true)
+
+      activityWith(run({ status: 'RUNNING', processed: 40 }))
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(syncApi.listMemberships).not.toHaveBeenCalled() // nothing to refresh mid-run
+
+      activityWith(run({ status: 'COMPLETE', phase: null, processed: 120, added: 2, modified: 1, noChange: 2 }))
+      await vi.advanceTimersByTimeAsync(1500)
+      expect(success).toHaveBeenCalledWith('Reconcile finished: 2 added, 1 updated, 2 already matched')
+      expect(syncApi.listMemberships).toHaveBeenCalled()
+      expect(syncApi.listNotInSet).toHaveBeenCalled()
+      expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(4)
+      expect(wrapper.emitted('changed')).toBeTruthy() // the set's chip counts reload
+      expect(byExactText('Reconcile now')!.disabled).toBe(false)
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('Reconcile now shows why it can\'t start, e.g. while another reconcile runs', async () => {
+    vi.mocked(syncApi.startReconcile).mockRejectedValueOnce(
+      { response: { status: 409, data: { detail: 'A reconcile of this sync set is already running.' } } })
     const wrapper = open()
     await flushPromises()
-    // Each load fetches the reconciles and the incremental passes.
-    expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(2)
+    const error = vi.spyOn(useNotificationStore(), 'error')
+
     byText('Reconcile now')!.click()
     await flushPromises()
-    expect(syncApi.reconcileSet).toHaveBeenCalledWith('set-1')
-    expect(syncApi.listReconcileRuns).toHaveBeenCalledTimes(4)
+
+    expect(error).toHaveBeenCalledWith('A reconcile of this sync set is already running.')
+    expect(byExactText('Reconcile now')!.disabled).toBe(false)
     wrapper.unmount()
+  })
+
+  it('refreshes the counts when a reconcile it didn\'t start finishes', async () => {
+    vi.useFakeTimers()
+    try {
+      activityWith(run({ trigger: 'SCHEDULED', status: 'RUNNING' }))
+      const wrapper = open()
+      await flushPromises()
+      expect(byExactText('Reconciling…')!.disabled).toBe(true)
+      vi.mocked(syncApi.listMemberships).mockClear()
+
+      activityWith(run({ trigger: 'SCHEDULED', status: 'COMPLETE', phase: null }))
+      await vi.advanceTimersByTimeAsync(1500)
+
+      expect(syncApi.listMemberships).toHaveBeenCalled()
+      expect(wrapper.emitted('changed')).toBeTruthy()
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('offers to recompute the search term when nothing matches', async () => {
@@ -301,8 +372,12 @@ describe('MembershipInventoryModal', () => {
   it('Reconcile now shows the run\'s phase, count and the entry it\'s on while it runs', async () => {
     vi.useFakeTimers()
     const now = new Date().toISOString()
-    const pending = deferred<{ data: { enumerated: number } }>()
-    vi.mocked(syncApi.reconcileSet).mockReturnValueOnce(pending.promise as never)
+    activityWith(null)
+    const wrapper = open()
+    await flushPromises()
+
+    byText('Reconcile now')!.click()
+    await flushPromises()
     vi.mocked(syncApi.getSyncSetActivity).mockResolvedValue({ data: {
       reconcile: {
         id: 'r1', trigger: 'MANUAL', status: 'RUNNING', startedAt: now, heartbeatAt: now, phase: 'APPLYING',
@@ -310,10 +385,6 @@ describe('MembershipInventoryModal', () => {
       },
       verify: null, asOf: now,
     } } as never)
-    const wrapper = open()
-    await flushPromises()
-
-    byText('Reconcile now')!.click()
     await vi.advanceTimersByTimeAsync(1500)
 
     const txt = document.body.textContent ?? ''
@@ -322,10 +393,7 @@ describe('MembershipInventoryModal', () => {
     expect(txt).toContain('last update')
     expect(document.querySelector('[role="progressbar"]')!.getAttribute('aria-valuenow')).toBe('37')
 
-    pending.resolve({ data: { enumerated: 120 } })
-    vi.mocked(syncApi.getSyncSetActivity).mockResolvedValue({ data: {
-      reconcile: null, verify: null, asOf: new Date().toISOString(),
-    } } as never)
+    activityWith(run({ startedAt: now, status: 'COMPLETE', phase: null, processed: 120 }))
     await vi.advanceTimersByTimeAsync(1500)
     expect(document.body.textContent).not.toContain('applying entries')
     wrapper.unmount()
@@ -335,8 +403,12 @@ describe('MembershipInventoryModal', () => {
   it('Reconcile now says when the run is queuing the entries that refer to changed ones', async () => {
     vi.useFakeTimers()
     const now = new Date().toISOString()
-    const pending = deferred<{ data: { enumerated: number } }>()
-    vi.mocked(syncApi.reconcileSet).mockReturnValueOnce(pending.promise as never)
+    activityWith(null)
+    const wrapper = open()
+    await flushPromises()
+
+    byText('Reconcile now')!.click()
+    await flushPromises()
     vi.mocked(syncApi.getSyncSetActivity).mockResolvedValue({ data: {
       reconcile: {
         id: 'r1', trigger: 'MANUAL', status: 'RUNNING', startedAt: now, heartbeatAt: now, phase: 'REFERENCES',
@@ -344,18 +416,12 @@ describe('MembershipInventoryModal', () => {
       },
       verify: null, asOf: now,
     } } as never)
-    const wrapper = open()
-    await flushPromises()
-
-    byText('Reconcile now')!.click()
     await vi.advanceTimersByTimeAsync(1500)
 
     const txt = document.body.textContent ?? ''
     expect(txt).toContain('Reconcile: queuing entries that refer to changed ones')
     expect(txt).toContain('Finding referrers of uid=alice,ou=people,dc=src')
 
-    pending.resolve({ data: { enumerated: 120 } })
-    await flushPromises()
     wrapper.unmount()
     vi.useRealTimers()
   })

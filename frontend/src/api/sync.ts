@@ -447,6 +447,9 @@ export interface MembershipQuery {
 
 export const listMemberships = (setId: string, query: MembershipQuery = {}) =>
   client.get<Page<Membership>>(`/superadmin/sync/sets/${setId}/memberships`, { params: query })
+/** Start a reconcile in the background and return at once (202); follow it on getSyncSetActivity. */
+export const startReconcile = (setId: string) =>
+  client.post<{ started: boolean }>(`/superadmin/sync/sets/${setId}/reconcile-start`)
 export const reconcileSet = (setId: string) =>
   client.post<{ enumerated: number }>(`/superadmin/sync/sets/${setId}/reconcile`)
 

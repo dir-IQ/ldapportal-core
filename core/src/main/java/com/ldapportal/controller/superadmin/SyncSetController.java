@@ -118,6 +118,20 @@ public class SyncSetController {
         return PageResponse.of(service.listMemberships(id, state, q, pageable));
     }
 
+    /**
+     * Start a reconcile now and return at once (202): follow it on
+     * {@code GET …/activity}. 409 while one is already running; 400 while the
+     * set or its link is disabled. {@code POST …/reconcile} still runs one
+     * synchronously, for scripts.
+     */
+    @PostMapping("/{id}/reconcile-start")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public ResponseEntity<Map<String, Boolean>> startReconcile(@PathVariable UUID id,
+                                                               @AuthenticationPrincipal AuthPrincipal principal) {
+        service.startReconcile(id, principal != null ? principal.username() : null);
+        return ResponseEntity.accepted().body(Map.of("started", true));
+    }
+
     @PostMapping("/{id}/reconcile")
     @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
     public Map<String, Integer> reconcile(@PathVariable UUID id, @AuthenticationPrincipal AuthPrincipal principal) {

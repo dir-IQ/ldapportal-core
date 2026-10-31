@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles; 2026-10-30).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, Reconcile now run in the background; 2026-10-31).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -561,6 +561,13 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   - a content check: *reading the source* (entries read), *reading the
     target*, then *comparing entries: N of M*, naming the entry it's comparing.
     **Reconcile now** shows the check that follows it too;
+  - **Reconcile now** starts the run in the background and returns at once
+    (`POST …/sets/{id}/reconcile-start`), so a long run is never cut off by a
+    load balancer's or proxy's idle timeout (the EKS ingress's is 60 s). The
+    inventory follows the run and, when it finishes, says what it did and
+    refreshes the rows, the state chips and **Not in set**. It does the same
+    when any run it sees finish ends, e.g. a scheduled one; while one runs,
+    **Reconcile now** reads *Reconciling…* and is disabled;
   - **Re-check target** only queues a reconcile, so it shows *waiting for the
     next reconcile to start*, then that run's progress, and says what it did
     when it finishes (it stops waiting after 5 minutes).
@@ -732,7 +739,8 @@ GET    /api/v1/superadmin/sync/sets/{id}/preview/entries?page=&size=&changesOnly
 GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source↔target compare (no writes)
 GET    /api/v1/superadmin/sync/sets/{id}/activity         # latest reconcile run (phase, processed, currentDn, heartbeatAt) + latest content check (phase, processed, total, currentDn), asOf
 GET    /api/v1/superadmin/sync/sets/{id}/not-in-set?q=&page=&size=   # in-scope source entries the set doesn't manage, as of the latest complete reconcile: total, reasons, entries (sourceDn, reason), allDnsRecorded
-POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}; recorded as a MANUAL run
+POST   /api/v1/superadmin/sync/sets/{id}/reconcile-start  # start a MANUAL run in the background → 202 {"started": true}; 409 while one runs, 400 while the set or link is disabled; follow it on …/activity
+POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # run one and wait → {"enumerated": N}; recorded as a MANUAL run (for scripts: a long run can outlast a proxy's timeout)
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs?limit=&kind=   # recent runs, newest first; limit 1..20 (default 10); kind RECONCILE | INCREMENTAL (default both)
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}  # one run in full: summary, settings, failureReasons, samples, allDnsRecorded (404 if not this set's run)
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}/entries.csv   # every entry the run changed or flagged: outcome,dn,reason (400 if the run kept only samples)

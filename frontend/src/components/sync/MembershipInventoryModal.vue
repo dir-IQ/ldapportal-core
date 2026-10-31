@@ -17,10 +17,10 @@
                   @click="verify">
             {{ verifying ? 'Verifying…' : 'Verify contents' }}
           </button>
-          <button class="btn-secondary btn-compact" :disabled="reconciling"
+          <button class="btn-secondary btn-compact" :disabled="reconciling || reconcileRunning"
                   title="Sync the whole set now instead of waiting for the schedule. Skips entries whose source hasn't changed since the sync last wrote them, so it doesn't repair entries changed or deleted directly on the target"
                   @click="reconcile">
-            {{ reconciling ? 'Reconciling…' : 'Reconcile now' }}
+            {{ reconciling || reconcileRunning ? 'Reconciling…' : 'Reconcile now' }}
           </button>
           <button class="btn-secondary btn-compact" :disabled="rechecking"
                   title="Forget what the sync last wrote, so the next reconcile (within about a minute) re-reads every target entry and repairs those missing or changed on the target, e.g. after a restore from backup or edits made outside the sync. Doesn't remove entries the restore brought back; Verify contents lists them as orphaned"
@@ -198,7 +198,7 @@ import RelativeTime from '@/components/RelativeTime.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useConfirm } from '@/composables/useConfirm'
 import {
-  listMemberships, reconcileSet, recheckTarget, recomputeKey, dismissMembership, verifyContents, approveDelete,
+  listMemberships, startReconcile, recheckTarget, recomputeKey, dismissMembership, verifyContents, approveDelete,
   getSyncSetActivity, listNotInSet,
   type SyncSet, type Membership, type MembershipState, type SyncVerifyResult, type SyncSetActivity,
   type SyncNotInSetPage,
@@ -378,23 +378,23 @@ watch(search, () => {
   searchTimer = setTimeout(() => { page.value = 0; load() }, 250)
 })
 
+/**
+ * Start a reconcile and follow it through the set's activity: the request
+ * returns at once, so a long run can't be cut off by a proxy's timeout. Its
+ * outcome is reported, and the inventory refreshed, when the run finishes.
+ */
 async function reconcile() {
   if (!props.set) return
   reconciling.value = true
-  watchSince.value = serverNow()
-  watchActivity()
+  const since = serverNow()
+  watchSince.value = since
   try {
-    const { data } = await reconcileSet(props.set.id)
-    notif.success(`Reconcile enumerated ${data.enumerated} source identities`)
-    await load()
-    void loadNotInSet()
-    emit('changed')
+    await startReconcile(props.set.id)
+    awaitingRun.value = { since, label: 'Reconcile' }
+    watchActivity()
   } catch (e) {
-    notif.error(errMsg(e))
-  } finally {
     reconciling.value = false
-    historyKey.value++ // a failed run is recorded too
-    void refreshActivity()
+    notif.error(errMsg(e))
   }
 }
 /**
@@ -420,7 +420,7 @@ async function recheck() {
     const { data } = await recheckTarget(props.set.id)
     if (data.reconcileQueued) {
       notif.success(`Re-check queued: the next reconcile (within about a minute) re-reads ${data.entries} entries`)
-      awaitingRecheck.value = { since }
+      awaitingRun.value = { since, label: 'Re-check' }
       watchActivity()
     } else {
       notif.success(`Re-check set up for ${data.entries} entries; it runs once the set and its link are enabled`)
@@ -468,7 +468,8 @@ const activity = ref<SyncSetActivity | null>(null)
 const clockOffset = ref<number>(0)
 /** Server time when the current action was started: older runs aren't its progress. */
 const watchSince = ref<number>(0)
-const awaitingRecheck = ref<{ since: number } | null>(null)
+/** A run an action started (Reconcile now) or queued (Re-check target), until it finishes. */
+const awaitingRun = ref<{ since: number; label: 'Reconcile' | 'Re-check' } | null>(null)
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 
 function serverNow(): number {
@@ -484,15 +485,22 @@ const reconcileRunning = computed<boolean>(() => activity.value?.reconcile?.stat
 const verifyRunning = computed<boolean>(() =>
   activity.value?.verify?.status === 'RUNNING' && (verifying.value || reconciling.value))
 const needsWatch = computed<boolean>(() =>
-  reconciling.value || verifying.value || !!awaitingRecheck.value || reconcileRunning.value)
+  reconciling.value || verifying.value || !!awaitingRun.value || reconcileRunning.value)
 
 async function refreshActivity() {
   if (!props.set || !show.value) return
   try {
     const { data } = await getSyncSetActivity(props.set.id)
+    const wasRunning = reconcileRunning.value
     activity.value = data
     clockOffset.value = data.asOf ? Date.parse(data.asOf) - Date.now() : 0
-    checkRecheckDone(data)
+    if (awaitingRun.value) {
+      checkRunDone(data)
+    } else if (wasRunning && !reconcileRunning.value) {
+      // A run this inventory didn't start (a scheduled one, or one started
+      // before it opened) finished: its counts changed too.
+      refreshAfterRun()
+    }
   } catch {
     // Progress is a nicety: a failed read leaves the last one on screen.
   }
@@ -514,28 +522,36 @@ function stopWatching() {
   }
 }
 
-/** Re-check target's reconcile finished: say what it did and refresh the inventory. */
-function checkRecheckDone(data: SyncSetActivity) {
-  const waiting = awaitingRecheck.value
+/** The rows, chips and Not in set as a finished run left them. */
+function refreshAfterRun() {
+  historyKey.value++
+  void load()
+  void loadNotInSet()
+  emit('changed')
+}
+
+/** The run an action started or queued finished: say what it did and refresh the inventory. */
+function checkRunDone(data: SyncSetActivity) {
+  const waiting = awaitingRun.value
   if (!waiting) return
   const run = data.reconcile
   if (run && startedSince(run.startedAt, waiting.since) && run.status !== 'RUNNING') {
-    awaitingRecheck.value = null
+    awaitingRun.value = null
+    reconciling.value = false
     if (run.status === 'COMPLETE') {
-      notif.success(`Re-check finished: ${run.added} added, ${run.modified + run.moved} updated, `
+      notif.success(`${waiting.label} finished: ${run.added} added, ${run.modified + run.moved} updated, `
         + `${run.noChange + run.unchanged} already matched`)
     } else {
-      notif.error(run.error || 'The re-check reconcile failed')
+      notif.error(run.error || `The ${waiting.label === 'Re-check' ? 're-check ' : ''}reconcile failed`)
     }
-    historyKey.value++
-    void load()
-    void loadNotInSet()
-    emit('changed')
+    refreshAfterRun()
   } else if (!run || !startedSince(run.startedAt, waiting.since)) {
     if (serverNow() - waiting.since > RECHECK_WAIT_MS) {
-      awaitingRecheck.value = null
-      notif.warning('The re-check reconcile hasn\'t started yet. It runs on the next scheduler tick; '
-        + 'check Last reconcile later.')
+      awaitingRun.value = null
+      reconciling.value = false
+      notif.warning(waiting.label === 'Re-check'
+        ? 'The re-check reconcile hasn\'t started yet. It runs on the next scheduler tick; check Last reconcile later.'
+        : 'The reconcile hasn\'t started yet. Check Last reconcile later.')
     }
   }
 }
@@ -560,7 +576,8 @@ const progress = computed(() => {
   }
   const r = a?.reconcile
   if (r && r.status === 'RUNNING') {
-    const who = awaitingRecheck.value ? 'Re-check' : r.trigger === 'SCHEDULED' ? 'Scheduled reconcile' : 'Reconcile'
+    const who = awaitingRun.value?.label === 'Re-check' ? 'Re-check'
+      : r.trigger === 'SCHEDULED' ? 'Scheduled reconcile' : 'Reconcile'
     const heading = r.phase === 'APPLYING' ? `${who}: applying entries: ${r.processed} of ${r.sourceCount}…`
       : r.phase === 'SWEEPING'
         ? `${who}: checking managed entries no longer in the source (${Math.max(0, r.processed - r.sourceCount)} checked)…`
@@ -574,7 +591,7 @@ const progress = computed(() => {
       hint: r.phase === 'APPLYING' ? RECONCILE_HINT : '',
     }
   }
-  if (awaitingRecheck.value) {
+  if (awaitingRun.value?.label === 'Re-check') {
     return { heading: 'Re-check queued: waiting for the next reconcile to start (within about a minute)…', asOf }
   }
   if (reconciling.value) return { heading: 'Starting the reconcile…', asOf }
@@ -591,7 +608,8 @@ watch([show, () => props.set?.id], ([open]) => {
     page.value = 0
     verifyResult.value = null
     notInSet.value = null
-    awaitingRecheck.value = null
+    awaitingRun.value = null
+    reconciling.value = false
     historyKey.value++
     load()
     if (!notInSetView.value) void loadNotInSet()
