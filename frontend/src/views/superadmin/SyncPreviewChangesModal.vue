@@ -139,7 +139,11 @@ const props = defineProps<{
   setId: string
   setName: string
 }>()
-const emit = defineEmits<{ 'update:modelValue': [boolean] }>()
+const emit = defineEmits<{
+  'update:modelValue': [boolean]
+  /** Each run status this dialog adopts, so an opener can mirror its progress and result. */
+  run: [SyncPreviewStatus]
+}>()
 
 const notif = useNotificationStore()
 
@@ -276,6 +280,7 @@ function adopt(status: SyncPreviewStatus) {
   // Load when this status is a completed run whose entries aren't on screen yet.
   const needsEntries = status.status === 'COMPLETE' && result.value?.runId !== status.runId
   run.value = status
+  emit('run', status)
   now.value = Date.now()
   clockOffset.value = status.asOf ? Date.parse(status.asOf) - now.value : 0
   stopPolling()

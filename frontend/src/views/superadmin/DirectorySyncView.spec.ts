@@ -265,6 +265,9 @@ describe('DirectorySyncView', () => {
       await flushPromises()
       expect(document.body.textContent).toContain('Planned changes — people')
       expect(syncApi.startPreviewRun).toHaveBeenCalledWith('set-1')
+      // The panel behind it follows the run straight away, not only once it closes.
+      expect(document.querySelector('[data-testid="impact-counts"]')!.textContent!.replace(/\s+/g, ' '))
+        .toContain('Would add: 1 · Would modify: 0 · Would move: 0 · Would delete: 1')
 
       // Closing it leaves that run's counts in the editor: the same run the list showed.
       const closes = Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="Close"]'))

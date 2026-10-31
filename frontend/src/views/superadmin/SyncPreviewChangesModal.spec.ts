@@ -102,6 +102,25 @@ describe('SyncPreviewChangesModal', () => {
     vi.useRealTimers()
   })
 
+  it('reports each run status it adopts, so the opener can mirror it', async () => {
+    vi.useFakeTimers()
+    api.getPreviewRun
+      .mockResolvedValueOnce(ok({ ...run(), status: null, runId: null } as unknown as SyncPreviewStatus))
+      .mockResolvedValueOnce(ok(run({ runId: 'run-2' })))
+    api.startPreviewRun.mockResolvedValue(ok(run({
+      runId: 'run-2', status: 'RUNNING', processed: 1, finishedAt: null, actionCounts: {},
+    })))
+    api.previewEntries.mockResolvedValue(ok(page({ runId: 'run-2' })))
+    const w = mountModal()
+    await flushPromises()
+    await vi.advanceTimersByTimeAsync(1500)
+    await flushPromises()
+
+    const emitted = (w.emitted('run') ?? []).map(([s]) => (s as SyncPreviewStatus).status)
+    expect(emitted).toEqual(['RUNNING', 'COMPLETE'])
+    w.unmount()
+  })
+
   it('shows the latest completed run and its first page when opened', async () => {
     api.getPreviewRun.mockResolvedValue(ok(run()))
     api.previewEntries.mockResolvedValue(ok(page()))

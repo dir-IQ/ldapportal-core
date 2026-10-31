@@ -313,7 +313,7 @@
     </AppModal>
 
     <SyncPreviewChangesModal v-if="editingSet" v-model="showChanges"
-                             :set-id="editingSet.id" :set-name="editingSet.name" />
+                             :set-id="editingSet.id" :set-name="editingSet.name" @run="onChangesRun" />
   </PageContainer>
 </template>
 
@@ -734,8 +734,16 @@ async function loadLatestPreview(): Promise<void> {
   }
 }
 
-// The per-entry view starts a fresh run when the latest is missing or outdated:
-// show what it ran once it closes.
+// The per-entry view starts a fresh run when the latest is missing or outdated
+// (or on Run again) and follows it: mirror each status it reads, so the panel
+// behind it tracks the run live rather than only once the view closes. Taking
+// over drops any poll this view still has in flight for an older run.
+function onChangesRun(status: SyncPreviewStatus): void {
+  if (!showSetModal.value || !editingSet.value) return
+  previewTicket++
+  impact.value = status
+}
+// Once it closes, re-read the latest run (following it if it's still running).
 watch(showChanges, (open) => {
   if (!open && showSetModal.value) void loadLatestPreview()
 })
