@@ -463,6 +463,13 @@ export interface SyncRecheckResult {
   reconcileQueued: boolean
 }
 
+/**
+ * Queue a reconcile for the scheduler's next tick (within about a minute) and return at once.
+ * reconcileQueued is false while the set or its link is disabled.
+ */
+export const requestSyncSetReconcile = (setId: string) =>
+  client.post<{ reconcileQueued: boolean }>(`/superadmin/sync/sets/${setId}/reconcile-request`)
+
 /** Re-check the target (e.g. after a restore from backup): the next reconcile re-reads every applied entry. */
 export const recheckTarget = (setId: string) =>
   client.post<SyncRecheckResult>(`/superadmin/sync/sets/${setId}/recheck-target`)

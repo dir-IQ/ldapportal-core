@@ -163,6 +163,49 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
+  it('Re-check watches the row and refreshes the table once the worker has handled it', async () => {
+    vi.useFakeTimers()
+    try {
+      withRow({ reviewKind: 'PENDING_DELETE', failReason: 'scope-exit held for review (deletePolicy=REVIEW)' })
+      const wrapper = open()
+      await flushPromises()
+      const success = vi.spyOn(useNotificationStore(), 'success')
+
+      byExactText('Re-check')!.click()
+      await flushPromises()
+      expect(syncApi.recomputeKey).toHaveBeenCalledWith('set-1', '1111')
+      // The worker has now applied it: the entry is back in the set.
+      withRow({ state: 'APPLIED', reviewKind: null, failReason: null } as unknown as Partial<typeof membership>)
+      await vi.advanceTimersByTimeAsync(2000)
+
+      expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', expect.objectContaining({ q: '1111' }))
+      expect(success).toHaveBeenLastCalledWith('Re-check done: the row is now Synced')
+      expect(byText('Delete target')).toBeUndefined()
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('Re-check that changes nothing says why a held deletion stays held', async () => {
+    vi.useFakeTimers()
+    try {
+      withRow({ reviewKind: 'PENDING_DELETE', failReason: 'scope-exit held for review (deletePolicy=REVIEW)' })
+      const wrapper = open()
+      await flushPromises()
+      const info = vi.spyOn(useNotificationStore(), 'info')
+
+      byExactText('Re-check')!.click()
+      await vi.advanceTimersByTimeAsync(20_000)
+      await flushPromises()
+
+      expect(info).toHaveBeenCalledWith(expect.stringContaining("still outside the set's filter or scope"))
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('names the recompute for the row: Retry match, Retry, Re-sync', async () => {
     for (const [over, label] of [
       [{ state: 'REVIEW', reviewKind: 'AMBIGUOUS_MATCH' }, 'Retry match'],

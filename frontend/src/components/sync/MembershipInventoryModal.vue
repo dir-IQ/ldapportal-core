@@ -238,6 +238,15 @@ const search = ref('')
 const loading = ref(false)
 const reconciling = ref(false)
 const rechecking = ref(false)
+
+/** How long a row action watches its row for the worker's result, and how often it looks. */
+const ROW_WATCH_MS = 20_000
+const ROW_POLL_MS = 2_000
+// The latest watch per identity: a newer action on the row, or closing the
+// inventory, ends the older one.
+const rowWatches = new Map<string, number>()
+let rowWatchSeq = 0
+let unmounted = false
 const verifying = ref(false)
 const verifyResult = ref<SyncVerifyResult | null>(null)
 // Bumped to make ReconcileRunHistory reload (on open, and after a reconcile).
@@ -616,9 +625,14 @@ watch([show, () => props.set?.id], ([open]) => {
     void refreshActivity()
   } else {
     stopWatching()
+    rowWatches.clear()
   }
 }, { immediate: true })
-onBeforeUnmount(stopWatching)
+onBeforeUnmount(() => {
+  unmounted = true
+  stopWatching()
+  rowWatches.clear()
+})
 interface RowAction { label: string; hint: string; danger?: boolean; run: () => void }
 
 /**
@@ -637,14 +651,14 @@ function rowActions(row: Membership): { primary: RowAction; menu: { label: strin
       },
       menu: [
         { label: 'Keep entry, stop syncing', onClick: () => confirmKeep(row) },
-        { label: 'Re-check', onClick: () => recompute(row.identity, 'Re-check') },
+        { label: 'Re-check', onClick: () => recompute(row, 'Re-check') },
       ],
     }
   }
   if (row.state === 'REVIEW' && (row.reviewKind === 'AMBIGUOUS_MATCH' || row.reviewKind === 'PLACEMENT_CONFLICT')) {
     return {
       primary: {
-        label: 'Retry match', run: () => recompute(row.identity, 'Retry match'),
+        label: 'Retry match', run: () => recompute(row, 'Retry match'),
         hint: 'Run target matching again, once the conflicting target entries are resolved.',
       },
       menu: [stopTracking],
@@ -653,7 +667,7 @@ function rowActions(row: Membership): { primary: RowAction; menu: { label: strin
   if (row.state === 'FAILED') {
     return {
       primary: {
-        label: 'Retry', run: () => recompute(row.identity, 'Retry'),
+        label: 'Retry', run: () => recompute(row, 'Retry'),
         hint: 'Retry the failed write once its cause is fixed.',
       },
       menu: [stopTracking],
@@ -661,22 +675,85 @@ function rowActions(row: Membership): { primary: RowAction; menu: { label: strin
   }
   return {
     primary: {
-      label: row.state === 'REVIEW' ? 'Recompute' : 'Re-sync', run: () => recompute(row.identity, 'Re-sync'),
+      label: row.state === 'REVIEW' ? 'Recompute' : 'Re-sync', run: () => recompute(row, 'Re-sync'),
       hint: 'Re-read the source entry and bring the target entry in line now.',
     },
     menu: [stopTracking],
   }
 }
 
-async function recompute(identity: string, label = 'Recompute') {
+/**
+ * Queue a recompute of the row, then watch it: the worker picks the request up
+ * within about ten seconds, and the table only shows the result once reloaded.
+ */
+async function recompute(row: Membership, label: string) {
   if (!props.set) return
   try {
-    await recomputeKey(props.set.id, identity)
-    notif.success(`${label} queued — the row updates in a few seconds`)
-    emit('changed')
+    await recomputeKey(props.set.id, row.identity)
   } catch (e) {
     notif.error(errMsg(e))
+    return
   }
+  notif.success(`${label} queued: watching the row for the result…`)
+  emit('changed')
+  await watchRow(row, label)
+}
+
+/** The row as the server has it now; null when the set no longer tracks it. */
+async function fetchRow(setId: string, identity: string): Promise<Membership | null> {
+  const { data } = await listMemberships(setId, { q: identity, size: 20 })
+  return data.content.find((r) => r.identity === identity) ?? null
+}
+
+function rowChanged(before: Membership, now: Membership | null): boolean {
+  return !now || now.state !== before.state || now.reviewKind !== before.reviewKind
+    || (now.failReason ?? '') !== (before.failReason ?? '')
+    || now.sourceDn !== before.sourceDn || now.targetDn !== before.targetDn
+}
+
+/** Poll the row until it changes or {@link ROW_WATCH_MS} passes, then refresh the table and say what happened. */
+async function watchRow(before: Membership, label: string) {
+  const setId = props.set?.id
+  if (!setId) return
+  const ticket = ++rowWatchSeq
+  rowWatches.set(before.identity, ticket)
+  const current = () => !unmounted && rowWatches.get(before.identity) === ticket && props.set?.id === setId
+  const deadline = Date.now() + ROW_WATCH_MS
+  try {
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, ROW_POLL_MS))
+      if (!current()) return
+      let now: Membership | null
+      try {
+        now = await fetchRow(setId, before.identity)
+      } catch {
+        continue // a failed look isn't the result; try again
+      }
+      if (!current()) return
+      if (rowChanged(before, now)) {
+        await load()
+        emit('changed')
+        notif.success(now
+          ? `${label} done: the row is now ${stateLabel(now.state)}${now.failReason ? ` (${now.failReason})` : ''}`
+          : `${label} done: the set no longer tracks this entry`)
+        return
+      }
+    }
+    await load()
+    notif.info(unchangedMessage(before, label))
+  } finally {
+    if (rowWatches.get(before.identity) === ticket) rowWatches.delete(before.identity)
+  }
+}
+
+/** What an action that changed nothing means for the row. */
+function unchangedMessage(row: Membership, label: string): string {
+  if (row.state === 'REVIEW' && row.reviewKind === 'PENDING_DELETE') {
+    return `${label}: no change. The source entry is still outside the set's filter or scope, so its `
+      + 'deletion stays held for review. If you changed the filter, check it against this entry.'
+  }
+  return `${label}: no change after ${ROW_WATCH_MS / 1000} seconds; the row is still `
+    + `${stateLabel(row.state)}. If a reconcile is running, the recompute may still be queued behind it.`
 }
 
 async function confirmApproveDelete(row: Membership) {
@@ -728,13 +805,27 @@ async function recomputeQuery() {
   if (!props.set) return
   const key = search.value.trim()
   if (!key) return
+  const setId = props.set.id
   try {
-    await recomputeKey(props.set.id, key)
-    notif.success('Recompute enqueued')
-    emit('changed')
+    await recomputeKey(setId, key)
   } catch (e) {
     notif.error(errMsg(e))
+    return
   }
+  notif.success('Recompute queued: watching for the entry…')
+  emit('changed')
+  // Nothing matched the search, so the result shows as rows appearing.
+  const deadline = Date.now() + ROW_WATCH_MS
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, ROW_POLL_MS))
+    if (unmounted || props.set?.id !== setId || search.value.trim() !== key || !show.value) return
+    await load()
+    if (rows.value.length > 0) {
+      emit('changed')
+      return
+    }
+  }
+  notif.info(`Recompute of "${key}" tracked nothing: it isn't a source entry in this set's scope and filter.`)
 }
 async function dismiss(identity: string, message: string) {
   if (!props.set) return

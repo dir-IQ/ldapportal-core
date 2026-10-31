@@ -211,6 +211,19 @@ public class SyncSetController {
     }
 
     /**
+     * Queue a reconcile for the scheduler's next tick and return at once, e.g.
+     * after the set's filter or scope changed. {@code reconcileQueued} is false
+     * while the set or its link is disabled.
+     */
+    @PostMapping("/{id}/reconcile-request")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public Map<String, Boolean> requestReconcile(@PathVariable UUID id,
+                                                 @AuthenticationPrincipal AuthPrincipal principal) {
+        return Map.of("reconcileQueued",
+                service.requestReconcile(id, principal != null ? principal.username() : null));
+    }
+
+    /**
      * Re-check the target (e.g. after restoring it from a backup): the next
      * reconcile re-reads every applied entry instead of trusting what the set
      * last wrote, and re-applies the ones that differ. Queues that reconcile.

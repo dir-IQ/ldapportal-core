@@ -421,6 +421,20 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void requestReconcile_superadmin_queuesIt() throws Exception {
+        given(service.requestReconcile(SET, "superadmin")).willReturn(true);
+        mockMvc.perform(post(SETS + "/" + SET + "/reconcile-request").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reconcileQueued").value(true));
+    }
+
+    @Test
+    void requestReconcile_adminRole_returns403() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/reconcile-request").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void recompute_superadmin_returns202() throws Exception {
         mockMvc.perform(post(SETS + "/" + SET + "/recompute").with(authentication(superadminAuth()))
                         .contentType(MediaType.APPLICATION_JSON)

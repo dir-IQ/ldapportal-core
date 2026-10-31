@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, Reconcile now run in the background; 2026-10-31).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background; 2026-10-31).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -158,6 +158,17 @@ source attrs (first-wins would silently shadow), valid `targetAttr`, and a
 > **Identity key is the expensive-to-change decision.** It is written into every
 > target entry as the source anchor and is the join key for the whole index.
 > Get it right before any real sync runs; changing it later re-anchors everything.
+
+**When an edit takes effect.** Saving a set doesn't touch any entry: a change to
+what it manages, where it places entries or what it writes (applicability
+filter, source base DN or scope, target base DN, reference or excluded
+attributes, transform rules) applies at the set's next reconcile. Until then,
+rows decided under the old settings stay as they are; for example, a deletion
+held for review stays held even though the new filter takes the entry back. So
+after such a save of an enabled set, the editor offers **Reconcile now**, which
+queues a reconcile for the scheduler's next tick (within about a minute;
+`POST …/sets/{id}/reconcile-request`). **Later** leaves it to the schedule: run
+**Preview impact** first to see what it would do.
 
 ---
 
@@ -525,6 +536,12 @@ unrecognized reason), and the inventory names each row's actions for it.
 | **FAILED** | **Retry** (recompute) · **Stop tracking** |
 | **Synced / Pending** (`APPLIED` / `PENDING`) | **Re-sync** (recompute) · **Stop tracking** |
 
+**Re-check**, **Retry match**, **Retry** and **Re-sync** queue a recompute of the
+row, which the worker picks up within about ten seconds. The inventory then
+watches the row for up to 20 seconds, refreshes it when it changes and says what
+it became. If nothing changed, it says so; for a held delete that means the
+entry is still outside the set's filter or scope.
+
 **Stop tracking** (dismiss) drops only the index row — the target isn't touched.
 An in-scope entry is picked up again from scratch by the next reconcile; an
 out-of-scope one is left unmanaged. Destructive actions ask for confirmation.
@@ -745,6 +762,7 @@ GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs?limit=&kind=   # recent 
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}  # one run in full: summary, settings, failureReasons, samples, allDnsRecorded (404 if not this set's run)
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}/entries.csv   # every entry the run changed or flagged: outcome,dn,reason (400 if the run kept only samples)
 POST   /api/v1/superadmin/sync/sets/{id}/recompute        # body {"key": "<dn-or-identity>"} → 202
+POST   /api/v1/superadmin/sync/sets/{id}/reconcile-request # queue a reconcile for the next scheduler tick, without waiting → {"reconcileQueued"}; manage permission
 POST   /api/v1/superadmin/sync/sets/{id}/recheck-target   # forget applied content hashes + request a reconcile → {"entries", "reconcileQueued"}; manage permission
 DELETE /api/v1/superadmin/sync/sets/{id}/memberships/{identity}   # dismiss ("stop tracking")
 POST   /api/v1/superadmin/sync/sets/{id}/memberships/{identity}/approve-delete   # approve a held delete → {"outcome": DELETE|FORGET|ERROR, "targetDn", …}; 400 if not a held delete, back in scope, or the set is disabled
