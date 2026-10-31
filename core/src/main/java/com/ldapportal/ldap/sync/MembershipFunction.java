@@ -100,6 +100,18 @@ public class MembershipFunction {
         Map<String, String> targetCase = new LinkedHashMap<>();
         Map<String, List<String>> unresolved = new LinkedHashMap<>();
 
+        // Resolve every reference value in one go rather than one lookup each.
+        List<String> refValues = new ArrayList<>();
+        for (Attribute a : entry.getAttributes()) {
+            if (SyncReferenceAttributes.containsIgnoreCase(refAttrs, a.getName())
+                    && !excluded.contains(a.getName().toLowerCase(Locale.ROOT))) {
+                refValues.addAll(java.util.Arrays.asList(a.getValues()));
+            }
+        }
+        if (refValues.size() > 1) {
+            resolver = resolver.prefetched(refValues);
+        }
+
         for (Attribute a : entry.getAttributes()) {
             String name = a.getName();
             // Never project excluded attributes — server-maintained operational

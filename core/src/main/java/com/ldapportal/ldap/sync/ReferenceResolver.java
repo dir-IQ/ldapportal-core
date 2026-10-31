@@ -23,4 +23,14 @@ public interface ReferenceResolver {
     default boolean leavesItsSet(String sourceDn) {
         return false;
     }
+
+    /**
+     * A resolver that answers for {@code sourceDns} without a lookup each:
+     * {@link MembershipFunction} hands it every reference value of the entry
+     * it's projecting (a large group's members) before resolving them one by
+     * one. Other DNs still resolve as here. By default, this resolver itself.
+     */
+    default ReferenceResolver prefetched(java.util.Collection<String> sourceDns) {
+        return this;
+    }
 }

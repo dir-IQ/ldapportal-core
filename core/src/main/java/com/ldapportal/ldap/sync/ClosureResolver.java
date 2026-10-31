@@ -18,9 +18,11 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -52,8 +54,88 @@ public class ClosureResolver {
     private final LdapConnectionFactory connectionFactory;
     private final RecomputeEnqueuer enqueuer;
 
+    /** Changed DNs per batched referrer search in {@link #fanOutAll}. */
+    static final int DN_BATCH = 50;
+
     public void fanOut(SyncLink link, String changedSourceDn) {
         String changedNorm = SyncDnUtil.normalize(changedSourceDn);
+        forEachSet(link, (set, source) -> fanOutSet(set, source, changedSourceDn, changedNorm));
+    }
+
+    /**
+     * Fan out once for a reconcile's changes: {@code changed} maps each source
+     * DN whose target the run changed to the position of that recompute in the
+     * run, and {@code visited} maps each source DN the run recomputed
+     * successfully (in set {@code runSetId}) to its position.
+     *
+     * <p>The changed DNs are taken in the order they changed, {@link #DN_BATCH}
+     * at a time, and each batch is one search returning referrer DNs only. A
+     * referrer in {@code runSetId} that the run recomputed after the batch's
+     * last change has seen every change it could refer to there, and is
+     * skipped; any other referrer is enqueued (one recomputed partway through
+     * the batch's changes may be enqueued without need, never skipped wrongly).
+     * Referrers in other sets are always enqueued. {@code beforeSearch} is
+     * given the first DN of each batch before it's searched (the reconcile's
+     * heartbeat and progress).
+     */
+    public void fanOutAll(SyncLink link, UUID runSetId, Map<String, Integer> changed, Map<String, Integer> visited,
+                          java.util.function.Consumer<String> beforeSearch) {
+        if (changed.isEmpty()) {
+            return;
+        }
+        List<String> dns = new ArrayList<>(changed.keySet());
+        dns.sort(java.util.Comparator.comparing(changed::get));
+        forEachSet(link, (set, source) -> {
+            List<String> refAttrs = SyncReferenceAttributes.forSet(set);
+            if (refAttrs.isEmpty()) {
+                return;
+            }
+            boolean own = set.getId().equals(runSetId);
+            String base = set.getObjectScopeBaseDn() != null ? set.getObjectScopeBaseDn() : source.getBaseDn();
+            SearchScope scope = SyncScopes.searchScope(set);
+            Set<String> enqueued = new HashSet<>();
+            for (int from = 0; from < dns.size(); from += DN_BATCH) {
+                List<String> chunk = dns.subList(from, Math.min(dns.size(), from + DN_BATCH));
+                int lastChange = changed.get(chunk.get(chunk.size() - 1));
+                beforeSearch.accept(chunk.get(0));
+                List<Filter> ors = new ArrayList<>(refAttrs.size() * chunk.size());
+                for (String attr : refAttrs) {
+                    for (String dn : chunk) {
+                        ors.add(Filter.createEqualityFilter(attr, dn));
+                    }
+                }
+                try {
+                    // "1.1" => DNs only: a large group matches every batch.
+                    List<SearchResultEntry> referrers = connectionFactory.withConnectionUnreplicated(source, conn ->
+                            SyncPagedSearch.all(conn, new SearchRequest(base, scope, Filter.createORFilter(ors), "1.1"),
+                                    source.getPagingSize()));
+                    for (SearchResultEntry e : referrers) {
+                        String referrer = SyncDnUtil.normalize(e.getDN());
+                        if (!enqueued.contains(referrer)
+                                && needsRecompute(own ? visited.get(referrer) : null, lastChange, own)) {
+                            enqueued.add(referrer);
+                            enqueuer.enqueue(set.getId(), e.getDN(), null);
+                        }
+                    }
+                } catch (Exception ex) {
+                    log.warn("Closure search failed for sync set {} on {} changes: {}",
+                            set.getId(), chunk.size(), ex.toString());
+                }
+            }
+        });
+    }
+
+    /**
+     * Whether a referrer matched by a batch whose last change was at
+     * {@code lastChange} must be recomputed: always outside the run's own set;
+     * in it, unless the run recomputed it ({@code visitedAt}) after that change.
+     */
+    static boolean needsRecompute(Integer visitedAt, int lastChange, boolean own) {
+        return !own || visitedAt == null || visitedAt < lastChange;
+    }
+
+    /** Every enabled set whose source could hold referrers, with that source (see the class doc). */
+    private void forEachSet(SyncLink link, java.util.function.BiConsumer<SyncSet, DirectoryConnection> each) {
         Map<UUID, Optional<SyncLink>> links = new HashMap<>();
         links.put(link.getId(), Optional.of(link));
         Map<UUID, Optional<DirectoryConnection>> sources = new HashMap<>();
@@ -68,7 +150,7 @@ public class ClosureResolver {
             if (source == null) {
                 continue;
             }
-            fanOutSet(set, source, changedSourceDn, changedNorm);
+            each.accept(set, source);
         }
     }
 

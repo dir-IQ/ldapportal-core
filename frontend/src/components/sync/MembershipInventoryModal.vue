@@ -564,10 +564,12 @@ const progress = computed(() => {
     const heading = r.phase === 'APPLYING' ? `${who}: applying entries: ${r.processed} of ${r.sourceCount}…`
       : r.phase === 'SWEEPING'
         ? `${who}: checking managed entries no longer in the source (${Math.max(0, r.processed - r.sourceCount)} checked)…`
-        : `${who}: scanning the source…`
+        : r.phase === 'REFERENCES'
+          ? `${who}: queuing entries that refer to changed ones…`
+          : `${who}: scanning the source…`
     return {
       heading, processed: r.processed, total: r.phase === 'APPLYING' ? r.sourceCount : null,
-      currentDn: r.currentDn, currentLabel: 'Now checking',
+      currentDn: r.currentDn, currentLabel: r.phase === 'REFERENCES' ? 'Finding referrers of' : 'Now checking',
       startedAt: r.startedAt, heartbeatAt: r.heartbeatAt ?? r.startedAt, asOf,
       hint: r.phase === 'APPLYING' ? RECONCILE_HINT : '',
     }

@@ -8,5 +8,7 @@ public enum SyncReconcilePhase {
     /** Recomputing each source entry the plan found. */
     APPLYING,
     /** Recomputing managed entries the source scan didn't find (out-of-scope or deleted). */
-    SWEEPING
+    SWEEPING,
+    /** Finding the entries that refer to ones the run changed, and queuing them for recompute. */
+    REFERENCES
 }

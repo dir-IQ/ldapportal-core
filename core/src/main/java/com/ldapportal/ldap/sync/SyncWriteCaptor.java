@@ -42,7 +42,7 @@ public class SyncWriteCaptor {
             for (SyncLink link : syncLinkRepo.findAllBySourceDirIdAndEnabledTrue(sourceDirectoryId)) {
                 for (SyncSet set : syncSetRepo.findAllByLinkId(link.getId())) {
                     if (set.isEnabled() && SyncScopes.inScope(set, dn)) {
-                        enqueuer.enqueue(set.getId(), dn, null);
+                        enqueuer.enqueueSourceChange(set.getId(), dn, null);
                     }
                 }
             }

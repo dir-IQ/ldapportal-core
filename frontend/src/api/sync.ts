@@ -207,7 +207,7 @@ export interface SyncReconcileRun {
   /** In-scope source entries the set doesn't manage (the applicability filter or placement excludes them). */
   notInSet: number
   /** Where a RUNNING run is (else null). */
-  phase: 'SCANNING' | 'APPLYING' | 'SWEEPING' | null
+  phase: 'SCANNING' | 'APPLYING' | 'SWEEPING' | 'REFERENCES' | null
   /** The entry a RUNNING run is recomputing (else null). */
   currentDn: string | null
   /** When the run last reported progress or that it's alive. */

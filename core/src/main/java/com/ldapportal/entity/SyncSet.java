@@ -143,6 +143,16 @@ public class SyncSet {
     private long reconcileHandledSeq;
 
     /**
+     * Incremented ({@code SyncSetRepository.bumpSourceChange}) before each
+     * source change is enqueued for the set. A reconcile reads it before its
+     * source scan and trusts the entries it scanned only while it hasn't moved.
+     * Read-only to JPA, like the request counters.
+     */
+    @ColumnDefault("0")
+    @Column(name = "source_change_seq", nullable = false, insertable = false, updatable = false)
+    private long sourceChangeSeq;
+
+    /**
      * Single-flight lease for this set's reconcile across app instances: the
      * running reconcile's token and its last heartbeat ({@code null} when none
      * runs). Read-only to JPA, like the request counters: only the targeted

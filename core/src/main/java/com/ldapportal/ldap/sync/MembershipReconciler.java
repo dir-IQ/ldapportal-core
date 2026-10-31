@@ -153,7 +153,14 @@ public class MembershipReconciler {
 
     private int reconcile(Context ctx, SyncReconcileHistory.Run run, Lease lease) {
         UUID syncSetId = ctx.set.getId();
+        long started = System.nanoTime();
+        // Read before the scan: if it moves while the run works, a source change
+        // raced it and the engine stops trusting the scanned entries.
+        Long sourceChangeSeq = syncSetRepo.findSourceChangeSeq(syncSetId);
         Plan plan = computePlan(ctx);
+        long scanNanos = System.nanoTime() - started;
+        RecomputeEngine.Batch batch = engine.reconcileBatch(syncSetId,
+                sourceChangeSeq != null ? sourceChangeSeq : Long.MIN_VALUE);
         Guard guard = evaluateGuard(plan);
         lease.beat(); // the source scan can be long
         history.planned(run, plan.entries.size(), plan.managedCount, plan.complete,
@@ -162,46 +169,57 @@ public class MembershipReconciler {
 
         long epoch = epochSequence.incrementAndGet();
         int faults = 0;
-        for (Planned p : plan.entries) {
-            // Per-entry isolation: one entry whose recompute faults (a source read
-            // that throws, a contended index row) must not abort the run and skip
-            // the sweep for everyone else. It is still stamped as seen — it was
-            // enumerated, so it must not become a not-seen delete candidate.
-            lease.beat();
-            history.current(run, p.entry.getDN());
-            try {
-                RecomputeOutcome outcome = engine.process(syncSetId, p.entry.getDN(), guard.tripped());
-                if (p.notInSet != null && outcome != null && outcome.action() == SyncPreviewAction.UNCHANGED) {
-                    // In scope, never tracked and still not a member: the reason
-                    // the run's source entries outnumber the managed ones.
-                    history.notInSet(run, p.entry.getDN(), p.notInSet);
-                } else {
-                    history.record(run, outcome);
-                }
-            } catch (Exception ex) {
-                faults++;
-                history.fault(run, ex, p.entry.getDN());
-                log.warn("Sync set {}: reconcile recompute of {} faulted ({}); continuing",
-                        syncSetId, p.entry.getDN(), ex.toString());
-            } finally {
-                stampSeen(syncSetId, p.identity, epoch);
-            }
-        }
-        if (plan.complete) {
-            history.phase(run, SyncReconcilePhase.SWEEPING);
-            for (Membership row : membershipRepo.findNotSeen(syncSetId, epoch)) {
+        boolean finished = false;
+        try {
+            for (Planned p : plan.entries) {
+                // Per-entry isolation: one entry whose recompute faults (a source read
+                // that throws, a contended index row) must not abort the run and skip
+                // the sweep for everyone else. It is still stamped as seen — it was
+                // enumerated, so it must not become a not-seen delete candidate.
                 lease.beat();
-                history.current(run, row.getTargetDn() != null ? row.getTargetDn() : row.getSourceDn());
+                history.current(run, p.entry.getDN());
                 try {
-                    history.record(run, engine.process(syncSetId, row.getIdentity(), guard.tripped()));
+                    RecomputeOutcome outcome = engine.process(batch, p.entry.getDN(), p.entry, guard.tripped());
+                    if (p.notInSet != null && outcome != null && outcome.action() == SyncPreviewAction.UNCHANGED) {
+                        // In scope, never tracked and still not a member: the reason
+                        // the run's source entries outnumber the managed ones.
+                        history.notInSet(run, p.entry.getDN(), p.notInSet);
+                    } else {
+                        history.record(run, outcome);
+                    }
                 } catch (Exception ex) {
                     faults++;
-                    history.fault(run, ex, row.getIdentity());
-                    log.warn("Sync set {}: reconcile sweep of identity {} faulted ({}); continuing",
-                            syncSetId, row.getIdentity(), ex.toString());
+                    history.fault(run, ex, p.entry.getDN());
+                    log.warn("Sync set {}: reconcile recompute of {} faulted ({}); continuing",
+                            syncSetId, p.entry.getDN(), ex.toString());
+                } finally {
+                    stampSeen(syncSetId, p.identity, epoch);
                 }
             }
+            if (plan.complete) {
+                history.phase(run, SyncReconcilePhase.SWEEPING);
+                for (Membership row : membershipRepo.findNotSeen(syncSetId, epoch)) {
+                    lease.beat();
+                    history.current(run, row.getTargetDn() != null ? row.getTargetDn() : row.getSourceDn());
+                    try {
+                        history.record(run, engine.process(batch, row.getIdentity(), null, guard.tripped()));
+                    } catch (Exception ex) {
+                        faults++;
+                        history.fault(run, ex, row.getIdentity());
+                        log.warn("Sync set {}: reconcile sweep of identity {} faulted ({}); continuing",
+                                syncSetId, row.getIdentity(), ex.toString());
+                    }
+                }
+            }
+            finished = true;
+        } finally {
+            // Closure for what this run changed, once at the end: during the run
+            // a referrer is either recomputed later anyway, or its referent wasn't
+            // synced yet when the change happened. Also when the run stops part
+            // way, so the changes it did make still reach their referrers.
+            fanOutChanges(batch, run, finished ? lease : null);
         }
+        logTimings(syncSetId, plan.entries.size(), System.nanoTime() - started, scanNanos, batch.timings());
         if (faults > 0) {
             log.warn("Sync set {}: reconcile finished with {} faulted recompute(s); they retry next run",
                     syncSetId, faults);
@@ -219,6 +237,44 @@ public class MembershipReconciler {
         // an attempt and the request is retried.
         syncSetRepo.markReconcileRun(syncSetId, ctx.set.getReconcileRequestSeq(), plan.complete);
         return plan.entries.size();
+    }
+
+    /**
+     * Queue the referrers of what the run changed. {@code lease} is {@code null}
+     * when the run stopped part way: then it isn't heartbeated (it may be why
+     * the run stopped), and a failure here is logged rather than hiding the
+     * run's own.
+     */
+    private void fanOutChanges(RecomputeEngine.Batch batch, SyncReconcileHistory.Run run, Lease lease) {
+        try {
+            history.phase(run, SyncReconcilePhase.REFERENCES);
+            engine.fanOutDeferred(batch, dn -> {
+                if (lease != null) {
+                    lease.beat();
+                }
+                history.current(run, dn);
+            });
+        } catch (RuntimeException ex) {
+            if (lease != null) {
+                throw ex;
+            }
+            log.warn("Sync set {}: could not queue the referrers of a stopped reconcile's changes: {}",
+                    run.row().getSyncSetId(), ex.toString());
+        }
+    }
+
+    /** Where a reconcile's time went: the first thing to read when a run is slow. */
+    private static void logTimings(UUID syncSetId, int entries, long totalNanos, long scanNanos,
+                                   RecomputeEngine.Timings t) {
+        long other = Math.max(0, totalNanos - scanNanos - t.sourceReadNanos() - t.targetNanos() - t.referenceNanos());
+        log.info("Sync set {}: reconcile of {} source entries took {} (source scan {}, source reads {}, "
+                        + "target reads and writes {}, reference updates {}, index, audit and other work {})",
+                syncSetId, entries, seconds(totalNanos), seconds(scanNanos), seconds(t.sourceReadNanos()),
+                seconds(t.targetNanos()), seconds(t.referenceNanos()), seconds(other));
+    }
+
+    private static String seconds(long nanos) {
+        return String.format(java.util.Locale.ROOT, "%.1fs", nanos / 1e9);
     }
 
     /** Dry-run: what a reconcile would do, computed without writing to the target. */
