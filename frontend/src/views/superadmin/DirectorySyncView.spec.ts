@@ -379,6 +379,34 @@ describe('DirectorySyncView', () => {
       wrapper.unmount()
     })
 
+    it('shows that enabling is checking the impact, and ignores more clicks meanwhile', async () => {
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [{ ...set, enabled: false }] } as never)
+      let finish!: (v: unknown) => void
+      vi.mocked(syncApi.startPreviewRun).mockReturnValueOnce(new Promise((r) => { finish = r }) as never)
+      const wrapper = await openEditor('Edit')
+      const enabled = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+        .find((c) => c.parentElement?.textContent?.includes('Enabled'))!
+      enabled.checked = true
+      enabled.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      await submit()
+      const save = buttons().find((b) => b.textContent?.trim().startsWith('Checking impact'))
+      expect(save).toBeTruthy()
+      expect(save!.disabled).toBe(true)
+      expect(save!.getAttribute('aria-busy')).toBe('true')
+      await submit() // an impatient second click
+      expect(syncApi.startPreviewRun).toHaveBeenCalledTimes(1)
+
+      // The check finds nothing to delete, so the save goes ahead.
+      finish({ data: { runId: 'run-1', status: 'COMPLETE', actionCounts: { NO_CHANGE: 3 }, guardTripped: false } })
+      await flushPromises()
+      expect(syncApi.updateSyncSet).toHaveBeenCalledTimes(1)
+      expect(syncApi.updateSyncSet).toHaveBeenCalledWith('set-1', expect.objectContaining({ enabled: true }))
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set] } as never)
+      wrapper.unmount()
+    })
+
     it('closes straight away when nothing changed', async () => {
       const wrapper = await openEditor('Edit')
       button('Close')!.click()

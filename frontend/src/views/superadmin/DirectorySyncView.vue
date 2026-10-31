@@ -294,7 +294,9 @@
           </p>
           <div class="flex justify-end gap-2">
             <button type="button" class="btn-neutral btn-compact" @click="confirmEnable = false">Back</button>
-            <button type="button" class="btn-danger btn-compact" @click="doSaveSet">Enable anyway</button>
+            <button type="button" class="btn-danger btn-compact" :disabled="setSaveBusy" @click="doSaveSet">
+              {{ savingSet ? 'Saving…' : 'Enable anyway' }}
+            </button>
           </div>
         </div>
 
@@ -304,8 +306,8 @@
       <template #footer="{ close }">
         <button type="button" class="btn-neutral" @click="close()">Close</button>
         <button type="submit" form="sync-set-form" class="btn-primary"
-                :disabled="savingSet || (!!editingSet && !setDirty)">
-          {{ savingSet ? 'Saving…' : editingSet ? 'Save' : 'Create' }}
+                :disabled="setSaveBusy || (!!editingSet && !setDirty)" :aria-busy="setSaveBusy">
+          {{ setSaveLabel }}
         </button>
       </template>
     </AppModal>
@@ -595,6 +597,20 @@ function formFromSet(s: SyncSet): SetForm {
 // from what it held when it was opened or last saved.
 const savedSetSnapshot = ref<string>('')
 const savingSet = ref<boolean>(false)
+// Enabling a set runs a full impact preview before saving, which can take a
+// while on a large set: the Save button says so, and ignores further clicks.
+const checkingImpact = ref<boolean>(false)
+const setSaveBusy = computed<boolean>(() => savingSet.value || checkingImpact.value)
+const setSaveLabel = computed<string>(() => {
+  if (checkingImpact.value) {
+    const p = impact.value
+    return p?.status === 'RUNNING' && p.total
+      ? `Checking impact… ${p.processed.toLocaleString()} of ${p.total.toLocaleString()}`
+      : 'Checking impact…'
+  }
+  if (savingSet.value) return 'Saving…'
+  return editingSet.value ? 'Save' : 'Create'
+})
 function setSnapshot(f: SetForm): string {
   return JSON.stringify(toPayload(f))
 }
@@ -730,9 +746,16 @@ async function saveSet() {
   // Turning an existing set on is the moment deletions could start. Preview the
   // impact first and make the operator confirm if anything would be deleted (or
   // the guard would quarantine).
+  if (setSaveBusy.value) return // a click while the last one is still checking or saving
   const enabling = !!editingSet.value && setForm.value.enabled && !editingSet.value.enabled
   if (enabling && !confirmEnable.value) {
-    const p = await runPreview()
+    checkingImpact.value = true
+    let p: SyncPreviewStatus | null
+    try {
+      p = await runPreview()
+    } finally {
+      checkingImpact.value = false
+    }
     if (p?.status === 'COMPLETE' && ((p.actionCounts?.DELETE ?? 0) > 0 || p.guardTripped)) {
       confirmEnable.value = true
       return
@@ -745,6 +768,7 @@ async function saveSet() {
 // stored, and a new set becomes an existing one, so the impact preview can run
 // on it straight away.
 async function doSaveSet() {
+  if (savingSet.value) return
   const creating = !editingSet.value
   savingSet.value = true
   try {
