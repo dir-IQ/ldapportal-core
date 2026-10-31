@@ -14,7 +14,6 @@ import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.service.DirectoryDiffService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -26,6 +25,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import jakarta.servlet.http.HttpServletResponse;
+
+import java.io.BufferedWriter;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.UncheckedIOException;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
@@ -97,20 +103,30 @@ public class DirectoryDiffController {
     }
 
     /** A group (every group when {@code category} is left out) as CSV: group, DN on A, DN on B, attributes, note. */
+    /**
+     * A group (every group when no category), as CSV. Written straight to the
+     * response as rows are read, so a large run isn't held in memory. Not a
+     * StreamingResponseBody: that completes on an async dispatch, which the
+     * security filter chain doesn't authorize.
+     */
     @GetMapping(value = "/{id}/entries.csv", produces = "text/csv")
-    public ResponseEntity<byte[]> csv(@PathVariable UUID id,
-                                      @RequestParam(required = false) DirectoryDiffCategory category) {
-        StringBuilder out = new StringBuilder("group,dn_a,dn_b,attributes,note\r\n");
-        service.forEachEntry(id, category, e -> out.append(e.category()).append(',')
-                .append(csv(e.dnA())).append(',')
-                .append(csv(e.dnB())).append(',')
-                .append(csv(String.join(" ", e.attributes()))).append(',')
-                .append(csv(e.note())).append("\r\n"));
+    public void csv(@PathVariable UUID id, @RequestParam(required = false) DirectoryDiffCategory category,
+                    HttpServletResponse response) throws IOException {
+        service.get(id); // 404 before anything is written
         String name = "directory-diff-" + id + (category != null ? "-" + category.name().toLowerCase() : "") + ".csv";
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + name + "\"")
-                .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
-                .body(out.toString().getBytes(StandardCharsets.UTF_8));
+        response.setContentType("text/csv; charset=UTF-8");
+        response.setHeader(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + name + "\"");
+        Writer out = new BufferedWriter(new OutputStreamWriter(response.getOutputStream(), StandardCharsets.UTF_8));
+        out.write("group,dn_a,dn_b,attributes,note\r\n");
+        service.forEachEntry(id, category, e -> {
+            try {
+                out.write(e.category() + "," + csv(e.dnA()) + "," + csv(e.dnB()) + ","
+                        + csv(String.join(" ", e.attributes())) + "," + csv(e.note()) + "\r\n");
+            } catch (IOException ex) {
+                throw new UncheckedIOException(ex);
+            }
+        });
+        out.flush();
     }
 
     /** A CSV field: quoted when it holds a comma, quote or line break; a leading formula character neutralised. */

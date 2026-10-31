@@ -31,6 +31,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -207,6 +208,55 @@ class DirectoryDiffServiceIntegrationTest {
         finish(service.start(request(DirectoryDiffPairing.DN, null, null), SUPERADMIN));
         assertThat(runRepo.findById(first)).isEmpty();
         assertThat(runRepo.count()).isEqualTo(2);
+    }
+
+    @Test
+    void failedRunsNeverPushOutTheLastGoodResult() {
+        // keep-per-pair=2. Newest first: 3 failed, then 2 complete, then an old complete one.
+        OffsetDateTime t = OffsetDateTime.now().minusHours(1);
+        UUID failed1 = savedRun(DirectoryDiffStatus.FAILED, t.plusMinutes(6));
+        UUID failed2 = savedRun(DirectoryDiffStatus.CANCELLED, t.plusMinutes(5));
+        UUID failed3 = savedRun(DirectoryDiffStatus.FAILED, t.plusMinutes(4));
+        UUID good1 = savedRun(DirectoryDiffStatus.COMPLETE, t.plusMinutes(3));
+        UUID good2 = savedRun(DirectoryDiffStatus.COMPLETE, t.plusMinutes(2));
+        UUID good3 = savedRun(DirectoryDiffStatus.COMPLETE, t.plusMinutes(1));
+
+        service.prune(dirA.getId(), dirB.getId());
+
+        assertThat(runRepo.findAll()).extracting(r -> r.getId())
+                .containsExactlyInAnyOrder(failed1, failed2, good1, good2);
+        assertThat(runRepo.findById(failed3)).isEmpty();
+        assertThat(runRepo.findById(good3)).isEmpty();
+    }
+
+    @Test
+    void compactKeepsOnlyComparedAndPairingAttributes() {
+        Entry e = new Entry("uid=a,dc=x", new Attribute("cn", "A"), new Attribute("userPassword", "secret"),
+                new Attribute("modifyTimestamp", "20260101000000Z"), new Attribute("employeeNumber", "7"),
+                new Attribute("description", "d"));
+        Entry compact = DirectoryDiffService.compact(e,
+                name -> List.of("cn", "employeenumber").contains(name));
+        assertThat(compact.getDN()).isEqualTo("uid=a,dc=x");
+        assertThat(compact.getAttributes()).extracting(Attribute::getName)
+                .containsExactlyInAnyOrder("cn", "employeeNumber");
+        assertThat(DirectoryDiffService.estimateBytes(compact)).isLessThan(DirectoryDiffService.estimateBytes(e));
+    }
+
+    private UUID savedRun(DirectoryDiffStatus status, OffsetDateTime startedAt) {
+        com.ldapportal.entity.DirectoryDiffRun run = new com.ldapportal.entity.DirectoryDiffRun();
+        run.setId(UUID.randomUUID());
+        run.setStatus(status);
+        run.setPhase(com.ldapportal.entity.enums.DirectoryDiffPhase.DONE);
+        run.setStartedAt(startedAt);
+        run.setHeartbeatAt(startedAt);
+        run.setFinishedAt(startedAt);
+        run.setDirectoryAId(dirA.getId());
+        run.setDirectoryBId(dirB.getId());
+        run.setBaseA(BASE_A);
+        run.setBaseB(BASE_B);
+        run.setPairing(DirectoryDiffPairing.DN);
+        run.setSettings("{}");
+        return runRepo.save(run).getId();
     }
 
     private DirectoryDiffRequest request(DirectoryDiffPairing pairing, List<String> only, List<String> ignore) {
