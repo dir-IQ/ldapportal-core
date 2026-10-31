@@ -24,7 +24,6 @@ import com.ldapportal.exception.ConflictException;
 import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.LdapConnectionFactory;
 import com.ldapportal.ldap.diff.DirectoryDiffEngine;
-import com.ldapportal.ldap.sync.SyncDnUtil;
 import com.ldapportal.ldap.sync.SyncTargetSchemas;
 import com.ldapportal.repository.DirectoryConnectionRepository;
 import com.ldapportal.repository.DirectoryDiffEntryStore;
@@ -156,7 +155,7 @@ public class DirectoryDiffService {
         DirectoryConnection dirB = directory(req.b().directoryId());
         Side a = side(req.a(), dirA, "A");
         Side b = side(req.b(), dirB, "B");
-        if (a.directoryId().equals(b.directoryId()) && SyncDnUtil.sameDn(a.baseDn(), b.baseDn())
+        if (a.directoryId().equals(b.directoryId()) && sameDn(a.baseDn(), b.baseDn())
                 && a.scope().equals(b.scope()) && a.filter().equals(b.filter())) {
             throw new IllegalArgumentException("The two sides are the same: choose another directory, base DN or filter.");
         }
@@ -576,6 +575,14 @@ public class DirectoryDiffService {
                 throw ex;
             }
         });
+    }
+
+    private static boolean sameDn(String x, String y) {
+        try {
+            return new DN(x).equals(new DN(y));
+        } catch (LDAPException ex) {
+            return x.equalsIgnoreCase(y);
+        }
     }
 
     private DirectoryDiffRun require(UUID id) {

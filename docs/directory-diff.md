@@ -55,8 +55,11 @@ saying why. The reasons are:
 
 ## What counts as different
 
-The comparison is the same one the sync engine uses to decide whether a target
-entry needs a write:
+The diff is meant to be usable for checking sync's work, so it has its own
+comparison code. Nothing it uses to pair entries or decide "same" comes from
+the sync engine, so a sync bug can't hide itself in the diff. A test runs the
+same cases through both and checks they agree, so the two can't drift apart
+unnoticed. The rules:
 
 - **DN-valued attributes** (`member`, `uniqueMember`, `manager`, `owner`, …, plus
   any attribute with DN syntax in side B's schema) compare as DNs. Spacing and
@@ -71,7 +74,9 @@ entry needs a write:
 Some attributes are never compared:
 
 - **Operational attributes** are always left out: timestamps, `entryUUID`,
-  `entryCSN` and the other defaults the sync engine excludes.
+  `entryCSN`, `objectGUID` and the like. The diff keeps its own list rather than
+  the sync engine's exclusions, so an attribute sync skips by mistake still
+  shows up as missing on one side.
 - **Password attributes** (`userPassword`, `unicodePwd`, …) are never read,
   compared or stored. This holds even when you list them yourself.
 - **Ignore** is an extra list you can add for a run, for example
@@ -81,6 +86,18 @@ Some attributes are never compared:
 
 The base entries of two differently named trees always differ in their naming
 attribute (`dc=a` vs `dc=b`). That is expected.
+
+## Using it to check sync
+
+Sync isn't a straight copy, so expect some differences that are intended:
+
+- **Different tree layout.** If sync places entries under different containers
+  on the target, pairing by DN won't match them. Pair by an attribute that is
+  the same on both sides instead, such as `employeeNumber` or `mail`.
+- **Translated references.** `member` values that sync rewrites to other target
+  DNs show as different, because the diff only swaps the base DN.
+- **A sync set's excluded attributes** show as only on side A. Add them to
+  **Ignore** to leave them out.
 
 ## Results
 

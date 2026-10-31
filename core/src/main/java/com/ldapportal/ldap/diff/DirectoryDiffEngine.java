@@ -3,9 +3,6 @@ package com.ldapportal.ldap.diff;
 
 import com.ldapportal.entity.enums.DirectoryDiffCategory;
 import com.ldapportal.entity.enums.DirectoryDiffPairing;
-import com.ldapportal.ldap.sync.EntryComparison;
-import com.ldapportal.ldap.sync.SyncDnUtil;
-import com.ldapportal.ldap.sync.SyncExcludedAttributes;
 import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.DN;
 import com.unboundid.ldap.sdk.Entry;
@@ -29,7 +26,8 @@ import java.util.function.UnaryOperator;
 /**
  * Pairs the entries read from two sides and sorts each into a
  * {@link DirectoryDiffCategory}, comparing a pair attribute by attribute with
- * {@link EntryComparison} (the sync engine's rules). No I/O: the caller reads
+ * {@link DiffValueComparison}. Nothing here comes from the sync engine, so the
+ * diff can check sync's work independently. No I/O: the caller reads
  * both sides and stores what this hands it.
  */
 public final class DirectoryDiffEngine {
@@ -168,7 +166,7 @@ public final class DirectoryDiffEngine {
             Attribute va = attrsA.get(key);
             Attribute vb = attrsB.get(key);
             if (va != null && vb != null) {
-                EntryComparison.ValueDiff d = EntryComparison.values(va, vb, options.schema(), KNOWN_DN_ATTRIBUTES, mapA);
+                DiffValueComparison.ValueDiff d = DiffValueComparison.values(va, vb, options.schema(), KNOWN_DN_ATTRIBUTES, mapA);
                 if (d.same()) {
                     same.add(new SameAttribute(va.getName(), List.of(va.getValues())));
                 } else {
@@ -189,7 +187,7 @@ public final class DirectoryDiffEngine {
         Map<String, Attribute> out = new LinkedHashMap<>();
         for (Attribute attr : e.getAttributes()) {
             if (options.compared().test(attr.getBaseName().toLowerCase(Locale.ROOT))) {
-                out.putIfAbsent(EntryComparison.canonicalName(attr.getName(), options.schema()), attr);
+                out.putIfAbsent(DiffValueComparison.canonicalName(attr.getName(), options.schema()), attr);
             }
         }
         return out;
@@ -210,14 +208,14 @@ public final class DirectoryDiffEngine {
     private static String keyA(Entry e, Options options) {
         if (options.pairing() == DirectoryDiffPairing.DN) {
             String placed = options.rebaseA() == null ? e.getDN() : options.rebaseA().apply(e.getDN());
-            return placed == null ? null : SyncDnUtil.normalize(placed);
+            return placed == null ? null : normalizeDn(placed);
         }
         return attributeKey(e, options.pairAttribute());
     }
 
     private static String keyB(Entry e, Options options) {
         if (options.pairing() == DirectoryDiffPairing.DN) {
-            return SyncDnUtil.normalize(e.getDN());
+            return normalizeDn(e.getDN());
         }
         return attributeKey(e, options.pairAttribute());
     }
@@ -253,17 +251,28 @@ public final class DirectoryDiffEngine {
             "dbcspwd", "lmpwdhistory", "ntpwdhistory");
 
     /**
+     * Server-maintained attributes left out by default. The diff keeps its own
+     * list rather than borrowing the sync engine's exclusions, so an attribute
+     * sync wrongly skips still shows up as missing.
+     */
+    public static final Set<String> OPERATIONAL_ATTRIBUTES = Set.of("entryuuid", "entrydn", "entrycsn",
+            "createtimestamp", "modifytimestamp", "creatorsname", "modifiersname", "subschemasubentry",
+            "hassubordinates", "numsubordinates", "structuralobjectclass", "pwdchangedtime",
+            "pwdaccountlockedtime", "pwdfailuretime", "pwdgraceusetime", "ds-entry-unique-id", "nsuniqueid",
+            "objectguid", "objectsid", "usncreated", "usnchanged", "whencreated", "whenchanged",
+            "dscorepropagationdata", "contextcsn");
+
+    /**
      * Whether an attribute (lower-case base name) is compared: one of
-     * {@code only} when that's given, else any but the operational ones
-     * ({@link SyncExcludedAttributes#DEFAULT_EXCLUDED}); never one of
+     * {@code only} when that's given, else any but the
+     * {@link #OPERATIONAL_ATTRIBUTES}; never one of
      * {@code ignore}, and never a password.
      */
     public static Predicate<String> compared(java.util.Collection<String> only, java.util.Collection<String> ignore) {
         Set<String> onlyNames = lower(only);
         Set<String> ignored = lower(ignore);
-        Set<String> excluded = lower(SyncExcludedAttributes.DEFAULT_EXCLUDED);
         return name -> !SECRET_ATTRIBUTES.contains(name) && !ignored.contains(name)
-                && (onlyNames.isEmpty() ? !excluded.contains(name) : onlyNames.contains(name));
+                && (onlyNames.isEmpty() ? !OPERATIONAL_ATTRIBUTES.contains(name) : onlyNames.contains(name));
     }
 
     /**
@@ -300,6 +309,15 @@ public final class DirectoryDiffEngine {
                 return null;
             }
         };
+    }
+
+    /** A DN in normalized form, for pairing; lower-cased as written when it doesn't parse. */
+    private static String normalizeDn(String dn) {
+        try {
+            return new DN(dn).toNormalizedString();
+        } catch (LDAPException ex) {
+            return dn.trim().toLowerCase(Locale.ROOT);
+        }
     }
 
     private static Set<String> lower(java.util.Collection<String> values) {

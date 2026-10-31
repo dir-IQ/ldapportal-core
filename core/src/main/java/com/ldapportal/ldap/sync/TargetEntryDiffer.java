@@ -114,11 +114,17 @@ public final class TargetEntryDiffer {
         return key.toString();
     }
 
-    /** Whether the target holds exactly the desired values, by {@link EntryComparison}'s rules. */
     private static boolean sameValues(Attribute current, Attribute desired, Schema schema,
                                       Collection<String> dnAttrs) {
-        return EntryComparison.values(desired, current, schema, dnAttrs, java.util.function.UnaryOperator.identity())
-                .same();
+        MatchingRule rule = matchingRule(desired.getBaseName(), schema, dnAttrs);
+        if (rule != null) {
+            Set<String> a = normalized(current, rule);
+            Set<String> b = normalized(desired, rule);
+            if (a != null && b != null) {
+                return a.equals(b);
+            }
+        }
+        return exact(current).equals(exact(desired));
     }
 
     /**
@@ -250,5 +256,26 @@ public final class TargetEntryDiffer {
         }
         MatchingRule rule = MatchingRule.selectEqualityMatchingRule(baseName, schema);
         return rule instanceof DistinguishedNameMatchingRule ? rule : null;
+    }
+
+    /** The values in the rule's normalized form, or {@code null} when one can't be normalized. */
+    private static Set<String> normalized(Attribute attr, MatchingRule rule) {
+        Set<String> out = new HashSet<>();
+        for (byte[] value : attr.getValueByteArrays()) {
+            try {
+                out.add(rule.normalize(new ASN1OctetString(value)).stringValue());
+            } catch (LDAPException ex) {
+                return null; // e.g. a value that isn't a valid DN: compare exactly instead
+            }
+        }
+        return out;
+    }
+
+    private static Set<String> exact(Attribute attr) {
+        Set<String> out = new HashSet<>();
+        for (byte[] value : attr.getValueByteArrays()) {
+            out.add(Arrays.toString(value));
+        }
+        return out;
     }
 }
