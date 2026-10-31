@@ -405,7 +405,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
@@ -417,7 +417,7 @@ import {
   runOperationalReport, runOperationalReportData, runOperationalReportPdf,
 } from '@/api/reports'
 import { listDirectories } from '@/api/directories'
-import { checkIntegrity } from '@/api/browse'
+import { checkIntegrity, listIntegrityChecks } from '@/api/browse'
 import { getAuditActions } from '@/api/audit'
 import { actionLabel } from '@/components/dashboard/auditLabels'
 import { downloadBlob } from '@/composables/useApi'
@@ -558,11 +558,33 @@ const reportTypes = computed<ReportTypeDef[]>(() => {
 // Scheduled jobs can't use INTEGRITY_CHECK (it's not a backend report type)
 const schedulableTypes = computed(() => reportTypes.value.filter(t => t.value !== 'INTEGRITY_CHECK'))
 
-const integrityChecks = [
-  { value: 'BROKEN_MEMBER',  label: 'Broken Member References' },
-  { value: 'ORPHANED_ENTRY', label: 'Orphaned Entries' },
-  { value: 'EMPTY_GROUP',    label: 'Empty Groups' },
+/** A check the directory offers, and the attributes it checks. */
+interface AvailableCheck {
+  type: string
+  attributes: string[]
+}
+
+const BUILT_IN_CHECKS: AvailableCheck[] = [
+  { type: 'BROKEN_MEMBER',  attributes: ['member', 'uniqueMember'] },
+  { type: 'ORPHANED_ENTRY', attributes: [] },
+  { type: 'EMPTY_GROUP',    attributes: [] },
 ]
+
+// What the selected directory offers: the built-in checks, plus a reference
+// check (e.g. IVIA secDN) where an addon contributes one for the directory.
+const offeredChecks = ref<AvailableCheck[]>(BUILT_IN_CHECKS)
+
+function integrityCheckLabel(c: AvailableCheck): string {
+  switch (c.type) {
+    case 'BROKEN_MEMBER':    return 'Broken Member References'
+    case 'ORPHANED_ENTRY':   return 'Orphaned Entries'
+    case 'EMPTY_GROUP':      return 'Empty Groups'
+    case 'BROKEN_REFERENCE': return `Broken References (${c.attributes.join(', ')})`
+    default:                 return c.type
+  }
+}
+
+const integrityChecks = computed(() => offeredChecks.value.map(c => ({ value: c.type, label: integrityCheckLabel(c) })))
 
 function labelFor(type: string): string { return reportTypes.value.find(t => t.value === type)?.label ?? type }
 function fmtDate(iso: string): string { return new Date(iso).toLocaleString() }
@@ -745,6 +767,27 @@ async function doRun(): Promise<void> {
     running.value = false
   }
 }
+
+// Each directory offers its own checks. A newly offered check starts ticked;
+// a check the directory doesn't offer is dropped from the selection.
+async function loadOfferedChecks(directoryId: string): Promise<void> {
+  if (!directoryId || !auth.isSuperadmin) return
+  const before = new Set(offeredChecks.value.map(c => c.type))
+  try {
+    const { data } = await listIntegrityChecks(directoryId)
+    offeredChecks.value = (data as AvailableCheck[])?.length ? data as AvailableCheck[] : BUILT_IN_CHECKS
+  } catch {
+    offeredChecks.value = BUILT_IN_CHECKS
+  }
+  const offered = new Set(offeredChecks.value.map(c => c.type))
+  const kept = runForm.value.integrityChecks.filter(t => offered.has(t))
+  for (const t of offered) {
+    if (!before.has(t) && !kept.includes(t)) kept.push(t)
+  }
+  runForm.value.integrityChecks = kept
+}
+
+watch(dirId, (id) => { void loadOfferedChecks(id) }, { immediate: true })
 
 async function runIntegrityCheck(): Promise<void> {
   const checks = runForm.value.integrityChecks

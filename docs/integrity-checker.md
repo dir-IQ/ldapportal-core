@@ -1,8 +1,9 @@
 # Referential Integrity Checker
 
-**Status:** Shipped (broken-member, orphaned-entry and empty-group checks; removal of broken member references; IVIA `secDN` reference check; 2026-10-28).
+**Status:** Shipped (broken-member, orphaned-entry and empty-group checks; removal of broken member references; IVIA `secDN` reference check, also on the Reports page's Integrity Check; 2026-10-29).
 
-The superadmin **Referential Integrity Checker** scans a directory for
+The superadmin **Referential Integrity Checker** (sidebar: **Report →
+Referential Integrity Check**, `/superadmin/integrity`) scans a directory for
 references that point nowhere and entries that have lost their place, and can
 remove the broken group member references it finds.
 
@@ -18,7 +19,10 @@ directory), and the checks to run:
 | **Empty groups** | A `groupOfNames`, `groupOfUniqueNames` or `posixGroup` with no members. |
 | **Broken references (secDN)** | *Offered only on a directory with an active linked-mode IVIA configuration.* An IVIA account (a `secUser` under the configured user container in the management DIT) whose `secDN` names no entry, or that has no `secDN` at all. The same scan as the **Orphaned IVIA accounts** report. With a base DN, only accounts whose `secDN` (or the account itself) is under it are listed; accounts with no `secDN` are then left out. These aren't removed from here: fix the account's `secDN`, or remove the orphaned account, on the directory. |
 
-Any superadmin can run a check; each run is audited as `integrity.check`.
+Any superadmin can run a check; each run is audited as `integrity.check`. The
+same checks, including the `secDN` check where it's offered, are also on
+**Reports → Integrity Check**, which runs them against the whole directory (no
+base DN) and lists the issues without the removal action.
 The checks a directory offers come from
 `GET /api/v1/superadmin/directories/{id}/browse/integrity-check/checks`
 (`[{"type","attributes"}]`); `BROKEN_REFERENCE` is listed only where an addon
