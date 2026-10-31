@@ -4,6 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import MembershipInventoryModal from './MembershipInventoryModal.vue'
 import { useNotificationStore } from '@/stores/notifications'
+import { useAuthStore } from '@/stores/auth'
 
 const set = {
   id: 'set-1', linkId: 'link-1', name: 'people', objectScopeBaseDn: null, objectScope: 'SUB' as const,
@@ -84,6 +85,30 @@ describe('MembershipInventoryModal', () => {
     vi.clearAllMocks()
     withRow({}) // tests below override the listed row; start each from the fixture
     document.body.innerHTML = ''
+  })
+
+  it('links to Directory Diff, filled in from this set, for superadmins who may run diffs', async () => {
+    const auth = useAuthStore()
+    const mountWith = async () => {
+      const w = mount(MembershipInventoryModal, {
+        attachTo: document.body,
+        props: { show: true, set, sourceName: 'Source', targetName: 'Target' },
+        global: { stubs: { RouterLink: { props: ['to'], template: '<a class="diff-link" :data-to="JSON.stringify(to)"><slot /></a>' } } },
+      })
+      await flushPromises()
+      return w
+    }
+    let w = await mountWith()
+    expect(document.querySelector('.diff-link')).toBeNull()
+    w.unmount()
+
+    auth.principal = { superadminPermissions: ['superadmin.manage_directory_diff'] } as never
+    w = await mountWith()
+    const link = document.querySelector('.diff-link')!
+    expect(link.textContent).toContain('Compare in Directory Diff')
+    expect(JSON.parse(link.getAttribute('data-to')!)).toEqual(
+      { path: '/superadmin/directory-diff', query: { verifySet: set.id } })
+    w.unmount()
   })
 
   it('loads memberships on open and renders state chips with counts', async () => {

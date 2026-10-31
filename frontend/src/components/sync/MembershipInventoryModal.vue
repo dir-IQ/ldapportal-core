@@ -12,6 +12,11 @@
       <div class="flex items-center justify-between gap-2 flex-wrap -mt-1">
         <p class="text-xs text-gray-500 font-mono">{{ sourceName }} → {{ targetName }}</p>
         <div class="flex items-center gap-2">
+          <RouterLink v-if="set && canDiff" :to="{ path: '/superadmin/directory-diff', query: { verifySet: set.id } }"
+                      class="btn-secondary btn-compact"
+                      title="Compare the set's source and target entry by entry in Directory Diff, independently of the sync's own comparison: every attribute's values side by side, with a live re-read per entry">
+            Compare in Directory Diff
+          </RouterLink>
           <button class="btn-secondary btn-compact" :disabled="verifying"
                   title="Check only, never writes: reads both directories and compares them directly, without trusting the sync's records. Lists entries missing on the target, orphaned on the target, and with content drift"
                   @click="verify">
@@ -197,6 +202,7 @@ import SyncActivityProgress from '@/components/sync/SyncActivityProgress.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
 import { useNotificationStore } from '@/stores/notifications'
 import { useConfirm } from '@/composables/useConfirm'
+import { useAuthStore } from '@/stores/auth'
 import {
   listMemberships, startReconcile, recheckTarget, recomputeKey, dismissMembership, verifyContents, approveDelete,
   getSyncSetActivity, listNotInSet,
@@ -217,6 +223,9 @@ const emit = defineEmits<{ changed: [] }>()
 
 const notif = useNotificationStore()
 const confirm = useConfirm()
+const auth = useAuthStore()
+/** Directory Diff is gated by its own superadmin permission. */
+const canDiff = computed(() => auth.hasSuperadminPermission('superadmin.manage_directory_diff'))
 
 const rows = ref<Membership[]>([])
 const total = ref(0)
