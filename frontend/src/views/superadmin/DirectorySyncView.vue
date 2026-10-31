@@ -337,6 +337,7 @@ import { listDirectories } from '@/api/directories'
 import {
   listSyncLinks, createSyncLink, updateSyncLink, deleteSyncLink,
   listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet, getSyncSetDeleteImpact, getSyncSetDefaults,
+  requestSyncSetReconcile,
   getPreviewRun, startPreviewRun,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
   type SyncTransformRule, type SyncPreviewStatus, type SyncPreviewAction, type MembershipState, type SyncSetDeleteImpact,
@@ -770,6 +771,7 @@ async function saveSet() {
 async function doSaveSet() {
   if (savingSet.value) return
   const creating = !editingSet.value
+  const before = editingSet.value
   savingSet.value = true
   try {
     const payload = toPayload(setForm.value)
@@ -784,10 +786,62 @@ async function doSaveSet() {
     confirmEnable.value = false
     notif.success(creating ? 'Sync set created' : 'Sync set updated')
     await refreshHealth()
+    if (before && before.enabled && data.enabled) await offerReconcile(before, data)
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
     savingSet.value = false
+  }
+}
+
+// What decides which entries the set manages, where they go and what it writes:
+// a change only takes effect at the set's next reconcile.
+const RECONCILED_FIELDS: { key: keyof SyncSet; label: string }[] = [
+  { key: 'applicabilityFilter', label: 'applicability filter' },
+  { key: 'objectScopeBaseDn', label: 'source base DN' },
+  { key: 'objectScope', label: 'source scope' },
+  { key: 'targetBaseDn', label: 'target base DN' },
+  { key: 'referenceAttributes', label: 'reference attributes' },
+  { key: 'excludedAttributes', label: 'excluded attributes' },
+  { key: 'transformRules', label: 'transform rules' },
+]
+
+/** The reconciled settings a save changed, by label. */
+function reconciledChanges(before: SyncSet, after: SyncSet): string[] {
+  return RECONCILED_FIELDS
+    .filter(({ key }) => JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null))
+    .map(({ label }) => label)
+}
+
+/**
+ * After a save that changed what the set manages or writes, offer to apply it
+ * now: otherwise it waits for the set's next scheduled reconcile, and rows held
+ * under the old settings (a deletion held for review) stay held until then.
+ */
+async function offerReconcile(before: SyncSet, after: SyncSet) {
+  const changed = reconciledChanges(before, after)
+  if (changed.length === 0) return
+  const what = changed.length === 1 ? `The new ${changed[0]} takes`
+    : `The changes to the ${changed.slice(0, -1).join(', ')} and ${changed[changed.length - 1]} take`
+  const ok = await confirm({
+    title: 'Apply the changes now?',
+    message: `${what} effect at the set's next reconcile. Reconcile now to apply ${changed.length === 1 ? 'it' : 'them'} `
+      + 'to every entry: entries that now leave the set are deleted or held for review, as its delete policy '
+      + 'says, and deletions held for entries that are back in the set clear.\n\n'
+      + 'To see what it would do first, choose Later and run Preview impact.',
+    confirmLabel: 'Reconcile now',
+    cancelLabel: 'Later',
+  })
+  if (!ok) return
+  try {
+    const { data } = await requestSyncSetReconcile(after.id)
+    if (data.reconcileQueued) {
+      notif.success('Reconcile queued: it starts within about a minute. Follow it in the set\'s inventory.')
+    } else {
+      notif.info('Reconcile requested: it runs once the set\'s link is enabled.')
+    }
+  } catch (e) {
+    notif.error(errMsg(e))
   }
 }
 function plural(n: number, one: string, many = `${one}s`): string {

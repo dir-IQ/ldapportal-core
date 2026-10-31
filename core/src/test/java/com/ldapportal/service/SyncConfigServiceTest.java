@@ -409,6 +409,36 @@ class SyncConfigServiceTest {
     }
 
     @Test
+    void requestReconcile_queuesOne_andSaysWhetherItWillRun() {
+        UUID setId = UUID.randomUUID();
+        UUID linkId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setEnabled(true);
+        set.setLinkId(linkId);
+        SyncLink link = new SyncLink();
+        link.setEnabled(true);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+
+        assertThat(service.requestReconcile(setId, "alice")).isTrue();
+        verify(setRepo).requestReconcileOfSet(setId);
+        verify(membershipRepo, never()).forgetAppliedContent(any(), any());
+
+        link.setEnabled(false);
+        assertThat(service.requestReconcile(setId, "alice")).isFalse();
+    }
+
+    @Test
+    void requestReconcile_unknownSet_isNotFound() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.requestReconcile(setId, "alice"))
+                .isInstanceOf(com.ldapportal.exception.ResourceNotFoundException.class);
+        verify(setRepo, never()).requestReconcileOfSet(any());
+    }
+
+    @Test
     void recheckTarget_unknownSet_isNotFound() {
         UUID setId = UUID.randomUUID();
         when(setRepo.findById(setId)).thenReturn(Optional.empty());
