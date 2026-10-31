@@ -294,7 +294,9 @@
           </p>
           <div class="flex justify-end gap-2">
             <button type="button" class="btn-neutral btn-compact" @click="confirmEnable = false">Back</button>
-            <button type="button" class="btn-danger btn-compact" @click="doSaveSet">Enable anyway</button>
+            <button type="button" class="btn-danger btn-compact" :disabled="setSaveBusy" @click="doSaveSet">
+              {{ savingSet ? 'Saving…' : 'Enable anyway' }}
+            </button>
           </div>
         </div>
 
@@ -304,8 +306,8 @@
       <template #footer="{ close }">
         <button type="button" class="btn-neutral" @click="close()">Close</button>
         <button type="submit" form="sync-set-form" class="btn-primary"
-                :disabled="savingSet || (!!editingSet && !setDirty)">
-          {{ savingSet ? 'Saving…' : editingSet ? 'Save' : 'Create' }}
+                :disabled="setSaveBusy || (!!editingSet && !setDirty)" :aria-busy="setSaveBusy">
+          {{ setSaveLabel }}
         </button>
       </template>
     </AppModal>
@@ -335,6 +337,7 @@ import { listDirectories } from '@/api/directories'
 import {
   listSyncLinks, createSyncLink, updateSyncLink, deleteSyncLink,
   listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet, getSyncSetDeleteImpact, getSyncSetDefaults,
+  requestSyncSetReconcile,
   getPreviewRun, startPreviewRun,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
   type SyncTransformRule, type SyncPreviewStatus, type SyncPreviewAction, type MembershipState, type SyncSetDeleteImpact,
@@ -595,6 +598,20 @@ function formFromSet(s: SyncSet): SetForm {
 // from what it held when it was opened or last saved.
 const savedSetSnapshot = ref<string>('')
 const savingSet = ref<boolean>(false)
+// Enabling a set runs a full impact preview before saving, which can take a
+// while on a large set: the Save button says so, and ignores further clicks.
+const checkingImpact = ref<boolean>(false)
+const setSaveBusy = computed<boolean>(() => savingSet.value || checkingImpact.value)
+const setSaveLabel = computed<string>(() => {
+  if (checkingImpact.value) {
+    const p = impact.value
+    return p?.status === 'RUNNING' && p.total
+      ? `Checking impact… ${p.processed.toLocaleString()} of ${p.total.toLocaleString()}`
+      : 'Checking impact…'
+  }
+  if (savingSet.value) return 'Saving…'
+  return editingSet.value ? 'Save' : 'Create'
+})
 function setSnapshot(f: SetForm): string {
   return JSON.stringify(toPayload(f))
 }
@@ -730,9 +747,16 @@ async function saveSet() {
   // Turning an existing set on is the moment deletions could start. Preview the
   // impact first and make the operator confirm if anything would be deleted (or
   // the guard would quarantine).
+  if (setSaveBusy.value) return // a click while the last one is still checking or saving
   const enabling = !!editingSet.value && setForm.value.enabled && !editingSet.value.enabled
   if (enabling && !confirmEnable.value) {
-    const p = await runPreview()
+    checkingImpact.value = true
+    let p: SyncPreviewStatus | null
+    try {
+      p = await runPreview()
+    } finally {
+      checkingImpact.value = false
+    }
     if (p?.status === 'COMPLETE' && ((p.actionCounts?.DELETE ?? 0) > 0 || p.guardTripped)) {
       confirmEnable.value = true
       return
@@ -745,7 +769,10 @@ async function saveSet() {
 // stored, and a new set becomes an existing one, so the impact preview can run
 // on it straight away.
 async function doSaveSet() {
+  if (savingSet.value) return
   const creating = !editingSet.value
+  const before = editingSet.value
+  let saved: SyncSet | null = null
   savingSet.value = true
   try {
     const payload = toPayload(setForm.value)
@@ -759,11 +786,65 @@ async function doSaveSet() {
     impact.value = null // it described the configuration before this save
     confirmEnable.value = false
     notif.success(creating ? 'Sync set created' : 'Sync set updated')
+    saved = data
     await refreshHealth()
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
     savingSet.value = false
+  }
+  // Asked once the save is done, so the button no longer reads "Saving…" behind it.
+  if (before && saved && before.enabled && saved.enabled) await offerReconcile(before, saved)
+}
+
+// What decides which entries the set manages, where they go and what it writes:
+// a change only takes effect at the set's next reconcile.
+const RECONCILED_FIELDS: { key: keyof SyncSet; label: string }[] = [
+  { key: 'applicabilityFilter', label: 'applicability filter' },
+  { key: 'objectScopeBaseDn', label: 'source base DN' },
+  { key: 'objectScope', label: 'source scope' },
+  { key: 'targetBaseDn', label: 'target base DN' },
+  { key: 'referenceAttributes', label: 'reference attributes' },
+  { key: 'excludedAttributes', label: 'excluded attributes' },
+  { key: 'transformRules', label: 'transform rules' },
+]
+
+/** The reconciled settings a save changed, by label. */
+function reconciledChanges(before: SyncSet, after: SyncSet): string[] {
+  return RECONCILED_FIELDS
+    .filter(({ key }) => JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null))
+    .map(({ label }) => label)
+}
+
+/**
+ * After a save that changed what the set manages or writes, offer to apply it
+ * now: otherwise it waits for the set's next scheduled reconcile, and rows held
+ * under the old settings (a deletion held for review) stay held until then.
+ */
+async function offerReconcile(before: SyncSet, after: SyncSet) {
+  const changed = reconciledChanges(before, after)
+  if (changed.length === 0) return
+  const what = changed.length === 1 ? `The new ${changed[0]} takes`
+    : `The changes to the ${changed.slice(0, -1).join(', ')} and ${changed[changed.length - 1]} take`
+  const ok = await confirm({
+    title: 'Apply the changes now?',
+    message: `${what} effect at the set's next reconcile. Reconcile now to apply ${changed.length === 1 ? 'it' : 'them'} `
+      + 'to every entry: entries that now leave the set are deleted or held for review, as its delete policy '
+      + 'says, and deletions held for entries that are back in the set clear.\n\n'
+      + 'To see what it would do first, choose Later and run Preview impact.',
+    confirmLabel: 'Reconcile now',
+    cancelLabel: 'Later',
+  })
+  if (!ok) return
+  try {
+    const { data } = await requestSyncSetReconcile(after.id)
+    if (data.reconcileQueued) {
+      notif.success('Reconcile queued: it starts within about a minute. Follow it in the set\'s inventory.')
+    } else {
+      notif.info('Reconcile requested: it runs once the set\'s link is enabled.')
+    }
+  } catch (e) {
+    notif.error(errMsg(e))
   }
 }
 function plural(n: number, one: string, many = `${one}s`): string {
