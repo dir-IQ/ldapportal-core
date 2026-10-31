@@ -1,6 +1,6 @@
 # Directory diff
 
-**Status:** In progress (backend and API shipped; the UI is next, 2026-10-31).
+**Status:** Shipped (backend, API and UI, 2026-10-31).
 
 Compare two directories, or two branches of one directory, entry by entry.
 Every entry ends up in one of four groups:
@@ -13,6 +13,31 @@ Every entry ends up in one of four groups:
 | **Only in B** | No partner on side A |
 
 A diff only reads. It never writes to either directory.
+
+## Where to find it
+
+In the superadmin sidebar, **Report › Directory Diff**, next to Operational
+Reports. It is also in the command palette (Ctrl/Cmd+K). The link only shows
+for superadmins who hold the permission below.
+
+The page has three states:
+
+1. **Set up.** Choose each side, how entries pair, and which attributes count,
+   then select **Compare**. Recent comparisons are listed below the form; open
+   one to see its results.
+2. **Running.** The page shows each stage (read A, read B, compare) with
+   progress and live counts. You can leave the page; the comparison keeps
+   running. **Cancel comparison** stops it.
+3. **Results.** One tab per group, with its count. In Different, select an
+   attribute to show only the entries where it differs. Select **Compare** on a
+   row to open the side panel:
+   - each differing attribute, with values only on A, only on B, and on both;
+   - **Re-read live**, which fetches both entries again;
+   - links to each entry in the Directory Browser;
+   - **Previous** and **Next** to step through the group, across pages.
+
+   **Export (CSV)** downloads the current group or all groups. **Run again**
+   reopens the form with the same settings.
 
 ## Who can run it
 

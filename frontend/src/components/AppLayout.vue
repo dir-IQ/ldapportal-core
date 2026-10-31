@@ -147,6 +147,10 @@
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16V10M10 16V4M15 16v-4"/></svg>
             <span v-if="!collapsed">Operational Reports</span>
           </RouterLink>
+          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_directory_diff')" to="/superadmin/directory-diff" class="nav-item">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="6.5" height="14" rx="1.5"/><rect x="11.5" y="3" width="6.5" height="14" rx="1.5"/><path d="M4.5 7h2M4.5 10h2M13.5 7h2M13.5 13h2"/></svg>
+            <span v-if="!collapsed">Directory Diff</span>
+          </RouterLink>
           <RouterLink to="/superadmin/audit-log" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="2" width="14" height="16" rx="2"/><path d="M7 6h6M7 10h6M7 14h3"/></svg>
             <span v-if="!collapsed">Audit Log</span>
