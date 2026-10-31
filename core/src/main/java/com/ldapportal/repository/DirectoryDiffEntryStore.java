@@ -5,6 +5,7 @@ import com.ldapportal.entity.enums.DirectoryDiffCategory;
 import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -92,7 +93,13 @@ public class DirectoryDiffEntryStore {
         return rows.stream().findFirst();
     }
 
-    /** Hand each of a run's rows in {@code category} (every category when {@code null}) to {@code sink}, in order. */
+    /**
+     * Hand each of a run's rows in {@code category} (every category when
+     * {@code null}) to {@code sink}, in order. Read-only transaction: PostgreSQL
+     * only honours the fetch size with autocommit off, so rows really do arrive
+     * a batch at a time instead of all at once.
+     */
+    @Transactional(readOnly = true)
     public void forEach(UUID runId, DirectoryDiffCategory category, Consumer<Row> sink) {
         jdbc.query(con -> {
             var ps = con.prepareStatement("SELECT seq, category, dn_a, dn_b, attributes, note FROM directory_diff_entry "
