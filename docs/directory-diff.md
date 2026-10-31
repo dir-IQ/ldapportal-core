@@ -116,15 +116,43 @@ For each finished run you can:
   same way, so you can confirm a fix without re-running the whole diff;
 - download a group, or all groups, as CSV.
 
-Only the latest 10 runs per pair of directories are kept.
+See [Retention](#retention) for how many runs are kept.
 
 ## Limits and settings
 
 | Property | Default | Meaning |
 |---|---|---|
 | `ldapportal.directory-diff.max-concurrent` | `2` | Runs at once; a further start gets 409 |
-| `ldapportal.directory-diff.max-entries-per-side` | `500000` | A side larger than this fails the run |
-| `ldapportal.directory-diff.keep-per-pair` | `10` | Finished runs kept per pair of directories |
+| `ldapportal.directory-diff.max-entries-per-side` | `200000` | A side larger than this fails the run |
+| `ldapportal.directory-diff.memory-percent` | `40` | Share of the server's heap all runs together may fill with entries |
+| `ldapportal.directory-diff.memory-budget-mb` | unset | A fixed per-run budget instead, in MB |
+| `ldapportal.directory-diff.keep-per-pair` | `10` | Complete runs kept per pair of directories |
+
+### Memory
+
+A run holds both sides in memory while it compares them. It keeps only what it
+compares: each entry's DN, the compared attributes and the pairing attribute.
+Operational attributes, passwords and ignored attributes are dropped as each
+page arrives.
+
+Each run tracks roughly how much heap its entries take. A run that would go
+over its budget fails with a message saying how far it got, rather than running
+the server out of memory. The budget is `memory-percent` of the heap, split
+between `max-concurrent` runs. With the shipped 512 MB heap that comes to about
+100 MB per run. The size estimate errs high, so that budget holds about 10,000
+to 15,000 typical user entries per side; fewer for entries with large values.
+
+To compare more, try these in order:
+- narrow the base DN or the filter;
+- compare only the attributes you care about, or ignore large ones such as
+  `jpegPhoto`;
+- give the server a larger heap.
+
+### Retention
+
+A pair of directories keeps its latest 10 complete runs. Failed and cancelled
+runs are kept only while they are among the latest 10 runs overall. A few
+failed attempts therefore never push out the last good result.
 
 Runs happen in the background, so the 60-second load balancer idle timeout
 doesn't apply. A run whose server restarts mid-way shows as **Failed**, with

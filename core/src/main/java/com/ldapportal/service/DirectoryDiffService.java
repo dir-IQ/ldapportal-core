@@ -30,6 +30,7 @@ import com.ldapportal.repository.DirectoryDiffEntryStore;
 import com.ldapportal.repository.DirectoryDiffRunRepository;
 import com.unboundid.asn1.ASN1OctetString;
 import com.unboundid.ldap.sdk.DN;
+import com.unboundid.ldap.sdk.Attribute;
 import com.unboundid.ldap.sdk.Entry;
 import com.unboundid.ldap.sdk.Filter;
 import com.unboundid.ldap.sdk.LDAPException;
@@ -60,6 +61,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 /**
@@ -96,14 +98,20 @@ public class DirectoryDiffService {
     private final int maxConcurrent;
     private final int maxEntriesPerSide;
     private final int keepPerPair;
+    /** Roughly how much heap one run may fill with the entries it reads. */
+    private final long memoryBudgetBytes;
     private final ExecutorService runs;
+    /** Serialises this server's check-then-start, so its own starts can't race past the limit. */
+    private final Object startLock = new Object();
 
     public DirectoryDiffService(DirectoryDiffRunRepository runRepo, DirectoryDiffEntryStore entryStore,
                                 DirectoryConnectionRepository directoryRepo, LdapConnectionFactory connectionFactory,
                                 SyncTargetSchemas schemas, AuditService auditService, ObjectMapper objectMapper,
                                 @Value("${ldapportal.directory-diff.max-concurrent:2}") int maxConcurrent,
-                                @Value("${ldapportal.directory-diff.max-entries-per-side:500000}") int maxEntriesPerSide,
-                                @Value("${ldapportal.directory-diff.keep-per-pair:10}") int keepPerPair) {
+                                @Value("${ldapportal.directory-diff.max-entries-per-side:200000}") int maxEntriesPerSide,
+                                @Value("${ldapportal.directory-diff.keep-per-pair:10}") int keepPerPair,
+                                @Value("${ldapportal.directory-diff.memory-percent:40}") int memoryPercent,
+                                @Value("${ldapportal.directory-diff.memory-budget-mb:0}") long memoryBudgetMb) {
         this.runRepo = runRepo;
         this.entryStore = entryStore;
         this.directoryRepo = directoryRepo;
@@ -114,7 +122,11 @@ public class DirectoryDiffService {
         this.maxConcurrent = Math.max(1, maxConcurrent);
         this.maxEntriesPerSide = Math.max(1, maxEntriesPerSide);
         this.keepPerPair = Math.max(1, keepPerPair);
-        this.runs = Executors.newFixedThreadPool(this.maxConcurrent, r -> {
+        this.memoryBudgetBytes = memoryBudgetMb > 0 ? memoryBudgetMb * 1024 * 1024
+                : Runtime.getRuntime().maxMemory() / 100 * Math.min(Math.max(memoryPercent, 1), 80) / this.maxConcurrent;
+        // Not a fixed pool: a run that waited in a queue would send no heartbeat and read as
+        // interrupted. start() keeps the count of runs to max-concurrent.
+        this.runs = Executors.newCachedThreadPool(r -> {
             Thread t = new Thread(r, "directory-diff");
             t.setDaemon(true);
             return t;
@@ -170,27 +182,30 @@ public class DirectoryDiffService {
         Settings settings = new Settings(a, b, pairBy, pairAttribute, names(req.attributes(), "attributes"),
                 names(req.ignore(), "ignore"));
 
-        OffsetDateTime now = OffsetDateTime.now();
-        if (runRepo.countRunning(now.minus(STALE_AFTER)) >= maxConcurrent) {
-            throw new ConflictException(maxConcurrent + " directory comparisons are already running. "
-                    + "Wait for one to finish, or cancel one.");
-        }
         DirectoryDiffRun run = new DirectoryDiffRun();
-        run.setId(UUID.randomUUID());
-        run.setRequestedBy(principal != null ? principal.username() : null);
-        run.setStatus(DirectoryDiffStatus.RUNNING);
-        run.setPhase(DirectoryDiffPhase.READING_A);
-        run.setStartedAt(now);
-        run.setHeartbeatAt(now);
-        run.setDirectoryAId(dirA.getId());
-        run.setDirectoryBId(dirB.getId());
-        run.setDirectoryAName(dirA.getDisplayName());
-        run.setDirectoryBName(dirB.getDisplayName());
-        run.setBaseA(a.baseDn());
-        run.setBaseB(b.baseDn());
-        run.setPairing(pairBy);
-        run.setSettings(toJson(settings));
-        runRepo.saveAndFlush(run);
+        OffsetDateTime now;
+        synchronized (startLock) {
+            now = OffsetDateTime.now();
+            if (runRepo.countRunning(now.minus(STALE_AFTER)) >= maxConcurrent) {
+                throw new ConflictException(maxConcurrent + " directory comparisons are already running. "
+                        + "Wait for one to finish, or cancel one.");
+            }
+            run.setId(UUID.randomUUID());
+            run.setRequestedBy(principal != null ? principal.username() : null);
+            run.setStatus(DirectoryDiffStatus.RUNNING);
+            run.setPhase(DirectoryDiffPhase.READING_A);
+            run.setStartedAt(now);
+            run.setHeartbeatAt(now);
+            run.setDirectoryAId(dirA.getId());
+            run.setDirectoryBId(dirB.getId());
+            run.setDirectoryAName(dirA.getDisplayName());
+            run.setDirectoryBName(dirB.getDisplayName());
+            run.setBaseA(a.baseDn());
+            run.setBaseB(b.baseDn());
+            run.setPairing(pairBy);
+            run.setSettings(toJson(settings));
+            runRepo.saveAndFlush(run);
+        }
 
         Map<String, Object> detail = new LinkedHashMap<>();
         detail.put("kind", "directory-diff");
@@ -298,6 +313,8 @@ public class DirectoryDiffService {
         private final DirectoryDiffRun run;
         private long lastFlush = System.nanoTime();
         private boolean cancelRequested;
+        /** About how much heap the entries read so far take, both sides together. */
+        private long bytes;
 
         Tracker(DirectoryDiffRun run) {
             this.run = run;
@@ -329,11 +346,12 @@ public class DirectoryDiffService {
         Tracker tracker = new Tracker(run);
         try {
             String[] requested = requestedAttributes(settings);
-            List<SearchResultEntry> a = read(dirA, settings.a(), requested, tracker);
+            Predicate<String> kept = kept(settings);
+            List<Entry> a = read(dirA, settings.a(), "A", requested, kept, tracker);
             run.setPhase(DirectoryDiffPhase.READING_B);
             run.setProcessed(0);
             tracker.flush();
-            List<SearchResultEntry> b = read(dirB, settings.b(), requested, tracker);
+            List<Entry> b = read(dirB, settings.b(), "B", requested, kept, tracker);
 
             run.setPhase(DirectoryDiffPhase.COMPARING);
             run.setProcessed(0);
@@ -382,18 +400,58 @@ public class DirectoryDiffService {
         return out.toArray(new String[0]);
     }
 
+    /**
+     * The attributes a run keeps of each entry it reads (lower-case base names):
+     * those it compares, and the one it pairs by. Everything else (operational
+     * attributes, passwords, ignored ones) is dropped as soon as a page arrives.
+     */
+    private static Predicate<String> kept(Settings settings) {
+        Predicate<String> compared = DirectoryDiffEngine.compared(settings.attributes(), settings.ignore());
+        String pairBy = settings.pairAttribute() == null ? null : settings.pairAttribute().toLowerCase(Locale.ROOT);
+        return name -> compared.test(name) || name.equals(pairBy);
+    }
+
+    /** The entry, keeping only its DN and the {@code kept} attributes. */
+    static Entry compact(Entry e, Predicate<String> kept) {
+        List<Attribute> attrs = new ArrayList<>();
+        for (Attribute attr : e.getAttributes()) {
+            if (kept.test(attr.getBaseName().toLowerCase(Locale.ROOT))) {
+                attrs.add(attr);
+            }
+        }
+        return new Entry(e.getDN(), attrs);
+    }
+
+    /**
+     * A rough estimate of the heap an entry takes once read: the DN, each
+     * attribute's name and each value, with the JVM's per-object overhead.
+     * Errs high, so a budget built on it errs safe.
+     */
+    static long estimateBytes(Entry e) {
+        long bytes = 96 + 2L * e.getDN().length();
+        for (Attribute attr : e.getAttributes()) {
+            bytes += 96 + 2L * attr.getName().length();
+            for (byte[] value : attr.getValueByteArrays()) {
+                bytes += 64 + value.length;
+            }
+        }
+        return bytes;
+    }
+
     /** Read one side completely, a page at a time, counting as it goes. */
-    private List<SearchResultEntry> read(DirectoryConnection dc, Side side, String[] attributes, Tracker tracker)
-            throws LDAPException {
+    private List<Entry> read(DirectoryConnection dc, Side side, String label, String[] attributes,
+                             Predicate<String> kept, Tracker tracker) throws LDAPException {
         SearchRequest request = new SearchRequest(side.baseDn(),
                 side.scope().equals("ONE") ? SearchScope.ONE : SearchScope.SUB, Filter.create(side.filter()), attributes);
         int pageSize = dc.getPagingSize() > 0 ? dc.getPagingSize() : 500;
-        return connectionFactory.withConnection(dc, conn -> readPages(conn, request, pageSize, tracker, dc));
+        return connectionFactory.withConnection(dc,
+                conn -> readPages(conn, request, pageSize, label, kept, tracker, dc));
     }
 
-    private List<SearchResultEntry> readPages(LDAPInterface conn, SearchRequest request, int pageSize, Tracker tracker,
-                                              DirectoryConnection dc) throws LDAPException {
-        List<SearchResultEntry> out = new ArrayList<>();
+    private List<Entry> readPages(LDAPInterface conn, SearchRequest request, int pageSize, String label,
+                                  Predicate<String> kept, Tracker tracker, DirectoryConnection dc)
+            throws LDAPException {
+        List<Entry> out = new ArrayList<>();
         ASN1OctetString cookie = null;
         do {
             SearchRequest page = request.duplicate();
@@ -408,7 +466,18 @@ public class DirectoryDiffService {
                 }
                 throw ex;
             }
-            out.addAll(result.getSearchEntries());
+            for (SearchResultEntry e : result.getSearchEntries()) {
+                Entry compact = compact(e, kept);
+                tracker.bytes += estimateBytes(compact);
+                out.add(compact);
+            }
+            if (tracker.bytes > memoryBudgetBytes) {
+                throw new IllegalArgumentException("Reading side " + label + " (" + dc.getDisplayName()
+                        + ") needs more memory than a comparison may use (about " + memoryBudgetBytes / (1024 * 1024)
+                        + " MB, reached after " + out.size() + " entries). Narrow the base DN or the filter, compare "
+                        + "only some attributes, or raise ldapportal.directory-diff.memory-budget-mb along with "
+                        + "the server's heap.");
+            }
             if (out.size() > maxEntriesPerSide) {
                 throw new IllegalArgumentException(dc.getDisplayName() + " has more than " + maxEntriesPerSide
                         + " entries under " + request.getBaseDN() + ". Narrow the base DN or the filter.");
@@ -422,7 +491,7 @@ public class DirectoryDiffService {
     }
 
     /** Pair and compare, writing each result as it comes and keeping the counts. */
-    private void compare(DirectoryDiffRun run, Settings settings, List<SearchResultEntry> a, List<SearchResultEntry> b,
+    private void compare(DirectoryDiffRun run, Settings settings, List<Entry> a, List<Entry> b,
                          com.unboundid.ldap.sdk.schema.Schema schema, Tracker tracker) {
         DirectoryDiffEngine.Options options = options(settings, schema);
         Map<String, int[]> attributeCounts = new LinkedHashMap<>();
@@ -474,17 +543,31 @@ public class DirectoryDiffService {
                 DirectoryDiffEngine.rebase(settings.a().baseDn(), settings.b().baseDn()));
     }
 
-    private void prune(UUID directoryAId, UUID directoryBId) {
+    /**
+     * Keep a pair of directories' history short: its latest {@code keep-per-pair}
+     * complete runs, plus failed or cancelled runs only while they are among the
+     * latest {@code keep-per-pair} overall — so a few failed attempts never push
+     * out the last good result. A run still going is never touched.
+     */
+    void prune(UUID directoryAId, UUID directoryBId) {
         try {
-            List<DirectoryDiffRun> older = runRepo.findByDirectoryAIdAndDirectoryBIdOrderByStartedAtDesc(
+            List<DirectoryDiffRun> runs = runRepo.findByDirectoryAIdAndDirectoryBIdOrderByStartedAtDesc(
                     directoryAId, directoryBId);
-            for (int i = keepPerPair; i < older.size(); i++) {
-                DirectoryDiffRun old = older.get(i);
-                if (old.getStatus() == DirectoryDiffStatus.RUNNING && !stale(old)) {
-                    continue;
+            int complete = 0;
+            for (int i = 0; i < runs.size(); i++) {
+                DirectoryDiffRun run = runs.get(i);
+                boolean keep;
+                if (run.getStatus() == DirectoryDiffStatus.RUNNING && !stale(run)) {
+                    keep = true;
+                } else if (run.getStatus() == DirectoryDiffStatus.COMPLETE) {
+                    keep = ++complete <= keepPerPair;
+                } else {
+                    keep = i < keepPerPair;
                 }
-                entryStore.deleteRun(old.getId());
-                runRepo.delete(old);
+                if (!keep) {
+                    entryStore.deleteRun(run.getId());
+                    runRepo.delete(run);
+                }
             }
         } catch (Exception ex) {
             log.warn("Directory diff: could not prune old runs: {}", ex.toString());

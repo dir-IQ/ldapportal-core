@@ -11,6 +11,7 @@ import com.ldapportal.entity.enums.DirectoryDiffPhase;
 import com.ldapportal.entity.enums.DirectoryDiffStatus;
 import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.exception.ConflictException;
+import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.service.DirectoryDiffService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -109,6 +110,15 @@ class DirectoryDiffControllerTest extends BaseControllerTest {
                         "attachment; filename=\"directory-diff-" + id + "-different.csv\""))
                 .andExpect(content().string("group,dn_a,dn_b,attributes,note\r\n"
                         + "DIFFERENT,\"cn=a\\,b,dc=a\",\"cn=a\\,b,dc=b\",cn mail,\r\n"));
+    }
+
+    @Test
+    void csvOfAMissingRunIs404() throws Exception {
+        UUID id = UUID.randomUUID();
+        when(service.get(id)).thenThrow(new ResourceNotFoundException("Directory comparison not found: " + id));
+        mockMvc.perform(get("/api/v1/superadmin/directory-diffs/{id}/entries.csv", id)
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isNotFound());
     }
 
     @Test
