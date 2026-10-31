@@ -1,0 +1,135 @@
+# Directory diff
+
+**Status:** In progress (backend and API shipped; the UI is next, 2026-10-31).
+
+Compare two directories, or two branches of one directory, entry by entry.
+Every entry ends up in one of four groups:
+
+| Group | Meaning |
+|---|---|
+| **Same** | Paired, and every compared attribute holds the same values on both sides |
+| **Different** | Paired, but at least one compared attribute differs |
+| **Only in A** | No partner on side B |
+| **Only in B** | No partner on side A |
+
+A diff only reads. It never writes to either directory.
+
+## Who can run it
+
+Superadmins who hold the **Run directory diffs** permission
+(`superadmin.manage_directory_diff`) can run diffs. The owner superadmin holds
+it automatically. Results show attribute values from both directories, so grant
+the permission only where you would grant read access to both.
+
+## Choosing the sides
+
+Each side is a directory, a base DN, a scope and a filter:
+
+- **Base DN** is optional. Left blank, it is the directory's base DN. It must lie
+  under one of the directory's roots.
+- **Scope** is `SUB` (the default) or `ONE`.
+- **Filter** is optional. Left blank, it is `(objectClass=*)`.
+
+The two sides may be the same directory with different bases, for example to
+compare `ou=staging` with `ou=production`. They may not be identical. Entra ID
+directories can't be compared, because they aren't read over LDAP.
+
+## Pairing
+
+Pairing decides which entry on A is compared with which entry on B. There are
+two modes.
+
+- **By DN (default).** Side A's base is swapped for side B's, and entries whose
+  rebased DNs match (case-insensitively) are paired. `uid=alice,ou=people,dc=a`
+  pairs with `uid=alice,ou=people,dc=b` when the bases are `dc=a` and `dc=b`.
+- **By attribute.** Entries pair on an attribute's value, compared trimmed and
+  case-insensitively. Typical attributes are `employeeNumber`, `mail` or
+  `entryUUID`. Use this mode when the two trees are laid out differently.
+
+An entry that can't pair is listed under Only in A or Only in B, with a note
+saying why. The reasons are:
+
+- it isn't under side A's base;
+- it has no value for the pairing attribute, or more than one;
+- its key is shared by several entries.
+
+## What counts as different
+
+The comparison is the same one the sync engine uses to decide whether a target
+entry needs a write:
+
+- **DN-valued attributes** (`member`, `uniqueMember`, `manager`, `owner`, …, plus
+  any attribute with DN syntax in side B's schema) compare as DNs. Spacing and
+  case don't count, and side A's base is swapped for side B's first, so a
+  `member` pointing at the "same" user on each side matches.
+- **Every other attribute** compares exactly. A case-only change counts as a
+  difference.
+- **Attribute order and value order** don't count.
+
+### Attributes that are left out
+
+Some attributes are never compared:
+
+- **Operational attributes** are always left out: timestamps, `entryUUID`,
+  `entryCSN` and the other defaults the sync engine excludes.
+- **Password attributes** (`userPassword`, `unicodePwd`, …) are never read,
+  compared or stored. This holds even when you list them yourself.
+- **Ignore** is an extra list you can add for a run, for example
+  `description`.
+- **Compare only** is a list of attributes. When you give one, only those
+  attributes count.
+
+The base entries of two differently named trees always differ in their naming
+attribute (`dc=a` vs `dc=b`). That is expected.
+
+## Results
+
+A run works through three stages: it reads side A, then side B, then compares.
+Progress is updated about once a second.
+
+For each finished run you can:
+
+- page through each group, newest run first;
+- filter the Different group by one attribute;
+- search any group by DN substring;
+- open an entry to see each differing attribute's values. The values are split
+  into only-on-A, only-on-B and on-both, with up to 100 values per side and full
+  counts;
+- **re-check** an entry. This reads both entries again now and compares them the
+  same way, so you can confirm a fix without re-running the whole diff;
+- download a group, or all groups, as CSV.
+
+Only the latest 10 runs per pair of directories are kept.
+
+## Limits and settings
+
+| Property | Default | Meaning |
+|---|---|---|
+| `ldapportal.directory-diff.max-concurrent` | `2` | Runs at once; a further start gets 409 |
+| `ldapportal.directory-diff.max-entries-per-side` | `500000` | A side larger than this fails the run |
+| `ldapportal.directory-diff.keep-per-pair` | `10` | Finished runs kept per pair of directories |
+
+Runs happen in the background, so the 60-second load balancer idle timeout
+doesn't apply. A run whose server restarts mid-way shows as **Failed**, with
+the error "Interrupted". Run it again.
+
+## API
+
+All endpoints are under `/api/v1/superadmin/directory-diffs`.
+
+| Method | Path | |
+|---|---|---|
+| POST | `/` | Start a run (202) |
+| GET | `/` | Latest 20 runs |
+| GET | `/{id}` | One run, with progress and counts |
+| POST | `/{id}/cancel` | Ask a running run to stop |
+| GET | `/{id}/entries?category=&attribute=&q=&page=&size=` | A page of one group |
+| GET | `/{id}/entries/{seq}` | One entry's stored differences |
+| GET | `/{id}/entries/{seq}/live` | One entry, re-read and compared now |
+| GET | `/{id}/entries.csv?category=` | CSV export |
+
+## Audit
+
+Starting a run records `INTEGRITY_CHECK` with `detail.kind = "directory-diff"`.
+The detail includes the run id, side B's directory and base, and the pairing
+mode.

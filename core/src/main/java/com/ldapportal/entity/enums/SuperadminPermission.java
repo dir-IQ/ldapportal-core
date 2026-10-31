@@ -94,6 +94,11 @@ public enum SuperadminPermission {
      * they get — the same surface a {@link BaseRole#READ_ONLY} admin has.
      */
     MANAGE_DIRECTORY_DATA       ("superadmin.manage_directory_data"),
+    /**
+     * Run directory diffs: compare two directories (or branches), reading every
+     * entry of both and showing their attribute values side by side.
+     */
+    MANAGE_DIRECTORY_DIFF       ("superadmin.manage_directory_diff"),
     /** View license status. */
     VIEW_LICENSE                ("superadmin.view_license");
 
