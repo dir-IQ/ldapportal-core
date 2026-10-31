@@ -59,7 +59,7 @@ describe('DirectoryDiffResults', () => {
     const w = await mountResults()
     expect(api.listDirectoryDiffEntries).toHaveBeenCalledWith('run-1',
       { category: 'DIFFERENT', attribute: null, q: null, page: 0, size: 50 })
-    expect(w.find('[data-testid="group-DIFFERENT"]').attributes('aria-selected')).toBe('true')
+    expect(w.find('[data-testid="group-DIFFERENT"]').attributes('aria-pressed')).toBe('true')
     expect(w.find('[data-testid="group-SAME"]').text()).toContain('5')
     expect(w.find('[data-testid="group-ONLY_B"]').text()).toContain('2')
     expect(w.findAll('[data-testid="results-table"] tbody tr')).toHaveLength(2)
@@ -133,5 +133,14 @@ describe('DirectoryDiffResults', () => {
     await buttons.find(b => b.text() === 'Export all (CSV)')!.trigger('click')
     await flushPromises()
     expect(api.downloadDirectoryDiffCsv).toHaveBeenLastCalledWith('run-1', undefined)
+  })
+
+  it('shows the server’s message when an export fails', async () => {
+    const body = new Blob([JSON.stringify({ detail: 'Directory comparison not found: run-1' })])
+    api.downloadDirectoryDiffCsv.mockRejectedValue({ response: { data: body }, message: 'Request failed' })
+    const w = await mountResults()
+    await w.findAll('button').find(b => b.text() === 'Export all (CSV)')!.trigger('click')
+    await flushPromises()
+    expect(notif.error).toHaveBeenCalledWith('Directory comparison not found: run-1')
   })
 })

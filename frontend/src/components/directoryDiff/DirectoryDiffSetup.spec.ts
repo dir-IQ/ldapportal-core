@@ -120,4 +120,20 @@ describe('DirectoryDiffSetup', () => {
     await rows[0].find('button').trigger('click')
     expect(wrapper.emitted('open')?.[0]).toEqual(['run-1'])
   })
+
+  it('clears a side’s base DN when its directory changes', async () => {
+    const wrapper = await mountSetup()
+    await wrapper.find('#dd-a-dir').setValue('dir-a')
+    await wrapper.findAll('.dn-picker')[0].setValue('ou=people,dc=a')
+    await wrapper.find('#dd-a-dir').setValue('dir-b')
+    expect((wrapper.findAll('.dn-picker')[0].element as HTMLInputElement).value).toBe('')
+  })
+
+  it('keeps the base DNs an earlier run pre-fills', async () => {
+    const wrapper = await mountSetup({ prefill: diffRun() })
+    await flushPromises()
+    const pickers = wrapper.findAll('.dn-picker')
+    expect((pickers[0].element as HTMLInputElement).value).toBe('ou=people,dc=a')
+    expect((pickers[1].element as HTMLInputElement).value).toBe('ou=Users,dc=b')
+  })
 })

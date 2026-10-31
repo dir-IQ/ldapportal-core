@@ -121,4 +121,14 @@ describe('DirectoryDiffView', () => {
     const w = await mountView({ run: 'x' })
     expect(w.text()).toContain('Directory comparison not found: x')
   })
+
+  it('keeps Cancel disabled while an accepted cancel takes effect', async () => {
+    api.getDirectoryDiff.mockResolvedValue({ data: diffRun({ status: 'RUNNING', phase: 'COMPARING' }) })
+    api.cancelDirectoryDiff.mockResolvedValue({ data: diffRun({ status: 'RUNNING', phase: 'COMPARING' }) })
+    const w = await mountView({ run: 'run-1' })
+    await w.findAll('button').find(b => b.text() === 'Cancel comparison')!.trigger('click')
+    await flushPromises()
+    const button = w.findAll('button').find(b => b.text() === 'Cancelling…')!
+    expect(button.attributes('disabled')).toBeDefined()
+  })
 })

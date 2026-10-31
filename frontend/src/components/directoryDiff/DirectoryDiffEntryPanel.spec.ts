@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
 vi.mock('@/api/directoryDiff', () => api)
 
 import DirectoryDiffEntryPanel from './DirectoryDiffEntryPanel.vue'
+import { vDialogA11y } from '@/directives/dialogA11y'
 import type { DirectoryDiffEntry } from '@/api/directoryDiff'
 
 const DIFFERENT: DirectoryDiffEntry = {
@@ -39,7 +40,10 @@ async function mountPanel(entry: DirectoryDiffEntry = DIFFERENT) {
       runId: 'run-1', entry, dirA: 'dir-a', dirB: 'dir-b', foundAt: '2026-10-31T14:05:00Z',
       position: '1 of 2', hasPrevious: false, hasNext: true,
     },
-    global: { stubs: { RouterLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' } } },
+    global: {
+      stubs: { RouterLink: { props: ['to'], template: '<a :data-to="JSON.stringify(to)"><slot /></a>' } },
+      directives: { 'dialog-a11y': vDialogA11y },
+    },
     attachTo: document.body,
   })
   await flushPromises()
@@ -102,5 +106,16 @@ describe('DirectoryDiffEntryPanel', () => {
     Array.from(body().querySelectorAll('button')).find(b => b.textContent?.includes('Next'))!.click()
     expect(w.emitted('close')).toBeTruthy()
     expect(w.emitted('next')).toBeTruthy()
+  })
+
+  it('gives focus back to what opened it when it closes', async () => {
+    const opener = document.createElement('button')
+    document.body.appendChild(opener)
+    opener.focus()
+    const w = await mountPanel()
+    w.unmount()
+    wrapper = null
+    expect(document.activeElement).toBe(opener)
+    opener.remove()
   })
 })

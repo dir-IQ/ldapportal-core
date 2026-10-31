@@ -158,7 +158,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { listDirectories } from '@/api/directories'
 import {
   listDirectoryDiffs, startDirectoryDiff,
@@ -232,7 +232,11 @@ const rebaseExample = computed(() => {
   return `Bases differ, so A's base is swapped for B's: uid=jo,${baseA} ↔ uid=jo,${baseB}`
 })
 
+/** Set while a run pre-fills the form, so its base DNs survive the directory watch below. */
+let prefilling = false
+
 function applyPrefill(run: DirectoryDiffRun) {
+  prefilling = true
   for (const key of ['a', 'b'] as const) {
     form[key].directoryId = run[key].directoryId
     form[key].baseDn = run[key].baseDn
@@ -244,9 +248,14 @@ function applyPrefill(run: DirectoryDiffRun) {
   form.attributeMode = run.attributes.length ? 'ONLY' : 'ALL'
   form.only = run.attributes.join(', ')
   form.ignore = run.ignore.join(', ')
+  nextTick(() => { prefilling = false })
 }
 
 watch(() => props.prefill, run => { if (run) applyPrefill(run) }, { immediate: true })
+
+// A base DN belongs to its directory: choosing another directory clears it.
+watch(() => form.a.directoryId, (now, before) => { if (before && now !== before && !prefilling) form.a.baseDn = '' })
+watch(() => form.b.directoryId, (now, before) => { if (before && now !== before && !prefilling) form.b.baseDn = '' })
 
 function statusText(status: DirectoryDiffStatus): string {
   return status === 'RUNNING' ? 'Running' : status === 'CANCELLED' ? 'Cancelled' : status === 'FAILED' ? 'Failed' : ''

@@ -5,7 +5,7 @@
     <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -->
     <div class="fixed inset-0 z-40 flex justify-end bg-black/30" @click.self="emit('close')" @keydown.esc="emit('close')">
       <aside
-        ref="panelRef"
+        v-dialog-a11y
         class="w-full max-w-3xl h-full overflow-y-auto bg-white dark:bg-gray-800 shadow-xl p-5"
         role="dialog" aria-modal="true" aria-labelledby="dd-panel-title" tabindex="-1"
       >
@@ -102,7 +102,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   getDirectoryDiffEntry, recheckDirectoryDiffEntry,
   type DirectoryDiffAttributeDiff, type DirectoryDiffEntry, type DirectoryDiffEntryDetail, type DirectoryDiffLiveEntry,
@@ -124,7 +124,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{ close: [], previous: [], next: [] }>()
 
-const panelRef = ref<HTMLElement | null>(null)
 const detail = ref<DirectoryDiffEntryDetail | null>(null)
 const live = ref<DirectoryDiffLiveEntry | null>(null)
 const loading = ref(false)
@@ -187,9 +186,5 @@ async function recheck() {
 
 watch(() => props.entry.seq, load)
 
-onMounted(async () => {
-  await load()
-  await nextTick()
-  panelRef.value?.focus()
-})
+onMounted(load)
 </script>

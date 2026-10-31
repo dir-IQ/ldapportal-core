@@ -93,3 +93,18 @@ export function errMsg(e: unknown, fallback: string): string {
   }
   return err.response?.data?.detail || err.response?.data?.message || err.message || fallback
 }
+
+/**
+ * A failed blob download carries its error body as a Blob; read it as JSON so
+ * {@link errMsg} can show the server's message.
+ */
+export async function withBlobBody(e: unknown): Promise<unknown> {
+  const err = e as { response?: { data?: unknown } }
+  const data = err.response?.data
+  if (!(data instanceof Blob)) return e
+  try {
+    return { ...err, response: { ...err.response, data: JSON.parse(await data.text()) } }
+  } catch {
+    return e
+  }
+}

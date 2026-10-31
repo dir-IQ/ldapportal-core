@@ -23,7 +23,7 @@
         <RouterLink to="/superadmin/directory-diff" class="btn-secondary btn-sm">Back to Directory diff</RouterLink>
       </div>
       <template v-else-if="run">
-        <DirectoryDiffProgress v-if="run.status === 'RUNNING'" :run="run" :cancelling="cancelling" @cancel="cancel" />
+        <DirectoryDiffProgress v-if="run.status === 'RUNNING'" :run="run" :cancelling="cancelling || cancelRequested" @cancel="cancel" />
         <DirectoryDiffResults v-else-if="run.status === 'COMPLETE'" :key="run.id" :run="run" @run-again="runAgain" />
         <div v-else class="bg-white border border-gray-200 rounded-xl p-5 text-sm" data-testid="run-ended">
           <p class="font-medium text-gray-900 mb-1">
@@ -62,6 +62,8 @@ const run = ref<DirectoryDiffRun | null>(null)
 const loading = ref(false)
 const loadError = ref<string | null>(null)
 const cancelling = ref(false)
+/** A cancel was accepted for the open run; it stops at its next progress write. */
+const cancelRequested = ref(false)
 /** The run "Run again" pre-fills the form from. */
 const prefill = ref<DirectoryDiffRun | null>(null)
 
@@ -121,6 +123,7 @@ async function cancel() {
   try {
     const { data } = await cancelDirectoryDiff(run.value.id)
     run.value = data
+    cancelRequested.value = true
     notif.success('Cancelling the comparison')
   } catch (e) {
     notif.error(errMsg(e, 'Could not cancel the comparison'))
@@ -131,6 +134,7 @@ async function cancel() {
 
 watch(runId, id => {
   stopPolling()
+  cancelRequested.value = false
   loadError.value = null
   if (!id) {
     run.value = null

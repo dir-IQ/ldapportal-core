@@ -22,10 +22,10 @@
       </div>
     </div>
 
-    <div class="flex flex-wrap gap-2 mb-2" role="tablist" aria-label="Groups">
+    <div class="flex flex-wrap gap-2 mb-2" role="group" aria-label="Groups">
       <button
-        v-for="c in CATEGORIES" :key="c" type="button" role="tab"
-        :aria-selected="category === c"
+        v-for="c in CATEGORIES" :key="c" type="button"
+        :aria-pressed="category === c"
         :class="category === c ? 'btn-tab-active' : 'btn-tab'"
         :data-testid="`group-${c}`"
         @click="selectCategory(c)"
@@ -125,6 +125,7 @@ import { useNotificationStore } from '@/stores/notifications'
 import { downloadBlob } from '@/composables/useApi'
 import DirectoryDiffEntryPanel from './DirectoryDiffEntryPanel.vue'
 import {
+  withBlobBody,
   CATEGORIES, CATEGORY_HINTS, CATEGORY_LABELS, countFor, errMsg, formatTime, n, pairingLabel, sideSummary,
   totalEntries,
 } from './directoryDiffFormat'
@@ -243,7 +244,7 @@ async function exportCsv(c?: DirectoryDiffCategory) {
     const { data } = await downloadDirectoryDiffCsv(props.run.id, c)
     downloadBlob(data, `directory-diff-${props.run.id}${c ? `-${c.toLowerCase()}` : ''}.csv`)
   } catch (e) {
-    notif.error(errMsg(e, 'Could not download the CSV'))
+    notif.error(errMsg(await withBlobBody(e), 'Could not download the CSV'))
   } finally {
     exporting.value = false
   }
