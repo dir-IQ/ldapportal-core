@@ -772,6 +772,7 @@ async function doSaveSet() {
   if (savingSet.value) return
   const creating = !editingSet.value
   const before = editingSet.value
+  let saved: SyncSet | null = null
   savingSet.value = true
   try {
     const payload = toPayload(setForm.value)
@@ -785,13 +786,15 @@ async function doSaveSet() {
     impact.value = null // it described the configuration before this save
     confirmEnable.value = false
     notif.success(creating ? 'Sync set created' : 'Sync set updated')
+    saved = data
     await refreshHealth()
-    if (before && before.enabled && data.enabled) await offerReconcile(before, data)
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
     savingSet.value = false
   }
+  // Asked once the save is done, so the button no longer reads "Saving…" behind it.
+  if (before && saved && before.enabled && saved.enabled) await offerReconcile(before, saved)
 }
 
 // What decides which entries the set manages, where they go and what it writes:
