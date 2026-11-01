@@ -278,7 +278,11 @@ package-backend:
 > so the overlay's `newTag` alone doesn't reach the stamp. An image built
 > without the arg shows its commit SHA instead (the frontend reads `dev` unless
 > `BUILD_SHA` is also passed). Retagging an existing image doesn't change what
-> it reports.
+> it reports. To show where the deployment runs after the tags
+> (`FE <tag> · BE <tag> · us-east-1`), set `DEPLOYMENT_LOCATION` in the
+> backend's ConfigMap (or the overlay's `configmap-patch.yaml`) to whatever text
+> you want shown, such as the AWS region. It's read at startup, so restart the
+> backend after changing it.
 
 > **Build-order reminder:** the backend Dockerfile **`COPY`s a host-built JAR**
 > from `distribution/community-plus-isva/target/`. The `package` stage must run

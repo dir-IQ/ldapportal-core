@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Directory Sync — operator manual
 
-**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile; 2026-10-30).
+**Status:** Shipped (engine core, app-intercept, changelog capture incl. OUD cookie mode, reconcile, reconcile run history incl. incremental passes and the Summary/Detailed logging level, audited sync writes (with the attributes an update changed; filterable and exportable from the Audit Log), brownfield adoption, cross-link reference resolution, review actions, audited set and link deletes, references kept while their entries aren't synced, sync audit records naming the set and both directories, preview progress naming the entry being checked, preview notes for unsynced references on unchanged entries, not-in-set entries and live progress in the inventory, the APPLIED state shown as Synced, live counts for a running reconcile, faster full reconciles, row actions that show their result, an offer to reconcile after a set edit, Reconcile now run in the background; 2026-10-31).
 
 Directory Sync keeps a **target** directory continuously convergent with a
 **source** directory. It is a *membership engine*, not a change-replay queue:
@@ -158,6 +158,17 @@ source attrs (first-wins would silently shadow), valid `targetAttr`, and a
 > **Identity key is the expensive-to-change decision.** It is written into every
 > target entry as the source anchor and is the join key for the whole index.
 > Get it right before any real sync runs; changing it later re-anchors everything.
+
+**When an edit takes effect.** Saving a set doesn't touch any entry: a change to
+what it manages, where it places entries or what it writes (applicability
+filter, source base DN or scope, target base DN, reference or excluded
+attributes, transform rules) applies at the set's next reconcile. Until then,
+rows decided under the old settings stay as they are; for example, a deletion
+held for review stays held even though the new filter takes the entry back. So
+after such a save of an enabled set, the editor offers **Reconcile now**, which
+queues a reconcile for the scheduler's next tick (within about a minute;
+`POST …/sets/{id}/reconcile-request`). **Later** leaves it to the schedule: run
+**Preview impact** first to see what it would do.
 
 ---
 
@@ -352,6 +363,44 @@ A reconcile is single-flight per set across instances (see §8.2), and it
 stamps the set with targeted updates only, so editing the set while it runs
 can't fail it.
 
+**Throughput.** A reconcile does less per entry than a single recompute:
+
+- the set, its link and both directories are loaded once and refreshed every
+  second, not read again for each entry;
+- the engine is handed the entry the scan already read, instead of reading
+  the source again. This holds only while no source change has been enqueued
+  for the set since the scan began (`sync_set.source_change_seq`, bumped in
+  its own transaction by app-intercept before each enqueue, and by the
+  changelog poller once per page of change records). Once one has,
+  the rest of the run reads each entry afresh, so a change made during the run
+  is never overwritten with what the scan saw;
+- closure fan-out waits until the end of the run (phase *queuing entries that
+  refer to changed ones*), and also runs when the run stops part way, so the
+  changes it did make still reach their referrers. The changed entries are
+  taken in the order they changed, 50 per search, and each search returns
+  referrer DNs only. A referrer in the run's own set that the run recomputed
+  successfully *after* the batch's last change is skipped; it already saw
+  those changes. Every other referrer is queued for the worker, including one
+  whose own recompute failed;
+- a group member that doesn't translate yet (kept as the target has it, §5
+  step 5) is looked up in bulk: one database query for where the sync last
+  wrote every such member, then one one-level search per 100 target DNs under
+  each parent to see which exist, instead of a query and a target read per
+  member. A search that finds none of its batch while a sample of it (first,
+  middle, last) does exist is not trusted, and that batch is read entry by
+  entry. The same bulk query serves the preview and **Verify contents**;
+- projecting an entry translates all its reference values (a group's
+  members) through the index with one query per 500 values, not one each.
+
+Each finished reconcile logs where its time went:
+`reconcile of N source entries took …  (source scan …, source reads …, target
+reads and writes …, reference updates …, index, audit and other work …)`. A
+large *reference updates* or *source scan* share usually means the source has
+no equality index on the reference attributes (`member`, `uniqueMember`,
+`manager`, `owner`, `secDN`) or on the scope's attributes. A large *target*
+share with a source anchor set usually means the target has no equality index
+on the anchor attribute.
+
 **Run history:** every reconcile of an enabled set is recorded in
 `sync_reconcile_run` — trigger (`SCHEDULED`, or `MANUAL` with the operator),
 start/finish, whether the source scan completed, the delete guard, managed rows
@@ -360,8 +409,9 @@ preview's vocabulary: added / modified / moved / deleted / held for review /
 already matched (applied with no target write) / forgotten / unchanged /
 failed. *Faulted* entries (the recompute threw) retry next run; *skipped*
 entries were not processed because the set or link was disabled while the run
-was in progress — the engine checks on every entry, so disabling mid-run stops
-the writes but the run still walks the rest of the plan. A running row
+was in progress — the run re-reads the set and link every second, so disabling
+mid-run stops the writes within about a second but the run still walks the
+rest of the plan. A running row
 heartbeats about every 15 s; one silent for
 `ldapportal.sync.reconcile.run-stale-after-ms` (default 15 min) belonged to a
 server that stopped and reads as `FAILED`. The newest
@@ -486,6 +536,12 @@ unrecognized reason), and the inventory names each row's actions for it.
 | **FAILED** | **Retry** (recompute) · **Stop tracking** |
 | **Synced / Pending** (`APPLIED` / `PENDING`) | **Re-sync** (recompute) · **Stop tracking** |
 
+**Re-check**, **Retry match**, **Retry** and **Re-sync** queue a recompute of the
+row, which the worker picks up within about ten seconds. The inventory then
+watches the row for up to 20 seconds, refreshes it when it changes and says what
+it became. If nothing changed, it says so; for a held delete that means the
+entry is still outside the set's filter or scope.
+
 **Stop tracking** (dismiss) drops only the index row — the target isn't touched.
 An in-scope entry is picked up again from scratch by the next reconcile; an
 out-of-scope one is left unmanaged. Destructive actions ask for confirmation.
@@ -516,12 +572,19 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   **Verify contents** show what's happening, updated about every second
   (`ldapportal.sync.reconcile.progress-ms`, `ldapportal.sync.verify.progress-ms`):
   - a reconcile: *scanning the source*, then *applying entries: N of M* with a
-    progress bar, then *checking managed entries no longer in the source*,
-    naming the entry it's on (a large group can take a while on its own: each
+    progress bar, then *checking managed entries no longer in the source*, then
+    *queuing entries that refer to changed ones*, naming the entry it's on (a large group can take a while on its own: each
     member is looked up);
   - a content check: *reading the source* (entries read), *reading the
     target*, then *comparing entries: N of M*, naming the entry it's comparing.
     **Reconcile now** shows the check that follows it too;
+  - **Reconcile now** starts the run in the background and returns at once
+    (`POST …/sets/{id}/reconcile-start`), so a long run is never cut off by a
+    load balancer's or proxy's idle timeout (the EKS ingress's is 60 s). The
+    inventory follows the run and, when it finishes, says what it did and
+    refreshes the rows, the state chips and **Not in set**. It does the same
+    when any run it sees finish ends, e.g. a scheduled one; while one runs,
+    **Reconcile now** reads *Reconciling…* and is disabled;
   - **Re-check target** only queues a reconcile, so it shows *waiting for the
     next reconcile to start*, then that run's progress, and says what it did
     when it finishes (it stops waiting after 5 minutes).
@@ -693,11 +756,13 @@ GET    /api/v1/superadmin/sync/sets/{id}/preview/entries?page=&size=&changesOnly
 GET    /api/v1/superadmin/sync/sets/{id}/verify           # independent source↔target compare (no writes)
 GET    /api/v1/superadmin/sync/sets/{id}/activity         # latest reconcile run (phase, processed, currentDn, heartbeatAt) + latest content check (phase, processed, total, currentDn), asOf
 GET    /api/v1/superadmin/sync/sets/{id}/not-in-set?q=&page=&size=   # in-scope source entries the set doesn't manage, as of the latest complete reconcile: total, reasons, entries (sourceDn, reason), allDnsRecorded
-POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # → {"enumerated": N}; recorded as a MANUAL run
+POST   /api/v1/superadmin/sync/sets/{id}/reconcile-start  # start a MANUAL run in the background → 202 {"started": true}; 409 while one runs, 400 while the set or link is disabled; follow it on …/activity
+POST   /api/v1/superadmin/sync/sets/{id}/reconcile        # run one and wait → {"enumerated": N}; recorded as a MANUAL run (for scripts: a long run can outlast a proxy's timeout)
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs?limit=&kind=   # recent runs, newest first; limit 1..20 (default 10); kind RECONCILE | INCREMENTAL (default both)
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}  # one run in full: summary, settings, failureReasons, samples, allDnsRecorded (404 if not this set's run)
 GET    /api/v1/superadmin/sync/sets/{id}/reconcile-runs/{runId}/entries.csv   # every entry the run changed or flagged: outcome,dn,reason (400 if the run kept only samples)
 POST   /api/v1/superadmin/sync/sets/{id}/recompute        # body {"key": "<dn-or-identity>"} → 202
+POST   /api/v1/superadmin/sync/sets/{id}/reconcile-request # queue a reconcile for the next scheduler tick, without waiting → {"reconcileQueued"}; manage permission
 POST   /api/v1/superadmin/sync/sets/{id}/recheck-target   # forget applied content hashes + request a reconcile → {"entries", "reconcileQueued"}; manage permission
 DELETE /api/v1/superadmin/sync/sets/{id}/memberships/{identity}   # dismiss ("stop tracking")
 POST   /api/v1/superadmin/sync/sets/{id}/memberships/{identity}/approve-delete   # approve a held delete → {"outcome": DELETE|FORGET|ERROR, "targetDn", …}; 400 if not a held delete, back in scope, or the set is disabled
@@ -725,6 +790,7 @@ JSON logs (`logback-spring.xml`). Useful greps:
 "changelog cookie refused"        # cookie-mode gap → reconcile requested
 "Released ... stale recompute claim"   # worker crashed mid-process and recovered
 "Scheduled reconcile of sync set ... failed"
+"reconcile of ... source entries took"  # where a reconcile's time went (§5)
 ```
 
 > **Audit note (current state):** sync config/operator actions are **not yet**
@@ -788,7 +854,7 @@ leader election needed.
 | Table | Holds |
 |---|---|
 | `sync_links` | source/target dirs, capture mode, changelog config + health/cursor. |
-| `sync_set` | selection + projection config per set; reconcile cadence, last run, and the reconcile request counters (`reconcile_request_seq` / `reconcile_attempted_seq` / `reconcile_handled_seq`). |
+| `sync_set` | selection + projection config per set; reconcile cadence, last run, the reconcile request counters (`reconcile_request_seq` / `reconcile_attempted_seq` / `reconcile_handled_seq`), and `source_change_seq` (source changes enqueued; `V43`). |
 | `sync_membership` | one row per identity per set: source/target DN, content hash, state, fail reason, scan epoch, version. (Renamed from `membership` in `V7`.) |
 | `recompute_request` | coalescing trigger queue, PK `(sync_set_id, request_key)`. |
 | `sync_reconcile_run` | run history: reconciles and incremental passes, with counts, samples and failures. |
@@ -826,6 +892,7 @@ cap it. The audit log grows by one record per target write, whatever the level.
 | Many `FAILED` after target change | Target outage/ACL change | Fix target; reconcile re-drives FAILED rows automatically next cadence, or **Reconcile now**. |
 | Changelog `STALLED` | Source unreachable / changelog perms | See `changelogLastError`; fix source bind/ACL. |
 | Changelog `GAP_DETECTED` | Source changelog purged faster than polled | A reconcile is requested automatically (next scheduler tick); raise source changelog retention or poll more often. |
+| Full reconcile slow (well under ~20 entries/s) | Unindexed searches: the reference attributes on the source, or the anchor attribute on the target | Read the run's `reconcile of … took` log line (§5); add equality indexes for the attributes in its largest share. |
 | `recompute_request` backlog growing | Worker behind | Lower `worker.fixed-delay-ms`, scale instances, check DB. |
 | Wrong DN on target after a rename | (shouldn't happen) engine converges renames as MODDN | If stuck, **Recompute** by identity; reconcile re-derives. |
 | Member/manager points at stale DN | reference attr not declared | Add the attr to **Reference attributes**; recompute the group/referrer. |

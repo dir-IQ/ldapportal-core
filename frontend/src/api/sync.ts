@@ -207,7 +207,7 @@ export interface SyncReconcileRun {
   /** In-scope source entries the set doesn't manage (the applicability filter or placement excludes them). */
   notInSet: number
   /** Where a RUNNING run is (else null). */
-  phase: 'SCANNING' | 'APPLYING' | 'SWEEPING' | null
+  phase: 'SCANNING' | 'APPLYING' | 'SWEEPING' | 'REFERENCES' | null
   /** The entry a RUNNING run is recomputing (else null). */
   currentDn: string | null
   /** When the run last reported progress or that it's alive. */
@@ -447,6 +447,9 @@ export interface MembershipQuery {
 
 export const listMemberships = (setId: string, query: MembershipQuery = {}) =>
   client.get<Page<Membership>>(`/superadmin/sync/sets/${setId}/memberships`, { params: query })
+/** Start a reconcile in the background and return at once (202); follow it on getSyncSetActivity. */
+export const startReconcile = (setId: string) =>
+  client.post<{ started: boolean }>(`/superadmin/sync/sets/${setId}/reconcile-start`)
 export const reconcileSet = (setId: string) =>
   client.post<{ enumerated: number }>(`/superadmin/sync/sets/${setId}/reconcile`)
 
@@ -459,6 +462,13 @@ export interface SyncRecheckResult {
   entries: number
   reconcileQueued: boolean
 }
+
+/**
+ * Queue a reconcile for the scheduler's next tick (within about a minute) and return at once.
+ * reconcileQueued is false while the set or its link is disabled.
+ */
+export const requestSyncSetReconcile = (setId: string) =>
+  client.post<{ reconcileQueued: boolean }>(`/superadmin/sync/sets/${setId}/reconcile-request`)
 
 /** Re-check the target (e.g. after a restore from backup): the next reconcile re-reads every applied entry. */
 export const recheckTarget = (setId: string) =>

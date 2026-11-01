@@ -84,6 +84,12 @@ public class RecomputeEngine {
     /** The real side effects: target directory writes + index commits. */
     private final Effects live = new LiveEffects();
 
+    /** How often a {@link Batch} reloads its set, link and directories. */
+    private static final long BATCH_REFRESH_NANOS = 1_000_000_000L;
+
+    /** The running {@link Batch}'s timings, for the LDAP helpers to add to. */
+    private static final ThreadLocal<Timings> TIMINGS = new ThreadLocal<>();
+
     /**
      * Recompute one key (a source DN or a normalized identity) for one sync set.
      * Handles its own apply failures (marking the identity FAILED) and returns
@@ -105,37 +111,88 @@ public class RecomputeEngine {
      *         directory is missing
      */
     public RecomputeOutcome process(UUID syncSetId, String key, boolean suppressDeletes) {
-        SyncSet set = syncSetRepo.findById(syncSetId).orElse(null);
-        if (set == null || !set.isEnabled()) {
-            return null;
-        }
-        SyncLink link = syncLinkRepo.findById(set.getLinkId()).orElse(null);
-        if (link == null || !link.isEnabled()) {
-            return null;
-        }
-        DirectoryConnection source = directoryRepo.findById(link.getSourceDirId()).orElse(null);
-        DirectoryConnection target = directoryRepo.findById(link.getTargetDirId()).orElse(null);
-        if (source == null || target == null) {
-            log.warn("Sync set {}: source or target directory missing; skipping", syncSetId);
-            return null;
-        }
-        IdentityStrategy strategy = identityStrategies.forType(source.getDirectoryType());
+        Batch batch = new Batch(syncSetId, false, null);
+        return batch.skipped() ? null : process(batch, key, null, suppressDeletes);
+    }
 
-        for (int attempt = 1; ; attempt++) {
-            try {
-                return processOnce(set, link, source, target, strategy, key, suppressDeletes);
-            } catch (OptimisticLockingFailureException | DataIntegrityViolationException race) {
-                if (attempt >= MAX_OPTIMISTIC_RETRIES) {
-                    // Propagate rather than return: a normal return would let the
-                    // worker settle (delete) the request as done, silently dropping
-                    // the change until the next reconcile. Throwing releases the
-                    // claim so the request is retried on the next drain.
-                    throw new IllegalStateException("Sync set " + syncSetId + ": recompute of [" + key
-                            + "] still contended after " + attempt + " attempts", race);
-                }
-                log.debug("Sync set {}: recompute of [{}] contended (attempt {}); retrying",
-                        syncSetId, key, attempt);
+    /**
+     * Start a reconcile's run of recomputes: the set, its link and directories
+     * are loaded once (and refreshed every second, so an edit or a disable
+     * mid-run still takes effect), not once per entry. Closure fan-out is
+     * deferred to {@link #fanOutDeferred}, and an entry the run's source scan
+     * read can be handed to {@link #process(Batch, String, Entry, boolean)}
+     * instead of being read again.
+     *
+     * @param sourceChangeSeq the set's {@code source_change_seq}, read before the
+     *                        scan began: once it moves, a source change raced the
+     *                        run and scanned entries are no longer trusted
+     */
+    public Batch reconcileBatch(UUID syncSetId, long sourceChangeSeq) {
+        return new Batch(syncSetId, true, sourceChangeSeq);
+    }
+
+    /**
+     * Recompute one key within {@code batch}.
+     *
+     * @param scanned the source entry at {@code key} as the reconcile's scan read
+     *                it, or {@code null} to read the source now. It's used only
+     *                while no source change has been enqueued for the set since
+     *                the scan began, and never on a retry.
+     * @return as {@link #process(UUID, String, boolean)}
+     */
+    public RecomputeOutcome process(Batch batch, String key, Entry scanned, boolean suppressDeletes) {
+        Timings previous = TIMINGS.get();
+        TIMINGS.set(batch.timings);
+        try {
+            batch.refresh();
+            if (batch.skipped()) {
+                return null;
             }
+            for (int attempt = 1; ; attempt++) {
+                try {
+                    RecomputeOutcome outcome = processOnce(batch, key, attempt == 1 ? scanned : null, suppressDeletes);
+                    if (outcome != null && outcome.action() != SyncPreviewAction.ERROR) {
+                        batch.commitVisit();
+                    }
+                    return outcome;
+                } catch (OptimisticLockingFailureException | DataIntegrityViolationException race) {
+                    if (attempt >= MAX_OPTIMISTIC_RETRIES) {
+                        // Propagate rather than return: a normal return would let the
+                        // worker settle (delete) the request as done, silently dropping
+                        // the change until the next reconcile. Throwing releases the
+                        // claim so the request is retried on the next drain.
+                        throw new IllegalStateException("Sync set " + batch.syncSetId + ": recompute of [" + key
+                                + "] still contended after " + attempt + " attempts", race);
+                    }
+                    log.debug("Sync set {}: recompute of [{}] contended (attempt {}); retrying",
+                            batch.syncSetId, key, attempt);
+                }
+            }
+        } finally {
+            if (previous != null) {
+                TIMINGS.set(previous);
+            } else {
+                TIMINGS.remove();
+            }
+        }
+    }
+
+    /**
+     * Fan closure out, once, for every source entry {@code batch} changed:
+     * referrers are found with a few batched searches rather than one search
+     * per change, and a referrer the run already recomputed after the change it
+     * refers to is skipped (see {@link ClosureResolver#fanOutAll}, which gives
+     * {@code beforeSearch} the first DN of each search's batch).
+     */
+    public void fanOutDeferred(Batch batch, java.util.function.Consumer<String> beforeSearch) {
+        if (batch.changed.isEmpty() || batch.link == null) {
+            return;
+        }
+        long t0 = System.nanoTime();
+        try {
+            closureResolver.fanOutAll(batch.link, batch.syncSetId, batch.changed, batch.visited, beforeSearch);
+        } finally {
+            batch.timings.references += System.nanoTime() - t0;
         }
     }
 
@@ -224,40 +281,62 @@ public class RecomputeEngine {
      *
      * @return what was done to the entry ({@code UNCHANGED} for the no-op)
      */
-    private RecomputeOutcome processOnce(SyncSet set, SyncLink link, DirectoryConnection source,
-                             DirectoryConnection target, IdentityStrategy strategy, String key,
-                             boolean suppressDeletes) {
+    private RecomputeOutcome processOnce(Batch batch, String key, Entry scanned, boolean suppressDeletes) {
+        SyncSet set = batch.set;
+        SyncLink link = batch.link;
+        DirectoryConnection source = batch.source;
+        DirectoryConnection target = batch.target;
+        IdentityStrategy strategy = batch.strategy;
         // ── Resolve the current source entry and the identity ──
-        Entry entry;
-        String identity;
-        if (SyncDnUtil.isDn(key)) {
-            entry = readSourceByDn(source, set, key, strategy);
-            if (entry != null) {
-                identity = SyncIdentity.extract(set, strategy, entry);
-            } else {
-                identity = membershipRepo.findFirstBySyncSetIdAndSourceDn(set.getId(), SyncDnUtil.normalize(key))
-                        .map(Membership::getIdentity).orElse(null);
-                // The DN is gone but the identity is tracked — the entry may have
-                // MOVED (a feed that reports the pre-move DN, e.g. a changelog
-                // modrdn record). Re-search by identity so a rename converges as a
-                // MODDN, not a destructive delete+recreate.
-                if (identity != null) {
-                    entry = searchSourceByIdentity(source, set, strategy, identity);
+        Entry entry = null;
+        String identity = null;
+        Membership current = null;
+        boolean resolved = false;
+        if (scanned != null) {
+            identity = SyncIdentity.extract(set, strategy, scanned);
+            if (identity != null && !identity.isBlank()) {
+                current = membershipRepo.findById(new MembershipId(set.getId(), identity)).orElse(null);
+                // Checked after the row is loaded: a source change enqueued before
+                // this point makes us read the source afresh, and one enqueued
+                // after it can only be written (by the worker) after our load, so
+                // our own index write then fails on the row's version and the
+                // retry reads the source afresh.
+                if (batch.sourceUnchanged()) {
+                    entry = scanned;
+                    resolved = true;
                 }
             }
-        } else {
-            identity = key;
-            entry = searchSourceByIdentity(source, set, strategy, key);
         }
-        if (identity == null || identity.isBlank()) {
-            // Absent and never tracked — nothing to do.
-            return new RecomputeOutcome(SyncPreviewAction.UNCHANGED, null, null);
+        if (!resolved) {
+            if (SyncDnUtil.isDn(key)) {
+                entry = readSourceByDn(source, set, key, strategy);
+                if (entry != null) {
+                    identity = SyncIdentity.extract(set, strategy, entry);
+                } else {
+                    identity = membershipRepo.findFirstBySyncSetIdAndSourceDn(set.getId(), SyncDnUtil.normalize(key))
+                            .map(Membership::getIdentity).orElse(null);
+                    // The DN is gone but the identity is tracked — the entry may have
+                    // MOVED (a feed that reports the pre-move DN, e.g. a changelog
+                    // modrdn record). Re-search by identity so a rename converges as a
+                    // MODDN, not a destructive delete+recreate.
+                    if (identity != null) {
+                        entry = searchSourceByIdentity(source, set, strategy, identity);
+                    }
+                }
+            } else {
+                identity = key;
+                entry = searchSourceByIdentity(source, set, strategy, key);
+            }
+            if (identity == null || identity.isBlank()) {
+                // Absent and never tracked — nothing to do.
+                return new RecomputeOutcome(SyncPreviewAction.UNCHANGED, null, null);
+            }
+            current = membershipRepo.findById(new MembershipId(set.getId(), identity)).orElse(null);
         }
-
-        Membership current = membershipRepo.findById(new MembershipId(set.getId(), identity)).orElse(null);
+        batch.visiting(entry);
 
         MembershipDecision decision = entry != null
-                ? membershipFunction.evaluate(set, strategy, entry, referenceResolvers.forLink(link))
+                ? membershipFunction.evaluate(set, strategy, entry, batch.resolver)
                 : MembershipDecision.out(identity);
 
         String changedSourceDn = entry != null
@@ -267,7 +346,11 @@ public class RecomputeEngine {
         LiveRecorder rec = new LiveRecorder();
         boolean changed = apply(set, target, identity, current, decision, entry, suppressDeletes, rec);
         if (changed && changedSourceDn != null) {
-            closureResolver.fanOut(link, changedSourceDn);
+            if (batch.defersFanOut) {
+                batch.changed(changedSourceDn);
+            } else {
+                closureResolver.fanOut(link, changedSourceDn);
+            }
         }
         String fallbackDn = decision.member() ? decision.targetDn()
                 : (current != null ? current.getTargetDn() : null);
@@ -467,7 +550,7 @@ public class RecomputeEngine {
         TargetEntryDiffer.Kept kept = new TargetEntryDiffer.Kept(decision.desiredAttrs(), java.util.Map.of());
         if (!decision.unresolvedReferences().isEmpty()) {
             java.util.Map<String, java.util.Map<String, String>> candidates = untranslatedTargets.forSet(set)
-                    .candidates(decision.unresolvedReferences(), dn -> fx.readTarget(target, dn) != null,
+                    .candidatesInBulk(decision.unresolvedReferences(), dns -> fx.existingOnTarget(target, dns),
                             fx::leavesItsSet);
             kept = TargetEntryDiffer.keepUnresolved(decision.desiredAttrs(), candidates, tgt);
         }
@@ -691,6 +774,25 @@ public class RecomputeEngine {
         }
 
         @Override
+        public java.util.Set<String> existingOnTarget(DirectoryConnection target, java.util.Set<String> dns) {
+            java.util.Set<String> rest = new java.util.LinkedHashSet<>(dns);
+            java.util.Set<String> found = new java.util.HashSet<>();
+            if (moveTo != null) {
+                // The recorded move's DN can only be read as the dry run sees it.
+                for (String dn : dns) {
+                    if (SyncDnUtil.normalize(dn).equals(SyncDnUtil.normalize(moveTo))) {
+                        rest.remove(dn);
+                        if (readTarget(target, dn) != null) {
+                            found.add(dn);
+                        }
+                    }
+                }
+            }
+            found.addAll(RecomputeEngine.this.existingOnTarget(target, rest));
+            return found;
+        }
+
+        @Override
         public ApplyOutcome add(DirectoryConnection target, String dn, List<Attribute> attrs) {
             addDn = dn;
             addAttrs = attrs;
@@ -833,6 +935,20 @@ public class RecomputeEngine {
          */
         Entry readTarget(DirectoryConnection target, String dn);
 
+        /**
+         * Those of {@code dns} an entry exists at on the target, by
+         * {@link #readTarget}. The live effects look them up in bulk.
+         */
+        default java.util.Set<String> existingOnTarget(DirectoryConnection target, java.util.Set<String> dns) {
+            java.util.Set<String> found = new java.util.HashSet<>();
+            for (String dn : dns) {
+                if (readTarget(target, dn) != null) {
+                    found.add(dn);
+                }
+            }
+            return found;
+        }
+
         ApplyOutcome add(DirectoryConnection target, String dn, List<Attribute> attrs);
 
         /** {@code before} is the target entry the modifications were diffed against. */
@@ -872,6 +988,11 @@ public class RecomputeEngine {
         @Override
         public Entry readTarget(DirectoryConnection target, String dn) {
             return RecomputeEngine.this.readTarget(target, dn);
+        }
+
+        @Override
+        public java.util.Set<String> existingOnTarget(DirectoryConnection target, java.util.Set<String> dns) {
+            return RecomputeEngine.this.existingOnTarget(target, dns);
         }
 
         @Override
@@ -948,6 +1069,11 @@ public class RecomputeEngine {
         @Override
         public Entry readTarget(DirectoryConnection target, String dn) {
             return live.readTarget(target, dn);
+        }
+
+        @Override
+        public java.util.Set<String> existingOnTarget(DirectoryConnection target, java.util.Set<String> dns) {
+            return live.existingOnTarget(target, dns);
         }
 
         @Override
@@ -1152,12 +1278,168 @@ public class RecomputeEngine {
         return m;
     }
 
+    /**
+     * A run of recomputes of one sync set (see {@link #reconcileBatch}); a
+     * single {@link #process(UUID, String, boolean)} is a batch of one. Not
+     * thread-safe: one per run.
+     */
+    public final class Batch {
+        private final UUID syncSetId;
+        private final boolean defersFanOut;
+        /** {@code null}: no scanned entries to trust (a batch of one). */
+        private final Long sourceChangeSeq;
+        private boolean sourceChanged;
+        private long loadedAt;
+        private boolean skipped;
+        private SyncSet set;
+        private SyncLink link;
+        private DirectoryConnection source;
+        private DirectoryConnection target;
+        private IdentityStrategy strategy;
+        private ReferenceResolver resolver;
+        /** Normalized source DN → the position of the recompute that changed its target. */
+        private final java.util.Map<String, Integer> changed = new java.util.HashMap<>();
+        /** Normalized source DN → the position of the (last) recompute that read it. */
+        private final java.util.Map<String, Integer> visited = new java.util.HashMap<>();
+        private int position;
+        private final Timings timings = new Timings();
+
+        private Batch(UUID syncSetId, boolean defersFanOut, Long sourceChangeSeq) {
+            this.syncSetId = syncSetId;
+            this.defersFanOut = defersFanOut;
+            this.sourceChangeSeq = sourceChangeSeq;
+            load();
+        }
+
+        /** Where the run's time went so far. */
+        public Timings timings() {
+            return timings;
+        }
+
+        /** Whether the set, its link or a directory is disabled or missing, so recomputes skip. */
+        boolean skipped() {
+            return skipped;
+        }
+
+        private void refresh() {
+            position++;
+            visiting = null;
+            if (System.nanoTime() - loadedAt >= BATCH_REFRESH_NANOS) {
+                load();
+            }
+        }
+
+        private void load() {
+            loadedAt = System.nanoTime();
+            skipped = true;
+            set = syncSetRepo.findById(syncSetId).orElse(null);
+            if (set == null || !set.isEnabled()) {
+                return;
+            }
+            link = syncLinkRepo.findById(set.getLinkId()).orElse(null);
+            if (link == null || !link.isEnabled()) {
+                return;
+            }
+            source = directoryRepo.findById(link.getSourceDirId()).orElse(null);
+            target = directoryRepo.findById(link.getTargetDirId()).orElse(null);
+            if (source == null || target == null) {
+                log.warn("Sync set {}: source or target directory missing; skipping", syncSetId);
+                return;
+            }
+            strategy = identityStrategies.forType(source.getDirectoryType());
+            resolver = referenceResolvers.forLink(link);
+            skipped = false;
+        }
+
+        /**
+         * Whether no source change has been enqueued for the set since the scan
+         * began. Once one has, it stays {@code false} for the rest of the run.
+         */
+        private boolean sourceUnchanged() {
+            if (sourceChangeSeq == null || sourceChanged) {
+                return false;
+            }
+            Long now = syncSetRepo.findSourceChangeSeq(syncSetId);
+            if (now == null || now != sourceChangeSeq.longValue()) {
+                sourceChanged = true;
+                log.debug("Sync set {}: a source change arrived during the reconcile; reading entries afresh",
+                        syncSetId);
+            }
+            return !sourceChanged;
+        }
+
+        /** The source entry the current recompute read, recorded as visited once it succeeds. */
+        private String visiting;
+
+        private void visiting(Entry entry) {
+            visiting = defersFanOut && entry != null ? SyncDnUtil.normalize(entry.getDN()) : null;
+        }
+
+        /**
+         * The current recompute succeeded: its entry has seen every change made
+         * before it. One that failed or threw hasn't, so a fan-out still queues it.
+         */
+        private void commitVisit() {
+            if (visiting != null) {
+                visited.put(visiting, position);
+                visiting = null;
+            }
+        }
+
+        private void changed(String sourceDn) {
+            changed.put(SyncDnUtil.normalize(sourceDn), position);
+        }
+    }
+
+    /** Wall-clock nanoseconds a {@link Batch} spent in each kind of work. */
+    public static final class Timings {
+        private long sourceReads;
+        private long target;
+        private long references;
+
+        /** Reading entries from the source, after the scan. */
+        public long sourceReadNanos() {
+            return sourceReads;
+        }
+
+        /** Reading, searching and writing the target. */
+        public long targetNanos() {
+            return target;
+        }
+
+        /** Finding and enqueuing referrers of changed entries. */
+        public long referenceNanos() {
+            return references;
+        }
+    }
+
+    /** Which directory an LDAP helper's time is counted against. */
+    private enum Side { SOURCE, TARGET }
+
+    /** Run {@code op}, adding its wall-clock time to the running {@link Batch}'s {@link Timings}. */
+    private static <T> T timed(Side side, java.util.function.Supplier<T> op) {
+        long t0 = System.nanoTime();
+        try {
+            return op.get();
+        } finally {
+            Timings t = TIMINGS.get();
+            if (t != null) {
+                long spent = System.nanoTime() - t0;
+                if (side == Side.SOURCE) {
+                    t.sourceReads += spent;
+                } else {
+                    t.target += spent;
+                }
+            }
+        }
+    }
+
     // ── LDAP helpers (all reads/writes are uncaptured) ──────────────────────────
 
     private Entry readSourceByDn(DirectoryConnection source, SyncSet set, String dn, IdentityStrategy strategy) {
         String idAttr = SyncIdentity.attribute(set, strategy);
         String[] attrs = idAttr != null ? new String[]{"*", idAttr} : new String[]{"*"};
-        return connectionFactory.withConnectionUnreplicated(source, conn -> {
+        return timed(Side.SOURCE, () -> connectionFactory.withConnectionUnreplicated(source, conn -> {
             try {
                 return conn.getEntry(dn, attrs);
             } catch (LDAPException e) {
@@ -1166,7 +1448,7 @@ public class RecomputeEngine {
                 }
                 throw e;
             }
-        });
+        }));
     }
 
     private Entry searchSourceByIdentity(DirectoryConnection source, SyncSet set,
@@ -1178,7 +1460,7 @@ public class RecomputeEngine {
         String base = set.getObjectScopeBaseDn() != null ? set.getObjectScopeBaseDn() : source.getBaseDn();
         SearchScope scope = SyncScopes.searchScope(set);
         com.unboundid.ldap.sdk.Filter f = SyncIdentity.filter(set, strategy, identity);
-        return connectionFactory.withConnectionUnreplicated(source, conn -> {
+        return timed(Side.SOURCE, () -> connectionFactory.withConnectionUnreplicated(source, conn -> {
             try {
                 SearchRequest req = new SearchRequest(base, scope, f, "*", idAttr);
                 List<SearchResultEntry> entries = conn.search(req).getSearchEntries();
@@ -1189,11 +1471,11 @@ public class RecomputeEngine {
                 }
                 throw e;
             }
-        });
+        }));
     }
 
     private Entry readTarget(DirectoryConnection target, String dn) {
-        return connectionFactory.withConnectionUnreplicated(target, conn -> {
+        return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
             try {
                 return conn.getEntry(dn, "*");
             } catch (LDAPException e) {
@@ -1202,24 +1484,141 @@ public class RecomputeEngine {
                 }
                 throw e;
             }
+        }));
+    }
+
+    /** Target DNs searched per one-level search in {@link #existingOnTarget}. */
+    static final int EXISTS_BATCH = 100;
+
+    /**
+     * Those of {@code dns} an entry exists at on the target. LDAP can't search
+     * by DN portably, so the DNs are grouped by parent and each group is one
+     * one-level search matching their RDNs ({@link #EXISTS_BATCH} at a time),
+     * instead of a read per DN. A DN that doesn't parse, a search that fails
+     * other than on a missing parent, or one that finds none of a batch while a
+     * sample of it does exist, falls back to reading each DN.
+     */
+    java.util.Set<String> existingOnTarget(DirectoryConnection target, java.util.Set<String> dns) {
+        java.util.Set<String> found = new java.util.HashSet<>();
+        java.util.Map<String, List<String>> byParent = new java.util.LinkedHashMap<>();
+        for (String dn : dns) {
+            try {
+                DN parsed = new DN(dn);
+                DN parent = parsed.getParent();
+                if (parent == null) {
+                    if (readTarget(target, dn) != null) {
+                        found.add(dn);
+                    }
+                    continue;
+                }
+                byParent.computeIfAbsent(parent.toString(), k -> new ArrayList<>()).add(dn);
+            } catch (LDAPException e) {
+                if (readTarget(target, dn) != null) {
+                    found.add(dn);
+                }
+            }
+        }
+        byParent.forEach((parent, children) -> {
+            for (int from = 0; from < children.size(); from += EXISTS_BATCH) {
+                List<String> chunk = children.subList(from, Math.min(children.size(), from + EXISTS_BATCH));
+                java.util.Set<String> present = childrenPresent(target, parent, chunk);
+                if (present != null && present.isEmpty() && anyExists(target, sample(chunk))) {
+                    // The search found none, yet one is there: it can't be trusted
+                    // here (e.g. the bind may read entries but not search their
+                    // naming attribute), so read each DN instead.
+                    log.debug("Bulk existence check under {} found nothing that exists; reading each entry", parent);
+                    present = null;
+                }
+                if (present == null) {
+                    for (String dn : chunk) {
+                        if (readTarget(target, dn) != null) {
+                            found.add(dn);
+                        }
+                    }
+                    continue;
+                }
+                for (String dn : chunk) {
+                    if (present.contains(SyncDnUtil.normalize(dn))) {
+                        found.add(dn);
+                    }
+                }
+            }
         });
+        return found;
+    }
+
+    /** Up to three of {@code dns} (first, middle, last) to check a search that found none of them. */
+    private static List<String> sample(List<String> dns) {
+        java.util.Set<String> picked = new java.util.LinkedHashSet<>(
+                List.of(dns.get(0), dns.get(dns.size() / 2), dns.get(dns.size() - 1)));
+        return new ArrayList<>(picked);
+    }
+
+    private boolean anyExists(DirectoryConnection target, List<String> dns) {
+        for (String dn : dns) {
+            if (readTarget(target, dn) != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The normalized DNs of the entries directly under {@code parent} whose
+     * RDN is one of {@code children}'s; empty when the parent doesn't exist,
+     * {@code null} when the search failed otherwise.
+     */
+    private java.util.Set<String> childrenPresent(DirectoryConnection target, String parent, List<String> children) {
+        List<com.unboundid.ldap.sdk.Filter> rdns = new ArrayList<>(children.size());
+        try {
+            for (String dn : children) {
+                com.unboundid.ldap.sdk.RDN rdn = new DN(dn).getRDN();
+                String[] names = rdn.getAttributeNames();
+                String[] values = rdn.getAttributeValues();
+                List<com.unboundid.ldap.sdk.Filter> parts = new ArrayList<>(names.length);
+                for (int i = 0; i < names.length; i++) {
+                    parts.add(com.unboundid.ldap.sdk.Filter.createEqualityFilter(names[i], values[i]));
+                }
+                rdns.add(parts.size() == 1 ? parts.get(0) : com.unboundid.ldap.sdk.Filter.createANDFilter(parts));
+            }
+        } catch (LDAPException e) {
+            return null;
+        }
+        try {
+            return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
+                try {
+                    SearchRequest req = new SearchRequest(parent, SearchScope.ONE,
+                            com.unboundid.ldap.sdk.Filter.createORFilter(rdns), "1.1");
+                    java.util.Set<String> present = new java.util.HashSet<>();
+                    for (SearchResultEntry e : conn.search(req).getSearchEntries()) {
+                        present.add(SyncDnUtil.normalize(e.getDN()));
+                    }
+                    return present;
+                } catch (LDAPException e) {
+                    return e.getResultCode() == ResultCode.NO_SUCH_OBJECT ? java.util.Set.<String>of() : null;
+                }
+            }));
+        } catch (RuntimeException e) {
+            log.debug("Bulk existence check under {} failed ({}); reading each entry", parent, e.toString());
+            return null;
+        }
     }
 
     private ApplyOutcome targetAdd(DirectoryConnection target, String dn, List<Attribute> attrs) {
-        return connectionFactory.withConnectionUnreplicated(target, conn -> {
+        return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
             try {
                 return ok(conn.add(new AddRequest(dn, attrs)).getResultCode());
             } catch (LDAPException e) {
                 return failed(e);
             }
-        });
+        }));
     }
 
     /** Target DNs carrying {@code anchorAttr=identity} (brownfield correlation). */
     private List<String> searchTargetByAnchor(DirectoryConnection target, SyncSet set,
                                               String anchorAttr, String identity) {
         String base = SyncPlacement.effectiveTargetBase(set, target);
-        return connectionFactory.withConnectionUnreplicated(target, conn -> {
+        return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
             try {
                 SearchRequest req = new SearchRequest(base, SearchScope.SUB,
                         com.unboundid.ldap.sdk.Filter.createEqualityFilter(anchorAttr, identity), "1.1");
@@ -1234,34 +1633,34 @@ public class RecomputeEngine {
                 }
                 throw e;
             }
-        });
+        }));
     }
 
     private ApplyOutcome targetModify(DirectoryConnection target, String dn, List<Modification> mods) {
         if (mods.isEmpty()) {
             return ok(ResultCode.SUCCESS);
         }
-        return connectionFactory.withConnectionUnreplicated(target, conn -> {
+        return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
             try {
                 return ok(conn.modify(new ModifyRequest(dn, mods)).getResultCode());
             } catch (LDAPException e) {
                 return failed(e);
             }
-        });
+        }));
     }
 
     private ApplyOutcome targetDelete(DirectoryConnection target, String dn) {
-        return connectionFactory.withConnectionUnreplicated(target, conn -> {
+        return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
             try {
                 return ok(conn.delete(new DeleteRequest(dn)).getResultCode());
             } catch (LDAPException e) {
                 return failed(e);
             }
-        });
+        }));
     }
 
     private ApplyOutcome targetModifyDn(DirectoryConnection target, String oldDn, String newDn) {
-        return connectionFactory.withConnectionUnreplicated(target, conn -> {
+        return timed(Side.TARGET, () -> connectionFactory.withConnectionUnreplicated(target, conn -> {
             try {
                 DN newDnParsed = new DN(newDn);
                 String newRdn = newDnParsed.getRDNString();
@@ -1271,7 +1670,7 @@ public class RecomputeEngine {
             } catch (LDAPException e) {
                 return failed(e);
             }
-        });
+        }));
     }
 
     // ── Apply outcome: the result code plus, on failure, the server's diagnostic

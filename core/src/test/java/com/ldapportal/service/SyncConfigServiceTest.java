@@ -408,6 +408,98 @@ class SyncConfigServiceTest {
         assertThat(service.recheckTarget(setId, "alice").reconcileQueued()).isFalse();
     }
 
+    private SyncSet enabledSet(UUID setId) {
+        UUID linkId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setEnabled(true);
+        set.setLinkId(linkId);
+        SyncLink link = new SyncLink();
+        link.setEnabled(true);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        org.mockito.Mockito.lenient().when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+        return set;
+    }
+
+    @Test
+    void startReconcile_runsTheReconcileInTheBackground_asAManualRun() {
+        UUID setId = UUID.randomUUID();
+        enabledSet(setId);
+
+        service.startReconcile(setId, "alice");
+
+        verify(reconciler, org.mockito.Mockito.timeout(5000))
+                .reconcile(setId, com.ldapportal.entity.enums.SyncReconcileTrigger.MANUAL, "alice");
+    }
+
+    @Test
+    void startReconcile_whileOneIsRunning_isAConflict() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = enabledSet(setId);
+        org.springframework.test.util.ReflectionTestUtils.setField(set, "reconcileLeaseToken", UUID.randomUUID());
+        org.springframework.test.util.ReflectionTestUtils.setField(set, "reconcileLeaseHeartbeatAt",
+                java.time.OffsetDateTime.now().minusSeconds(20));
+
+        assertThatThrownBy(() -> service.startReconcile(setId, "alice"))
+                .isInstanceOf(com.ldapportal.exception.ConflictException.class);
+        verify(reconciler, never()).reconcile(any(), any(), any());
+    }
+
+    @Test
+    void startReconcile_aLeaseLeftByAStoppedServer_doesNotBlockIt() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = enabledSet(setId);
+        org.springframework.test.util.ReflectionTestUtils.setField(set, "reconcileLeaseToken", UUID.randomUUID());
+        org.springframework.test.util.ReflectionTestUtils.setField(set, "reconcileLeaseHeartbeatAt",
+                java.time.OffsetDateTime.now().minusHours(1));
+
+        service.startReconcile(setId, "alice");
+
+        verify(reconciler, org.mockito.Mockito.timeout(5000))
+                .reconcile(setId, com.ldapportal.entity.enums.SyncReconcileTrigger.MANUAL, "alice");
+    }
+
+    @Test
+    void startReconcile_onADisabledSet_isRefused() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = enabledSet(setId);
+        set.setEnabled(false);
+
+        assertThatThrownBy(() -> service.startReconcile(setId, "alice"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Enable the sync set and its link");
+        verify(reconciler, never()).reconcile(any(), any(), any());
+    }
+
+    @Test
+    void requestReconcile_queuesOne_andSaysWhetherItWillRun() {
+        UUID setId = UUID.randomUUID();
+        UUID linkId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setEnabled(true);
+        set.setLinkId(linkId);
+        SyncLink link = new SyncLink();
+        link.setEnabled(true);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+
+        assertThat(service.requestReconcile(setId, "alice")).isTrue();
+        verify(setRepo).requestReconcileOfSet(setId);
+        verify(membershipRepo, never()).forgetAppliedContent(any(), any());
+
+        link.setEnabled(false);
+        assertThat(service.requestReconcile(setId, "alice")).isFalse();
+    }
+
+    @Test
+    void requestReconcile_unknownSet_isNotFound() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.requestReconcile(setId, "alice"))
+                .isInstanceOf(com.ldapportal.exception.ResourceNotFoundException.class);
+        verify(setRepo, never()).requestReconcileOfSet(any());
+    }
+
     @Test
     void recheckTarget_unknownSet_isNotFound() {
         UUID setId = UUID.randomUUID();

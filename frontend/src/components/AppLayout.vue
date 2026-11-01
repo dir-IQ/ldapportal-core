@@ -151,6 +151,10 @@
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 11.5a3.5 3.5 0 0 0 5 0l2.5-2.5a3.5 3.5 0 0 0-5-5L10 5"/><path d="M11.5 8.5a3.5 3.5 0 0 0-5 0L4 11a3.5 3.5 0 0 0 5 5l1-1"/></svg>
             <span v-if="!collapsed">Referential Integrity Check</span>
           </RouterLink>
+          <RouterLink v-if="auth.hasSuperadminPermission('superadmin.manage_directory_diff')" to="/superadmin/directory-diff" class="nav-item">
+            <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="6.5" height="14" rx="1.5"/><rect x="11.5" y="3" width="6.5" height="14" rx="1.5"/><path d="M4.5 7h2M4.5 10h2M13.5 7h2M13.5 13h2"/></svg>
+            <span v-if="!collapsed">Directory Diff</span>
+          </RouterLink>
           <RouterLink to="/superadmin/audit-log" class="nav-item">
             <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="2" width="14" height="16" rx="2"/><path d="M7 6h6M7 10h6M7 14h3"/></svg>
             <span v-if="!collapsed">Audit Log</span>
@@ -252,7 +256,8 @@
       </div>
 
       <!-- Build identifier: the frontend and backend image tags (e.g.
-           "FE 1.4.2 · BE 1.4.2"), each falling back to its git short-SHA
+           "FE 1.4.2 · BE 1.4.2"), then where the app is deployed when the
+           operator set DEPLOYMENT_LOCATION. Each tag falls back to its git short-SHA
            when the image was built without a tag. Amber when the two
            builds' SHAs differ. Lets a quick glance answer "is this the
            version I think it is?". Hidden when the sidebar is collapsed to
@@ -260,7 +265,7 @@
       <div v-if="!collapsed" class="px-3 py-1.5 border-t border-white/10 text-[10px] font-mono leading-none truncate"
            :class="skewDetected ? 'text-amber-300/80' : 'text-white/70'"
            :title="buildStampTitle">
-        FE {{ frontendStamp }} · BE {{ backendStamp }}
+        FE {{ frontendStamp }} · BE {{ backendStamp }}<template v-if="deploymentLocation"> · {{ deploymentLocation }}</template>
       </div>
     </aside>
 
@@ -360,7 +365,8 @@ const unsavedChanges = useUnsavedChangesStore()
 // Build identifier + skew detector. clientSha comes from
 // vite.config.js's `define` block; serverSha / serverImageVersion are
 // fetched once on first call. See composables/useVersionCheck.ts.
-const { clientSha, clientImageVersion, serverSha, serverImageVersion, skewDetected } = useVersionCheck()
+const { clientSha, clientImageVersion, serverSha, serverImageVersion, deploymentLocation, skewDetected } =
+  useVersionCheck()
 
 // The sidebar build stamp shows each side's image tag when its image was
 // built with one, falling back to that build's git SHA.
@@ -370,7 +376,8 @@ const buildStampTitle = computed(() => {
   const frontend = clientImageVersion ? `${clientImageVersion} (${clientSha})` : clientSha
   const sha = serverSha.value || '…'
   const backend = serverImageVersion.value ? `${serverImageVersion.value} (${sha})` : sha
-  return `Frontend image ${frontend} · backend image ${backend}`
+  const where = deploymentLocation.value ? ` · deployed in ${deploymentLocation.value}` : ''
+  return `Frontend image ${frontend} · backend image ${backend}${where}`
 })
 
 function reloadHard() {

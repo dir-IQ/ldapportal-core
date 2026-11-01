@@ -77,6 +77,7 @@ vi.mock('@/api/sync', () => ({
     data: { content: [membership], totalElements: 8, totalPages: 1, number: 0, size: 50 },
   })),
   reconcileSet: vi.fn(() => Promise.resolve({ data: { enumerated: 3 } })),
+  requestSyncSetReconcile: vi.fn(() => Promise.resolve({ data: { reconcileQueued: true } })),
   recomputeKey: vi.fn(() => Promise.resolve({ data: undefined })),
   dismissMembership: vi.fn(() => Promise.resolve({ data: undefined })),
 }))
@@ -264,6 +265,9 @@ describe('DirectorySyncView', () => {
       await flushPromises()
       expect(document.body.textContent).toContain('Planned changes — people')
       expect(syncApi.startPreviewRun).toHaveBeenCalledWith('set-1')
+      // The panel behind it follows the run straight away, not only once it closes.
+      expect(document.querySelector('[data-testid="impact-counts"]')!.textContent!.replace(/\s+/g, ' '))
+        .toContain('Would add: 1 · Would modify: 0 · Would move: 0 · Would delete: 1')
 
       // Closing it leaves that run's counts in the editor: the same run the list showed.
       const closes = Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="Close"]'))
@@ -333,6 +337,49 @@ describe('DirectorySyncView', () => {
       wrapper.unmount()
     })
 
+    it('offers to reconcile now after a save changes the filter, and queues it on yes', async () => {
+      const saved = { ...set, applicabilityFilter: '(!(uid=svc-*))' }
+      vi.mocked(syncApi.updateSyncSet).mockResolvedValueOnce({ data: saved } as never)
+      confirmApi.confirm.mockResolvedValueOnce(true)
+      const wrapper = await openEditor('Edit')
+
+      await type('Applicability filter', '(!(uid=svc-*))')
+      await submit()
+
+      expect(confirmApi.confirm).toHaveBeenCalledWith(expect.objectContaining({
+        title: 'Apply the changes now?', confirmLabel: 'Reconcile now', cancelLabel: 'Later',
+        message: expect.stringContaining('The new applicability filter takes effect at the set\'s next reconcile'),
+      }))
+      expect(syncApi.requestSyncSetReconcile).toHaveBeenCalledWith('set-1')
+      wrapper.unmount()
+    })
+
+    it('leaves the reconcile to its schedule on Later, and doesn\'t ask when nothing it applies changed', async () => {
+      vi.mocked(syncApi.updateSyncSet).mockResolvedValueOnce(
+        { data: { ...set, applicabilityFilter: '(!(uid=svc-*))' } } as never)
+      confirmApi.confirm.mockResolvedValueOnce(false)
+      const wrapper = await openEditor('Edit')
+      await type('Applicability filter', '(!(uid=svc-*))')
+      await submit()
+      expect(confirmApi.confirm).toHaveBeenCalledTimes(1)
+      expect(syncApi.requestSyncSetReconcile).not.toHaveBeenCalled()
+      wrapper.unmount()
+
+      vi.clearAllMocks()
+      document.body.innerHTML = ''
+      vi.mocked(syncApi.updateSyncSet).mockResolvedValueOnce(
+        { data: { ...set, loggingLevel: 'DETAILED' } } as never)
+      const again = await openEditor('Edit')
+      const level = document.getElementById('sync-set-logging-level') as HTMLSelectElement
+      level.value = 'DETAILED'
+      level.dispatchEvent(new Event('change'))
+      await flushPromises()
+      await submit()
+      expect(syncApi.updateSyncSet).toHaveBeenCalled()
+      expect(confirmApi.confirm).not.toHaveBeenCalled()
+      again.unmount()
+    })
+
     it('marks the source base DN required and points blank fields at their defaults', async () => {
       const wrapper = await openEditor('+ New Set')
       const labels = Array.from(document.querySelectorAll('label')).map((l) => l.textContent?.trim() ?? '')
@@ -374,6 +421,34 @@ describe('DirectorySyncView', () => {
       expect(document.body.textContent).toContain('1 target entry(ies) would be deleted.')
       button('Enable anyway')!.click()
       await flushPromises()
+      expect(syncApi.updateSyncSet).toHaveBeenCalledWith('set-1', expect.objectContaining({ enabled: true }))
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set] } as never)
+      wrapper.unmount()
+    })
+
+    it('shows that enabling is checking the impact, and ignores more clicks meanwhile', async () => {
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [{ ...set, enabled: false }] } as never)
+      let finish!: (v: unknown) => void
+      vi.mocked(syncApi.startPreviewRun).mockReturnValueOnce(new Promise((r) => { finish = r }) as never)
+      const wrapper = await openEditor('Edit')
+      const enabled = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+        .find((c) => c.parentElement?.textContent?.includes('Enabled'))!
+      enabled.checked = true
+      enabled.dispatchEvent(new Event('change'))
+      await flushPromises()
+
+      await submit()
+      const save = buttons().find((b) => b.textContent?.trim().startsWith('Checking impact'))
+      expect(save).toBeTruthy()
+      expect(save!.disabled).toBe(true)
+      expect(save!.getAttribute('aria-busy')).toBe('true')
+      await submit() // an impatient second click
+      expect(syncApi.startPreviewRun).toHaveBeenCalledTimes(1)
+
+      // The check finds nothing to delete, so the save goes ahead.
+      finish({ data: { runId: 'run-1', status: 'COMPLETE', actionCounts: { NO_CHANGE: 3 }, guardTripped: false } })
+      await flushPromises()
+      expect(syncApi.updateSyncSet).toHaveBeenCalledTimes(1)
       expect(syncApi.updateSyncSet).toHaveBeenCalledWith('set-1', expect.objectContaining({ enabled: true }))
       vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set] } as never)
       wrapper.unmount()

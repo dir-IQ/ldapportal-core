@@ -81,6 +81,23 @@ public class SyncConfigService {
     private final com.ldapportal.repository.SyncReconcileRunRepository reconcileRunRepo;
     private final com.ldapportal.ldap.sync.SyncVerifyProgressTracker verifyProgress;
 
+    /**
+     * Runs the reconciles {@link #startReconcile} starts, off the request thread:
+     * a run can outlast any proxy's idle timeout. One per set at most (the
+     * reconcile lease), so a cached pool stays small.
+     */
+    private final java.util.concurrent.ExecutorService manualReconciles =
+            java.util.concurrent.Executors.newCachedThreadPool(r -> {
+                Thread t = new Thread(r, "sync-manual-reconcile");
+                t.setDaemon(true);
+                return t;
+            });
+
+    @jakarta.annotation.PreDestroy
+    void stopManualReconciles() {
+        manualReconciles.shutdownNow();
+    }
+
     // ── Links ────────────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
@@ -445,6 +462,39 @@ public class SyncConfigService {
     }
 
     /**
+     * Start a reconcile of the set now, in the background, recorded in its
+     * history as a manual run by {@code requestedBy}, and return at once: the
+     * run's progress and outcome are on {@code GET …/activity} and in its run
+     * history. Unlike {@link #reconcileNow}, nothing waits on it, so a long run
+     * can't be cut off by a proxy's timeout.
+     *
+     * @throws IllegalArgumentException while the set or its link is disabled
+     * @throws com.ldapportal.exception.ConflictException while a reconcile of the set is running
+     */
+    public void startReconcile(UUID syncSetId, String requestedBy) {
+        SyncSet set = requireSet(syncSetId);
+        if (!set.isEnabled() || !linkRepo.findById(set.getLinkId()).map(SyncLink::isEnabled).orElse(false)) {
+            throw new IllegalArgumentException("Enable the sync set and its link to reconcile it.");
+        }
+        if (MembershipReconciler.isRunning(set, java.time.OffsetDateTime.now())) {
+            throw new com.ldapportal.exception.ConflictException("A reconcile of this sync set is already running.");
+        }
+        manualReconciles.execute(() -> {
+            try {
+                reconcileNow(syncSetId, requestedBy);
+            } catch (com.ldapportal.exception.ConflictException ex) {
+                // Another started between the check and this run's claim: it covers the request.
+                log.info("Sync set {}: manual reconcile by {} not started: {}", syncSetId, requestedBy,
+                        ex.getMessage());
+            } catch (Exception ex) {
+                // The run records its own failure in the history; this is for the log.
+                log.warn("Sync set {}: manual reconcile by {} failed: {}", syncSetId, requestedBy, ex.toString());
+            }
+        });
+        log.info("Sync set {}: manual reconcile started by {}", syncSetId, requestedBy);
+    }
+
+    /**
      * Run a synchronous reconcile of the set, recorded in its history as a manual
      * run by {@code requestedBy}; returns the number of source identities enumerated.
      */
@@ -460,6 +510,22 @@ public class SyncConfigService {
             log.warn("Post-reconcile drift refresh for sync set {} failed: {}", syncSetId, ex.toString());
         }
         return enumerated;
+    }
+
+    /**
+     * Ask for a reconcile of the set on the scheduler's next tick, without
+     * waiting for it: e.g. after its filter, scope or placement changed, so the
+     * new configuration is applied now rather than at its next scheduled run.
+     * A reconcile already running finishes first and the requested one follows.
+     *
+     * @return whether it will run: false while the set or its link is disabled
+     *         (it then runs once both are enabled)
+     */
+    public boolean requestReconcile(UUID syncSetId, String requestedBy) {
+        SyncSet set = requireSet(syncSetId);
+        setRepo.requestReconcileOfSet(syncSetId);
+        log.info("Sync set {}: reconcile requested by {}", syncSetId, requestedBy);
+        return set.isEnabled() && linkRepo.findById(set.getLinkId()).map(SyncLink::isEnabled).orElse(false);
     }
 
     /**

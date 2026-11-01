@@ -3,6 +3,10 @@
   <AppModal :model-value="modelValue" :title="`Planned changes — ${setName}`" size="2xl"
             storage-key="sync-preview-changes" @update:model-value="emit('update:modelValue', $event)">
     <div class="flex-1 min-h-0 flex flex-col gap-3">
+      <p class="text-xs text-gray-500 -mb-1">
+        What a reconcile would do to each entry, from a dry run of the sync engine. Nothing is written to either
+        directory.
+      </p>
       <div class="flex flex-wrap items-center gap-3">
         <label class="flex items-center gap-2 text-sm text-gray-700">
           <input type="checkbox" v-model="changesOnly" class="rounded" :disabled="!complete || loading"
@@ -28,7 +32,6 @@
           </template>
           <template v-else>Scanning the source…</template>
           <span v-if="elapsed" class="text-gray-500"> · {{ elapsed }} elapsed</span>
-          A dry run of the sync engine: nothing is written.
         </p>
         <div v-if="run && run.total > 0" class="h-1.5 w-full rounded bg-gray-200 dark:bg-gray-700 overflow-hidden"
              role="progressbar" aria-label="Preview progress" :aria-valuenow="run.processed" aria-valuemin="0"
@@ -136,7 +139,11 @@ const props = defineProps<{
   setId: string
   setName: string
 }>()
-const emit = defineEmits<{ 'update:modelValue': [boolean] }>()
+const emit = defineEmits<{
+  'update:modelValue': [boolean]
+  /** Each run status this dialog adopts, so an opener can mirror its progress and result. */
+  run: [SyncPreviewStatus]
+}>()
 
 const notif = useNotificationStore()
 
@@ -273,6 +280,7 @@ function adopt(status: SyncPreviewStatus) {
   // Load when this status is a completed run whose entries aren't on screen yet.
   const needsEntries = status.status === 'COMPLETE' && result.value?.runId !== status.runId
   run.value = status
+  emit('run', status)
   now.value = Date.now()
   clockOffset.value = status.asOf ? Date.parse(status.asOf) - now.value : 0
   stopPolling()

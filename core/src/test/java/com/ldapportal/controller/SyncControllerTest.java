@@ -384,6 +384,28 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void startReconcile_superadmin_returns202() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/reconcile-start").with(authentication(superadminAuth())))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.started").value(true));
+        org.mockito.Mockito.verify(service).startReconcile(SET, "superadmin");
+    }
+
+    @Test
+    void startReconcile_whileOneIsRunning_returns409() throws Exception {
+        org.mockito.BDDMockito.willThrow(new com.ldapportal.exception.ConflictException("already running"))
+                .given(service).startReconcile(SET, "superadmin");
+        mockMvc.perform(post(SETS + "/" + SET + "/reconcile-start").with(authentication(superadminAuth())))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void startReconcile_adminRole_returns403() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/reconcile-start").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void recheckTarget_superadmin_returnsResult() throws Exception {
         given(service.recheckTarget(SET, "superadmin")).willReturn(new SyncRecheckResult(4741, true));
         mockMvc.perform(post(SETS + "/" + SET + "/recheck-target").with(authentication(superadminAuth())))
@@ -395,6 +417,20 @@ class SyncControllerTest extends BaseControllerTest {
     @Test
     void recheckTarget_adminRole_returns403() throws Exception {
         mockMvc.perform(post(SETS + "/" + SET + "/recheck-target").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void requestReconcile_superadmin_queuesIt() throws Exception {
+        given(service.requestReconcile(SET, "superadmin")).willReturn(true);
+        mockMvc.perform(post(SETS + "/" + SET + "/reconcile-request").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reconcileQueued").value(true));
+    }
+
+    @Test
+    void requestReconcile_adminRole_returns403() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/reconcile-request").with(authentication(adminAuth())))
                 .andExpect(status().isForbidden());
     }
 
