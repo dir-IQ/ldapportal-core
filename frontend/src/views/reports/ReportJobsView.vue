@@ -105,16 +105,6 @@
             <option value="GROUP">Groups</option>
           </select>
         </div>
-        <!-- Integrity check options -->
-        <div v-if="isIntegrityCheck">
-          <label class="block text-sm font-medium text-gray-700 mb-1">Checks to Run</label>
-          <div class="flex flex-row gap-4 mt-1">
-            <label v-for="c in integrityChecks" :key="c.value" class="flex items-center gap-2 text-sm text-gray-700">
-              <input type="checkbox" v-model="runForm.integrityChecks" :value="c.value" class="rounded border-gray-300" />
-              {{ c.label }}
-            </label>
-          </div>
-        </div>
       </div>
       <button @click="doRun" :disabled="running || !dirId" class="btn-primary">
         {{ running ? 'Running…' : 'Run Report' }}
@@ -136,7 +126,7 @@
                GOVERNANCE entitlement isn't granted, so operators
                don't see an export they can't actually run. -->
           <button v-if="auth.isComplianceEnabled" @click="doExport('PDF')"
-                  :disabled="exporting || isIntegrityCheck"
+                  :disabled="exporting"
                   class="btn-secondary text-xs">Export PDF</button>
         </template>
 
@@ -146,12 +136,8 @@
           pattern for consistency.
         -->
         <template #cell="{ col, value }">
-          <!-- Integrity check type badge -->
-          <span v-if="col.key === 'type' && isIntegrityCheck" :class="integrityTypeBadgeClass(value as string)" class="inline-block px-2 py-0.5 rounded-full text-xs font-medium">
-            {{ friendlyIntegrityType(value as string) }}
-          </span>
           <!-- Source badge (Recently Deleted) -->
-          <span v-else-if="col.key === 'Source'" :class="sourceBadgeClass(value as string)" class="inline-block px-2 py-0.5 rounded-full text-xs font-medium">
+          <span v-if="col.key === 'Source'" :class="sourceBadgeClass(value as string)" class="inline-block px-2 py-0.5 rounded-full text-xs font-medium">
             {{ value }}
           </span>
           <!-- Date columns -->
@@ -258,7 +244,7 @@
               <div>
                 <label for="rj-job-report-type" class="block text-sm font-medium text-gray-700 mb-1">Report Type</label>
                 <select id="rj-job-report-type" v-model="jobForm.reportType" class="input w-full" required>
-                  <option v-for="t in schedulableTypes" :key="t.value" :value="t.value">{{ t.label }}</option>
+                  <option v-for="t in reportTypes" :key="t.value" :value="t.value">{{ t.label }}</option>
                 </select>
               </div>
             </div>
@@ -405,7 +391,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useUnsavedChangesGuard } from '@/composables/useUnsavedChangesGuard'
 import { useRoute } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
@@ -417,14 +403,13 @@ import {
   runOperationalReport, runOperationalReportData, runOperationalReportPdf,
 } from '@/api/reports'
 import { listDirectories } from '@/api/directories'
-import { checkIntegrity, listIntegrityChecks } from '@/api/browse'
 import { getAuditActions } from '@/api/audit'
 import { actionLabel } from '@/components/dashboard/auditLabels'
 import { downloadBlob } from '@/composables/useApi'
 import {
   friendlyColumnName, formatRelativeDate, formatFullDate,
   looksLikeTimestamp, looksLikeDn,
-  integrityTypeBadgeClass, friendlyIntegrityType, sourceBadgeClass,
+  sourceBadgeClass,
   DATE_COLUMNS, HIDDEN_COLUMNS,
 } from '@/composables/useReportFormatting'
 import FormField from '@/components/FormField.vue'
@@ -544,47 +529,8 @@ const reportTypes = computed<ReportTypeDef[]>(() => {
   if (auth.isIsvaIntegrationEnabled) {
     types.push({ value: 'ORPHANED_IVIA_ACCOUNTS', label: 'Orphaned IVIA Accounts', param: null, lookback: false })
   }
-  // Integrity Check runs against the whole DIT via the superadmin-only
-  // Directory Browser endpoint (POST /api/v1/superadmin/.../browse/integrity-check,
-  // gated hasRole('SUPERADMIN')). Offering it to an admin meant the request was
-  // rejected by Spring Security and the SPA's 401 handler bounced them to the
-  // login screen — so only surface it for superadmins.
-  if (auth.isSuperadmin) {
-    types.push({ value: 'INTEGRITY_CHECK', label: 'Integrity Check', param: null, lookback: false })
-  }
   return types
 })
-
-// Scheduled jobs can't use INTEGRITY_CHECK (it's not a backend report type)
-const schedulableTypes = computed(() => reportTypes.value.filter(t => t.value !== 'INTEGRITY_CHECK'))
-
-/** A check the directory offers, and the attributes it checks. */
-interface AvailableCheck {
-  type: string
-  attributes: string[]
-}
-
-const BUILT_IN_CHECKS: AvailableCheck[] = [
-  { type: 'BROKEN_MEMBER',  attributes: ['member', 'uniqueMember'] },
-  { type: 'ORPHANED_ENTRY', attributes: [] },
-  { type: 'EMPTY_GROUP',    attributes: [] },
-]
-
-// What the selected directory offers: the built-in checks, plus a reference
-// check (e.g. IVIA secDN) where an addon contributes one for the directory.
-const offeredChecks = ref<AvailableCheck[]>(BUILT_IN_CHECKS)
-
-function integrityCheckLabel(c: AvailableCheck): string {
-  switch (c.type) {
-    case 'BROKEN_MEMBER':    return 'Broken Member References'
-    case 'ORPHANED_ENTRY':   return 'Orphaned Entries'
-    case 'EMPTY_GROUP':      return 'Empty Groups'
-    case 'BROKEN_REFERENCE': return `Broken References (${c.attributes.join(', ')})`
-    default:                 return c.type
-  }
-}
-
-const integrityChecks = computed(() => offeredChecks.value.map(c => ({ value: c.type, label: integrityCheckLabel(c) })))
 
 function labelFor(type: string): string { return reportTypes.value.find(t => t.value === type)?.label ?? type }
 function fmtDate(iso: string): string { return new Date(iso).toLocaleString() }
@@ -627,7 +573,6 @@ const runForm = ref({
   groupCountOp: '=', groupCountValue: 0,
   lookbackHours: 24, auditActions: [] as string[],
   attributes: '',
-  integrityChecks: ['BROKEN_MEMBER', 'ORPHANED_ENTRY', 'EMPTY_GROUP'] as string[],
 })
 const running = ref(false)
 const exporting = ref(false)
@@ -646,7 +591,6 @@ const RECENTLY_TYPES = new Set(['RECENTLY_ADDED', 'RECENTLY_MODIFIED', 'RECENTLY
 // Missing Data, which otherwise scans every entry under the branch.
 const OBJECT_TYPE_REPORTS = new Set([...RECENTLY_TYPES, 'MISSING_DATA'])
 const needsObjectTypeFilter = computed(() => OBJECT_TYPE_REPORTS.has(runForm.value.reportType))
-const isIntegrityCheck = computed(() => runForm.value.reportType === 'INTEGRITY_CHECK')
 const needsAuditFilters = computed(() => !!currentRunType.value?.auditFilters)
 const needsAttributes = computed(() => !!currentRunType.value?.attributes)
 
@@ -749,16 +693,12 @@ async function doRun(): Promise<void> {
   running.value = true
   hasResults.value = false
   try {
-    if (isIntegrityCheck.value) {
-      await runIntegrityCheck()
-    } else {
-      const { data } = await runOperationalReportData(dirId.value, {
-        reportType: runForm.value.reportType,
-        reportParams: buildReportParams(),
-      })
-      resultColumns.value = data.columns || []
-      resultRows.value = data.rows || []
-    }
+    const { data } = await runOperationalReportData(dirId.value, {
+      reportType: runForm.value.reportType,
+      reportParams: buildReportParams(),
+    })
+    resultColumns.value = data.columns || []
+    resultRows.value = data.rows || []
     hasResults.value = true
   } catch (e) {
     const err = e as { response?: { data?: { detail?: string } }, message?: string }
@@ -768,53 +708,8 @@ async function doRun(): Promise<void> {
   }
 }
 
-// Each directory offers its own checks. A newly offered check starts ticked;
-// a check the directory doesn't offer is dropped from the selection.
-async function loadOfferedChecks(directoryId: string): Promise<void> {
-  if (!directoryId || !auth.isSuperadmin) return
-  const before = new Set(offeredChecks.value.map(c => c.type))
-  try {
-    const { data } = await listIntegrityChecks(directoryId)
-    offeredChecks.value = (data as AvailableCheck[])?.length ? data as AvailableCheck[] : BUILT_IN_CHECKS
-  } catch {
-    offeredChecks.value = BUILT_IN_CHECKS
-  }
-  const offered = new Set(offeredChecks.value.map(c => c.type))
-  const kept = runForm.value.integrityChecks.filter(t => offered.has(t))
-  for (const t of offered) {
-    if (!before.has(t) && !kept.includes(t)) kept.push(t)
-  }
-  runForm.value.integrityChecks = kept
-}
-
-watch(dirId, (id) => { void loadOfferedChecks(id) }, { immediate: true })
-
-async function runIntegrityCheck(): Promise<void> {
-  const checks = runForm.value.integrityChecks
-  if (!checks.length) { notif.error('Select at least one check.'); return }
-  const { data } = await checkIntegrity(dirId.value, '', checks)
-  const issues = data.issues || []
-  resultColumns.value = ['type', 'dn', 'description']
-  resultRows.value = issues.map((i: { type: string, dn: string, description: string }) => ({
-    type: i.type, dn: i.dn, description: i.description,
-  }))
-}
-
 async function doExport(format: 'CSV' | 'PDF'): Promise<void> {
   if (!dirId.value) return
-  if (isIntegrityCheck.value) {
-    // Export integrity results as CSV from current data
-    const header = resultColumns.value.join(',')
-    const rows = resultRows.value.map(r => resultColumns.value.map(c => {
-      const v = r[c]
-      const s = v == null ? '' : String(v)
-      return `"${s.replace(/"/g, '""')}"`
-    }).join(','))
-    const csv = [header, ...rows].join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    downloadBlob(blob, 'integrity_check.csv')
-    return
-  }
   exporting.value = true
   try {
     if (format === 'PDF') {

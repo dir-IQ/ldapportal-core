@@ -36,8 +36,17 @@
 
     <!-- Results -->
     <div v-if="hasRun" class="bg-white border border-gray-200 rounded-xl overflow-hidden">
-      <div class="px-5 py-3 border-b border-gray-200">
-        <span class="text-sm text-gray-600">{{ report.issues.length }} issue{{ report.issues.length !== 1 ? 's' : '' }} found</span>
+      <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-gray-200">
+        <span class="text-sm text-gray-600" data-testid="issue-count">
+          {{ report.issues.length }} issue{{ report.issues.length !== 1 ? 's' : '' }} found<template
+            v-if="issueFilter.trim()">, {{ filteredIssues.length }} shown</template>
+        </span>
+        <div v-if="report.issues.length" class="flex items-center gap-2">
+          <label for="icv-filter" class="sr-only">Filter issues by DN or description</label>
+          <input id="icv-filter" v-model="issueFilter" type="search" class="input input-sm w-64"
+                 placeholder="Filter by DN or description" />
+          <button class="btn-secondary btn-sm" :disabled="!filteredIssues.length" @click="exportCsv">Export CSV</button>
+        </div>
       </div>
 
       <EmptyState
@@ -45,6 +54,10 @@
         icon="shield"
         title="No integrity issues found. Everything looks good!"
       />
+
+      <p v-else-if="filteredIssues.length === 0" class="px-5 py-6 text-sm text-gray-500">
+        No issues match “{{ issueFilter.trim() }}”.
+      </p>
 
       <template v-else>
         <!-- Group by issue type -->
@@ -117,6 +130,7 @@ import { listDirectories } from '@/api/directories'
 import { checkIntegrity, listIntegrityChecks, removeBrokenReferences } from '@/api/browse'
 import DnPicker from '@/components/DnPicker.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import { downloadBlob } from '@/composables/useApi'
 import type { components } from '@/api/openapi'
 
 type Directory = components['schemas']['DirectorySummaryResponse']
@@ -220,9 +234,19 @@ const form = ref<CheckForm>({
   checks: ['BROKEN_MEMBER', 'ORPHANED_ENTRY', 'EMPTY_GROUP'],
 })
 
+/** Case-insensitive substring of an issue's DN or description; blank shows every issue. */
+const issueFilter = ref('')
+
+const filteredIssues = computed<IntegrityIssue[]>(() => {
+  const q = issueFilter.value.trim().toLowerCase()
+  if (!q) return report.value.issues
+  return report.value.issues.filter(i =>
+    i.dn.toLowerCase().includes(q) || (i.description ?? '').toLowerCase().includes(q))
+})
+
 const groupedIssues = computed<IssueGroup[]>(() => {
   const groups = new Map<string, IssueGroup>()
-  for (const issue of report.value.issues) {
+  for (const issue of filteredIssues.value) {
     if (!groups.has(issue.type)) {
       groups.set(issue.type, { type: issue.type, issues: [] })
     }
@@ -259,7 +283,8 @@ function issueKey(issue: IntegrityIssue): string {
   return `${issue.dn}\u0000${issue.attribute}\u0000${issue.value}`
 }
 
-const removableIssues = computed<IntegrityIssue[]>(() => report.value.issues.filter(isRemovable))
+// Only the references the filter shows can be selected and removed, so nothing hidden is removed.
+const removableIssues = computed<IntegrityIssue[]>(() => filteredIssues.value.filter(isRemovable))
 const selectedCount = computed<number>(() => removableIssues.value.filter(i => selected.value.has(issueKey(i))).length)
 const allSelected = computed<boolean>(() =>
   removableIssues.value.length > 0 && selectedCount.value === removableIssues.value.length)
@@ -340,6 +365,7 @@ async function runCheck() {
     report.value = data
     checkedDirectoryId.value = form.value.directoryId
     selected.value = new Set()
+    issueFilter.value = ''
     hasRun.value = true
     // Auto-expand all groups that have issues
     expandedGroups.value = new Set(groupedIssues.value.map(g => g.type))
@@ -351,7 +377,25 @@ async function runCheck() {
 }
 
 function goToBrowser(dn: string) {
-  router.push({ path: '/superadmin/browser', query: { dn } })
+  router.push({ path: '/superadmin/directory-browser', query: { dir: checkedDirectoryId.value, dn } })
+}
+
+/** A CSV field, quoted, with a leading formula character neutralised. */
+function csvField(value: string | null | undefined): string {
+  let v = value ?? ''
+  if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`
+  return `"${v.replace(/"/g, '""')}"`
+}
+
+/** The issues the filter shows, as CSV: one row each, with the reference for a broken member. */
+function exportCsv() {
+  const lines = ['type,dn,description,attribute,value']
+  for (const i of filteredIssues.value) {
+    lines.push([typeLabel(i.type), i.dn, i.description, i.attribute, i.value].map(csvField).join(','))
+  }
+  const name = directories.value.find(d => d.id === checkedDirectoryId.value)?.slug ?? 'directory'
+  downloadBlob(new Blob([lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' }),
+    `integrity-check-${name}.csv`)
 }
 
 // Each directory offers its own checks. A newly offered check starts ticked;
@@ -374,6 +418,9 @@ async function loadOfferedChecks(directoryId: string): Promise<void> {
 }
 
 watch(() => form.value.directoryId, (id) => { void loadOfferedChecks(id) })
+
+// A changed filter starts the selection afresh, so a reference can't stay selected out of sight.
+watch(issueFilter, () => { selected.value = new Set() })
 
 onMounted(async () => {
   loadingDirs.value = true

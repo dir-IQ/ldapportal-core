@@ -33,10 +33,6 @@ vi.mock('@/api/reports', () => ({
   runOperationalReportPdf: vi.fn().mockResolvedValue({ data: new Blob() }),
 }))
 vi.mock('@/api/directories', () => ({ listDirectories: vi.fn().mockResolvedValue({ data: [] }) }))
-vi.mock('@/api/browse', () => ({
-  checkIntegrity: vi.fn().mockResolvedValue({ data: {} }),
-  listIntegrityChecks: vi.fn().mockResolvedValue({ data: [] }),
-}))
 vi.mock('@/api/audit', () => ({ getAuditActions: vi.fn().mockResolvedValue({ data: [] }) }))
 
 vi.mock('@/stores/auth', () => ({
@@ -250,6 +246,15 @@ describe('ReportJobsView — scheduled-jobs gating', () => {
 
     expect(wrapper.findComponent(DnPicker).props('authorizedRoots'))
       .toEqual(['ou=people,dc=example,dc=com', 'ou=staff,dc=example,dc=com'])
+  })
+
+  it('offers no Integrity Check report: the Referential Integrity Check page has it', async () => {
+    hoisted.isSuperadmin = true
+    const wrapper = mountView()
+    await flushPromises()
+    const types = wrapper.find('#rj-report-type').findAll('option').map(o => o.attributes('value'))
+    expect(types).not.toContain('INTEGRITY_CHECK')
+    expect(types).toContain('MISSING_DATA')
   })
 
   it('lets a superadmin browse the whole tree for the branch picker', async () => {
@@ -530,35 +535,4 @@ describe('ReportJobsView — result cells', () => {
     for (const c of cells) expect(c.classes()).not.toContain('max-w-xs')
   })
 
-  it('offers the checks the directory lists, including an addon reference check, and runs them', async () => {
-    hoisted.isSuperadmin = true
-    const browse = await import('@/api/browse')
-    ;(browse.listIntegrityChecks as unknown as Mock).mockResolvedValueOnce({
-      data: [
-        { type: 'BROKEN_MEMBER', attributes: ['member', 'uniqueMember'] },
-        { type: 'ORPHANED_ENTRY', attributes: [] },
-        { type: 'EMPTY_GROUP', attributes: [] },
-        { type: 'BROKEN_REFERENCE', attributes: ['secDN'] },
-      ],
-    })
-    const wrapper = mountView()
-    await flushPromises()
-    expect(browse.listIntegrityChecks).toHaveBeenCalledWith('dir-1')
-
-    await wrapper.find('#rj-report-type').setValue('INTEGRITY_CHECK')
-    const secDn = wrapper.findAll('label').find(l => l.text() === 'Broken References (secDN)')!
-    expect(secDn.find('input').element.checked).toBe(true)
-
-    await wrapper.findAll('button').find(b => b.text() === 'Run Report')!.trigger('click')
-    await flushPromises()
-    expect(browse.checkIntegrity).toHaveBeenCalledWith('dir-1', '',
-      ['BROKEN_MEMBER', 'ORPHANED_ENTRY', 'EMPTY_GROUP', 'BROKEN_REFERENCE'])
-  })
-
-  it('does not ask an admin\'s directory for integrity checks', async () => {
-    const browse = await import('@/api/browse')
-    mountView()
-    await flushPromises()
-    expect(browse.listIntegrityChecks).not.toHaveBeenCalled()
-  })
 })
