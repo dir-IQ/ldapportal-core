@@ -29,7 +29,7 @@
         </div>
       </div>
 
-      <button @click="runCheck" :disabled="!form.directoryId || !form.checks.length || running" class="btn-primary">
+      <button @click="runCheck()" :disabled="!form.directoryId || !form.checks.length || running" class="btn-primary">
         {{ running ? 'Running\u2026' : 'Run Check' }}
       </button>
     </div>
@@ -106,8 +106,9 @@
                            :aria-label="`Select ${issue.value} in ${issue.dn}`"
                            :checked="selected.has(issueKey(issue))" @change="toggle(issue)" />
                   </td>
-                  <td class="py-2 px-5 font-mono text-[13px] text-blue-600 break-all cursor-pointer" @click="goToBrowser(issue.dn)">
-                    {{ issue.dn }}
+                  <td class="py-2 px-5 font-mono text-[13px] break-all">
+                    <RouterLink :to="browserLink(issue.dn)" class="text-blue-600 hover:underline"
+                                :title="`Open ${issue.dn} in the Directory Browser`">{{ issue.dn }}</RouterLink>
                   </td>
                   <td class="py-2 px-5 text-xs text-gray-600 break-all">{{ issue.description }}</td>
                 </tr>
@@ -122,7 +123,6 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useNotificationStore } from '@/stores/notifications'
 import { useAuthStore } from '@/stores/auth'
 import { useConfirm } from '@/composables/useConfirm'
@@ -180,7 +180,6 @@ function errMsg(e: unknown, fallback = 'Something went wrong'): string {
   return err.response?.data?.detail || err.message || fallback
 }
 
-const router = useRouter()
 const notif  = useNotificationStore()
 const auth   = useAuthStore()
 const confirm = useConfirm()
@@ -324,7 +323,7 @@ async function confirmRemove() {
       refs.map(i => ({ groupDn: i.dn, attribute: i.attribute, value: i.value })))
     reportRemoval(data as RemoveResult)
     selected.value = new Set()
-    await runCheck()
+    await runCheck({ keepFilter: true })
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
@@ -356,7 +355,11 @@ function toggleGroup(type: string) {
   expandedGroups.value = s
 }
 
-async function runCheck() {
+/**
+ * Run the checks. A fresh run clears the filter; the run that follows a
+ * removal keeps it, so working through a filtered subset doesn't lose its place.
+ */
+async function runCheck(opts: { keepFilter?: boolean } = {}) {
   if (!form.value.directoryId || !form.value.checks.length) return
   running.value = true
   hasRun.value = false
@@ -365,7 +368,7 @@ async function runCheck() {
     report.value = data
     checkedDirectoryId.value = form.value.directoryId
     selected.value = new Set()
-    issueFilter.value = ''
+    if (!opts.keepFilter) issueFilter.value = ''
     hasRun.value = true
     // Auto-expand all groups that have issues
     expandedGroups.value = new Set(groupedIssues.value.map(g => g.type))
@@ -376,8 +379,9 @@ async function runCheck() {
   }
 }
 
-function goToBrowser(dn: string) {
-  router.push({ path: '/superadmin/directory-browser', query: { dir: checkedDirectoryId.value, dn } })
+/** The entry in the Directory Browser, on the directory that was checked. */
+function browserLink(dn: string) {
+  return { path: '/superadmin/directory-browser', query: { dir: checkedDirectoryId.value, dn } }
 }
 
 /** A CSV field, quoted, with a leading formula character neutralised. */

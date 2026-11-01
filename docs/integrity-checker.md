@@ -42,13 +42,14 @@ Issues are grouped by check, each group collapsible, with a count.
 
 - **Filter.** The box above the results narrows every group to the issues
   whose DN or description contains the text, ignoring case. The count shows
-  how many are shown out of how many were found.
+  how many are shown out of how many were found. The filter stays in place
+  through the check that runs again after a removal; **Run Check** clears it.
 - **Export CSV.** This downloads the issues the filter shows as
   `type,dn,description,attribute,value`. `attribute` and `value` hold the
   broken reference for a broken member or `secDN` issue. Fields are quoted,
   and a field starting with a formula character is prefixed with `'`.
-- **Open an entry.** Select a DN to open the entry in the Directory Browser,
-  in the directory that was checked.
+- **Open an entry.** Each DN is a link to the entry in the Directory
+  Browser, in the directory that was checked.
 
 ## Removing broken member references
 
