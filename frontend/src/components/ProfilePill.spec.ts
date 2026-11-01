@@ -11,10 +11,13 @@ describe('ProfilePill', () => {
     const dot = w.find('span[aria-hidden="true"]')
     expect(dot.exists()).toBe(true)
     expect(dot.attributes('style')).toContain('#b91c1c')
-    // Rendered as a taller, less-rounded chip (the soft theme tint is applied
-    // via inline color-mix styles, which jsdom doesn't parse, so we assert the
-    // chrome rather than the computed fill).
+    // A less-rounded chip carrying the profile tint: the .profile-tint class
+    // applies the light or dark set of these colours for the current theme.
     expect(w.classes()).toContain('rounded-md')
+    expect(w.classes()).toContain('profile-tint')
+    const style = w.attributes('style') ?? ''
+    expect(style).toContain('--profile-tint-text:')
+    expect(style).toContain('--profile-tint-text-dark:')
   })
 
   it('renders a neutral chip with no dot when no colour is set', () => {
@@ -23,6 +26,7 @@ describe('ProfilePill', () => {
     // Same chip shape, neutral grey, and no theme dot.
     expect(w.classes()).toContain('rounded-md')
     expect(w.classes()).toContain('border-gray-300')
+    expect(w.classes()).not.toContain('profile-tint')
     expect(w.find('span[aria-hidden="true"]').exists()).toBe(false)
   })
 })

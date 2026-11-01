@@ -22,6 +22,7 @@ import FormLayoutDesigner from '@/components/FormLayoutDesigner.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import DataTable from '@/components/DataTable.vue'
 import IsvaProfileOverrideControl from '@/components/profiles/IsvaProfileOverrideControl.vue'
+import ThemeColorPreview from '@/components/profiles/ThemeColorPreview.vue'
 import { setIsvaProfileOverride } from '@/api/isvaConfig'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -198,6 +199,7 @@ const ocSchemaCache = ref<Record<string, { required: string[]; optional: string[
 
 // Profile form
 const profile = ref<ProfileForm>(emptyProfile())
+
 
 
 // Group change preview dialog
@@ -1595,10 +1597,11 @@ function toggleApprover(accountId: string) {
                 @click="profile.themeColor = ''">Clear</button>
             </div>
             <p class="mt-1 text-xs text-gray-500">
-              Optional. When set, the user and group list headers (and the new/edit
-              user and group modals) show a band of this colour instead of the
-              profile name in blue. Leave blank for no theme.
+              Optional. When set, the profile's tag (on the user and group pages, their
+              new/edit dialogs and the bulk pages) is tinted with this colour, and its
+              name is shaded as needed to stay readable. Leave blank for a neutral tag.
             </p>
+            <ThemeColorPreview class="mt-2" :color="profile.themeColor" :name="profile.name" />
           </div>
           <div v-if="!editing">
             <label for="sp-directory" class="block text-sm font-medium text-gray-700 mb-1">Directory</label>
