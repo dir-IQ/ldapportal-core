@@ -1,8 +1,9 @@
 # Referential Integrity Checker
 
-**Status:** Shipped (broken-member, orphaned-entry and empty-group checks; removal of broken member references; IVIA `secDN` reference check; 2026-10-28).
+**Status:** Shipped (broken-member, orphaned-entry and empty-group checks; removal of broken member references; IVIA `secDN` reference check; filter and CSV export, replacing the Reports page's Integrity Check; 2026-11-01).
 
-The superadmin **Referential Integrity Checker** scans a directory for
+The superadmin **Referential Integrity Checker** (sidebar: **Report →
+Referential Integrity Check**, `/superadmin/integrity`) scans a directory for
 references that point nowhere and entries that have lost their place, and can
 remove the broken group member references it finds.
 
@@ -19,6 +20,10 @@ directory), and the checks to run:
 | **Broken references (secDN)** | *Offered only on a directory with an active linked-mode IVIA configuration.* An IVIA account (a `secUser` under the configured user container in the management DIT) whose `secDN` names no entry, or that has no `secDN` at all. The same scan as the **Orphaned IVIA accounts** report. With a base DN, only accounts whose `secDN` (or the account itself) is under it are listed; accounts with no `secDN` are then left out. These aren't removed from here: fix the account's `secDN`, or remove the orphaned account, on the directory. |
 
 Any superadmin can run a check; each run is audited as `integrity.check`.
+This page is the one place to run these checks. The Operational Reports page
+used to offer them too, as an **Integrity Check** report type; that report type
+is gone, and what it had that this page lacked (a quick filter and a CSV
+export) is now here.
 The checks a directory offers come from
 `GET /api/v1/superadmin/directories/{id}/browse/integrity-check/checks`
 (`[{"type","attributes"}]`); `BROKEN_REFERENCE` is listed only where an addon
@@ -31,11 +36,28 @@ member that lives elsewhere in the directory is reported as broken. Removing
 references re-checks each one (below), so such a member is kept — but leave
 the base blank when you mean to clean up.
 
+## Working with the results
+
+Issues are grouped by check, each group collapsible, with a count.
+
+- **Filter.** The box above the results narrows every group to the issues
+  whose DN or description contains the text, ignoring case. The count shows
+  how many are shown out of how many were found. The filter stays in place
+  through the check that runs again after a removal; **Run Check** clears it.
+- **Export CSV.** This downloads the issues the filter shows as
+  `type,dn,description,attribute,value`. `attribute` and `value` hold the
+  broken reference for a broken member or `secDN` issue. Fields are quoted,
+  and a field starting with a formula character is prefixed with `'`.
+- **Open an entry.** Each DN is a link to the entry in the Directory
+  Browser, in the directory that was checked.
+
 ## Removing broken member references
 
 With *manage directory data*, the **Broken Member References** section has a
 checkbox per reference and **Remove broken references**. Tick the references
-to remove (or all of them) and confirm. For each one the server:
+to remove (or all of them) and confirm. While a filter is set, only the
+references it shows can be ticked, and changing the filter clears the ticks,
+so a reference out of sight is never removed. For each one the server:
 
 1. **Checks it again.** The report may be stale: if an entry now exists at the
    referenced DN (a user was re-created, or the member lives outside the base

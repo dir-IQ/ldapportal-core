@@ -173,15 +173,6 @@ export function actionBadgeClass(action) {
   return 'bg-gray-100 text-gray-600'
 }
 
-export function integrityTypeBadgeClass(type) {
-  switch (type) {
-    case 'BROKEN_MEMBER':  return 'bg-red-100 text-red-700'
-    case 'ORPHANED_ENTRY': return 'bg-amber-100 text-amber-700'
-    case 'EMPTY_GROUP':    return 'bg-blue-100 text-blue-700'
-    default:               return 'bg-gray-100 text-gray-600'
-  }
-}
-
 export function sourceBadgeClass(source) {
   switch (source) {
     case 'Internal':  return 'bg-blue-100 text-blue-700'
@@ -196,18 +187,6 @@ export function sourceBadgeClass(source) {
 export function humanizeEnum(val) {
   if (!val) return ''
   return val.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\b(\w)(\w*)/g, (m, first, rest) => first + rest.toLowerCase())
-}
-
-/**
- * Friendly label for integrity issue types.
- */
-export function friendlyIntegrityType(type) {
-  switch (type) {
-    case 'BROKEN_MEMBER':  return 'Broken Member'
-    case 'ORPHANED_ENTRY': return 'Orphaned Entry'
-    case 'EMPTY_GROUP':    return 'Empty Group'
-    default:               return type
-  }
 }
 
 /**
