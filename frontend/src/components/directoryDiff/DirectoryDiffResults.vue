@@ -13,11 +13,11 @@
           </div>
         </div>
         <div class="flex gap-2">
-          <button type="button" class="btn-secondary btn-sm" :disabled="exporting" @click="exportCsv(category)">
+          <button type="button" class="btn-secondary btn-compact" :disabled="exporting" @click="exportCsv(category)">
             Export {{ CATEGORY_LABELS[category] }} (CSV)
           </button>
-          <button type="button" class="btn-secondary btn-sm" :disabled="exporting" @click="exportCsv()">Export all (CSV)</button>
-          <button type="button" class="btn-primary btn-sm" @click="emit('runAgain')">Run again</button>
+          <button type="button" class="btn-secondary btn-compact" :disabled="exporting" @click="exportCsv()">Export all (CSV)</button>
+          <button type="button" class="btn-primary btn-compact" @click="emit('runAgain')">Run again</button>
         </div>
       </div>
     </div>
@@ -40,13 +40,13 @@
       <span class="text-xs text-gray-500 mr-1">Attributes that differ:</span>
       <button
         v-for="f in run.attributeCounts" :key="f.name" type="button"
-        :class="['btn-sm', attribute === f.name ? 'btn-tab-active' : 'btn-tab']"
+        :class="['btn-compact', attribute === f.name ? 'btn-tab-active' : 'btn-tab']"
         :aria-pressed="attribute === f.name"
         @click="toggleAttribute(f.name)"
       >
         <span class="font-mono">{{ f.name }}</span> <span class="tabular-nums ml-1">{{ n(f.count) }}</span>
       </button>
-      <button v-if="attribute" type="button" class="btn-neutral btn-sm" @click="toggleAttribute(null)">Show all</button>
+      <button v-if="attribute" type="button" class="btn-neutral btn-compact" @click="toggleAttribute(null)">Show all</button>
     </div>
 
     <div class="bg-white border border-gray-200 rounded-xl">
@@ -83,7 +83,7 @@
               <span v-else class="cell-muted">{{ r.note || '—' }}</span>
             </td>
             <td class="py-2 px-3 text-right whitespace-nowrap">
-              <button type="button" class="btn-secondary btn-sm" @click="openAt(i)">
+              <button type="button" class="btn-secondary btn-compact" @click="openAt(i)">
                 {{ r.dnA && r.dnB ? 'Compare' : 'Details' }}
               </button>
             </td>
@@ -92,9 +92,9 @@
       </table>
 
       <div v-if="totalPages > 1" class="flex items-center justify-between p-3 border-t border-gray-200 text-sm">
-        <button type="button" class="btn-secondary btn-sm" :disabled="page === 0 || loading" @click="goTo(page - 1)">‹ Previous</button>
+        <button type="button" class="btn-secondary btn-compact" :disabled="page === 0 || loading" @click="goTo(page - 1)">‹ Previous</button>
         <span class="text-gray-600">Page {{ page + 1 }} of {{ n(totalPages) }}</span>
-        <button type="button" class="btn-secondary btn-sm" :disabled="page >= totalPages - 1 || loading" @click="goTo(page + 1)">Next ›</button>
+        <button type="button" class="btn-secondary btn-compact" :disabled="page >= totalPages - 1 || loading" @click="goTo(page + 1)">Next ›</button>
       </div>
     </div>
 

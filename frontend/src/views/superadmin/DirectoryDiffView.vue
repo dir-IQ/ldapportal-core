@@ -20,7 +20,7 @@
       <p v-if="loading && !run" class="text-sm text-gray-500">Loading…</p>
       <div v-else-if="loadError" class="bg-white border border-gray-200 rounded-xl p-5 text-sm">
         <p class="text-red-600 mb-3">{{ loadError }}</p>
-        <RouterLink to="/superadmin/directory-diff" class="btn-secondary btn-sm">Back to Directory diff</RouterLink>
+        <RouterLink to="/superadmin/directory-diff" class="btn-secondary btn-compact">Back to Directory diff</RouterLink>
       </div>
       <template v-else-if="run">
         <DirectoryDiffProgress v-if="run.status === 'RUNNING'" :run="run" :cancelling="cancelling || cancelRequested" @cancel="cancel" />
@@ -31,8 +31,8 @@
           </p>
           <p v-if="run.error" class="text-gray-600 mb-4">{{ run.error }}</p>
           <div class="flex gap-2">
-            <button type="button" class="btn-primary btn-sm" @click="runAgain">Run again</button>
-            <RouterLink to="/superadmin/directory-diff" class="btn-secondary btn-sm">Back to Directory diff</RouterLink>
+            <button type="button" class="btn-primary btn-compact" @click="runAgain">Run again</button>
+            <RouterLink to="/superadmin/directory-diff" class="btn-secondary btn-compact">Back to Directory diff</RouterLink>
           </div>
         </div>
       </template>
