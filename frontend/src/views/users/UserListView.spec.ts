@@ -461,6 +461,47 @@ describe('UserListView edit resolves the profile that owns the entry', () => {
       .toMatchObject({ baseDn: 'ou=contractors,dc=x' })
   })
 
+  describe('New User', () => {
+    const CONTRACTORS = { ...PROFILE, id: 'p2', name: 'Contractors', targetUserDn: 'ou=contractors,dc=x' }
+
+    async function mountWithTwoProfiles(sidebarPick: string | null) {
+      state.features = ALL
+      vi.mocked(listProfiles).mockResolvedValue({ data: [PROFILE, CONTRACTORS] } as never)
+      vi.mocked(getProfile).mockImplementation(async (_d, id) =>
+        ({ data: id === 'p2' ? CONTRACTORS : PROFILE }) as Awaited<ReturnType<typeof getProfile>>)
+      const { useProfilePickerStore } = await import('@/stores/profilePicker')
+      if (sidebarPick) useProfilePickerStore().setSelectedId(sidebarPick)
+      const wrapper = mount(UserListView, { global: { stubs: editStubs } })
+      await flushPromises()
+      return wrapper
+    }
+
+    it('creates through the selected profile without asking', async () => {
+      const wrapper = await mountWithTwoProfiles('p2')
+      await wrapper.findAll('button').find(b => b.text() === '+ New User')!.trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).not.toContain('Select a provisioning profile')
+      expect(getProfile).toHaveBeenCalledWith('d1', 'p2')
+      expect(wrapper.findComponent({ name: 'UserForm' }).props('userTemplateConfig')).toMatchObject({ id: 'p2' })
+    })
+
+    it('asks under "All", and the profile picked for the new user doesn\'t narrow the list', async () => {
+      const wrapper = await mountWithTwoProfiles(null)
+      expect((wrapper.find('#ul-profile').element as HTMLSelectElement).value).toBe('')
+      await wrapper.findAll('button').find(b => b.text() === '+ New User')!.trigger('click')
+      await flushPromises()
+      expect(wrapper.text()).toContain('Select a provisioning profile')
+
+      await wrapper.findAll('button').find(b => b.text().startsWith('Contractors'))!.trigger('click')
+      await flushPromises()
+      expect(wrapper.findComponent({ name: 'UserForm' }).props('userTemplateConfig')).toMatchObject({ id: 'p2' })
+      // The page itself still lists "All": its header names no profile (the
+      // create dialog's own header isn't rendered by the AppModal stub).
+      const { default: ProfilePill } = await import('@/components/ProfilePill.vue')
+      expect(wrapper.findAllComponents(ProfilePill)).toHaveLength(0)
+    })
+  })
+
   it('still resolves when the entry returns no objectClass at all', async () => {
     // getUser failing falls the caller back to search-result attributes, which
     // carry only the display columns — no objectClass to match on.
