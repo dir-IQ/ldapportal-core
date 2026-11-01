@@ -127,11 +127,17 @@ from the set:
 | Side B | The link's target directory, the set's target base DN (or the source base, when the set keeps DNs), the same scope |
 | Side B filter | `(<anchor>=*)` when the set writes a source anchor, so entries the sync doesn't manage stay out of Only in B |
 | Pairing | By DN, with the source base swapped for the target base, as the set places entries |
-| Ignore | The set's excluded attributes (or the engine defaults), every attribute its transform rules rename or rewrite, and the source anchor |
+| Ignore | The set's excluded attributes (or the engine defaults), every attribute its transform rules rename or rewrite, the source anchor, and the set's own identity key (sync never copies it; the anchor carries the identity instead) |
 
 Notes under the picker explain each of these choices. You can still change
-anything before you select **Compare**. The picker shows only for superadmins
-who may view Directory Sync. A set with base scope can't be verified this way.
+anything before you select **Compare**. Once you edit either side by hand, the
+picker resets and its notes go, because they no longer describe the form.
+
+The picker shows only for superadmins who may view Directory Sync. Some sets
+are listed but can't be picked, with the reason shown:
+- a set with base scope;
+- a set whose source or target directory is Entra ID or disabled. The diff
+  reads only enabled LDAP directories.
 
 The diff never reads the sync's own records. It reads both directories, so a
 sync bug can't hide from it.
@@ -139,6 +145,13 @@ sync bug can't hide from it.
 ### Differences to expect
 
 Some differences are intended, and the shortcut can't remove all of them:
+
+- **Deletes held for review.** With the default delete policy (REVIEW), an
+  entry that left the set stays on the target until someone approves its
+  delete. It still carries the anchor, so it shows under Only in B.
+- **Other sets' entries.** If another sync set places entries under the same
+  target base and stamps the same anchor attribute, those entries pass side
+  B's filter too and show under Only in B.
 
 - **Translated references.** `member` values that sync rewrites to other target
   DNs show as different, because the diff only swaps the base DN.

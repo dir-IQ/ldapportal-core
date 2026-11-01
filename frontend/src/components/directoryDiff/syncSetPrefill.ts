@@ -20,10 +20,29 @@ export interface SyncSetPrefill {
   notes: string[]
 }
 
-/** Why a set can't be verified this way, or null when it can. */
-export function unsupportedReason(set: SyncSet): string | null {
+/** What the form knows about a directory: enough to tell whether the diff can read it. */
+export interface DirectoryInfo {
+  displayName?: string
+  directoryType?: string
+  enabled?: boolean
+}
+
+/**
+ * Why a set can't be verified this way, or null when it can. The diff reads
+ * only enabled LDAP directories, and compares a subtree or one level.
+ *
+ * @param directory looks up a directory by id; undefined when it isn't known
+ */
+export function unsupportedReason(set: SyncSet, link: SyncLink,
+                                  directory: (id: string) => DirectoryInfo | undefined): string | null {
   if (!set.objectScopeBaseDn) return 'it has no source base DN'
   if (set.objectScope === 'BASE') return 'it syncs a single entry (base scope)'
+  for (const [side, id] of [['source', link.sourceDirId], ['target', link.targetDirId]] as const) {
+    const d = directory(id)
+    if (!d) return `its ${side} directory isn’t available`
+    if (d.directoryType === 'ENTRA_ID') return `its ${side} directory${d.displayName ? ` (${d.displayName})` : ''} is Entra ID`
+    if (d.enabled === false) return `its ${side} directory${d.displayName ? ` (${d.displayName})` : ''} is disabled`
+  }
   return null
 }
 
@@ -40,6 +59,10 @@ export function prefillFromSyncSet(set: SyncSet, link: SyncLink, defaultExcluded
   const sourceBase = set.objectScopeBaseDn ?? ''
   const targetBase = set.targetBaseDn || sourceBase
   const anchor = set.sourceAnchorAttribute?.trim() || null
+  // Sync never copies the identity attribute: the anchor carries the identity
+  // instead. The defaults (entryUUID, objectGUID) are operational and left out
+  // anyway; a set's own identity key would otherwise differ on every entry.
+  const identityKey = set.identityKey?.trim() || null
   const notes: string[] = []
 
   const excluded = set.excludedAttributes ?? defaultExcluded
@@ -48,11 +71,13 @@ export function prefillFromSyncSet(set: SyncSet, link: SyncLink, defaultExcluded
     if (rule.sourceAttr) rewritten.push(rule.sourceAttr)
     if (rule.targetAttr) rewritten.push(rule.targetAttr)
   }
-  const ignore = unique([...excluded, ...rewritten, ...(anchor ? [anchor] : [])])
+  const ignore = unique([...excluded, ...rewritten, ...(anchor ? [anchor] : []),
+    ...(identityKey ? [identityKey] : [])])
 
   if (set.applicabilityFilter) notes.push('Side A: only entries matching the set’s applicability filter.')
   if (anchor) {
-    notes.push(`Side B: only entries the sync stamped with ${anchor}, so entries it doesn’t manage stay out of Only in B.`)
+    notes.push(`Side B: only entries the sync stamped with ${anchor}, so entries it doesn’t manage stay out of Only in B. `
+      + `Entries another set stamps with ${anchor} under the same target base are still included.`)
   } else {
     notes.push('Side B: every entry under the target base. The set writes no source anchor, so entries the sync doesn’t manage show under Only in B.')
   }
@@ -61,6 +86,12 @@ export function prefillFromSyncSet(set: SyncSet, link: SyncLink, defaultExcluded
     : 'Paired by DN, with the source base swapped for the target base, as the set places entries.')
   if (excluded.length) {
     notes.push(`Ignoring ${excluded.length} attribute${excluded.length === 1 ? '' : 's'} the set doesn’t copy.`)
+  }
+  if (identityKey) {
+    notes.push(`Ignoring ${identityKey}: the set’s identity key, which sync never copies (${anchor ?? 'the anchor'} carries the identity instead).`)
+  }
+  if (set.deletePolicy === 'REVIEW') {
+    notes.push('Entries that left the set but whose delete is held for review are still on the target, so they show under Only in B.')
   }
   if (rewritten.length) {
     notes.push(`Ignoring ${unique(rewritten).join(', ')}: the set renames or rewrites them, so they’d always differ.`)
