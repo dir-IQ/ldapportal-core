@@ -48,6 +48,7 @@ vi.mock('@/api/profiles', () => ({ listProfiles: vi.fn().mockResolvedValue({ dat
 beforeEach(() => setActivePinia(createPinia()))
 
 import GroupListView from './GroupListView.vue'
+import { listProfiles } from '@/api/profiles'
 import { createGroup, updateGroup, addGroupMembersBulk, removeGroupMembersBulk, searchGroups } from '@/api/groups'
 import { getIsvaGroupRegistrations, importIsvaGroup, removeIsvaGroup } from '@/api/isvaGroup'
 
@@ -479,5 +480,47 @@ describe('GroupListView import into IVIA', () => {
 
     expect(removeIsvaGroup).not.toHaveBeenCalled()
     expect(row(wrapper, STAFF).find('[data-action="Remove from IVIA"]').exists()).toBe(true)
+  })
+})
+
+describe('GroupListView New Group', () => {
+  const EMPLOYEES = { id: 'p1', name: 'Employees', enabled: true, targetUserDn: 'ou=people,dc=x', targetGroupDn: 'ou=groups,dc=x' }
+  const CONTRACTORS = { id: 'p2', name: 'Contractors', enabled: true, targetUserDn: 'ou=contractors,dc=x', targetGroupDn: 'ou=cgroups,dc=x' }
+  const modalStubs = {
+    ...stubs,
+    AppModal: { props: ['modelValue'], template: '<div v-if="modelValue"><slot /></div>' },
+    FormField: {
+      props: ['modelValue', 'label'],
+      emits: ['update:modelValue'],
+      template: `<label :data-label="label"><input :value="modelValue"
+                   @input="$emit('update:modelValue', $event.target.value)" /></label>`,
+    },
+  }
+
+  beforeEach(() => vi.clearAllMocks())
+
+  async function mountWithTwoProfiles(sidebarPick: string | null) {
+    state.features = ['group.read', 'group.create_delete']
+    vi.mocked(listProfiles).mockResolvedValue({ data: [EMPLOYEES, CONTRACTORS] } as never)
+    const { useProfilePickerStore } = await import('@/stores/profilePicker')
+    if (sidebarPick) useProfilePickerStore().setSelectedId(sidebarPick)
+    const wrapper = mount(GroupListView, { global: { stubs: modalStubs } })
+    await flushPromises()
+    await wrapper.findAll('button').find(b => b.text() === '+ New Group')!.trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  it('creates under the selected profile without asking', async () => {
+    const wrapper = await mountWithTwoProfiles('p2')
+    expect(wrapper.text()).not.toContain('Select a provisioning profile')
+    await wrapper.find('label[data-label="Group Name (cn) (RDN)"] input').setValue('eng')
+    expect((wrapper.find('label[data-label="DN"] input').element as HTMLInputElement).value)
+      .toBe('cn=eng,ou=cgroups,dc=x')
+  })
+
+  it('asks which profile under "All"', async () => {
+    const wrapper = await mountWithTwoProfiles(null)
+    expect(wrapper.text()).toContain('Select a provisioning profile')
   })
 })

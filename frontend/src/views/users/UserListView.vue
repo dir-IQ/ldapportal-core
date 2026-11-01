@@ -1075,10 +1075,19 @@ async function doExportUsers() {
   }
 }
 
+/**
+ * New User. With a profile selected (the sidebar picker, or this page's
+ * Profile dropdown), create through it; the dialog's header names it. Only
+ * under "All", which lists several profiles' users at once, is there no
+ * single profile to use, so the operator picks one.
+ */
 async function openCreate() {
   editingDn.value = null
   profileConfig.value = null
-  if (allProfiles.value.length === 1) {
+  const selected = allProfiles.value.find(p => p.id === selectedProfileId.value)
+  if (selected) {
+    await selectProfileAndCreate(selected)
+  } else if (allProfiles.value.length === 1) {
     await selectProfileAndCreate(allProfiles.value[0])
   } else if (allProfiles.value.length > 1) {
     showTemplatePicker.value = true
@@ -1092,7 +1101,9 @@ async function selectProfileAndCreate(p: ProfileLite) {
   showTemplatePicker.value = false
   try {
     const { data } = await getProfile(dirId, p.id)
-    profileData.value = data
+    // Refresh the page's profile only when it's the one the list shows: under
+    // "All", the profile picked for the new user mustn't narrow the list.
+    if (p.id === selectedProfileId.value) profileData.value = data
     profileConfig.value = data
   } catch (e) {
     const err = e as { message?: string }

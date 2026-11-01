@@ -702,13 +702,18 @@ async function doCreate() {
 }
 
 function openCreate() {
-  // Mirror UserListView's two-step flow: when multiple enabled profiles
-  // exist, force an explicit pick so the operator sees which group
-  // container the group will be created under. Single profile auto-picks;
-  // no profile falls back to the bare form using the directory base.
+  // Mirror UserListView: with a profile selected (the sidebar picker, or this
+  // page's Profile dropdown), create through it; the dialog shows which. Under
+  // "All" with several enabled profiles there's no single one, so ask, so the
+  // operator sees which group container the group will be created under. A
+  // single profile auto-picks; no profile falls back to the bare form using
+  // the directory base.
   createProfile.value = null
   createOwnerError.value = null
-  if (allProfiles.value.length === 1) {
+  const selected = allProfiles.value.find(p => p.id === selectedProfileId.value)
+  if (selected) {
+    selectProfileAndCreate(selected)
+  } else if (allProfiles.value.length === 1) {
     selectProfileAndCreate(allProfiles.value[0])
   } else if (allProfiles.value.length > 1) {
     showTemplatePicker.value = true
