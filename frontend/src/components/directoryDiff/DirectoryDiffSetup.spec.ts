@@ -54,10 +54,12 @@ beforeEach(() => {
   auth.granted.clear()
   sync.listSyncLinks.mockResolvedValue({ data: [
     { id: 'link-1', displayName: 'East → West', sourceDirId: 'dir-a', targetDirId: 'dir-b' },
+    { id: 'link-2', displayName: 'Entra → West', sourceDirId: 'dir-e', targetDirId: 'dir-b' },
   ] })
   sync.listSyncSets.mockResolvedValue({ data: [
     syncSet({ id: 'set-1', name: 'People' }),
     syncSet({ id: 'set-2', name: 'Admin', objectScope: 'BASE' }),
+    syncSet({ id: 'set-3', name: 'Cloud users', linkId: 'link-2' }),
   ] })
   sync.getSyncSetDefaults.mockResolvedValue({ data: { excludedAttributes: ['userPassword', 'entryUUID'] } })
   api.listDirectoryDiffs.mockResolvedValue({ data: [diffRun(), diffRun({ id: 'run-2', status: 'FAILED', error: 'Boom' })] })
@@ -203,5 +205,22 @@ describe('DirectoryDiffSetup', () => {
     expect((wrapper.find('#dd-sync-set').element as HTMLSelectElement).value).toBe('set-1')
     expect((wrapper.find('#dd-a-dir').element as HTMLSelectElement).value).toBe('dir-a')
     expect((wrapper.findAll('.dn-picker')[1].element as HTMLInputElement).value).toBe('ou=Users,dc=b')
+  })
+
+  it('lists a set on an Entra ID directory as unavailable', async () => {
+    auth.granted.add('superadmin.view_directory_sync')
+    const wrapper = await mountSetup()
+    const option = wrapper.find('#dd-sync-set').findAll('option').find(o => o.text().includes('Cloud users'))!
+    expect(option.text()).toContain('can’t verify: its source directory (Entra) is Entra ID')
+    expect(option.attributes('disabled')).toBeDefined()
+  })
+
+  it('lets go of the sync set once a side is edited by hand', async () => {
+    auth.granted.add('superadmin.view_directory_sync')
+    const wrapper = await mountSetup({ verifySetId: 'set-1' })
+    expect(wrapper.find('[data-testid="sync-set-notes"]').exists()).toBe(true)
+    await wrapper.find('#dd-b-filter').setValue('(objectClass=person)')
+    expect((wrapper.find('#dd-sync-set').element as HTMLSelectElement).value).toBe('')
+    expect(wrapper.find('[data-testid="sync-set-notes"]').exists()).toBe(false)
   })
 })

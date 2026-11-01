@@ -225,7 +225,10 @@ const auth = useAuthStore()
 
 const sides: { key: 'a' | 'b' }[] = [{ key: 'a' }, { key: 'b' }]
 
+/** The LDAP directories the diff can read: the ones the form offers. */
 const directories = ref<Directory[]>([])
+/** Every directory, so a sync set on one the diff can't read can say why. */
+const allDirectories = ref<Directory[]>([])
 const loadingDirs = ref(false)
 const recent = ref<DirectoryDiffRun[]>([])
 const loadingRecent = ref(false)
@@ -290,6 +293,14 @@ function applyPrefill(run: DirectoryDiffRun) {
 
 watch(() => props.prefill, run => { if (run) applyPrefill(run) }, { immediate: true })
 
+// Editing either side by hand leaves the sync set's settings: the picker and its notes no longer describe the form.
+watch(() => [form.a, form.b], () => {
+  if (!prefilling && syncSetId.value) {
+    syncSetId.value = ''
+    syncSetNotes.value = []
+  }
+}, { deep: true })
+
 // A base DN belongs to its directory: choosing another directory clears it.
 watch(() => form.a.directoryId, (now, before) => { if (before && now !== before && !prefilling) form.a.baseDn = '' })
 watch(() => form.b.directoryId, (now, before) => { if (before && now !== before && !prefilling) form.b.baseDn = '' })
@@ -306,6 +317,7 @@ async function loadDirectories() {
   loadingDirs.value = true
   try {
     const { data } = await listDirectories()
+    allDirectories.value = data
     directories.value = data.filter(d => d.directoryType !== 'ENTRA_ID' && d.enabled !== false)
   } catch (e) {
     notif.error(errMsg(e, 'Could not load directories'))
@@ -314,18 +326,21 @@ async function loadDirectories() {
   }
 }
 
-async function loadSyncSets() {
+/** Load the sync sets, once the directories are known (a set is offered only when the diff can read both of its). */
+async function loadSyncSets(directoriesLoaded: Promise<void>) {
   if (!canUseSyncSets.value) return
   loadingSyncSets.value = true
   try {
-    const [links, sets, defaults] = await Promise.all([listSyncLinks(), listSyncSets(), getSyncSetDefaults()])
+    const [links, sets, defaults] = await Promise.all([listSyncLinks(), listSyncSets(), getSyncSetDefaults(),
+      directoriesLoaded])
+    const directoryById = new Map(allDirectories.value.map(d => [d.id, d]))
     const byId = new Map(links.data.map(l => [l.id, l]))
     defaultExcluded.value = defaults.data.excludedAttributes
     syncSetOptions.value = sets.data
       .filter(s => byId.has(s.linkId))
       .map(s => {
         const link = byId.get(s.linkId)!
-        return { set: s, link, label: `${link.displayName} › ${s.name}`, unsupported: unsupportedReason(s) }
+        return { set: s, link, label: `${link.displayName} › ${s.name}`, unsupported: unsupportedReason(s, link, id => directoryById.get(id)) }
       })
       .sort((x, y) => x.label.localeCompare(y.label))
     if (props.verifySetId) applySyncSet(props.verifySetId)
@@ -403,8 +418,8 @@ function side(s: SideForm) {
 }
 
 onMounted(() => {
-  loadDirectories()
+  const directoriesLoaded = loadDirectories()
   loadRecent()
-  loadSyncSets()
+  loadSyncSets(directoriesLoaded)
 })
 </script>
