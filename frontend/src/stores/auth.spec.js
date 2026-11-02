@@ -29,7 +29,8 @@ vi.mock('@/api/preferences', () => ({
 }))
 
 import { useAuthStore } from './auth'
-import { login as apiLogin, me, websealAuthorize } from '@/api/auth'
+import { login as apiLogin, logout as apiLogout, me, websealAuthorize } from '@/api/auth'
+import { isSignedOut, markSignedOut, clearSignedOut } from '@/utils/signedOut'
 import { getSetupStatus } from '@/api/setup'
 import { getBranding } from '@/api/settings'
 
@@ -174,6 +175,45 @@ describe('useAuthStore', () => {
 
       expect(websealAuthorize).not.toHaveBeenCalled()
       expect(store.isLoggedIn).toBe(false)
+    })
+  })
+
+  describe('after an explicit logout (signed-out marker)', () => {
+    const unauthorized = () => Object.assign(new Error('401'), { response: { status: 401 } })
+    beforeEach(() => clearSignedOut())
+
+    it('marks the browser session as signed out once the server takes the logout', async () => {
+      apiLogout.mockResolvedValue({ data: { logoutUrl: '/pkmslogout' } })
+      const store = useAuthStore()
+      expect(await store.logout()).toBe('/pkmslogout')
+      expect(isSignedOut()).toBe(true)
+    })
+
+    it('does not mark a logout the server rejected', async () => {
+      apiLogout.mockRejectedValue(new Error('403'))
+      const store = useAuthStore()
+      await expect(store.logout()).rejects.toThrow()
+      expect(isSignedOut()).toBe(false)
+    })
+
+    it('does not sign back in from the WebSEAL header while signed out', async () => {
+      markSignedOut()
+      getBranding.mockResolvedValue({ data: { enabledAuthTypes: ['LOCAL', 'WEBSEAL'] } })
+      me.mockRejectedValue(unauthorized())
+
+      const store = useAuthStore()
+      await store.init()
+
+      expect(websealAuthorize).not.toHaveBeenCalled()
+      expect(store.isLoggedIn).toBe(false)
+    })
+
+    it('forgets the logout on a password sign-in', async () => {
+      markSignedOut()
+      apiLogin.mockResolvedValue({ data: { id: 'a1', username: 'alice', accountType: 'ADMIN' } })
+      me.mockResolvedValue({ data: { id: 'a1', username: 'alice', accountType: 'ADMIN' } })
+      await useAuthStore().login('alice', 'pw')
+      expect(isSignedOut()).toBe(false)
     })
   })
 

@@ -235,6 +235,14 @@ defineEmits(['update:modelValue'])
             after this app's own session token has expired: the request still arrives through
             the trusted junction, which is enough for logout to hand back the sign-off URL.
           </li>
+          <li>
+            Go back to the app. Instead of signing you straight back in, it says you've signed
+            out and offers <strong>Sign in again</strong>. That matters with certificate
+            sign-in: the browser keeps presenting the certificate after <code>/pkmslogout</code>,
+            so WebSEAL starts a new session without a prompt. The app waits until you choose
+            to sign in again, or until the browser is closed. Closing the browser is also the
+            only way to end a certificate session completely.
+          </li>
         </ol>
       </section>
 
