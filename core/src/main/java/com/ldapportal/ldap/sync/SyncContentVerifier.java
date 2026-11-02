@@ -51,7 +51,10 @@ import java.util.UUID;
  *
  * <ul>
  *   <li><b>missing</b> — a member with no entry at its expected target DN,</li>
- *   <li><b>orphan</b> — a target entry with no corresponding source member,</li>
+ *   <li><b>orphan</b> — a target entry with no corresponding source member. When
+ *       the set writes a source anchor, only target entries carrying it count:
+ *       an entry the set doesn't manage (another set's, or one never synced)
+ *       under the same target base isn't this set's drift,</li>
  *   <li><b>mismatch</b> — present on both sides, but the target's attributes
  *       differ from the projected desired state (the same diff the engine's
  *       MODIFY uses — see {@link TargetEntryDiffer}).</li>
@@ -163,7 +166,7 @@ public class SyncContentVerifier {
                 targetSchemas.forDirectory(ctx.target), SyncReferenceAttributes.forSet(ctx.set), (n, dn) -> {
                     tracking.processed(n);
                     tracking.current(dn);
-                });
+                }, anchorAttribute(ctx.set));
         tracking.processed(expected.size());
         return result;
     }
@@ -193,13 +196,13 @@ public class SyncContentVerifier {
                                     Set<String> excluded, boolean sourceComplete, boolean targetComplete,
                                     com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs) {
         return compare(expected, actual, excluded, sourceComplete, targetComplete, schema, dnAttrs,
-                CompareProgress.NONE);
+                CompareProgress.NONE, null);
     }
 
     static SyncVerifyResult compare(Map<String, Expected> expected, Map<String, Entry> actual,
                                     Set<String> excluded, boolean sourceComplete, boolean targetComplete,
                                     com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs,
-                                    CompareProgress progress) {
+                                    CompareProgress progress, String anchorAttr) {
         int inSync = 0;
         int compared = 0;
         List<String> missing = new ArrayList<>();
@@ -226,9 +229,12 @@ public class SyncContentVerifier {
             }
         }
 
+        // With an anchor, only entries carrying it are the set's to account for:
+        // an unanchored entry under the target base is someone else's.
         List<String> orphans = new ArrayList<>();
         for (Map.Entry<String, Entry> en : actual.entrySet()) {
-            if (!expected.containsKey(en.getKey())) {
+            if (!expected.containsKey(en.getKey())
+                    && (anchorAttr == null || en.getValue().hasAttribute(anchorAttr))) {
                 orphans.add(en.getValue().getDN());
             }
         }
@@ -237,7 +243,13 @@ public class SyncContentVerifier {
                 expected.size(), actual.size(), inSync,
                 missing.size(), orphans.size(), mismatches.size(),
                 sample(missing), sample(orphans), sample(mismatches),
-                sourceComplete, targetComplete, null);
+                sourceComplete, targetComplete, null, anchorAttr != null);
+    }
+
+    /** The set's source anchor attribute, or {@code null} when it writes none. */
+    static String anchorAttribute(SyncSet set) {
+        String a = set.getSourceAnchorAttribute();
+        return a == null || a.isBlank() ? null : a.trim();
     }
 
     // ── LDAP enumeration (no writes) ───────────────────────────────────────────
@@ -263,8 +275,11 @@ public class SyncContentVerifier {
         SearchScope scope = SyncScopes.searchScope(ctx.set);
         Filter filter = applicabilityFilter(ctx.set);
         int pageSize = ctx.target.getPagingSize();
+        // The anchor explicitly too: orphan counting reads it, and it may be operational.
+        String anchor = anchorAttribute(ctx.set);
+        String[] attrs = anchor == null ? new String[] {"*"} : new String[] {"*", anchor};
         return connectionFactory.withConnectionUnreplicated(ctx.target, conn -> {
-            SearchRequest req = new SearchRequest(base, scope, filter, "*");
+            SearchRequest req = new SearchRequest(base, scope, filter, attrs);
             return SyncPagedSearch.all(conn, req, pageSize);
         });
     }

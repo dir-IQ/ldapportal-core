@@ -671,6 +671,10 @@ public class SyncConfigService {
                 reconcileHistory.recordDrift(syncSetId,
                         result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
             }
+        } else if (result.note() == null) {
+            // It ran but couldn't read a side completely (an unavailable set
+            // carries a note instead): keep the snapshot, flag it as possibly stale.
+            setRepo.recordVerifyIncomplete(syncSetId, java.time.OffsetDateTime.now());
         }
         return result;
     }

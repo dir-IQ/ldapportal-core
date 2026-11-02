@@ -98,6 +98,8 @@ class SyncReconcileSchedulerTest {
 
         verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
         verify(syncSetRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        // Noted, so the stored snapshot can be shown as possibly out of date.
+        verify(syncSetRepo).recordVerifyIncomplete(eq(id), any());
     }
 
     @Test

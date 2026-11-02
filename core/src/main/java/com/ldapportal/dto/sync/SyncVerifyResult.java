@@ -27,6 +27,11 @@ import java.util.List;
  * @param sourceComplete    false when source enumeration failed (counts partial)
  * @param targetComplete    false when target enumeration failed (counts partial)
  * @param note              human-readable explanation when the set can't be verified
+ * @param orphansAnchored   true when only target entries carrying the set's source
+ *                          anchor count as orphans (the set writes an anchor), so
+ *                          entries it doesn't manage aren't counted; false when
+ *                          every entry under the target base that matches the
+ *                          filter is a candidate
  */
 public record SyncVerifyResult(
         int sourceMembers,
@@ -40,5 +45,15 @@ public record SyncVerifyResult(
         List<String> sampleMismatches,
         boolean sourceComplete,
         boolean targetComplete,
-        String note) {
+        String note,
+        boolean orphansAnchored) {
+
+    /** A result whose orphans weren't limited to anchored entries. */
+    public SyncVerifyResult(int sourceMembers, int targetEntries, int inSync, int missingOnTarget,
+                            int orphanOnTarget, int contentMismatches, List<String> sampleMissing,
+                            List<String> sampleOrphans, List<String> sampleMismatches,
+                            boolean sourceComplete, boolean targetComplete, String note) {
+        this(sourceMembers, targetEntries, inSync, missingOnTarget, orphanOnTarget, contentMismatches,
+                sampleMissing, sampleOrphans, sampleMismatches, sourceComplete, targetComplete, note, false);
+    }
 }

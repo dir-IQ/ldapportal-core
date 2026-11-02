@@ -122,9 +122,8 @@ class ActivityDashboardServiceTest {
         when(syncLinkRepo.findDegradedChangelogLinkIdsByLagDesc())
                 .thenReturn(List.of(worstLagLinkId, UUID.randomUUID()));
         // One drifted set (3 differences), one clean (verified, zero), one never verified.
-        UUID worstDriftSetId = UUID.randomUUID();
         when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(
-                verifiedSet(worstDriftSetId, 2, 0, 1), verifiedSet(UUID.randomUUID(), 0, 0, 0), neverVerifiedSet()));
+                verifiedSet(UUID.randomUUID(), 2, 0, 1), verifiedSet(UUID.randomUUID(), 0, 0, 0), neverVerifiedSet()));
 
         ActivityDashboardResponse out = service.build(superadmin);
 
@@ -140,8 +139,11 @@ class ActivityDashboardServiceTest {
                 .contains("REPLICATION_LAG_HIGH", "RECONCILIATION_DRIFT_OPEN");
         assertThat(awarenessOf(out, "REPLICATION_LAG_HIGH").link())
                 .isEqualTo("/superadmin/directory-sync?link=" + worstLagLinkId);
+        // Drift links to the list of every drifting set, and says what kind it is.
         assertThat(awarenessOf(out, "RECONCILIATION_DRIFT_OPEN").link())
-                .isEqualTo("/superadmin/directory-sync?set=" + worstDriftSetId);
+                .isEqualTo("/superadmin/directory-sync?drift=1");
+        assertThat(awarenessOf(out, "RECONCILIATION_DRIFT_OPEN").detail())
+                .isEqualTo("Across 1 sync set: 2 missing on target · 1 with different content at the last content verify");
 
         // The dead-letter metric mirrors the FAILED count.
         assertThat(out.metrics().replicationEventsDeadLettered()).isEqualTo(3);

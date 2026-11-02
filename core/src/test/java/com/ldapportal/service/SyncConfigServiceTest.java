@@ -239,8 +239,22 @@ class SyncConfigServiceTest {
 
         service.verifyContents(setId);
 
-        // A partial scan must not overwrite a previously good snapshot with low counts.
+        // A partial scan must not overwrite a previously good snapshot with low counts...
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        // ...but it's noted, so the UI can say the snapshot may be out of date.
+        verify(setRepo).recordVerifyIncomplete(eq(setId), any());
+    }
+
+    @Test
+    void verifyContents_unavailableSet_isNotRecordedAsIncomplete() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(
+                0, 0, 0, 0, 0, 0, List.of(), List.of(), List.of(), false, false, "Sync set is disabled."));
+
+        service.verifyContents(setId);
+
+        verify(setRepo, never()).recordVerifyIncomplete(any(), any());
     }
 
     @Test

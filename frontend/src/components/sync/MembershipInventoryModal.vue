@@ -66,6 +66,11 @@
           </template>
           <template v-else>✓ Source and target agree — no mismatches found.</template>
         </p>
+        <p v-if="hasMismatches && verifyResult.orphanOnTarget" class="text-xs text-gray-500" data-testid="orphan-scope">
+          {{ verifyResult.orphansAnchored
+            ? 'Orphans are entries this set stamped with its source anchor that no source entry accounts for; other entries under the target base aren’t counted.'
+            : 'This set writes no source anchor, so every entry under the target base that matches its filter counts, including ones another set or nothing manages.' }}
+        </p>
         <p v-if="verifyResult.note" class="text-amber-700">{{ verifyResult.note }}</p>
         <p v-if="!verifyResult.sourceComplete || !verifyResult.targetComplete" class="text-amber-600">
           Enumeration was incomplete (a directory read failed); counts may be partial.
