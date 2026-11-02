@@ -86,6 +86,23 @@ describe('DirectoryDiffEntryPanel', () => {
     expect(body().querySelector('[data-testid="diff-table"]')).toBeNull()
   })
 
+  it('lists references whose entry doesn\'t exist after a live re-read', async () => {
+    api.recheckDirectoryDiffEntry.mockResolvedValue({ data: {
+      category: 'DIFFERENT', dnA: DIFFERENT.dnA, dnB: DIFFERENT.dnB, presentInA: true, presentInB: true,
+      readAt: new Date().toISOString(),
+      diffs: [{ name: 'secDN', onlyA: ['uid=ghost,ou=people,dc=a'], onlyACount: 1, onlyB: [], onlyBCount: 0,
+        both: [], bothCount: 0 }],
+      same: [], dangling: [{ attribute: 'secDN', side: 'A', value: 'uid=ghost,ou=people,dc=a' }],
+    } })
+    await mountPanel()
+    expect(body().querySelector('[data-testid="dangling-references"]')).toBeNull()
+    Array.from(body().querySelectorAll('button')).find(b => b.textContent?.trim() === 'Re-read live')!.click()
+    await flushPromises()
+    const box = body().querySelector('[data-testid="dangling-references"]')!.textContent!.replace(/\s+/g, ' ')
+    expect(box).toContain('References to entries that don’t exist')
+    expect(box).toContain('secDN on A: uid=ghost,ou=people,dc=a')
+  })
+
   it('links each side to the directory browser', async () => {
     await mountPanel()
     const links = Array.from(body().querySelectorAll('a')).map(a => a.getAttribute('data-to'))

@@ -40,7 +40,7 @@ public final class DirectoryDiffEngine {
      * when a directory's schema couldn't be read.
      */
     public static final List<String> KNOWN_DN_ATTRIBUTES = List.of("member", "uniqueMember", "owner", "manager",
-            "seeAlso", "secretary", "roleOccupant", "memberOf", "distinguishedName");
+            "seeAlso", "secretary", "roleOccupant", "memberOf", "distinguishedName", "secDN");
 
     private DirectoryDiffEngine() {
     }

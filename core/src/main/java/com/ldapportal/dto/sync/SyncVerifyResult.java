@@ -32,6 +32,9 @@ import java.util.List;
  *                          entries it doesn't manage aren't counted; false when
  *                          every entry under the target base that matches the
  *                          filter is a candidate
+ * @param heldReferences    members with a reference value the sync holds back (it
+ *                          names an entry the sync hasn't placed), or null when not
+ *                          counted; the sync's checks don't count these as drift
  */
 public record SyncVerifyResult(
         int sourceMembers,
@@ -46,7 +49,40 @@ public record SyncVerifyResult(
         boolean sourceComplete,
         boolean targetComplete,
         String note,
-        boolean orphansAnchored) {
+        boolean orphansAnchored,
+        HeldReferences heldReferences) {
+
+    /**
+     * Members whose reference values (a {@code secDN}, a group {@code member}) the
+     * sync holds back because the entry they name isn't synced. {@code dangling}
+     * of them name an entry that doesn't exist on the source at all: a source
+     * data problem, not something a reconcile can fix. Up to
+     * {@code SyncContentVerifier.HELD_CHECK_LIMIT} referenced DNs are looked up;
+     * {@code unchecked} says some weren't.
+     */
+    public record HeldReferences(int entries, int dangling, boolean unchecked, List<HeldSample> samples) {
+    }
+
+    /** One held value: the member's target DN, the attribute, the source DN it names, and whether that's missing. */
+    public record HeldSample(String entryDn, String attribute, String reference, boolean dangling) {
+    }
+
+    /** As the canonical constructor, with held references not counted. */
+    public SyncVerifyResult(int sourceMembers, int targetEntries, int inSync, int missingOnTarget,
+                            int orphanOnTarget, int contentMismatches, List<String> sampleMissing,
+                            List<String> sampleOrphans, List<String> sampleMismatches,
+                            boolean sourceComplete, boolean targetComplete, String note, boolean orphansAnchored) {
+        this(sourceMembers, targetEntries, inSync, missingOnTarget, orphanOnTarget, contentMismatches,
+                sampleMissing, sampleOrphans, sampleMismatches, sourceComplete, targetComplete, note,
+                orphansAnchored, null);
+    }
+
+    /** This result with {@code held} counted. */
+    public SyncVerifyResult withHeldReferences(HeldReferences held) {
+        return new SyncVerifyResult(sourceMembers, targetEntries, inSync, missingOnTarget, orphanOnTarget,
+                contentMismatches, sampleMissing, sampleOrphans, sampleMismatches, sourceComplete, targetComplete,
+                note, orphansAnchored, held);
+    }
 
     /** A result whose orphans weren't limited to anchored entries. */
     public SyncVerifyResult(int sourceMembers, int targetEntries, int inSync, int missingOnTarget,
@@ -54,6 +90,6 @@ public record SyncVerifyResult(
                             List<String> sampleOrphans, List<String> sampleMismatches,
                             boolean sourceComplete, boolean targetComplete, String note) {
         this(sourceMembers, targetEntries, inSync, missingOnTarget, orphanOnTarget, contentMismatches,
-                sampleMissing, sampleOrphans, sampleMismatches, sourceComplete, targetComplete, note, false);
+                sampleMissing, sampleOrphans, sampleMismatches, sourceComplete, targetComplete, note, false, null);
     }
 }

@@ -248,6 +248,21 @@ class SyncConfigServiceTest {
         assertThat(out.missingOnTarget()).isEqualTo(2);
         // The drift counts are cached on the set so the dashboard can read them cheaply.
         verify(setRepo).recordVerifyResult(eq(setId), any(), eq(2), eq(1), eq(0));
+        // No held references counted (none in the result): nothing stored for them.
+        verify(setRepo, never()).recordVerifyHeld(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void verifyContents_storesHeldReferenceCounts_whenScanComplete() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(10, 10, 10, 0, 0, 0,
+                List.of(), List.of(), List.of(), true, true, null, true,
+                new SyncVerifyResult.HeldReferences(4, 3, false, List.of())));
+
+        service.verifyContents(setId);
+
+        verify(setRepo).recordVerifyHeld(setId, 4, 3);
     }
 
     @Test

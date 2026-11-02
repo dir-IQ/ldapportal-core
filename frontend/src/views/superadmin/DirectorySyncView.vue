@@ -875,6 +875,10 @@ async function doSaveSet() {
   } finally {
     savingSet.value = false
   }
+  // A new set, or a save that changed what the set manages or writes, starts
+  // the impact preview straight away: the panel would otherwise only say "No
+  // preview yet", and its counts are what to read before reconciling.
+  if (saved && (creating || (before && reconciledChanges(before, saved).length > 0))) void runPreview()
   // Asked once the save is done, so the button no longer reads "Saving…" behind it.
   if (before && saved && before.enabled && saved.enabled) await offerReconcile(before, saved)
 }
@@ -913,7 +917,7 @@ async function offerReconcile(before: SyncSet, after: SyncSet) {
     message: `${what} effect at the set's next reconcile. Reconcile now to apply ${changed.length === 1 ? 'it' : 'them'} `
       + 'to every entry: entries that now leave the set are deleted or held for review, as its delete policy '
       + 'says, and deletions held for entries that are back in the set clear.\n\n'
-      + 'To see what it would do first, choose Later and run Preview impact.',
+      + 'To see what it would do first, choose Later: the impact preview is already running in the editor.',
     confirmLabel: 'Reconcile now',
     cancelLabel: 'Later',
   })

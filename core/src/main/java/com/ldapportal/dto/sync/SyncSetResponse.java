@@ -44,10 +44,12 @@ public record SyncSetResponse(
     /**
      * The stored drift snapshot: the last complete content verify ({@code at}
      * null when never verified) and, when a newer verify didn't finish reading
-     * both directories, when that was ({@code incompleteAt}).
+     * both directories, when that was ({@code incompleteAt}). {@code held} is how
+     * many members had a reference value the sync holds back, {@code dangling}
+     * how many of those name an entry missing on the source (null until counted).
      */
     public record VerifySnapshot(OffsetDateTime at, Integer missing, Integer orphan, Integer mismatch,
-                                 OffsetDateTime incompleteAt) {
+                                 OffsetDateTime incompleteAt, Integer held, Integer dangling) {
     }
 
     public static SyncSetResponse of(SyncSet s) {
@@ -63,6 +65,7 @@ public record SyncSetResponse(
                 s.isEnabled(), s.getLoggingLevel(), s.getCreatedAt(), s.getUpdatedAt(), s.getVersion(),
                 stateCounts == null ? Map.of() : stateCounts,
                 new VerifySnapshot(s.getLastVerifiedAt(), s.getVerifyMissingCount(), s.getVerifyOrphanCount(),
-                        s.getVerifyMismatchCount(), s.getVerifyIncompleteAt()));
+                        s.getVerifyMismatchCount(), s.getVerifyIncompleteAt(), s.getVerifyHeldCount(),
+                        s.getVerifyDanglingCount()));
     }
 }
