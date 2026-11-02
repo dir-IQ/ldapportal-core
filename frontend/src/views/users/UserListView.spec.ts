@@ -384,6 +384,28 @@ describe('UserListView edit save sends only changed attributes', () => {
       { operation: 'REPLACE', attribute: 'mail', values: ['new@x.com'] },
     ])
   })
+
+  // regression: clearing the last value of a field produced an empty REPLACE
+  // that was filtered out, so the save silently did nothing.
+  it('sends a value-less DELETE when the last value of a field is removed', async () => {
+    vi.mocked(usersApi.getUser).mockResolvedValue({
+      data: { attributes: { uid: ['jdoe'], mail: ['a@x.com', 'b@x.com'], employeeNumber: ['e1'] } },
+    } as Awaited<ReturnType<typeof usersApi.getUser>>)
+    const wrapper = await openEditModal()
+    wrapper.findComponent({ name: 'UserForm' }).vm.$emit('update', {
+      dn: 'uid=jdoe,ou=people,dc=x',
+      attributes: { uid: 'jdoe', mail: '  \n', employeeNumber: 'e1' },
+    })
+    await wrapper.vm.$nextTick()
+    await wrapper.findAll('button').find(b => b.text() === 'Save')!.trigger('click')
+    await flushPromises()
+    expect(usersApi.updateUser).toHaveBeenCalledTimes(1)
+    const payload = vi.mocked(usersApi.updateUser).mock.calls[0][2] as
+      { modifications: Array<{ operation: string, attribute: string, values: string[] }> }
+    expect(payload.modifications).toEqual([
+      { operation: 'DELETE', attribute: 'mail', values: [] },
+    ])
+  })
 })
 
 // regression: the edit form resolved a user's profile by objectClass superset

@@ -32,7 +32,12 @@ The page has three states:
    attribute to show only the entries where it differs. Select **Compare** on a
    row to open the side panel:
    - each differing attribute, with values only on A, only on B, and on both;
-   - **Re-read live**, which fetches both entries again;
+   - **Re-read live**, which fetches both entries again. It also checks the
+     differing reference values (`member`, `secDN`, `manager` and other
+     DN-valued attributes, up to 50 values) and lists any that name **no entry
+     in their own directory**, e.g. a `secDN` whose person was deleted. A sync
+     holds such a value back instead of writing it, so it shows here as a
+     difference; fix it at the source;
    - links to each entry in the Directory Browser;
    - **Previous** and **Next** to step through the group, across pages.
 

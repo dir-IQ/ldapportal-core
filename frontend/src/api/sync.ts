@@ -97,6 +97,10 @@ export interface SyncVerifySnapshot {
   orphan: number | null
   mismatch: number | null
   incompleteAt: string | null
+  /** Members with a held reference value at that verify (null until counted). */
+  held?: number | null
+  /** Of those, members whose held value names an entry missing on the source. */
+  dangling?: number | null
 }
 
 export type SyncSetPayload = Omit<
@@ -438,6 +442,17 @@ export interface SyncVerifyResult {
   note: string | null
   /** Only target entries carrying the set's source anchor counted as orphans. */
   orphansAnchored?: boolean
+  /** Members whose reference values the sync holds back (not drift); null when not counted. */
+  heldReferences?: SyncHeldReferences | null
+}
+
+export interface SyncHeldReferences {
+  entries: number
+  /** Members with a held value naming an entry that doesn't exist on the source. */
+  dangling: number
+  /** Some referenced DNs weren't looked up (too many). */
+  unchecked: boolean
+  samples: { entryDn: string; attribute: string; reference: string; dangling: boolean }[]
 }
 
 export const verifyContents = (setId: string) =>

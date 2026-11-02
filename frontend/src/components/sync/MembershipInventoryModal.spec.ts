@@ -309,6 +309,28 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
+  it('Verify contents lists held references, telling dangling ones from unsynced ones', async () => {
+    vi.mocked(syncApi.verifyContents).mockResolvedValueOnce({ data: {
+      sourceMembers: 2, targetEntries: 2, inSync: 2, missingOnTarget: 0, orphanOnTarget: 0, contentMismatches: 0,
+      sampleMissing: [], sampleOrphans: [], sampleMismatches: [], sourceComplete: true, targetComplete: true,
+      note: null, orphansAnchored: true,
+      heldReferences: { entries: 2, dangling: 1, unchecked: false, samples: [
+        { entryDn: 'cn=a,dc=dst', attribute: 'secDN', reference: 'uid=ghost,dc=src', dangling: true },
+        { entryDn: 'cn=b,dc=dst', attribute: 'member', reference: 'uid=new,dc=src', dangling: false },
+      ] },
+    } } as never)
+    const wrapper = open()
+    await flushPromises()
+    byText('Verify contents')!.click()
+    await flushPromises()
+    const held = document.querySelector('[data-testid="held-references"]')!.textContent!.replace(/\s+/g, ' ')
+    expect(held).toContain('Held references: 2 entries have a reference the sync holds back')
+    expect(held).toContain('1 of them names an entry that doesn’t exist on the source')
+    expect(held).toContain('cn=a,dc=dst: secDN → uid=ghost,dc=src (doesn’t exist)')
+    expect(held).toContain('cn=b,dc=dst: member → uid=new,dc=src (not synced yet)')
+    wrapper.unmount()
+  })
+
   /** The set's activity as getSyncSetActivity returns it: no run, or the given one. */
   function activityWith(reconcile: Record<string, unknown> | null) {
     vi.mocked(syncApi.getSyncSetActivity).mockResolvedValue({ data: {
