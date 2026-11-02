@@ -222,15 +222,27 @@ public class SyncConfigService {
                 .toList();
     }
 
-    /** Membership counts per set keyed by state name, for the health rollup. */
+    /**
+     * Membership counts per set keyed by state name, for the health rollup, plus
+     * {@value #HELD_DELETE_KEY}: how many of the {@code REVIEW} rows are held
+     * deletes (a subset of {@code REVIEW}, not an extra state).
+     */
     private Map<UUID, Map<String, Long>> membershipStateCounts() {
         Map<UUID, Map<String, Long>> counts = new HashMap<>();
         for (MembershipStateCount c : membershipRepo.countGroupedByState()) {
             counts.computeIfAbsent(c.getSyncSetId(), k -> new HashMap<>())
                     .put(c.getState().name(), c.getCnt());
         }
+        for (Object[] row : membershipRepo.countHeldDeletesBySet(
+                com.ldapportal.dto.sync.SyncReviewKind.PENDING_DELETE_PREFIX + "%")) {
+            counts.computeIfAbsent((UUID) row[0], k -> new HashMap<>())
+                    .put(HELD_DELETE_KEY, ((Number) row[1]).longValue());
+        }
         return counts;
     }
+
+    /** {@code stateCounts} key for the held deletes among a set's {@code REVIEW} rows. */
+    public static final String HELD_DELETE_KEY = "REVIEW_DELETE";
 
     @Transactional(readOnly = true)
     public SyncSetResponse getSet(UUID id) {

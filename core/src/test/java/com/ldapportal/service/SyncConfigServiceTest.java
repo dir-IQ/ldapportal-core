@@ -213,6 +213,28 @@ class SyncConfigServiceTest {
     }
 
     @Test
+    void listSets_countsHeldDeletesAmongReviewRows() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(setId);
+        when(setRepo.findAll()).thenReturn(List.of(set));
+        com.ldapportal.repository.MembershipStateCount review =
+                org.mockito.Mockito.mock(com.ldapportal.repository.MembershipStateCount.class);
+        when(review.getSyncSetId()).thenReturn(setId);
+        when(review.getState()).thenReturn(MembershipState.REVIEW);
+        when(review.getCnt()).thenReturn(5L);
+        when(membershipRepo.countGroupedByState()).thenReturn(List.of(review));
+        when(membershipRepo.countHeldDeletesBySet("scope-exit held for review%"))
+                .thenReturn(List.<Object[]>of(new Object[]{setId, 3L}));
+
+        var out = service.listSets(null);
+
+        assertThat(out.get(0).stateCounts())
+                .containsEntry("REVIEW", 5L)
+                .containsEntry(SyncConfigService.HELD_DELETE_KEY, 3L);
+    }
+
+    @Test
     void verifyContents_persistsDriftSnapshot_whenScanComplete() {
         UUID setId = UUID.randomUUID();
         when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));

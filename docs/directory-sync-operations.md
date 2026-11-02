@@ -558,9 +558,14 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
 ## 7. Monitoring
 
 ### 7.1 The UI (Directory Sync → expand a link → a set → its inventory)
-- **Link / set tables** show a colour-coded **Health** rollup: red `N failed`
-  (worst), amber `N review`, green `Healthy`, grey `No data` — derived from
-  membership `stateCounts`.
+- **Link / set tables** show a colour-coded **Health** rollup: `N failed` and
+  `N review` side by side (e.g. `2 failed · 5 review`, red while anything
+  failed, amber for review alone), green `Healthy`, grey `No data` — derived
+  from membership `stateCounts`. Held deletes (entries that left scope whose
+  target delete waits for approval) are called out within the review count,
+  e.g. `5 review (3 deletes)`; the rest are correlation decisions (ambiguous
+  match, placement conflict). The dashboard's *sync items awaiting review*
+  action says how many are deletes too.
 - **Membership inventory modal** (per set): state-filter chips (All / Synced /
   Pending / Review / Failed with counts, each with a tooltip saying what it means, and **Not in set**, below), a search box (identity or DN),
   per-row Identity / State / Source DN / Target DN / **Reason**, and per-row

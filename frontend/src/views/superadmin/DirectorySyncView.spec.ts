@@ -122,11 +122,24 @@ describe('DirectorySyncView', () => {
     wrapper.unmount()
   })
 
-  it('rolls up membership health onto the link row (worst state wins)', async () => {
+  it('rolls up membership health onto the link row, failed and review side by side', async () => {
     const wrapper = mount(DirectorySyncView)
     await flushPromises()
-    // FAILED outranks REVIEW/APPLIED, so the link shows the failure summary.
-    expect(wrapper.find('tbody tr').text()).toContain('2 failed')
+    // A failure no longer hides what waits for review.
+    expect(wrapper.find('tbody tr').text()).toContain('2 failed · 1 review')
+  })
+
+  it('calls out held deletes within the review count', async () => {
+    vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [
+      { ...set, stateCounts: { APPLIED: 5, REVIEW: 4, REVIEW_DELETE: 3 } },
+    ] } as never)
+    const wrapper = mount(DirectorySyncView)
+    await flushPromises()
+    const row = wrapper.find('tbody tr').text()
+    expect(row).toContain('4 review (3 deletes)')
+    expect(row).not.toContain('failed')
+    vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set] } as never)
+    wrapper.unmount()
   })
 
   it('authoring a transform rule includes it in the create payload', async () => {

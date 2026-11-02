@@ -168,10 +168,16 @@ public class ActivityDashboardService {
         }
         long review = syncStates.getOrDefault(MembershipState.REVIEW, 0L);
         if (review > 0) {
+            // Held deletes are the review rows that would remove a target entry:
+            // say how many, so they aren't lost among correlation conflicts.
+            long heldDeletes = heldDeletes();
+            String detail = heldDeletes > 0
+                    ? heldDeletes + (heldDeletes == 1 ? " is a delete" : " are deletes")
+                            + " waiting for approval; the rest need a correlation decision"
+                    : "Quarantined changes need an operator decision";
             items.add(new ActionItem("SYNC_REVIEW_PENDING", "HIGH",
                     review + " sync " + (review == 1 ? "item" : "items") + " awaiting review",
-                    "Quarantined changes need an operator decision",
-                    "/superadmin/directory-sync?state=REVIEW", clampInt(review)));
+                    detail, "/superadmin/directory-sync?state=REVIEW", clampInt(review)));
         }
 
         return items;
@@ -462,6 +468,16 @@ public class ActivityDashboardService {
         if (orphan > 0) parts.add(orphan + " orphaned on target");
         if (mismatch > 0) parts.add(mismatch + " with different content");
         return String.join(" · ", parts);
+    }
+
+    /** Held deletes across every set: the review rows waiting to delete a target entry. */
+    private long heldDeletes() {
+        long n = 0;
+        for (Object[] row : membershipRepo.countHeldDeletesBySet(
+                com.ldapportal.dto.sync.SyncReviewKind.PENDING_DELETE_PREFIX + "%")) {
+            n += ((Number) row[1]).longValue();
+        }
+        return n;
     }
 
     private static long nz(Integer v) {
