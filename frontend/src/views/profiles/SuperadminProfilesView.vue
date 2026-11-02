@@ -420,10 +420,11 @@ async function save() {
   // Only Automatic mode needs a naming attribute: it composes the DN from it.
   // In operator-entered mode a DN template names the entry (the watcher keeps
   // rdnAttribute on its leading RDN); with no template the operator types the
-  // whole DN, so none is kept — a hidden leftover would still pre-fill the DN.
-  if (profile.value.showDnField && !dnTemplateActive.value) {
-    profile.value.rdnAttribute = ''
-  } else if (!profile.value.rdnAttribute) {
+  // whole DN, so none is sent — a hidden leftover would still pre-fill the DN.
+  // Blanked in the payload only, so a save that stops early (or a switch back
+  // to Automatic) keeps the editor's selection.
+  const operatorNoTemplate = profile.value.showDnField && !dnTemplateActive.value
+  if (!operatorNoTemplate && !profile.value.rdnAttribute) {
     notif.error('RDN Attribute is required')
     return
   }
@@ -461,9 +462,10 @@ async function save() {
   // source of truth — a 400 from the server tells us if force was
   // needed).
   const force = targetOuProbeState.value === 'missing'
+  const payload = operatorNoTemplate ? { ...profile.value, rdnAttribute: '' } : profile.value
   try {
     if (editing.value) {
-      await updateProfile(selectedDirId.value, editing.value, profile.value, force)
+      await updateProfile(selectedDirId.value, editing.value, payload, force)
       // Save approval config
       await setApprovalConfig(editing.value, approval.value)
       await setApprovers(editing.value, { accountIds: profileApprovers.value })
@@ -472,7 +474,7 @@ async function save() {
       editing.value = null
       await reload()
     } else {
-      const { data } = await createProfile(selectedDirId.value, profile.value, force)
+      const { data } = await createProfile(selectedDirId.value, payload, force)
       // Save approval config
       await setApprovalConfig(data.id, approval.value)
       if (profileApprovers.value.length > 0) {

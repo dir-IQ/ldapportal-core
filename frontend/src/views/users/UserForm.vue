@@ -1076,9 +1076,11 @@ const dnError = computed(() => {
   const dn = effectiveDn.value.trim()
   const base = (local.parentDn || '').trim()
   if (!dn) return dnEdited.value ? 'DN is required' : ''
-  // A DN still missing its leading RDN (the bare ",<target OU>" pre-fill) is
-  // flagged once the operator types or tries to save, not on first sight.
-  if (!parseLeadingRdn(dn).length) {
+  // A DN with no RDN at all (the bare ",<target OU>" pre-fill) is flagged once
+  // the operator types or tries to save, not on first sight. Only a missing
+  // RDN: a template RDN still waiting on a blank field ("uid=,ou=…") is left to
+  // that field's own required check.
+  if (dn.startsWith(',')) {
     return dnEdited.value || validationAttempted.value
       ? 'Start the DN with the entry\'s RDN, e.g. uid=jsmith' : ''
   }

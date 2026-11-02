@@ -305,6 +305,23 @@ describe('UserForm editable DN (create mode)', () => {
     expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(true)
   })
 
+  it('reports a blank templated field, not a missing RDN, when the template RDN is still empty', async () => {
+    const wrapper = mount(UserForm, {
+      props: {
+        data: { rdnAttribute: 'uid', rdnValue: '', parentDn: BASE, attributes: {} },
+        isEdit: false,
+        userTemplateConfig: { ...dnTemplateConfig, showDnField: true },
+        dirId: null,
+        profileId: null,
+      },
+    })
+    await wrapper.vm.$nextTick()
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).not.toContain('Start the DN')
+    expect(wrapper.text()).toMatch(/required/i)
+  })
+
   it('rejects an overridden DN outside the target OU', async () => {
     const wrapper = mountDn(dnTemplateConfig)
     await wrapper.vm.$nextTick()
