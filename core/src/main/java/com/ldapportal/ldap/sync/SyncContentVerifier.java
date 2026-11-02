@@ -168,7 +168,80 @@ public class SyncContentVerifier {
                     tracking.current(dn);
                 }, anchorAttribute(ctx.set));
         tracking.processed(expected.size());
-        return result;
+        return result.withHeldReferences(heldReferencesOnSource(ctx, members.values()));
+    }
+
+    /**
+     * {@link #heldReferences} with the referenced DNs looked up on the source over
+     * one pooled connection rather than one borrow per DN. If the source can't be
+     * reached, nothing counts as dangling.
+     */
+    private SyncVerifyResult.HeldReferences heldReferencesOnSource(Context ctx,
+                                                                   java.util.Collection<MembershipDecision> members) {
+        try {
+            return connectionFactory.withConnectionUnreplicated(ctx.source, conn -> {
+                Map<String, Boolean> onSource = new HashMap<>();
+                return heldReferences(members, dn -> onSource.computeIfAbsent(normDn(dn), k -> {
+                    try {
+                        return conn.getEntry(dn, "1.1") != null;
+                    } catch (Exception ex) {
+                        return true; // a failed read isn't evidence the entry is missing
+                    }
+                }));
+            });
+        } catch (Exception ex) {
+            log.warn("Sync set {}: couldn't look up held references on the source ({})",
+                    ctx.set.getId(), ex.toString());
+            return heldReferences(members, dn -> true);
+        }
+    }
+
+    /** At most this many distinct referenced DNs are looked up on the source per verify. */
+    static final int HELD_CHECK_LIMIT = 500;
+
+    /**
+     * The members whose reference values are held back (they name an entry the
+     * sync hasn't placed), and how many of those name an entry that doesn't
+     * exist on the source at all. Pure apart from {@code existsOnSource}
+     * (package-private for direct unit testing).
+     */
+    static SyncVerifyResult.HeldReferences heldReferences(java.util.Collection<MembershipDecision> members,
+                                                         java.util.function.Predicate<String> existsOnSource) {
+        int entries = 0;
+        int dangling = 0;
+        boolean unchecked = false;
+        Set<String> looked = new java.util.HashSet<>();
+        List<SyncVerifyResult.HeldSample> samples = new ArrayList<>();
+        for (MembershipDecision d : members) {
+            Map<String, List<String>> refs = new java.util.LinkedHashMap<>(d.heldReferences());
+            d.unresolvedReferences().forEach((attr, dns) -> refs.merge(attr, dns,
+                    (x, y) -> { List<String> all = new ArrayList<>(x); all.addAll(y); return all; }));
+            if (refs.isEmpty()) {
+                continue;
+            }
+            entries++;
+            boolean entryDangling = false;
+            for (Map.Entry<String, List<String>> ref : refs.entrySet()) {
+                for (String dn : ref.getValue()) {
+                    Boolean missing = null;
+                    if (looked.size() < HELD_CHECK_LIMIT || looked.contains(normDn(dn))) {
+                        looked.add(normDn(dn));
+                        missing = !existsOnSource.test(dn);
+                    } else {
+                        unchecked = true;
+                    }
+                    entryDangling |= Boolean.TRUE.equals(missing);
+                    if (samples.size() < SAMPLE_LIMIT) {
+                        samples.add(new SyncVerifyResult.HeldSample(d.targetDn(), ref.getKey(), dn,
+                                Boolean.TRUE.equals(missing)));
+                    }
+                }
+            }
+            if (entryDangling) {
+                dangling++;
+            }
+        }
+        return new SyncVerifyResult.HeldReferences(entries, dangling, unchecked, List.copyOf(samples));
     }
 
     /** Told as the comparison reaches each expected entry: how many came before it, and its DN. */
