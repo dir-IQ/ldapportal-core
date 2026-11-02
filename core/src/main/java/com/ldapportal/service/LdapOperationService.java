@@ -1077,6 +1077,27 @@ public class LdapOperationService {
     // ── Bulk import / export ──────────────────────────────────────────────────
 
     /**
+     * The attribute a bulk import matches rows to existing entries by, before a
+     * template or the request overrides it: the profile's RDN attribute; else,
+     * for an operator-entered profile without one, the first attribute of its
+     * DN template's leading RDN; else {@code uid}.
+     */
+    static String defaultImportKeyAttribute(ProvisioningProfile profile) {
+        if (profile == null) return "uid";
+        String rdn = profile.getRdnAttribute();
+        if (rdn != null && !rdn.isBlank()) return rdn;
+        String tpl = profile.getDnTemplate();
+        if (tpl != null) {
+            int eq = tpl.indexOf('=');
+            if (eq > 0) {
+                String name = tpl.substring(0, eq).trim();
+                if (name.matches("[A-Za-z][A-Za-z0-9-]*")) return name;
+            }
+        }
+        return "uid";
+    }
+
+    /**
      * Resolve a bulk-import request's {@code profileId} to its profile entity,
      * or {@code null} when no profile was given (legacy parentDn-driven import).
      * Throws a 400-class error if a profileId is supplied but the provisioning
@@ -1147,7 +1168,7 @@ public class LdapOperationService {
         // create.
         permissionService.requireDnWithinScope(principal, directoryId, parentDn);
 
-        String targetKeyAttr = importProfile != null ? importProfile.getRdnAttribute() : "uid";
+        String targetKeyAttr = defaultImportKeyAttribute(importProfile);
         String dnSourceColumn = null;
         List<CsvColumnMappingDto> mappings = req.columnMappings() != null
                 ? new ArrayList<>(req.columnMappings()) : new ArrayList<>();
@@ -1250,7 +1271,7 @@ public class LdapOperationService {
 
         // Defaults — seeded from the profile when present, then may be overridden
         // by template or request fields.
-        String              targetKeyAttr    = importProfile != null ? importProfile.getRdnAttribute() : "uid";
+        String              targetKeyAttr    = defaultImportKeyAttribute(importProfile);
         ConflictHandling    conflictHandling = ConflictHandling.SKIP;
         ImportErrorHandling errorHandling    = ImportErrorHandling.SKIP_ERRORS;
         List<String>        objectClasses    = importProfile != null

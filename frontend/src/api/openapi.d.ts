@@ -3568,7 +3568,7 @@ export interface components {
             targetUserDn: string;
             targetGroupDn?: string;
             objectClassNames: string[];
-            rdnAttribute: string;
+            rdnAttribute?: string | null;
             showDnField?: boolean;
             dnTemplate?: string;
             /** Format: int32 */
@@ -3609,7 +3609,7 @@ export interface components {
             targetUserDn?: string;
             targetGroupDn?: string;
             objectClassNames?: string[];
-            rdnAttribute?: string;
+            rdnAttribute?: string | null;
             showDnField?: boolean;
             dnTemplate?: string;
             /** Format: int32 */
@@ -3872,7 +3872,7 @@ export interface components {
             targetUserDn: string;
             targetGroupDn?: string;
             objectClassNames: string[];
-            rdnAttribute: string;
+            rdnAttribute?: string | null;
             showDnField?: boolean;
             dnTemplate?: string;
             /** Format: int32 */

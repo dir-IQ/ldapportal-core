@@ -9,9 +9,9 @@
   <div>
     <div v-if="previews" class="flex flex-wrap gap-2" data-testid="theme-preview">
       <div v-for="t in previews" :key="t.label"
-           class="rounded-md border px-3 py-2"
+           class="flex items-center gap-2 rounded-md border px-2 py-1.5"
            :style="{ backgroundColor: t.page, borderColor: t.pageBorder }">
-        <span class="block text-[11px] mb-1" :style="{ color: t.caption }">{{ t.label }}</span>
+        <span class="text-[11px] whitespace-nowrap" :style="{ color: t.caption }">{{ t.label }}</span>
         <span class="inline-flex items-center gap-1.5 rounded-md border px-3 py-1 text-sm font-medium"
               :data-testid="`theme-preview-tag-${t.key}`"
               :style="{ backgroundColor: t.tint.background, borderColor: t.tint.border, color: t.tint.text }">
@@ -20,7 +20,7 @@
         </span>
       </div>
     </div>
-    <p v-if="advice" class="mt-1 text-xs text-amber-700" role="status" data-testid="theme-advice">{{ advice }}</p>
+    <p v-if="advice" class="mt-1.5 text-xs text-amber-700" role="status" data-testid="theme-advice">{{ advice }}</p>
   </div>
 </template>
 
