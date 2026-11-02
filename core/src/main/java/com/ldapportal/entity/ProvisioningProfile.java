@@ -68,6 +68,13 @@ public class ProvisioningProfile {
     @Column(name = "theme_color", length = 7)
     private String themeColor;
 
+    /**
+     * Whether the profile's user and group dialogs show {@link #themeColor} as a
+     * strip down their left edge. Only has an effect when a theme colour is set.
+     */
+    @Column(name = "show_theme_bar", nullable = false)
+    private boolean showThemeBar = true;
+
     /** LDAP DN of the OU where new users are created. */
     @Column(name = "target_user_dn", nullable = false, length = 500)
     private String targetUserDn;

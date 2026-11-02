@@ -670,7 +670,7 @@ describe('BulkView — tabs follow the admin\'s bulk features', () => {
   beforeEach(() => vi.clearAllMocks())
 
   const tabLabels = (w: ReturnType<typeof mount>) =>
-    w.findAll('button').map(b => b.text()).filter(t => ['Import', 'Export', 'Delete'].includes(t))
+    w.findAll('button').map(b => b.text()).filter(t => ['Import', 'Update', 'Export', 'Delete'].includes(t))
 
   it('shows a read-only admin only the Export tab and opens on it', async () => {
     grantedFeatures.clear()
@@ -700,7 +700,7 @@ describe('BulkView — tabs follow the admin\'s bulk features', () => {
     await flushPromises()
     expect(tabLabels(w)).toEqual(['Import', 'Export', 'Delete'])
     await btnByText(w, 'Groups').trigger('click')
-    expect(tabLabels(w)).toEqual(['Import', 'Export'])
+    expect(tabLabels(w)).toEqual(['Update', 'Export'])
   })
 
   it('moves off Delete when switching to groups', async () => {

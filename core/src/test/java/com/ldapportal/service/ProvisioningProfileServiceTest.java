@@ -473,7 +473,7 @@ class ProvisioningProfileServiceTest {
     private com.ldapportal.dto.profile.CreateProfileRequest createReq(
             List<com.ldapportal.dto.profile.CreateProfileRequest.GroupAssignmentEntry> groups) {
         return new com.ldapportal.dto.profile.CreateProfileRequest(
-                "engineers", null, null, "ou=People,dc=example,dc=com", null,
+                "engineers", null, null, null, "ou=People,dc=example,dc=com", null,
                 List.of("inetOrgPerson"), "uid", true,
                 null, null, null, null,
                 true, false,
@@ -513,7 +513,7 @@ class ProvisioningProfileServiceTest {
             String rdnAttribute, String dnTemplate, boolean showDnField, boolean selfRegistration,
             List<com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry> configs) {
         return new com.ldapportal.dto.profile.CreateProfileRequest(
-                "engineers", null, null, "ou=People,dc=example,dc=com", null,
+                "engineers", null, null, null, "ou=People,dc=example,dc=com", null,
                 List.of("inetOrgPerson"), rdnAttribute, showDnField,
                 dnTemplate, null, null, null,
                 true, selfRegistration,
@@ -524,7 +524,7 @@ class ProvisioningProfileServiceTest {
     // Operator-entered DN mode with the DN field placed in the given section.
     private com.ldapportal.dto.profile.CreateProfileRequest reqWithDnSection(String dnSectionName) {
         return new com.ldapportal.dto.profile.CreateProfileRequest(
-                "engineers", null, null, "ou=People,dc=example,dc=com", null,
+                "engineers", null, null, null, "ou=People,dc=example,dc=com", null,
                 List.of("inetOrgPerson"), "uid", true,
                 null, 6, dnSectionName, 0,
                 true, false,
@@ -815,13 +815,33 @@ class ProvisioningProfileServiceTest {
 
     /** A minimal valid create request carrying the given theme colour. */
     private com.ldapportal.dto.profile.CreateProfileRequest themedCreateReq(String themeColor) {
+        return themedCreateReq(themeColor, null);
+    }
+
+    private com.ldapportal.dto.profile.CreateProfileRequest themedCreateReq(String themeColor, Boolean showThemeBar) {
         return new com.ldapportal.dto.profile.CreateProfileRequest(
-                "engineers", null, themeColor, "ou=People,dc=example,dc=com", null,
+                "engineers", null, themeColor, showThemeBar, "ou=People,dc=example,dc=com", null,
                 List.of("inetOrgPerson"), "uid", true,
                 null, null, null, null,
                 true, false,
                 null, null, null, null, null, null, null, null,
                 false, false, null, null, List.of());
+    }
+
+    @Test
+    void createProfile_showThemeBar_defaultsOnAndHonoursOff() {
+        UUID directoryId = UUID.randomUUID();
+        stubDirectory(directoryId);
+        var captor = org.mockito.ArgumentCaptor.forClass(
+                com.ldapportal.entity.ProvisioningProfile.class);
+
+        service.create(directoryId, themedCreateReq("#2563eb", null), true, null);
+        service.create(directoryId, themedCreateReq("#2563eb", false), true, null);
+
+        org.mockito.Mockito.verify(profileRepo, org.mockito.Mockito.atLeast(2)).save(captor.capture());
+        var flags = captor.getAllValues().stream()
+                .map(com.ldapportal.entity.ProvisioningProfile::isShowThemeBar).distinct().toList();
+        assertThat(flags).containsExactly(true, false);
     }
 
     @Test

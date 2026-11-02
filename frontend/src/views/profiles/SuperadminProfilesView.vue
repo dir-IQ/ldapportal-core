@@ -64,6 +64,7 @@ interface ProfileForm {
   name: string
   description: string
   themeColor: string
+  showThemeBar: boolean
   targetUserDn: string
   targetGroupDn: string
   objectClassNames: string[]
@@ -105,6 +106,7 @@ interface ProfileRow {
   name: string
   description?: string | null
   themeColor?: string | null
+  showThemeBar?: boolean
   directoryId: string
   directoryName?: string
   targetUserDn: string
@@ -212,7 +214,7 @@ const profileApprovers = ref<string[]>([])
 
 function emptyProfile(): ProfileForm {
   return {
-    name: '', description: '', themeColor: '', targetUserDn: '', targetGroupDn: '',
+    name: '', description: '', themeColor: '', showThemeBar: true, targetUserDn: '', targetGroupDn: '',
     objectClassNames: [], rdnAttribute: '',
     // Default to Automatic DN mode (app composes <rdn>=<value>,<targetOU>).
     showDnField: false, dnTemplate: '',
@@ -292,6 +294,7 @@ async function openEdit(p: ProfileRow) {
   selectedDirId.value = p.directoryId
   profile.value = {
     name: p.name, description: p.description || '', themeColor: p.themeColor || '',
+    showThemeBar: p.showThemeBar !== false,
     targetUserDn: p.targetUserDn,
     targetGroupDn: p.targetGroupDn || '',
     objectClassNames: [...p.objectClassNames], rdnAttribute: p.rdnAttribute ?? '',
@@ -1615,6 +1618,13 @@ function toggleApprover(accountId: string) {
               new/edit dialogs and the bulk pages) is tinted with this colour, and its
               name is shaded as needed to stay readable. Leave blank for a neutral tag.
             </p>
+            <label class="mt-2 flex items-center gap-2 text-sm"
+              :class="profile.themeColor ? '' : 'text-gray-400 cursor-not-allowed'"
+              :title="profile.themeColor ? undefined : 'Set a theme colour to show the bar'">
+              <input type="checkbox" v-model="profile.showThemeBar" :disabled="!profile.themeColor"
+                data-testid="sp-show-theme-bar" />
+              Show vertical bar: the theme colour down the left edge of this profile's user and group dialogs
+            </label>
           </div>
           <div v-if="!editing">
             <label for="sp-directory" class="block text-sm font-medium text-gray-700 mb-1">Directory</label>

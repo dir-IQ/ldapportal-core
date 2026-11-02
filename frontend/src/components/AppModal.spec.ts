@@ -37,20 +37,22 @@ describe('AppModal', () => {
     w.unmount()
   })
 
-  it('keeps the default white header (gray title) when no headerColor is set', () => {
+  it('draws no accent strip when no accentColor is set', () => {
     const w = mountModal({}, { default: '<p>hi</p>' })
-    const header = document.body.querySelector('h2')?.parentElement as HTMLElement
-    expect(header.getAttribute('style') || '').not.toContain('background')
+    expect(document.body.querySelector('[data-testid="modal-accent"]')).toBeNull()
     expect(document.body.querySelector('h2')?.className).toContain('text-gray-900')
     w.unmount()
   })
 
-  it('renders a colour band with contrasting title when headerColor is set', () => {
-    const w = mountModal({ headerColor: '#2563eb' }, { default: '<p>hi</p>' })
+  it('draws the accent colour as a strip down the left edge, header unchanged', () => {
+    const w = mountModal({ accentColor: '#2563eb' }, { default: '<p>hi</p>' })
+    const strip = document.body.querySelector('[data-testid="modal-accent"]') as HTMLElement
+    expect(strip).toBeTruthy()
+    expect(strip.className).toContain('left-0')
+    expect(strip.className).toContain('w-1.5')
+    expect(strip.getAttribute('style')).toContain('background-color')
     const header = document.body.querySelector('h2')?.parentElement as HTMLElement
-    // Dark brand colour → white title for legibility on the band.
-    expect(header.getAttribute('style')).toContain('background-color')
-    expect(document.body.querySelector('h2')?.className).toContain('text-white')
+    expect(header.getAttribute('style') || '').not.toContain('background')
     w.unmount()
   })
 

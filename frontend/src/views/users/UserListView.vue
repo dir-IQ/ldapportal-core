@@ -221,10 +221,10 @@
     </AppModal>
 
     <!-- Create/Edit modal (step 2 of create, or edit) -->
-    <AppModal v-model="showModal" size="xl" :dirty="modalDirty">
+    <AppModal v-model="showModal" size="xl" :dirty="modalDirty" :accent-color="themeBarColor(profileConfig)">
       <template #title>
         <span class="whitespace-nowrap">{{ viewOnly ? 'User Details' : editingDn ? 'Edit User' : 'New User' }}</span>
-        <ProfilePill v-if="profileConfig?.name" class="flex-1 min-w-0"
+        <ProfilePill v-if="profileConfig?.name" class="min-w-0"
                      :name="profileConfig.name" :color="profileConfig.themeColor" />
       </template>
       <UserForm ref="userFormRef" :data="form" :is-edit="!!editingDn" :read-only="viewOnly" :user-template-config="profileConfig ?? undefined" :dir-id="dirId" :profile-id="selectedProfileId" @update="(v: UserFormState) => form = v" />
@@ -529,12 +529,15 @@ import { rdnValue } from '@/composables/useEntryClassification'
 import { ensureNamingValues, parseLeadingRdn } from '@/utils/dn'
 import { resolveGroupMembers } from '@/utils/groupMembers'
 import ProfilePill from '@/components/ProfilePill.vue'
+import { themeBarColor } from '@/utils/themeColor'
 
 interface ProfileLite {
   id: string
   name: string
   /** Optional #RRGGBB theme colour; when set the page header / modal render a band of it. */
   themeColor?: string | null
+  /** Whether its dialogs show the theme colour as a left-edge strip (default on). */
+  showThemeBar?: boolean
   targetUserDn?: string | null
   rdnAttribute?: string
   showDnField?: boolean

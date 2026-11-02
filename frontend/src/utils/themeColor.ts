@@ -157,3 +157,14 @@ export function onThemeTitleClass(hex: string | null | undefined): string {
 export function onThemeMutedClass(hex: string | null | undefined): string {
   return isLightColor(hex) ? 'text-gray-700' : 'text-white/80'
 }
+
+/**
+ * The colour for a profile's dialog accent strip: its theme colour, unless the
+ * profile turned the strip off (showThemeBar false) or has no colour.
+ */
+export function themeBarColor(
+  profile: { themeColor?: string | null, showThemeBar?: boolean | null } | null | undefined,
+): string | null {
+  if (!profile || profile.showThemeBar === false) return null
+  return parseHex(profile.themeColor) ? (profile.themeColor as string) : null
+}

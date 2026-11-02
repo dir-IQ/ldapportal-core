@@ -164,6 +164,7 @@ public class ProvisioningProfileService {
                 req.passwordDigits(), req.passwordSpecial(), req.passwordSpecialChars(),
                 req.emailPasswordToUser(), req.passwordDisposition());
         profile.setThemeColor(normalizeThemeColor(req.themeColor()));
+        if (req.showThemeBar() != null) profile.setShowThemeBar(req.showThemeBar());
         profile.setAutoIncludeGroups(req.autoIncludeGroups());
         // Auto-include profiles should not also exclude auto-includes (nonsensical)
         profile.setExcludeAutoIncludes(req.autoIncludeGroups() ? false : req.excludeAutoIncludes());
@@ -265,6 +266,7 @@ public class ProvisioningProfileService {
                 req.passwordDigits(), req.passwordSpecial(), req.passwordSpecialChars(),
                 req.emailPasswordToUser(), req.passwordDisposition());
         profile.setThemeColor(normalizeThemeColor(req.themeColor()));
+        if (req.showThemeBar() != null) profile.setShowThemeBar(req.showThemeBar());
         profile.setAutoIncludeGroups(req.autoIncludeGroups());
         // Auto-include profiles should not also exclude auto-includes (nonsensical)
         profile.setExcludeAutoIncludes(req.autoIncludeGroups() ? false : req.excludeAutoIncludes());
@@ -350,6 +352,7 @@ public class ProvisioningProfileService {
         copy.setName(newName);
         copy.setDescription(source.getDescription());
         copy.setThemeColor(source.getThemeColor());
+        copy.setShowThemeBar(source.isShowThemeBar());
         copy.setTargetUserDn(source.getTargetUserDn());
         copy.setTargetGroupDn(source.getTargetGroupDn());
         copy.setObjectClassNames(new ArrayList<>(source.getObjectClassNames()));

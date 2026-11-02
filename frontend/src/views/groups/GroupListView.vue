@@ -142,10 +142,10 @@
     </AppModal>
 
     <!-- Create group (step 2 of create) -->
-    <AppModal v-model="showCreate" size="lg">
+    <AppModal v-model="showCreate" size="lg" :accent-color="themeBarColor(createProfile)">
       <template #title>
         <span class="whitespace-nowrap">New Group</span>
-        <ProfilePill v-if="createProfile?.name" class="flex-1 min-w-0"
+        <ProfilePill v-if="createProfile?.name" class="min-w-0"
                      :name="createProfile.name" :color="createProfile.themeColor" />
       </template>
       <div class="grid grid-cols-3 gap-2">
@@ -164,10 +164,10 @@
     </AppModal>
 
     <!-- Edit group -->
-    <AppModal v-model="showEdit" size="md">
+    <AppModal v-model="showEdit" size="md" :accent-color="themeBarColor(profileData)">
       <template #title>
         <span class="whitespace-nowrap">Edit Group</span>
-        <ProfilePill v-if="profileData?.name" class="flex-1 min-w-0"
+        <ProfilePill v-if="profileData?.name" class="min-w-0"
                      :name="profileData.name" :color="profileData.themeColor" />
       </template>
       <FormField label="Owner" v-model="editForm.owner" placeholder="DN of the group owner" :error="editOwnerError" />
@@ -282,6 +282,7 @@ import CopyButton from '@/components/CopyButton.vue'
 import { validateDn } from '@/utils/attributeValidation'
 import { resolveGroupMembers, type MemberAttr } from '@/utils/groupMembers'
 import ProfilePill from '@/components/ProfilePill.vue'
+import { themeBarColor } from '@/utils/themeColor'
 import { useAuthStore } from '@/stores/auth'
 import { getIsvaGroupRegistrations, importIsvaGroup, removeIsvaGroup } from '@/api/isvaGroup'
 import { useConfirm } from '@/composables/useConfirm'
@@ -292,6 +293,8 @@ interface ProfileLite {
   name: string
   /** Optional #RRGGBB theme colour; when set the page header / modal render a band of it. */
   themeColor?: string | null
+  /** Whether its dialogs show the theme colour as a left-edge strip (default on). */
+  showThemeBar?: boolean
   targetUserDn?: string | null
   targetGroupDn?: string | null
   enabled?: boolean

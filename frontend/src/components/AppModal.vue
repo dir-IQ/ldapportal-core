@@ -21,24 +21,22 @@
         <div ref="panelRef"
              :class="['relative bg-white rounded-xl shadow-xl w-full flex flex-col overflow-hidden', sizeClass]"
              :style="panelStyle">
-          <!-- Header (doubles as the drag handle when `movable`). When a
-               `headerColor` (a provisioning-profile theme colour) is given, the
-               header fills with that colour as a band and the title/close switch
-               to a legible contrast colour. -->
+          <!-- Accent strip: a provisioning-profile theme colour down the panel's
+               left edge (the panel's overflow-hidden rounds it with the corners).
+               Decorative — the title's profile tag names the profile. -->
+          <div v-if="accentColor" class="absolute inset-y-0 left-0 w-1.5 z-[1] pointer-events-none"
+               :style="{ backgroundColor: accentColor }" data-testid="modal-accent" aria-hidden="true"></div>
+          <!-- Header (doubles as the drag handle when `movable`). -->
           <div :class="['flex items-center justify-between gap-3 px-6 py-4 border-b border-gray-200 shrink-0',
                         movable ? 'cursor-move select-none' : '']"
-               :style="headerColor ? { backgroundColor: headerColor } : {}"
                @pointerdown="onHandlePointerDown">
-            <!-- flex-1 + flex lets a title-slot tag (the profile pill) stretch
-                 across the header to just before the close button. Plain string
-                 titles are unaffected — a single flex item, left-aligned. -->
-            <h2 :id="titleId" class="text-lg font-semibold flex-1 min-w-0 flex items-center gap-3"
-                :class="headerColor ? onThemeTitleClass(headerColor) : 'text-gray-900'">
+            <!-- flex-1 + flex lays out a title slot's pieces (e.g. a heading and
+                 the profile tag) in a row; min-w-0 lets a long tag truncate. -->
+            <h2 :id="titleId" class="text-lg font-semibold flex-1 min-w-0 flex items-center gap-3 text-gray-900">
               <slot name="title">{{ title }}</slot>
             </h2>
             <button @click="requestClose" aria-label="Close"
-                    class="text-xl leading-none transition-colors hover:opacity-80"
-                    :class="headerColor ? onThemeTitleClass(headerColor) : 'text-gray-500 hover:text-gray-600'">&#215;</button>
+                    class="text-xl leading-none transition-colors hover:opacity-80 text-gray-500 hover:text-gray-600">&#215;</button>
           </div>
           <!-- Body. A flex column so content can use the modal's full height:
                a scroll region opts in with `min-h-0 overflow-y-auto` (plus the
@@ -92,7 +90,6 @@ import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { useDialogA11y } from '@/composables/useDialogA11y'
 import { useDraggableModal } from '@/composables/useDraggableModal'
 import { usePreferencesStore } from '@/stores/preferences'
-import { onThemeTitleClass } from '@/utils/themeColor'
 
 const props = withDefaults(
   defineProps<{
@@ -120,13 +117,12 @@ const props = withDefaults(
      *  Programmatic closes (setting the v-model directly, e.g. after a
      *  successful save) bypass the guard. */
     dirty?: boolean
-    /** Optional provisioning-profile theme colour (#RRGGBB). When set, the modal
-     *  header renders as a band of this colour with a contrasting title/close.
-     *  Empty/unset keeps the default white header. */
-    headerColor?: string | null
+    /** Optional provisioning-profile theme colour (#RRGGBB), drawn as a strip
+     *  down the panel's left edge. Empty/unset draws none. */
+    accentColor?: string | null
   }>(),
   { modelValue: false, title: '', size: 'md', movable: true, resizable: true,
-    fill: false, storageKey: '', dirty: false, headerColor: '' },
+    fill: false, storageKey: '', dirty: false, accentColor: '' },
 )
 const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>()
 

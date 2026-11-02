@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { describe, it, expect } from 'vitest'
 import {
-  isLightColor, onThemeTitleClass, onThemeMutedClass, themeTint, themeTintStyle, themeColorAdvice, contrastRatio,
+  isLightColor, onThemeTitleClass, themeBarColor, onThemeMutedClass, themeTint, themeTintStyle, themeColorAdvice, contrastRatio,
   MIN_TEXT_CONTRAST,
 } from './themeColor'
 
@@ -101,5 +101,16 @@ describe('themeColorAdvice', () => {
 
   it('asks for a hex colour when the value isn\'t one', () => {
     expect(themeColorAdvice('#abc')).toContain('#2563eb')
+  })
+})
+
+describe('themeBarColor', () => {
+  it('is the theme colour unless the profile turned the bar off or has none', () => {
+    expect(themeBarColor({ themeColor: '#2563eb' })).toBe('#2563eb')
+    expect(themeBarColor({ themeColor: '#2563eb', showThemeBar: true })).toBe('#2563eb')
+    expect(themeBarColor({ themeColor: '#2563eb', showThemeBar: false })).toBeNull()
+    expect(themeBarColor({ themeColor: '' })).toBeNull()
+    expect(themeBarColor({ themeColor: 'blue' })).toBeNull()
+    expect(themeBarColor(null)).toBeNull()
   })
 })

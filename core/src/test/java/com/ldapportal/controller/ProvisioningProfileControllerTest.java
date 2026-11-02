@@ -51,6 +51,7 @@ class ProvisioningProfileControllerTest extends BaseControllerTest {
         return new ProfileResponse(
                 PROFILE_ID, DIR_ID, "dir-1", "p1", "p1", null,
                 null, // themeColor
+                true, // showThemeBar
                 "ou=people,dc=example,dc=com",
                 "ou=groups,dc=example,dc=com",
                 List.of("inetOrgPerson"), "uid",

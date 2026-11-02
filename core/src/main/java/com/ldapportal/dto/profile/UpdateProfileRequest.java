@@ -18,6 +18,9 @@ public record UpdateProfileRequest(
         // Optional UI theme colour as #RRGGBB hex; empty/null means "no theme".
         @Pattern(regexp = "^(#[0-9a-fA-F]{6})?$",
                 message = "themeColor must be a hex colour like #2563eb") String themeColor,
+        // Show the theme colour as a strip on the profile's user/group dialogs; null keeps
+        // the stored value (on by default).
+        Boolean showThemeBar,
         @NotBlank @Size(max = 500) String targetUserDn,
         @Size(max = 500) String targetGroupDn,
         @NotEmpty List<@NotBlank String> objectClassNames,

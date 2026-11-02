@@ -1295,6 +1295,7 @@ class LdapOperationServiceTest {
         return new com.ldapportal.dto.profile.ProfileResponse(
                 id, dirId, "dir", "Staff", "staff", null,
                 null, // themeColor
+                true, // showThemeBar
                 targetUserDn, targetUserDn,
                 List.of(), "uid",
                 true, null, null, null, null, true, false,

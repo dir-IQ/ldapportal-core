@@ -380,6 +380,7 @@ class UserControllerTest extends BaseControllerTest {
         return new com.ldapportal.dto.profile.ProfileResponse(
                 id, DIR_ID, "dir-1", "Staff", "staff", null,
                 null, // themeColor
+                true, // showThemeBar
                 "ou=staff,dc=example,dc=com", "ou=groups,dc=example,dc=com",
                 List.of("inetOrgPerson"), "uid",
                 true, null, null, null, null, true, false,
