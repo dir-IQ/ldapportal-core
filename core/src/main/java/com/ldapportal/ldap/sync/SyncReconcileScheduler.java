@@ -101,6 +101,9 @@ public class SyncReconcileScheduler {
                 syncSetRepo.recordVerifyResult(setId, OffsetDateTime.now(),
                         v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
                 history.recordDrift(setId, v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
+                if (v.heldReferences() != null) {
+                    syncSetRepo.recordVerifyHeld(setId, v.heldReferences().entries(), v.heldReferences().dangling());
+                }
             } else {
                 syncSetRepo.recordVerifyIncomplete(setId, OffsetDateTime.now());
             }

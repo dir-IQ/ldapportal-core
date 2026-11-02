@@ -189,4 +189,26 @@ class SyncContentVerifierTest {
         assertThat(unanchored.orphanOnTarget()).isEqualTo(2);
         assertThat(unanchored.orphansAnchored()).isFalse();
     }
+
+    // ── held references ──────────────────────────────────────────────────────────
+
+    @org.junit.jupiter.api.Test
+    void heldReferences_countsMembersAndTheOnesNamingMissingEntries() {
+        var linked = MembershipDecision.in("1", "cn=a,dc=t", List.of(), new byte[0],
+                Map.of("secDN", List.of("uid=ghost,ou=people,dc=s")), Map.of());
+        var unsynced = MembershipDecision.in("2", "cn=b,dc=t", List.of(), new byte[0],
+                Map.of(), Map.of("member", List.of("uid=pending,ou=people,dc=s")));
+        var clean = MembershipDecision.in("3", "cn=c,dc=t", List.of(), new byte[0], Map.of(), Map.of());
+
+        // ghost exists nowhere; pending exists on the source but isn't synced yet.
+        var held = SyncContentVerifier.heldReferences(List.of(linked, unsynced, clean),
+                dn -> !dn.startsWith("uid=ghost"));
+
+        assertThat(held.entries()).isEqualTo(2);
+        assertThat(held.dangling()).isEqualTo(1);
+        assertThat(held.unchecked()).isFalse();
+        assertThat(held.samples()).extracting(SyncVerifyResult.HeldSample::reference, SyncVerifyResult.HeldSample::dangling)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple("uid=ghost,ou=people,dc=s", true),
+                        org.assertj.core.groups.Tuple.tuple("uid=pending,ou=people,dc=s", false));
+    }
 }

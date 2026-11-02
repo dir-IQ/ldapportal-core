@@ -47,7 +47,7 @@ public record SyncSetResponse(
      * both directories, when that was ({@code incompleteAt}).
      */
     public record VerifySnapshot(OffsetDateTime at, Integer missing, Integer orphan, Integer mismatch,
-                                 OffsetDateTime incompleteAt) {
+                                 OffsetDateTime incompleteAt, Integer held, Integer dangling) {
     }
 
     public static SyncSetResponse of(SyncSet s) {
@@ -63,6 +63,7 @@ public record SyncSetResponse(
                 s.isEnabled(), s.getLoggingLevel(), s.getCreatedAt(), s.getUpdatedAt(), s.getVersion(),
                 stateCounts == null ? Map.of() : stateCounts,
                 new VerifySnapshot(s.getLastVerifiedAt(), s.getVerifyMissingCount(), s.getVerifyOrphanCount(),
-                        s.getVerifyMismatchCount(), s.getVerifyIncompleteAt()));
+                        s.getVerifyMismatchCount(), s.getVerifyIncompleteAt(), s.getVerifyHeldCount(),
+                        s.getVerifyDanglingCount()));
     }
 }

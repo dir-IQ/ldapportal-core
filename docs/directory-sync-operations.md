@@ -636,7 +636,14 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   orphaned: an entry under the same target base that another set placed, or
   that nothing manages, isn't this set's drift. Without an anchor every entry
   under the target base that matches the filter is counted, and the result says
-  so.
+  so. It also counts **held references**: members with a reference value
+  (`secDN`, group `member`, …) the sync holds back because the entry it names
+  isn't placed by any sync set. They aren't drift — a held value is left as
+  the target has it — but each is listed with its value and whether the entry
+  it names **doesn't exist on the source** (a source data problem a reconcile
+  can't fix) or simply **isn't synced yet** (it fills in once that entry
+  lands). The counts are stored with the drift snapshot, so the inventory
+  shows them without running a verify.
 - **Drift column and drifting sets.** Each set stores its last *complete*
   content verify (it runs after every scheduled or manual reconcile, and on
   **Verify contents**). The sets table's **Drift** column shows it — e.g.

@@ -683,6 +683,10 @@ public class SyncConfigService {
                 reconcileHistory.recordDrift(syncSetId,
                         result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
             }
+            if (result.heldReferences() != null) {
+                setRepo.recordVerifyHeld(syncSetId, result.heldReferences().entries(),
+                        result.heldReferences().dangling());
+            }
         } else if (result.note() == null) {
             // It ran but couldn't read a side completely (an unavailable set
             // carries a note instead): keep the snapshot, flag it as possibly stale.

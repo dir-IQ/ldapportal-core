@@ -124,6 +124,8 @@ export interface DirectoryDiffLiveEntry {
   readAt: string
   diffs: DirectoryDiffAttributeDiff[]
   same: { name: string; values: string[] }[]
+  /** Differing DN values that name no entry in their own directory (a dangling reference). */
+  dangling?: { attribute: string; side: 'A' | 'B'; value: string }[]
 }
 
 const BASE = '/superadmin/directory-diffs'

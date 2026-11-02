@@ -631,13 +631,65 @@ public class DirectoryDiffService {
             DirectoryDiffCategory category = a != null ? DirectoryDiffCategory.ONLY_A
                     : b != null ? DirectoryDiffCategory.ONLY_B : null;
             return new DirectoryDiffLiveEntry(category, row.dnA(), row.dnB(), a != null, b != null, now, List.of(),
-                    List.of());
+                    List.of(), List.of());
         }
         DirectoryDiffEngine.Result result = DirectoryDiffEngine.comparePair(a, b,
                 options(settings, schemas.forDirectory(dirB)));
-        return new DirectoryDiffLiveEntry(result.category(), row.dnA(), row.dnB(), true, true, now,
-                result.diffs().stream().map(DirectoryDiffService::dto).toList(),
-                result.same().stream().map(s -> new DirectoryDiffLiveEntry.SameAttribute(s.name(), s.values())).toList());
+        List<DirectoryDiffAttributeDiff> diffs = result.diffs().stream().map(DirectoryDiffService::dto).toList();
+        return new DirectoryDiffLiveEntry(result.category(), row.dnA(), row.dnB(), true, true, now, diffs,
+                result.same().stream().map(s -> new DirectoryDiffLiveEntry.SameAttribute(s.name(), s.values())).toList(),
+                danglingValues(diffs, dirA, dirB));
+    }
+
+    /** At most this many reference values are checked for a live re-read (one read each). */
+    static final int DANGLING_CHECK_LIMIT = 50;
+
+    /**
+     * The differing DN values that name no entry in their own directory: a value
+     * only on A is looked up on A, one only on B on B. A reference to a missing
+     * entry is a source data problem (a sync holds such a value back rather than
+     * writing it), not a copy that went wrong.
+     */
+    private List<DirectoryDiffLiveEntry.DanglingValue> danglingValues(List<DirectoryDiffAttributeDiff> diffs,
+                                                                   DirectoryConnection dirA, DirectoryConnection dirB) {
+        com.unboundid.ldap.sdk.schema.Schema schemaA = schemas.forDirectory(dirA);
+        com.unboundid.ldap.sdk.schema.Schema schemaB = schemas.forDirectory(dirB);
+        List<DirectoryDiffLiveEntry.DanglingValue> out = new java.util.ArrayList<>();
+        int checked = 0;
+        for (DirectoryDiffAttributeDiff d : diffs) {
+            String base = d.name().split(";", 2)[0];
+            boolean dnA = com.ldapportal.ldap.diff.DiffValueComparison.isDnValued(base, schemaA,
+                    DirectoryDiffEngine.KNOWN_DN_ATTRIBUTES);
+            boolean dnB = com.ldapportal.ldap.diff.DiffValueComparison.isDnValued(base, schemaB,
+                    DirectoryDiffEngine.KNOWN_DN_ATTRIBUTES);
+            for (String v : dnA ? d.onlyA() : List.<String>of()) {
+                if (checked++ >= DANGLING_CHECK_LIMIT) return out;
+                if (isDn(v) && !exists(dirA, v)) out.add(new DirectoryDiffLiveEntry.DanglingValue(d.name(), "A", v));
+            }
+            for (String v : dnB ? d.onlyB() : List.<String>of()) {
+                if (checked++ >= DANGLING_CHECK_LIMIT) return out;
+                if (isDn(v) && !exists(dirB, v)) out.add(new DirectoryDiffLiveEntry.DanglingValue(d.name(), "B", v));
+            }
+        }
+        return out;
+    }
+
+    private static boolean isDn(String v) {
+        try {
+            return !new DN(v).isNullDN();
+        } catch (LDAPException ex) {
+            return false;
+        }
+    }
+
+    /** Whether an entry exists at {@code dn}; a read failure other than no-such-object counts as yes (not dangling). */
+    private boolean exists(DirectoryConnection dc, String dn) {
+        try {
+            return readOne(dc, dn, new String[] {"1.1"}) != null;
+        } catch (Exception ex) {
+            log.debug("Couldn't check whether {} exists: {}", dn, ex.toString());
+            return true;
+        }
     }
 
     /** Hand each row of a group (every group when {@code null}) to {@code sink}, for a CSV export. */
