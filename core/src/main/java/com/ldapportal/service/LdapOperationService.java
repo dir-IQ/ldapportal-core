@@ -1077,12 +1077,6 @@ public class LdapOperationService {
     // ── Bulk import / export ──────────────────────────────────────────────────
 
     /**
-     * Resolve a bulk-import request's {@code profileId} to its profile entity,
-     * or {@code null} when no profile was given (legacy parentDn-driven import).
-     * Throws a 400-class error if a profileId is supplied but the provisioning
-     * profile module isn't on the classpath (community build without it).
-     */
-    /**
      * The attribute a bulk import matches rows to existing entries by, before a
      * template or the request overrides it: the profile's RDN attribute; else,
      * for an operator-entered profile without one, the first attribute of its
@@ -1103,6 +1097,12 @@ public class LdapOperationService {
         return "uid";
     }
 
+    /**
+     * Resolve a bulk-import request's {@code profileId} to its profile entity,
+     * or {@code null} when no profile was given (legacy parentDn-driven import).
+     * Throws a 400-class error if a profileId is supplied but the provisioning
+     * profile module isn't on the classpath (community build without it).
+     */
     private ProvisioningProfile resolveBulkImportProfile(UUID directoryId, BulkImportRequest req) {
         if (req.profileId() == null) return null;
         ProvisioningProfileService ps = profileServiceProvider.getIfAvailable();
