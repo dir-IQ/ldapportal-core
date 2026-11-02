@@ -168,9 +168,32 @@ public class SyncContentVerifier {
                     tracking.current(dn);
                 }, anchorAttribute(ctx.set));
         tracking.processed(expected.size());
-        Map<String, Boolean> onSource = new HashMap<>();
-        return result.withHeldReferences(heldReferences(members.values(),
-                dn -> onSource.computeIfAbsent(normDn(dn), k -> readExistsOnSource(ctx, dn))));
+        return result.withHeldReferences(heldReferencesOnSource(ctx, members.values()));
+    }
+
+    /**
+     * {@link #heldReferences} with the referenced DNs looked up on the source over
+     * one pooled connection rather than one borrow per DN. If the source can't be
+     * reached, nothing counts as dangling.
+     */
+    private SyncVerifyResult.HeldReferences heldReferencesOnSource(Context ctx,
+                                                                   java.util.Collection<MembershipDecision> members) {
+        try {
+            return connectionFactory.withConnectionUnreplicated(ctx.source, conn -> {
+                Map<String, Boolean> onSource = new HashMap<>();
+                return heldReferences(members, dn -> onSource.computeIfAbsent(normDn(dn), k -> {
+                    try {
+                        return conn.getEntry(dn, "1.1") != null;
+                    } catch (Exception ex) {
+                        return true; // a failed read isn't evidence the entry is missing
+                    }
+                }));
+            });
+        } catch (Exception ex) {
+            log.warn("Sync set {}: couldn't look up held references on the source ({})",
+                    ctx.set.getId(), ex.toString());
+            return heldReferences(members, dn -> true);
+        }
     }
 
     /** At most this many distinct referenced DNs are looked up on the source per verify. */
@@ -219,15 +242,6 @@ public class SyncContentVerifier {
             }
         }
         return new SyncVerifyResult.HeldReferences(entries, dangling, unchecked, List.copyOf(samples));
-    }
-
-    /** Whether an entry exists at {@code dn} on the source; a failed read counts as yes (not dangling). */
-    private boolean readExistsOnSource(Context ctx, String dn) {
-        try {
-            return connectionFactory.withConnectionUnreplicated(ctx.source, conn -> conn.getEntry(dn, "1.1") != null);
-        } catch (Exception ex) {
-            return true;
-        }
     }
 
     /** Told as the comparison reaches each expected entry: how many came before it, and its DN. */
