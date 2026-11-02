@@ -168,4 +168,25 @@ class SyncContentVerifierTest {
         assertThat(r.inSync()).isEqualTo(1);
         assertThat(r.contentMismatches()).isZero();
     }
+
+    @Test
+    void withAnAnchor_onlyAnchoredTargetEntriesAreOrphans() {
+        Map<String, Entry> actual = new LinkedHashMap<>();
+        actual.put("uid=gone,ou=people,dc=t", new Entry("uid=gone,ou=people,dc=t",
+                new Attribute("cn", "Gone"), new Attribute("srcAnchor", "id-1")));
+        actual.put("uid=other,ou=people,dc=t", new Entry("uid=other,ou=people,dc=t",
+                new Attribute("cn", "Not ours")));
+
+        SyncVerifyResult anchored = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true,
+                null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor");
+        SyncVerifyResult unanchored = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true);
+
+        // Only the entry the set stamped is its orphan; the other isn't its to account for.
+        assertThat(anchored.orphanOnTarget()).isEqualTo(1);
+        assertThat(anchored.sampleOrphans()).containsExactly("uid=gone,ou=people,dc=t");
+        assertThat(anchored.orphansAnchored()).isTrue();
+        // Without an anchor every entry under the base is a candidate, as before.
+        assertThat(unanchored.orphanOnTarget()).isEqualTo(2);
+        assertThat(unanchored.orphansAnchored()).isFalse();
+    }
 }

@@ -427,35 +427,41 @@ public class ActivityDashboardService {
         }
 
         long driftSets = 0;
-        long driftEntries = 0;
-        UUID worstDriftSetId = null;
-        long worstDrift = 0;
+        long missing = 0;
+        long orphan = 0;
+        long mismatch = 0;
         for (SyncSet set : syncSetRepo.findAllByEnabledTrue()) {
             if (set.getLastVerifiedAt() == null) {
                 continue; // never verified — claim no drift
             }
-            long drift = nz(set.getVerifyMissingCount())
-                    + nz(set.getVerifyOrphanCount())
-                    + nz(set.getVerifyMismatchCount());
-            if (drift > 0) {
+            long m = nz(set.getVerifyMissingCount());
+            long o = nz(set.getVerifyOrphanCount());
+            long x = nz(set.getVerifyMismatchCount());
+            if (m + o + x > 0) {
                 driftSets++;
-                driftEntries += drift;
-                if (drift > worstDrift) {
-                    worstDrift = drift;
-                    worstDriftSetId = set.getId();
-                }
+                missing += m;
+                orphan += o;
+                mismatch += x;
             }
         }
+        long driftEntries = missing + orphan + mismatch;
         if (driftEntries > 0) {
-            String link = worstDriftSetId == null
-                    ? "/superadmin/directory-sync"
-                    : "/superadmin/directory-sync?set=" + worstDriftSetId;
+            // The sync page lists every drifting set (?drift=1), not just one of them.
             items.add(new AwarenessItem("RECONCILIATION_DRIFT_OPEN",
                     driftEntries + (driftEntries == 1 ? " entry" : " entries") + " differ from source",
-                    "Across " + driftSets + " sync set" + (driftSets == 1 ? "" : "s")
-                            + " — last content verify found drift",
-                    link));
+                    "Across " + driftSets + " sync set" + (driftSets == 1 ? "" : "s") + ": "
+                            + driftBreakdown(missing, orphan, mismatch) + " at the last content verify",
+                    "/superadmin/directory-sync?drift=1"));
         }
+    }
+
+    /** "3 missing · 12 orphaned · 2 different", leaving out the kinds with none. */
+    static String driftBreakdown(long missing, long orphan, long mismatch) {
+        List<String> parts = new ArrayList<>(3);
+        if (missing > 0) parts.add(missing + " missing on target");
+        if (orphan > 0) parts.add(orphan + " orphaned on target");
+        if (mismatch > 0) parts.add(mismatch + " with different content");
+        return String.join(" · ", parts);
     }
 
     private static long nz(Integer v) {

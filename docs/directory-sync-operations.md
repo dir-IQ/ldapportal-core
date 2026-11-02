@@ -626,7 +626,22 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   directories and compares them directly (it ignores the membership index, so it
   catches drift the index believes is already converged). Reports counts of
   in-sync / **missing on target** / **orphaned on target** / **content drift**
-  entries, with sample DNs for each. Read-only; never writes.
+  entries, with sample DNs for each. Read-only; never writes. When the set
+  writes a **source anchor**, only target entries carrying it count as
+  orphaned: an entry under the same target base that another set placed, or
+  that nothing manages, isn't this set's drift. Without an anchor every entry
+  under the target base that matches the filter is counted, and the result says
+  so.
+- **Drift column and drifting sets.** Each set stores its last *complete*
+  content verify (it runs after every scheduled or manual reconcile, and on
+  **Verify contents**). The sets table's **Drift** column shows it — e.g.
+  *12 orphaned · 1 different*, *In sync* or *Not verified* — with the verify's
+  time on hover, and each link rolls up how many of its sets drift. When any
+  enabled set drifts, a **drifting sets** banner lists them all with an
+  **Open set** button each; the dashboard's *entries differ from source*
+  message links here (`?drift=1`) with the list open. A verify that couldn't
+  read both directories completely doesn't replace the stored counts; the
+  column then says *(may be out of date)*.
 - **Saving in the set editor.** **Save** keeps the editor open, so you can
   edit, save and preview in one place. The preview runs on the **saved** set,
   so Preview impact is unavailable while the form holds unsaved edits. Saving a

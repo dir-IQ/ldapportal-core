@@ -101,6 +101,8 @@ public class SyncReconcileScheduler {
                 syncSetRepo.recordVerifyResult(setId, OffsetDateTime.now(),
                         v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
                 history.recordDrift(setId, v.missingOnTarget(), v.orphanOnTarget(), v.contentMismatches());
+            } else {
+                syncSetRepo.recordVerifyIncomplete(setId, OffsetDateTime.now());
             }
         } catch (Exception ex) {
             log.warn("Scheduled content verify of sync set {} failed: {}", setId, ex.toString());

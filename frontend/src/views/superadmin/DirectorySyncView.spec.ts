@@ -189,6 +189,49 @@ describe('DirectorySyncView', () => {
     wrapper.unmount()
   })
 
+  describe('drift', () => {
+    const drifting = {
+      ...set, id: 'set-2', name: 'ivia users',
+      verify: { at: '2026-11-02T10:00:00Z', missing: 0, orphan: 12, mismatch: 1, incompleteAt: null },
+    }
+    const clean = {
+      ...set, id: 'set-3', name: 'groups',
+      verify: { at: '2026-11-02T10:00:00Z', missing: 0, orphan: 0, mismatch: 0, incompleteAt: null },
+    }
+
+    it('lists every drifting set, and ?drift=1 opens the list', async () => {
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set, drifting, clean] } as never)
+      routerState.query = { drift: '1' }
+      const wrapper = mount(DirectorySyncView)
+      await flushPromises()
+      const panel = wrapper.find('[data-testid="drifting-sets"]')
+      expect(panel.text()).toContain('1 sync set drifting')
+      // Only the set with drift is listed (never-verified and clean ones aren't).
+      expect(panel.text()).toContain('ivia users')
+      expect(panel.text()).toContain('12 orphaned · 1 different')
+      expect(panel.text()).not.toContain('groups')
+      // The link's Drift column rolls its sets up.
+      expect(wrapper.text()).toContain('1 set drifting')
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set] } as never)
+      wrapper.unmount()
+    })
+
+    it('keeps the list closed without ?drift=1, and shows nothing when no set drifts', async () => {
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [drifting] } as never)
+      const wrapper = mount(DirectorySyncView)
+      await flushPromises()
+      expect(wrapper.find('[data-testid="drifting-sets"]').exists()).toBe(true)
+      expect(wrapper.find('#drifting-sets-list').exists()).toBe(false)
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [clean] } as never)
+      const quiet = mount(DirectorySyncView)
+      await flushPromises()
+      expect(quiet.find('[data-testid="drifting-sets"]').exists()).toBe(false)
+      vi.mocked(syncApi.listSyncSets).mockResolvedValue({ data: [set] } as never)
+      wrapper.unmount()
+      quiet.unmount()
+    })
+  })
+
   it('deep link ?link=<id> expands that link without opening a set modal', async () => {
     routerState.query = { link: 'link-1' }
     const wrapper = mount(DirectorySyncView)
