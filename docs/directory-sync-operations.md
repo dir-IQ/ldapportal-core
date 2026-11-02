@@ -633,8 +633,10 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   in-sync / **missing on target** / **orphaned on target** / **content drift**
   entries, with sample DNs for each. Read-only; never writes. When the set
   writes a **source anchor**, only target entries carrying it count as
-  orphaned: an entry under the same target base that another set placed, or
-  that nothing manages, isn't this set's drift. Without an anchor every entry
+  orphaned: an entry under the same target base that nothing manages isn't
+  this set's drift. Nor is one another set placed: when several sets write
+  their anchor into the same attribute, an entry whose anchor value another
+  set's index places at that DN is left out too. Without an anchor every entry
   under the target base that matches the filter is counted, and the result says
   so.
 - **Drift column and drifting sets.** Each set stores its last *complete*

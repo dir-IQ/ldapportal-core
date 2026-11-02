@@ -178,7 +178,8 @@ class SyncContentVerifierTest {
                 new Attribute("cn", "Not ours")));
 
         SyncVerifyResult anchored = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true,
-                null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor");
+                null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor",
+                SyncContentVerifier.NOT_ELSEWHERE);
         SyncVerifyResult unanchored = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true);
 
         // Only the entry the set stamped is its orphan; the other isn't its to account for.
@@ -188,5 +189,23 @@ class SyncContentVerifierTest {
         // Without an anchor every entry under the base is a candidate, as before.
         assertThat(unanchored.orphanOnTarget()).isEqualTo(2);
         assertThat(unanchored.orphansAnchored()).isFalse();
+    }
+
+    @org.junit.jupiter.api.Test
+    void withAnAnchor_entriesAnotherSetPlacesThereAreNotOrphans() {
+        // Both carry the shared anchor attribute; only "gone" is this set's leftover.
+        Map<String, Entry> actual = new LinkedHashMap<>();
+        actual.put("uid=gone,ou=people,dc=t", new Entry("uid=gone,ou=people,dc=t",
+                new Attribute("cn", "Gone"), new Attribute("srcAnchor", "id-1")));
+        actual.put("uid=theirs,ou=people,dc=t", new Entry("uid=theirs,ou=people,dc=t",
+                new Attribute("cn", "Theirs"), new Attribute("srcAnchor", "id-2")));
+        SyncContentVerifier.ManagedElsewhere otherSet = (value, dn) ->
+                value.equals("id-2") && dn.equalsIgnoreCase("uid=theirs,ou=people,dc=t");
+
+        SyncVerifyResult r = SyncContentVerifier.compare(Map.of(), actual, EXCLUDED, true, true,
+                null, List.of(), SyncContentVerifier.CompareProgress.NONE, "srcAnchor", otherSet);
+
+        assertThat(r.orphanOnTarget()).isEqualTo(1);
+        assertThat(r.sampleOrphans()).containsExactly("uid=gone,ou=people,dc=t");
     }
 }

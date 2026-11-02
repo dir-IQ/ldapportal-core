@@ -52,9 +52,10 @@ import java.util.UUID;
  * <ul>
  *   <li><b>missing</b> — a member with no entry at its expected target DN,</li>
  *   <li><b>orphan</b> — a target entry with no corresponding source member. When
- *       the set writes a source anchor, only target entries carrying it count:
- *       an entry the set doesn't manage (another set's, or one never synced)
- *       under the same target base isn't this set's drift,</li>
+ *       the set writes a source anchor, only target entries carrying it count,
+ *       less those another set's index places at that DN under that anchor
+ *       value: an entry the set doesn't manage (another set's, or one never
+ *       synced) under the same target base isn't this set's drift,</li>
  *   <li><b>mismatch</b> — present on both sides, but the target's attributes
  *       differ from the projected desired state (the same diff the engine's
  *       MODIFY uses — see {@link TargetEntryDiffer}).</li>
@@ -162,11 +163,12 @@ public class SyncContentVerifier {
         Set<String> excluded = SyncExcludedAttributes.effectiveFor(ctx.set);
         tracking.phase(SyncVerifyPhase.COMPARING);
         tracking.total(expected.size());
+        String anchorAttr = anchorAttribute(ctx.set);
         SyncVerifyResult result = compare(expected, actual, excluded, sourceComplete, targetComplete,
                 targetSchemas.forDirectory(ctx.target), SyncReferenceAttributes.forSet(ctx.set), (n, dn) -> {
                     tracking.processed(n);
                     tracking.current(dn);
-                }, anchorAttribute(ctx.set));
+                }, anchorAttr, managedElsewhere(syncSetId, expected, actual, anchorAttr));
         tracking.processed(expected.size());
         return result;
     }
@@ -196,13 +198,62 @@ public class SyncContentVerifier {
                                     Set<String> excluded, boolean sourceComplete, boolean targetComplete,
                                     com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs) {
         return compare(expected, actual, excluded, sourceComplete, targetComplete, schema, dnAttrs,
-                CompareProgress.NONE, null);
+                CompareProgress.NONE, null, NOT_ELSEWHERE);
+    }
+
+    /** Says whether another set manages an anchored entry: (anchor value, entry DN) → true when it does. */
+    @FunctionalInterface
+    interface ManagedElsewhere {
+        boolean test(String anchorValue, String entryDn);
+    }
+
+    static final ManagedElsewhere NOT_ELSEWHERE = (v, dn) -> false;
+
+    /** Identities per query when looking up who manages the orphan candidates. */
+    static final int IDENTITY_BATCH = 500;
+
+    /**
+     * For the anchored target entries this set can't account for: whether
+     * another set's index places that anchor value at that very DN, so the entry
+     * is that set's, not this one's orphan (several sets may write their anchor
+     * into the same attribute under one target base).
+     */
+    private ManagedElsewhere managedElsewhere(UUID syncSetId, Map<String, Expected> expected,
+                                              Map<String, Entry> actual, String anchorAttr) {
+        if (anchorAttr == null) {
+            return NOT_ELSEWHERE;
+        }
+        java.util.Set<String> values = new java.util.LinkedHashSet<>();
+        for (Map.Entry<String, Entry> en : actual.entrySet()) {
+            if (!expected.containsKey(en.getKey())) {
+                String[] v = en.getValue().getAttributeValues(anchorAttr);
+                if (v != null) {
+                    values.addAll(java.util.Arrays.asList(v));
+                }
+            }
+        }
+        if (values.isEmpty()) {
+            return NOT_ELSEWHERE;
+        }
+        // identity -> normalized target DNs other sets place it at
+        Map<String, Set<String>> elsewhere = new HashMap<>();
+        List<String> all = new ArrayList<>(values);
+        for (int from = 0; from < all.size(); from += IDENTITY_BATCH) {
+            for (com.ldapportal.entity.Membership m
+                    : membershipRepo.findAllByIdentityIn(all.subList(from, Math.min(all.size(), from + IDENTITY_BATCH)))) {
+                if (!syncSetId.equals(m.getSyncSetId()) && m.getTargetDn() != null) {
+                    elsewhere.computeIfAbsent(m.getIdentity(), k -> new java.util.HashSet<>()).add(normDn(m.getTargetDn()));
+                }
+            }
+        }
+        return (value, dn) -> elsewhere.getOrDefault(value, Set.of()).contains(normDn(dn));
     }
 
     static SyncVerifyResult compare(Map<String, Expected> expected, Map<String, Entry> actual,
                                     Set<String> excluded, boolean sourceComplete, boolean targetComplete,
                                     com.unboundid.ldap.sdk.schema.Schema schema, List<String> dnAttrs,
-                                    CompareProgress progress, String anchorAttr) {
+                                    CompareProgress progress, String anchorAttr,
+                                    ManagedElsewhere managedElsewhere) {
         int inSync = 0;
         int compared = 0;
         List<String> missing = new ArrayList<>();
@@ -234,7 +285,7 @@ public class SyncContentVerifier {
         List<String> orphans = new ArrayList<>();
         for (Map.Entry<String, Entry> en : actual.entrySet()) {
             if (!expected.containsKey(en.getKey())
-                    && (anchorAttr == null || en.getValue().hasAttribute(anchorAttr))) {
+                    && (anchorAttr == null || isOwnOrphan(en.getValue(), anchorAttr, managedElsewhere))) {
                 orphans.add(en.getValue().getDN());
             }
         }
@@ -244,6 +295,20 @@ public class SyncContentVerifier {
                 missing.size(), orphans.size(), mismatches.size(),
                 sample(missing), sample(orphans), sample(mismatches),
                 sourceComplete, targetComplete, null, anchorAttr != null);
+    }
+
+    /** Anchored, and not placed at its DN by another set under any of its anchor values. */
+    private static boolean isOwnOrphan(Entry e, String anchorAttr, ManagedElsewhere managedElsewhere) {
+        String[] values = e.getAttributeValues(anchorAttr);
+        if (values == null || values.length == 0) {
+            return false;
+        }
+        for (String v : values) {
+            if (managedElsewhere.test(v, e.getDN())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** The set's source anchor attribute, or {@code null} when it writes none. */
