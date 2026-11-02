@@ -356,7 +356,8 @@ function stateClass(state: MembershipState): string {
 
 const chips = computed(() => {
   const c = props.set?.stateCounts ?? {}
-  const all = Object.values(c).reduce((a, b) => a + b, 0)
+  // REVIEW_DELETE counts the held deletes among the REVIEW rows: a subset, not a state.
+  const all = Object.entries(c).reduce((a, [k, v]) => (k === 'REVIEW_DELETE' ? a : a + v), 0)
   return [
     { key: 'all', value: '' as StateFilter, label: 'All', n: all, dot: '', chip: 'bg-gray-100 text-gray-700',
       hint: 'Every entry this set tracks.' },

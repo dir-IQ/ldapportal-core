@@ -160,6 +160,20 @@ class SyncReconcileSchedulerTest {
     }
 
     @Test
+    void notesTheVerifyAsIncomplete_whenItThrows() {
+        UUID id = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(id);
+        when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(set));
+        when(verifier.verify(id)).thenThrow(new RuntimeException("source unreachable"));
+
+        scheduler.reconcileDueSets();
+
+        verify(syncSetRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        verify(syncSetRepo).recordVerifyIncomplete(eq(id), any());
+    }
+
+    @Test
     void doesNothing_whenDirectorySyncNotEntitled() {
         when(entitlementService.has(Entitlement.DIRECTORY_SYNC)).thenReturn(false);
 

@@ -111,6 +111,19 @@ describe('MembershipInventoryModal', () => {
     w.unmount()
   })
 
+  it('counts held deletes once in the All chip (they are part of Review)', async () => {
+    const w = mount(MembershipInventoryModal, {
+      attachTo: document.body,
+      props: { show: true, set: { ...set, stateCounts: { APPLIED: 40, REVIEW: 5, REVIEW_DELETE: 3 } },
+        sourceName: 'Source', targetName: 'Target' },
+    })
+    await flushPromises()
+    const all = byExactText('All 45') ?? Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent?.replace(/\s+/g, ' ').trim() === 'All 45')
+    expect(all).toBeTruthy()
+    w.unmount()
+  })
+
   it('loads memberships on open and renders state chips with counts', async () => {
     const wrapper = open()
     await flushPromises()
