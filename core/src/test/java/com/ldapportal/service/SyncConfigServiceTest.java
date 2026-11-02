@@ -342,6 +342,8 @@ class SyncConfigServiceTest {
 
         assertThat(enumerated).isEqualTo(5);
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        // ...but it's noted, so the stored drift shows as possibly out of date.
+        verify(setRepo).recordVerifyIncomplete(eq(setId), any());
     }
 
     @Test
