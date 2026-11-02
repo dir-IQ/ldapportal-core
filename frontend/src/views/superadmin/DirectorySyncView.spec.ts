@@ -350,6 +350,9 @@ describe('DirectorySyncView', () => {
       expect(syncApi.createSyncSet).toHaveBeenCalledTimes(1)
       expect(document.body.textContent).toContain('Edit sync set')
       expect(button('Preview impact')!.disabled).toBe(false)
+      // A new set's impact preview starts by itself.
+      await flushPromises()
+      expect(syncApi.startPreviewRun).toHaveBeenCalledWith('set-1')
       wrapper.unmount()
     })
 
@@ -391,6 +394,34 @@ describe('DirectorySyncView', () => {
         applicabilityFilter: '(&(objectClass=secGroup)\n  (!(cn=iv-admin)))', // the server joins the lines
       }))
       wrapper.unmount()
+    })
+
+    it('starts the impact preview after a save that changes what the set applies, not otherwise', async () => {
+      vi.mocked(syncApi.updateSyncSet).mockResolvedValueOnce(
+        { data: { ...set, applicabilityFilter: '(!(uid=svc-*))' } } as never)
+      confirmApi.confirm.mockResolvedValueOnce(false)
+      const wrapper = await openEditor('Edit')
+      vi.mocked(syncApi.startPreviewRun).mockClear()
+      await type('Applicability filter', '(!(uid=svc-*))')
+      await submit()
+      await flushPromises()
+      expect(syncApi.startPreviewRun).toHaveBeenCalledWith('set-1')
+      expect(confirmApi.confirm).toHaveBeenCalledWith(expect.objectContaining({
+        message: expect.stringContaining('the impact preview is already running in the editor'),
+      }))
+      wrapper.unmount()
+
+      vi.clearAllMocks()
+      document.body.innerHTML = ''
+      vi.mocked(syncApi.updateSyncSet).mockResolvedValueOnce({ data: { ...set, name: 'people (HR)' } } as never)
+      const other = await openEditor('Edit')
+      vi.mocked(syncApi.startPreviewRun).mockClear()
+      await type('Name', 'people (HR)')
+      await submit()
+      await flushPromises()
+      expect(syncApi.updateSyncSet).toHaveBeenCalled()
+      expect(syncApi.startPreviewRun).not.toHaveBeenCalled()
+      other.unmount()
     })
 
     it('offers to reconcile now after a save changes the filter, and queues it on yes', async () => {
