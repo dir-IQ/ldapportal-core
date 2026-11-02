@@ -106,6 +106,11 @@ public class SyncReconcileScheduler {
             }
         } catch (Exception ex) {
             log.warn("Scheduled content verify of sync set {} failed: {}", setId, ex.toString());
+            try {
+                syncSetRepo.recordVerifyIncomplete(setId, OffsetDateTime.now());
+            } catch (Exception inner) {
+                log.debug("Couldn't note the failed verify of sync set {}: {}", setId, inner.toString());
+            }
         }
     }
 

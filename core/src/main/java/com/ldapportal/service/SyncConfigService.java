@@ -675,7 +675,14 @@ public class SyncConfigService {
      * @param afterReconcile also record the result on the reconcile run it follows
      */
     private com.ldapportal.dto.sync.SyncVerifyResult refreshDriftSnapshot(UUID syncSetId, boolean afterReconcile) {
-        com.ldapportal.dto.sync.SyncVerifyResult result = verifier.verify(syncSetId);
+        com.ldapportal.dto.sync.SyncVerifyResult result;
+        try {
+            result = verifier.verify(syncSetId);
+        } catch (RuntimeException ex) {
+            // It ran but failed: the stored snapshot stays, flagged as possibly stale.
+            setRepo.recordVerifyIncomplete(syncSetId, java.time.OffsetDateTime.now());
+            throw ex;
+        }
         if (result.sourceComplete() && result.targetComplete()) {
             setRepo.recordVerifyResult(syncSetId, java.time.OffsetDateTime.now(),
                     result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
