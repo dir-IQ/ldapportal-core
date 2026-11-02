@@ -666,7 +666,12 @@ The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed
   are taken from the run's stored entries, so they always match its list.
   Works on a **disabled** set, and runs automatically as the confirmation step
   when you enable a set: if the run would delete entries (or the delete guard
-  would trip) you're asked before it turns on.
+  would trip) you're asked before it turns on. It also starts by itself when
+  you create a set, and when a save changes what the set manages or writes
+  (applicability filter, source base DN or scope, target base DN, reference
+  or excluded attributes, transform rules), so its counts are there to read
+  before choosing **Reconcile now** or **Later**. Saves that change nothing
+  it applies (name, cadence, logging level) don't start one.
 - **Preview impact** (set editor; needs *manage directory sync*) — opens the
   full, paged list of what a reconcile would do to **each entry**: **Add**,
   **Modify**, **Move**, **Delete**, **Review**, **No change**, **Forget**,
