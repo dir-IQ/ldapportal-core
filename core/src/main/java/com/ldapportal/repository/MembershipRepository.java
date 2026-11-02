@@ -101,6 +101,18 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
     List<MembershipStateCount> countGroupedByState();
 
     /**
+     * Per set, how many {@code REVIEW} rows are held deletes (an entry that left
+     * scope whose target delete waits for an operator), told apart by the reason
+     * prefix the engine writes. Each row is {@code [syncSetId, count]}.
+     *
+     * @param prefix the held-delete reason prefix followed by {@code %}
+     */
+    @Query("select m.syncSetId, count(m) from Membership m "
+            + "where m.state = com.ldapportal.entity.enums.MembershipState.REVIEW "
+            + "and m.failReason like :prefix group by m.syncSetId")
+    List<Object[]> countHeldDeletesBySet(@Param("prefix") String prefix);
+
+    /**
      * Paged inventory for one set, optionally filtered by state and by a
      * case-insensitive substring over identity / source DN / target DN.
      * {@code state} null = all states; {@code q} null/blank = no text filter

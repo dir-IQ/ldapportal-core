@@ -111,6 +111,9 @@ class ActivityDashboardServiceTest {
                 stateCount(MembershipState.FAILED, 3),
                 stateCount(MembershipState.REVIEW, 2));
         when(membershipRepo.countGroupedByState()).thenReturn(counts);
+        // One of the two review rows is a held delete.
+        when(membershipRepo.countHeldDeletesBySet(any()))
+                .thenReturn(List.<Object[]>of(new Object[]{UUID.randomUUID(), 1L}));
         // One lagging + one stalled link (degraded), five healthy.
         when(syncLinkRepo.countChangelogLinksByHealth()).thenReturn(List.of(
                 new Object[]{SyncChangelogHealth.HEALTHY, 5L},
@@ -132,6 +135,8 @@ class ActivityDashboardServiceTest {
                 .contains("REPLICATION_DEAD_LETTERED", "SYNC_REVIEW_PENDING");
         assertThat(actionOf(out, "REPLICATION_DEAD_LETTERED").count()).isEqualTo(3);
         assertThat(actionOf(out, "SYNC_REVIEW_PENDING").count()).isEqualTo(2);
+        assertThat(actionOf(out, "SYNC_REVIEW_PENDING").detail())
+                .isEqualTo("1 is a delete waiting for approval; the rest need a correlation decision");
 
         // Lag (degraded changelog links) + drift (cached verify) awareness, each
         // deep-linking to the worst offender so the operator lands on the right row.

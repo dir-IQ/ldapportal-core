@@ -453,8 +453,10 @@ function linkDrift(linkId: string): { label: string; tone: string } {
 // ── Health rollup (membership state counts) ──
 type StateCounts = Record<string, number>
 
+// REVIEW_DELETE counts the held deletes among the REVIEW rows: a subset, not a state.
+const HELD_DELETE_KEY = 'REVIEW_DELETE'
 function countTotal(c: StateCounts | undefined): number {
-  return Object.values(c ?? {}).reduce((a, b) => a + b, 0)
+  return Object.entries(c ?? {}).reduce((a, [k, v]) => (k === HELD_DELETE_KEY ? a : a + v), 0)
 }
 function setCounts(s: SyncSet | undefined): StateCounts {
   return s?.stateCounts ?? {}
@@ -467,10 +469,20 @@ function linkCounts(linkId: string): StateCounts {
   }
   return acc
 }
-// A single dot + label summarizing health (worst non-zero state wins).
+// A dot + label summarizing health. Failed and review show side by side (the
+// dot and colour follow the worse), so a failure never hides what waits for
+// review; held deletes are called out within the review count.
 function healthSummary(c: StateCounts): { dot: string; label: string; tone: string } {
-  if ((c.FAILED ?? 0) > 0) return { dot: 'bg-red-600', label: `${c.FAILED} failed`, tone: 'text-red-700' }
-  if ((c.REVIEW ?? 0) > 0) return { dot: 'bg-amber-500', label: `${c.REVIEW} review`, tone: 'text-amber-800' }
+  const failed = c.FAILED ?? 0
+  const review = c.REVIEW ?? 0
+  const deletes = Math.min(c[HELD_DELETE_KEY] ?? 0, review)
+  const parts: string[] = []
+  if (failed > 0) parts.push(`${failed} failed`)
+  if (review > 0) {
+    parts.push(`${review} review` + (deletes > 0 ? ` (${deletes} ${deletes === 1 ? 'delete' : 'deletes'})` : ''))
+  }
+  if (failed > 0) return { dot: 'bg-red-600', label: parts.join(' · '), tone: 'text-red-700' }
+  if (review > 0) return { dot: 'bg-amber-500', label: parts.join(' · '), tone: 'text-amber-800' }
   if (countTotal(c) > 0) return { dot: 'bg-green-600', label: 'Healthy', tone: 'text-green-700' }
   return { dot: 'bg-gray-300', label: 'No data', tone: 'text-gray-400' }
 }
