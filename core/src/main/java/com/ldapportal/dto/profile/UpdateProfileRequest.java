@@ -21,7 +21,8 @@ public record UpdateProfileRequest(
         @NotBlank @Size(max = 500) String targetUserDn,
         @Size(max = 500) String targetGroupDn,
         @NotEmpty List<@NotBlank String> objectClassNames,
-        @NotBlank @Size(max = 100) String rdnAttribute,
+        // Required in Automatic DN mode only (showDnField false); enforced by the service.
+        @Size(max = 100) String rdnAttribute,
         boolean showDnField,
         @Size(max = 500) String dnTemplate,
         Integer dnColumnSpan,

@@ -1063,6 +1063,14 @@ public class ProvisioningProfileService {
                     "Self-registration requires an automatically-composed DN; turn off "
                     + "operator-entered DN or self-registration");
         }
+        // Automatic mode composes "<rdnAttribute>=<value>,<targetUserDn>", so it
+        // needs the attribute; operator-entered mode names the entry from the DN
+        // template or the operator's typed DN, so it's optional there.
+        String rdn = (rdnAttribute != null && !rdnAttribute.isBlank()) ? rdnAttribute.trim() : null;
+        if (rdn == null && !showDnField) {
+            throw new IllegalArgumentException(
+                    "An RDN attribute is required when the DN is composed automatically");
+        }
         profile.setName(name);
         profile.setDescription(description);
         profile.setTargetUserDn(targetUserDn);
@@ -1073,7 +1081,7 @@ public class ProvisioningProfileService {
         profile.setTargetGroupDn(
                 (targetGroupDn != null && !targetGroupDn.isBlank()) ? targetGroupDn : targetUserDn);
         profile.setObjectClassNames(new ArrayList<>(objectClassNames));
-        profile.setRdnAttribute(rdnAttribute);
+        profile.setRdnAttribute(rdn);
         profile.setShowDnField(showDnField);
         // Blank collapses to null so the create form falls back to the default
         // "<rdn>=<value>,<targetUserDn>" composition rather than an empty template.

@@ -953,7 +953,9 @@ const emptyForm = (): UserFormState => {
   }
   return {
     parentDn: profileData.value?.targetUserDn || '',
-    rdnAttribute: profileData.value?.rdnAttribute || 'uid',
+    // No profile: the fallback form's RDN field starts at uid. A profile with
+    // no RDN attribute (operator-entered DN, no template) leaves it blank.
+    rdnAttribute: profileData.value ? (profileData.value.rdnAttribute || '') : 'uid',
     rdnValue: '',
     attributes,
   }

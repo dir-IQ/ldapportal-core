@@ -265,6 +265,46 @@ describe('UserForm editable DN (create mode)', () => {
       .toBe('uid=jsmith,ou=staff,dc=example,dc=com')
   })
 
+  // Operator-entered with neither a template nor an RDN attribute: the DN
+  // pre-fills with just the target OU and the operator types the RDN.
+  const noRdnConfig = {
+    rdnAttribute: null,
+    showDnField: true,
+    attributeConfigs: [
+      { attributeName: 'cn', requiredOnCreate: true, editableOnCreate: true, inputType: 'TEXT' },
+    ],
+  }
+  function mountNoRdn() {
+    return mount(UserForm, {
+      props: {
+        data: { rdnAttribute: '', rdnValue: '', parentDn: BASE, attributes: { cn: 'John Smith' } },
+        isEdit: false,
+        userTemplateConfig: noRdnConfig,
+        dirId: null,
+        profileId: null,
+      },
+    })
+  }
+
+  it('pre-fills just the target OU when the profile has no RDN attribute or template', async () => {
+    const wrapper = mountNoRdn()
+    await wrapper.vm.$nextTick()
+    expect((dnInput(wrapper).element as HTMLInputElement).value).toBe(`,${BASE}`)
+    // Not flagged until the operator types or saves.
+    expect(wrapper.text()).not.toContain('Start the DN')
+  })
+
+  it('blocks saving until the operator enters the RDN, then accepts it', async () => {
+    const wrapper = mountNoRdn()
+    await wrapper.vm.$nextTick()
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).toContain('Start the DN with the entry\'s RDN')
+
+    await dnInput(wrapper).setValue(`cn=John Smith,${BASE}`)
+    expect((wrapper.vm as unknown as ExposedForm).validate()).toBe(true)
+  })
+
   it('rejects an overridden DN outside the target OU', async () => {
     const wrapper = mountDn(dnTemplateConfig)
     await wrapper.vm.$nextTick()
