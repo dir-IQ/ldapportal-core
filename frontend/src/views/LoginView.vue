@@ -23,8 +23,20 @@
         Checking session…
       </div>
 
+      <!-- After an explicit logout: no silent WebSEAL sign-in until the user asks for it. -->
+      <div v-if="!probingWebseal && signedOut" class="mb-5 rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm text-gray-700"
+           role="status" data-testid="signed-out">
+        <p class="font-medium text-gray-900">You've signed out.</p>
+        <p v-if="showWebseal" class="mt-1">
+          To end a certificate session completely, close the browser.
+        </p>
+        <button v-if="showWebseal" type="button" class="btn-primary w-full mt-3" @click="signInAgain">
+          Sign in again
+        </button>
+      </div>
+
       <!-- Password login form (LOCAL or LDAP) -->
-      <form v-else-if="showPasswordLogin" @submit.prevent="handleLogin" class="space-y-2">
+      <form v-if="!probingWebseal && showPasswordLogin" @submit.prevent="handleLogin" class="space-y-2">
         <FormField label="Username" v-model="form.username" autocomplete="username" placeholder="username" required />
         <FormField label="Password" type="password" autocomplete="current-password" v-model="form.password" placeholder="••••••••" required />
 
@@ -83,6 +95,7 @@ import { useSettingsStore } from '@/stores/settings'
 import { oidcAuthorize, websealAuthorize } from '@/api/auth'
 import FormField from '@/components/FormField.vue'
 import { loginErrorMessage } from '@/utils/loginError'
+import { isSignedOut, clearSignedOut } from '@/utils/signedOut'
 
 const router   = useRouter()
 const route    = useRoute()
@@ -92,6 +105,8 @@ const settings = useSettingsStore()
 // While the WebSEAL probe is in flight we hide the form to avoid flashing
 // the LOCAL/LDAP login UI before the auto-redirect kicks in.
 const probingWebseal = ref(true)
+/** The user logged out in this browser session: the page says so instead of signing them straight back in. */
+const signedOut = ref(false)
 
 onMounted(async () => {
   await settings.init()
@@ -113,6 +128,13 @@ async function tryWebsealPreAuth() {
   if (!settings.enabledAuthTypes.includes('WEBSEAL')) return
   if (auth.isLoggedIn && !auth.isSelfService) {
     navigateAfterLogin()
+    return
+  }
+  // After an explicit logout, WebSEAL may already have re-authenticated the
+  // browser's client certificate behind the scenes; don't use it until the
+  // user asks to sign in again.
+  if (isSignedOut()) {
+    signedOut.value = true
     return
   }
   try {
@@ -138,6 +160,18 @@ const showPasswordLogin = computed(() => {
 })
 
 const showOidc = computed(() => settings.enabledAuthTypes.includes('OIDC'))
+const showWebseal = computed(() => settings.enabledAuthTypes.includes('WEBSEAL'))
+
+/**
+ * Sign in again through WebSEAL after a logout: forget the logout and load the
+ * requested page afresh. A full page load (not an XHR probe) lets WebSEAL run
+ * its own sign-in (a certificate prompt or its login form) when its session
+ * has ended; the app then signs in from the iv-user header as usual.
+ */
+function signInAgain() {
+  clearSignedOut()
+  window.location.assign(router.resolve(redirectTarget()).href)
+}
 
 async function handleLogin() {
   errorMsg.value = ''
@@ -158,6 +192,7 @@ async function handleLogin() {
 async function handleOidc() {
   errorMsg.value    = ''
   oidcLoading.value = true
+  clearSignedOut()
   try {
     const { data } = await oidcAuthorize()
     // Store state for callback validation
@@ -175,11 +210,15 @@ async function handleOidc() {
   }
 }
 
-function navigateAfterLogin() {
+/** Where to go once signed in: the requested page, or home. */
+function redirectTarget(): string {
   const rawRedirect = route.query.redirect
-  const redirect = (typeof rawRedirect === 'string' && rawRedirect.startsWith('/') && rawRedirect !== '/login')
+  return (typeof rawRedirect === 'string' && rawRedirect.startsWith('/') && rawRedirect !== '/login')
     ? rawRedirect
     : '/'
-  router.push(redirect)
+}
+
+function navigateAfterLogin() {
+  router.push(redirectTarget())
 }
 </script>

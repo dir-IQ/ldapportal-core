@@ -163,7 +163,7 @@
               <td v-else colspan="4" class="py-2 pr-3 cell-muted">{{ r.error || '—' }}</td>
               <td class="py-2 pr-3 cell-muted">{{ r.requestedBy || '—' }}</td>
               <td class="py-2 text-right">
-                <button type="button" class="btn-secondary btn-sm" @click="emit('open', r.id)">Open</button>
+                <button type="button" class="btn-secondary btn-compact" @click="emit('open', r.id)">Open</button>
               </td>
             </tr>
           </tbody>
