@@ -33,7 +33,12 @@
     </div>
 
     <!-- Filters -->
-    <div class="bg-white border border-gray-200 rounded-xl p-4 mb-2 grid grid-cols-4 gap-2">
+    <div class="bg-white border border-gray-200 rounded-xl p-4 mb-2 grid grid-cols-5 gap-2">
+      <!-- Server-side search across the whole log, unlike the table's own
+           filter box, which only searches the events loaded below. -->
+      <FormField id="audit-dn-contains" label="Target DN contains" v-model="filters.dnContains"
+                 placeholder="e.g. jdoe" hint="Any part of the entry's DN, e.g. an RDN value."
+                 @keyup.enter="load()" />
       <FormField label="From" type="datetime-local" v-model="filters.from" />
       <FormField label="To"   type="datetime-local" v-model="filters.to" />
       <div class="mb-2">
@@ -135,6 +140,8 @@ interface AuditFilters {
   action: string[]
   /** `detail.source` to match ('' = any). */
   source: string
+  /** Text the target DN contains, searched server-side ('' = any). */
+  dnContains: string
 }
 
 // Where events came from, by their `detail.source`.
@@ -202,7 +209,7 @@ const events   = ref<AuditEvent[]>([])
 const pageSize = 200
 const capped   = computed(() => events.value.length >= pageSize)
 
-const filters = ref<AuditFilters>({ from: '', to: '', action: [], source: '' })
+const filters = ref<AuditFilters>({ from: '', to: '', action: [], source: '', dnContains: '' })
 const exporting = ref<boolean>(false)
 const notif = useNotificationStore()
 
@@ -308,7 +315,7 @@ function formatDetail(detail: unknown): string {
 }
 
 function clearFilters(): void {
-  filters.value = { from: '', to: '', action: [], source: '' }
+  filters.value = { from: '', to: '', action: [], source: '', dnContains: '' }
   // Also drop an active correlation trace so "Clear" means clear
   // everything. When no trace is active this is a no-op (the route
   // watcher won't fire), preserving the apply-on-Filter behaviour.
@@ -348,6 +355,7 @@ function filterParams() {
     to:            toIsoZoned(filters.value.to),
     action:        filters.value.action.length ? filters.value.action : undefined,
     source:        filters.value.source || undefined,
+    targetDnContains: filters.value.dnContains.trim() || undefined,
     correlationId: correlationId.value || undefined,
   }
 }
