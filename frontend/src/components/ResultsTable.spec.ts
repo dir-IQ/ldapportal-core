@@ -412,19 +412,16 @@ describe('ResultsTable.vue', () => {
       await flushPromises()
       return w
     }
-    const moveBtn = (w: ReturnType<typeof mount>, label: string, dir: 'up' | 'down') =>
-      w.find(`button[aria-label="Move ${label} ${dir}"]`)
-
-    it('moves a column with the up/down buttons and persists the order', async () => {
-      const key = 'order-' + Math.random()
-      const w = await openPicker(key)
-      await moveBtn(w, 'Mail', 'up').trigger('click')
-      expect(headerKeys(w)).toEqual(['dn', 'name', 'mail', 'dept', 'actions'])
-      expect((tablePrefs[key] as { order: string[] }).order).toEqual(['name', 'mail', 'dept'])
-      // Announced for screen readers.
-      expect(w.find('[aria-live="polite"]').text()).toBe('Mail moved to position 2 of 3')
-      w.unmount()
-    })
+    // Play the part of a finished Sortable drag (jsdom can't drive a real
+    // pointer drag): move the picker row at `from` to `to`, then report it.
+    async function drag(from: number, to: number) {
+      const { el, opts } = sortableCalls[sortableCalls.length - 1]
+      const item = el.children[from] as HTMLElement
+      el.insertBefore(item, el.children[to > from ? to + 1 : to] ?? null)
+      opts.onEnd!({ item, from: el, oldIndex: from, newIndex: to })
+      await nextTick()
+      return el
+    }
 
     it('restores a saved order on mount', () => {
       const key = 'order-' + Math.random()
@@ -434,40 +431,34 @@ describe('ResultsTable.vue', () => {
       expect(headerKeys(w)).toEqual(['dn', 'mail', 'name', 'dept', 'actions'])
     })
 
-    it('keeps locked and pinned columns out of reordering', async () => {
+    it('offers drag handles only on movable columns, and no arrow buttons', async () => {
       const w = await openPicker('order-' + Math.random())
-      expect(moveBtn(w, 'DN', 'up').exists()).toBe(false)
-      expect(moveBtn(w, 'Actions', 'down').exists()).toBe(false)
-      // Ends of the movable band disable the button that would leave it.
-      expect(moveBtn(w, 'Name', 'up').attributes('disabled')).toBeDefined()
-      expect(moveBtn(w, 'Mail', 'down').attributes('disabled')).toBeDefined()
-      w.unmount()
-    })
-
-    it('keeps focus on the pressed button, falling back at the end of the list', async () => {
-      const w = await openPicker('order-' + Math.random())
-      const up = moveBtn(w, 'Department', 'up')
-      ;(up.element as HTMLButtonElement).focus()
-      await up.trigger('click')
-      await nextTick()
-      // Department is now first: its "up" button is disabled, so focus moves to "down".
-      expect(document.activeElement).toBe(moveBtn(w, 'Department', 'down').element)
+      const handled = w.findAll('[data-picker-key]')
+        .filter(r => r.find('.col-drag-handle').exists())
+        .map(r => r.attributes('data-picker-key'))
+      expect(handled).toEqual(['name', 'dept', 'mail'])
+      expect(w.findAll('button[aria-label^="Move "]')).toHaveLength(0)
       w.unmount()
     })
 
     it('applies a drag from the picker and keeps the picker rows in sync', async () => {
       const key = 'order-' + Math.random()
       const w = await openPicker(key)
-      const { el, opts } = sortableCalls[sortableCalls.length - 1]
-      // Emulate Sortable: move the Mail row (index 2) to the top of the list.
-      const item = el.children[2] as HTMLElement
-      el.insertBefore(item, el.children[0])
-      opts.onEnd!({ item, from: el, oldIndex: 2, newIndex: 0 })
-      await nextTick()
+      // Move the Mail row (index 2) to the top of the list.
+      const el = await drag(2, 0)
       expect(headerKeys(w)).toEqual(['dn', 'mail', 'name', 'dept', 'actions'])
       expect((tablePrefs[key] as { order: string[] }).order).toEqual(['mail', 'name', 'dept'])
       const pickerKeys = [...el.children].map(c => (c as HTMLElement).dataset.pickerKey)
       expect(pickerKeys).toEqual(['mail', 'name', 'dept'])
+      w.unmount()
+    })
+
+    it('applies a downward drag', async () => {
+      const key = 'order-' + Math.random()
+      const w = await openPicker(key)
+      const el = await drag(0, 2)
+      expect(headerKeys(w)).toEqual(['dn', 'dept', 'mail', 'name', 'actions'])
+      expect([...el.children].map(c => (c as HTMLElement).dataset.pickerKey)).toEqual(['dept', 'mail', 'name'])
       w.unmount()
     })
 
@@ -476,7 +467,7 @@ describe('ResultsTable.vue', () => {
       const w = await openPicker(key)
       const reset = w.findAll('button').find(b => b.text() === 'Reset column order')!
       expect(reset.attributes('disabled')).toBeDefined()
-      await moveBtn(w, 'Mail', 'up').trigger('click')
+      await drag(2, 1)
       expect(reset.attributes('disabled')).toBeUndefined()
       await reset.trigger('click')
       expect(headerKeys(w)).toEqual(['dn', 'name', 'dept', 'mail', 'actions'])
