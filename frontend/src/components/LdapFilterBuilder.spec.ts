@@ -638,4 +638,42 @@ describe('LdapFilterBuilder.vue — objectClass-derived suggestions', () => {
     await flushPromises()
     expect((w.vm as unknown as Exposed).suggestionSource).toContain('uidNumber')
   })
+
+  it('has no show-all toggle and never fetches the full schema when scoped', async () => {
+    const w = mountBuilder({ objectClasses: ['inetOrgPerson'] })
+    await w.find('button[aria-expanded]').trigger('click')
+    await flushPromises()
+    expect(w.text()).not.toContain('Show all attributes')
+    expect(w.text()).toContain("from this profile's object classes")
+    expect(mockListAttributeTypes).not.toHaveBeenCalled()
+  })
+
+  it('renders the whole scoped superset in the dropdown (no 50-item cap)', async () => {
+    const many = Array.from({ length: 120 }, (_, i) => `attr${String(i).padStart(3, '0')}`)
+    mockGetObjectClass.mockResolvedValueOnce(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { data: { required: ['objectClass'], optional: many } } as any)
+    const w = mountBuilder({ objectClasses: ['bigClass'] })
+    await w.find('button[aria-expanded]').trigger('click')
+    await flushPromises()
+    await w.find('button[aria-label="Add rule"]').trigger('click')
+    await nextTick()
+    await w.find('input[role="combobox"]').trigger('focus')
+    await nextTick()
+    expect(w.findAll('[role="option"]')).toHaveLength(121)
+  })
+})
+
+describe('LdapFilterBuilder.vue — unscoped full-schema fallback', () => {
+  it('shows a type-to-narrow hint when the schema exceeds the render cap', async () => {
+    mockListAttributeTypes.mockResolvedValueOnce({
+      data: Array.from({ length: 80 }, (_, i) => ({ name: `a${i}` })),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)
+    const w = mountBuilder()
+    await w.find('button[aria-expanded]').trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('80 directory attributes — type to narrow')
+    expect(mockGetObjectClass).not.toHaveBeenCalled()
+  })
 })

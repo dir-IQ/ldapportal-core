@@ -933,10 +933,9 @@ const moveDestTargetDn = computed(() =>
   moveTargets.value.find(p => p.id === moveDestProfileId.value)?.targetUserDn ?? '')
 
 // Attribute names the active profile declares — fed to LdapFilterBuilder
-// so the attribute picker defaults to this subset (typically ~10-30 attrs)
-// instead of the directory's full schema (often 1500+). The builder
-// exposes a "Show all attributes" toggle for power users; empty array
-// means no scoping and the builder shows the full schema list.
+// alongside filterObjectClasses below. The builder suggests the superset
+// of attributes those classes allow; these cover any profile field no
+// listed class declares.
 const profileAttributeNames = computed<string[]>(() =>
   (profileData.value?.attributeConfigs ?? [])
     .map(a => a.attributeName)

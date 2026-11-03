@@ -36,7 +36,6 @@
       <LdapFilterBuilder
         v-model="filterText"
         :directory-id="dirId"
-        :relevant-attributes="profileAttributeNames"
         :object-classes="filterObjectClasses"
       />
       <RecentSearches
@@ -487,20 +486,12 @@ const allProfiles     = ref<ProfileLite[]>([])
 const selectedProfileId = ref('')
 const profileData     = ref<ProfileLite | null>(null)
 
-// Attribute names the active profile declares — fed to LdapFilterBuilder
-// so the attribute picker defaults to this subset instead of the
-// directory's full schema. Builder exposes a "Show all attributes"
-// toggle for power users; empty array disables scoping.
-const profileAttributeNames = computed<string[]>(() =>
-  (profileData.value?.attributeConfigs ?? [])
-    .map(a => a.attributeName)
-    .filter((n): n is string => typeof n === 'string' && n.length > 0),
-)
 
-// objectClasses fed to LdapFilterBuilder so its scoped suggestions cover
-// every attribute the loaded groups' classes allow (groupOfNames,
-// posixGroup, …). The profile's objectClassNames describe *users*, so
-// only the classes present on the returned group rows are used here.
+// objectClasses fed to LdapFilterBuilder: its suggestions are every
+// attribute the loaded groups' classes allow (groupOfNames, posixGroup,
+// …). The profile's objectClassNames and attributeConfigs describe
+// *users*, so neither is used here. Before the first search returns,
+// the builder falls back to the full directory schema.
 const filterObjectClasses = computed<string[]>(() => {
   const out: string[] = []
   for (const row of groups.value) out.push(...rowObjectClasses(row.__entry?.attributes))

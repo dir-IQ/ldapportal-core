@@ -12,11 +12,13 @@
  * builder rules and direct edits don't conflict because the builder only
  * emits when its own state changes.
  *
- * Schema autocomplete: when `directoryId` is provided, the component
- * fetches attribute types via `/api/v1/directories/{id}/schema/attribute-
- * types` and offers them as suggestions in a custom combobox under the
- * attr input. If the call fails (no schema exposed, RBAC, network), we
- * silently fall back to free-text input — never blocks the user.
+ * Schema autocomplete: when the parent passes `objectClasses` (and/or
+ * `relevantAttributes`), suggestions are the superset of attributes those
+ * classes allow, fetched per class from `/schema/object-classes/{name}`.
+ * Otherwise the component fetches the full attribute-type list via
+ * `/schema/attribute-types`. Suggestions show in a custom combobox under
+ * the attr input. If the calls fail (no schema exposed, RBAC, network),
+ * we silently fall back to free-text input — never blocks the user.
  *
  * The combobox is custom Tailwind-styled rather than a native
  * `<datalist>`. Datalist popovers are OS-rendered chrome and don't
@@ -45,23 +47,19 @@ const props = defineProps<{
   modelValue: string
   directoryId: string
   /**
-   * Attribute names the parent considers "relevant" — typically the
-   * provisioning profile's attributeConfigs. When non-empty, the
-   * suggestion list is restricted to these by default; a "Show all
-   * attributes" toggle in the panel header escapes to the full
-   * directory-schema list. If empty or omitted, the builder behaves
-   * as before (full schema only).
+   * Extra attribute names to suggest alongside the objectClass superset —
+   * typically the provisioning profile's attributeConfigs (which can name
+   * attributes no listed class declares). Either this or `objectClasses`
+   * being non-empty switches the builder to scoped suggestions; with
+   * neither, it suggests the full directory schema.
    */
   relevantAttributes?: string[]
   /**
    * objectClasses in play for the entries being searched — typically the
    * profile's objectClassNames plus every objectClass value seen on the
-   * loaded result rows. Each class's MUST + MAY attributes (inherited
-   * via SUP included) are resolved from the live schema and folded into
-   * the scoped suggestion list alongside `relevantAttributes`. Without
-   * this the scoped list only held the profile's form fields, which the
-   * profile editor seeds from the *required* attributes alone — so e.g.
-   * posixAccount / auxiliary-class attributes never showed up.
+   * loaded result rows. The suggestion list is the superset of every
+   * class's MUST + MAY attributes (inherited via SUP included), resolved
+   * from the live schema.
    */
   objectClasses?: string[]
 }>()
@@ -95,16 +93,19 @@ const rules = ref<IndexedRule[]>([])
 const attributeNames = ref<string[]>([])
 const schemaState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 
-// When `relevantAttributes` is provided, default to suggesting only that
-// subset (typically the profile's attributeConfigs). The toggle below
-// flips this for power users who need to filter on something the
-// profile doesn't surface (objectClass, memberOf, operational attrs).
-const showAllAttributes = ref(false)
-const hasRelevantList = computed(
+// Scoped mode: the parent told us which objectClasses (and/or which
+// extra attribute names) are in play, so suggestions are the superset of
+// every attribute those classes allow — complete for the entries being
+// searched, and small enough (typically 100–300) to list in full. There
+// is deliberately no "show all" escape hatch: the full directory schema
+// (often 1500+ names) isn't a usable picker, and the attribute input
+// still accepts any free-text name (operational attrs, memberOf, …).
+// Unscoped (no objectClasses, no relevant list — e.g. the superadmin
+// Directory Search page) falls back to the full schema.
+const isScopedToProfile = computed(
   () => (Array.isArray(props.relevantAttributes) && props.relevantAttributes.length > 0)
     || normalizedObjectClasses.value.length > 0,
 )
-const isScopedToProfile = computed(() => hasRelevantList.value && !showAllAttributes.value)
 
 // Module-level cache so unmounting the component doesn't drop fetched
 // schemas. The map lives for the page lifetime (acceptable tradeoff —
@@ -157,12 +158,14 @@ const normalizedObjectClasses = computed<string[]>(() => {
 })
 
 let ocLoadSeq = 0
+const ocLoading = ref(false)
 async function loadObjectClassAttributes(): Promise<void> {
   const dirId = props.directoryId
   const ocs = normalizedObjectClasses.value
   if (!dirId || ocs.length === 0) { ocAttributeNames.value = []; return }
   const seq = ++ocLoadSeq
   const missing = ocs.filter(oc => !ocAttrCache.has(`${dirId}|${oc.toLowerCase()}`))
+  if (missing.length) ocLoading.value = true
   // Per-class requests (not /bulk): bulk fails as a whole if any one
   // class is absent from the schema, and entries can carry classes the
   // schema endpoint doesn't resolve (vendor/legacy extensions).
@@ -178,21 +181,31 @@ async function loadObjectClassAttributes(): Promise<void> {
     }
   }))
   if (seq !== ocLoadSeq) return // a newer load superseded this one
+  ocLoading.value = false
   ocAttributeNames.value = ocs.flatMap(oc => ocAttrCache.get(`${dirId}|${oc.toLowerCase()}`) ?? [])
 }
 
+// Only the active source is fetched: scoped mode never needs the full
+// schema (objectClass lookups already return schema-cased names).
+// A failed full-schema fetch is not retried on re-expand (the "Schema
+// unavailable" hint persists); a directory change always refetches.
+function loadActiveSource(directoryChanged = false): void {
+  if (isScopedToProfile.value) loadObjectClassAttributes()
+  else if (directoryChanged || schemaState.value === 'idle') loadSchemaIfNeeded()
+}
+
 watch(() => props.directoryId, () => {
-  if (expanded.value) { loadSchemaIfNeeded(); loadObjectClassAttributes() }
+  if (expanded.value) loadActiveSource(true)
 })
 
-watch(normalizedObjectClasses, () => {
-  if (expanded.value) loadObjectClassAttributes()
+// Classes arrive asynchronously (profile load, search results), so this
+// also covers flipping from unscoped to scoped while the panel is open.
+watch([normalizedObjectClasses, isScopedToProfile], () => {
+  if (expanded.value) loadActiveSource()
 })
 
 watch(expanded, (open) => {
-  if (!open) return
-  if (schemaState.value === 'idle') loadSchemaIfNeeded()
-  loadObjectClassAttributes()
+  if (open) loadActiveSource()
 })
 
 // Compile and emit on any rule/conjunction change. Default flush ('pre')
@@ -243,17 +256,16 @@ const comboHighlightIdx = ref(-1)
 
 const isComboOpen = (id: number): boolean => activeComboRuleId.value === id
 
-// Suggestion source: the profile-relevant subset when scoped, otherwise
-// the full directory schema. Profile-relevant names are normalised to
-// the schema's casing where possible so the dropdown shows e.g.
-// "givenName" instead of whatever case the profile happened to declare.
+// Suggestion source: the objectClass superset (plus any parent-supplied
+// names) when scoped, otherwise the full directory schema. objectClass-
+// derived names come first so their schema casing wins the case-
+// insensitive de-dup — the dropdown shows "givenName" even if the
+// profile declared "givenname".
 const suggestionSource = computed<string[]>(() => {
   if (isScopedToProfile.value) {
-    const schemaLc = new Map(attributeNames.value.map(n => [n.toLowerCase(), n]))
     const seen = new Set<string>()
     const out: string[] = []
-    for (const raw of [...(props.relevantAttributes ?? []), ...ocAttributeNames.value]) {
-      const name = schemaLc.get(raw.toLowerCase()) ?? raw
+    for (const name of [...ocAttributeNames.value, ...(props.relevantAttributes ?? [])]) {
       const key = name.toLowerCase()
       if (seen.has(key)) continue
       seen.add(key)
@@ -269,12 +281,16 @@ function filteredSuggestions(rule: IndexedRule): string[] {
   if (!source.length) return []
   const q = (rule.attr ?? '').trim().toLowerCase()
   const matched = q ? source.filter(n => n.toLowerCase().includes(q)) : source
-  // Render cap keeps the listbox cheap when the user hasn't typed
-  // anything yet (Active Directory schemas can return 1500+ attrs).
-  // Scroll handles overflow within the cap; users typically narrow with
-  // a few keystrokes well before reaching the bottom.
-  return matched.slice(0, SUGGESTION_RENDER_CAP)
+  // Scoped lists are bounded by the objectClass superset, so render them
+  // in full. The cap only guards the unscoped full-schema fallback
+  // (Active Directory schemas can return 1500+ attrs); the panel shows a
+  // "type to narrow" hint when it bites.
+  return isScopedToProfile.value ? matched : matched.slice(0, SUGGESTION_RENDER_CAP)
 }
+
+const fullSchemaTruncated = computed(
+  () => !isScopedToProfile.value && attributeNames.value.length > SUGGESTION_RENDER_CAP,
+)
 
 function openCombo(id: number): void {
   activeComboRuleId.value = id
@@ -395,9 +411,7 @@ defineExpose({
   // state without depending on aria-activedescendant string parsing.
   activeComboRuleId,
   comboHighlightIdx,
-  // Profile-scope toggle state so tests can assert the suggestion
-  // source flips without parsing the DOM.
-  showAllAttributes,
+  // Suggestion-source state so tests can assert it without parsing the DOM.
   isScopedToProfile,
   suggestionSource,
 })
@@ -447,31 +461,18 @@ defineExpose({
         >Clear</button>
       </div>
 
-      <!-- Suggestion scope hint + toggle. Only shown when the parent
-           passed a relevant-attribute list. Pure UX affordance — the
-           input still accepts any free-text value either way. -->
-      <p v-if="hasRelevantList" class="text-xs text-gray-500 mb-2">
-        <template v-if="isScopedToProfile">
-          Suggesting attributes for this profile's object classes ({{ suggestionSource.length }}).
-          <button
-            type="button"
-            class="text-blue-600 hover:text-blue-700 ml-1"
-            @click="showAllAttributes = true"
-          >Show all attributes</button>
-        </template>
+      <!-- Suggestion-source hint. Pure UX affordance — the attribute
+           input accepts any free-text name either way. -->
+      <p v-if="isScopedToProfile" class="text-xs text-gray-500 mb-2">
+        <template v-if="ocLoading && !suggestionSource.length">Loading attributes…</template>
         <template v-else>
-          Showing all directory attributes.
-          <button
-            type="button"
-            class="text-blue-600 hover:text-blue-700 ml-1"
-            @click="showAllAttributes = false"
-          >Show profile attributes only</button>
+          Suggesting {{ suggestionSource.length }} attribute{{ suggestionSource.length === 1 ? '' : 's' }}
+          from this profile's object classes. Any other attribute name can be typed in.
         </template>
       </p>
-
-      <!-- Schema status hint. Suppressed when scoped to a profile-supplied
-           list — the profile list is a perfectly usable source even if
-           the live schema call failed, so a warning would be misleading. -->
+      <p v-else-if="fullSchemaTruncated" class="text-xs text-gray-500 mb-2">
+        {{ attributeNames.length }} directory attributes — type to narrow the suggestions.
+      </p>
       <p
         v-if="schemaState === 'error' && !isScopedToProfile"
         class="text-xs text-amber-600 mb-2"
