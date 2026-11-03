@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.ldapportal.dto.profile;
 
+import com.ldapportal.dto.profile.CreateProfileRequest.AttributeConfigEntry;
+import com.ldapportal.dto.profile.CreateProfileRequest.GroupAssignmentEntry;
 import com.ldapportal.entity.enums.ApproverMode;
 import com.ldapportal.entity.enums.ExpiryAction;
 import jakarta.validation.Valid;
@@ -74,8 +76,8 @@ public record ProfileExportDocument(
             boolean autoIncludeGroups,
             boolean excludeAutoIncludes,
             List<String> additionalProfileNames,
-            List<@Valid CreateProfileRequest.AttributeConfigEntry> attributeConfigs,
-            List<@Valid CreateProfileRequest.GroupAssignmentEntry> groupAssignments,
+            List<@Valid AttributeConfigEntry> attributeConfigs,
+            List<@Valid GroupAssignmentEntry> groupAssignments,
             Lifecycle lifecycle,
             Approval approval) {
     }
