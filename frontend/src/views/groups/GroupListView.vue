@@ -37,6 +37,7 @@
         v-model="filterText"
         :directory-id="dirId"
         :relevant-attributes="profileAttributeNames"
+        :object-classes="filterObjectClasses"
       />
       <RecentSearches
         ref="recentSearchesRef"
@@ -273,6 +274,7 @@ import { listProfiles } from '@/api/profiles'
 import { usePermissions } from '@/composables/usePermissions'
 import ResultsTable from '@/components/ResultsTable.vue'
 import LdapFilterBuilder from '@/components/LdapFilterBuilder.vue'
+import { rowObjectClasses } from '@/composables/useLdapFilter'
 import RecentSearches from '@/components/RecentSearches.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -494,6 +496,16 @@ const profileAttributeNames = computed<string[]>(() =>
     .map(a => a.attributeName)
     .filter((n): n is string => typeof n === 'string' && n.length > 0),
 )
+
+// objectClasses fed to LdapFilterBuilder so its scoped suggestions cover
+// every attribute the loaded groups' classes allow (groupOfNames,
+// posixGroup, …). The profile's objectClassNames describe *users*, so
+// only the classes present on the returned group rows are used here.
+const filterObjectClasses = computed<string[]>(() => {
+  const out: string[] = []
+  for (const row of groups.value) out.push(...rowObjectClasses(row.__entry?.attributes))
+  return out
+})
 const bulkMode      = ref<BulkMode | null>(null)
 const bulkMemberDns = ref('')
 const bulkBusy      = ref(false)

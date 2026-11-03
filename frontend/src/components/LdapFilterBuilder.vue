@@ -32,7 +32,7 @@ import {
   type FilterOp,
   type FilterRule,
 } from '@/composables/useLdapFilter'
-import { listAttributeTypes } from '@/api/schema'
+import { listAttributeTypes, getObjectClass } from '@/api/schema'
 
 interface AttributeTypeInfo {
   name?: string
@@ -53,6 +53,17 @@ const props = defineProps<{
    * as before (full schema only).
    */
   relevantAttributes?: string[]
+  /**
+   * objectClasses in play for the entries being searched — typically the
+   * profile's objectClassNames plus every objectClass value seen on the
+   * loaded result rows. Each class's MUST + MAY attributes (inherited
+   * via SUP included) are resolved from the live schema and folded into
+   * the scoped suggestion list alongside `relevantAttributes`. Without
+   * this the scoped list only held the profile's form fields, which the
+   * profile editor seeds from the *required* attributes alone — so e.g.
+   * posixAccount / auxiliary-class attributes never showed up.
+   */
+  objectClasses?: string[]
 }>()
 
 const emit = defineEmits<{
@@ -90,7 +101,8 @@ const schemaState = ref<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 // profile doesn't surface (objectClass, memberOf, operational attrs).
 const showAllAttributes = ref(false)
 const hasRelevantList = computed(
-  () => Array.isArray(props.relevantAttributes) && props.relevantAttributes.length > 0,
+  () => (Array.isArray(props.relevantAttributes) && props.relevantAttributes.length > 0)
+    || normalizedObjectClasses.value.length > 0,
 )
 const isScopedToProfile = computed(() => hasRelevantList.value && !showAllAttributes.value)
 
@@ -123,12 +135,64 @@ async function loadSchemaIfNeeded(): Promise<void> {
   }
 }
 
+// objectClass → its MUST + MAY attribute names, cached per directory so
+// re-renders (new search results with the same classes) don't refetch.
+// Unknown classes (schema lookup 404s) cache as [] so they aren't retried.
+const ocAttrCache = new Map<string, string[]>()
+const ocAttributeNames = ref<string[]>([])
+
+// De-duplicated, case-insensitive, without `top` (it only contributes
+// objectClass, which every entry has anyway).
+const normalizedObjectClasses = computed<string[]>(() => {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of (props.objectClasses ?? [])) {
+    const name = typeof raw === 'string' ? raw.trim() : ''
+    const key = name.toLowerCase()
+    if (!name || key === 'top' || seen.has(key)) continue
+    seen.add(key)
+    out.push(name)
+  }
+  return out
+})
+
+let ocLoadSeq = 0
+async function loadObjectClassAttributes(): Promise<void> {
+  const dirId = props.directoryId
+  const ocs = normalizedObjectClasses.value
+  if (!dirId || ocs.length === 0) { ocAttributeNames.value = []; return }
+  const seq = ++ocLoadSeq
+  const missing = ocs.filter(oc => !ocAttrCache.has(`${dirId}|${oc.toLowerCase()}`))
+  // Per-class requests (not /bulk): bulk fails as a whole if any one
+  // class is absent from the schema, and entries can carry classes the
+  // schema endpoint doesn't resolve (vendor/legacy extensions).
+  await Promise.all(missing.map(async (oc) => {
+    const key = `${dirId}|${oc.toLowerCase()}`
+    try {
+      const { data } = await getObjectClass(dirId, oc)
+      const required: string[] = data?.required ?? data?.requiredAttributes ?? []
+      const optional: string[] = data?.optional ?? data?.optionalAttributes ?? []
+      ocAttrCache.set(key, [...required, ...optional].filter(n => typeof n === 'string' && n))
+    } catch {
+      ocAttrCache.set(key, [])
+    }
+  }))
+  if (seq !== ocLoadSeq) return // a newer load superseded this one
+  ocAttributeNames.value = ocs.flatMap(oc => ocAttrCache.get(`${dirId}|${oc.toLowerCase()}`) ?? [])
+}
+
 watch(() => props.directoryId, () => {
-  if (expanded.value) loadSchemaIfNeeded()
+  if (expanded.value) { loadSchemaIfNeeded(); loadObjectClassAttributes() }
+})
+
+watch(normalizedObjectClasses, () => {
+  if (expanded.value) loadObjectClassAttributes()
 })
 
 watch(expanded, (open) => {
-  if (open && schemaState.value === 'idle') loadSchemaIfNeeded()
+  if (!open) return
+  if (schemaState.value === 'idle') loadSchemaIfNeeded()
+  loadObjectClassAttributes()
 })
 
 // Compile and emit on any rule/conjunction change. Default flush ('pre')
@@ -188,7 +252,7 @@ const suggestionSource = computed<string[]>(() => {
     const schemaLc = new Map(attributeNames.value.map(n => [n.toLowerCase(), n]))
     const seen = new Set<string>()
     const out: string[] = []
-    for (const raw of (props.relevantAttributes ?? [])) {
+    for (const raw of [...(props.relevantAttributes ?? []), ...ocAttributeNames.value]) {
       const name = schemaLc.get(raw.toLowerCase()) ?? raw
       const key = name.toLowerCase()
       if (seen.has(key)) continue
@@ -314,6 +378,7 @@ function starHintIsBare(rule: IndexedRule): boolean {
  */
 function __resetSchemaCacheForTesting(): void {
   schemaCache.clear()
+  ocAttrCache.clear()
 }
 
 defineExpose({
@@ -387,7 +452,7 @@ defineExpose({
            input still accepts any free-text value either way. -->
       <p v-if="hasRelevantList" class="text-xs text-gray-500 mb-2">
         <template v-if="isScopedToProfile">
-          Suggesting profile attributes ({{ suggestionSource.length }}).
+          Suggesting attributes for this profile's object classes ({{ suggestionSource.length }}).
           <button
             type="button"
             class="text-blue-600 hover:text-blue-700 ml-1"

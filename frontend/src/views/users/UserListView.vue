@@ -53,6 +53,7 @@
         v-model="filterText"
         :directory-id="dirId"
         :relevant-attributes="profileAttributeNames"
+        :object-classes="filterObjectClasses"
       />
       <RecentSearches
         ref="recentSearchesRef"
@@ -515,6 +516,7 @@ import { listEnabled as listEnabledPlaybooks, previewPlaybook, executePlaybook, 
 import { usePermissions } from '@/composables/usePermissions'
 import ResultsTable from '@/components/ResultsTable.vue'
 import LdapFilterBuilder from '@/components/LdapFilterBuilder.vue'
+import { rowObjectClasses } from '@/composables/useLdapFilter'
 import RecentSearches from '@/components/RecentSearches.vue'
 import ActionMenu from '@/components/ActionMenu.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -940,6 +942,17 @@ const profileAttributeNames = computed<string[]>(() =>
     .map(a => a.attributeName)
     .filter((n): n is string => typeof n === 'string' && n.length > 0),
 )
+
+// objectClasses fed to LdapFilterBuilder so its scoped suggestions cover
+// every attribute those classes allow, not just the profile's form fields:
+// the profile's own objectClassNames plus every objectClass value present
+// on the loaded rows (entries in the branch often carry auxiliary classes —
+// posixAccount, shadowAccount, vendor extensions — the profile doesn't list).
+const filterObjectClasses = computed<string[]>(() => {
+  const out = [...(profileData.value?.objectClassNames ?? [])]
+  for (const row of users.value) out.push(...rowObjectClasses(row.__entry?.attributes))
+  return out
+})
 
 const emptyForm = (): UserFormState => {
   // Pre-populate default values from profile attribute configs

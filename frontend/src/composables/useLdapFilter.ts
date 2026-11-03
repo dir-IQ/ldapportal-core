@@ -168,3 +168,24 @@ export function compileRules(rules: FilterRule[], conj: Conjunction): string {
 export function operatorHasValue(op: FilterOp): boolean {
   return OPERATORS.find(o => o.value === op)?.hasValue ?? true
 }
+
+/**
+ * objectClass values from a search-result entry's attribute map. LDAP
+ * attribute names are case-insensitive and the backend may return either
+ * `objectClass` or `objectclass`, single-valued as a bare string or as a
+ * list — accept all shapes. Used to tell LdapFilterBuilder which classes
+ * the loaded entries actually carry.
+ */
+export function rowObjectClasses(
+  attrs: Record<string, string[] | string | null | undefined> | null | undefined,
+): string[] {
+  if (!attrs) return []
+  const out: string[] = []
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k.toLowerCase() !== 'objectclass' || v == null) continue
+    for (const oc of Array.isArray(v) ? v : [v]) {
+      if (typeof oc === 'string' && oc) out.push(oc)
+    }
+  }
+  return out
+}
