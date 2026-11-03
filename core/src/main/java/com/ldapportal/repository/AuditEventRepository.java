@@ -90,6 +90,17 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
             Pageable pageable);
 
     /**
+     * {@link #findAll(UUID, UUID, String, String, String, String, UUID, OffsetDateTime, OffsetDateTime, Pageable)}
+     * without the "Target DN contains" filter — for callers (reports, SIEM
+     * export) that never search by part of a DN.
+     */
+    default Page<AuditEvent> findAll(UUID directoryId, UUID actorId, String action, String targetDn,
+                                     String source, UUID correlationId, OffsetDateTime from,
+                                     OffsetDateTime to, Pageable pageable) {
+        return findAll(directoryId, actorId, action, targetDn, null, source, correlationId, from, to, pageable);
+    }
+
+    /**
      * Directory-scoped query for non-superadmins. Restricts results to the
      * given set of directory IDs.
      */
