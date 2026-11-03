@@ -157,25 +157,118 @@ describe('MembershipInventoryModal', () => {
     wrapper.unmount()
   })
 
-  it('row Recompute calls the API with the identity', async () => {
+  // ── Bulk actions on selected rows ──────────────────────────────────────────
+
+  /** List these membership rows: the fixture with each override, identities 1111, 2222, … unless given. */
+  function withRows(...overs: Record<string, unknown>[]) {
+    vi.mocked(syncApi.listMemberships).mockResolvedValue(page(overs.map((o, i) => ({
+      ...membership, identity: String(i + 1).repeat(4), ...o,
+    }))) as never)
+  }
+  async function selectRow(identity: string) {
+    document.querySelector<HTMLInputElement>(`input[aria-label="Select row ${identity}"]`)!.click()
+    await flushPromises()
+  }
+  async function selectAll() {
+    document.querySelector<HTMLInputElement>('input[aria-label="Select all rows"]')!.click()
+    await flushPromises()
+  }
+
+  it('has no per-row actions; the bulk actions wait for a selection', async () => {
     const wrapper = open()
     await flushPromises()
-    byText('Recompute')!.click()
+    const headers = Array.from(document.querySelectorAll('th')).map((th) => th.textContent?.trim())
+    expect(headers).not.toContain('Actions')
+    expect(document.body.textContent).toContain('Select rows to act on them')
+    expect(byExactText('Recompute')!.disabled).toBe(true)
+    expect(byExactText('Stop tracking')!.disabled).toBe(true)
+
+    await selectRow('1111')
+    expect(document.body.textContent).toContain('1 selected')
+    expect(byExactText('Recompute (1)')!.disabled).toBe(false)
+    expect(byExactText('Stop tracking (1)')!.disabled).toBe(false)
+    byExactText('Clear selection')!.click()
+    await flushPromises()
+    expect(byExactText('Recompute')!.disabled).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('Recompute calls the API with the selected row\'s identity', async () => {
+    const wrapper = open()
+    await flushPromises()
+    await selectRow('1111')
+    byExactText('Recompute (1)')!.click()
     await flushPromises()
     expect(syncApi.recomputeKey).toHaveBeenCalledWith('set-1', '1111')
     wrapper.unmount()
   })
 
-  it('labels a held delete "Delete target" and approves it after a danger confirm', async () => {
-    withRow({ reviewKind: 'PENDING_DELETE', failReason: 'scope-exit held for review (deletePolicy=REVIEW)' })
+  it('recomputes every selected row, then reports what they became', async () => {
+    vi.useFakeTimers()
+    try {
+      withRows({ state: 'FAILED', reviewKind: null }, { state: 'FAILED', reviewKind: null })
+      const wrapper = open()
+      await flushPromises()
+      const success = vi.spyOn(useNotificationStore(), 'success')
+      await selectAll()
+
+      byExactText('Retry (2)')!.click()
+      await flushPromises()
+      expect(syncApi.recomputeKey).toHaveBeenCalledWith('set-1', '1111')
+      expect(syncApi.recomputeKey).toHaveBeenCalledWith('set-1', '2222')
+      expect(success).toHaveBeenCalledWith('Retry queued for 2 rows: watching them for the result…')
+
+      withRows({ state: 'APPLIED', reviewKind: null, failReason: null },
+        { state: 'APPLIED', reviewKind: null, failReason: null })
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(success).toHaveBeenLastCalledWith('Retry done: 2 now Synced')
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('offers Delete target only for selected held deletes and approves them after a danger confirm', async () => {
+    withRows({ state: 'FAILED', reviewKind: null }, { reviewKind: 'PENDING_DELETE' })
     const wrapper = open()
     await flushPromises()
-    expect(byText('Keep entry, stop syncing')).toBeTruthy()
-    expect(byText('Re-check')).toBeTruthy()
-    byText('Delete target')!.click()
+    await selectRow('1111')
+    expect(byText('Delete target')).toBeUndefined()
+
+    await selectRow('2222')
+    byExactText('Delete target (1)')!.click()
     await flushPromises()
-    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ danger: true, confirmLabel: 'Delete entry' }))
-    expect(syncApi.approveDelete).toHaveBeenCalledWith('set-1', '1111')
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({
+      danger: true, confirmLabel: 'Delete entry',
+      message: expect.stringContaining('The other 1 selected row isn\'t a held delete and is left alone.'),
+    }))
+    expect(syncApi.approveDelete).toHaveBeenCalledTimes(1)
+    expect(syncApi.approveDelete).toHaveBeenCalledWith('set-1', '2222')
+    wrapper.unmount()
+  })
+
+  it('deletes several held deletes in one go and sums up the outcomes', async () => {
+    withRows({ reviewKind: 'PENDING_DELETE' }, { reviewKind: 'PENDING_DELETE' }, { reviewKind: 'PENDING_DELETE' })
+    vi.mocked(syncApi.approveDelete)
+      .mockResolvedValueOnce({ data: { outcome: 'DELETE', targetDirectoryId: 'd', targetDn: 'uid=a', message: null } } as never)
+      .mockResolvedValueOnce({ data: { outcome: 'FORGET', targetDirectoryId: 'd', targetDn: 'uid=b', message: null } } as never)
+      .mockResolvedValueOnce({ data: { outcome: 'ERROR', targetDirectoryId: 'd', targetDn: 'uid=c', message: 'busy' } } as never)
+    const wrapper = open()
+    await flushPromises()
+    const notif = useNotificationStore()
+    const success = vi.spyOn(notif, 'success')
+    const error = vi.spyOn(notif, 'error')
+    await selectAll()
+
+    byExactText('Delete target (3)')!.click()
+    await flushPromises()
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Delete 3 target entries?', confirmLabel: 'Delete 3 entries',
+    }))
+    expect(syncApi.approveDelete).toHaveBeenCalledTimes(3)
+    expect(success).toHaveBeenCalledWith(
+      'Deleted 1 target entry; kept 1 that another sync identity owns (only their rows were removed)')
+    expect(error).toHaveBeenCalledWith('1 of 3 deletions failed: busy')
     wrapper.unmount()
   })
 
@@ -184,19 +277,23 @@ describe('MembershipInventoryModal', () => {
     confirmMock.mockResolvedValueOnce(false)
     const wrapper = open()
     await flushPromises()
+    await selectRow('1111')
     byText('Delete target')!.click()
     await flushPromises()
     expect(syncApi.approveDelete).not.toHaveBeenCalled()
     wrapper.unmount()
   })
 
-  it('"Keep entry, stop syncing" dismisses the row after confirming', async () => {
+  it('Stop tracking on a held delete says the target entry is kept, then dismisses it', async () => {
     withRow({ reviewKind: 'PENDING_DELETE' })
     const wrapper = open()
     await flushPromises()
-    byText('Keep entry, stop syncing')!.click()
+    await selectRow('1111')
+    byExactText('Stop tracking (1)')!.click()
     await flushPromises()
-    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ confirmLabel: 'Keep and stop syncing' }))
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({
+      confirmLabel: 'Stop tracking', message: expect.stringContaining('The held delete keeps its target entry'),
+    }))
     expect(syncApi.dismissMembership).toHaveBeenCalledWith('set-1', '1111')
     wrapper.unmount()
   })
@@ -208,17 +305,46 @@ describe('MembershipInventoryModal', () => {
       const wrapper = open()
       await flushPromises()
       const success = vi.spyOn(useNotificationStore(), 'success')
+      await selectRow('1111')
 
-      byExactText('Re-check')!.click()
+      byExactText('Re-check (1)')!.click()
       await flushPromises()
       expect(syncApi.recomputeKey).toHaveBeenCalledWith('set-1', '1111')
       // The worker has now applied it: the entry is back in the set.
       withRow({ state: 'APPLIED', reviewKind: null, failReason: null } as unknown as Partial<typeof membership>)
       await vi.advanceTimersByTimeAsync(2000)
 
-      expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', expect.objectContaining({ q: '1111' }))
       expect(success).toHaveBeenLastCalledWith('Re-check done: the row is now Synced')
-      expect(byText('Delete target')).toBeUndefined()
+      expect(document.querySelector('td span')?.textContent).not.toContain('Review')
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('looks up a recomputed row that left the filtered page on its own', async () => {
+    vi.useFakeTimers()
+    try {
+      withRow({ state: 'FAILED', reviewKind: null })
+      const wrapper = mount(MembershipInventoryModal, {
+        attachTo: document.body,
+        props: { show: true, set, sourceName: 'Source', targetName: 'Target', initialState: 'FAILED' as const },
+      })
+      await flushPromises()
+      const success = vi.spyOn(useNotificationStore(), 'success')
+      await selectRow('1111')
+      byExactText('Retry (1)')!.click()
+      await flushPromises()
+
+      // The Failed page is now empty; looked up by identity, the row is Synced.
+      vi.mocked(syncApi.listMemberships).mockImplementation(((_id: string, p: { q?: string }) =>
+        Promise.resolve(p.q === '1111'
+          ? page([{ ...membership, state: 'APPLIED', reviewKind: null, failReason: null }])
+          : page([]))) as never)
+      await vi.advanceTimersByTimeAsync(2000)
+
+      expect(syncApi.listMemberships).toHaveBeenCalledWith('set-1', expect.objectContaining({ q: '1111' }))
+      expect(success).toHaveBeenLastCalledWith('Retry done: the row is now Synced')
       wrapper.unmount()
     } finally {
       vi.useRealTimers()
@@ -232,8 +358,9 @@ describe('MembershipInventoryModal', () => {
       const wrapper = open()
       await flushPromises()
       const info = vi.spyOn(useNotificationStore(), 'info')
+      await selectRow('1111')
 
-      byExactText('Re-check')!.click()
+      byExactText('Re-check (1)')!.click()
       await vi.advanceTimersByTimeAsync(20_000)
       await flushPromises()
 
@@ -244,19 +371,20 @@ describe('MembershipInventoryModal', () => {
     }
   })
 
-  it('names the recompute for the row: Retry match, Retry, Re-sync', async () => {
-    for (const [over, label] of [
-      [{ state: 'REVIEW', reviewKind: 'AMBIGUOUS_MATCH' }, 'Retry match'],
-      [{ state: 'FAILED', reviewKind: null }, 'Retry'],
-      [{ state: 'APPLIED', reviewKind: null, failReason: null }, 'Re-sync'],
+  it('names the recompute for the selection: Retry match, Retry, Re-sync, or Recompute when mixed', async () => {
+    for (const [overs, label] of [
+      [[{ state: 'REVIEW', reviewKind: 'AMBIGUOUS_MATCH' }], 'Retry match (1)'],
+      [[{ state: 'FAILED', reviewKind: null }], 'Retry (1)'],
+      [[{ state: 'APPLIED', reviewKind: null, failReason: null }], 'Re-sync (1)'],
+      [[{ state: 'FAILED', reviewKind: null }, { state: 'APPLIED', reviewKind: null }], 'Recompute (2)'],
     ] as const) {
       vi.clearAllMocks()
       document.body.innerHTML = ''
-      withRow(over as Partial<typeof membership>)
+      withRows(...overs)
       const wrapper = open()
       await flushPromises()
-      const btn = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
-        .find((b) => b.textContent?.trim() === label)
+      await selectAll()
+      const btn = byExactText(label)
       expect(btn, label).toBeTruthy()
       btn!.click()
       await flushPromises()
@@ -266,17 +394,32 @@ describe('MembershipInventoryModal', () => {
     }
   })
 
-  it('"Stop tracking" asks first and dismisses only when confirmed', async () => {
-    withRow({ state: 'FAILED', reviewKind: null })
+  it('"Stop tracking" asks first and dismisses every selected row only when confirmed', async () => {
+    withRows({ state: 'FAILED', reviewKind: null }, { state: 'APPLIED', reviewKind: null })
     confirmMock.mockResolvedValueOnce(false)
     const wrapper = open()
     await flushPromises()
-    byText('Stop tracking')!.click()
+    await selectAll()
+    byExactText('Stop tracking (2)')!.click()
     await flushPromises()
+    expect(confirmMock).toHaveBeenCalledWith(expect.objectContaining({ title: 'Stop tracking 2 entries?' }))
     expect(syncApi.dismissMembership).not.toHaveBeenCalled()
-    byText('Stop tracking')!.click()
+    byExactText('Stop tracking (2)')!.click()
     await flushPromises()
     expect(syncApi.dismissMembership).toHaveBeenCalledWith('set-1', '1111')
+    expect(syncApi.dismissMembership).toHaveBeenCalledWith('set-1', '2222')
+    wrapper.unmount()
+  })
+
+  it('drops selected rows that a new filter or page no longer shows', async () => {
+    const wrapper = open()
+    await flushPromises()
+    await selectRow('1111')
+    expect(document.body.textContent).toContain('1 selected')
+    withRows({ identity: '9999', state: 'FAILED' })
+    byText('Failed')!.click()
+    await flushPromises()
+    expect(document.body.textContent).toContain('Select rows to act on them')
     wrapper.unmount()
   })
 
