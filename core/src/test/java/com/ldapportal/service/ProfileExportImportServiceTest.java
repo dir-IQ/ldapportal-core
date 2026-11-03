@@ -57,7 +57,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -97,11 +96,17 @@ class ProfileExportImportServiceTest {
         return d;
     }
 
+    /** A real response (records are final, so not mockable here) with the fields the service reads. */
     private static ProfileResponse response(UUID id, String name) {
-        ProfileResponse r = mock(ProfileResponse.class);
-        lenient().when(r.id()).thenReturn(id);
-        lenient().when(r.name()).thenReturn(name);
-        return r;
+        return new ProfileResponse(
+                id, UUID.randomUUID(), "Prod", name, "slug", null, null,
+                "ou=people,dc=prod,dc=corp", null, List.of("inetOrgPerson"), "uid",
+                true, null, null, null, null, false, false,
+                16, true, true, true, true, "!@#$%^&*", false,
+                "OPERATOR_ENTERED",
+                false, false,
+                List.of(), List.of(), List.of(), List.of(),
+                null, null);
     }
 
     // ── Export ────────────────────────────────────────────────────────────────
