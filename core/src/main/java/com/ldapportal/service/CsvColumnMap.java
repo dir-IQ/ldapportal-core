@@ -41,7 +41,7 @@ final class CsvColumnMap {
     static final String GROUP_MEMBERSHIPS = "@groups";
 
     /** Header that means group memberships when there are no mappings for it. */
-    static final String GROUPS_COLUMN = "groups";
+    static final String GROUPS_COLUMN = com.ldapportal.ldap.UserGroupIndex.COLUMN;
 
     /** csvColumn → ldapAttribute; a {@code null} value means "ignored". */
     private final Map<String, String> exact;
