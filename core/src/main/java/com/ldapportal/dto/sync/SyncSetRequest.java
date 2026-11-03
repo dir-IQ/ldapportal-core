@@ -3,6 +3,7 @@ package com.ldapportal.dto.sync;
 
 import com.ldapportal.entity.SyncTransformRule;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncScope;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -34,7 +35,7 @@ public record SyncSetRequest(
         List<@Size(max = 255) String> excludedAttributes,
         @Min(60) Long reconcileCadenceSeconds,
         boolean enabled,
-        // Keep every changed or flagged entry's DN in each run's history, not
-        // just the samples. null => unchanged on update, off on create.
-        Boolean recordAllDns) {
+        // How much of each run the history keeps. null => unchanged on update,
+        // SUMMARY on create.
+        SyncLoggingLevel loggingLevel) {
 }

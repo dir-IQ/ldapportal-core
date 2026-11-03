@@ -4,10 +4,13 @@ package com.ldapportal.auth;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ldapportal.entity.Account;
+import com.ldapportal.entity.SuperadminPermissionGrant;
 import com.ldapportal.entity.enums.AccountRole;
 import com.ldapportal.entity.enums.AccountType;
+import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.repository.AccountRepository;
 import com.ldapportal.repository.ApiTokenRepository;
+import com.ldapportal.repository.SuperadminPermissionGrantRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +44,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * open their own transactions and cannot see uncommitted rows from an outer
  * test-level transaction. The {@link #setUp()} method handles isolation via
  * {@code apiTokenRepository.deleteAll()} instead.</p>
+ *
+ * <p>The test uses a superadmin of its own, granted the API-token permission,
+ * rather than whichever active superadmin the shared test database holds.
+ * Superadmin permissions come from grant rows, and the shared H2 schema is
+ * recreated ({@code ddl-auto: create-drop}) whenever another test context
+ * starts, so a borrowed superadmin can be one with no grants (or a grant-less
+ * one inserted as a fallback) — turning every request here into a 403,
+ * depending on test order. The account is looked up by name each time, so it
+ * is re-created if the schema was.</p>
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -53,27 +65,32 @@ class ApiTokenEndToEndTest {
     @Autowired private ApiTokenRepository apiTokenRepository;
     @Autowired private ApiTokenService apiTokenService;
     @Autowired private JwtTokenService jwtTokenService;
+    @Autowired private SuperadminPermissionGrantRepository grantRepository;
+
+    private static final String SUPERADMIN_USERNAME = "e2e-api-token-superadmin";
 
     private Account superadmin;
 
     @BeforeEach
     void setUp() {
         apiTokenRepository.deleteAll();
-        superadmin = accountRepository.findAll().stream()
-                .filter(a -> a.getRole() == AccountRole.SUPERADMIN && a.isActive())
-                .findFirst()
-                .orElseGet(this::insertSuperadmin);
+        superadmin = accountRepository.findByUsername(SUPERADMIN_USERNAME).orElseGet(this::insertSuperadmin);
     }
 
     private Account insertSuperadmin() {
         Account a = new Account();
-        a.setUsername("e2e-superadmin-" + UUID.randomUUID());
-        a.setDisplayName("E2E Superadmin");
+        a.setUsername(SUPERADMIN_USERNAME);
+        a.setDisplayName("E2E API-token superadmin");
         a.setRole(AccountRole.SUPERADMIN);
         a.setAuthType(AccountType.LOCAL);
         a.setPasswordHash("$2a$10$irrelevant");
         a.setActive(true);
-        return accountRepository.save(a);
+        Account saved = accountRepository.save(a);
+        SuperadminPermissionGrant grant = new SuperadminPermissionGrant();
+        grant.setAccount(saved);
+        grant.setPermission(SuperadminPermission.MANAGE_API_TOKENS);
+        grantRepository.save(grant);
+        return saved;
     }
 
     private UsernamePasswordAuthenticationToken superadminAuth() {

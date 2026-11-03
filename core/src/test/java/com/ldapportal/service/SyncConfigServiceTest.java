@@ -18,6 +18,7 @@ import com.ldapportal.entity.enums.MembershipState;
 import com.ldapportal.entity.enums.SyncCaptureMode;
 import com.ldapportal.entity.enums.SyncChangelogHealth;
 import com.ldapportal.entity.enums.SyncDeletePolicy;
+import com.ldapportal.entity.enums.SyncLoggingLevel;
 import com.ldapportal.entity.enums.SyncReconcileTrigger;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
@@ -63,6 +64,7 @@ class SyncConfigServiceTest {
     @Mock private SyncSetRepository setRepo;
     @Mock private MembershipRepository membershipRepo;
     @Mock private DirectoryConnectionRepository directoryRepo;
+    @Mock private com.ldapportal.ldap.sync.SyncVerifyProgressTracker verifyProgress;
     @Mock private MembershipReconciler reconciler;
     @Mock private SyncContentVerifier verifier;
     @Mock private RecomputeEnqueuer enqueuer;
@@ -78,12 +80,12 @@ class SyncConfigServiceTest {
     void setUp() {
         service = new SyncConfigService(linkRepo, setRepo, membershipRepo, directoryRepo,
                 reconciler, verifier, enqueuer, previewService, reconcileHistory, engine, auditService,
-                reconcileRunRepo);
+                reconcileRunRepo, verifyProgress);
     }
 
     private SyncSetRequest req(List<SyncTransformRule> rules) {
-        return new SyncSetRequest(UUID.randomUUID(), "people", null, null, null, null, null, null, null,
-                SyncDeletePolicy.DELETE, rules, null, null, true, null);
+        return new SyncSetRequest(UUID.randomUUID(), "people", "ou=people,dc=src,dc=com", null, null, null,
+                null, null, null, SyncDeletePolicy.DELETE, rules, null, null, true, null);
     }
 
     @Test
@@ -134,21 +136,47 @@ class SyncConfigServiceTest {
     }
 
     @Test
-    void recordAllDns_isSetWhenGiven_andLeftAloneWhenNull() {
+    void loggingLevel_isSetWhenGiven_summaryOnCreate_andLeftAloneWhenNull() {
         when(linkRepo.existsById(any())).thenReturn(true);
         when(setRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         SyncSetRequest base = req(List.of());
-        SyncSetRequest on = new SyncSetRequest(base.linkId(), base.name(), null, null, null, null, null, null,
-                null, base.deletePolicy(), null, null, null, true, true);
+        SyncSetRequest detailed = new SyncSetRequest(base.linkId(), base.name(), base.objectScopeBaseDn(), null,
+                null, null, null, null, null, base.deletePolicy(), null, null, null, true, SyncLoggingLevel.DETAILED);
 
-        assertThat(service.createSet(on).recordAllDns()).isTrue();
-        assertThat(service.createSet(base).recordAllDns()).isFalse();
+        assertThat(service.createSet(detailed).loggingLevel()).isEqualTo(SyncLoggingLevel.DETAILED);
+        assertThat(service.createSet(base).loggingLevel()).isEqualTo(SyncLoggingLevel.SUMMARY);
 
         UUID setId = UUID.randomUUID();
         SyncSet existing = new SyncSet();
-        existing.setRecordAllDns(true);
+        existing.setLoggingLevel(SyncLoggingLevel.DETAILED);
         when(setRepo.findById(setId)).thenReturn(Optional.of(existing));
-        assertThat(service.updateSet(setId, base).recordAllDns()).isTrue(); // null: unchanged
+        assertThat(service.updateSet(setId, base).loggingLevel()).isEqualTo(SyncLoggingLevel.DETAILED); // null: unchanged
+    }
+
+    @Test
+    void applicabilityFilter_laidOutOverSeveralLines_isStoredAsOneLine() {
+        when(linkRepo.existsById(any())).thenReturn(true);
+        when(setRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        SyncSetRequest base = req(List.of());
+        SyncSetRequest multiline = new SyncSetRequest(base.linkId(), base.name(), base.objectScopeBaseDn(), null,
+                null, null, "(&(objectClass=secGroup)\n  (!(|(cn=iv-admin)\r\n      (cn=John Smith))))\n", null, null,
+                base.deletePolicy(), null, null, null, true, null);
+
+        assertThat(service.createSet(multiline).applicabilityFilter())
+                .isEqualTo("(&(objectClass=secGroup)(!(|(cn=iv-admin)(cn=John Smith))))");
+    }
+
+    @Test
+    void sourceBaseDn_isRequired() {
+        when(linkRepo.existsById(any())).thenReturn(true);
+        SyncSetRequest base = req(List.of());
+        SyncSetRequest blank = new SyncSetRequest(base.linkId(), base.name(), "  ", null, null, null, null, null,
+                null, base.deletePolicy(), null, null, null, true, null);
+
+        assertThatThrownBy(() -> service.createSet(blank))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Source base DN is required.");
+        verify(setRepo, never()).save(any());
     }
 
     @Test
@@ -185,6 +213,28 @@ class SyncConfigServiceTest {
     }
 
     @Test
+    void listSets_countsHeldDeletesAmongReviewRows() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(setId);
+        when(setRepo.findAll()).thenReturn(List.of(set));
+        com.ldapportal.repository.MembershipStateCount review =
+                org.mockito.Mockito.mock(com.ldapportal.repository.MembershipStateCount.class);
+        when(review.getSyncSetId()).thenReturn(setId);
+        when(review.getState()).thenReturn(MembershipState.REVIEW);
+        when(review.getCnt()).thenReturn(5L);
+        when(membershipRepo.countGroupedByState()).thenReturn(List.of(review));
+        when(membershipRepo.countHeldDeletesBySet("scope-exit held for review%"))
+                .thenReturn(List.<Object[]>of(new Object[]{setId, 3L}));
+
+        var out = service.listSets(null);
+
+        assertThat(out.get(0).stateCounts())
+                .containsEntry("REVIEW", 5L)
+                .containsEntry(SyncConfigService.HELD_DELETE_KEY, 3L);
+    }
+
+    @Test
     void verifyContents_persistsDriftSnapshot_whenScanComplete() {
         UUID setId = UUID.randomUUID();
         when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
@@ -198,6 +248,21 @@ class SyncConfigServiceTest {
         assertThat(out.missingOnTarget()).isEqualTo(2);
         // The drift counts are cached on the set so the dashboard can read them cheaply.
         verify(setRepo).recordVerifyResult(eq(setId), any(), eq(2), eq(1), eq(0));
+        // No held references counted (none in the result): nothing stored for them.
+        verify(setRepo, never()).recordVerifyHeld(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void verifyContents_storesHeldReferenceCounts_whenScanComplete() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(10, 10, 10, 0, 0, 0,
+                List.of(), List.of(), List.of(), true, true, null, true,
+                new SyncVerifyResult.HeldReferences(4, 3, false, List.of())));
+
+        service.verifyContents(setId);
+
+        verify(setRepo).recordVerifyHeld(setId, 4, 3);
     }
 
     @Test
@@ -211,8 +276,22 @@ class SyncConfigServiceTest {
 
         service.verifyContents(setId);
 
-        // A partial scan must not overwrite a previously good snapshot with low counts.
+        // A partial scan must not overwrite a previously good snapshot with low counts...
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        // ...but it's noted, so the UI can say the snapshot may be out of date.
+        verify(setRepo).recordVerifyIncomplete(eq(setId), any());
+    }
+
+    @Test
+    void verifyContents_unavailableSet_isNotRecordedAsIncomplete() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(
+                0, 0, 0, 0, 0, 0, List.of(), List.of(), List.of(), false, false, "Sync set is disabled."));
+
+        service.verifyContents(setId);
+
+        verify(setRepo, never()).recordVerifyIncomplete(any(), any());
     }
 
     @Test
@@ -263,6 +342,8 @@ class SyncConfigServiceTest {
 
         assertThat(enumerated).isEqualTo(5);
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        // ...but it's noted, so the stored drift shows as possibly out of date.
+        verify(setRepo).recordVerifyIncomplete(eq(setId), any());
     }
 
     @Test
@@ -283,14 +364,23 @@ class SyncConfigServiceTest {
         when(directoryRepo.findById(srcId)).thenReturn(Optional.of(multi));
         org.mockito.Mockito.lenient().when(directoryRepo.findById(dstId)).thenReturn(Optional.of(single));
 
-        SyncSetRequest noScope = new SyncSetRequest(linkId, "people", null, null, null, "ou=Users,dc=dst,dc=com",
-                null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
-        assertThatThrownBy(() -> service.createSet(noScope))
+        SyncSetRequest outside = new SyncSetRequest(linkId, "people", "ou=people,dc=other", null, null,
+                "ou=Users,dc=dst,dc=com", null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
+        assertThatThrownBy(() -> service.createSet(outside))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("source scope base DN");
+                .hasMessageContaining("'ou=people,dc=other' isn't under any of the source directory's base DNs");
+
+        // Under either of the source's roots is fine.
+        org.mockito.Mockito.lenient().when(setRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        SyncSetRequest secondRoot = new SyncSetRequest(linkId, "partners", "ou=people,o=partners", null, null,
+                "ou=Users,dc=dst,dc=com", null, null, null, SyncDeletePolicy.DELETE, null, null, null, true, null);
+        assertThat(service.createSet(secondRoot).objectScopeBaseDn()).isEqualTo("ou=people,o=partners");
     }
 
-    /** A link from a single-root source to a target with two roots (c=us and o=partners). */
+    /**
+     * A link from a source with roots c=us and dc=elsewhere to a target with
+     * roots c=us and o=partners.
+     */
     private UUID linkToMultiRootTarget() {
         UUID linkId = UUID.randomUUID();
         UUID srcId = UUID.randomUUID();
@@ -298,14 +388,15 @@ class SyncConfigServiceTest {
         SyncLink link = new SyncLink();
         link.setSourceDirId(srcId);
         link.setTargetDirId(dstId);
-        com.ldapportal.entity.DirectoryConnection single = new com.ldapportal.entity.DirectoryConnection();
-        single.setBaseDn("c=us");
+        com.ldapportal.entity.DirectoryConnection source = new com.ldapportal.entity.DirectoryConnection();
+        source.setBaseDn("c=us");
+        source.setAdditionalBaseDns(new java.util.ArrayList<>(List.of("dc=elsewhere")));
         com.ldapportal.entity.DirectoryConnection multi = new com.ldapportal.entity.DirectoryConnection();
         multi.setBaseDn("c=us");
         multi.setAdditionalBaseDns(new java.util.ArrayList<>(List.of("o=partners")));
         when(linkRepo.existsById(linkId)).thenReturn(true);
         when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
-        org.mockito.Mockito.lenient().when(directoryRepo.findById(srcId)).thenReturn(Optional.of(single));
+        org.mockito.Mockito.lenient().when(directoryRepo.findById(srcId)).thenReturn(Optional.of(source));
         when(directoryRepo.findById(dstId)).thenReturn(Optional.of(multi));
         org.mockito.Mockito.lenient().when(setRepo.save(any())).thenAnswer(inv -> inv.getArgument(0));
         return linkId;
@@ -370,6 +461,98 @@ class SyncConfigServiceTest {
         assertThat(service.recheckTarget(setId, "alice").reconcileQueued()).isFalse();
     }
 
+    private SyncSet enabledSet(UUID setId) {
+        UUID linkId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setEnabled(true);
+        set.setLinkId(linkId);
+        SyncLink link = new SyncLink();
+        link.setEnabled(true);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        org.mockito.Mockito.lenient().when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+        return set;
+    }
+
+    @Test
+    void startReconcile_runsTheReconcileInTheBackground_asAManualRun() {
+        UUID setId = UUID.randomUUID();
+        enabledSet(setId);
+
+        service.startReconcile(setId, "alice");
+
+        verify(reconciler, org.mockito.Mockito.timeout(5000))
+                .reconcile(setId, com.ldapportal.entity.enums.SyncReconcileTrigger.MANUAL, "alice");
+    }
+
+    @Test
+    void startReconcile_whileOneIsRunning_isAConflict() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = enabledSet(setId);
+        org.springframework.test.util.ReflectionTestUtils.setField(set, "reconcileLeaseToken", UUID.randomUUID());
+        org.springframework.test.util.ReflectionTestUtils.setField(set, "reconcileLeaseHeartbeatAt",
+                java.time.OffsetDateTime.now().minusSeconds(20));
+
+        assertThatThrownBy(() -> service.startReconcile(setId, "alice"))
+                .isInstanceOf(com.ldapportal.exception.ConflictException.class);
+        verify(reconciler, never()).reconcile(any(), any(), any());
+    }
+
+    @Test
+    void startReconcile_aLeaseLeftByAStoppedServer_doesNotBlockIt() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = enabledSet(setId);
+        org.springframework.test.util.ReflectionTestUtils.setField(set, "reconcileLeaseToken", UUID.randomUUID());
+        org.springframework.test.util.ReflectionTestUtils.setField(set, "reconcileLeaseHeartbeatAt",
+                java.time.OffsetDateTime.now().minusHours(1));
+
+        service.startReconcile(setId, "alice");
+
+        verify(reconciler, org.mockito.Mockito.timeout(5000))
+                .reconcile(setId, com.ldapportal.entity.enums.SyncReconcileTrigger.MANUAL, "alice");
+    }
+
+    @Test
+    void startReconcile_onADisabledSet_isRefused() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = enabledSet(setId);
+        set.setEnabled(false);
+
+        assertThatThrownBy(() -> service.startReconcile(setId, "alice"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Enable the sync set and its link");
+        verify(reconciler, never()).reconcile(any(), any(), any());
+    }
+
+    @Test
+    void requestReconcile_queuesOne_andSaysWhetherItWillRun() {
+        UUID setId = UUID.randomUUID();
+        UUID linkId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setEnabled(true);
+        set.setLinkId(linkId);
+        SyncLink link = new SyncLink();
+        link.setEnabled(true);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+
+        assertThat(service.requestReconcile(setId, "alice")).isTrue();
+        verify(setRepo).requestReconcileOfSet(setId);
+        verify(membershipRepo, never()).forgetAppliedContent(any(), any());
+
+        link.setEnabled(false);
+        assertThat(service.requestReconcile(setId, "alice")).isFalse();
+    }
+
+    @Test
+    void requestReconcile_unknownSet_isNotFound() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.requestReconcile(setId, "alice"))
+                .isInstanceOf(com.ldapportal.exception.ResourceNotFoundException.class);
+        verify(setRepo, never()).requestReconcileOfSet(any());
+    }
+
     @Test
     void recheckTarget_unknownSet_isNotFound() {
         UUID setId = UUID.randomUUID();
@@ -390,9 +573,13 @@ class SyncConfigServiceTest {
         set.setName("people");
         set.setLinkId(linkId);
         set.setTargetBaseDn("ou=Users,dc=dst");
+        UUID sourceDir = UUID.randomUUID();
         SyncLink link = new SyncLink();
+        link.setSourceDirId(sourceDir);
         link.setTargetDirId(targetDir);
         AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
+        stubDirectoryName(sourceDir, "HR LDAP");
+        stubDirectoryName(targetDir, "Corp AD");
         when(setRepo.findById(setId)).thenReturn(Optional.of(set));
         when(setRepo.findAll()).thenReturn(List.of(set));
         when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
@@ -406,8 +593,10 @@ class SyncConfigServiceTest {
         org.mockito.InOrder order = org.mockito.Mockito.inOrder(setRepo, auditService);
         order.verify(setRepo).delete(set);
         java.util.Map<String, Object> detail = new java.util.LinkedHashMap<>();
-        detail.put("syncSetId", setId.toString());
         detail.put("syncSetName", "people");
+        detail.put("sourceDirectory", "HR LDAP");
+        detail.put("targetDirectory", "Corp AD");
+        detail.put("syncSetId", setId.toString());
         detail.put("linkId", linkId.toString());
         detail.put("managedEntries", 876L);
         detail.put("pendingReview", 3L);
@@ -432,6 +621,8 @@ class SyncConfigServiceTest {
         AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
         when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
         when(setRepo.findAllByLinkId(linkId)).thenReturn(List.of());
+        stubDirectoryName(sourceDir, "HR LDAP");
+        stubDirectoryName(targetDir, "Corp AD");
 
         service.deleteLink(linkId, admin);
 
@@ -440,6 +631,8 @@ class SyncConfigServiceTest {
         java.util.Map<String, Object> detail = new java.util.LinkedHashMap<>();
         detail.put("linkId", linkId.toString());
         detail.put("linkName", "hr->corp");
+        detail.put("sourceDirectory", "HR LDAP");
+        detail.put("targetDirectory", "Corp AD");
         detail.put("sourceDirId", sourceDir.toString());
         detail.put("targetDirId", targetDir.toString());
         detail.put("captureMode", "CHANGELOG");
@@ -497,7 +690,18 @@ class SyncConfigServiceTest {
         UUID setId = UUID.randomUUID();
         UUID targetDir = UUID.randomUUID();
         AuthPrincipal admin = new AuthPrincipal(PrincipalType.SUPERADMIN, UUID.randomUUID(), "admin");
-        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        UUID linkId = UUID.randomUUID();
+        UUID sourceDir = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setName("people");
+        set.setLinkId(linkId);
+        SyncLink link = new SyncLink();
+        link.setSourceDirId(sourceDir);
+        link.setTargetDirId(targetDir);
+        when(setRepo.findById(setId)).thenReturn(Optional.of(set));
+        when(linkRepo.findById(linkId)).thenReturn(Optional.of(link));
+        stubDirectoryName(sourceDir, "HR LDAP");
+        stubDirectoryName(targetDir, "Corp AD");
         when(engine.approveDelete(setId, "id-1")).thenReturn(new SyncDeleteApproval(
                 SyncPreviewAction.DELETE, targetDir, "uid=a,dc=dst", null));
 
@@ -506,6 +710,7 @@ class SyncConfigServiceTest {
         assertThat(result.outcome()).isEqualTo(SyncPreviewAction.DELETE);
         verify(auditService).record(eq(admin), eq(targetDir), eq(AuditAction.ENTRY_DELETE), eq("uid=a,dc=dst"),
                 eq(java.util.Map.of("source", "directory-sync", "operation", "approved-review-delete",
+                        "syncSetName", "people", "sourceDirectory", "HR LDAP", "targetDirectory", "Corp AD",
                         "syncSetId", setId.toString(), "identity", "id-1")));
     }
 
@@ -632,5 +837,11 @@ class SyncConfigServiceTest {
         l.setChangelogLastChangeNumber(42L);
         l.setChangelogSourceLastChangeNumber(50L);
         return l;
+    }
+
+    private void stubDirectoryName(UUID id, String name) {
+        com.ldapportal.entity.DirectoryConnection dc = new com.ldapportal.entity.DirectoryConnection();
+        dc.setDisplayName(name);
+        when(directoryRepo.findById(id)).thenReturn(Optional.of(dc));
     }
 }

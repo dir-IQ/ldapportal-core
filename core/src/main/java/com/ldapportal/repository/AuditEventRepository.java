@@ -28,6 +28,12 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
      * surfaces their group-membership changes and their move-in, not only rows
      * literally keyed to their DN. Backed by the {@code idx_audit_detail_*}
      * expression indexes (V20).</p>
+     *
+     * <p>{@code targetDnLike} is an {@code ILIKE} pattern (with {@code \} as
+     * the escape character) matched case-insensitively against the same three
+     * fields — the "Target DN contains" search. It has no supporting index, so
+     * it filters the rows the other criteria and the {@code occurred_at}
+     * ordering already narrow.</p>
      */
     @Query(value = """
             SELECT * FROM audit_events e
@@ -39,6 +45,10 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
                    OR e.target_dn = CAST(:targetDn AS VARCHAR)
                    OR e.detail->>'member' = CAST(:targetDn AS VARCHAR)
                    OR e.detail->>'newDn'  = CAST(:targetDn AS VARCHAR))
+              AND (CAST(:targetDnLike AS VARCHAR) IS NULL
+                   OR e.target_dn         ILIKE CAST(:targetDnLike AS VARCHAR) ESCAPE '\\'
+                   OR e.detail->>'member' ILIKE CAST(:targetDnLike AS VARCHAR) ESCAPE '\\'
+                   OR e.detail->>'newDn'  ILIKE CAST(:targetDnLike AS VARCHAR) ESCAPE '\\')
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
               AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
@@ -56,6 +66,10 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
                    OR e.target_dn = CAST(:targetDn AS VARCHAR)
                    OR e.detail->>'member' = CAST(:targetDn AS VARCHAR)
                    OR e.detail->>'newDn'  = CAST(:targetDn AS VARCHAR))
+              AND (CAST(:targetDnLike AS VARCHAR) IS NULL
+                   OR e.target_dn         ILIKE CAST(:targetDnLike AS VARCHAR) ESCAPE '\\'
+                   OR e.detail->>'member' ILIKE CAST(:targetDnLike AS VARCHAR) ESCAPE '\\'
+                   OR e.detail->>'newDn'  ILIKE CAST(:targetDnLike AS VARCHAR) ESCAPE '\\')
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
               AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
@@ -68,11 +82,23 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
             @Param("actorId")     UUID actorId,
             @Param("action")      String action,
             @Param("targetDn")    String targetDn,
+            @Param("targetDnLike") String targetDnLike,
             @Param("source")      String source,
             @Param("correlationId") UUID correlationId,
             @Param("from")        OffsetDateTime from,
             @Param("to")          OffsetDateTime to,
             Pageable pageable);
+
+    /**
+     * {@link #findAll(UUID, UUID, String, String, String, String, UUID, OffsetDateTime, OffsetDateTime, Pageable)}
+     * without the "Target DN contains" filter — for callers (reports, SIEM
+     * export) that never search by part of a DN.
+     */
+    default Page<AuditEvent> findAll(UUID directoryId, UUID actorId, String action, String targetDn,
+                                     String source, UUID correlationId, OffsetDateTime from,
+                                     OffsetDateTime to, Pageable pageable) {
+        return findAll(directoryId, actorId, action, targetDn, null, source, correlationId, from, to, pageable);
+    }
 
     /**
      * Directory-scoped query for non-superadmins. Restricts results to the
@@ -88,6 +114,10 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
                    OR e.target_dn = CAST(:targetDn AS VARCHAR)
                    OR e.detail->>'member' = CAST(:targetDn AS VARCHAR)
                    OR e.detail->>'newDn'  = CAST(:targetDn AS VARCHAR))
+              AND (CAST(:targetDnLike AS VARCHAR) IS NULL
+                   OR e.target_dn         ILIKE CAST(:targetDnLike AS VARCHAR) ESCAPE '\\'
+                   OR e.detail->>'member' ILIKE CAST(:targetDnLike AS VARCHAR) ESCAPE '\\'
+                   OR e.detail->>'newDn'  ILIKE CAST(:targetDnLike AS VARCHAR) ESCAPE '\\')
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
               AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
@@ -105,6 +135,10 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
                    OR e.target_dn = CAST(:targetDn AS VARCHAR)
                    OR e.detail->>'member' = CAST(:targetDn AS VARCHAR)
                    OR e.detail->>'newDn'  = CAST(:targetDn AS VARCHAR))
+              AND (CAST(:targetDnLike AS VARCHAR) IS NULL
+                   OR e.target_dn         ILIKE CAST(:targetDnLike AS VARCHAR) ESCAPE '\\'
+                   OR e.detail->>'member' ILIKE CAST(:targetDnLike AS VARCHAR) ESCAPE '\\'
+                   OR e.detail->>'newDn'  ILIKE CAST(:targetDnLike AS VARCHAR) ESCAPE '\\')
               AND (CAST(:source AS VARCHAR) IS NULL
                    OR e.detail->>'source' = CAST(:source AS VARCHAR))
               AND (:correlationId IS NULL OR e.correlation_id = CAST(:correlationId AS UUID))
@@ -117,6 +151,7 @@ public interface AuditEventRepository extends JpaRepository<AuditEvent, UUID> {
             @Param("actorId")      UUID actorId,
             @Param("action")       String action,
             @Param("targetDn")     String targetDn,
+            @Param("targetDnLike") String targetDnLike,
             @Param("source")       String source,
             @Param("correlationId") UUID correlationId,
             @Param("from")         OffsetDateTime from,

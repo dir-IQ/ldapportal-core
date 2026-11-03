@@ -13,6 +13,8 @@ import com.ldapportal.dto.ldap.LdifPreviewPage;
 import com.ldapportal.dto.ldap.LdifPreviewRowDetail;
 import com.ldapportal.dto.ldap.LdifPreviewSummary;
 import com.ldapportal.dto.ldap.MoveEntryRequest;
+import com.ldapportal.dto.ldap.RemoveBrokenReferencesRequest;
+import com.ldapportal.dto.ldap.RemoveBrokenReferencesResult;
 import com.ldapportal.dto.ldap.RenameEntryRequest;
 import com.ldapportal.dto.ldap.UpdateEntryRequest;
 import com.ldapportal.entity.DirectoryConnection;
@@ -383,6 +385,21 @@ public class BrowseController {
 
     // ── Integrity Check ─────────────────────────────────────────────────────
 
+    /**
+     * The checks the directory offers, each with the attributes it checks
+     * (empty for the structural ones). {@code BROKEN_REFERENCE} is listed only
+     * where an addon contributes a reference check for this directory, e.g.
+     * IVIA {@code secDN} on a directory with an IVIA configuration.
+     */
+    @GetMapping("/integrity-check/checks")
+    public List<Map<String, Object>> integrityChecks(@PathVariable UUID directoryId) {
+        DirectoryConnection dc = loadDirectory(directoryId);
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        integrityCheckService.availableChecks(dc).forEach((type, attrs) ->
+                out.add(Map.of("type", type.name(), "attributes", attrs)));
+        return out;
+    }
+
     @PostMapping("/integrity-check")
     public IntegrityReport integrityCheck(
             @PathVariable UUID directoryId,
@@ -408,6 +425,31 @@ public class BrowseController {
                         "bases", explicitBase ? baseDn : String.join("; ", dc.getBaseDns())));
 
         return report;
+    }
+
+    /**
+     * Removes broken member references an integrity check reported (its
+     * {@code BROKEN_MEMBER} issues' {@code dn}, {@code attribute} and
+     * {@code value}). Each reference is re-checked first: one whose DN now
+     * names an entry, or that its group no longer holds, is left alone. Each
+     * removal is audited as {@code group.member_remove} on the group.
+     */
+    @PostMapping("/integrity-check/remove-broken-references")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_DATA)
+    public RemoveBrokenReferencesResult removeBrokenReferences(
+            @PathVariable UUID directoryId,
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @Valid @RequestBody RemoveBrokenReferencesRequest req) {
+        DirectoryConnection dc = loadDirectory(directoryId);
+        RemoveBrokenReferencesResult result = integrityCheckService.removeBrokenReferences(dc, req.references());
+        for (RemoveBrokenReferencesResult.Outcome o : result.outcomes()) {
+            if (o.status() == RemoveBrokenReferencesResult.Status.REMOVED) {
+                auditService.record(principal, directoryId, AuditAction.GROUP_MEMBER_REMOVE, o.groupDn(),
+                        Map.of("member", o.value(), "attribute", o.attribute(),
+                                "source", "integrity-check", "operation", "remove-broken-reference"));
+            }
+        }
+        return result;
     }
 
     // ── Schema endpoints (superadmin bypass — no realm/feature checks) ────────

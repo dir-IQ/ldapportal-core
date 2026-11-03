@@ -1355,4 +1355,26 @@ class LdapOperationServiceTest {
                 .containsEntry("nsaccountlock", BulkImportPermissions.ENABLE_DISABLE)
                 .doesNotContainKey("userpassword");
     }
+
+    // ── default bulk-import key attribute ─────────────────────────────────────
+
+    @org.junit.jupiter.api.Test
+    void defaultImportKeyAttribute_prefersRdnThenTemplateThenUid() {
+        assertThat(LdapOperationService.defaultImportKeyAttribute(null)).isEqualTo("uid");
+
+        var p = new com.ldapportal.entity.ProvisioningProfile();
+        p.setRdnAttribute("cn");
+        p.setDnTemplate("uid=${uid},ou=People,dc=example,dc=com");
+        assertThat(LdapOperationService.defaultImportKeyAttribute(p)).isEqualTo("cn");
+
+        // Operator-entered with no RDN attribute: the template's leading RDN.
+        p.setRdnAttribute(null);
+        assertThat(LdapOperationService.defaultImportKeyAttribute(p)).isEqualTo("uid");
+        p.setDnTemplate(" employeeNumber=${employeeNumber}+cn=${cn},ou=People,dc=example,dc=com");
+        assertThat(LdapOperationService.defaultImportKeyAttribute(p)).isEqualTo("employeeNumber");
+
+        // Neither: uid.
+        p.setDnTemplate(null);
+        assertThat(LdapOperationService.defaultImportKeyAttribute(p)).isEqualTo("uid");
+    }
 }

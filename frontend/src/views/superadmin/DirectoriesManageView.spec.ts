@@ -198,7 +198,7 @@ describe('DirectoriesManageView additional base DNs', () => {
 
   it('surfaces the warnings a save returns', async () => {
     api.updateDirectory.mockResolvedValue({ data: { warnings: [
-      'Sync set "people" has no source scope base DN, so it still reads only dc=x; set its scope explicitly.',
+      'Sync set "people" has no target base DN, so it still writes under dc=x; set its target base explicitly.',
     ] } })
     const wrapper = mount(DirectoriesManageView, { global: { stubs } })
     await flushPromises()

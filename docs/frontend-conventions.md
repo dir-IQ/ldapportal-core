@@ -500,7 +500,9 @@ before hand-rolling a `<table>`.
   per-user **persisted column widths**, **"Fit columns" auto-sizing**
   (`fitColumns()`), a **right-pinned column** (`pinned` — the rightmost
   column, typically row actions, stays visible while the rest scrolls),
-  hidden-column and page-size memory, and CSV export.
+  **column reordering** from the Columns picker (drag the grip; pointer
+  only, there is no keyboard path), hidden-column and page-size memory, and
+  CSV export.
 - **`EditableResultsTable`** — `ResultsTable` plus inline cell editing
   (single-value cells and a chip editor for multi-valued attributes).
 
@@ -508,10 +510,17 @@ What this buys you, and the rules:
 
 - **Column state is persisted, not component-local.** `ResultsTable` /
   `EditableResultsTable` take a required `tableKey` and route all width /
-  hidden / sort / page-size state through `useTablePreferences`
+  hidden / order / sort / page-size state through `useTablePreferences`
   (`composables/useTablePreferences.ts`). Don't keep column widths in a
   local ref — give the table a stable `tableKey` and let the composable
   persist it. Widths have a 40px floor so a column can't collapse to zero.
+- **Mark columns that must not move.** Set `lockPosition: true` on an
+  identity column (DN) or a row-actions column; `pinned` columns are always
+  locked. Locked columns declared before the first movable column stay at
+  the start, the rest stay at the end. A saved order only covers the
+  movable columns; ones the user never placed (e.g. newly discovered
+  attributes) follow in declared order. `EditableResultsTable` renders the
+  declared order and doesn't apply the saved one yet.
 - **Don't re-set cell typography in a slot.** Body cells are 13px; a
   secondary column uses `.cell-muted`. See *Table cell typography* under
   *Density mode and utility classes*.

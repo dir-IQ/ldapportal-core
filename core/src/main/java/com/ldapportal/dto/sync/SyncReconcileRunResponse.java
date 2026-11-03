@@ -45,6 +45,11 @@ import java.util.UUID;
  * @param verifyMismatch entries whose content still differed after the run
  * @param allDnsRecorded whether every changed or flagged entry's DN was kept
  *                       (downloadable), not just the samples
+ * @param notInSet       in-scope source entries the set doesn't manage (the
+ *                       applicability filter or placement excludes them)
+ * @param phase          where the run is while RUNNING, else {@code null}
+ * @param currentDn      the entry being recomputed while RUNNING, else {@code null}
+ * @param heartbeatAt    when the run last reported progress or that it's alive
  */
 public record SyncReconcileRunResponse(
         UUID id,
@@ -78,5 +83,9 @@ public record SyncReconcileRunResponse(
         Integer verifyMissing,
         Integer verifyOrphan,
         Integer verifyMismatch,
-        boolean allDnsRecorded) {
+        boolean allDnsRecorded,
+        int notInSet,
+        com.ldapportal.entity.enums.SyncReconcilePhase phase,
+        String currentDn,
+        OffsetDateTime heartbeatAt) {
 }

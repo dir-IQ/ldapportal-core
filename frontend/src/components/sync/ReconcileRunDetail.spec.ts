@@ -22,6 +22,7 @@ const run: SyncReconcileRun = {
   instanceName: 'ldapportal-7f9c', plannedAt: '2026-10-20T10:01:10Z',
   verifiedAt: '2026-10-20T10:03:00Z', verifyMissing: 2, verifyOrphan: 0, verifyMismatch: 0,
   allDnsRecorded: false,
+  notInSet: 0, phase: null, currentDn: null, heartbeatAt: null,
 }
 
 function detail(over: Partial<SyncReconcileRunDetail> = {}): SyncReconcileRunDetail {
@@ -39,6 +40,7 @@ function detail(over: Partial<SyncReconcileRunDetail> = {}): SyncReconcileRunDet
     ],
     samples: { ADD: ['uid=a,ou=Users,dc=dmz', 'uid=b,ou=Users,dc=dmz'], ERROR: ['uid=x,ou=Users,dc=dmz'] },
     sampleLimit: 25,
+    notInSet: [],
     ...over,
   }
 }
@@ -110,16 +112,24 @@ describe('ReconcileRunDetail', () => {
 
     expect(syncApi.downloadReconcileRunEntries).toHaveBeenCalledWith('set-1', 'run-1')
     expect(downloadBlob).toHaveBeenCalledWith(blob, 'sync-run-run-1.csv')
-    expect(wrapper.text()).not.toContain('Record every DN')
+    expect(wrapper.text()).not.toContain('Logging level')
   })
 
-  it('points to "Record every DN" when the samples were cut short', async () => {
+  it('points to the Detailed logging level when an older run\'s samples were cut short', async () => {
     getRun.mockResolvedValue({ data: detail() }) // 30 added, 2 sampled
     const wrapper = mount(ReconcileRunDetail, { props: { setId: 'set-1', runId: 'run-1' } })
     await flushPromises()
     expect(wrapper.findAll('button').some((b) => b.text().includes('Download all entries'))).toBe(false)
-    expect(wrapper.text()).toContain('Up to 25 DNs per outcome are kept')
-    expect(wrapper.text()).toContain('Record every DN')
+    expect(wrapper.text()).toContain('This run kept up to 25 DNs per outcome')
+    expect(wrapper.text()).toContain('Logging level to Detailed')
+  })
+
+  it('says a summary-level run kept counts only', async () => {
+    getRun.mockResolvedValue({ data: detail({ samples: {} }) }) // 30 added, no DNs kept
+    const wrapper = mount(ReconcileRunDetail, { props: { setId: 'set-1', runId: 'run-1' } })
+    await flushPromises()
+    expect(wrapper.text()).toContain('This run kept counts only (Summary logging)')
+    expect(wrapper.text()).not.toContain('Sample entries')
   })
 
   it('leaves out the scan, verification and settings for an incremental pass', async () => {
@@ -136,5 +146,19 @@ describe('ReconcileRunDetail', () => {
     expect(txt).not.toContain('content verification')
     expect(txt).not.toContain('Settings at run time')
     expect(txt).not.toContain('source scan did not complete')
+  })
+
+  it('lists the source entries the set didn\'t manage, by reason', async () => {
+    getRun.mockResolvedValue({ data: detail({
+      run: { ...run, notInSet: 3 },
+      notInSet: [{ reason: 'FILTER', label: "Doesn't match the applicability filter", count: 3,
+        samples: ['ou=people,dc=src', 'uid=bob,ou=people,dc=src'] }],
+    }) })
+    const wrapper = mount(ReconcileRunDetail, { props: { setId: 'set-1', runId: 'run-1' } })
+    await flushPromises()
+    const txt = wrapper.text()
+    expect(txt).toMatch(/Not in set\s*3/)
+    expect(txt).toContain("Doesn't match the applicability filter — first 2 of 3")
+    expect(txt).toContain('uid=bob,ou=people,dc=src')
   })
 })

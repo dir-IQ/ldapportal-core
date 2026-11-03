@@ -165,4 +165,21 @@ public class SyncReconcileRun {
     /** Whether every entry's DN was kept (the set's record-all-DNs flag at run time). */
     @Column(name = "all_dns_recorded", nullable = false)
     private boolean allDnsRecorded;
+
+    /** In-scope source entries the set doesn't manage (filter or placement excludes them). */
+    @Column(name = "not_in_set", nullable = false)
+    private int notInSet;
+
+    /** {@link #notInSet} per reason, with sample source DNs (JSON). */
+    @Column(name = "not_in_set_reasons", columnDefinition = "TEXT")
+    private String notInSetReasons;
+
+    /** Where the run is while RUNNING; {@code null} once it finishes. */
+    @jakarta.persistence.Enumerated(jakarta.persistence.EnumType.STRING)
+    @Column(name = "phase")
+    private com.ldapportal.entity.enums.SyncReconcilePhase phase;
+
+    /** The entry being recomputed now, while RUNNING. */
+    @Column(name = "current_dn", columnDefinition = "TEXT")
+    private String currentDn;
 }

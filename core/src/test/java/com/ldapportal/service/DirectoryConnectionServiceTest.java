@@ -150,30 +150,25 @@ class DirectoryConnectionServiceTest {
     }
 
     @Test
-    void updateDirectory_addingARoot_warnsAboutSyncSetsWithBlankBases() {
-        com.ldapportal.entity.SyncLink asSource = new com.ldapportal.entity.SyncLink();
-        asSource.setId(UUID.randomUUID());
+    void updateDirectory_addingARoot_warnsAboutSyncSetsWithABlankTargetBase() {
         com.ldapportal.entity.SyncLink asTarget = new com.ldapportal.entity.SyncLink();
         asTarget.setId(UUID.randomUUID());
-        com.ldapportal.entity.SyncSet blankScope = new com.ldapportal.entity.SyncSet();
-        blankScope.setName("people");
-        com.ldapportal.entity.SyncSet scoped = new com.ldapportal.entity.SyncSet();
-        scoped.setName("partners");
-        scoped.setObjectScopeBaseDn("o=partners");
         com.ldapportal.entity.SyncSet blankTarget = new com.ldapportal.entity.SyncSet();
         blankTarget.setName("inbound");
-        when(syncLinkRepo.findAllBySourceDirId(DIR_ID)).thenReturn(List.of(asSource));
+        com.ldapportal.entity.SyncSet placed = new com.ldapportal.entity.SyncSet();
+        placed.setName("partners");
+        placed.setTargetBaseDn("o=partners");
         when(syncLinkRepo.findAllByTargetDirId(DIR_ID)).thenReturn(List.of(asTarget));
-        when(syncSetRepo.findAllByLinkId(asSource.getId())).thenReturn(List.of(blankScope, scoped));
-        when(syncSetRepo.findAllByLinkId(asTarget.getId())).thenReturn(List.of(blankTarget));
+        when(syncSetRepo.findAllByLinkId(asTarget.getId())).thenReturn(List.of(blankTarget, placed));
 
         var resp = service.updateDirectory(DIR_ID, requestWithRoots(List.of("o=partners")));
 
-        // Saved anyway; each blank-base set is named once.
+        // Saved anyway; the blank-target set is named once. (Every set names its
+        // source base DN, so a source directory gaining a root needs no warning.)
         assertThat(resp.additionalBaseDns()).containsExactly("o=partners");
-        assertThat(resp.warnings()).hasSize(2);
-        assertThat(resp.warnings().get(0)).contains("\"people\"", "source scope base DN");
-        assertThat(resp.warnings().get(1)).contains("\"inbound\"", "target base DN");
+        assertThat(resp.warnings()).singleElement()
+                .satisfies(w -> assertThat(w).contains("\"inbound\"", "target base DN"));
+        verify(syncLinkRepo, never()).findAllBySourceDirId(any());
     }
 
     @Test

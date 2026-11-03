@@ -40,6 +40,11 @@ data:
   # directory sync). Set to "" for the pure community baseline.
   LDAPPORTAL_ENTITLEMENTS_GRANT: "DIRECTORY_SYNC"
 
+  # ── Deployment location ──────────────────────────────────────────────────
+  # Shown in the sidebar after the image tags, e.g. the AWS region this
+  # cluster runs in. Leave "" to show nothing.
+  DEPLOYMENT_LOCATION: ""
+
   # ── Logging ──────────────────────────────────────────────────────────────
   LOG_LEVEL: "INFO"
   APP_LOG_LEVEL: "INFO"

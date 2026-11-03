@@ -87,7 +87,9 @@ class SyncEngineIntegrationTest {
     @Autowired private SyncContentVerifier verifier;
     @Autowired private RecomputeEnqueuer enqueuer;
     @Autowired private SyncReconcileRunRepository runRepo;
-    @Autowired private SyncReconcileHistory history;
+    @MockitoSpyBean private SyncReconcileHistory history;
+    @Autowired private org.springframework.transaction.PlatformTransactionManager txManager;
+    @Autowired private SyncVerifyProgressTracker verifyProgress;
     @Autowired private com.ldapportal.service.SyncConfigService syncConfigService;
 
     private InMemoryDirectoryServer source;
@@ -181,6 +183,20 @@ class SyncEngineIntegrationTest {
         source.modify("uid=bob," + SRC_PEOPLE, new Modification(ModificationType.REPLACE, "employeeType", "staff"));
         engine.process(peopleSet.getId(), dn("bob"));
         assertThat(target.getEntry("uid=bob," + DST_USERS)).isNotNull(); // now IN -> ADD
+    }
+
+    @Test
+    void modify_outcomeNamesTheAttributesItChanged() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        RecomputeOutcome added = engine.process(peopleSet.getId(), dn("alice"), false);
+        assertThat(added.action()).isEqualTo(SyncPreviewAction.ADD);
+        assertThat(added.attributes()).isEmpty();
+
+        source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "mail", "alice@new"));
+        RecomputeOutcome modified = engine.process(peopleSet.getId(), dn("alice"), false);
+
+        assertThat(modified.action()).isEqualTo(SyncPreviewAction.MODIFY);
+        assertThat(modified.attributes()).containsExactly("mail");
     }
 
     // ── Stable identity => rename is a MODDN, not delete+recreate ────────────────
@@ -386,6 +402,9 @@ class SyncEngineIntegrationTest {
         engine.process(accountsSet.getId(), daveSrc);
         assertThat(target2.getEntry(daveDst).getAttributeValue("manager"))
                 .isEqualTo("uid=alice," + DST_USERS);
+
+        // Verify contents resolves it the same way (across links), so dave isn't drift.
+        assertThat(verifier.verify(accountsSet.getId()).contentMismatches()).isZero();
     }
 
     // ── Verify: a correctly-synced set reports in-sync (references included) ─────
@@ -433,6 +452,23 @@ class SyncEngineIntegrationTest {
         SyncVerifyResult r = verifier.verify(peopleSet.getId());
         assertThat(r.contentMismatches()).isEqualTo(1);
         assertThat(r.sampleMismatches()).anyMatch(d -> d.contains("uid=alice"));
+    }
+
+    @Test
+    void verify_recordsItsProgress_andHowItEnded() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        engine.process(peopleSet.getId(), dn("alice"));
+
+        verifier.verify(peopleSet.getId());
+
+        var progress = verifyProgress.status(peopleSet.getId());
+        assertThat(progress.status()).isEqualTo(com.ldapportal.entity.enums.SyncPreviewRunStatus.COMPLETE);
+        assertThat(progress.phase()).isEqualTo(com.ldapportal.entity.enums.SyncVerifyPhase.DONE);
+        assertThat(progress.total()).isEqualTo(2); // alice and bob were compared
+        assertThat(progress.processed()).isEqualTo(2);
+        assertThat(progress.finishedAt()).isNotNull();
+        assertThat(progress.currentDn()).isNull();
     }
 
     // ── Reconcile: not-seen sweep removes an orphan left by a missed delete ──────
@@ -895,13 +931,15 @@ class SyncEngineIntegrationTest {
         assertThat(run.getModified()).isEqualTo(1);     // bob
         assertThat(run.getDeleted()).isEqualTo(1);      // alice
         assertThat(run.getNoChange()).isEqualTo(1);     // dave, re-adopted without a write
-        assertThat(run.getUnchanged()).isEqualTo(1);    // the OU: out of scope, never tracked
+        assertThat(run.getUnchanged()).isZero();
+        assertThat(run.getNotInSet()).isEqualTo(1);     // the OU: out of scope, never tracked
         assertThat(run.getFailed() + run.getFaulted() + run.getSkipped() + run.getMoved()
                 + run.getHeldForReview() + run.getForgotten()).isZero();
     }
 
     @Test
     void reconcile_recordsDetails_instanceTimingSettingsAndSampleDns() throws Exception {
+        detailedLogging();
         addPerson("alice", "staff", "alice@src");
         addPerson("bob", "staff", "bob@src");
         reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
@@ -925,6 +963,7 @@ class SyncEngineIntegrationTest {
 
     @Test
     void reconcile_groupsFailuresByReason() throws Exception {
+        detailedLogging();
         addPerson("alice", "staff", "alice@src");
         addPerson("bob", "staff", "bob@src");
         target.delete(DST_USERS); // every placement's parent is missing
@@ -940,6 +979,80 @@ class SyncEngineIntegrationTest {
             assertThat(r.example()).contains("ou=Users");
         });
         assertThat(detail.samples().get("ERROR")).hasSize(2);
+    }
+
+    @Test
+    void reconcile_atSummaryLogging_keepsCountsAndReasons_butNoDns() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        target.delete(DST_USERS); // the placement's parent is missing
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
+
+        SyncReconcileRunDetail detail = history.detail(peopleSet.getId(), runRepo.findAll().get(0).getId());
+        assertThat(detail.run().failed()).isEqualTo(1);
+        assertThat(detail.failureReasons()).singleElement()
+                .satisfies(r -> assertThat(r.reason()).isEqualTo("apply failed: 32 (no such object)"));
+        assertThat(detail.samples()).isEmpty();
+        assertThat(detail.run().allDnsRecorded()).isFalse();
+    }
+
+    @Test
+    void progressWrite_recordsARunningRunsCountsSoFar_butNeverAFinishedRun() {
+        SyncReconcileHistory.Run run = history.start(peopleSet, link.getTargetDirId(), SyncReconcileTrigger.MANUAL, "ann");
+        SyncRunCounts soFar = new SyncRunCounts(1, 2, 0, 0, 0, 3, 0, 2093, 0, 0, 0, 4);
+
+        assertThat(runRepo.progress(run.id(), 2103, soFar, com.ldapportal.entity.enums.SyncReconcilePhase.APPLYING,
+                "uid=x,ou=people,dc=src,dc=com", OffsetDateTime.now())).isEqualTo(1);
+
+        SyncReconcileRun row = runRepo.findById(run.id()).orElseThrow();
+        assertThat(row.getProcessed()).isEqualTo(2103);
+        assertThat(row.getUnchanged()).isEqualTo(2093);
+        assertThat(row.getAdded()).isEqualTo(1);
+        assertThat(row.getModified()).isEqualTo(2);
+        assertThat(row.getNoChange()).isEqualTo(3);
+        assertThat(row.getNotInSet()).isEqualTo(4);
+        assertThat(row.getCurrentDn()).isEqualTo("uid=x,ou=people,dc=src,dc=com");
+
+        history.complete(run, 5);
+        assertThat(runRepo.progress(run.id(), 1, SyncRunCounts.NONE, null, null, OffsetDateTime.now())).isZero();
+    }
+
+    @Test
+    void reconcile_countsTheSourceEntriesTheSetDoesntManage_andWhy() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "contractor", "bob@src"); // the filter wants employeeType=staff
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+
+        SyncReconcileRun run = runRepo.findAll().get(0);
+        // The gap between the run's source entries and the managed ones is exactly them.
+        assertThat(run.getNotInSet()).isEqualTo(run.getSourceCount() - run.getManagedAfter().intValue());
+        assertThat(run.getManagedAfter()).isEqualTo(1L);
+        SyncReconcileRunDetail detail = history.detail(peopleSet.getId(), run.getId());
+        assertThat(detail.notInSet()).singleElement().satisfies(g -> {
+            assertThat(g.reason()).isEqualTo("FILTER");
+            assertThat(g.count()).isEqualTo(run.getNotInSet());
+            assertThat(g.samples()).anySatisfy(dn -> assertThat(dn).containsIgnoringCase("uid=bob"));
+        });
+        // At Summary logging the inventory lists the samples.
+        var page = history.notInSet(peopleSet.getId(), "bob", 0, 50);
+        assertThat(page.allDnsRecorded()).isFalse();
+        assertThat(page.total()).isEqualTo(run.getNotInSet());
+        assertThat(page.entries()).singleElement().satisfies(e -> {
+            assertThat(e.sourceDn()).containsIgnoringCase("uid=bob");
+            assertThat(e.label()).isEqualTo("Doesn't match the applicability filter");
+        });
+        // Not counted as unchanged, and the run finished with no phase or current entry left.
+        assertThat(run.getUnchanged()).isZero();
+        assertThat(run.getPhase()).isNull();
+        assertThat(run.getCurrentDn()).isNull();
+    }
+
+    /** Keep every changed or flagged entry's DN in the people set's runs. */
+    private void detailedLogging() {
+        SyncSet s = setRepo.findById(peopleSet.getId()).orElseThrow();
+        s.setLoggingLevel(com.ldapportal.entity.enums.SyncLoggingLevel.DETAILED);
+        peopleSet = setRepo.save(s);
     }
 
     @Test
@@ -985,6 +1098,190 @@ class SyncEngineIntegrationTest {
     }
 
     @Test
+    void reconcile_fansOutOnceAtTheEnd_skippingReferrersItRecomputedAfterTheChange() throws Exception {
+        // Each refers to the other: whichever the run reaches first is
+        // recomputed before its manager is synced, the second after.
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        source.modify(dn("alice"), new Modification(ModificationType.ADD, "manager", dn("bob")));
+        source.modify(dn("bob"), new Modification(ModificationType.ADD, "manager", dn("alice")));
+        source.add(new Entry("cn=eng," + SRC_GROUPS,
+                new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("cn", "eng"),
+                new Attribute("member", dn("alice"), dn("bob"))));
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+
+        SearchResultEntry alice = target.getEntry("uid=alice," + DST_USERS);
+        SearchResultEntry bob = target.getEntry("uid=bob," + DST_USERS);
+        assertThat(alice).isNotNull();
+        assertThat(bob).isNotNull();
+        // Only the one recomputed before its manager landed is queued again.
+        SearchResultEntry first = alice.hasAttribute("manager") ? bob : alice;
+        SearchResultEntry second = first == alice ? bob : alice;
+        assertThat(first.hasAttribute("manager")).isFalse();
+        assertThat(second.getAttributeValue("manager")).isEqualToIgnoringCase(first.getDN());
+        String firstUid = first.getAttributeValue("uid");
+        assertThat(requestRepo.findAllBySyncSetId(peopleSet.getId()))
+                .extracting(RecomputeRequest::getRequestKey)
+                .singleElement()
+                .satisfies(k -> assertThat(k).startsWithIgnoringCase("uid=" + firstUid + ","));
+        // A referrer in another set is always queued.
+        assertThat(requestRepo.findAllBySyncSetId(groupsSet.getId()))
+                .extracting(RecomputeRequest::getRequestKey)
+                .singleElement()
+                .satisfies(k -> assertThat(k).startsWithIgnoringCase("cn=eng,"));
+
+        // Draining it completes the reference.
+        engine.process(peopleSet.getId(), "uid=" + firstUid + "," + SRC_PEOPLE);
+        assertThat(target.getEntry(first.getDN()).getAttributeValue("manager"))
+                .isEqualToIgnoringCase(second.getDN());
+    }
+
+    @Test
+    void reconcile_thatStopsPartWay_stillQueuesTheReferrersOfWhatItChanged() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        source.add(new Entry("cn=eng," + SRC_GROUPS,
+                new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("cn", "eng"),
+                new Attribute("member", dn("alice"))));
+        // The run stops after applying entries, before its sweep.
+        org.mockito.Mockito.doThrow(new IllegalStateException("stopped")).when(history).phase(
+                org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.eq(com.ldapportal.entity.enums.SyncReconcilePhase.SWEEPING));
+
+        assertThatThrownBy(() -> reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator"))
+                .hasMessageContaining("stopped");
+
+        assertThat(target.getEntry("uid=alice," + DST_USERS)).isNotNull();
+        assertThat(requestRepo.findAllBySyncSetId(groupsSet.getId()))
+                .extracting(RecomputeRequest::getRequestKey)
+                .singleElement()
+                .satisfies(k -> assertThat(k).startsWithIgnoringCase("cn=eng,"));
+    }
+
+    @Test
+    void reconcile_queuesAReferrerWhoseOwnRecomputeFailed_evenAfterTheChangeItRefersTo() throws Exception {
+        // The scan returns entries in DN order: alice (under ou=a) before carol
+        // (under ou=sub). carol's target has no parent entry, so her write fails
+        // whenever she's recomputed; she refers to alice, who the run adds first.
+        String aliceDn = "uid=alice,ou=a," + SRC_PEOPLE;
+        source.add(new Entry("ou=a," + SRC_PEOPLE, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "a")));
+        target.add(new Entry("ou=a," + DST_USERS, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "a")));
+        source.add(new Entry(aliceDn,
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", "alice"), new Attribute("cn", "alice"), new Attribute("sn", "alice"),
+                new Attribute("employeeType", "staff")));
+        source.add(new Entry("ou=sub," + SRC_PEOPLE, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "sub")));
+        source.add(new Entry("uid=carol,ou=sub," + SRC_PEOPLE,
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", "carol"), new Attribute("cn", "carol"), new Attribute("sn", "carol"),
+                new Attribute("employeeType", "staff"), new Attribute("manager", aliceDn)));
+
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+
+        assertThat(target.getEntry("uid=alice,ou=a," + DST_USERS)).isNotNull();
+        assertThat(membershipRepo.findAllBySyncSetId(peopleSet.getId()))
+                .anyMatch(m -> m.getState() == MembershipState.FAILED);
+        assertThat(requestRepo.findAllBySyncSetId(peopleSet.getId()))
+                .extracting(RecomputeRequest::getRequestKey)
+                .anyMatch(k -> k.toLowerCase(java.util.Locale.ROOT).startsWith("uid=carol,"));
+    }
+
+    @Test
+    void noteSourceChanges_commitsBeforeTheCallersTransactionDoes() {
+        long before = setRepo.findSourceChangeSeq(peopleSet.getId());
+        org.springframework.transaction.support.TransactionTemplate outer =
+                new org.springframework.transaction.support.TransactionTemplate(txManager);
+        org.springframework.transaction.support.TransactionTemplate other =
+                new org.springframework.transaction.support.TransactionTemplate(txManager);
+        other.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+
+        outer.executeWithoutResult(status -> {
+            enqueuer.noteSourceChanges(List.of(peopleSet.getId()));
+            // Another transaction sees the bump while the caller's is still open.
+            Long seen = other.execute(tx -> setRepo.findSourceChangeSeq(peopleSet.getId()));
+            assertThat(seen).isEqualTo(before + 1);
+            status.setRollbackOnly();
+        });
+        // The caller rolling back doesn't undo it.
+        assertThat(setRepo.findSourceChangeSeq(peopleSet.getId())).isEqualTo(before + 1);
+    }
+
+    @Test
+    void reconcile_usesScannedEntries_untilASourceChangeIsEnqueued() throws Exception {
+        addPerson("alice", "staff", "alice@src");
+        addPerson("bob", "staff", "bob@src");
+        java.util.concurrent.atomic.AtomicBoolean once = new java.util.concurrent.atomic.AtomicBoolean();
+        // After the scan, both entries change in the source but nothing signals
+        // it: the run writes them as scanned.
+        org.mockito.Mockito.doAnswer(inv -> {
+            if (once.compareAndSet(false, true)) {
+                source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "mail", "alice@later"));
+                source.modify(dn("bob"), new Modification(ModificationType.REPLACE, "mail", "bob@later"));
+            }
+            return inv.callRealMethod();
+        }).when(engine).process(org.mockito.ArgumentMatchers.any(RecomputeEngine.Batch.class),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyBoolean());
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("mail")).isEqualTo("alice@src");
+        assertThat(target.getEntry("uid=bob," + DST_USERS).getAttributeValue("mail")).isEqualTo("bob@src");
+
+        // The same, but the changes are enqueued (as the changelog poller does):
+        // every entry from then on is read afresh.
+        once.set(false);
+        org.mockito.Mockito.doAnswer(inv -> {
+            if (once.compareAndSet(false, true)) {
+                source.modify(dn("alice"), new Modification(ModificationType.REPLACE, "mail", "alice@new"));
+                source.modify(dn("bob"), new Modification(ModificationType.REPLACE, "mail", "bob@new"));
+                enqueuer.enqueueSourceChange(peopleSet.getId(), dn("alice"), null);
+                enqueuer.enqueueSourceChange(peopleSet.getId(), dn("bob"), null);
+            }
+            return inv.callRealMethod();
+        }).when(engine).process(org.mockito.ArgumentMatchers.any(RecomputeEngine.Batch.class),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyBoolean());
+        reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.MANUAL, "operator");
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("mail")).isEqualTo("alice@new");
+        assertThat(target.getEntry("uid=bob," + DST_USERS).getAttributeValue("mail")).isEqualTo("bob@new");
+    }
+
+    @Test
+    void existingOnTarget_findsEntriesInBulk_acrossParentsAndBatches() throws Exception {
+        java.util.Set<String> asked = new java.util.LinkedHashSet<>();
+        java.util.Set<String> present = new java.util.HashSet<>();
+        // More than one batch under one parent, every other one present.
+        for (int i = 0; i < RecomputeEngine.EXISTS_BATCH + 20; i++) {
+            String dn = "uid=u" + i + "," + DST_USERS;
+            asked.add(dn);
+            if (i % 2 == 0) {
+                target.add(new Entry(dn, new Attribute("objectClass", "top", "person", "organizationalPerson",
+                        "inetOrgPerson"), new Attribute("uid", "u" + i), new Attribute("cn", "u" + i),
+                        new Attribute("sn", "u" + i)));
+                present.add(dn);
+            }
+        }
+        // A multi-valued RDN, a DN written in another form, and a missing parent.
+        String multi = "cn=eng+ou=it," + DST_GROUPS;
+        target.add(new Entry(multi, new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("cn", "eng"), new Attribute("ou", "it"), new Attribute("member", "cn=x")));
+        asked.add(multi);
+        present.add(multi);
+        String otherForm = "UID=U0, OU=Users," + DST_BASE;
+        asked.add(otherForm);
+        present.add(otherForm);
+        asked.add("uid=nobody,ou=Missing," + DST_BASE);
+
+        DirectoryConnection dst = directoryRepo.findById(linkRepo.findById(link.getId()).orElseThrow()
+                .getTargetDirId()).orElseThrow();
+        assertThat(engine.existingOnTarget(dst, asked)).containsExactlyInAnyOrderElementsOf(present);
+    }
+
+    @Test
     void reconcile_survivesAnAdminEditOfTheSetDuringTheRun() throws Exception {
         addPerson("alice", "staff", "alice@src");
         // An admin saves the set (bumping its version) while the reconcile works:
@@ -994,8 +1291,9 @@ class SyncEngineIntegrationTest {
             s.setName("people (edited)");
             setRepo.save(s);
             return inv.callRealMethod();
-        }).when(engine).process(org.mockito.ArgumentMatchers.eq(peopleSet.getId()),
-                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyBoolean());
+        }).when(engine).process(org.mockito.ArgumentMatchers.any(RecomputeEngine.Batch.class),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(),
+                org.mockito.ArgumentMatchers.anyBoolean());
 
         reconciler.reconcile(peopleSet.getId(), SyncReconcileTrigger.SCHEDULED, null);
 

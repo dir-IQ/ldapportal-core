@@ -574,7 +574,7 @@ const cols = computed(() => {
   const defaults = DEFAULT_GROUP_COLUMNS.filter(k => discoveredSet.has(k.toLowerCase()))
   const extras = discoveredAttrs.value.filter(k => !DEFAULT_GROUP_COLUMNS_LC.has(k.toLowerCase()))
   return [
-    { key: 'dn', label: 'DN', alwaysVisible: true },
+    { key: 'dn', label: 'DN', alwaysVisible: true, lockPosition: true },
     ...defaults.map(k => ({ key: k, label: k === 'cn' ? 'Name' : k })),
     // Synthetic, sortable member-count column (numeric sort via the
     // number-typed row field). Sits after the curated defaults so it
@@ -588,7 +588,7 @@ const cols = computed(() => {
     // buttons. Each ~70px with the gap-1 spacing; 240 leaves
     // breathing room. Smaller than UserListView's actions column
     // because there's no kebab to host overflow items here.
-    { key: 'actions', label: '', alwaysVisible: true, sortable: false, defaultWidth: 240 },
+    { key: 'actions', label: '', alwaysVisible: true, lockPosition: true, sortable: false, defaultWidth: 240 },
   ]
 })
 
@@ -702,13 +702,18 @@ async function doCreate() {
 }
 
 function openCreate() {
-  // Mirror UserListView's two-step flow: when multiple enabled profiles
-  // exist, force an explicit pick so the operator sees which group
-  // container the group will be created under. Single profile auto-picks;
-  // no profile falls back to the bare form using the directory base.
+  // Mirror UserListView: with a profile selected (the sidebar picker, or this
+  // page's Profile dropdown), create through it; the dialog shows which. Under
+  // "All" with several enabled profiles there's no single one, so ask, so the
+  // operator sees which group container the group will be created under. A
+  // single profile auto-picks; no profile falls back to the bare form using
+  // the directory base.
   createProfile.value = null
   createOwnerError.value = null
-  if (allProfiles.value.length === 1) {
+  const selected = allProfiles.value.find(p => p.id === selectedProfileId.value)
+  if (selected) {
+    selectProfileAndCreate(selected)
+  } else if (allProfiles.value.length === 1) {
     selectProfileAndCreate(allProfiles.value[0])
   } else if (allProfiles.value.length > 1) {
     showTemplatePicker.value = true

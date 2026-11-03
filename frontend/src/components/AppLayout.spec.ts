@@ -22,7 +22,7 @@ const state = vi.hoisted(() => ({
   features: null as string[] | null,  // /auth/me feature set; null = every feature
   // What useVersionCheck reports: both builds' tags (null = untagged) and SHAs.
   version: { clientSha: 'abc', clientImageVersion: null as string | null,
-    serverSha: '', serverImageVersion: '', skew: false },
+    serverSha: '', serverImageVersion: '', deploymentLocation: null as string | null, skew: false },
 }))
 const hasFeature = (v: string) => state.features === null || state.features.includes(v)
 
@@ -42,7 +42,7 @@ vi.mock('@/composables/useVersionCheck', () => ({
   useVersionCheck: () => ({
     clientSha: state.version.clientSha, clientImageVersion: state.version.clientImageVersion,
     serverSha: ref(state.version.serverSha), serverImageVersion: ref(state.version.serverImageVersion),
-    skewDetected: ref(state.version.skew),
+    deploymentLocation: ref(state.version.deploymentLocation), skewDetected: ref(state.version.skew),
   }),
 }))
 vi.mock('@/api/auth', () => ({
@@ -279,7 +279,8 @@ describe('AppLayout profile picker', () => {
 describe('sidebar build stamp', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    state.version = { clientSha: 'abc', clientImageVersion: null, serverSha: '', serverImageVersion: '', skew: false }
+    state.version = { clientSha: 'abc', clientImageVersion: null, serverSha: '', serverImageVersion: '',
+      deploymentLocation: null, skew: false }
   })
 
   function stamp(wrapper: ReturnType<typeof mount>) {
@@ -288,7 +289,7 @@ describe('sidebar build stamp', () => {
 
   it('shows the frontend and backend image tags', async () => {
     state.version = { clientSha: 'abc1234', clientImageVersion: '1.4.2',
-      serverSha: 'abc1234', serverImageVersion: '1.4.2', skew: false }
+      serverSha: 'abc1234', serverImageVersion: '1.4.2', deploymentLocation: null, skew: false }
 
     const el = stamp(await mountOnUsers())
 
@@ -299,11 +300,22 @@ describe('sidebar build stamp', () => {
 
   it('falls back to each build\'s SHA when its image has no tag', async () => {
     state.version = { clientSha: 'abc1234', clientImageVersion: null,
-      serverSha: 'def5678', serverImageVersion: '', skew: true }
+      serverSha: 'def5678', serverImageVersion: '', deploymentLocation: null, skew: true }
 
     const el = stamp(await mountOnUsers())
 
     expect(el.text()).toBe('FE abc1234 · BE def5678')
     expect(el.classes()).toContain('text-amber-300/80')
+  })
+
+  it('shows where the app is deployed after the image tags, when set', async () => {
+    state.version = { clientSha: 'abc1234', clientImageVersion: '1.4.2',
+      serverSha: 'abc1234', serverImageVersion: '1.4.2', deploymentLocation: 'us-east-1', skew: false }
+
+    const el = stamp(await mountOnUsers())
+
+    expect(el.text()).toBe('FE 1.4.2 · BE 1.4.2 · us-east-1')
+    expect(el.attributes('title')).toBe(
+      'Frontend image 1.4.2 (abc1234) · backend image 1.4.2 (abc1234) · deployed in us-east-1')
   })
 })

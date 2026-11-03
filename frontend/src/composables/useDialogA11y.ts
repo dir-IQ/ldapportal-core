@@ -12,7 +12,14 @@ import { onBeforeUnmount, watch, nextTick, type Ref } from 'vue'
  * `isOpen` is a getter (so it tracks a prop/ref reactively); `containerRef`
  * is the dialog panel element (the focusable region); `onClose` is invoked on
  * Escape and should flip whatever drives `isOpen`.
+ *
+ * Dialogs can stack (a modal opened from a modal, a confirmation over a
+ * modal). Each listens on `document`, so only the topmost open one acts on a
+ * key: Escape closes that one alone, and the focus trap is its own.
  */
+// Open dialogs, oldest first; the last entry is the one the keyboard belongs to.
+const openStack: symbol[] = []
+
 export function useDialogA11y(opts: {
   isOpen: () => boolean
   containerRef: Ref<HTMLElement | null>
@@ -28,6 +35,12 @@ export function useDialogA11y(opts: {
   ].join(',')
 
   let previouslyFocused: HTMLElement | null = null
+  const token = Symbol('dialog')
+
+  function release(): void {
+    const i = openStack.indexOf(token)
+    if (i !== -1) openStack.splice(i, 1)
+  }
 
   function focusable(): HTMLElement[] {
     const c = opts.containerRef.value
@@ -41,7 +54,7 @@ export function useDialogA11y(opts: {
   }
 
   function onKeydown(e: KeyboardEvent): void {
-    if (!opts.isOpen()) return
+    if (!opts.isOpen() || openStack[openStack.length - 1] !== token) return
     if (e.key === 'Escape') {
       e.stopPropagation()
       opts.onClose()
@@ -67,10 +80,13 @@ export function useDialogA11y(opts: {
     async (open) => {
       if (open) {
         previouslyFocused = document.activeElement as HTMLElement | null
+        release()
+        openStack.push(token)
         document.addEventListener('keydown', onKeydown, true)
         await nextTick()
         focusable()[0]?.focus()
       } else {
+        release()
         document.removeEventListener('keydown', onKeydown, true)
         previouslyFocused?.focus?.()
         previouslyFocused = null
@@ -80,6 +96,7 @@ export function useDialogA11y(opts: {
   )
 
   onBeforeUnmount(() => {
+    release()
     document.removeEventListener('keydown', onKeydown, true)
   })
 }

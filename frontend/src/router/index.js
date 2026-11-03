@@ -247,6 +247,12 @@ const router = createRouter({
           meta: { requiresSuperadmin: true },
         },
         {
+          path: 'superadmin/directory-diff',
+          name: 'directoryDiff',
+          component: () => import('@/views/superadmin/DirectoryDiffView.vue'),
+          meta: { requiresSuperadmin: true, requiresSuperadminPermission: 'superadmin.manage_directory_diff' },
+        },
+        {
           path: 'superadmin/playbooks',
           name: 'superadminPlaybooks',
           component: () => import('@/views/playbooks/PlaybooksView.vue'),

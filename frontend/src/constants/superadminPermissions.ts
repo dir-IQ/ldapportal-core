@@ -27,6 +27,7 @@ export const SUPERADMIN_PERMISSION_LABELS: Record<string, string> = {
   'superadmin.manage_event_backbone': 'Manage event backbone',
   'superadmin.manage_schema': 'Manage directory schema',
   'superadmin.manage_directory_data': 'Manage directory entries',
+  'superadmin.manage_directory_diff': 'Run directory diffs',
   'superadmin.view_license': 'View license',
 }
 
@@ -90,6 +91,9 @@ export const SUPERADMIN_PERMISSION_AREAS: readonly SuperadminPermissionArea[] = 
   { id: 'directory_data', label: 'Directory entries',
     description: 'Create, edit, delete, move, rename, and import entries; browsing, searching, and exporting need no grant',
     manage: 'superadmin.manage_directory_data', noneLabel: 'Read-only' },
+  { id: 'directory_diff', label: 'Directory diff',
+    description: 'Compare two directories entry by entry; shows attribute values from both',
+    manage: 'superadmin.manage_directory_diff' },
   { id: 'license', label: 'License',
     view: 'superadmin.view_license' },
 ]

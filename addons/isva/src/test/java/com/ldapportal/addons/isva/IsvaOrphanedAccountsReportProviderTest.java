@@ -32,9 +32,10 @@ import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
- * End-to-end tests for the orphaned-IVIA-accounts report against an in-memory
+ * End-to-end tests for the orphaned-IVIA-accounts scan against an in-memory
  * UnboundID directory carrying both a demographic OU and a management DIT with
- * secUser entries linked via {@code secDN}.
+ * secUser entries linked via {@code secDN}: the Orphaned IVIA accounts report,
+ * and the integrity checker's {@code secDN} check built on the same scan.
  */
 @ExtendWith(MockitoExtension.class)
 class IsvaOrphanedAccountsReportProviderTest {
@@ -45,6 +46,7 @@ class IsvaOrphanedAccountsReportProviderTest {
     private InMemoryDirectoryServer inMemoryServer;
     private LdapConnectionFactory connectionFactory;
     private IsvaOrphanedAccountsReportProvider provider;
+    private IsvaIntegrityCheckContributor contributor;
     private DirectoryConnection dir;
 
     private static final String DEMOGRAPHIC_BASE = "dc=example,dc=com";
@@ -77,7 +79,9 @@ class IsvaOrphanedAccountsReportProviderTest {
 
         lenient().when(encryptionService.decrypt(anyString())).thenReturn(BIND_PASS);
         connectionFactory = new LdapConnectionFactory(encryptionService);
-        provider = new IsvaOrphanedAccountsReportProvider(configRepo, connectionFactory);
+        IsvaOrphanedSecUsers orphaned = new IsvaOrphanedSecUsers(configRepo, connectionFactory);
+        provider = new IsvaOrphanedAccountsReportProvider(orphaned);
+        contributor = new IsvaIntegrityCheckContributor(orphaned);
         dir = buildDc();
     }
 
@@ -180,6 +184,50 @@ class IsvaOrphanedAccountsReportProviderTest {
                 .filter(r -> login.equals(r.get("secLogin")))
                 .findFirst()
                 .orElseThrow(() -> new AssertionError("No report row for secLogin=" + login));
+    }
+
+    // ── integrity checker: secDN references ───────────────────────
+
+    @Test
+    void secDnCheck_appliesOnlyToLinkedMode() {
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(config(IsvaTopologyMode.INLINE)));
+        assertThat(contributor.referenceAttributes(dir)).isEmpty();
+
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(config(IsvaTopologyMode.LINKED)));
+        assertThat(contributor.referenceAttributes(dir)).containsExactly("secDN");
+    }
+
+    @Test
+    void secDnCheck_reportsEachOrphanAsABrokenReference() throws Exception {
+        String aliceDn = "uid=alice," + PEOPLE_OU;
+        inMemoryServer.add(new Entry(aliceDn,
+                new Attribute("objectClass", "inetOrgPerson"),
+                new Attribute("uid", "alice"), new Attribute("cn", "Alice"), new Attribute("sn", "A")));
+        inMemoryServer.add(new Entry("secUUID=a," + MGMT_BASE,
+                new Attribute("objectClass", "top", "secUser"),
+                new Attribute("secUUID", "a"), new Attribute("secDN", aliceDn)));
+        inMemoryServer.add(new Entry("secUUID=g," + MGMT_BASE,
+                new Attribute("objectClass", "top", "secUser"),
+                new Attribute("secUUID", "g"), new Attribute("secDN", "uid=ghost," + PEOPLE_OU)));
+        inMemoryServer.add(new Entry("secUUID=n," + MGMT_BASE,
+                new Attribute("objectClass", "top", "secUser"),
+                new Attribute("secUUID", "n")));
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.of(config(IsvaTopologyMode.LINKED)));
+
+        List<com.ldapportal.dto.ldap.IntegrityReport.IntegrityIssue> issues = contributor.brokenReferences(dir);
+
+        assertThat(issues).extracting(i -> i.type().name()).containsOnly("BROKEN_REFERENCE");
+        assertThat(issues).extracting(i -> i.dn().toLowerCase(), i -> i.attribute(), i -> i.value())
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple(("secUUID=g," + MGMT_BASE).toLowerCase(), "secDN",
+                                "uid=ghost," + PEOPLE_OU),
+                        org.assertj.core.groups.Tuple.tuple(("secUUID=n," + MGMT_BASE).toLowerCase(), "secDN", null));
+    }
+
+    @Test
+    void secDnCheck_findsNothingWithoutALinkedConfig() {
+        when(configRepo.findById(dir.getId())).thenReturn(Optional.empty());
+        assertThat(contributor.brokenReferences(dir)).isEmpty();
     }
 
     private VendorIntegrationIsvaConfig config(IsvaTopologyMode mode) {

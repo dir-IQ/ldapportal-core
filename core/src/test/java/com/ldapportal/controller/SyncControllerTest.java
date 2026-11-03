@@ -52,6 +52,7 @@ class SyncControllerTest extends BaseControllerTest {
     @Autowired MockMvc mockMvc;
     @Autowired ObjectMapper objectMapper;
     @MockitoBean SyncConfigService service;
+    @MockitoBean com.ldapportal.ldap.sync.SyncSetDefaultsProvider defaultsProvider;
 
     private static final UUID LINK = UUID.fromString("10000000-0000-0000-0000-000000000001");
     private static final UUID SET = UUID.fromString("20000000-0000-0000-0000-000000000002");
@@ -76,8 +77,9 @@ class SyncControllerTest extends BaseControllerTest {
 
     private SyncSetResponse setResp() {
         return new SyncSetResponse(SET, LINK, "people", "ou=people,dc=src", null, null, "ou=Users,dc=dst",
-                null, null, null, null, null, null, null, null, true, false, OffsetDateTime.now(), OffsetDateTime.now(), 0L,
-                java.util.Map.of());
+                null, null, null, null, null, null, null, null, true,
+                com.ldapportal.entity.enums.SyncLoggingLevel.SUMMARY, OffsetDateTime.now(), OffsetDateTime.now(), 0L,
+                java.util.Map.of(), null);
     }
 
     // ── authz ──────────────────────────────────────────────────────────────────
@@ -182,6 +184,26 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void setDefaults_listsWhatTheEngineFallsBackTo() throws Exception {
+        given(defaultsProvider.defaults()).willReturn(new com.ldapportal.dto.sync.SyncSetDefaults(
+                java.util.Map.of("ACTIVE_DIRECTORY", "objectGUID"), List.of("member", "secDN"), 3600,
+                List.of("userPassword")));
+
+        mockMvc.perform(get(SETS + "/defaults").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.identityKeyByDirectoryType.ACTIVE_DIRECTORY").value("objectGUID"))
+                .andExpect(jsonPath("$.referenceAttributes[1]").value("secDN"))
+                .andExpect(jsonPath("$.reconcileIntervalSeconds").value(3600))
+                .andExpect(jsonPath("$.excludedAttributes[0]").value("userPassword"));
+    }
+
+    @Test
+    void setDefaults_adminRole_returns403() throws Exception {
+        mockMvc.perform(get(SETS + "/defaults").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void deleteSet_adminRole_returns403() throws Exception {
         mockMvc.perform(delete(SETS + "/" + SET).with(authentication(adminAuth())))
                 .andExpect(status().isForbidden());
@@ -232,7 +254,7 @@ class SyncControllerTest extends BaseControllerTest {
                 runId, SyncReconcileTrigger.MANUAL, "superadmin", SyncReconcileRunStatus.COMPLETE,
                 OffsetDateTime.now(), OffsetDateTime.now(), true, 4741, 876, 4741L, 4741,
                 3, 1, 0, 0, 0, 3865, 0, 872, 0, 0, 0, false, null, null,
-                "app-2", OffsetDateTime.now(), null, null, null, null, false)));
+                "app-2", OffsetDateTime.now(), null, null, null, null, false, 0, null, null, OffsetDateTime.now())));
         mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs").param("limit", "500")
                         .with(authentication(superadminAuth())))
                 .andExpect(status().isOk())
@@ -286,17 +308,58 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void activity_returnsTheRunningReconcile_andContentCheck_withProgress() throws Exception {
+        UUID runId = UUID.randomUUID();
+        SyncReconcileRunResponse run = new SyncReconcileRunResponse(
+                runId, SyncReconcileTrigger.MANUAL, "superadmin", SyncReconcileRunStatus.RUNNING,
+                OffsetDateTime.now(), null, false, 120, 80, null, 37,
+                0, 0, 0, 0, 0, 0, 0, 30, 0, 0, 0, false, null, null,
+                "app-1", OffsetDateTime.now(), null, null, null, null, false, 7,
+                com.ldapportal.entity.enums.SyncReconcilePhase.APPLYING, "cn=staff,ou=groups,dc=src",
+                OffsetDateTime.now());
+        var verify = new com.ldapportal.dto.sync.SyncVerifyProgressStatus(UUID.randomUUID(),
+                com.ldapportal.entity.enums.SyncPreviewRunStatus.RUNNING,
+                com.ldapportal.entity.enums.SyncVerifyPhase.TARGET, 500, 0, null, null,
+                OffsetDateTime.now(), OffsetDateTime.now(), null);
+        given(service.activity(SET)).willReturn(new com.ldapportal.dto.sync.SyncSetActivity(run, verify,
+                OffsetDateTime.now()));
+        mockMvc.perform(get(SETS + "/" + SET + "/activity").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reconcile.phase").value("APPLYING"))
+                .andExpect(jsonPath("$.reconcile.currentDn").value("cn=staff,ou=groups,dc=src"))
+                .andExpect(jsonPath("$.reconcile.notInSet").value(7))
+                .andExpect(jsonPath("$.verify.phase").value("TARGET"))
+                .andExpect(jsonPath("$.asOf").exists());
+    }
+
+    @Test
+    void notInSet_returnsThePage_withTheSearch() throws Exception {
+        given(service.notInSet(SET, "bob", 0, 50)).willReturn(new com.ldapportal.dto.sync.SyncNotInSetPage(
+                UUID.randomUUID(), OffsetDateTime.now(), false, 3, List.of(), List.of(
+                        new com.ldapportal.dto.sync.SyncNotInSetPage.Entry("uid=bob,ou=people,dc=src", "FILTER",
+                                "Doesn't match the applicability filter")), 1, 0, 50, 25));
+        mockMvc.perform(get(SETS + "/" + SET + "/not-in-set").param("q", "bob")
+                        .with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(3))
+                .andExpect(jsonPath("$.entries[0].sourceDn").value("uid=bob,ou=people,dc=src"))
+                .andExpect(jsonPath("$.entries[0].label").value("Doesn't match the applicability filter"));
+    }
+
+    @Test
     void reconcileRun_superadmin_returnsDetail() throws Exception {
         UUID runId = UUID.randomUUID();
         SyncReconcileRunResponse run = new SyncReconcileRunResponse(
                 runId, SyncReconcileTrigger.SCHEDULED, null, SyncReconcileRunStatus.COMPLETE,
                 OffsetDateTime.now(), OffsetDateTime.now(), true, 10, 8, 9L, 10,
                 1, 0, 0, 0, 0, 0, 0, 7, 2, 0, 0, false, null, null,
-                "app-1", OffsetDateTime.now(), OffsetDateTime.now(), 0, 1, 0, true);
+                "app-1", OffsetDateTime.now(), OffsetDateTime.now(), 0, 1, 0, true, 3, null, null, OffsetDateTime.now());
         given(service.reconcileRun(SET, runId)).willReturn(new SyncReconcileRunDetail(run,
                 new SyncRunSettings("REVIEW", null, null, null, "ou=Users,dc=dst", null, null, null, 50, 20, 20),
                 List.of(new SyncRunFailureReason("apply failed: NO_SUCH_OBJECT", 2, "apply failed: NO_SUCH_OBJECT — x")),
-                java.util.Map.of("ADD", List.of("uid=a,dc=dst")), 25));
+                java.util.Map.of("ADD", List.of("uid=a,dc=dst")), 25,
+                List.of(new com.ldapportal.dto.sync.SyncNotInSetGroup("FILTER",
+                        "Doesn't match the applicability filter", 3, List.of("ou=people,dc=src")))));
         mockMvc.perform(get(SETS + "/" + SET + "/reconcile-runs/" + runId).with(authentication(superadminAuth())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.run.instanceName").value("app-1"))
@@ -321,6 +384,28 @@ class SyncControllerTest extends BaseControllerTest {
     }
 
     @Test
+    void startReconcile_superadmin_returns202() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/reconcile-start").with(authentication(superadminAuth())))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.started").value(true));
+        org.mockito.Mockito.verify(service).startReconcile(SET, "superadmin");
+    }
+
+    @Test
+    void startReconcile_whileOneIsRunning_returns409() throws Exception {
+        org.mockito.BDDMockito.willThrow(new com.ldapportal.exception.ConflictException("already running"))
+                .given(service).startReconcile(SET, "superadmin");
+        mockMvc.perform(post(SETS + "/" + SET + "/reconcile-start").with(authentication(superadminAuth())))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
+    void startReconcile_adminRole_returns403() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/reconcile-start").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void recheckTarget_superadmin_returnsResult() throws Exception {
         given(service.recheckTarget(SET, "superadmin")).willReturn(new SyncRecheckResult(4741, true));
         mockMvc.perform(post(SETS + "/" + SET + "/recheck-target").with(authentication(superadminAuth())))
@@ -332,6 +417,20 @@ class SyncControllerTest extends BaseControllerTest {
     @Test
     void recheckTarget_adminRole_returns403() throws Exception {
         mockMvc.perform(post(SETS + "/" + SET + "/recheck-target").with(authentication(adminAuth())))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void requestReconcile_superadmin_queuesIt() throws Exception {
+        given(service.requestReconcile(SET, "superadmin")).willReturn(true);
+        mockMvc.perform(post(SETS + "/" + SET + "/reconcile-request").with(authentication(superadminAuth())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reconcileQueued").value(true));
+    }
+
+    @Test
+    void requestReconcile_adminRole_returns403() throws Exception {
+        mockMvc.perform(post(SETS + "/" + SET + "/reconcile-request").with(authentication(adminAuth())))
                 .andExpect(status().isForbidden());
     }
 
@@ -381,7 +480,8 @@ class SyncControllerTest extends BaseControllerTest {
     private static com.ldapportal.dto.sync.SyncPreviewStatus runningStatus() {
         return new com.ldapportal.dto.sync.SyncPreviewStatus(RUN,
                 com.ldapportal.entity.enums.SyncPreviewRunStatus.RUNNING, "superadmin", OffsetDateTime.now(),
-                null, 40, 100, false, null, 0, 0, 0, 0, false, null, false, null);
+                null, 40, 100, "cn=all-staff,ou=groups,dc=src", OffsetDateTime.now(), OffsetDateTime.now(), false, null,
+                0, 0, 0, 0, false, null, false, null, java.util.Map.of());
     }
 
     @Test
@@ -391,7 +491,8 @@ class SyncControllerTest extends BaseControllerTest {
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.runId").value(RUN.toString()))
                 .andExpect(jsonPath("$.status").value("RUNNING"))
-                .andExpect(jsonPath("$.processed").value(40));
+                .andExpect(jsonPath("$.processed").value(40))
+                .andExpect(jsonPath("$.currentDn").value("cn=all-staff,ou=groups,dc=src"));
     }
 
     @Test

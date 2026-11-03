@@ -72,18 +72,16 @@ authorized OUs still shows only those OUs.
   single-root directories too: before this change a duplicate login value
   silently signed in as the first match. Make the login attribute unique, or
   use a more specific one.
-- **Directory sync sets** on a multi-root **source** must name their
-  **Source scope base DN**: leaving it blank (which means "the directory's
-  base DN" on a single-root connection) is rejected on save, because it would
-  silently pick just the first root. Use one sync set per root you want to
-  mirror. On a multi-root **target**, a blank **Target base DN** means the
-  entries keep their source DNs; that's accepted when the source scope base DN
-  lies under one of the target's roots, and rejected otherwise.
+- **Directory sync sets** always name their **Source base DN**, which must lie
+  under one of the source directory's roots. Use one sync set per root you
+  want to mirror. A blank **Target base DN** means the entries keep their
+  source DNs; that's accepted when the source base DN lies under one of the
+  target's roots, and rejected otherwise.
 - **Adding a root to a directory that already has sync sets** doesn't change
-  those sets: one with a blank source scope (or, when the directory is a sync
-  target, a blank target base) keeps using the primary base DN only. The save
-  goes through, and the editor shows a warning naming each such set, so you
-  can give it an explicit base if it should cover the new root.
+  those sets: each keeps reading its own source base DN. When the directory is
+  a sync target, a set with a blank target base is listed in a warning on save,
+  so you can give it an explicit base if it should place entries under the new
+  root.
 - With no explicit base, a search runs once per root, and its time limit
   applies to each root's search, so a search across N roots can take up to N
   times the limit.

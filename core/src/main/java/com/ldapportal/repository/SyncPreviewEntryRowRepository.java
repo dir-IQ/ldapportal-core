@@ -23,6 +23,13 @@ public interface SyncPreviewEntryRowRepository
     /** One page of a run's entries the "changes only" view lists, in display order. */
     List<SyncPreviewEntryRow> findByRunIdAndActionableTrueOrderByOrdinalAsc(UUID runId, Pageable page);
 
+    /**
+     * A run's entries counted per outcome: rows of {@code [SyncPreviewAction, Long]}.
+     * The run's summary reports these, so its counts and its entry list can't disagree.
+     */
+    @Query("select e.action, count(e) from SyncPreviewEntryRow e where e.runId = :runId group by e.action")
+    List<Object[]> countByAction(@Param("runId") UUID runId);
+
     /** Drop a set's entries from every run but {@code keepRunId} (the run just started). */
     @Transactional
     @Modifying

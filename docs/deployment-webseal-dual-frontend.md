@@ -114,6 +114,17 @@ would NAT the peer IP** (see §5). The Trusted Proxies list must contain the
   trusted junction with `iv-user` — a LOCAL account on a single-host junction,
   or a JWT that has already expired — so the browser's WebSEAL session is
   always ended and the pre-auth probe cannot sign the user straight back in.
+- After an explicit logout, the SPA doesn't sign the user straight back in,
+  even when WebSEAL has started a new session. With certificate (or Kerberos)
+  sign-in, the browser keeps presenting its credential after `/pkmslogout`,
+  so WebSEAL re-authenticates on the next request without a prompt and the
+  pre-auth probe would succeed at once. Logout instead leaves a session cookie,
+  `ldapportal-signed-out`, that only the SPA reads. While it's set, the boot
+  probe is skipped and `/login` shows "You've signed out" with
+  **Sign in again**, which clears the cookie and reloads the requested page so
+  WebSEAL can run its own sign-in. Any successful sign-in also clears it, and
+  closing the browser drops it, as it drops the certificate session itself.
+  Closing the browser is the only way to end a certificate session completely.
 - Serve the SPA assets and proxy `/api/v1` under the **same hostname** as the
   junction (see §3.4 for why).
 
@@ -273,6 +284,17 @@ scheduled report, saving preferences). Verify one of these after applying
 the ACL; if it is denied, check which action your WebSEAL version maps PATCH
 to.
 
+**The portal sends no DELETE request bodies.** WebSEAL, like many reverse
+proxies, doesn't reliably forward the body of a DELETE. Removing a group
+member therefore sends the member in the query string
+(`DELETE …/groups/members?dn=…&memberAttribute=…&memberValue=…`), and
+removing several at once is a POST (`…/groups/members/bulk/remove`). Older
+portal versions put the member in a DELETE body; behind WebSEAL that body was
+dropped and the portal answered **400** ("Request body is malformed or
+contains an invalid value") even with `d` granted. A 400 here comes from the
+portal, a 403 from WebSEAL's ACL. API clients that still send the old DELETE
+body keep working where no proxy strips it.
+
 ---
 
 ## 4. Account provisioning
@@ -351,6 +373,10 @@ Admin (WebSEAL) flow:
       has elapsed. A `403 Invalid CORS request` here means the WebSEAL
       host is missing from `CORS_ALLOWED_ORIGIN` (§3.4); the backend log
       names the rejected origin.
+- [ ] After Logout, returning to the admin host shows "You've signed out"
+      rather than signing straight back in (including with certificate
+      sign-in); **Sign in again** lands on the dashboard; a new browser
+      session signs in automatically again.
 
 - [ ] Editing a user's description and saving (PUT) succeeds, and removing a
       member on the Groups page (DELETE) succeeds. A WebSEAL 403 page with

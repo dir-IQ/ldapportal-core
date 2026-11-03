@@ -202,7 +202,62 @@ class GroupControllerTest extends BaseControllerTest {
                 .andExpect(status().isNoContent());
     }
 
-    // ── DELETE /members/bulk ──────────────────────────────────────────────────
+    @Test
+    void removeMember_withQueryParams_andNoBody_returns204() throws Exception {
+        // What the UI sends: no DELETE body, which a proxy such as WebSEAL may drop.
+        mockMvc.perform(delete(BASE_URL + "/members")
+                        .param("dn", ENTRY_DN)
+                        .param("memberAttribute", "member")
+                        .param("memberValue", "uid=bob,ou=people,dc=example,dc=com")
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isNoContent());
+
+        org.mockito.Mockito.verify(ldapService).removeGroupMember(eq(DIR_ID), any(), eq(ENTRY_DN),
+                eq("member"), eq("uid=bob,ou=people,dc=example,dc=com"));
+    }
+
+    @Test
+    void removeMember_withNeitherParamsNorBody_returns400() throws Exception {
+        mockMvc.perform(delete(BASE_URL + "/members")
+                        .param("dn", ENTRY_DN)
+                        .with(authentication(adminAuth())))
+                .andExpect(status().isBadRequest());
+
+        org.mockito.Mockito.verifyNoInteractions(ldapService);
+    }
+
+    // ── POST /members/bulk/remove ─────────────────────────────────────────────
+
+    @Test
+    void removeMembersBulk_viaPost_returnsPerValueResult() throws Exception {
+        String bob   = "uid=bob,ou=people,dc=example,dc=com";
+        String carol = "uid=carol,ou=people,dc=example,dc=com";
+        BulkMemberRequest req = new BulkMemberRequest("member", List.of(bob, carol));
+        willThrow(new IllegalArgumentException("not a member"))
+                .given(ldapService).removeGroupMember(eq(DIR_ID), any(), eq(ENTRY_DN), eq("member"), eq(carol));
+
+        mockMvc.perform(post(BASE_URL + "/members/bulk/remove")
+                        .param("dn", ENTRY_DN)
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.removed").value(1))
+                .andExpect(jsonPath("$.failed").value(1))
+                .andExpect(jsonPath("$.errors[0].memberValue").value(carol));
+    }
+
+    @Test
+    void removeMembersBulk_viaPost_emptyValues_returns400() throws Exception {
+        mockMvc.perform(post(BASE_URL + "/members/bulk/remove")
+                        .param("dn", ENTRY_DN)
+                        .with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"memberAttribute\":\"member\",\"memberValues\":[]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    // ── DELETE /members/bulk (kept for existing API callers) ─────────────────
 
     @Test
     void removeMembersBulk_admin_returnsPerValueResult() throws Exception {

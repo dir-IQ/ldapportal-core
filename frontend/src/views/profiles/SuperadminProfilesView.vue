@@ -22,6 +22,7 @@ import FormLayoutDesigner from '@/components/FormLayoutDesigner.vue'
 import DnPicker from '@/components/DnPicker.vue'
 import DataTable from '@/components/DataTable.vue'
 import IsvaProfileOverrideControl from '@/components/profiles/IsvaProfileOverrideControl.vue'
+import ThemeColorPreview from '@/components/profiles/ThemeColorPreview.vue'
 import { setIsvaProfileOverride } from '@/api/isvaConfig'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -200,6 +201,7 @@ const ocSchemaCache = ref<Record<string, { required: string[]; optional: string[
 const profile = ref<ProfileForm>(emptyProfile())
 
 
+
 // Group change preview dialog
 // Group compliance check state is declared near checkCompliance()
 const applyingGroupChanges = ref(false)
@@ -292,7 +294,7 @@ async function openEdit(p: ProfileRow) {
     name: p.name, description: p.description || '', themeColor: p.themeColor || '',
     targetUserDn: p.targetUserDn,
     targetGroupDn: p.targetGroupDn || '',
-    objectClassNames: [...p.objectClassNames], rdnAttribute: p.rdnAttribute,
+    objectClassNames: [...p.objectClassNames], rdnAttribute: p.rdnAttribute ?? '',
     // Reconcile legacy profiles that predate the DN-mode interlock: operator-
     // entered DN and self-registration are now mutually exclusive, and a self-
     // registration profile is inherently automatic (DN = <rdn>=<value>), so keep
@@ -415,7 +417,14 @@ async function save() {
     notif.error('At least one object class is required')
     return
   }
-  if (!profile.value.rdnAttribute) {
+  // Only Automatic mode needs a naming attribute: it composes the DN from it.
+  // In operator-entered mode a DN template names the entry (the watcher keeps
+  // rdnAttribute on its leading RDN); with no template the operator types the
+  // whole DN, so none is sent — a hidden leftover would still pre-fill the DN.
+  // Blanked in the payload only, so a save that stops early (or a switch back
+  // to Automatic) keeps the editor's selection.
+  const operatorNoTemplate = profile.value.showDnField && !dnTemplateActive.value
+  if (!operatorNoTemplate && !profile.value.rdnAttribute) {
     notif.error('RDN Attribute is required')
     return
   }
@@ -453,9 +462,10 @@ async function save() {
   // source of truth — a 400 from the server tells us if force was
   // needed).
   const force = targetOuProbeState.value === 'missing'
+  const payload = operatorNoTemplate ? { ...profile.value, rdnAttribute: '' } : profile.value
   try {
     if (editing.value) {
-      await updateProfile(selectedDirId.value, editing.value, profile.value, force)
+      await updateProfile(selectedDirId.value, editing.value, payload, force)
       // Save approval config
       await setApprovalConfig(editing.value, approval.value)
       await setApprovers(editing.value, { accountIds: profileApprovers.value })
@@ -464,7 +474,7 @@ async function save() {
       editing.value = null
       await reload()
     } else {
-      const { data } = await createProfile(selectedDirId.value, profile.value, force)
+      const { data } = await createProfile(selectedDirId.value, payload, force)
       // Save approval config
       await setApprovalConfig(data.id, approval.value)
       if (profileApprovers.value.length > 0) {
@@ -1580,24 +1590,30 @@ function toggleApprover(accountId: string) {
           </div>
           <div>
             <label for="sp-theme-color" class="block text-sm font-medium text-gray-700 mb-1">Theme Color</label>
-            <div class="flex items-center gap-2">
-              <!-- A native colour input can't represent "unset" (it always holds
-                   a value), so bind :value with a display fallback and commit on
-                   @input; the hex field and Clear button own the unset state. -->
-              <input id="sp-theme-color" type="color"
-                :value="profile.themeColor || '#2563eb'"
-                @input="profile.themeColor = ($event.target as HTMLInputElement).value"
-                class="h-9 w-10 rounded border border-gray-300 cursor-pointer p-0.5 shrink-0"
-                aria-label="Profile theme colour picker" />
-              <input v-model="profile.themeColor" class="input w-40" maxlength="7"
-                placeholder="#2563eb (unset)" aria-label="Theme colour hex" />
-              <button v-if="profile.themeColor" type="button" class="btn-neutral text-xs"
-                @click="profile.themeColor = ''">Clear</button>
+            <!-- Picker on the left, light/dark preview (and any advice) to its
+                 right; the help text spans the full width below. Wraps on narrow
+                 screens. -->
+            <div class="flex flex-wrap items-start gap-x-5 gap-y-2">
+              <div class="flex items-center gap-2 shrink-0">
+                <!-- A native colour input can't represent "unset" (it always holds
+                     a value), so bind :value with a display fallback and commit on
+                     @input; the hex field and Clear button own the unset state. -->
+                <input id="sp-theme-color" type="color"
+                  :value="profile.themeColor || '#2563eb'"
+                  @input="profile.themeColor = ($event.target as HTMLInputElement).value"
+                  class="h-9 w-10 rounded border border-gray-300 cursor-pointer p-0.5 shrink-0"
+                  aria-label="Profile theme colour picker" />
+                <input v-model="profile.themeColor" class="input w-28" maxlength="7"
+                  placeholder="(unset)" aria-label="Theme colour hex" />
+                <button v-if="profile.themeColor" type="button" class="btn-neutral text-xs"
+                  @click="profile.themeColor = ''">Clear</button>
+              </div>
+              <ThemeColorPreview class="min-w-0 flex-1 basis-80" :color="profile.themeColor" :name="profile.name" />
             </div>
-            <p class="mt-1 text-xs text-gray-500">
-              Optional. When set, the user and group list headers (and the new/edit
-              user and group modals) show a band of this colour instead of the
-              profile name in blue. Leave blank for no theme.
+            <p class="mt-2 text-xs text-gray-500">
+              Optional. When set, the profile's tag (on the user and group pages, their
+              new/edit dialogs and the bulk pages) is tinted with this colour, and its
+              name is shaded as needed to stay readable. Leave blank for a neutral tag.
             </p>
           </div>
           <div v-if="!editing">
@@ -1707,32 +1723,19 @@ function toggleApprover(accountId: string) {
                 </p>
               </div>
 
-              <!-- Operator-entered: the DN template seeds the editable DN. The
-                   attribute seed is only the fallback when there's no template,
-                   so it's hidden while a template is defined (the template's
-                   leading RDN is the naming source). -->
-              <template v-else>
-                <div>
-                  <label class="block text-xs text-gray-500">DN template (optional)</label>
-                  <input v-model="profile.dnTemplate" type="text" aria-label="DN template" class="input w-full font-mono text-xs"
-                    placeholder="cn=${givenName} ${sn},ou=People,dc=example,dc=com" />
-                  <p class="text-[11px] text-gray-500 mt-1">
-                    Pre-fills the editable DN. <code>${'{'}attr{'}'}</code> tokens resolve to the new user's values; a
-                    <code>+</code> makes a multi-valued RDN.
-                  </p>
-                </div>
-                <div v-if="!dnTemplateActive" class="mt-3 max-w-md">
-                  <label class="block text-xs text-gray-500">Seed the DN from attribute <span class="text-red-500">*</span></label>
-                  <select v-model="profile.rdnAttribute" aria-label="Seed attribute" class="input w-full text-sm"
-                    :disabled="profile.objectClassNames.length === 0" @change="onRdnAttributeChange">
-                    <option value="">{{ profile.objectClassNames.length === 0 ? 'Add an object class first' : 'Select attribute…' }}</option>
-                    <option v-for="attr in rdnCandidates" :key="attr" :value="attr">{{ attr }}</option>
-                  </select>
-                  <p class="text-[11px] text-gray-500 mt-1">
-                    With no template, the editable DN pre-fills as <code>&lt;attribute&gt;=&lt;value&gt;,&lt;target OU&gt;</code>.
-                  </p>
-                </div>
-              </template>
+              <!-- Operator-entered: the DN template seeds the editable DN, and its
+                   leading RDN names the entry. With no template the operator
+                   types the RDN in front of the pre-filled target OU. -->
+              <div v-else>
+                <label class="block text-xs text-gray-500">DN template (optional)</label>
+                <input v-model="profile.dnTemplate" type="text" aria-label="DN template" class="input w-full font-mono text-xs"
+                  placeholder="cn=${givenName} ${sn},ou=People,dc=example,dc=com" />
+                <p class="text-[11px] text-gray-500 mt-1">
+                  Pre-fills the editable DN. <code>${'{'}attr{'}'}</code> tokens resolve to the new user's values; a
+                  <code>+</code> makes a multi-valued RDN. With no template, the DN pre-fills with the target OU and
+                  the operator enters the entry's RDN in front of it.
+                </p>
+              </div>
             </div>
           </div>
           <div class="flex gap-6">

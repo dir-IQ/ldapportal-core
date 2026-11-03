@@ -128,6 +128,8 @@ services:
       # Bootstrap superadmin (only active when no permanent superadmin exists)
       BOOTSTRAP_SUPERADMIN_USERNAME:   ${BOOTSTRAP_SUPERADMIN_USERNAME:-superadmin}
       BOOTSTRAP_SUPERADMIN_PASSWORD:   ${BOOTSTRAP_SUPERADMIN_PASSWORD}
+      # Shown in the sidebar after the image tags (e.g. an AWS region); optional.
+      DEPLOYMENT_LOCATION: ${DEPLOYMENT_LOCATION:-}
       # Logging
       LOG_LEVEL:     ${LOG_LEVEL:-INFO}
       APP_LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}

@@ -72,21 +72,40 @@ export interface SyncSet {
   reconcileLastRunAt: string | null
   enabled: boolean
   /**
-   * Keep every changed or flagged entry's DN in each run's history (CSV
-   * download), not just the first samples per outcome.
+   * How much of each run the history keeps: SUMMARY keeps counts and failure
+   * reasons only; DETAILED also keeps every changed or flagged entry's DN
+   * (CSV download).
    */
-  recordAllDns: boolean
+  loggingLevel: SyncLoggingLevel
   createdAt: string
   updatedAt: string
   version: number
   // Membership counts keyed by state name (APPLIED/PENDING/FAILED/REVIEW); the
   // list endpoint populates this, single-set responses leave it empty.
   stateCounts: Record<string, number>
+  /** The stored drift snapshot: the last complete content verify. */
+  verify?: SyncVerifySnapshot | null
+}
+
+/**
+ * A set's last complete content verify (`at` null when never verified), and
+ * when a newer verify didn't finish reading both directories (`incompleteAt`).
+ */
+export interface SyncVerifySnapshot {
+  at: string | null
+  missing: number | null
+  orphan: number | null
+  mismatch: number | null
+  incompleteAt: string | null
+  /** Members with a held reference value at that verify (null until counted). */
+  held?: number | null
+  /** Of those, members whose held value names an entry missing on the source. */
+  dangling?: number | null
 }
 
 export type SyncSetPayload = Omit<
   SyncSet,
-  'id' | 'reconcileLastRunAt' | 'createdAt' | 'updatedAt' | 'version' | 'stateCounts'
+  'id' | 'reconcileLastRunAt' | 'createdAt' | 'updatedAt' | 'version' | 'stateCounts' | 'verify'
 >
 
 export interface Membership {
@@ -140,8 +159,18 @@ export const getSyncSetDeleteImpact = (id: string) =>
   client.get<SyncSetDeleteImpact>(`/superadmin/sync/sets/${id}/delete-impact`)
 
 /** Default excluded attributes (operational + password values) — seeds the editor. */
-export const getExcludedAttributeDefaults = () =>
-  client.get<string[]>('/superadmin/sync/sets/excluded-attribute-defaults')
+export type SyncLoggingLevel = 'SUMMARY' | 'DETAILED'
+
+/** What the engine uses for each sync-set field left blank (the editor's info tips list these). */
+export interface SyncSetDefaults {
+  /** Identity attribute per source directory type (DirectoryType name → attribute). */
+  identityKeyByDirectoryType: Record<string, string>
+  referenceAttributes: string[]
+  /** This server's reconcile interval for sets that don't set one. */
+  reconcileIntervalSeconds: number
+  excludedAttributes: string[]
+}
+export const getSyncSetDefaults = () => client.get<SyncSetDefaults>('/superadmin/sync/sets/defaults')
 
 /**
  * One recorded run of a set: a reconcile (SCHEDULED / MANUAL), or an
@@ -193,7 +222,68 @@ export interface SyncReconcileRun {
   verifyMismatch: number | null
   /** Every changed or flagged entry's DN was kept: downloadable with `downloadReconcileRunEntries`. */
   allDnsRecorded: boolean
+  /** In-scope source entries the set doesn't manage (the applicability filter or placement excludes them). */
+  notInSet: number
+  /** Where a RUNNING run is (else null). */
+  phase: 'SCANNING' | 'APPLYING' | 'SWEEPING' | 'REFERENCES' | null
+  /** The entry a RUNNING run is recomputing (else null). */
+  currentDn: string | null
+  /** When the run last reported progress or that it's alive. */
+  heartbeatAt: string | null
 }
+
+/** In-scope source entries a reconcile found that the set doesn't manage, for one reason. */
+export interface SyncNotInSetGroup {
+  reason: 'FILTER' | 'PLACEMENT' | string
+  label: string
+  count: number
+  samples: string[]
+}
+
+/** The not-in-set entries of the set's latest complete reconcile (`GET …/not-in-set`). */
+export interface SyncNotInSetPage {
+  /** null when the set has no complete reconcile yet. */
+  runId: string | null
+  finishedAt: string | null
+  /** Every entry is listed (Detailed logging); otherwise up to `sampleLimit` per reason. */
+  allDnsRecorded: boolean
+  total: number
+  reasons: SyncNotInSetGroup[]
+  entries: { sourceDn: string; reason: string; label: string }[]
+  /** Entries matching the search: the listed ones (not `total`) when only samples were kept. */
+  matched: number
+  page: number
+  size: number
+  sampleLimit: number
+}
+
+/** A set's latest content verification: progress while it runs, and how it ended. */
+export interface SyncVerifyProgress {
+  runId: string
+  status: 'RUNNING' | 'COMPLETE' | 'FAILED'
+  phase: 'SOURCE' | 'TARGET' | 'COMPARING' | 'DONE'
+  processed: number
+  total: number
+  currentDn: string | null
+  error: string | null
+  startedAt: string
+  heartbeatAt: string
+  finishedAt: string | null
+}
+
+/** What a set's inventory actions are doing (`GET …/activity`). */
+export interface SyncSetActivity {
+  reconcile: SyncReconcileRun | null
+  verify: SyncVerifyProgress | null
+  /** The server's time when read: ages the runs' timestamps without the browser's clock. */
+  asOf: string
+}
+
+export const getSyncSetActivity = (setId: string) =>
+  client.get<SyncSetActivity>(`/superadmin/sync/sets/${setId}/activity`)
+
+export const listNotInSet = (setId: string, query: { q?: string; page?: number; size?: number } = {}) =>
+  client.get<SyncNotInSetPage>(`/superadmin/sync/sets/${setId}/not-in-set`, { params: query })
 
 /** The set's settings and delete-guard limits as the run saw them. */
 export interface SyncRunSettings {
@@ -226,6 +316,8 @@ export interface SyncReconcileRunDetail {
   /** Outcome (ADD, MODIFY, …) → up to `sampleLimit` target DNs. */
   samples: Partial<Record<SyncPreviewAction, string[]>>
   sampleLimit: number
+  /** In-scope source entries the set doesn't manage, per reason (most first), with sample DNs. */
+  notInSet: SyncNotInSetGroup[]
 }
 
 export const getReconcileRun = (setId: string, runId: string) =>
@@ -246,21 +338,6 @@ export const listReconcileRuns = (setId: string, limit = 10, kind?: SyncRunKind)
 export const downloadReconcileRunEntries = (setId: string, runId: string) =>
   client.get<Blob>(`/superadmin/sync/sets/${setId}/reconcile-runs/${runId}/entries.csv`,
     { responseType: 'blob' })
-
-/** Dry-run summary of what a reconcile of a sync set would change (no writes). */
-export interface SyncReconcilePreview {
-  sourceCount: number
-  managedCount: number
-  plannedAdds: number
-  plannedDeletes: number
-  sampleDeleteDns: string[]
-  guardTripped: boolean
-  guardReason: string | null
-  completeScan: boolean
-}
-
-export const previewReconcile = (setId: string) =>
-  client.get<SyncReconcilePreview>(`/superadmin/sync/sets/${setId}/preview`)
 
 /** What a reconcile would do to one entry (from a dry run of the engine). */
 export type SyncPreviewAction =
@@ -298,6 +375,12 @@ export interface SyncPreviewStatus {
   finishedAt: string | null
   processed: number
   total: number
+  /** The entry being dry-run now, while RUNNING (else null). */
+  currentDn: string | null
+  /** When the run last reported progress or that it's alive. */
+  heartbeatAt: string | null
+  /** The server's time when this status was read: ages startedAt / heartbeatAt without the browser's clock. */
+  asOf: string | null
   /** The set was edited or reconciled, or its link or directories changed, after this run started. */
   outdated: boolean
   error: string | null
@@ -309,6 +392,11 @@ export interface SyncPreviewStatus {
   guardReason: string | null
   completeScan: boolean
   note: string | null
+  /**
+   * Entries per outcome, counted from the stored entries once the run is
+   * complete (empty before), so they match what Show changes lists.
+   */
+  actionCounts: Partial<Record<SyncPreviewAction, number>>
 }
 
 /** One page of a completed preview, ordered by target DN (parents first). */
@@ -352,6 +440,19 @@ export interface SyncVerifyResult {
   sourceComplete: boolean
   targetComplete: boolean
   note: string | null
+  /** Only target entries carrying the set's source anchor counted as orphans. */
+  orphansAnchored?: boolean
+  /** Members whose reference values the sync holds back (not drift); null when not counted. */
+  heldReferences?: SyncHeldReferences | null
+}
+
+export interface SyncHeldReferences {
+  entries: number
+  /** Members with a held value naming an entry that doesn't exist on the source. */
+  dangling: number
+  /** Some referenced DNs weren't looked up (too many). */
+  unchecked: boolean
+  samples: { entryDn: string; attribute: string; reference: string; dangling: boolean }[]
 }
 
 export const verifyContents = (setId: string) =>
@@ -377,6 +478,9 @@ export interface MembershipQuery {
 
 export const listMemberships = (setId: string, query: MembershipQuery = {}) =>
   client.get<Page<Membership>>(`/superadmin/sync/sets/${setId}/memberships`, { params: query })
+/** Start a reconcile in the background and return at once (202); follow it on getSyncSetActivity. */
+export const startReconcile = (setId: string) =>
+  client.post<{ started: boolean }>(`/superadmin/sync/sets/${setId}/reconcile-start`)
 export const reconcileSet = (setId: string) =>
   client.post<{ enumerated: number }>(`/superadmin/sync/sets/${setId}/reconcile`)
 
@@ -389,6 +493,13 @@ export interface SyncRecheckResult {
   entries: number
   reconcileQueued: boolean
 }
+
+/**
+ * Queue a reconcile for the scheduler's next tick (within about a minute) and return at once.
+ * reconcileQueued is false while the set or its link is disabled.
+ */
+export const requestSyncSetReconcile = (setId: string) =>
+  client.post<{ reconcileQueued: boolean }>(`/superadmin/sync/sets/${setId}/reconcile-request`)
 
 /** Re-check the target (e.g. after a restore from backup): the next reconcile re-reads every applied entry. */
 export const recheckTarget = (setId: string) =>

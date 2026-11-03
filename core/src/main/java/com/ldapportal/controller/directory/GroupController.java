@@ -48,8 +48,15 @@ import java.util.UUID;
  *   DELETE /api/directories/{directoryId}/groups/entry     — delete by DN (?dn=)
  *   GET    /api/directories/{directoryId}/groups/members   — list members (?dn= &memberAttr=)
  *   POST   /api/directories/{directoryId}/groups/members   — add member (?dn=)
- *   DELETE /api/directories/{directoryId}/groups/members   — remove member (?dn=)
+ *   DELETE /api/directories/{directoryId}/groups/members   — remove member (?dn= &memberAttribute= &memberValue=)
+ *   POST   /api/directories/{directoryId}/groups/members/bulk/remove — remove several members (?dn=)
  * </pre>
+ *
+ * <p>Member removal carries the member in query parameters (one) or a POST
+ * body (several), not in a DELETE body: reverse proxies such as WebSEAL
+ * don't reliably forward a DELETE request's body, and a dropped body reached
+ * the portal as a 400. The DELETE forms still accept a body for existing
+ * API callers.</p>
  */
 @RestController
 @RequestMapping("/api/v1/directories/{directoryId}/groups")
@@ -174,15 +181,35 @@ public class GroupController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * Removes one member. The member is given as {@code memberAttribute} and
+     * {@code memberValue} query parameters; a JSON body
+     * ({@link MemberRequest}) is still accepted when they're absent.
+     */
     @DeleteMapping("/members")
     @RequiresFeature(FeatureKey.GROUP_MANAGE_MEMBERS)
     public ResponseEntity<Void> removeMember(
             @DirectoryId @PathVariable UUID directoryId,
             @AuthenticationPrincipal AuthPrincipal principal,
             @RequestParam String dn,
-            @Valid @RequestBody MemberRequest req) {
-        service.removeGroupMember(directoryId, principal, dn, req.memberAttribute(), req.memberValue());
+            @RequestParam(required = false) String memberAttribute,
+            @RequestParam(required = false) String memberValue,
+            @Valid @RequestBody(required = false) MemberRequest req) {
+        String attr = memberAttribute;
+        String value = memberValue;
+        if (isBlank(attr) && isBlank(value) && req != null) {
+            attr = req.memberAttribute();
+            value = req.memberValue();
+        }
+        if (isBlank(attr) || isBlank(value)) {
+            throw new IllegalArgumentException("memberAttribute and memberValue are required");
+        }
+        service.removeGroupMember(directoryId, principal, dn, attr, value);
         return ResponseEntity.noContent().build();
+    }
+
+    private static boolean isBlank(String s) {
+        return s == null || s.isBlank();
     }
 
     @PostMapping("/members/bulk")
@@ -227,14 +254,32 @@ public class GroupController {
      * removal (see the M4 note above) this has no approval gate; each value is
      * attempted independently and failures are reported per value.
      */
-    @DeleteMapping("/members/bulk")
+    @PostMapping("/members/bulk/remove")
     @RequiresFeature(FeatureKey.GROUP_MANAGE_MEMBERS)
     public ResponseEntity<BulkMemberRemoveResult> removeMembersBulk(
             @DirectoryId @PathVariable UUID directoryId,
             @AuthenticationPrincipal AuthPrincipal principal,
             @RequestParam String dn,
             @Valid @RequestBody BulkMemberRequest req) {
+        return ResponseEntity.ok(removeMembers(directoryId, principal, dn, req));
+    }
 
+    /**
+     * The former form of {@link #removeMembersBulk}, kept for existing API
+     * callers: a DELETE with a body, which a reverse proxy may drop.
+     */
+    @DeleteMapping("/members/bulk")
+    @RequiresFeature(FeatureKey.GROUP_MANAGE_MEMBERS)
+    public ResponseEntity<BulkMemberRemoveResult> removeMembersBulkViaDelete(
+            @DirectoryId @PathVariable UUID directoryId,
+            @AuthenticationPrincipal AuthPrincipal principal,
+            @RequestParam String dn,
+            @Valid @RequestBody BulkMemberRequest req) {
+        return ResponseEntity.ok(removeMembers(directoryId, principal, dn, req));
+    }
+
+    private BulkMemberRemoveResult removeMembers(UUID directoryId, AuthPrincipal principal, String dn,
+                                                 BulkMemberRequest req) {
         int removed = 0;
         List<BulkMemberError> errors = new ArrayList<>();
 
@@ -248,6 +293,6 @@ public class GroupController {
             }
         }
 
-        return ResponseEntity.ok(new BulkMemberRemoveResult(removed, errors.size(), errors));
+        return new BulkMemberRemoveResult(removed, errors.size(), errors);
     }
 }

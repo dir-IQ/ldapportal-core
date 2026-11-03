@@ -29,10 +29,27 @@ public interface SyncSetRepository extends JpaRepository<SyncSet, UUID> {
     @Transactional
     @Modifying
     @Query("update SyncSet s set s.lastVerifiedAt = :at, s.verifyMissingCount = :missing, "
-            + "s.verifyOrphanCount = :orphan, s.verifyMismatchCount = :mismatch where s.id = :id")
+            + "s.verifyOrphanCount = :orphan, s.verifyMismatchCount = :mismatch, "
+            + "s.verifyIncompleteAt = null where s.id = :id")
     int recordVerifyResult(@Param("id") UUID id, @Param("at") OffsetDateTime at,
                            @Param("missing") int missing, @Param("orphan") int orphan,
                            @Param("mismatch") int mismatch);
+
+    /**
+     * Note a content verify that couldn't read both directories completely: its
+     * counts aren't stored, so the snapshot above may be out of date. Targeted,
+     * like {@link #recordVerifyResult}.
+     */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.verifyIncompleteAt = :at where s.id = :id")
+    int recordVerifyIncomplete(@Param("id") UUID id, @Param("at") OffsetDateTime at);
+
+    /** A complete verify's held-reference counts, stored beside its drift counts. Targeted, as above. */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.verifyHeldCount = :held, s.verifyDanglingCount = :dangling where s.id = :id")
+    int recordVerifyHeld(@Param("id") UUID id, @Param("held") int held, @Param("dangling") int dangling);
 
     /**
      * Ask for a reconcile of every enabled set on a link: bumps the request
@@ -47,6 +64,20 @@ public interface SyncSetRepository extends JpaRepository<SyncSet, UUID> {
     @Query("update SyncSet s set s.reconcileRequestSeq = s.reconcileRequestSeq + 1 "
             + "where s.linkId = :linkId and s.enabled = true")
     int requestReconcile(@Param("linkId") UUID linkId);
+
+    /**
+     * Note that a source change is about to be enqueued for the set (see
+     * {@code SyncSet.sourceChangeSeq}). A targeted update, so it never collides
+     * with the config/engine optimistic-lock version.
+     */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.sourceChangeSeq = s.sourceChangeSeq + 1 where s.id = :id")
+    int bumpSourceChange(@Param("id") UUID id);
+
+    /** The set's {@code sourceChangeSeq} as stored now, or {@code null} when the set is gone. */
+    @Query("select s.sourceChangeSeq from SyncSet s where s.id = :id")
+    Long findSourceChangeSeq(@Param("id") UUID id);
 
     /** Ask for a reconcile of one set (see {@link #requestReconcile}); runs once the set is enabled. */
     @Transactional

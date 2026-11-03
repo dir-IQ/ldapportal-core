@@ -150,6 +150,45 @@ class MembershipFunctionTest {
     }
 
     @Test
+    void referenceWithNoTranslatableValue_isHeld_notProjected() {
+        SyncSet set = baseSet();
+        set.setObjectScopeBaseDn("ou=groups,dc=src");
+        set.setTargetBaseDn("ou=Groups,dc=dst");
+        set.setReferenceAttributes("member,secDN");
+        Entry registration = new Entry("cn=eng,ou=groups,dc=src",
+                new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("entryUUID", "9999"),
+                new Attribute("cn", "eng"),
+                new Attribute("member", "uid=alice,ou=people,dc=src", "uid=bob,ou=people,dc=src"),
+                new Attribute("secDN", "cn=eng,o=native,dc=src"));
+        ReferenceResolver resolver = dn -> dn.startsWith("uid=alice")
+                ? Optional.of("uid=alice,ou=Users,dc=dst") : Optional.empty();
+
+        MembershipDecision d = fn.evaluate(set, strategy, registration, resolver);
+
+        // secDN: nothing translated → held, with the untranslated DN.
+        assertThat(d.desiredAttrs()).noneMatch(a -> a.getName().equalsIgnoreCase("secDN"));
+        assertThat(d.heldReferences()).containsOnlyKeys("secDN");
+        assertThat(d.heldReferences().get("secDN")).containsExactly("cn=eng,o=native,dc=src");
+        assertThat(d.heldAttributeNames()).containsExactly("secdn");
+        // member: one value translated → projected, and bob noted as unresolved
+        // (kept where the target already has him).
+        assertThat(vals(d, "member")).containsExactly("uid=alice,ou=Users,dc=dst");
+        assertThat(d.unresolvedReferences()).containsExactly(
+                java.util.Map.entry("member", List.of("uid=bob,ou=people,dc=src")));
+    }
+
+    @Test
+    void everyReferenceTranslated_holdsNothing() {
+        SyncSet set = baseSet();
+        set.setReferenceAttributes("secDN");
+        Entry e = person().duplicate();
+        e.setAttribute("secDN", "uid=alice,ou=people,dc=src");
+        MembershipDecision d = fn.evaluate(set, strategy, e, dn -> Optional.of("uid=alice,ou=Users,dc=dst"));
+        assertThat(d.heldReferences()).isEmpty();
+    }
+
+    @Test
     void contentHash_isStableForEquivalentEntries() {
         byte[] h1 = fn.evaluate(baseSet(), strategy, person(), none()).contentHash();
         byte[] h2 = fn.evaluate(baseSet(), strategy, person(), none()).contentHash();
@@ -166,6 +205,39 @@ class MembershipFunctionTest {
         // Entra strategy has a null identity attribute → no identity → OUT.
         assertThat(entra.supports(DirectoryType.ENTRA_ID)).isTrue();
         assertThat(fn.evaluate(baseSet(), entra, person(), none()).member()).isFalse();
+    }
+
+    @Test
+    void referenceValues_areResolvedFromOnePrefetch() {
+        SyncSet set = baseSet();
+        set.setReferenceAttributes("member,manager");
+        Entry group = new Entry("cn=eng,ou=people,dc=src",
+                new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("entryUUID", "2222-BBBB"),
+                new Attribute("cn", "eng"),
+                new Attribute("member", "uid=a,ou=people,dc=src", "uid=b,ou=people,dc=src"),
+                new Attribute("manager", "uid=c,ou=people,dc=src"));
+        List<java.util.Collection<String>> prefetches = new java.util.ArrayList<>();
+        ReferenceResolver resolver = new ReferenceResolver() {
+            @Override
+            public Optional<String> resolveTargetDn(String dn) {
+                throw new AssertionError("resolved one by one: " + dn);
+            }
+
+            @Override
+            public ReferenceResolver prefetched(java.util.Collection<String> dns) {
+                prefetches.add(List.copyOf(dns));
+                return dn -> dn.startsWith("uid=c,") ? Optional.empty()
+                        : Optional.of(dn.replace("ou=people,dc=src", "ou=Users,dc=dst"));
+            }
+        };
+
+        MembershipDecision d = fn.evaluate(set, strategy, group, resolver);
+
+        assertThat(prefetches).singleElement().satisfies(dns -> assertThat(dns).containsExactlyInAnyOrder(
+                "uid=a,ou=people,dc=src", "uid=b,ou=people,dc=src", "uid=c,ou=people,dc=src"));
+        assertThat(vals(d, "member")).containsExactlyInAnyOrder("uid=a,ou=Users,dc=dst", "uid=b,ou=Users,dc=dst");
+        assertThat(d.heldReferences()).containsKey("manager"); // none of its values translate
     }
 
     private static String[] vals(MembershipDecision d, String name) {

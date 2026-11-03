@@ -21,7 +21,8 @@ import java.util.Map;
  * user action if it 404s on an old backend.
  *
  * <pre>
- *   GET /api/v1/version → {"sha": "abc1234", "buildTime": "...", "version": "..."}
+ *   GET /api/v1/version → {"sha": "abc1234", "buildTime": "...", "version": "...",
+ *                          "imageVersion": "...", "deploymentLocation": "..."}
  * </pre>
  *
  * <p>If {@code spring-boot-maven-plugin}'s {@code build-info} goal isn't
@@ -46,11 +47,19 @@ public class VersionController {
     @Value("${IMAGE_VERSION:}")
     private String imageVersion;
 
+    // Where this deployment runs (e.g. an AWS region), as the operator sets it
+    // in DEPLOYMENT_LOCATION. Shown beside the build stamp; omitted when blank.
+    @Value("${DEPLOYMENT_LOCATION:}")
+    private String deploymentLocation;
+
     @GetMapping
     public Map<String, String> version() {
         Map<String, String> out = new LinkedHashMap<>();
         if (imageVersion != null && !imageVersion.isBlank()) {
             out.put("imageVersion", imageVersion);
+        }
+        if (deploymentLocation != null && !deploymentLocation.isBlank()) {
+            out.put("deploymentLocation", deploymentLocation.trim());
         }
         if (buildProperties == null) {
             out.put("sha", "dev");

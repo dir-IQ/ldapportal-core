@@ -48,6 +48,7 @@ import java.util.UUID;
 public class SyncSetController {
 
     private final SyncConfigService service;
+    private final com.ldapportal.ldap.sync.SyncSetDefaultsProvider defaultsProvider;
 
     @GetMapping
     public List<SyncSetResponse> list(@RequestParam(required = false) UUID linkId) {
@@ -62,6 +63,16 @@ public class SyncSetController {
     @GetMapping("/excluded-attribute-defaults")
     public List<String> excludedAttributeDefaults() {
         return com.ldapportal.ldap.sync.SyncExcludedAttributes.DEFAULT_EXCLUDED;
+    }
+
+    /**
+     * What the engine uses for each field left blank: the editor's info tips
+     * list these, so they stay in lock-step with the engine and this server's
+     * configuration.
+     */
+    @GetMapping("/defaults")
+    public com.ldapportal.dto.sync.SyncSetDefaults defaults() {
+        return defaultsProvider.defaults();
     }
 
     @PostMapping
@@ -105,6 +116,20 @@ public class SyncSetController {
         int capped = Math.min(Math.max(size, 1), 200);
         PageRequest pageable = PageRequest.of(Math.max(page, 0), capped, Sort.by("identity"));
         return PageResponse.of(service.listMemberships(id, state, q, pageable));
+    }
+
+    /**
+     * Start a reconcile now and return at once (202): follow it on
+     * {@code GET …/activity}. 409 while one is already running; 400 while the
+     * set or its link is disabled. {@code POST …/reconcile} still runs one
+     * synchronously, for scripts.
+     */
+    @PostMapping("/{id}/reconcile-start")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public ResponseEntity<Map<String, Boolean>> startReconcile(@PathVariable UUID id,
+                                                               @AuthenticationPrincipal AuthPrincipal principal) {
+        service.startReconcile(id, principal != null ? principal.username() : null);
+        return ResponseEntity.accepted().body(Map.of("started", true));
     }
 
     @PostMapping("/{id}/reconcile")
@@ -159,6 +184,43 @@ public class SyncSetController {
             @PathVariable UUID id, @RequestParam(defaultValue = "10") int limit,
             @RequestParam(required = false) SyncReconcileHistory.RunKind kind) {
         return service.reconcileRuns(id, Math.min(Math.max(limit, 1), 20), kind);
+    }
+
+    /**
+     * What the set's inventory actions are doing — its latest reconcile run
+     * and latest content verification, with live progress (phase, counts, the
+     * entry being worked on) while each runs. Polled while Reconcile now,
+     * Re-check target or Verify contents is in progress.
+     */
+    @GetMapping("/{id}/activity")
+    public com.ldapportal.dto.sync.SyncSetActivity activity(@PathVariable UUID id) {
+        return service.activity(id);
+    }
+
+    /**
+     * In-scope source entries the set doesn't manage, and why (applicability
+     * filter, placement), as its latest complete reconcile found them: every
+     * one when that run recorded all DNs, else the samples it kept.
+     */
+    @GetMapping("/{id}/not-in-set")
+    public com.ldapportal.dto.sync.SyncNotInSetPage notInSet(@PathVariable UUID id,
+                                                             @RequestParam(required = false) String q,
+                                                             @RequestParam(defaultValue = "0") int page,
+                                                             @RequestParam(defaultValue = "50") int size) {
+        return service.notInSet(id, q, page, size);
+    }
+
+    /**
+     * Queue a reconcile for the scheduler's next tick and return at once, e.g.
+     * after the set's filter or scope changed. {@code reconcileQueued} is false
+     * while the set or its link is disabled.
+     */
+    @PostMapping("/{id}/reconcile-request")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_DIRECTORY_SYNC)
+    public Map<String, Boolean> requestReconcile(@PathVariable UUID id,
+                                                 @AuthenticationPrincipal AuthPrincipal principal) {
+        return Map.of("reconcileQueued",
+                service.requestReconcile(id, principal != null ? principal.username() : null));
     }
 
     /**

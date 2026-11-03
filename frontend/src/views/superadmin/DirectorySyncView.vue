@@ -9,6 +9,35 @@
       <button v-if="canManage" @click="openLinkModal()" class="btn-primary">+ New Link</button>
     </div>
 
+    <!-- ── Drifting sets: every enabled set whose last complete content verify
+         found drift (what the dashboard's drift count adds up), so they can
+         be found without opening each set. ?drift=1 opens the list. ──────── -->
+    <section v-if="driftingSets.length" data-testid="drifting-sets"
+             class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-amber-900">
+          <span class="font-medium">{{ driftingSets.length }} sync {{ driftingSets.length === 1 ? 'set' : 'sets' }}
+            drifting</span> at their last content verify.
+        </p>
+        <button type="button" class="btn-secondary btn-compact" :aria-expanded="showDrifting"
+                aria-controls="drifting-sets-list" @click="showDrifting = !showDrifting">
+          {{ showDrifting ? 'Hide' : 'Show' }} drifting sets
+        </button>
+      </div>
+      <ul v-if="showDrifting" id="drifting-sets-list" class="mt-3 divide-y divide-amber-200 text-sm">
+        <li v-for="s in driftingSets" :key="s.id" class="flex flex-wrap items-center justify-between gap-2 py-2">
+          <div class="min-w-0">
+            <span class="font-medium text-gray-900">{{ s.name }}</span>
+            <span class="text-gray-500"> · {{ linkName(s.linkId) }}</span>
+            <span class="block text-xs" :class="driftSummary(s).tone" :title="driftSummary(s).title">
+              {{ driftSummary(s).label }} · verified {{ verifiedAt(s) }}
+            </span>
+          </div>
+          <button type="button" class="btn-secondary btn-compact" @click="openSetById(s.id)">Open set</button>
+        </li>
+      </ul>
+    </section>
+
     <!-- ── Links (each expands to its nested sync sets) ─────────────────── -->
     <DataTable :columns="linkCols" :rows="links" :loading="loadingLinks" row-key="id"
                empty-text="No sync links configured yet."
@@ -32,6 +61,9 @@
           <span class="w-2 h-2 rounded-full shrink-0" :class="healthSummary(linkCounts(row.id)).dot" aria-hidden="true"></span>
           {{ healthSummary(linkCounts(row.id)).label }}
         </span>
+      </template>
+      <template #cell-drift="{ row }">
+        <span class="text-xs font-medium" :class="linkDrift(row.id).tone">{{ linkDrift(row.id).label }}</span>
       </template>
       <template #cell-enabled="{ row }">
         <span class="text-xs font-medium" :class="row.enabled ? 'text-green-600' : 'text-gray-500'">
@@ -72,6 +104,11 @@
                     :class="healthSummary(setCounts(s)).tone">
                 <span class="w-2 h-2 rounded-full shrink-0" :class="healthSummary(setCounts(s)).dot" aria-hidden="true"></span>
                 {{ healthSummary(setCounts(s)).label }}
+              </span>
+            </template>
+            <template #cell-drift="{ row: s }">
+              <span class="text-xs font-medium" :class="driftSummary(s).tone" :title="driftSummary(s).title">
+                {{ driftSummary(s).label }}
               </span>
             </template>
             <template #cell-enabled="{ row: s }">
@@ -145,51 +182,55 @@
     </AppModal>
 
     <!-- ── Set editor ──────────────────────────────────────────────────────── -->
-    <AppModal v-model="showSetModal" :title="editingSet ? 'Edit sync set' : 'New sync set'" size="lg">
-      <form class="space-y-3" @submit.prevent="saveSet">
+    <AppModal v-model="showSetModal" :title="editingSet ? 'Edit sync set' : 'New sync set'" size="lg"
+              :dirty="setDirty">
+      <form id="sync-set-form" class="space-y-3" @submit.prevent="saveSet">
         <div class="grid grid-cols-2 gap-3">
-          <FormField label="Name" v-model="setForm.name" required
-                     help="A label for this sync set, shown in the inventory and logs. Does not affect matching." />
+          <FormField label="Name" v-model="setForm.name" required :help="help.name" />
           <FormField label="Identity key (attribute)" v-model="setForm.identityKey"
-                     placeholder="entryUUID / objectGUID (default by type)"
-                     help="Source attribute used as each entry's stable identity (e.g. entryUUID, objectGUID). Leave blank to use the directory type's default. Avoid mutable attributes like mail." />
-          <FormField label="Source scope base DN" v-model="setForm.objectScopeBaseDn"
-                     placeholder="directory base DN"
-                     help="Base DN under the source directory to enumerate entries from. Combined with the source scope below. Leave blank for the source directory's base DN (required when it has more than one)." />
+                     :placeholder="DEFAULT_PLACEHOLDER" :help="help.identityKey" />
+          <FormField label="Source base DN" v-model="setForm.objectScopeBaseDn" required
+                     :help="help.sourceBaseDn" />
           <FormField label="Target base DN" v-model="setForm.targetBaseDn"
-                     placeholder="same as source"
-                     help="Base DN under the target directory where matched entries are created and placed; the part of each DN below the source scope base is kept. Leave blank to place entries at the same DNs as on the source, which needs the source scope base DN to be under one of the target directory's base DNs." />
-          <FormField label="Applicability filter (RFC 4515)" v-model="setForm.applicabilityFilter"
-                     placeholder="(&(objectClass=inetOrgPerson)(employeeType=staff))"
-                     help="LDAP filter selecting which source entries belong to this set. Only matching entries are synced." />
+                     :placeholder="DEFAULT_PLACEHOLDER" :help="help.targetBaseDn" />
+          <FormField class="col-span-2" label="Applicability filter (RFC 4515)" v-model="setForm.applicabilityFilter"
+                     type="textarea" :rows="3" :placeholder="DEFAULT_PLACEHOLDER" :help="help.applicabilityFilter" />
           <FormField label="Reference attributes (csv)" v-model="setForm.referenceAttributes"
-                     placeholder="member,uniqueMember,manager"
-                     help="Comma-separated DN-valued attributes whose references are rewritten and closed across the set (e.g. member, uniqueMember, manager)." />
+                     :placeholder="DEFAULT_PLACEHOLDER" :help="help.referenceAttributes" />
           <FormField label="Source anchor attribute" v-model="setForm.sourceAnchorAttribute"
-                     help="Target attribute holding the source identity, used to adopt pre-existing target entries (brownfield). Ambiguous matches are quarantined for review." />
-          <FormField label="Reconcile cadence (seconds)" v-model="setForm.reconcileCadenceSeconds"
-                     type="number" placeholder="default"
-                     help="How often this set is fully reconciled against the source. Leave blank to use the global default." />
+                     :placeholder="DEFAULT_PLACEHOLDER" :help="help.sourceAnchorAttribute" />
+          <FormField label="Reconcile interval (seconds)" v-model="setForm.reconcileCadenceSeconds"
+                     type="number" :placeholder="DEFAULT_PLACEHOLDER" :help="help.reconcileInterval" />
           <div>
             <div class="flex items-center mb-1">
-              <label class="block text-sm font-medium text-gray-700">Delete policy</label>
-              <HelpTip text="What happens when an entry leaves scope: Delete removes the target entry; Review quarantines it for an operator to resolve." />
+              <label for="sync-set-delete-policy" class="block text-sm font-medium text-gray-700">Delete policy</label>
+              <HelpTip :text="help.deletePolicy" />
             </div>
-            <select v-model="setForm.deletePolicy" aria-label="Delete policy" class="input">
+            <select id="sync-set-delete-policy" v-model="setForm.deletePolicy" class="input">
               <option value="DELETE">Delete</option>
               <option value="REVIEW">Review (quarantine)</option>
             </select>
           </div>
           <div>
             <div class="flex items-center mb-1">
-              <label class="block text-sm font-medium text-gray-700">Source scope</label>
-              <HelpTip text="LDAP search scope under the base DN: Subtree (all descendants), One level (immediate children), or Base (the base entry only)." />
+              <label for="sync-set-source-scope" class="block text-sm font-medium text-gray-700">Source scope</label>
+              <HelpTip :text="help.sourceScope" />
             </div>
-            <select v-model="setForm.objectScope" aria-label="Source scope" class="input">
+            <select id="sync-set-source-scope" v-model="setForm.objectScope" class="input">
               <option :value="null">Default (subtree)</option>
               <option value="SUB">Subtree</option>
               <option value="ONE">One level</option>
               <option value="BASE">Base</option>
+            </select>
+          </div>
+          <div>
+            <div class="flex items-center mb-1">
+              <label for="sync-set-logging-level" class="block text-sm font-medium text-gray-700">Logging level</label>
+              <HelpTip :text="help.loggingLevel" />
+            </div>
+            <select id="sync-set-logging-level" v-model="setForm.loggingLevel" class="input">
+              <option value="SUMMARY">Summary</option>
+              <option value="DETAILED">Detailed</option>
             </select>
           </div>
         </div>
@@ -231,79 +272,90 @@
           </label>
           <HelpTip text="New sets start disabled. When off, this set is not reconciled or applied, and existing target entries are left untouched." />
         </div>
-        <div class="flex items-center gap-1">
-          <label class="flex items-center gap-2 text-sm text-gray-700">
-            <input type="checkbox" v-model="setForm.recordAllDns" class="rounded" /> Record every DN
-          </label>
-          <HelpTip text="Keep every changed or flagged entry's DN in each run's history, downloadable as CSV from the run's details. When off, only the first 25 DNs per outcome are kept. A large run stores one row per entry." />
-        </div>
 
-        <!-- Dry-run preview (existing sets only — needs a persisted set to plan against). -->
+        <!-- Dry-run preview (existing sets only — needs a persisted set to plan
+             against). Preview impact opens the per-entry view, which runs on the
+             saved set, so it waits for a save while the form holds edits. This
+             panel shows the latest run's counts: the entries that view lists. -->
         <div v-if="editingSet" class="rounded-lg border border-gray-200 p-3 space-y-2">
           <div class="flex items-center justify-between">
             <span class="text-sm font-medium text-gray-700">Impact preview</span>
-            <div class="flex items-center gap-2">
-              <button type="button" class="btn-secondary btn-compact" :disabled="previewLoading"
-                      @click="runPreview">{{ previewLoading ? 'Checking…' : 'Preview impact' }}</button>
-              <button v-if="canManage" type="button" class="btn-secondary btn-compact"
-                      @click="showChanges = true">
-                Show changes
-              </button>
-            </div>
+            <button v-if="canManage" type="button" class="btn-secondary btn-compact" :disabled="setDirty"
+                    @click="showChanges = true">Preview impact</button>
           </div>
-          <div v-if="previewResult" class="text-xs text-gray-600 space-y-1">
+          <p v-if="setDirty" class="text-xs text-gray-500">
+            Save your changes to preview them. The preview runs on the saved set.
+          </p>
+          <p v-else-if="!impact" class="text-xs text-gray-500">
+            No preview yet. Preview impact checks every entry against the target and lists what a reconcile would do.
+          </p>
+          <p v-else-if="impact?.status === 'RUNNING'" class="text-xs text-gray-500">
+            Checking every entry against the target… {{ impact.processed }} of {{ impact.total || '…' }}
+          </p>
+          <p v-else-if="impact?.status === 'FAILED'" class="text-xs text-rose-700">
+            The preview failed: {{ impact.error }}
+          </p>
+          <div v-else-if="impact?.status === 'COMPLETE'" class="text-xs text-gray-600 space-y-1">
+            <p class="text-gray-500">{{ impactRanAt }}</p>
             <p>
-              Source entries: <span class="font-medium">{{ previewResult.sourceCount }}</span> ·
-              Managed: <span class="font-medium">{{ previewResult.managedCount }}</span> ·
-              Would add: <span class="font-medium text-emerald-700">{{ previewResult.plannedAdds }}</span> ·
-              Would delete:
-              <span class="font-medium" :class="previewResult.plannedDeletes > 0 ? 'text-rose-700' : 'text-gray-700'">
-                {{ previewResult.plannedDeletes }}
-              </span>
+              Source entries: <span class="font-medium">{{ impact.sourceCount }}</span> ·
+              Managed: <span class="font-medium">{{ impact.managedCount }}</span>
             </p>
-            <p v-if="!previewResult.completeScan" class="text-amber-600">
-              Source enumeration failed — no deletions would run this cycle.
+            <p data-testid="impact-counts">
+              <template v-for="(c, i) in impactCounts" :key="c.label">
+                <template v-if="i"> · </template>{{ c.label }}:
+                <span class="font-medium" :class="c.n > 0 ? c.tone : 'text-gray-700'">{{ c.n }}</span>
+              </template>
             </p>
-            <p v-if="previewResult.guardTripped" class="text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-              Delete guard would trip: {{ previewResult.guardReason }}. These deletions would be
-              held for review, not applied.
+            <p v-if="impact.outdated" class="text-amber-700">
+              The set or its directories changed after this preview ran. Preview again for current counts.
             </p>
-            <ul v-if="previewResult.sampleDeleteDns.length" class="font-mono text-[11px] text-gray-500 list-disc pl-4">
-              <li v-for="dn in previewResult.sampleDeleteDns" :key="dn">{{ dn }}</li>
-            </ul>
+            <p v-if="!impact.completeScan" class="text-amber-600">
+              {{ impact.note ?? 'Source enumeration failed.' }} No deletions would run this cycle.
+            </p>
+            <p v-if="impact.guardTripped" class="text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+              Delete guard would trip: {{ impact.guardReason }}. The deletions would be held for review, not applied.
+            </p>
           </div>
         </div>
 
         <!-- Enable confirmation: surfaced when turning a set on would delete entries. -->
-        <div v-if="confirmEnable && previewResult"
+        <div v-if="confirmEnable && impact?.status === 'COMPLETE'"
              class="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 space-y-2">
           <p class="font-semibold">Enabling this set will affect existing target entries.</p>
           <p>
-            {{ previewResult.guardTripped
-              ? `${previewResult.plannedDeletes} deletion(s) would be held for review (delete guard).`
-              : `${previewResult.plannedDeletes} target entry(ies) would be deleted.` }}
+            {{ impact.guardTripped
+              ? 'The delete guard would trip, so the planned deletions would be held for review.'
+              : `${impactCount('DELETE')} target entry(ies) would be deleted.` }}
             Review the preview above before continuing.
           </p>
           <div class="flex justify-end gap-2">
             <button type="button" class="btn-neutral btn-compact" @click="confirmEnable = false">Back</button>
-            <button type="button" class="btn-danger btn-compact" @click="doSaveSet">Enable anyway</button>
+            <button type="button" class="btn-danger btn-compact" :disabled="setSaveBusy" @click="doSaveSet">
+              {{ savingSet ? 'Saving…' : 'Enable anyway' }}
+            </button>
           </div>
         </div>
 
-        <div class="flex justify-end gap-2 pt-2">
-          <button type="button" class="btn-neutral" @click="showSetModal = false">Cancel</button>
-          <button type="submit" class="btn-primary">{{ editingSet ? 'Save' : 'Create' }}</button>
-        </div>
       </form>
+      <!-- Save keeps the dialog open so the impact preview can run on what was
+           just saved; Close goes through AppModal's unsaved-changes guard. -->
+      <template #footer="{ close }">
+        <button type="button" class="btn-neutral" @click="close()">Close</button>
+        <button type="submit" form="sync-set-form" class="btn-primary"
+                :disabled="setSaveBusy || (!!editingSet && !setDirty)" :aria-busy="setSaveBusy">
+          {{ setSaveLabel }}
+        </button>
+      </template>
     </AppModal>
 
     <SyncPreviewChangesModal v-if="editingSet" v-model="showChanges"
-                             :set-id="editingSet.id" :set-name="editingSet.name" />
+                             :set-id="editingSet.id" :set-name="editingSet.name" @run="onChangesRun" />
   </PageContainer>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import PageContainer from '@/components/PageContainer.vue'
 import AppModal from '@/components/AppModal.vue'
@@ -321,11 +373,15 @@ import { useConfirm } from '@/composables/useConfirm'
 import { listDirectories } from '@/api/directories'
 import {
   listSyncLinks, createSyncLink, updateSyncLink, deleteSyncLink,
-  listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet, getSyncSetDeleteImpact, getExcludedAttributeDefaults,
-  previewReconcile,
+  listSyncSets, createSyncSet, updateSyncSet, deleteSyncSet, getSyncSetDeleteImpact, getSyncSetDefaults,
+  requestSyncSetReconcile,
+  getPreviewRun, startPreviewRun,
   type SyncLink, type SyncLinkPayload, type SyncSet, type SyncSetPayload,
-  type SyncTransformRule, type SyncReconcilePreview, type MembershipState, type SyncSetDeleteImpact,
+  type SyncTransformRule, type SyncPreviewStatus, type SyncPreviewAction, type MembershipState, type SyncSetDeleteImpact,
+  type SyncSetDefaults, type SyncLoggingLevel,
 } from '@/api/sync'
+import { DEFAULT_PLACEHOLDER, syncSetHelp } from '@/components/sync/syncSetHelp'
+import { driftCounts, driftSummary, driftTotal, isDrifting } from '@/components/sync/syncDrift'
 
 interface DirOption { id: string; displayName: string }
 
@@ -359,6 +415,7 @@ const linkCols = [
   { key: 'targetDirId', label: 'Target' },
   { key: 'captureMode', label: 'Capture' },
   { key: 'health', label: 'Health' },
+  { key: 'drift', label: 'Drift' },
   { key: 'enabled', label: 'Enabled' },
 ]
 const setCols = [
@@ -367,14 +424,39 @@ const setCols = [
   { key: 'targetBaseDn', label: 'Target base' },
   { key: 'deletePolicy', label: 'Delete policy' },
   { key: 'health', label: 'Health' },
+  { key: 'drift', label: 'Drift' },
   { key: 'enabled', label: 'Enabled' },
 ]
+
+// ── Drift (each set's last complete content verify) ──
+// The drifting-sets list is open by default only for the dashboard's ?drift=1.
+const showDrifting = ref(false)
+/** Enabled sets whose last complete verify found drift, most first. */
+const driftingSets = computed<SyncSet[]>(() => allSets.value
+  .filter(isDrifting)
+  .sort((a, b) => driftTotal(driftCounts(b)) - driftTotal(driftCounts(a))))
+function linkName(linkId: string): string {
+  return links.value.find((l) => l.id === linkId)?.displayName ?? '—'
+}
+function verifiedAt(s: SyncSet): string {
+  return s.verify?.at ? new Date(s.verify.at).toLocaleString() : '—'
+}
+/** A link's drift rollup over its enabled sets. */
+function linkDrift(linkId: string): { label: string; tone: string } {
+  const own = allSets.value.filter((s) => s.linkId === linkId && s.enabled)
+  const drifting = own.filter(isDrifting).length
+  if (drifting) return { label: `${drifting} ${drifting === 1 ? 'set' : 'sets'} drifting`, tone: 'text-amber-800' }
+  if (own.some((s) => driftCounts(s))) return { label: 'In sync', tone: 'text-green-700' }
+  return { label: 'Not verified', tone: 'text-gray-400' }
+}
 
 // ── Health rollup (membership state counts) ──
 type StateCounts = Record<string, number>
 
+// REVIEW_DELETE counts the held deletes among the REVIEW rows: a subset, not a state.
+const HELD_DELETE_KEY = 'REVIEW_DELETE'
 function countTotal(c: StateCounts | undefined): number {
-  return Object.values(c ?? {}).reduce((a, b) => a + b, 0)
+  return Object.entries(c ?? {}).reduce((a, [k, v]) => (k === HELD_DELETE_KEY ? a : a + v), 0)
 }
 function setCounts(s: SyncSet | undefined): StateCounts {
   return s?.stateCounts ?? {}
@@ -387,10 +469,20 @@ function linkCounts(linkId: string): StateCounts {
   }
   return acc
 }
-// A single dot + label summarizing health (worst non-zero state wins).
+// A dot + label summarizing health. Failed and review show side by side (the
+// dot and colour follow the worse), so a failure never hides what waits for
+// review; held deletes are called out within the review count.
 function healthSummary(c: StateCounts): { dot: string; label: string; tone: string } {
-  if ((c.FAILED ?? 0) > 0) return { dot: 'bg-red-600', label: `${c.FAILED} failed`, tone: 'text-red-700' }
-  if ((c.REVIEW ?? 0) > 0) return { dot: 'bg-amber-500', label: `${c.REVIEW} review`, tone: 'text-amber-800' }
+  const failed = c.FAILED ?? 0
+  const review = c.REVIEW ?? 0
+  const deletes = Math.min(c[HELD_DELETE_KEY] ?? 0, review)
+  const parts: string[] = []
+  if (failed > 0) parts.push(`${failed} failed`)
+  if (review > 0) {
+    parts.push(`${review} review` + (deletes > 0 ? ` (${deletes} ${deletes === 1 ? 'delete' : 'deletes'})` : ''))
+  }
+  if (failed > 0) return { dot: 'bg-red-600', label: parts.join(' · '), tone: 'text-red-700' }
+  if (review > 0) return { dot: 'bg-amber-500', label: parts.join(' · '), tone: 'text-amber-800' }
   if (countTotal(c) > 0) return { dot: 'bg-green-600', label: 'Healthy', tone: 'text-green-700' }
   return { dot: 'bg-gray-300', label: 'No data', tone: 'text-gray-400' }
 }
@@ -543,13 +635,16 @@ interface SetForm {
   // null ⇒ use the engine defaults (operational + password values).
   excludedAttributes: string[] | null
   enabled: boolean
-  recordAllDns: boolean
+  loggingLevel: SyncLoggingLevel
 }
 const showSetModal = ref(false)
 const editingSet = ref<SyncSet | null>(null)
 const setForm = ref<SetForm>(blankSet())
-// Backend-driven default exclusion list, used to seed/show the editor.
-const excludedDefaults = ref<string[]>([])
+// What the engine uses for blank fields (backend-driven): the info tips list
+// these, and the excluded-attribute editor seeds from its list.
+const setDefaults = ref<SyncSetDefaults | null>(null)
+const help = computed(() => syncSetHelp(setDefaults.value))
+const excludedDefaults = computed<string[]>(() => setDefaults.value?.excludedAttributes ?? [])
 function blankSet(): SetForm {
   return {
     name: '', identityKey: '', objectScopeBaseDn: '', targetBaseDn: '', applicabilityFilter: '',
@@ -557,28 +652,54 @@ function blankSet(): SetForm {
     // Safe defaults: quarantine deletes for review, and start disabled so the
     // operator validates (and can Preview the impact) before turning it on.
     deletePolicy: 'REVIEW', objectScope: null, transformRules: [], excludedAttributes: null, enabled: false,
-    recordAllDns: false,
+    loggingLevel: 'SUMMARY',
   }
 }
+function formFromSet(s: SyncSet): SetForm {
+  return {
+    name: s.name, identityKey: s.identityKey ?? '', objectScopeBaseDn: s.objectScopeBaseDn ?? '',
+    targetBaseDn: s.targetBaseDn ?? '', applicabilityFilter: s.applicabilityFilter ?? '',
+    referenceAttributes: s.referenceAttributes ?? '', sourceAnchorAttribute: s.sourceAnchorAttribute ?? '',
+    reconcileCadenceSeconds: s.reconcileCadenceSeconds != null ? String(s.reconcileCadenceSeconds) : '',
+    deletePolicy: s.deletePolicy, objectScope: s.objectScope,
+    transformRules: (s.transformRules ?? []).map((r) => ({ ...r })),
+    excludedAttributes: s.excludedAttributes ? [...s.excludedAttributes] : null,
+    enabled: s.enabled,
+    loggingLevel: s.loggingLevel ?? 'SUMMARY',
+  }
+}
+// Unsaved-changes tracking: the form is dirty while what it would send differs
+// from what it held when it was opened or last saved.
+const savedSetSnapshot = ref<string>('')
+const savingSet = ref<boolean>(false)
+// Enabling a set runs a full impact preview before saving, which can take a
+// while on a large set: the Save button says so, and ignores further clicks.
+const checkingImpact = ref<boolean>(false)
+const setSaveBusy = computed<boolean>(() => savingSet.value || checkingImpact.value)
+const setSaveLabel = computed<string>(() => {
+  if (checkingImpact.value) {
+    const p = impact.value
+    return p?.status === 'RUNNING' && p.total
+      ? `Checking impact… ${p.processed.toLocaleString()} of ${p.total.toLocaleString()}`
+      : 'Checking impact…'
+  }
+  if (savingSet.value) return 'Saving…'
+  return editingSet.value ? 'Save' : 'Create'
+})
+function setSnapshot(f: SetForm): string {
+  return JSON.stringify(toPayload(f))
+}
+const setDirty = computed<boolean>(() => showSetModal.value && setSnapshot(setForm.value) !== savedSetSnapshot.value)
 function openSetModal(s?: SyncSet) {
   editingSet.value = s ?? null
-  setForm.value = s
-    ? {
-        name: s.name, identityKey: s.identityKey ?? '', objectScopeBaseDn: s.objectScopeBaseDn ?? '',
-        targetBaseDn: s.targetBaseDn ?? '', applicabilityFilter: s.applicabilityFilter ?? '',
-        referenceAttributes: s.referenceAttributes ?? '', sourceAnchorAttribute: s.sourceAnchorAttribute ?? '',
-        reconcileCadenceSeconds: s.reconcileCadenceSeconds != null ? String(s.reconcileCadenceSeconds) : '',
-        deletePolicy: s.deletePolicy, objectScope: s.objectScope,
-        transformRules: (s.transformRules ?? []).map((r) => ({ ...r })),
-        excludedAttributes: s.excludedAttributes ? [...s.excludedAttributes] : null,
-        enabled: s.enabled,
-        recordAllDns: s.recordAllDns,
-      }
-    : blankSet()
-  previewResult.value = null
+  setForm.value = s ? formFromSet(s) : blankSet()
+  // A new set is dirty from the start: nothing has been saved yet.
+  savedSetSnapshot.value = s ? setSnapshot(setForm.value) : ''
+  impact.value = null
   confirmEnable.value = false
   showChanges.value = false
   showSetModal.value = true
+  void loadLatestPreview()
 }
 // Trim rows, drop blank-source rows, and collapse blank target/template to null
 // (the engine reads null target as "same name" and null template as passthrough).
@@ -610,39 +731,115 @@ function toPayload(f: SetForm): SyncSetPayload {
     excludedAttributes: f.excludedAttributes,
     reconcileCadenceSeconds: f.reconcileCadenceSeconds.trim() ? Number(f.reconcileCadenceSeconds) : null,
     enabled: f.enabled,
-    recordAllDns: f.recordAllDns,
+    loggingLevel: f.loggingLevel,
   }
 }
 // ── Dry-run preview + enable confirmation ──
-const previewResult = ref<SyncReconcilePreview | null>(null)
-const previewLoading = ref(false)
+// One per-entry preview run backs the summary here and the Preview impact list,
+// so the two can't disagree.
+const impact = ref<SyncPreviewStatus | null>(null)
+const impactRanAt = computed<string>(() => {
+  const at = impact.value?.finishedAt ?? impact.value?.startedAt
+  if (!at) return ''
+  const by = impact.value?.requestedBy
+  return `Last preview: ${new Date(at).toLocaleString()}${by ? ` by ${by}` : ''}.`
+})
 // Per-entry dry run (what a reconcile would do to each entry), in its own dialog.
 const showChanges = ref<boolean>(false)
 const confirmEnable = ref(false) // showing the "enable will delete N" confirmation
+const PREVIEW_POLL_MS = 1000
+// Bumped whenever the run being followed stops mattering (dialog reopened or
+// closed, set saved), so a poll still in flight drops its result.
+let previewTicket = 0
 
-async function runPreview() {
+function impactCount(action: SyncPreviewAction): number {
+  return impact.value?.actionCounts?.[action] ?? 0
+}
+const impactCounts = computed(() => [
+  { label: 'Would add', n: impactCount('ADD'), tone: 'text-emerald-700' },
+  { label: 'Would modify', n: impactCount('MODIFY'), tone: 'text-sky-700' },
+  { label: 'Would move', n: impactCount('MOVE'), tone: 'text-sky-700' },
+  { label: 'Would delete', n: impactCount('DELETE'), tone: 'text-rose-700' },
+  { label: 'Held for review', n: impactCount('REVIEW'), tone: 'text-amber-700' },
+  { label: 'Errors', n: impactCount('ERROR'), tone: 'text-rose-700' },
+  { label: 'No change', n: impactCount('NO_CHANGE') + impactCount('UNCHANGED') + impactCount('FORGET'),
+    tone: 'text-gray-700' },
+])
+
+/** Follow a run until it finishes (or stops mattering); resolves with its last status. */
+async function followPreview(status: SyncPreviewStatus, ticket: number): Promise<SyncPreviewStatus | null> {
+  let current = status
+  while (current.status === 'RUNNING') {
+    await new Promise((resolve) => setTimeout(resolve, PREVIEW_POLL_MS))
+    if (ticket !== previewTicket || !editingSet.value) return null
+    current = (await getPreviewRun(editingSet.value.id)).data
+    if (ticket !== previewTicket) return null
+    impact.value = current
+  }
+  return current
+}
+
+/** Start a fresh run (or join the one running) and wait for it: the enable confirmation's check. */
+async function runPreview(): Promise<SyncPreviewStatus | null> {
   if (!editingSet.value) return null
-  previewLoading.value = true
+  const ticket = ++previewTicket
   try {
-    const { data } = await previewReconcile(editingSet.value.id)
-    previewResult.value = data
-    return data
+    const { data } = await startPreviewRun(editingSet.value.id)
+    if (ticket !== previewTicket) return null
+    impact.value = data
+    return await followPreview(data, ticket)
   } catch (e) {
     notif.error(errMsg(e))
     return null
-  } finally {
-    previewLoading.value = false
   }
 }
+
+/** Show the set's latest run, if any (following it when it's still running). */
+async function loadLatestPreview(): Promise<void> {
+  if (!editingSet.value) return
+  const ticket = ++previewTicket
+  try {
+    const { data } = await getPreviewRun(editingSet.value.id)
+    if (ticket !== previewTicket) return
+    impact.value = data.status ? data : null
+    if (data.status === 'RUNNING') await followPreview(data, ticket)
+  } catch {
+    // The summary is a convenience: without it the panel just offers Preview impact.
+  }
+}
+
+// The per-entry view starts a fresh run when the latest is missing or outdated
+// (or on Run again) and follows it: mirror each status it reads, so the panel
+// behind it tracks the run live rather than only once the view closes. Taking
+// over drops any poll this view still has in flight for an older run.
+function onChangesRun(status: SyncPreviewStatus): void {
+  if (!showSetModal.value || !editingSet.value) return
+  previewTicket++
+  impact.value = status
+}
+// Once it closes, re-read the latest run (following it if it's still running).
+watch(showChanges, (open) => {
+  if (!open && showSetModal.value) void loadLatestPreview()
+})
+watch(showSetModal, (open) => {
+  if (!open) previewTicket++
+})
 
 async function saveSet() {
   // Turning an existing set on is the moment deletions could start. Preview the
   // impact first and make the operator confirm if anything would be deleted (or
   // the guard would quarantine).
+  if (setSaveBusy.value) return // a click while the last one is still checking or saving
   const enabling = !!editingSet.value && setForm.value.enabled && !editingSet.value.enabled
   if (enabling && !confirmEnable.value) {
-    const p = await runPreview()
-    if (p && (p.plannedDeletes > 0 || p.guardTripped)) {
+    checkingImpact.value = true
+    let p: SyncPreviewStatus | null
+    try {
+      p = await runPreview()
+    } finally {
+      checkingImpact.value = false
+    }
+    if (p?.status === 'COMPLETE' && ((p.actionCounts?.DELETE ?? 0) > 0 || p.guardTripped)) {
       confirmEnable.value = true
       return
     }
@@ -650,15 +847,88 @@ async function saveSet() {
   await doSaveSet()
 }
 
+// Saves and keeps the dialog open: the form is reseeded from what the server
+// stored, and a new set becomes an existing one, so the impact preview can run
+// on it straight away.
 async function doSaveSet() {
+  if (savingSet.value) return
+  const creating = !editingSet.value
+  const before = editingSet.value
+  let saved: SyncSet | null = null
+  savingSet.value = true
   try {
     const payload = toPayload(setForm.value)
-    if (editingSet.value) await updateSyncSet(editingSet.value.id, payload)
-    else await createSyncSet(payload)
-    notif.success(editingSet.value ? 'Sync set updated' : 'Sync set created')
+    const { data } = editingSet.value
+      ? await updateSyncSet(editingSet.value.id, payload)
+      : await createSyncSet(payload)
+    editingSet.value = data
+    setForm.value = formFromSet(data)
+    savedSetSnapshot.value = setSnapshot(setForm.value)
+    previewTicket++
+    impact.value = null // it described the configuration before this save
     confirmEnable.value = false
-    showSetModal.value = false
+    notif.success(creating ? 'Sync set created' : 'Sync set updated')
+    saved = data
     await refreshHealth()
+  } catch (e) {
+    notif.error(errMsg(e))
+  } finally {
+    savingSet.value = false
+  }
+  // A new set, or a save that changed what the set manages or writes, starts
+  // the impact preview straight away: the panel would otherwise only say "No
+  // preview yet", and its counts are what to read before reconciling.
+  if (saved && (creating || (before && reconciledChanges(before, saved).length > 0))) void runPreview()
+  // Asked once the save is done, so the button no longer reads "Saving…" behind it.
+  if (before && saved && before.enabled && saved.enabled) await offerReconcile(before, saved)
+}
+
+// What decides which entries the set manages, where they go and what it writes:
+// a change only takes effect at the set's next reconcile.
+const RECONCILED_FIELDS: { key: keyof SyncSet; label: string }[] = [
+  { key: 'applicabilityFilter', label: 'applicability filter' },
+  { key: 'objectScopeBaseDn', label: 'source base DN' },
+  { key: 'objectScope', label: 'source scope' },
+  { key: 'targetBaseDn', label: 'target base DN' },
+  { key: 'referenceAttributes', label: 'reference attributes' },
+  { key: 'excludedAttributes', label: 'excluded attributes' },
+  { key: 'transformRules', label: 'transform rules' },
+]
+
+/** The reconciled settings a save changed, by label. */
+function reconciledChanges(before: SyncSet, after: SyncSet): string[] {
+  return RECONCILED_FIELDS
+    .filter(({ key }) => JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null))
+    .map(({ label }) => label)
+}
+
+/**
+ * After a save that changed what the set manages or writes, offer to apply it
+ * now: otherwise it waits for the set's next scheduled reconcile, and rows held
+ * under the old settings (a deletion held for review) stay held until then.
+ */
+async function offerReconcile(before: SyncSet, after: SyncSet) {
+  const changed = reconciledChanges(before, after)
+  if (changed.length === 0) return
+  const what = changed.length === 1 ? `The new ${changed[0]} takes`
+    : `The changes to the ${changed.slice(0, -1).join(', ')} and ${changed[changed.length - 1]} take`
+  const ok = await confirm({
+    title: 'Apply the changes now?',
+    message: `${what} effect at the set's next reconcile. Reconcile now to apply ${changed.length === 1 ? 'it' : 'them'} `
+      + 'to every entry: entries that now leave the set are deleted or held for review, as its delete policy '
+      + 'says, and deletions held for entries that are back in the set clear.\n\n'
+      + 'To see what it would do first, choose Later: the impact preview is already running in the editor.',
+    confirmLabel: 'Reconcile now',
+    cancelLabel: 'Later',
+  })
+  if (!ok) return
+  try {
+    const { data } = await requestSyncSetReconcile(after.id)
+    if (data.reconcileQueued) {
+      notif.success('Reconcile queued: it starts within about a minute. Follow it in the set\'s inventory.')
+    } else {
+      notif.info('Reconcile requested: it runs once the set\'s link is enabled.')
+    }
   } catch (e) {
     notif.error(errMsg(e))
   }
@@ -762,7 +1032,9 @@ function queryParam(v: unknown): string | undefined {
 //   ?set=<id>            → open that set's inventory
 //   ?state=FAILED|REVIEW → open the worst set in that state, pre-filtered
 //   ?link=<id>           → expand + highlight that link
+//   ?drift=1             → open the drifting-sets list
 async function applyDeepLink() {
+  if (queryParam(route.query.drift)) showDrifting.value = true
   const setId = queryParam(route.query.set)
   const linkId = queryParam(route.query.link)
   const stateRaw = queryParam(route.query.state)
@@ -782,10 +1054,10 @@ async function applyDeepLink() {
 onMounted(async () => {
   try {
     const [dirs, defaults] = await Promise.all([
-      listDirectories(), getExcludedAttributeDefaults(), loadLinks(), loadSetHealth(),
+      listDirectories(), getSyncSetDefaults(), loadLinks(), loadSetHealth(),
     ])
     directories.value = dirs.data.map((d) => ({ id: d.id ?? '', displayName: d.displayName ?? '' }))
-    excludedDefaults.value = defaults.data
+    setDefaults.value = defaults.data
     // links + set health are loaded above, so the deep link can resolve its target.
     await applyDeepLink()
   } catch (e) {

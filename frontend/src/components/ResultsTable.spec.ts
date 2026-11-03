@@ -24,6 +24,18 @@ vi.mock('@/stores/preferences', () => ({
   }),
 }))
 
+// Capture the options ResultsTable hands sortablejs so a test can play the
+// part of a finished drag (jsdom can't drive real pointer drags).
+const sortableCalls: Array<{ el: HTMLElement, opts: { onEnd?: (e: unknown) => void } }> = []
+vi.mock('sortablejs', () => ({
+  default: {
+    create: (el: HTMLElement, opts: { onEnd?: (e: unknown) => void }) => {
+      sortableCalls.push({ el, opts })
+      return { destroy: () => {} }
+    },
+  },
+}))
+
 import ResultsTable from './ResultsTable.vue'
 import type { ColumnDef } from './ResultsTable.vue'
 
@@ -247,6 +259,7 @@ describe('ResultsTable.vue', () => {
     // Open picker
     const colsBtn = w.findAll('button').find(b => b.text().includes('Columns'))!
     await colsBtn.trigger('click')
+    await flushPromises() // the picker's draggable list is lazy-loaded
     // Find the "Department" item and click it
     const deptItem = w.findAll('div.cursor-pointer').find(d => d.text().includes('Department'))!
     await deptItem.trigger('click')
@@ -260,6 +273,7 @@ describe('ResultsTable.vue', () => {
     const w = makeWrapper()
     const colsBtn = w.findAll('button').find(b => b.text().includes('Columns'))!
     await colsBtn.trigger('click')
+    await flushPromises() // the picker's draggable list is lazy-loaded
     // The 'id' column has alwaysVisible: true, so its row should be marked
     // disabled and clicking it should be a no-op.
     const idItem = w.findAll('div.cursor-not-allowed').find(d => d.text().includes('ID'))
@@ -370,6 +384,7 @@ describe('ResultsTable.vue', () => {
       }
       const w = mount(ResultsTable, { props: { tableKey: key, columns, rows } })
       await w.findAll('button').find(b => b.text().includes('Columns'))!.trigger('click')
+      await flushPromises()
       const deptRow = w.findAll('div.cursor-pointer').find(d => d.text().includes('Department'))!
       await deptRow.trigger('click')
       await flushPromises()
@@ -377,5 +392,87 @@ describe('ResultsTable.vue', () => {
     } finally {
       Element.prototype.scrollIntoView = orig
     }
+  })
+
+  // ── Column reordering ────────────────────────────────────────────────────
+  describe('column order', () => {
+    const lockedCols: ColumnDef[] = [
+      { key: 'dn', label: 'DN', alwaysVisible: true, lockPosition: true },
+      { key: 'name', label: 'Name' },
+      { key: 'dept', label: 'Department' },
+      { key: 'mail', label: 'Mail' },
+      { key: 'actions', label: 'Actions', alwaysVisible: true, pinned: true },
+    ]
+    const headerKeys = (w: ReturnType<typeof mount>) =>
+      w.findAll('thead th[data-col-key]').map(t => t.attributes('data-col-key'))
+
+    async function openPicker(key: string, cols: ColumnDef[] = lockedCols) {
+      const w = mount(ResultsTable, { props: { tableKey: key, columns: cols, rows }, attachTo: document.body })
+      await w.findAll('button').find(b => b.text().includes('Columns'))!.trigger('click')
+      await flushPromises()
+      return w
+    }
+    // Play the part of a finished Sortable drag (jsdom can't drive a real
+    // pointer drag): move the picker row at `from` to `to`, then report it.
+    async function drag(from: number, to: number) {
+      const { el, opts } = sortableCalls[sortableCalls.length - 1]
+      const item = el.children[from] as HTMLElement
+      el.insertBefore(item, el.children[to > from ? to + 1 : to] ?? null)
+      opts.onEnd!({ item, from: el, oldIndex: from, newIndex: to })
+      await nextTick()
+      return el
+    }
+
+    it('restores a saved order on mount', () => {
+      const key = 'order-' + Math.random()
+      tablePrefs[key] = { widths: {}, hidden: [], pageSize: 50, sortKey: '', sortAsc: true,
+        seenColumns: ['name', 'dept', 'mail'], order: ['mail', 'name', 'dept'] }
+      const w = mount(ResultsTable, { props: { tableKey: key, columns: lockedCols, rows } })
+      expect(headerKeys(w)).toEqual(['dn', 'mail', 'name', 'dept', 'actions'])
+    })
+
+    it('offers drag handles only on movable columns, and no arrow buttons', async () => {
+      const w = await openPicker('order-' + Math.random())
+      const handled = w.findAll('[data-picker-key]')
+        .filter(r => r.find('.col-drag-handle').exists())
+        .map(r => r.attributes('data-picker-key'))
+      expect(handled).toEqual(['name', 'dept', 'mail'])
+      expect(w.findAll('button[aria-label^="Move "]')).toHaveLength(0)
+      w.unmount()
+    })
+
+    it('applies a drag from the picker and keeps the picker rows in sync', async () => {
+      const key = 'order-' + Math.random()
+      const w = await openPicker(key)
+      // Move the Mail row (index 2) to the top of the list.
+      const el = await drag(2, 0)
+      expect(headerKeys(w)).toEqual(['dn', 'mail', 'name', 'dept', 'actions'])
+      expect((tablePrefs[key] as { order: string[] }).order).toEqual(['mail', 'name', 'dept'])
+      const pickerKeys = [...el.children].map(c => (c as HTMLElement).dataset.pickerKey)
+      expect(pickerKeys).toEqual(['mail', 'name', 'dept'])
+      w.unmount()
+    })
+
+    it('applies a downward drag', async () => {
+      const key = 'order-' + Math.random()
+      const w = await openPicker(key)
+      const el = await drag(0, 2)
+      expect(headerKeys(w)).toEqual(['dn', 'dept', 'mail', 'name', 'actions'])
+      expect([...el.children].map(c => (c as HTMLElement).dataset.pickerKey)).toEqual(['dept', 'mail', 'name'])
+      w.unmount()
+    })
+
+    it('"Reset column order" reverts to the declared order', async () => {
+      const key = 'order-' + Math.random()
+      const w = await openPicker(key)
+      const reset = w.findAll('button').find(b => b.text() === 'Reset column order')!
+      expect(reset.attributes('disabled')).toBeDefined()
+      await drag(2, 1)
+      expect(reset.attributes('disabled')).toBeUndefined()
+      await reset.trigger('click')
+      expect(headerKeys(w)).toEqual(['dn', 'name', 'dept', 'mail', 'actions'])
+      expect((tablePrefs[key] as { order: string[] }).order).toEqual([])
+      w.unmount()
+    })
   })
 })

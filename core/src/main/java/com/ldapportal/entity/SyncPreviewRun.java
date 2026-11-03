@@ -64,6 +64,10 @@ public class SyncPreviewRun {
     @Column(name = "total", nullable = false)
     private int total;
 
+    /** The entry being dry-run now (its source DN, or its target DN for an entry gone from the source). */
+    @Column(name = "current_dn", columnDefinition = "TEXT")
+    private String currentDn;
+
     @Column(name = "source_count", nullable = false)
     private int sourceCount;
 

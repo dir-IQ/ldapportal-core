@@ -14,11 +14,13 @@ import java.util.Map;
  * @param samples        up to {@code sampleLimit} target DNs per outcome
  *                       ({@link SyncPreviewAction} name → DNs), in processing order
  * @param sampleLimit    the cap on DNs kept per outcome
+ * @param notInSet       in-scope source entries the set doesn't manage, per reason, most first
  */
 public record SyncReconcileRunDetail(
         SyncReconcileRunResponse run,
         SyncRunSettings settings,
         List<SyncRunFailureReason> failureReasons,
         Map<String, List<String>> samples,
-        int sampleLimit) {
+        int sampleLimit,
+        List<SyncNotInSetGroup> notInSet) {
 }

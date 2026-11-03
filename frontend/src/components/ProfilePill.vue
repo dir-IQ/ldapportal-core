@@ -11,7 +11,7 @@
 <template>
   <span class="inline-flex items-center gap-1.5 rounded-md border px-3 py-1 text-sm font-medium align-middle"
         :style="tint ?? undefined"
-        :class="tint ? '' : 'bg-gray-50 border-gray-300 text-gray-700'">
+        :class="tint ? 'profile-tint' : 'bg-gray-50 border-gray-300 text-gray-700'">
     <span v-if="color" class="w-2 h-2 rounded-full shrink-0" :style="{ backgroundColor: color }" aria-hidden="true"></span>
     <span class="truncate">{{ name }}</span>
   </span>

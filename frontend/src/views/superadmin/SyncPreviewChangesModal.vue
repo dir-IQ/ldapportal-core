@@ -3,6 +3,10 @@
   <AppModal :model-value="modelValue" :title="`Planned changes — ${setName}`" size="2xl"
             storage-key="sync-preview-changes" @update:model-value="emit('update:modelValue', $event)">
     <div class="flex-1 min-h-0 flex flex-col gap-3">
+      <p class="text-xs text-gray-500 -mb-1">
+        What a reconcile would do to each entry, from a dry run of the sync engine. Nothing is written to either
+        directory.
+      </p>
       <div class="flex flex-wrap items-center gap-3">
         <label class="flex items-center gap-2 text-sm text-gray-700">
           <input type="checkbox" v-model="changesOnly" class="rounded" :disabled="!complete || loading"
@@ -21,13 +25,27 @@
         </button>
       </div>
 
-      <p v-if="running" class="text-sm text-gray-600" role="status">
-        <template v-if="run && run.total > 0">
-          Checking entries: {{ run.processed }} of {{ run.total }}…
-        </template>
-        <template v-else>Scanning the source…</template>
-        A dry run of the sync engine: nothing is written.
-      </p>
+      <div v-if="running" class="text-sm text-gray-600 space-y-1" role="status">
+        <p>
+          <template v-if="run && run.total > 0">
+            Checking entries: {{ run.processed }} of {{ run.total }}…
+          </template>
+          <template v-else>Scanning the source…</template>
+          <span v-if="elapsed" class="text-gray-500"> · {{ elapsed }} elapsed</span>
+        </p>
+        <div v-if="run && run.total > 0" class="h-1.5 w-full rounded bg-gray-200 dark:bg-gray-700 overflow-hidden"
+             role="progressbar" aria-label="Preview progress" :aria-valuenow="run.processed" aria-valuemin="0"
+             :aria-valuemax="run.total">
+          <div class="h-full bg-blue-500 transition-all" :style="{ width: `${percent}%` }" />
+        </div>
+        <p v-if="run?.currentDn" class="text-xs text-gray-500 truncate" :title="run.currentDn">
+          Now checking <span class="font-mono">{{ run.currentDn }}</span>
+        </p>
+        <p v-if="lastUpdate" class="text-xs text-gray-500">
+          Still working · last update {{ lastUpdate }} ago<template v-if="run && run.total > 0">. A large group
+            can take a while on its own: each member is looked up.</template>
+        </p>
+      </div>
 
       <p v-if="run?.status === 'FAILED'" class="text-sm text-rose-700" role="alert">
         {{ run.error || 'The preview failed.' }}
@@ -121,7 +139,11 @@ const props = defineProps<{
   setId: string
   setName: string
 }>()
-const emit = defineEmits<{ 'update:modelValue': [boolean] }>()
+const emit = defineEmits<{
+  'update:modelValue': [boolean]
+  /** Each run status this dialog adopts, so an opener can mirror its progress and result. */
+  run: [SyncPreviewStatus]
+}>()
 
 const notif = useNotificationStore()
 
@@ -162,6 +184,48 @@ const computedAt = computed<string>(() => {
   const at = run.value?.finishedAt
   return at ? new Date(at).toLocaleString() : ''
 })
+
+// Elapsed time and "last update" are aged on the server's clock: the offset
+// from the browser's clock is taken from each status, and a 1 s tick ages them.
+const clockOffset = ref<number>(0)
+const now = ref<number>(Date.now())
+let ticker: ReturnType<typeof setInterval> | null = null
+
+function serverNow(): number {
+  return now.value + clockOffset.value
+}
+
+function duration(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ${s % 60}s`
+  return `${Math.floor(m / 60)}h ${m % 60}m`
+}
+
+const elapsed = computed<string>(() => {
+  const at = run.value?.startedAt
+  return running.value && at ? duration(serverNow() - Date.parse(at)) : ''
+})
+const lastUpdate = computed<string>(() => {
+  const at = run.value?.heartbeatAt
+  return running.value && at ? duration(serverNow() - Date.parse(at)) : ''
+})
+const percent = computed<number>(() => {
+  const r = run.value
+  return r && r.total > 0 ? Math.min(100, Math.round((r.processed / r.total) * 100)) : 0
+})
+
+function startTicking() {
+  if (ticker === null) ticker = setInterval(() => { now.value = Date.now() }, 1000)
+}
+
+function stopTicking() {
+  if (ticker !== null) {
+    clearInterval(ticker)
+    ticker = null
+  }
+}
 
 // Each page request takes a ticket; a response for an older ticket is dropped,
 // so a slow earlier request can't overwrite what a later one asked for.
@@ -216,16 +280,28 @@ function adopt(status: SyncPreviewStatus) {
   // Load when this status is a completed run whose entries aren't on screen yet.
   const needsEntries = status.status === 'COMPLETE' && result.value?.runId !== status.runId
   run.value = status
+  emit('run', status)
+  now.value = Date.now()
+  clockOffset.value = status.asOf ? Date.parse(status.asOf) - now.value : 0
   stopPolling()
   if (status.status === 'RUNNING') {
+    startTicking()
     schedulePoll(POLL_MS)
-  } else if (needsEntries) {
+  } else {
+    stopTicking()
+  }
+  if (status.status !== 'RUNNING' && needsEntries) {
     result.value = null
     void load(0)
   }
 }
 
-async function refresh() {
+/**
+ * Read the latest run. On opening ({@code opening}), a set with no run, or
+ * whose run no longer describes it, gets a fresh one straight away; the
+ * outdated result stays on screen, flagged, until the new one replaces it.
+ */
+async function refresh(opening = false) {
   try {
     const { data } = await getPreviewRun(props.setId)
     if (disposed || !props.modelValue) return
@@ -234,6 +310,7 @@ async function refresh() {
       await start()
     } else {
       adopt(data)
+      if (opening && data.outdated) await start()
     }
   } catch (e) {
     if (disposed || !props.modelValue) return
@@ -289,19 +366,22 @@ async function load(target: number) {
   }
 }
 
-// Read the latest run each time the dialog opens; start one if the set has none.
+// Read the latest run each time the dialog opens; start one if the set has
+// none, or if the latest is outdated.
 watch(() => props.modelValue, (open) => {
   stopPolling()
+  stopTicking()
   pageTicket++
   pollFailures = 0
   loading.value = false
   run.value = null
   result.value = null
-  if (open) void refresh()
+  if (open) void refresh(true)
 }, { immediate: true })
 
 onBeforeUnmount(() => {
   disposed = true
   stopPolling()
+  stopTicking()
 })
 </script>

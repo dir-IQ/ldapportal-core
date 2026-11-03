@@ -350,8 +350,8 @@ public class DirectoryConnectionService {
     }
 
     /**
-     * When an update adds a root, the sync sets that leave their source scope
-     * or target base blank: those fall back to the primary base DN, so they
+     * When an update adds a root, the sync sets that leave their target base
+     * blank: those fall back to the primary base DN, so they
      * keep syncing only that root and never reach the new one. Saving still
      * succeeds (the sets behave exactly as before); the operator is told
      * which sets to give an explicit base.
@@ -365,15 +365,7 @@ public class DirectoryConnectionService {
             return List.of();
         }
         List<String> warnings = new java.util.ArrayList<>();
-        for (var link : syncLinkRepo.findAllBySourceDirId(dc.getId())) {
-            for (var set : syncSetRepo.findAllByLinkId(link.getId())) {
-                if (set.getObjectScopeBaseDn() == null || set.getObjectScopeBaseDn().isBlank()) {
-                    warnings.add("Sync set \"" + set.getName() + "\" has no source scope base DN, so it "
-                            + "still reads only " + dc.getBaseDn() + "; set its scope explicitly to sync "
-                            + "another root.");
-                }
-            }
-        }
+        // Source side needs no check: every sync set names its source base DN.
         for (var link : syncLinkRepo.findAllByTargetDirId(dc.getId())) {
             for (var set : syncSetRepo.findAllByLinkId(link.getId())) {
                 if (set.getTargetBaseDn() == null || set.getTargetBaseDn().isBlank()) {

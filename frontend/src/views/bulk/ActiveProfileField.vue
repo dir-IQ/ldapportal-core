@@ -12,7 +12,7 @@
     <label class="block text-sm font-medium text-gray-700 mb-1">Active profile</label>
     <div class="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold"
          :style="tint ?? undefined"
-         :class="tint ? '' : 'bg-gray-50 border-gray-300 text-gray-900'">
+         :class="tint ? 'profile-tint' : 'bg-gray-50 border-gray-300 text-gray-900'">
       <span v-if="color" class="w-2.5 h-2.5 rounded-full shrink-0" :style="{ backgroundColor: color }" aria-hidden="true"></span>
       <span class="truncate">{{ name || '—' }}</span>
     </div>

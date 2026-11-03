@@ -22,6 +22,7 @@ import com.ldapportal.exception.ResourceNotFoundException;
 import com.ldapportal.ldap.sync.MembershipReconciler;
 import com.ldapportal.ldap.sync.RecomputeEngine;
 import com.ldapportal.ldap.sync.RecomputeEnqueuer;
+import com.ldapportal.ldap.sync.SyncAuditLabels;
 import com.ldapportal.ldap.sync.SyncContentVerifier;
 import com.ldapportal.ldap.sync.SyncPreviewService;
 import com.ldapportal.ldap.sync.SyncReconcileHistory;
@@ -78,6 +79,24 @@ public class SyncConfigService {
     private final RecomputeEngine engine;
     private final AuditService auditService;
     private final com.ldapportal.repository.SyncReconcileRunRepository reconcileRunRepo;
+    private final com.ldapportal.ldap.sync.SyncVerifyProgressTracker verifyProgress;
+
+    /**
+     * Runs the reconciles {@link #startReconcile} starts, off the request thread:
+     * a run can outlast any proxy's idle timeout. One per set at most (the
+     * reconcile lease), so a cached pool stays small.
+     */
+    private final java.util.concurrent.ExecutorService manualReconciles =
+            java.util.concurrent.Executors.newCachedThreadPool(r -> {
+                Thread t = new Thread(r, "sync-manual-reconcile");
+                t.setDaemon(true);
+                return t;
+            });
+
+    @jakarta.annotation.PreDestroy
+    void stopManualReconciles() {
+        manualReconciles.shutdownNow();
+    }
 
     // ── Links ────────────────────────────────────────────────────────────────
 
@@ -121,6 +140,7 @@ public class SyncConfigService {
             Map<String, Object> detail = new java.util.LinkedHashMap<>();
             detail.put("linkId", id.toString());
             detail.put("linkName", l.getDisplayName());
+            SyncAuditLabels.of(null, l, directoryRepo).putInto(detail);
             detail.put("sourceDirId", String.valueOf(l.getSourceDirId()));
             detail.put("targetDirId", String.valueOf(l.getTargetDirId()));
             detail.put("captureMode", String.valueOf(l.getCaptureMode()));
@@ -202,15 +222,27 @@ public class SyncConfigService {
                 .toList();
     }
 
-    /** Membership counts per set keyed by state name, for the health rollup. */
+    /**
+     * Membership counts per set keyed by state name, for the health rollup, plus
+     * {@value #HELD_DELETE_KEY}: how many of the {@code REVIEW} rows are held
+     * deletes (a subset of {@code REVIEW}, not an extra state).
+     */
     private Map<UUID, Map<String, Long>> membershipStateCounts() {
         Map<UUID, Map<String, Long>> counts = new HashMap<>();
         for (MembershipStateCount c : membershipRepo.countGroupedByState()) {
             counts.computeIfAbsent(c.getSyncSetId(), k -> new HashMap<>())
                     .put(c.getState().name(), c.getCnt());
         }
+        for (Object[] row : membershipRepo.countHeldDeletesBySet(
+                com.ldapportal.dto.sync.SyncReviewKind.PENDING_DELETE_PREFIX + "%")) {
+            counts.computeIfAbsent((UUID) row[0], k -> new HashMap<>())
+                    .put(HELD_DELETE_KEY, ((Number) row[1]).longValue());
+        }
         return counts;
     }
+
+    /** {@code stateCounts} key for the held deletes among a set's {@code REVIEW} rows. */
+    public static final String HELD_DELETE_KEY = "REVIEW_DELETE";
 
     @Transactional(readOnly = true)
     public SyncSetResponse getSet(UUID id) {
@@ -243,10 +275,11 @@ public class SyncConfigService {
         if (principal != null) {
             // Recorded against the target directory: that's where the set's
             // entries are left behind, now unmanaged.
-            UUID targetDirId = linkRepo.findById(s.getLinkId()).map(SyncLink::getTargetDirId).orElse(null);
+            SyncLink link = linkRepo.findById(s.getLinkId()).orElse(null);
+            UUID targetDirId = link != null ? link.getTargetDirId() : null;
             Map<String, Object> detail = new java.util.LinkedHashMap<>();
+            SyncAuditLabels.of(s.getName(), link, directoryRepo).putInto(detail);
             detail.put("syncSetId", id.toString());
-            detail.put("syncSetName", s.getName());
             detail.put("linkId", String.valueOf(s.getLinkId()));
             detail.put("managedEntries", impact.managed());
             detail.put("pendingReview", impact.pendingReview());
@@ -280,7 +313,7 @@ public class SyncConfigService {
         s.setObjectScope(req.objectScope());
         s.setIdentityKey(blankToNull(req.identityKey()));
         s.setTargetBaseDn(blankToNull(req.targetBaseDn()));
-        s.setApplicabilityFilter(blankToNull(req.applicabilityFilter()));
+        s.setApplicabilityFilter(normalizeFilter(req.applicabilityFilter()));
         s.setReferenceAttributes(blankToNull(req.referenceAttributes()));
         s.setSourceAnchorAttribute(blankToNull(req.sourceAnchorAttribute()));
         // Default to the safe REVIEW policy (quarantine deletes) when unspecified.
@@ -289,8 +322,8 @@ public class SyncConfigService {
         s.setExcludedAttributes(normalizeExcludedAttributes(req.excludedAttributes()));
         s.setReconcileCadenceSeconds(req.reconcileCadenceSeconds());
         s.setEnabled(req.enabled());
-        if (req.recordAllDns() != null) {
-            s.setRecordAllDns(req.recordAllDns());
+        if (req.loggingLevel() != null) {
+            s.setLoggingLevel(req.loggingLevel());
         }
     }
 
@@ -322,12 +355,16 @@ public class SyncConfigService {
         if (!linkRepo.existsById(req.linkId())) {
             throw new IllegalArgumentException("Sync link not found");
         }
+        if (req.objectScopeBaseDn() == null || req.objectScopeBaseDn().isBlank()) {
+            throw new IllegalArgumentException("Source base DN is required.");
+        }
         requireValidDn(req.objectScopeBaseDn(), "objectScopeBaseDn");
         requireValidDn(req.targetBaseDn(), "targetBaseDn");
-        requireExplicitBaseOnMultiRoot(req);
-        if (req.applicabilityFilter() != null && !req.applicabilityFilter().isBlank()) {
+        requireBasesWithinRoots(req);
+        String filter = normalizeFilter(req.applicabilityFilter());
+        if (filter != null) {
             try {
-                Filter.create(req.applicabilityFilter());
+                Filter.create(filter);
             } catch (LDAPException e) {
                 throw new IllegalArgumentException("Invalid applicabilityFilter: " + e.getMessage());
             }
@@ -336,37 +373,28 @@ public class SyncConfigService {
     }
 
     /**
-     * A blank source scope falls back to the source directory's base DN. On a
-     * directory with several roots that's just the primary one, which is rarely
-     * what was meant — so require the scope explicitly there.
+     * The source base DN must lie under one of the source directory's base DNs,
+     * or the set would enumerate nothing.
      *
      * <p>A blank target base means "the same DNs as on the source": entries are
-     * placed at their source DNs, under the source scope base. On a target with
-     * several roots that's fine as long as that base lies under one of them;
-     * otherwise the entries would have nowhere to go, so the target base must
-     * be set.
+     * placed at their source DNs, under the source base. That needs the source
+     * base to lie under one of the target directory's base DNs too; otherwise the
+     * entries would have nowhere to go, so the target base must be set.
      */
-    private void requireExplicitBaseOnMultiRoot(SyncSetRequest req) {
-        boolean noScope = req.objectScopeBaseDn() == null || req.objectScopeBaseDn().isBlank();
+    private void requireBasesWithinRoots(SyncSetRequest req) {
+        String sourceBase = req.objectScopeBaseDn().trim();
         boolean noTarget = req.targetBaseDn() == null || req.targetBaseDn().isBlank();
-        if (!noScope && !noTarget) {
-            return;
-        }
         linkRepo.findById(req.linkId()).ifPresent(link -> {
             DirectoryConnection source = directory(link.getSourceDirId());
-            if (noScope && source != null && com.ldapportal.ldap.DirectoryRoots.isMultiRoot(source)) {
-                throw new IllegalArgumentException("The source directory has more than one base DN: "
-                        + "set the source scope base DN for this sync set.");
+            if (source != null && !com.ldapportal.ldap.DirectoryRoots.isWithin(source, sourceBase)) {
+                throw new IllegalArgumentException("The source base DN '" + sourceBase
+                        + "' isn't under any of the source directory's base DNs.");
             }
             DirectoryConnection target = directory(link.getTargetDirId());
-            if (noTarget && target != null && com.ldapportal.ldap.DirectoryRoots.isMultiRoot(target)) {
-                String sameAsSource = noScope ? (source != null ? source.getBaseDn() : null)
-                        : req.objectScopeBaseDn().trim();
-                if (!com.ldapportal.ldap.DirectoryRoots.isWithin(target, sameAsSource)) {
-                    throw new IllegalArgumentException("A blank target base DN places entries at their source "
-                            + "DNs, but " + (sameAsSource != null ? "'" + sameAsSource + "'" : "the source base")
-                            + " isn't under any of the target directory's base DNs: set the target base DN.");
-                }
+            if (noTarget && target != null && !com.ldapportal.ldap.DirectoryRoots.isWithin(target, sourceBase)) {
+                throw new IllegalArgumentException("A blank target base DN places entries at their source "
+                        + "DNs, but '" + sourceBase + "' isn't under any of the target directory's base DNs: "
+                        + "set the target base DN.");
             }
         });
     }
@@ -446,6 +474,39 @@ public class SyncConfigService {
     }
 
     /**
+     * Start a reconcile of the set now, in the background, recorded in its
+     * history as a manual run by {@code requestedBy}, and return at once: the
+     * run's progress and outcome are on {@code GET …/activity} and in its run
+     * history. Unlike {@link #reconcileNow}, nothing waits on it, so a long run
+     * can't be cut off by a proxy's timeout.
+     *
+     * @throws IllegalArgumentException while the set or its link is disabled
+     * @throws com.ldapportal.exception.ConflictException while a reconcile of the set is running
+     */
+    public void startReconcile(UUID syncSetId, String requestedBy) {
+        SyncSet set = requireSet(syncSetId);
+        if (!set.isEnabled() || !linkRepo.findById(set.getLinkId()).map(SyncLink::isEnabled).orElse(false)) {
+            throw new IllegalArgumentException("Enable the sync set and its link to reconcile it.");
+        }
+        if (MembershipReconciler.isRunning(set, java.time.OffsetDateTime.now())) {
+            throw new com.ldapportal.exception.ConflictException("A reconcile of this sync set is already running.");
+        }
+        manualReconciles.execute(() -> {
+            try {
+                reconcileNow(syncSetId, requestedBy);
+            } catch (com.ldapportal.exception.ConflictException ex) {
+                // Another started between the check and this run's claim: it covers the request.
+                log.info("Sync set {}: manual reconcile by {} not started: {}", syncSetId, requestedBy,
+                        ex.getMessage());
+            } catch (Exception ex) {
+                // The run records its own failure in the history; this is for the log.
+                log.warn("Sync set {}: manual reconcile by {} failed: {}", syncSetId, requestedBy, ex.toString());
+            }
+        });
+        log.info("Sync set {}: manual reconcile started by {}", syncSetId, requestedBy);
+    }
+
+    /**
      * Run a synchronous reconcile of the set, recorded in its history as a manual
      * run by {@code requestedBy}; returns the number of source identities enumerated.
      */
@@ -461,6 +522,22 @@ public class SyncConfigService {
             log.warn("Post-reconcile drift refresh for sync set {} failed: {}", syncSetId, ex.toString());
         }
         return enumerated;
+    }
+
+    /**
+     * Ask for a reconcile of the set on the scheduler's next tick, without
+     * waiting for it: e.g. after its filter, scope or placement changed, so the
+     * new configuration is applied now rather than at its next scheduled run.
+     * A reconcile already running finishes first and the requested one follows.
+     *
+     * @return whether it will run: false while the set or its link is disabled
+     *         (it then runs once both are enabled)
+     */
+    public boolean requestReconcile(UUID syncSetId, String requestedBy) {
+        SyncSet set = requireSet(syncSetId);
+        setRepo.requestReconcileOfSet(syncSetId);
+        log.info("Sync set {}: reconcile requested by {}", syncSetId, requestedBy);
+        return set.isEnabled() && linkRepo.findById(set.getLinkId()).map(SyncLink::isEnabled).orElse(false);
     }
 
     /**
@@ -498,6 +575,27 @@ public class SyncConfigService {
             UUID syncSetId, int limit, com.ldapportal.ldap.sync.SyncReconcileHistory.RunKind kind) {
         requireSet(syncSetId);
         return reconcileHistory.recent(syncSetId, limit, kind);
+    }
+
+    /**
+     * What the set's inventory actions are doing: its latest reconcile run and
+     * its latest content verification, each with live progress while it runs.
+     */
+    public com.ldapportal.dto.sync.SyncSetActivity activity(UUID syncSetId) {
+        requireSet(syncSetId);
+        var reconcile = reconcileHistory.recent(syncSetId, 1,
+                com.ldapportal.ldap.sync.SyncReconcileHistory.RunKind.RECONCILE).stream().findFirst().orElse(null);
+        return new com.ldapportal.dto.sync.SyncSetActivity(reconcile, verifyProgress.status(syncSetId),
+                java.time.OffsetDateTime.now());
+    }
+
+    /**
+     * The in-scope source entries the set doesn't manage, and why, as its
+     * latest complete reconcile found them.
+     */
+    public com.ldapportal.dto.sync.SyncNotInSetPage notInSet(UUID syncSetId, String search, int page, int size) {
+        requireSet(syncSetId);
+        return reconcileHistory.notInSet(syncSetId, search, page, size);
     }
 
     /** Check a run's entries can be downloaded (see {@link #writeRunEntriesCsv}), before streaming them. */
@@ -577,7 +675,14 @@ public class SyncConfigService {
      * @param afterReconcile also record the result on the reconcile run it follows
      */
     private com.ldapportal.dto.sync.SyncVerifyResult refreshDriftSnapshot(UUID syncSetId, boolean afterReconcile) {
-        com.ldapportal.dto.sync.SyncVerifyResult result = verifier.verify(syncSetId);
+        com.ldapportal.dto.sync.SyncVerifyResult result;
+        try {
+            result = verifier.verify(syncSetId);
+        } catch (RuntimeException ex) {
+            // It ran but failed: the stored snapshot stays, flagged as possibly stale.
+            setRepo.recordVerifyIncomplete(syncSetId, java.time.OffsetDateTime.now());
+            throw ex;
+        }
         if (result.sourceComplete() && result.targetComplete()) {
             setRepo.recordVerifyResult(syncSetId, java.time.OffsetDateTime.now(),
                     result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
@@ -585,6 +690,14 @@ public class SyncConfigService {
                 reconcileHistory.recordDrift(syncSetId,
                         result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
             }
+            if (result.heldReferences() != null) {
+                setRepo.recordVerifyHeld(syncSetId, result.heldReferences().entries(),
+                        result.heldReferences().dangling());
+            }
+        } else if (result.note() == null) {
+            // It ran but couldn't read a side completely (an unavailable set
+            // carries a note instead): keep the snapshot, flag it as possibly stale.
+            setRepo.recordVerifyIncomplete(syncSetId, java.time.OffsetDateTime.now());
         }
         return result;
     }
@@ -606,12 +719,17 @@ public class SyncConfigService {
      */
     public com.ldapportal.dto.sync.SyncDeleteApproval approveDelete(UUID syncSetId, String identity,
                                                                     AuthPrincipal principal) {
-        requireSet(syncSetId);
+        SyncSet set = requireSet(syncSetId);
         com.ldapportal.dto.sync.SyncDeleteApproval result = engine.approveDelete(syncSetId, identity);
         if (result.outcome() == com.ldapportal.dto.sync.SyncPreviewAction.DELETE && principal != null) {
+            Map<String, Object> detail = new java.util.LinkedHashMap<>();
+            detail.put("source", "directory-sync");
+            detail.put("operation", "approved-review-delete");
+            SyncAuditLabels.of(set, linkRepo, directoryRepo).putInto(detail);
+            detail.put("syncSetId", syncSetId.toString());
+            detail.put("identity", identity);
             auditService.record(principal, result.targetDirectoryId(), AuditAction.ENTRY_DELETE,
-                    result.targetDn(), Map.of("source", "directory-sync", "operation", "approved-review-delete",
-                            "syncSetId", syncSetId.toString(), "identity", identity));
+                    result.targetDn(), detail);
         }
         return result;
     }
@@ -637,6 +755,21 @@ public class SyncConfigService {
 
     private static String blankToNull(String s) {
         return (s == null || s.isBlank()) ? null : s.trim();
+    }
+
+    /**
+     * The applicability filter as the engine evaluates it. The editor lets a
+     * long filter be laid out over several lines, but an LDAP filter allows no
+     * whitespace between its components, so each line break and the whitespace
+     * around it is removed (whitespace within a line, such as in a value, is
+     * kept). Blank → {@code null} (every entry in scope).
+     */
+    static String normalizeFilter(String filter) {
+        if (filter == null) {
+            return null;
+        }
+        String joined = filter.replaceAll("\\s*\\R\\s*", "").trim();
+        return joined.isEmpty() ? null : joined;
     }
 
     private static void requireValidDn(String dn, String field) {

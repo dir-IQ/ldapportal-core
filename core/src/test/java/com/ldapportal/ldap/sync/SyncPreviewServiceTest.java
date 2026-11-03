@@ -186,6 +186,9 @@ class SyncPreviewServiceTest {
             assertThat(sn.added()).containsExactly("Smith");
         });
         assertThat(preview.status(set.getId()).unchangedCount()).isEqualTo(1); // bob
+        // The summary's per-outcome counts are the stored entries', so they match the list.
+        assertThat(preview.status(set.getId()).actionCounts())
+                .containsExactly(Map.entry("MODIFY", 1L), Map.entry("UNCHANGED", 1L));
 
         SyncPreviewPage all = preview.page(set.getId(), 0, 50, false);
         assertThat(all.entries()).extracting(SyncPreviewEntry::action)
@@ -389,6 +392,174 @@ class SyncPreviewServiceTest {
     }
 
     @Test
+    void anIdenticalGroup_withAnUnsyncedMember_andSpacedMemberDns_isNoChange() throws Exception {
+        String stray = "secAuthority=default,cn=foo"; // a member pointing at no synced entry
+        addPerson("alice");
+        addPerson("bob");
+        source.add(new Entry("cn=staff," + SRC_PEOPLE,
+                new Attribute("objectClass", "top", "groupOfNames"), new Attribute("cn", "staff"),
+                new Attribute("member", "uid=alice, ou=people, " + SRC_BASE, "uid=bob, ou=people, " + SRC_BASE,
+                        stray)));
+        for (String uid : List.of("alice", "bob")) {
+            target.add(new Entry("uid=" + uid + "," + DST_USERS,
+                    new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                    new Attribute("uid", uid), new Attribute("cn", uid), new Attribute("sn", uid)));
+        }
+        // The same group on the target, its member DNs written with spaces too.
+        target.add(new Entry("cn=staff," + DST_USERS,
+                new Attribute("objectClass", "top", "groupOfNames"), new Attribute("cn", "staff"),
+                new Attribute("member", "uid=alice, ou=Users, " + DST_BASE, "uid=bob, ou=Users, " + DST_BASE,
+                        stray)));
+
+        SyncPreviewEntry staff = byTargetDn(previewAll()).get(("cn=staff," + DST_USERS).toLowerCase());
+
+        // The stray member is kept, and spacing alone isn't a change.
+        assertThat(staff.action()).isEqualTo(SyncPreviewAction.NO_CHANGE);
+        assertThat(staff.reason()).isEqualTo("member: kept 1 value as on the target, pointing to " + stray
+                + ", which isn't synced yet. The sync updates it once that entry is synced.");
+
+        // A real reconcile leaves the group alone.
+        reconciler.reconcile(set.getId());
+        assertThat(target.getEntry("cn=staff," + DST_USERS).getAttributeValues("member"))
+                .containsExactlyInAnyOrder("uid=alice, ou=Users, " + DST_BASE, "uid=bob, ou=Users, " + DST_BASE,
+                        stray);
+
+        // A member removed on the source is still removed, and the list shows only that one.
+        source.modify("cn=staff," + SRC_PEOPLE,
+                new Modification(ModificationType.DELETE, "member", "uid=bob, ou=people, " + SRC_BASE));
+        SyncPreviewEntry changed = byTargetDn(previewAll()).get(("cn=staff," + DST_USERS).toLowerCase());
+        assertThat(changed.action()).isEqualTo(SyncPreviewAction.MODIFY);
+        assertThat(changeOf(changed, "member").removed()).containsExactly("uid=bob, ou=Users, " + DST_BASE);
+        assertThat(changeOf(changed, "member").added()).isEmpty();
+    }
+
+    /** alice and bob on both sides, and group staff listing them plus {@code extra} on both sides. */
+    private void staffOnBothSides(String... extra) throws Exception {
+        addPerson("alice");
+        addPerson("bob");
+        List<String> src = new java.util.ArrayList<>(List.of("uid=alice," + SRC_PEOPLE, "uid=bob," + SRC_PEOPLE));
+        List<String> dst = new java.util.ArrayList<>(List.of("uid=alice," + DST_USERS, "uid=bob," + DST_USERS));
+        src.addAll(List.of(extra));
+        dst.addAll(List.of(extra));
+        source.add(new Entry("cn=staff," + SRC_PEOPLE, new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("cn", "staff"), new Attribute("member", src)));
+        target.add(new Entry("cn=staff," + DST_USERS, new Attribute("objectClass", "top", "groupOfNames"),
+                new Attribute("cn", "staff"), new Attribute("member", dst)));
+    }
+
+    @Test
+    void aKeptUnsyncedMember_isRemoved_onceTheSourceDropsIt() throws Exception {
+        String stray = "secAuthority=default,cn=foo";
+        staffOnBothSides(stray);
+        reconciler.reconcile(set.getId());
+        assertThat(target.getEntry("cn=staff," + DST_USERS).getAttributeValues("member")).contains(stray);
+
+        source.modify("cn=staff," + SRC_PEOPLE, new Modification(ModificationType.DELETE, "member", stray));
+
+        // Its removal changes the group's content hash, so the group isn't skipped.
+        SyncPreviewEntry staff = byTargetDn(previewAll()).get(("cn=staff," + DST_USERS).toLowerCase());
+        assertThat(staff.action()).isEqualTo(SyncPreviewAction.MODIFY);
+        assertThat(changeOf(staff, "member").removed()).containsExactly(stray);
+        reconciler.reconcile(set.getId());
+        assertThat(target.getEntry("cn=staff," + DST_USERS).getAttributeValues("member")).doesNotContain(stray);
+    }
+
+    @Test
+    void aMemberWhoseEntryTheSyncDeletes_isRemovedFromItsGroups_notKept() throws Exception {
+        staffOnBothSides();
+        reconciler.reconcile(set.getId());
+        // bob leaves the set (the filter now excludes him) but stays in the source group.
+        SyncSet s = setRepo.findById(set.getId()).orElseThrow();
+        s.setApplicabilityFilter("(|(&(objectClass=inetOrgPerson)(!(uid=bob)))(objectClass=groupOfNames))");
+        set = setRepo.save(s);
+
+        Map<String, SyncPreviewEntry> byDn = byTargetDn(previewAll());
+        assertThat(byDn.get(("uid=bob," + DST_USERS).toLowerCase()).action()).isEqualTo(SyncPreviewAction.DELETE);
+        SyncPreviewEntry staff = byDn.get(("cn=staff," + DST_USERS).toLowerCase());
+        assertThat(staff.action()).isEqualTo(SyncPreviewAction.MODIFY);
+        assertThat(changeOf(staff, "member").removed()).containsExactly("uid=bob," + DST_USERS);
+
+        reconciler.reconcile(set.getId());
+        reconciler.reconcile(set.getId()); // the group, re-driven once bob's entry is gone
+        assertThat(target.getEntry("uid=bob," + DST_USERS)).isNull();
+        assertThat(target.getEntry("cn=staff," + DST_USERS).getAttributeValues("member"))
+                .containsExactly("uid=alice," + DST_USERS);
+    }
+
+    @Test
+    void membersMovedByThisPlan_showTheirGroupsRewritten() throws Exception {
+        staffOnBothSides();
+        reconciler.reconcile(set.getId());
+        // The set now places entries under ou=Staff: the plan moves alice, bob and the group.
+        target.add(new Entry("ou=Staff," + DST_BASE, new Attribute("objectClass", "top", "organizationalUnit"),
+                new Attribute("ou", "Staff")));
+        SyncSet s = setRepo.findById(set.getId()).orElseThrow();
+        s.setTargetBaseDn("ou=Staff," + DST_BASE);
+        set = setRepo.save(s);
+
+        SyncPreviewEntry staff = byTargetDn(previewAll()).get(("cn=staff,ou=Staff," + DST_BASE).toLowerCase());
+
+        // The members resolve to where this plan puts them, not to the index's old DNs.
+        assertThat(staff.action()).isEqualTo(SyncPreviewAction.MOVE);
+        assertThat(changeOf(staff, "member").added())
+                .containsExactlyInAnyOrder("uid=alice,ou=Staff," + DST_BASE, "uid=bob,ou=Staff," + DST_BASE);
+    }
+
+    @Test
+    void anAppliedGroup_whoseNewMemberIsntSynced_readsUnchanged_withANote() throws Exception {
+        addPerson("alice");
+        addGroup("staff", "uid=alice," + SRC_PEOPLE);
+        reconciler.reconcile(set.getId());
+        reconciler.reconcile(set.getId()); // the group, once alice resolves
+        // A member outside the set's scope, which no link syncs, joins the group;
+        // the sync re-runs the group (as a captured member add does) and has
+        // nothing it can write.
+        String carol = "uid=carol,ou=elsewhere," + SRC_BASE;
+        source.modify("cn=staff," + SRC_PEOPLE, new Modification(ModificationType.ADD, "member", carol));
+        reconciler.reconcile(set.getId());
+
+        SyncPreviewEntry staff = byTargetDn(previewAll()).get(("cn=staff," + DST_USERS).toLowerCase());
+
+        assertThat(staff.action()).isEqualTo(SyncPreviewAction.UNCHANGED);
+        assertThat(staff.reason()).isEqualTo("member: 1 value not written, pointing to " + carol
+                + ", which isn't synced yet. The sync writes it once that entry is synced.");
+        assertThat(target.getEntry("cn=staff," + DST_USERS).getAttributeValues("member"))
+                .containsExactly("uid=alice," + DST_USERS);
+    }
+
+    @Test
+    void aReferenceToAnUnsyncedEntry_isKeptOnTheTarget_withANote() throws Exception {
+        // Both point their manager at an entry outside the set's scope, which no
+        // link syncs, so the reference can't be translated.
+        String boss = "uid=boss,ou=elsewhere," + SRC_BASE;
+        addPerson("alice");
+        source.modify("uid=alice," + SRC_PEOPLE, new Modification(ModificationType.ADD, "manager", boss));
+        addPerson("bob");
+        source.modify("uid=bob," + SRC_PEOPLE, new Modification(ModificationType.ADD, "manager", boss));
+        // alice is already on the target, identical, with her manager set there.
+        String targetBoss = "uid=boss,ou=elsewhere," + DST_BASE;
+        target.add(new Entry("uid=alice," + DST_USERS,
+                new Attribute("objectClass", "top", "person", "organizationalPerson", "inetOrgPerson"),
+                new Attribute("uid", "alice"), new Attribute("cn", "alice"), new Attribute("sn", "alice"),
+                new Attribute("manager", targetBoss)));
+
+        Map<String, SyncPreviewEntry> byDn = byTargetDn(previewAll());
+
+        SyncPreviewEntry alice = byDn.get(("uid=alice," + DST_USERS).toLowerCase());
+        assertThat(alice.action()).isEqualTo(SyncPreviewAction.NO_CHANGE); // manager isn't deleted
+        assertThat(alice.reason()).isEqualTo("manager kept as it is on the target: it points to " + boss
+                + ", which isn't synced yet. The sync updates it once that entry is synced.");
+        SyncPreviewEntry bob = byDn.get(("uid=bob," + DST_USERS).toLowerCase());
+        assertThat(bob.action()).isEqualTo(SyncPreviewAction.ADD);
+        assertThat(bob.changes()).noneMatch(c -> c.attribute().equalsIgnoreCase("manager"));
+        assertThat(bob.reason()).startsWith("manager left out: it points to " + boss);
+
+        // A real reconcile keeps it too.
+        reconciler.reconcile(set.getId());
+        assertThat(target.getEntry("uid=alice," + DST_USERS).getAttributeValue("manager")).isEqualTo(targetBoss);
+    }
+
+    @Test
     void aTargetOwnedByAnotherIdentity_isForgotten_notDeleted() throws Exception {
         addPerson("alice");
         reconciler.reconcile(set.getId());
@@ -523,6 +694,11 @@ class SyncPreviewServiceTest {
         assertThat(status.status()).as("preview run status (%s)", status.error())
                 .isEqualTo(SyncPreviewRunStatus.COMPLETE);
         return preview.page(set.getId(), page, size, changesOnly);
+    }
+
+    /** Run a fresh preview to completion and read every entry, unchanged ones included. */
+    private SyncPreviewPage previewAll() {
+        return previewEntries(0, 50, false);
     }
 
     private static Map<String, SyncPreviewEntry> byTargetDn(SyncPreviewPage p) {

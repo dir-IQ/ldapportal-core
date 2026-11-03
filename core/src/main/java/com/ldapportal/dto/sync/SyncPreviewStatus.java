@@ -4,6 +4,7 @@ package com.ldapportal.dto.sync;
 import com.ldapportal.entity.enums.SyncPreviewRunStatus;
 
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -18,6 +19,10 @@ import java.util.UUID;
  * @param finishedAt      when it finished, or {@code null}
  * @param processed       entries dry-run so far
  * @param total           entries to dry-run ({@code 0} until the source scan is planned)
+ * @param currentDn       the entry being dry-run now, while RUNNING (else {@code null})
+ * @param heartbeatAt     when the run last reported progress or liveness
+ * @param asOf            the server's time when this status was read, so a client can
+ *                        age {@code startedAt} and {@code heartbeatAt} without trusting its own clock
  * @param outdated        the set was edited or reconciled, its link repointed, or either
  *                        directory's connection settings edited, after this run started
  * @param error           why the run failed, when FAILED
@@ -29,6 +34,8 @@ import java.util.UUID;
  * @param guardReason     why, when {@code guardTripped}
  * @param completeScan    false when source enumeration failed or stopped (no deletes would happen)
  * @param note            explanation of an incomplete scan
+ * @param actionCounts    entries per outcome ({@code SyncPreviewAction} name → count),
+ *                        counted from the stored entries once complete; empty before
  */
 public record SyncPreviewStatus(
         UUID runId,
@@ -38,6 +45,9 @@ public record SyncPreviewStatus(
         OffsetDateTime finishedAt,
         int processed,
         int total,
+        String currentDn,
+        OffsetDateTime heartbeatAt,
+        OffsetDateTime asOf,
         boolean outdated,
         String error,
         int sourceCount,
@@ -47,10 +57,11 @@ public record SyncPreviewStatus(
         boolean guardTripped,
         String guardReason,
         boolean completeScan,
-        String note) {
+        String note,
+        Map<String, Long> actionCounts) {
 
     public static SyncPreviewStatus none() {
-        return new SyncPreviewStatus(null, null, null, null, null, 0, 0, false, null,
-                0, 0, 0, 0, false, null, false, null);
+        return new SyncPreviewStatus(null, null, null, null, null, 0, 0, null, null, OffsetDateTime.now(), false, null,
+                0, 0, 0, 0, false, null, false, null, Map.of());
     }
 }

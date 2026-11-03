@@ -855,7 +855,7 @@ const cols = computed(() => {
   // renders at a known size; the table scrolls horizontally when the columns
   // outgrow the container and parks any spare width to the right otherwise.
   return [
-    { key: 'dn', label: 'DN', alwaysVisible: true, defaultWidth: 360 },
+    { key: 'dn', label: 'DN', alwaysVisible: true, lockPosition: true, defaultWidth: 360 },
     // Row cells are keyed by the backend's lower-cased attribute names
     // (see load(): `row[attr]` where attr comes straight from the
     // server, which lower-cases keys). DEFAULT_USER_COLUMNS keeps the
@@ -953,7 +953,9 @@ const emptyForm = (): UserFormState => {
   }
   return {
     parentDn: profileData.value?.targetUserDn || '',
-    rdnAttribute: profileData.value?.rdnAttribute || 'uid',
+    // No profile: the fallback form's RDN field starts at uid. A profile with
+    // no RDN attribute (operator-entered DN, no template) leaves it blank.
+    rdnAttribute: profileData.value ? (profileData.value.rdnAttribute || '') : 'uid',
     rdnValue: '',
     attributes,
   }
@@ -1075,10 +1077,19 @@ async function doExportUsers() {
   }
 }
 
+/**
+ * New User. With a profile selected (the sidebar picker, or this page's
+ * Profile dropdown), create through it; the dialog's header names it. Only
+ * under "All", which lists several profiles' users at once, is there no
+ * single profile to use, so the operator picks one.
+ */
 async function openCreate() {
   editingDn.value = null
   profileConfig.value = null
-  if (allProfiles.value.length === 1) {
+  const selected = allProfiles.value.find(p => p.id === selectedProfileId.value)
+  if (selected) {
+    await selectProfileAndCreate(selected)
+  } else if (allProfiles.value.length === 1) {
     await selectProfileAndCreate(allProfiles.value[0])
   } else if (allProfiles.value.length > 1) {
     showTemplatePicker.value = true
@@ -1092,7 +1103,9 @@ async function selectProfileAndCreate(p: ProfileLite) {
   showTemplatePicker.value = false
   try {
     const { data } = await getProfile(dirId, p.id)
-    profileData.value = data
+    // Refresh the page's profile only when it's the one the list shows: under
+    // "All", the profile picked for the new user mustn't narrow the list.
+    if (p.id === selectedProfileId.value) profileData.value = data
     profileConfig.value = data
   } catch (e) {
     const err = e as { message?: string }
@@ -1207,12 +1220,16 @@ async function save() {
         // save from REPLACE-ing every attribute it never touched (audit
         // noise, needless writes).
         .filter(([attr, val]) => !unchanged(attr, val))
-        .map(([attr, val]) => ({
-          operation: 'REPLACE',
-          attribute: attr,
-          values: toValueList(val),
-        }))
-        .filter(m => m.values.length > 0)
+        // A changed attribute whose new value list is empty was cleared
+        // (e.g. the last line removed from a multi-valued field): send a
+        // value-less DELETE, which removes the attribute. Dropping it — as an
+        // empty REPLACE used to be — silently discarded the edit.
+        .map(([attr, val]) => {
+          const values = toValueList(val)
+          return values.length
+            ? { operation: 'REPLACE', attribute: attr, values }
+            : { operation: 'DELETE', attribute: attr, values: [] as string[] }
+        })
       // Nothing changed → no MODIFY at all: an empty modification list is
       // an LDAP protocol error, and there's nothing worth an audit row.
       if (mods.length) {
