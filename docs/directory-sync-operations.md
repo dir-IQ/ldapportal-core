@@ -525,26 +525,37 @@ ambiguous target; it quarantines for a human.
 
 The inventory API classifies each `REVIEW` row as `reviewKind`
 `PENDING_DELETE`, `AMBIGUOUS_MATCH`, `PLACEMENT_CONFLICT` (or `OTHER` for an
-unrecognized reason), and the inventory names each row's actions for it.
+unrecognized reason), and the inventory names its actions for the rows selected.
 
-### Resolving `REVIEW` (and the other row actions)
+### Resolving `REVIEW` (and the other inventory actions)
 
-| Row | Actions |
+The inventory's actions are bulk actions: tick rows (or the header checkbox for
+the whole page) and pick an action from the bar above the table. The selection
+covers the current page only and is cleared when the page, state filter or
+search changes. Each request is sent one row at a time; a row that fails is
+reported with the first reason and doesn't stop the others.
+
+| Action | Applies to |
 |---|---|
-| **Held delete** (`PENDING_DELETE`) | **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`, with the set and directory names as for a run's writes). Refused while the set or link is disabled. **Keep entry, stop syncing** — dismiss: the target entry stays but is no longer managed (verification then reports it *orphaned on target*). **Re-check** — recompute: re-applies it if the entry came back into scope; otherwise leaves it held under `deletePolicy=REVIEW`, or deletes it under `DELETE` (a single recompute doesn't apply the guard). |
-| **Ambiguous match / placement conflict** | **Retry match** (recompute, after cleaning up the conflicting target entries) · **Stop tracking** |
-| **FAILED** | **Retry** (recompute) · **Stop tracking** |
-| **Synced / Pending** (`APPLIED` / `PENDING`) | **Re-sync** (recompute) · **Stop tracking** |
+| **Recompute** — named for the selection: **Re-check** (held deletes), **Retry match** (ambiguous match / placement conflict, after cleaning up the conflicting target entries), **Retry** (`FAILED`), **Re-sync** (Synced / Pending), or **Recompute** when the selection mixes them | Every selected row |
+| **Delete target** — approves the deletion: deletes the target entry now, whatever the set's delete policy or the delete guard. The source is re-read first: an entry back in scope is refused (400); a target entry another identity owns is kept and only this row dropped. Audited as `entry.delete` on the target directory (`detail.source = directory-sync`, `operation = approved-review-delete`, with the set and directory names as for a run's writes). Refused while the set or link is disabled. | Only the held deletes (`PENDING_DELETE`) among the selection; the button appears only when there are some, and other selected rows are left alone |
+| **Stop tracking** — dismiss | Every selected row |
 
-**Re-check**, **Retry match**, **Retry** and **Re-sync** queue a recompute of the
-row, which the worker picks up within about ten seconds. The inventory then
-watches the row for up to 20 seconds, refreshes it when it changes and says what
-it became. If nothing changed, it says so; for a held delete that means the
-entry is still outside the set's filter or scope.
+A recompute queues each selected row, and the worker picks the requests up
+within about ten seconds. The inventory then reloads the page for up to 20
+seconds, until every row has changed, and says what they became (e.g.
+`Retry done: 2 now Synced, 1 now Failed; 1 unchanged after 20 seconds`). A row
+that left the filtered page is looked up on its own. For a held delete,
+**Re-check** re-applies the entry if it came back into scope; otherwise it stays
+held under `deletePolicy=REVIEW`, or is deleted under `DELETE` (a single
+recompute doesn't apply the guard). An unchanged held delete means the entry is
+still outside the set's filter or scope.
 
 **Stop tracking** (dismiss) drops only the index row — the target isn't touched.
 An in-scope entry is picked up again from scratch by the next reconcile; an
-out-of-scope one is left unmanaged. Destructive actions ask for confirmation.
+out-of-scope one is left unmanaged. For a held delete it keeps the target entry,
+which the set then no longer manages (verification reports it *orphaned on
+target*). Destructive actions ask for confirmation, once for the whole selection.
 
 ### `FAILED` reasons
 The reason is the server's own diagnostic (collapsed, ≤300 chars), prefixed

@@ -167,36 +167,56 @@
         </DataTable>
       </template>
 
-      <DataTable v-else :columns="cols" :rows="rows" :loading="loading" row-key="identity"
-                 empty-text="No membership rows match." empty-icon="users">
-        <template #cell-identity="{ row }">
-          <span class="font-mono">{{ row.identity }}</span>
-        </template>
-        <template #cell-state="{ row }">
-          <span class="px-2 py-0.5 rounded text-xs" :class="stateClass(row.state)"
-                :title="STATE_META[row.state]?.hint">{{ stateLabel(row.state) }}</span>
-        </template>
-        <template #cell-sourceDn="{ row }">
-          <span class="font-mono">{{ row.sourceDn }}</span>
-        </template>
-        <template #cell-targetDn="{ row }">
-          <span class="font-mono">{{ row.targetDn }}</span>
-        </template>
-        <template #cell-failReason="{ row }">
-          <span class="cell-muted line-clamp-2" :title="row.failReason || undefined">{{ row.failReason || '—' }}</span>
-        </template>
-        <!-- Actions are labelled by what they do to this row (see rowActions). -->
-        <template #actions="{ row }">
-          <ActionMenu :items="rowActions(row).menu">
-            <template #primary>
-              <button :class="rowActions(row).primary.danger ? 'btn-danger btn-compact' : 'btn-secondary btn-compact'"
-                      :title="rowActions(row).primary.hint" @click="rowActions(row).primary.run()">
-                {{ rowActions(row).primary.label }}
-              </button>
-            </template>
-          </ActionMenu>
-        </template>
-      </DataTable>
+      <template v-else>
+        <!--
+          Bulk actions on the selected rows (this page only). Recompute is named
+          for what it does to the selection; Delete target only appears, and only
+          acts on, held deletes among it.
+        -->
+        <div class="flex items-center gap-2 flex-wrap" data-testid="bulk-actions">
+          <span class="text-xs text-gray-600 tabular-nums mr-1">
+            {{ selectedRows.length ? `${selectedRows.length} selected` : 'Select rows to act on them' }}
+          </span>
+          <button class="btn-secondary btn-compact" :disabled="!selectedRows.length || bulkBusy"
+                  :title="recomputeAction.hint" @click="bulkRecompute">
+            {{ recomputeAction.label }}<template v-if="selectedRows.length"> ({{ selectedRows.length }})</template>
+          </button>
+          <button v-if="heldDeletes.length" class="btn-danger btn-compact" :disabled="bulkBusy"
+                  title="The source entries left scope. Approve the held deletion of their target entries."
+                  @click="bulkApproveDelete">
+            Delete target ({{ heldDeletes.length }})
+          </button>
+          <button class="btn-secondary btn-compact" :disabled="!selectedRows.length || bulkBusy"
+                  title="Forget the portal's record of these entries; the target isn't changed. Held deletes keep their target entry, which this set then no longer manages."
+                  @click="bulkStopTracking">
+            Stop tracking<template v-if="selectedRows.length"> ({{ selectedRows.length }})</template>
+          </button>
+          <button v-if="selectedRows.length" class="btn-neutral btn-compact" :disabled="bulkBusy"
+                  @click="selected = new Set()">
+            Clear selection
+          </button>
+        </div>
+
+        <DataTable v-model:selected-keys="selected" :columns="cols" :rows="rows" :loading="loading" row-key="identity"
+                   selectable empty-text="No membership rows match." empty-icon="users">
+          <template #cell-identity="{ row }">
+            <span class="font-mono">{{ row.identity }}</span>
+          </template>
+          <template #cell-state="{ row }">
+            <span class="px-2 py-0.5 rounded text-xs" :class="stateClass(row.state)"
+                  :title="STATE_META[row.state]?.hint">{{ stateLabel(row.state) }}</span>
+          </template>
+          <template #cell-sourceDn="{ row }">
+            <span class="font-mono">{{ row.sourceDn }}</span>
+          </template>
+          <template #cell-targetDn="{ row }">
+            <span class="font-mono">{{ row.targetDn }}</span>
+          </template>
+          <template #cell-failReason="{ row }">
+            <span class="cell-muted line-clamp-2" :title="row.failReason || undefined">{{ row.failReason || '—' }}</span>
+          </template>
+        </DataTable>
+      </template>
 
       <!-- Untracked-key affordance: recompute the search term directly. -->
       <div v-if="!notInSetView && !loading && !rows.length && search.trim()" class="text-center pb-1">
@@ -233,7 +253,6 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import AppModal from '@/components/AppModal.vue'
 import DataTable from '@/components/DataTable.vue'
-import ActionMenu from '@/components/ActionMenu.vue'
 import ReconcileRunHistory from '@/components/sync/ReconcileRunHistory.vue'
 import SyncActivityProgress from '@/components/sync/SyncActivityProgress.vue'
 import RelativeTime from '@/components/RelativeTime.vue'
@@ -285,13 +304,18 @@ const loading = ref(false)
 const reconciling = ref(false)
 const rechecking = ref(false)
 
-/** How long a row action watches its row for the worker's result, and how often it looks. */
+/** Identities of the rows selected for a bulk action (kept to rows on the current page). */
+const selected = ref<Set<unknown>>(new Set())
+const selectedRows = computed<Membership[]>(() => rows.value.filter((r) => selected.value.has(r.identity)))
+const heldDeletes = computed<Membership[]>(() => selectedRows.value.filter(isHeldDelete))
+/** A bulk action is sending its requests. */
+const bulkBusy = ref(false)
+
+/** How long a recompute watches its rows for the worker's result, and how often it looks. */
 const ROW_WATCH_MS = 20_000
 const ROW_POLL_MS = 2_000
-// The latest watch per identity: a newer action on the row, or closing the
-// inventory, ends the older one.
-const rowWatches = new Map<string, number>()
-let rowWatchSeq = 0
+// The latest recompute watch: a newer one, or closing the inventory, ends the older one.
+let batchSeq = 0
 let unmounted = false
 const verifying = ref(false)
 const verifyResult = ref<SyncVerifyResult | null>(null)
@@ -377,20 +401,38 @@ function errMsg(e: unknown): string {
   return err.response?.data?.detail || err.response?.data?.message || 'Request failed'
 }
 
+/** The filter, search and page the table shows, as one comparable key. */
+function viewKey(): string {
+  return JSON.stringify([stateFilter.value, search.value.trim(), page.value, size.value])
+}
+
+/** The current page of membership rows, as the table's filter, search and paging ask for it. */
+async function fetchPage(setId: string) {
+  const { data } = await listMemberships(setId, {
+    state: (stateFilter.value || undefined) as MembershipState | undefined,
+    q: search.value.trim() || undefined,
+    page: page.value,
+    size: size.value,
+  })
+  return data
+}
+
+/** Show a page of rows; the selection keeps only the rows still on it. */
+function applyPage(data: { content: Membership[]; totalElements: number; totalPages: number }) {
+  rows.value = data.content
+  total.value = data.totalElements
+  totalPages.value = data.totalPages
+  const onPage = new Set<unknown>(data.content.map((r) => r.identity))
+  const kept = [...selected.value].filter((k) => onPage.has(k))
+  if (kept.length !== selected.value.size) selected.value = new Set(kept)
+}
+
 async function load() {
   if (!props.set) return
   if (notInSetView.value) return loadNotInSet()
   loading.value = true
   try {
-    const { data } = await listMemberships(props.set.id, {
-      state: (stateFilter.value || undefined) as MembershipState | undefined,
-      q: search.value.trim() || undefined,
-      page: page.value,
-      size: size.value,
-    })
-    rows.value = data.content
-    total.value = data.totalElements
-    totalPages.value = data.totalPages
+    applyPage(await fetchPage(props.set.id))
   } catch (e) {
     notif.error(errMsg(e))
   } finally {
@@ -667,83 +709,118 @@ watch([show, () => props.set?.id], ([open]) => {
     awaitingRun.value = null
     reconciling.value = false
     historyKey.value++
+    selected.value = new Set()
     load()
     if (!notInSetView.value) void loadNotInSet()
     void refreshActivity()
   } else {
     stopWatching()
-    rowWatches.clear()
+    batchSeq++
   }
 }, { immediate: true })
 onBeforeUnmount(() => {
   unmounted = true
   stopWatching()
-  rowWatches.clear()
+  batchSeq++
 })
-interface RowAction { label: string; hint: string; danger?: boolean; run: () => void }
+// ── Bulk actions on the selected rows ───────────────────────────────────────
 
-/**
- * The row's actions, named for what they do in its situation. A held delete
- * gets an explicit "Delete target" (approves it, whatever the delete policy)
- * and "Keep entry, stop syncing"; other rows get a recompute named for its
- * effect, and "Stop tracking" for dismiss.
- */
-function rowActions(row: Membership): { primary: RowAction; menu: { label: string; onClick: () => void }[] } {
-  const stopTracking = { label: 'Stop tracking', onClick: () => confirmStopTracking(row) }
-  if (row.state === 'REVIEW' && row.reviewKind === 'PENDING_DELETE') {
-    return {
-      primary: {
-        label: 'Delete target', danger: true, run: () => confirmApproveDelete(row),
-        hint: 'The source entry left scope. Approve the held deletion of the target entry.',
-      },
-      menu: [
-        { label: 'Keep entry, stop syncing', onClick: () => confirmKeep(row) },
-        { label: 'Re-check', onClick: () => recompute(row, 'Re-check') },
-      ],
-    }
-  }
+function isHeldDelete(row: Membership): boolean {
+  return row.state === 'REVIEW' && row.reviewKind === 'PENDING_DELETE'
+}
+
+type RecomputeKind = 'RECHECK' | 'RETRY_MATCH' | 'RETRY' | 'RESYNC' | 'MIXED'
+interface NamedAction { label: string; hint: string }
+
+const RECOMPUTE: Record<RecomputeKind, NamedAction> = {
+  RECHECK: {
+    label: 'Re-check',
+    hint: 'Re-read the source entries: any back in scope are re-applied; the rest stay held for deletion.',
+  },
+  RETRY_MATCH: {
+    label: 'Retry match',
+    hint: 'Run target matching again, once the conflicting target entries are resolved.',
+  },
+  RETRY: { label: 'Retry', hint: 'Retry the failed writes once their cause is fixed.' },
+  RESYNC: { label: 'Re-sync', hint: 'Re-read the source entries and bring the target entries in line now.' },
+  MIXED: {
+    label: 'Recompute',
+    hint: 'Re-read the source entries and bring the target in line now: retries failed writes and target '
+      + 'matching, and re-checks held deletes.',
+  },
+}
+
+function recomputeKind(row: Membership): RecomputeKind {
+  if (isHeldDelete(row)) return 'RECHECK'
   if (row.state === 'REVIEW' && (row.reviewKind === 'AMBIGUOUS_MATCH' || row.reviewKind === 'PLACEMENT_CONFLICT')) {
-    return {
-      primary: {
-        label: 'Retry match', run: () => recompute(row, 'Retry match'),
-        hint: 'Run target matching again, once the conflicting target entries are resolved.',
-      },
-      menu: [stopTracking],
-    }
+    return 'RETRY_MATCH'
   }
-  if (row.state === 'FAILED') {
-    return {
-      primary: {
-        label: 'Retry', run: () => recompute(row, 'Retry'),
-        hint: 'Retry the failed write once its cause is fixed.',
-      },
-      menu: [stopTracking],
-    }
-  }
-  return {
-    primary: {
-      label: row.state === 'REVIEW' ? 'Recompute' : 'Re-sync', run: () => recompute(row, 'Re-sync'),
-      hint: 'Re-read the source entry and bring the target entry in line now.',
-    },
-    menu: [stopTracking],
-  }
+  if (row.state === 'FAILED') return 'RETRY'
+  if (row.state === 'REVIEW') return 'MIXED'
+  return 'RESYNC'
 }
 
 /**
- * Queue a recompute of the row, then watch it: the worker picks the request up
- * within about ten seconds, and the table only shows the result once reloaded.
+ * The recompute, named for what it does to the selection: Re-check for held
+ * deletes, Retry match, Retry for failed writes, Re-sync for the rest, and
+ * Recompute when the selection mixes them.
  */
-async function recompute(row: Membership, label: string) {
-  if (!props.set) return
-  try {
-    await recomputeKey(props.set.id, row.identity)
-  } catch (e) {
-    notif.error(errMsg(e))
-    return
+const recomputeAction = computed<NamedAction>(() => {
+  const kinds = new Set(selectedRows.value.map(recomputeKind))
+  return kinds.size === 1 ? RECOMPUTE[[...kinds][0]] : RECOMPUTE.MIXED
+})
+
+/**
+ * Run `fn` for each row in turn (one request at a time, so a large selection
+ * doesn't flood the server). A row fails when `fn` throws or returns a message.
+ */
+async function eachRow(
+  list: Membership[], fn: (row: Membership) => Promise<string | void>,
+): Promise<{ row: Membership; error: string }[]> {
+  const failures: { row: Membership; error: string }[] = []
+  for (const row of list) {
+    if (unmounted) break
+    try {
+      const error = await fn(row)
+      if (error) failures.push({ row, error })
+    } catch (e) {
+      failures.push({ row, error: errMsg(e) })
+    }
   }
-  notif.success(`${label} queued: watching the row for the result…`)
+  return failures
+}
+
+/** "2 of 5 …: <first reason>" for the rows a bulk action couldn't do. */
+function failureMessage(what: string, failures: { error: string }[], of: number): string {
+  return `${failures.length} of ${of} ${what}: ${failures[0].error}`
+}
+
+/**
+ * Queue a recompute of each selected row, then watch them: the worker picks
+ * the requests up within about ten seconds, and the table only shows the
+ * result once reloaded.
+ */
+async function bulkRecompute() {
+  const setId = props.set?.id
+  const batch = selectedRows.value
+  if (!setId || !batch.length) return
+  const { label } = recomputeAction.value
+  bulkBusy.value = true
+  let failures: { row: Membership; error: string }[]
+  try {
+    failures = await eachRow(batch, async (row) => { await recomputeKey(setId, row.identity) })
+  } finally {
+    bulkBusy.value = false
+  }
+  if (failures.length) notif.error(failureMessage(`couldn't be queued (${label})`, failures, batch.length))
+  const queued = batch.filter((r) => !failures.some((f) => f.row === r))
+  if (!queued.length) return
+  selected.value = new Set()
+  notif.success(queued.length === 1
+    ? `${label} queued: watching the row for the result…`
+    : `${label} queued for ${queued.length} rows: watching them for the result…`)
   emit('changed')
-  await watchRow(row, label)
+  await watchBatch(queued, label)
 }
 
 /** The row as the server has it now; null when the set no longer tracks it. */
@@ -758,44 +835,82 @@ function rowChanged(before: Membership, now: Membership | null): boolean {
     || now.sourceDn !== before.sourceDn || now.targetDn !== before.targetDn
 }
 
-/** Poll the row until it changes or {@link ROW_WATCH_MS} passes, then refresh the table and say what happened. */
-async function watchRow(before: Membership, label: string) {
+/**
+ * Reload the page until every row in the batch has changed or {@link ROW_WATCH_MS}
+ * passes, then say what happened. A row that left the page (another state now,
+ * or no longer tracked) is looked up on its own. Changing the page, filter or
+ * search, a newer recompute, or closing the inventory ends the watch.
+ */
+async function watchBatch(before: Membership[], label: string) {
   const setId = props.set?.id
   if (!setId) return
-  const ticket = ++rowWatchSeq
-  rowWatches.set(before.identity, ticket)
-  const current = () => !unmounted && rowWatches.get(before.identity) === ticket && props.set?.id === setId
+  const ticket = ++batchSeq
+  const view = viewKey()
+  const current = () => !unmounted && show.value && batchSeq === ticket
+    && props.set?.id === setId && viewKey() === view
+  const outcomes = new Map<string, Membership | null>()
   const deadline = Date.now() + ROW_WATCH_MS
-  try {
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, ROW_POLL_MS))
+  while (outcomes.size < before.length && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, ROW_POLL_MS))
+    if (!current()) return
+    try {
+      const data = await fetchPage(setId)
       if (!current()) return
-      let now: Membership | null
-      try {
-        now = await fetchRow(setId, before.identity)
-      } catch {
-        continue // a failed look isn't the result; try again
+      applyPage(data)
+      for (const row of before) {
+        if (outcomes.has(row.identity)) continue
+        const now = data.content.find((r) => r.identity === row.identity) ?? await fetchRow(setId, row.identity)
+        if (rowChanged(row, now)) outcomes.set(row.identity, now)
       }
-      if (!current()) return
-      if (rowChanged(before, now)) {
-        await load()
-        emit('changed')
-        notif.success(now
-          ? `${label} done: the row is now ${stateLabel(now.state)}${now.failReason ? ` (${now.failReason})` : ''}`
-          : `${label} done: the set no longer tracks this entry`)
-        return
-      }
+    } catch {
+      continue // a failed look isn't the result; try again
     }
-    await load()
-    notif.info(unchangedMessage(before, label))
-  } finally {
-    if (rowWatches.get(before.identity) === ticket) rowWatches.delete(before.identity)
+  }
+  if (!current()) return
+  if (outcomes.size) emit('changed')
+  reportBatch(before, outcomes, label)
+}
+
+/** Say what a watched recompute did: what each changed row became, and how many didn't change. */
+function reportBatch(before: Membership[], outcomes: Map<string, Membership | null>, label: string) {
+  if (before.length === 1) {
+    const row = before[0]
+    if (!outcomes.has(row.identity)) {
+      notif.info(unchangedMessage(row, label))
+      return
+    }
+    const now = outcomes.get(row.identity)
+    notif.success(now
+      ? `${label} done: the row is now ${stateLabel(now.state)}${now.failReason ? ` (${now.failReason})` : ''}`
+      : `${label} done: the set no longer tracks this entry`)
+    return
+  }
+  const unchanged = before.filter((r) => !outcomes.has(r.identity))
+  const heldNote = unchanged.some(isHeldDelete)
+    ? ' Held deletes stay held while the source entry is outside the set\'s filter or scope.'
+    : ''
+  if (!outcomes.size) {
+    notif.info(`${label}: no change after ${ROW_WATCH_MS / 1000} seconds for any of the ${before.length} rows. `
+      + `If a reconcile is running, the recomputes may still be queued behind it.${heldNote}`)
+    return
+  }
+  const counts = new Map<string, number>()
+  for (const now of outcomes.values()) {
+    const what = now ? `now ${stateLabel(now.state)}` : 'no longer tracked'
+    counts.set(what, (counts.get(what) ?? 0) + 1)
+  }
+  const parts = [...counts].map(([what, n]) => `${n} ${what}`)
+  if (unchanged.length) {
+    notif.info(`${label} done: ${parts.join(', ')}; ${unchanged.length} unchanged after `
+      + `${ROW_WATCH_MS / 1000} seconds.${heldNote}`)
+  } else {
+    notif.success(`${label} done: ${parts.join(', ')}`)
   }
 }
 
-/** What an action that changed nothing means for the row. */
+/** What a recompute that changed nothing means for the row. */
 function unchangedMessage(row: Membership, label: string): string {
-  if (row.state === 'REVIEW' && row.reviewKind === 'PENDING_DELETE') {
+  if (isHeldDelete(row)) {
     return `${label}: no change. The source entry is still outside the set's filter or scope, so its `
       + 'deletion stays held for review. If you changed the filter, check it against this entry.'
   }
@@ -803,51 +918,90 @@ function unchangedMessage(row: Membership, label: string): string {
     + `${stateLabel(row.state)}. If a reconcile is running, the recompute may still be queued behind it.`
 }
 
-async function confirmApproveDelete(row: Membership) {
-  if (!props.set) return
+/** Approve the held deletes among the selection: deletes their target entries now. */
+async function bulkApproveDelete() {
+  const setId = props.set?.id
+  const batch = heldDeletes.value
+  if (!setId || !batch.length) return
+  const n = batch.length
+  const others = selectedRows.value.length - n
   const ok = await confirm({
-    title: 'Delete target entry?',
-    message: `This deletes ${row.targetDn} from ${props.targetName} now. The source entry has left this `
-      + "set's scope, and this approves the held deletion. It can't be undone.",
-    confirmLabel: 'Delete entry',
+    title: n === 1 ? 'Delete target entry?' : `Delete ${n} target entries?`,
+    message: (n === 1
+      ? `This deletes ${batch[0].targetDn} from ${props.targetName} now. The source entry has left this `
+        + "set's scope, and this approves the held deletion. It can't be undone."
+      : `This deletes ${n} entries from ${props.targetName} now. Their source entries have left this `
+        + "set's scope, and this approves the held deletions. It can't be undone.")
+      + (others ? ` The other ${others} selected ${others === 1 ? 'row isn\'t a held delete and is'
+        : 'rows aren\'t held deletes and are'} left alone.` : ''),
+    confirmLabel: n === 1 ? 'Delete entry' : `Delete ${n} entries`,
     danger: true,
   })
   if (!ok) return
+  bulkBusy.value = true
+  const deleted: string[] = []
+  const kept: string[] = []
   try {
-    const { data } = await approveDelete(props.set.id, row.identity)
-    if (data.outcome === 'DELETE') {
-      notif.success(`Deleted ${data.targetDn}`)
-    } else if (data.outcome === 'FORGET') {
-      notif.success(`Kept ${data.targetDn}: another sync identity owns it. Only this row was removed.`)
+    const failures = await eachRow(batch, async (row) => {
+      const { data } = await approveDelete(setId, row.identity)
+      if (data.outcome === 'DELETE') deleted.push(data.targetDn)
+      else if (data.outcome === 'FORGET') kept.push(data.targetDn)
+      else return data.message || 'The deletion failed'
+    })
+    if (n === 1) {
+      if (deleted.length) notif.success(`Deleted ${deleted[0]}`)
+      if (kept.length) notif.success(`Kept ${kept[0]}: another sync identity owns it. Only this row was removed.`)
+      if (failures.length) notif.error(failures[0].error)
     } else {
-      notif.error(data.message || 'The deletion failed')
+      if (deleted.length || kept.length) {
+        notif.success(`Deleted ${deleted.length} target ${deleted.length === 1 ? 'entry' : 'entries'}`
+          + (kept.length ? `; kept ${kept.length} that another sync identity owns (only their rows were removed)` : ''))
+      }
+      if (failures.length) notif.error(failureMessage('deletions failed', failures, n))
     }
+    selected.value = new Set()
     await load()
     emit('changed')
-  } catch (e) {
-    notif.error(errMsg(e))
+  } finally {
+    bulkBusy.value = false
   }
 }
 
-async function confirmKeep(row: Membership) {
+/**
+ * Forget the portal's record of the selected rows; the target isn't changed.
+ * For a held delete that keeps the target entry, which the set then no longer manages.
+ */
+async function bulkStopTracking() {
+  const setId = props.set?.id
+  const batch = selectedRows.value
+  if (!setId || !batch.length) return
+  const n = batch.length
+  const held = batch.filter(isHeldDelete).length
   const ok = await confirm({
-    title: 'Keep the target entry?',
-    message: `${row.targetDn} stays in ${props.targetName}, but this set stops managing it: sync won't `
-      + 'update or delete it again. Content verification will list it as orphaned on target.',
-    confirmLabel: 'Keep and stop syncing',
-  })
-  if (ok) await dismiss(row.identity, 'Kept the target entry; this set no longer manages it')
-}
-
-async function confirmStopTracking(row: Membership) {
-  const ok = await confirm({
-    title: 'Stop tracking this entry?',
-    message: `The portal forgets its record of this entry; ${props.targetName} isn't changed. If the source `
-      + 'entry is still in scope, the next reconcile picks it up again from scratch.',
+    title: n === 1 ? 'Stop tracking this entry?' : `Stop tracking ${n} entries?`,
+    message: `The portal forgets its record of ${n === 1 ? 'this entry' : `these ${n} entries`}; `
+      + `${props.targetName} isn't changed. If a source entry is still in scope, the next reconcile picks it `
+      + 'up again from scratch.'
+      + (held ? ` ${held === 1 ? 'The held delete keeps its target entry' : `The ${held} held deletes keep their `
+        + 'target entries'}, which this set then no longer manages: content verification lists `
+        + `${held === 1 ? 'it' : 'them'} as orphaned on target.` : ''),
     confirmLabel: 'Stop tracking',
   })
-  if (ok) await dismiss(row.identity, 'Stopped tracking the entry')
+  if (!ok) return
+  bulkBusy.value = true
+  try {
+    const failures = await eachRow(batch, async (row) => { await dismissMembership(setId, row.identity) })
+    const done = n - failures.length
+    if (done) notif.success(n === 1 ? 'Stopped tracking the entry' : `Stopped tracking ${done} entries`)
+    if (failures.length) notif.error(n === 1 ? failures[0].error : failureMessage('couldn\'t be dismissed', failures, n))
+    selected.value = new Set()
+    await load()
+    emit('changed')
+  } finally {
+    bulkBusy.value = false
+  }
 }
+
 async function recomputeQuery() {
   if (!props.set) return
   const key = search.value.trim()
@@ -873,16 +1027,5 @@ async function recomputeQuery() {
     }
   }
   notif.info(`Recompute of "${key}" tracked nothing: it isn't a source entry in this set's scope and filter.`)
-}
-async function dismiss(identity: string, message: string) {
-  if (!props.set) return
-  try {
-    await dismissMembership(props.set.id, identity)
-    notif.success(message)
-    await load()
-    emit('changed')
-  } catch (e) {
-    notif.error(errMsg(e))
-  }
 }
 </script>
