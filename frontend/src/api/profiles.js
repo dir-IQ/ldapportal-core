@@ -32,6 +32,16 @@ export const cloneProfile      = (dirId, profileId, name, targetDirectoryId = nu
   client.post(`${dirBase(dirId)}/${profileId}/clone`,
     targetDirectoryId ? { name, targetDirectoryId } : { name })
 
+/**
+ * Replace the user form (attribute configs + DN field layout) of each target
+ * profile, in any directory, with this profile's. All-or-nothing.
+ * @param {string} dirId
+ * @param {string} profileId
+ * @param {string[]} targetProfileIds
+ */
+export const copyProfileForm   = (dirId, profileId, targetProfileIds) =>
+  client.post(`${dirBase(dirId)}/${profileId}/copy-form`, { targetProfileIds })
+
 // Seeds a curated set of attribute configs for a known schema
 // (currently 'inetOrgPerson'). Refuses 409 if the profile already
 // has attribute configs.

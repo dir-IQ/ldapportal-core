@@ -31,6 +31,7 @@ import java.util.UUID;
  *   PUT    /api/v1/directories/{dirId}/profiles/{profileId}              — update
  *   DELETE /api/v1/directories/{dirId}/profiles/{profileId}              — delete
  *   POST   /api/v1/directories/{dirId}/profiles/{profileId}/clone                    — clone (body: name, optional targetDirectoryId)
+ *   POST   /api/v1/directories/{dirId}/profiles/{profileId}/copy-form                — replace other profiles' user form with this one's (body: targetProfileIds)
  *   POST   /api/v1/directories/{dirId}/profiles/{profileId}/evaluate-group-changes   — preview group changes
  *   POST   /api/v1/directories/{dirId}/profiles/{profileId}/apply-group-changes      — apply group changes
  *
@@ -149,6 +150,22 @@ public class ProvisioningProfileController {
         }
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(service.clone(directoryId, profileId, newName, targetDirectoryId, principal));
+    }
+
+    /**
+     * Replaces the user form of each target profile (in any directory) with
+     * this profile's, e.g. to keep identical dev / test / prod directories on
+     * one form definition. All-or-nothing; see
+     * {@link ProvisioningProfileService#copyForm}.
+     */
+    @PostMapping("/api/v1/directories/{directoryId}/profiles/{profileId}/copy-form")
+    @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
+    public List<ProfileResponse> copyForm(@PathVariable UUID directoryId,
+                                          @PathVariable UUID profileId,
+                                          @Valid @RequestBody CopyFormRequest req,
+                                          @AuthenticationPrincipal AuthPrincipal principal) {
+        return service.copyForm(directoryId, profileId, req.targetProfileIds(), principal);
     }
 
     /**

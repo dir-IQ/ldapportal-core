@@ -131,4 +131,49 @@ class ProvisioningProfileControllerTest extends BaseControllerTest {
                         .content("{\"name\":\"copy\",\"targetDirectoryId\":\"not-a-uuid\"}"))
                 .andExpect(status().isBadRequest());
     }
+
+    // ── copy-form ────────────────────────────────────────────────────────────
+
+    static final UUID TARGET_ID     = UUID.fromString("50000000-0000-0000-0000-000000000005");
+    static final String COPY_FORM_URL = GET_URL + "/copy-form";
+
+    @Test
+    void copyForm_superadmin_forwardsTheTargetsToTheService() throws Exception {
+        given(service.copyForm(eq(DIR_ID), eq(PROFILE_ID), eq(List.of(TARGET_ID)), any()))
+                .willReturn(List.of(stubResponse()));
+
+        mockMvc.perform(post(COPY_FORM_URL).with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"targetProfileIds\":[\"" + TARGET_ID + "\"]}"))
+                .andExpect(status().isOk());
+
+        verify(service).copyForm(eq(DIR_ID), eq(PROFILE_ID), eq(List.of(TARGET_ID)), any());
+    }
+
+    @Test
+    void copyForm_withNoTargets_returns400() throws Exception {
+        mockMvc.perform(post(COPY_FORM_URL).with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"targetProfileIds\":[]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void copyForm_rejectedByATarget_returns400() throws Exception {
+        given(service.copyForm(any(), any(), any(), any()))
+                .willThrow(new IllegalArgumentException("Profile [x] in [test]: bad"));
+
+        mockMvc.perform(post(COPY_FORM_URL).with(authentication(superadminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"targetProfileIds\":[\"" + TARGET_ID + "\"]}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void copyForm_admin_returns403() throws Exception {
+        mockMvc.perform(post(COPY_FORM_URL).with(authentication(adminAuth()))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"targetProfileIds\":[\"" + TARGET_ID + "\"]}"))
+                .andExpect(status().isForbidden());
+    }
 }
