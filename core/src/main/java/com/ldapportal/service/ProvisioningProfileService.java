@@ -472,6 +472,83 @@ public class ProvisioningProfileService {
         return toResponse(copy);
     }
 
+    /**
+     * Replace the user form of each target profile with the source profile's:
+     * every attribute config (fields, labels, input types, validation,
+     * defaults, computed values, and the admin, self-registration and
+     * self-service layouts) plus where the DN field sits in the form (its
+     * section, width and order). Targets may live in any directory, which is
+     * how identical dev / test / prod directories share one form definition.
+     *
+     * <p>Everything else stays the target's own: name, target OUs, object
+     * classes, DN mode / template / RDN attribute, password policy, groups,
+     * lifecycle, approvals and enabled state. The copied fields go through the
+     * same checks as a manual save against the target's settings (e.g. its
+     * RDN attribute must be a required field), and the call is all-or-nothing:
+     * one target failing leaves every target unchanged.
+     *
+     * @return the updated target profiles, in request order
+     * @throws IllegalArgumentException if the source is among the targets, or a
+     *         target rejects the copied form
+     */
+    @Transactional
+    public List<ProfileResponse> copyForm(UUID directoryId, UUID sourceProfileId,
+                                          List<UUID> targetProfileIds, AuthPrincipal principal) {
+        ProvisioningProfile source = requireProfileInDirectory(directoryId, sourceProfileId);
+        Set<UUID> targetIds = new LinkedHashSet<>(targetProfileIds);
+        if (targetIds.contains(sourceProfileId)) {
+            throw new IllegalArgumentException("A profile can't copy its form onto itself");
+        }
+        List<CreateProfileRequest.AttributeConfigEntry> form =
+                attrConfigRepo.findAllByProfileIdOrderByDisplayOrderAsc(sourceProfileId).stream()
+                        .map(ProvisioningProfileService::toEntry)
+                        .toList();
+
+        List<ProfileResponse> updated = new ArrayList<>();
+        for (UUID targetId : targetIds) {
+            ProvisioningProfile target = requireProfile(targetId);
+            target.setDnColumnSpan(source.getDnColumnSpan());
+            target.setDnSectionName(source.getDnSectionName());
+            target.setDnDisplayOrder(source.getDnDisplayOrder());
+            target = profileRepo.save(target);
+
+            attrConfigRepo.deleteAllByProfileId(targetId);
+            attrConfigRepo.flush();
+            try {
+                saveAttributeConfigs(target, form);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "Profile [" + target.getName() + "] in [" + target.getDirectory().getDisplayName()
+                                + "]: " + e.getMessage(), e);
+            }
+
+            if (principal != null) {
+                // A form copy is an update of the target; the detail says
+                // where the form came from.
+                auditService.record(principal, target.getDirectory().getId(), AuditAction.PROFILE_UPDATE, null,
+                        Map.of("profileId", target.getId(), "name", target.getName(),
+                                "operation", "copy-form",
+                                "sourceProfileId", source.getId(), "sourceName", source.getName(),
+                                "sourceDirectoryId", source.getDirectory().getId()));
+            }
+            updated.add(toResponse(target));
+        }
+        return updated;
+    }
+
+    /** A stored attribute config as the entry {@link #saveAttributeConfigs} takes. */
+    private static CreateProfileRequest.AttributeConfigEntry toEntry(ProfileAttributeConfig c) {
+        return new CreateProfileRequest.AttributeConfigEntry(
+                c.getAttributeName(), c.getCustomLabel(), c.getInputType().name(),
+                c.isRequiredOnCreate(), c.isEditableOnCreate(), c.isEditableOnUpdate(),
+                c.isSelfServiceEdit(), c.isSelfRegistrationEdit(),
+                c.getDefaultValue(), c.getComputedExpression(), c.getValidationRegex(), c.getValidationMessage(),
+                c.getAllowedValues(), c.getMinLength(), c.getMaxLength(),
+                c.getSectionName(), c.getColumnSpan(), c.isHidden(),
+                c.getRegistrationSectionName(), c.getRegistrationColumnSpan(), c.getRegistrationDisplayOrder(),
+                c.getSelfServiceSectionName(), c.getSelfServiceColumnSpan(), c.getSelfServiceDisplayOrder());
+    }
+
     // ── Lifecycle Policy ──────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)

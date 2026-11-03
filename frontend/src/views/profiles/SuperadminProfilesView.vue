@@ -23,6 +23,7 @@ import DnPicker from '@/components/DnPicker.vue'
 import DataTable from '@/components/DataTable.vue'
 import IsvaProfileOverrideControl from '@/components/profiles/IsvaProfileOverrideControl.vue'
 import ThemeColorPreview from '@/components/profiles/ThemeColorPreview.vue'
+import CopyFormDialog from '@/components/profiles/CopyFormDialog.vue'
 import { setIsvaProfileOverride } from '@/api/isvaConfig'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -551,6 +552,16 @@ async function doClone() {
   } catch (e) {
     notif.error(errMsg(e))
   }
+}
+
+// "Copy form to…": push this profile's user form onto other profiles
+// (e.g. identical dev / test / prod directories sharing one definition).
+const copyFormSource = ref<ProfileRow | null>(null)
+const showCopyForm = ref(false)
+
+function openCopyForm(p: ProfileRow) {
+  copyFormSource.value = p
+  showCopyForm.value = true
 }
 
 async function reload() {
@@ -1540,6 +1551,7 @@ function toggleApprover(accountId: string) {
       <template #actions="{ row }">
         <ActionMenu :items="[
           { label: 'Clone',  onClick: () => openClone(row as ProfileRow), hidden: !canManage },
+          { label: 'Copy form to…', onClick: () => openCopyForm(row as ProfileRow), hidden: !canManage },
           { label: 'Delete', onClick: () => confirmDelete(row as ProfileRow), danger: true, hidden: !canManage },
         ]">
           <template #primary>
@@ -2208,6 +2220,8 @@ function toggleApprover(accountId: string) {
       confirmLabel="Delete" :danger="true" @confirm="doDelete" />
 
     <!-- Group change preview dialog removed — compliance check is now inline on the Groups tab -->
+
+    <CopyFormDialog v-model="showCopyForm" :source="copyFormSource" :profiles="profiles" @copied="reload" />
 
     <!-- Clone modal -->
     <AppModal v-model="showCloneModal" title="Clone Profile" size="sm">
