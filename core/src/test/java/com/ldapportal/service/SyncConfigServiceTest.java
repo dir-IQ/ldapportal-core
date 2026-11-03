@@ -213,6 +213,28 @@ class SyncConfigServiceTest {
     }
 
     @Test
+    void listSets_countsHeldDeletesAmongReviewRows() {
+        UUID setId = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(setId);
+        when(setRepo.findAll()).thenReturn(List.of(set));
+        com.ldapportal.repository.MembershipStateCount review =
+                org.mockito.Mockito.mock(com.ldapportal.repository.MembershipStateCount.class);
+        when(review.getSyncSetId()).thenReturn(setId);
+        when(review.getState()).thenReturn(MembershipState.REVIEW);
+        when(review.getCnt()).thenReturn(5L);
+        when(membershipRepo.countGroupedByState()).thenReturn(List.of(review));
+        when(membershipRepo.countHeldDeletesBySet("scope-exit held for review%"))
+                .thenReturn(List.<Object[]>of(new Object[]{setId, 3L}));
+
+        var out = service.listSets(null);
+
+        assertThat(out.get(0).stateCounts())
+                .containsEntry("REVIEW", 5L)
+                .containsEntry(SyncConfigService.HELD_DELETE_KEY, 3L);
+    }
+
+    @Test
     void verifyContents_persistsDriftSnapshot_whenScanComplete() {
         UUID setId = UUID.randomUUID();
         when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
@@ -226,6 +248,21 @@ class SyncConfigServiceTest {
         assertThat(out.missingOnTarget()).isEqualTo(2);
         // The drift counts are cached on the set so the dashboard can read them cheaply.
         verify(setRepo).recordVerifyResult(eq(setId), any(), eq(2), eq(1), eq(0));
+        // No held references counted (none in the result): nothing stored for them.
+        verify(setRepo, never()).recordVerifyHeld(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void verifyContents_storesHeldReferenceCounts_whenScanComplete() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(10, 10, 10, 0, 0, 0,
+                List.of(), List.of(), List.of(), true, true, null, true,
+                new SyncVerifyResult.HeldReferences(4, 3, false, List.of())));
+
+        service.verifyContents(setId);
+
+        verify(setRepo).recordVerifyHeld(setId, 4, 3);
     }
 
     @Test
@@ -239,8 +276,22 @@ class SyncConfigServiceTest {
 
         service.verifyContents(setId);
 
-        // A partial scan must not overwrite a previously good snapshot with low counts.
+        // A partial scan must not overwrite a previously good snapshot with low counts...
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        // ...but it's noted, so the UI can say the snapshot may be out of date.
+        verify(setRepo).recordVerifyIncomplete(eq(setId), any());
+    }
+
+    @Test
+    void verifyContents_unavailableSet_isNotRecordedAsIncomplete() {
+        UUID setId = UUID.randomUUID();
+        when(setRepo.findById(setId)).thenReturn(Optional.of(new SyncSet()));
+        when(verifier.verify(setId)).thenReturn(new SyncVerifyResult(
+                0, 0, 0, 0, 0, 0, List.of(), List.of(), List.of(), false, false, "Sync set is disabled."));
+
+        service.verifyContents(setId);
+
+        verify(setRepo, never()).recordVerifyIncomplete(any(), any());
     }
 
     @Test
@@ -291,6 +342,8 @@ class SyncConfigServiceTest {
 
         assertThat(enumerated).isEqualTo(5);
         verify(setRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        // ...but it's noted, so the stored drift shows as possibly out of date.
+        verify(setRepo).recordVerifyIncomplete(eq(setId), any());
     }
 
     @Test

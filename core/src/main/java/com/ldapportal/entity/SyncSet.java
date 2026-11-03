@@ -212,6 +212,21 @@ public class SyncSet {
     @Column(name = "verify_mismatch_count")
     private Integer verifyMismatchCount;
 
+    /**
+     * When the latest content verify didn't read both directories completely,
+     * so its counts weren't stored; null once a later verify completes.
+     */
+    @Column(name = "verify_incomplete_at")
+    private OffsetDateTime verifyIncompleteAt;
+
+    /** Members with held reference values at the last complete verify (null until counted). */
+    @Column(name = "verify_held_count")
+    private Integer verifyHeldCount;
+
+    /** Of {@link #verifyHeldCount}, members whose held value names an entry missing on the source. */
+    @Column(name = "verify_dangling_count")
+    private Integer verifyDanglingCount;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

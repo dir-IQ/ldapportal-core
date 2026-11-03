@@ -29,10 +29,27 @@ public interface SyncSetRepository extends JpaRepository<SyncSet, UUID> {
     @Transactional
     @Modifying
     @Query("update SyncSet s set s.lastVerifiedAt = :at, s.verifyMissingCount = :missing, "
-            + "s.verifyOrphanCount = :orphan, s.verifyMismatchCount = :mismatch where s.id = :id")
+            + "s.verifyOrphanCount = :orphan, s.verifyMismatchCount = :mismatch, "
+            + "s.verifyIncompleteAt = null where s.id = :id")
     int recordVerifyResult(@Param("id") UUID id, @Param("at") OffsetDateTime at,
                            @Param("missing") int missing, @Param("orphan") int orphan,
                            @Param("mismatch") int mismatch);
+
+    /**
+     * Note a content verify that couldn't read both directories completely: its
+     * counts aren't stored, so the snapshot above may be out of date. Targeted,
+     * like {@link #recordVerifyResult}.
+     */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.verifyIncompleteAt = :at where s.id = :id")
+    int recordVerifyIncomplete(@Param("id") UUID id, @Param("at") OffsetDateTime at);
+
+    /** A complete verify's held-reference counts, stored beside its drift counts. Targeted, as above. */
+    @Transactional
+    @Modifying
+    @Query("update SyncSet s set s.verifyHeldCount = :held, s.verifyDanglingCount = :dangling where s.id = :id")
+    int recordVerifyHeld(@Param("id") UUID id, @Param("held") int held, @Param("dangling") int dangling);
 
     /**
      * Ask for a reconcile of every enabled set on a link: bumps the request

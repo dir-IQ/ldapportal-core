@@ -164,4 +164,42 @@ class AuditLogControllerTest extends BaseControllerTest {
                         .with(authentication(adminAuth())))
                 .andExpect(status().isForbidden());
     }
+
+    @Test
+    void log_passesTargetDnContainsThrough() throws Exception {
+        given(auditQueryService.query(any(), anyInt(), anyInt())).willReturn(Page.empty());
+
+        mockMvc.perform(get(LOG_URL).param("targetDnContains", "jdoe").with(authentication(superadminAuth())))
+                .andExpect(status().isOk());
+
+        verify(auditQueryService).query(
+                org.mockito.ArgumentMatchers.argThat(c -> "jdoe".equals(c.targetDnContains())), anyInt(), anyInt());
+    }
+
+    // targetDnContains only narrows directories the admin can read in full, so
+    // unlike an exact targetDn it isn't checked against their OU scope.
+    @Test
+    void log_adminTargetDnContains_isScopedToTheirDirectories_notRefused() throws Exception {
+        Set<UUID> dirs = Set.of(UUID.randomUUID());
+        given(permissionService.getAuthorizedDirectoryIds(any())).willReturn(dirs);
+        given(auditQueryService.queryForDirectories(any(), any(), anyInt(), anyInt())).willReturn(Page.empty());
+
+        mockMvc.perform(get(LOG_URL).param("targetDnContains", "jdoe").with(authentication(adminAuth())))
+                .andExpect(status().isOk());
+
+        verify(auditQueryService).queryForDirectories(org.mockito.ArgumentMatchers.eq(dirs),
+                org.mockito.ArgumentMatchers.argThat(c -> "jdoe".equals(c.targetDnContains())), anyInt(), anyInt());
+    }
+
+    @Test
+    void export_passesTargetDnContainsThrough() throws Exception {
+        given(auditQueryService.exportCsv(any(), any(), any()))
+                .willReturn(new AuditQueryService.ExportResult(0, 0, false));
+
+        mockMvc.perform(get(EXPORT_URL).param("targetDnContains", "jdoe").with(authentication(superadminAuth())))
+                .andExpect(status().isOk());
+
+        verify(auditQueryService).exportCsv(
+                org.mockito.ArgumentMatchers.argThat(c -> "jdoe".equals(c.targetDnContains())), any(), any());
+    }
 }

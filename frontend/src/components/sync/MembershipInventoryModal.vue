@@ -66,10 +66,37 @@
           </template>
           <template v-else>✓ Source and target agree — no mismatches found.</template>
         </p>
+        <p v-if="hasMismatches && verifyResult.orphanOnTarget" class="text-xs text-gray-500" data-testid="orphan-scope">
+          {{ verifyResult.orphansAnchored
+            ? 'Orphans are entries carrying the set’s source anchor that no source entry accounts for; entries without it, or that another set places there, aren’t counted.'
+            : 'This set writes no source anchor, so every entry under the target base that matches its filter counts, including ones another set or nothing manages.' }}
+        </p>
         <p v-if="verifyResult.note" class="text-amber-700">{{ verifyResult.note }}</p>
         <p v-if="!verifyResult.sourceComplete || !verifyResult.targetComplete" class="text-amber-600">
           Enumeration was incomplete (a directory read failed); counts may be partial.
         </p>
+        <div v-if="verifyResult.heldReferences?.entries" data-testid="held-references" class="text-gray-600">
+          <p>
+            Held references: <span class="font-medium tabular-nums">{{ verifyResult.heldReferences.entries }}</span>
+            {{ verifyResult.heldReferences.entries === 1 ? 'entry has' : 'entries have' }} a reference the sync holds back
+            (not counted as drift).
+            <template v-if="verifyResult.heldReferences.dangling">
+              <span class="text-amber-700">{{ verifyResult.heldReferences.dangling }} of them
+                {{ verifyResult.heldReferences.dangling === 1 ? 'names' : 'name' }} an entry that doesn’t exist on the
+                source</span>: fix those on the source; a reconcile can’t.
+            </template>
+            The rest name entries not synced yet, and fill in once those are.
+            <template v-if="verifyResult.heldReferences.unchecked"> Not every referenced entry was looked up.</template>
+          </p>
+          <ul class="font-mono text-xs text-gray-500 list-disc pl-4">
+            <li v-for="h in verifyResult.heldReferences.samples" :key="h.entryDn + h.attribute + h.reference">
+              {{ h.entryDn }}: {{ h.attribute }} → {{ h.reference }}
+              <span class="font-sans" :class="h.dangling ? 'text-amber-700' : 'text-gray-500'">
+                ({{ h.dangling ? 'doesn’t exist' : 'not synced yet' }})
+              </span>
+            </li>
+          </ul>
+        </div>
         <div v-for="g in sampleGroups" :key="g.label">
           <template v-if="g.dns.length">
             <p class="text-gray-500">{{ g.label }}:</p>
@@ -79,6 +106,16 @@
           </template>
         </div>
       </div>
+
+      <!-- Held references at the last complete verify (stored with its drift
+           counts), so they show without running Verify contents. -->
+      <p v-if="!verifyResult && set?.verify?.held" class="text-xs text-gray-600" data-testid="held-snapshot">
+        At the last content verify, {{ set.verify.held }}
+        {{ set.verify.held === 1 ? 'entry had' : 'entries had' }} a held reference (a value naming an entry the sync
+        hasn’t placed)<template v-if="set.verify.dangling">; <span class="text-amber-700">{{ set.verify.dangling }}
+          {{ set.verify.dangling === 1 ? 'names' : 'name' }} an entry that doesn’t exist on the source</span></template>.
+        Verify contents lists them.
+      </p>
 
       <!-- State filter chips with counts -->
       <div class="flex flex-wrap items-center gap-1.5">
@@ -319,7 +356,8 @@ function stateClass(state: MembershipState): string {
 
 const chips = computed(() => {
   const c = props.set?.stateCounts ?? {}
-  const all = Object.values(c).reduce((a, b) => a + b, 0)
+  // REVIEW_DELETE counts the held deletes among the REVIEW rows: a subset, not a state.
+  const all = Object.entries(c).reduce((a, [k, v]) => (k === 'REVIEW_DELETE' ? a : a + v), 0)
   return [
     { key: 'all', value: '' as StateFilter, label: 'All', n: all, dot: '', chip: 'bg-gray-100 text-gray-700',
       hint: 'Every entry this set tracks.' },

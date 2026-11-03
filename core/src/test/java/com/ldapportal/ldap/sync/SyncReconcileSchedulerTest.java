@@ -98,6 +98,8 @@ class SyncReconcileSchedulerTest {
 
         verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
         verify(syncSetRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        // Noted, so the stored snapshot can be shown as possibly out of date.
+        verify(syncSetRepo).recordVerifyIncomplete(eq(id), any());
     }
 
     @Test
@@ -155,6 +157,20 @@ class SyncReconcileSchedulerTest {
                 .minus(SyncReconcileScheduler.REQUEST_RETRY_SPACING).minusSeconds(1));
         scheduler.reconcileDueSets();
         verify(reconciler).reconcile(id, SyncReconcileTrigger.SCHEDULED, null);
+    }
+
+    @Test
+    void notesTheVerifyAsIncomplete_whenItThrows() {
+        UUID id = UUID.randomUUID();
+        SyncSet set = new SyncSet();
+        set.setId(id);
+        when(syncSetRepo.findAllByEnabledTrue()).thenReturn(List.of(set));
+        when(verifier.verify(id)).thenThrow(new RuntimeException("source unreachable"));
+
+        scheduler.reconcileDueSets();
+
+        verify(syncSetRepo, never()).recordVerifyResult(any(), any(), anyInt(), anyInt(), anyInt());
+        verify(syncSetRepo).recordVerifyIncomplete(eq(id), any());
     }
 
     @Test

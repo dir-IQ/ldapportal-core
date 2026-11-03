@@ -147,6 +147,25 @@ class DirectoryDiffServiceIntegrationTest {
     }
 
     @Test
+    void liveReread_flagsReferencesToEntriesThatDontExist() throws Exception {
+        // Alice on A refers to carol (exists on A) and a ghost (exists nowhere); B has neither.
+        serverA.modify("uid=alice,ou=people," + BASE_A, new Modification(ModificationType.ADD, "seeAlso",
+                "uid=carol,ou=people," + BASE_A, "uid=ghost,ou=people," + BASE_A));
+        DirectoryDiffRunResponse run = finish(service.start(request(DirectoryDiffPairing.DN, null, null), SUPERADMIN));
+        int aliceSeq = service.entries(run.id(), DirectoryDiffCategory.DIFFERENT, "seeAlso", null, 0, 50)
+                .content().get(0).seq();
+
+        DirectoryDiffLiveEntry live = service.live(run.id(), aliceSeq);
+
+        // Only the ghost is dangling: carol's entry exists on A.
+        assertThat(live.dangling()).singleElement().satisfies(d -> {
+            assertThat(d.attribute()).isEqualToIgnoringCase("seeAlso");
+            assertThat(d.side()).isEqualTo("A");
+            assertThat(d.value()).isEqualToIgnoringCase("uid=ghost,ou=people," + BASE_A);
+        });
+    }
+
+    @Test
     void pairsByAttributeAcrossDifferentDns() throws Exception {
         serverB.add(new Entry("ou=staff," + BASE_B, new Attribute("objectClass", "top", "organizationalUnit"),
                 new Attribute("ou", "staff")));

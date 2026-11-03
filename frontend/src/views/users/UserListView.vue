@@ -855,7 +855,7 @@ const cols = computed(() => {
   // renders at a known size; the table scrolls horizontally when the columns
   // outgrow the container and parks any spare width to the right otherwise.
   return [
-    { key: 'dn', label: 'DN', alwaysVisible: true, defaultWidth: 360 },
+    { key: 'dn', label: 'DN', alwaysVisible: true, lockPosition: true, defaultWidth: 360 },
     // Row cells are keyed by the backend's lower-cased attribute names
     // (see load(): `row[attr]` where attr comes straight from the
     // server, which lower-cases keys). DEFAULT_USER_COLUMNS keeps the
@@ -1220,12 +1220,16 @@ async function save() {
         // save from REPLACE-ing every attribute it never touched (audit
         // noise, needless writes).
         .filter(([attr, val]) => !unchanged(attr, val))
-        .map(([attr, val]) => ({
-          operation: 'REPLACE',
-          attribute: attr,
-          values: toValueList(val),
-        }))
-        .filter(m => m.values.length > 0)
+        // A changed attribute whose new value list is empty was cleared
+        // (e.g. the last line removed from a multi-valued field): send a
+        // value-less DELETE, which removes the attribute. Dropping it — as an
+        // empty REPLACE used to be — silently discarded the edit.
+        .map(([attr, val]) => {
+          const values = toValueList(val)
+          return values.length
+            ? { operation: 'REPLACE', attribute: attr, values }
+            : { operation: 'DELETE', attribute: attr, values: [] as string[] }
+        })
       // Nothing changed → no MODIFY at all: an empty modification list is
       // an LDAP protocol error, and there's nothing worth an audit row.
       if (mods.length) {

@@ -222,15 +222,27 @@ public class SyncConfigService {
                 .toList();
     }
 
-    /** Membership counts per set keyed by state name, for the health rollup. */
+    /**
+     * Membership counts per set keyed by state name, for the health rollup, plus
+     * {@value #HELD_DELETE_KEY}: how many of the {@code REVIEW} rows are held
+     * deletes (a subset of {@code REVIEW}, not an extra state).
+     */
     private Map<UUID, Map<String, Long>> membershipStateCounts() {
         Map<UUID, Map<String, Long>> counts = new HashMap<>();
         for (MembershipStateCount c : membershipRepo.countGroupedByState()) {
             counts.computeIfAbsent(c.getSyncSetId(), k -> new HashMap<>())
                     .put(c.getState().name(), c.getCnt());
         }
+        for (Object[] row : membershipRepo.countHeldDeletesBySet(
+                com.ldapportal.dto.sync.SyncReviewKind.PENDING_DELETE_PREFIX + "%")) {
+            counts.computeIfAbsent((UUID) row[0], k -> new HashMap<>())
+                    .put(HELD_DELETE_KEY, ((Number) row[1]).longValue());
+        }
         return counts;
     }
+
+    /** {@code stateCounts} key for the held deletes among a set's {@code REVIEW} rows. */
+    public static final String HELD_DELETE_KEY = "REVIEW_DELETE";
 
     @Transactional(readOnly = true)
     public SyncSetResponse getSet(UUID id) {
@@ -663,7 +675,14 @@ public class SyncConfigService {
      * @param afterReconcile also record the result on the reconcile run it follows
      */
     private com.ldapportal.dto.sync.SyncVerifyResult refreshDriftSnapshot(UUID syncSetId, boolean afterReconcile) {
-        com.ldapportal.dto.sync.SyncVerifyResult result = verifier.verify(syncSetId);
+        com.ldapportal.dto.sync.SyncVerifyResult result;
+        try {
+            result = verifier.verify(syncSetId);
+        } catch (RuntimeException ex) {
+            // It ran but failed: the stored snapshot stays, flagged as possibly stale.
+            setRepo.recordVerifyIncomplete(syncSetId, java.time.OffsetDateTime.now());
+            throw ex;
+        }
         if (result.sourceComplete() && result.targetComplete()) {
             setRepo.recordVerifyResult(syncSetId, java.time.OffsetDateTime.now(),
                     result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
@@ -671,6 +690,14 @@ public class SyncConfigService {
                 reconcileHistory.recordDrift(syncSetId,
                         result.missingOnTarget(), result.orphanOnTarget(), result.contentMismatches());
             }
+            if (result.heldReferences() != null) {
+                setRepo.recordVerifyHeld(syncSetId, result.heldReferences().entries(),
+                        result.heldReferences().dangling());
+            }
+        } else if (result.note() == null) {
+            // It ran but couldn't read a side completely (an unavailable set
+            // carries a note instead): keep the snapshot, flag it as possibly stale.
+            setRepo.recordVerifyIncomplete(syncSetId, java.time.OffsetDateTime.now());
         }
         return result;
     }

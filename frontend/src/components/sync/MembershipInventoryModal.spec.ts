@@ -111,6 +111,19 @@ describe('MembershipInventoryModal', () => {
     w.unmount()
   })
 
+  it('counts held deletes once in the All chip (they are part of Review)', async () => {
+    const w = mount(MembershipInventoryModal, {
+      attachTo: document.body,
+      props: { show: true, set: { ...set, stateCounts: { APPLIED: 40, REVIEW: 5, REVIEW_DELETE: 3 } },
+        sourceName: 'Source', targetName: 'Target' },
+    })
+    await flushPromises()
+    const all = byExactText('All 45') ?? Array.from(document.querySelectorAll('button'))
+      .find((b) => b.textContent?.replace(/\s+/g, ' ').trim() === 'All 45')
+    expect(all).toBeTruthy()
+    w.unmount()
+  })
+
   it('loads memberships on open and renders state chips with counts', async () => {
     const wrapper = open()
     await flushPromises()
@@ -306,6 +319,28 @@ describe('MembershipInventoryModal', () => {
     expect(txt).toContain('Content verification')
     expect(txt).toContain('uid=gone,ou=Users,dc=dst') // sample missing DN
     expect(txt).toContain('uid=drift,ou=Users,dc=dst') // sample drift DN
+    wrapper.unmount()
+  })
+
+  it('Verify contents lists held references, telling dangling ones from unsynced ones', async () => {
+    vi.mocked(syncApi.verifyContents).mockResolvedValueOnce({ data: {
+      sourceMembers: 2, targetEntries: 2, inSync: 2, missingOnTarget: 0, orphanOnTarget: 0, contentMismatches: 0,
+      sampleMissing: [], sampleOrphans: [], sampleMismatches: [], sourceComplete: true, targetComplete: true,
+      note: null, orphansAnchored: true,
+      heldReferences: { entries: 2, dangling: 1, unchecked: false, samples: [
+        { entryDn: 'cn=a,dc=dst', attribute: 'secDN', reference: 'uid=ghost,dc=src', dangling: true },
+        { entryDn: 'cn=b,dc=dst', attribute: 'member', reference: 'uid=new,dc=src', dangling: false },
+      ] },
+    } } as never)
+    const wrapper = open()
+    await flushPromises()
+    byText('Verify contents')!.click()
+    await flushPromises()
+    const held = document.querySelector('[data-testid="held-references"]')!.textContent!.replace(/\s+/g, ' ')
+    expect(held).toContain('Held references: 2 entries have a reference the sync holds back')
+    expect(held).toContain('1 of them names an entry that doesn’t exist on the source')
+    expect(held).toContain('cn=a,dc=dst: secDN → uid=ghost,dc=src (doesn’t exist)')
+    expect(held).toContain('cn=b,dc=dst: member → uid=new,dc=src (not synced yet)')
     wrapper.unmount()
   })
 

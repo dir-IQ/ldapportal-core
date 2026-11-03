@@ -44,6 +44,9 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
     /** As {@link #findAllBySourceDn}, for many (normalized) source DNs in one query. */
     List<Membership> findAllBySourceDnIn(java.util.Collection<String> sourceDns);
 
+    /** Rows (of any set) for these identities: who manages an anchored target entry. */
+    List<Membership> findAllByIdentityIn(java.util.Collection<String> identities);
+
     /**
      * Every row (any set, any state) whose target DN matches, case-insensitively.
      * The engine's OUT path uses this to refuse deleting a target entry that
@@ -99,6 +102,18 @@ public interface MembershipRepository extends JpaRepository<Membership, Membersh
     @Query("select m.syncSetId as syncSetId, m.state as state, count(m) as cnt "
             + "from Membership m group by m.syncSetId, m.state")
     List<MembershipStateCount> countGroupedByState();
+
+    /**
+     * Per set, how many {@code REVIEW} rows are held deletes (an entry that left
+     * scope whose target delete waits for an operator), told apart by the reason
+     * prefix the engine writes. Each row is {@code [syncSetId, count]}.
+     *
+     * @param prefix the held-delete reason prefix followed by {@code %}
+     */
+    @Query("select m.syncSetId, count(m) from Membership m "
+            + "where m.state = com.ldapportal.entity.enums.MembershipState.REVIEW "
+            + "and m.failReason like :prefix group by m.syncSetId")
+    List<Object[]> countHeldDeletesBySet(@Param("prefix") String prefix);
 
     /**
      * Paged inventory for one set, optionally filtered by state and by a

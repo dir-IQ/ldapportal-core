@@ -481,13 +481,13 @@ class BulkUserServiceTest {
                 Map.of("cn",   List.of("John Smith"),
                        "mail", List.of("jsmith@example.com")));
 
-        // When attributes are specified, exportCsv uses processUsers (streaming)
+        // When attributes are specified, exportCsv uses processUsersRaw (streaming)
         doAnswer(invocation -> {
             @SuppressWarnings("unchecked")
             Consumer<LdapUser> consumer = invocation.getArgument(3);
             consumer.accept(user);
             return null;
-        }).when(userService).processUsers(eq(dc), anyString(), isNull(), any(), eq("cn"), eq("mail"));
+        }).when(userService).processUsersRaw(eq(dc), anyString(), isNull(), any(), eq("cn"), eq("mail"));
 
         byte[] csv = service.exportCsv(dc, null, null, List.of("cn", "mail"));
 
@@ -509,7 +509,7 @@ class BulkUserServiceTest {
             Consumer<LdapUser> consumer = invocation.getArgument(3);
             consumer.accept(user);
             return null;
-        }).when(userService).processUsers(eq(dc), anyString(), isNull(), any(), eq("memberof"));
+        }).when(userService).processUsersRaw(eq(dc), anyString(), isNull(), any(), eq("memberof"));
 
         byte[] csv = service.exportCsv(dc, null, null, List.of("memberof"));
 
@@ -527,7 +527,7 @@ class BulkUserServiceTest {
             Consumer<LdapUser> consumer = invocation.getArgument(3);
             consumer.accept(user);
             return null;
-        }).when(userService).processUsers(eq(dc), anyString(), isNull(), any(), eq("description"));
+        }).when(userService).processUsersRaw(eq(dc), anyString(), isNull(), any(), eq("description"));
 
         byte[] csv = service.exportCsv(dc, null, null, List.of("description"));
 
@@ -536,9 +536,9 @@ class BulkUserServiceTest {
 
     @Test
     void exportCsv_emptyResult_returnsHeaderOnly() throws IOException {
-        // When attributes are specified, exportCsv uses processUsers (streaming)
-        // processUsers does nothing (no entries) → only header is written
-        doNothing().when(userService).processUsers(eq(dc), anyString(), isNull(), any(), eq("cn"), eq("mail"));
+        // When attributes are specified, exportCsv uses processUsersRaw (streaming)
+        // processUsersRaw does nothing (no entries) → only header is written
+        doNothing().when(userService).processUsersRaw(eq(dc), anyString(), isNull(), any(), eq("cn"), eq("mail"));
 
         byte[] csv = service.exportCsv(dc, null, null, List.of("cn", "mail"));
 
@@ -550,12 +550,12 @@ class BulkUserServiceTest {
 
     @Test
     void exportCsv_defaultFilter_usedWhenFilterNull() throws IOException {
-        // When attributes are specified, exportCsv uses processUsers (streaming)
-        doNothing().when(userService).processUsers(eq(dc), eq("(objectClass=*)"), isNull(), any(), eq("cn"));
+        // When attributes are specified, exportCsv uses processUsersRaw (streaming)
+        doNothing().when(userService).processUsersRaw(eq(dc), eq("(objectClass=*)"), isNull(), any(), eq("cn"));
 
         service.exportCsv(dc, null, null, List.of("cn"));
 
-        verify(userService).processUsers(eq(dc), eq("(objectClass=*)"), isNull(), any(), eq("cn"));
+        verify(userService).processUsersRaw(eq(dc), eq("(objectClass=*)"), isNull(), any(), eq("cn"));
     }
 
     // ── Import — DN from a CSV column ──────────────────────────────────────────

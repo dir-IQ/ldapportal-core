@@ -83,11 +83,29 @@ export interface SyncSet {
   // Membership counts keyed by state name (APPLIED/PENDING/FAILED/REVIEW); the
   // list endpoint populates this, single-set responses leave it empty.
   stateCounts: Record<string, number>
+  /** The stored drift snapshot: the last complete content verify. */
+  verify?: SyncVerifySnapshot | null
+}
+
+/**
+ * A set's last complete content verify (`at` null when never verified), and
+ * when a newer verify didn't finish reading both directories (`incompleteAt`).
+ */
+export interface SyncVerifySnapshot {
+  at: string | null
+  missing: number | null
+  orphan: number | null
+  mismatch: number | null
+  incompleteAt: string | null
+  /** Members with a held reference value at that verify (null until counted). */
+  held?: number | null
+  /** Of those, members whose held value names an entry missing on the source. */
+  dangling?: number | null
 }
 
 export type SyncSetPayload = Omit<
   SyncSet,
-  'id' | 'reconcileLastRunAt' | 'createdAt' | 'updatedAt' | 'version' | 'stateCounts'
+  'id' | 'reconcileLastRunAt' | 'createdAt' | 'updatedAt' | 'version' | 'stateCounts' | 'verify'
 >
 
 export interface Membership {
@@ -422,6 +440,19 @@ export interface SyncVerifyResult {
   sourceComplete: boolean
   targetComplete: boolean
   note: string | null
+  /** Only target entries carrying the set's source anchor counted as orphans. */
+  orphansAnchored?: boolean
+  /** Members whose reference values the sync holds back (not drift); null when not counted. */
+  heldReferences?: SyncHeldReferences | null
+}
+
+export interface SyncHeldReferences {
+  entries: number
+  /** Members with a held value naming an entry that doesn't exist on the source. */
+  dangling: number
+  /** Some referenced DNs weren't looked up (too many). */
+  unchecked: boolean
+  samples: { entryDn: string; attribute: string; reference: string; dangling: boolean }[]
 }
 
 export const verifyContents = (setId: string) =>
