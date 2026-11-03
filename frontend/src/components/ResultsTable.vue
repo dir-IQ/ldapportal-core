@@ -9,8 +9,7 @@
  *   - Pagination with selectable page size (25 / 50 / 100 / All)
  *   - Quick-filter input (case-insensitive substring match across visible cols)
  *   - Column show/hide picker (persisted)
- *   - Column reordering from the picker: drag the grip, or use the
- *     move up / move down buttons (keyboard + screen-reader path).
+ *   - Column reordering from the picker by dragging a column's grip.
  *     Persisted; `lockPosition` / `pinned` columns stay put.
  *   - Sticky header
  *   - Per-cell rendering via scoped slot `cell-<key>` so callers keep
@@ -388,31 +387,7 @@ function onColumnToggle(col: ColumnDef): void {
   })
 }
 
-// Polite live-region text announcing a keyboard move, so a screen-reader
-// user hears where the column landed.
-const reorderStatus = ref('')
 const colLabel = (c: ColumnDef): string => c.label || c.key
-
-// Move a movable column one step up (-1) or down (+1) in the picker.
-function moveColumn(col: ColumnDef, delta: -1 | 1): void {
-  const keys = movableColumns.value.map(c => c.key)
-  const from = keys.indexOf(col.key)
-  const to = from + delta
-  if (from < 0 || to < 0 || to >= keys.length) return
-  keys.splice(from, 1)
-  keys.splice(to, 0, col.key)
-  setOrder(keys)
-  reorderStatus.value = `${colLabel(col)} moved to position ${to + 1} of ${keys.length}`
-  // Keep focus on the button that was pressed (the row re-renders in its new
-  // slot); at either end that button disables, so fall back to its sibling.
-  nextTick(() => {
-    const pick = (dir: string) => colPickerRef.value?.querySelector<HTMLButtonElement>(
-      `button[data-reorder-key="${CSS.escape(col.key)}"][data-reorder-dir="${dir}"]`)
-    const same = pick(delta < 0 ? 'up' : 'down')
-    const other = pick(delta < 0 ? 'down' : 'up')
-    ;(same && !same.disabled ? same : other)?.focus()
-  })
-}
 
 // Drag-to-reorder in the picker. sortablejs is used directly rather than via
 // vuedraggable: vuedraggable's bundle ships a core-js polyfill that replaces
@@ -443,10 +418,6 @@ function onDragEnd({ item, from, oldIndex, newIndex }: SortableEvent): void {
   setOrder(keys)
 }
 
-function onResetOrder(): void {
-  resetOrder()
-  reorderStatus.value = 'Column order reset'
-}
 
 function onDocClick(e: MouseEvent): void {
   if (!showColPicker.value) return
@@ -503,7 +474,7 @@ watch(() => props.rows, () => { page.value = 0 })
 </script>
 
 <template>
-  <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+  <div class="bg-white border border-gray-200 rounded-xl">
     <!-- Toolbar -->
     <div class="px-5 py-3 border-b border-gray-200 flex items-center justify-between gap-3 flex-wrap">
       <div class="flex items-center gap-3 flex-1 min-w-0">
@@ -522,8 +493,6 @@ watch(() => props.rows, () => { page.value = 0 })
         />
       </div>
       <div class="flex items-center gap-2">
-        <!-- Announces keyboard column moves (see moveColumn). -->
-        <span class="sr-only" role="status" aria-live="polite">{{ reorderStatus }}</span>
         <slot name="toolbar" />
         <!-- Fit columns to content (the bulk "auto-size" verb; double-clicking
              a single column's resize handle fits just that one). -->
@@ -556,7 +525,7 @@ watch(() => props.rows, () => { page.value = 0 })
           </button>
           <div
             v-if="showColPicker"
-            class="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-2 w-64 max-h-80 overflow-y-auto"
+            class="absolute right-0 top-full mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg py-2 w-64 max-h-[min(36rem,70vh)] overflow-y-auto"
           >
             <!-- Locked columns that sit before the movable ones (e.g. DN). -->
             <div v-for="col in columnBands.leading" :key="col.key"
@@ -574,9 +543,9 @@ watch(() => props.rows, () => { page.value = 0 })
               />
               <span class="text-gray-700 truncate">{{ colLabel(col) }}</span>
             </div>
-            <!-- Movable columns: drag the grip, or use the arrow buttons. -->
+            <!-- Movable columns: drag the grip to reorder. -->
             <div ref="movableListRef">
-              <div v-for="(col, index) in movableColumns" :key="col.key"
+              <div v-for="col in movableColumns" :key="col.key"
                    class="px-3 py-1.5 text-sm hover:bg-gray-50 flex items-center gap-2 cursor-pointer"
                    :class="col.alwaysVisible ? 'cursor-not-allowed' : ''"
                    :data-picker-key="col.key"
@@ -598,26 +567,6 @@ watch(() => props.rows, () => { page.value = 0 })
                 />
                 <span class="text-gray-700 truncate flex-1 min-w-0"
                       :class="col.alwaysVisible ? 'opacity-50' : ''">{{ colLabel(col) }}</span>
-                <button
-                  type="button"
-                  class="p-0.5 rounded cursor-pointer text-gray-400 hover:text-gray-700 disabled:opacity-30 disabled:cursor-default leading-none"
-                  :data-reorder-key="col.key"
-                  data-reorder-dir="up"
-                  :disabled="index === 0"
-                  :aria-label="`Move ${colLabel(col)} up`"
-                  title="Move up"
-                  @click.stop="moveColumn(col, -1)"
-                >▲</button>
-                <button
-                  type="button"
-                  class="p-0.5 rounded cursor-pointer text-gray-400 hover:text-gray-700 disabled:opacity-30 disabled:cursor-default leading-none"
-                  :data-reorder-key="col.key"
-                  data-reorder-dir="down"
-                  :disabled="index === movableColumns.length - 1"
-                  :aria-label="`Move ${colLabel(col)} down`"
-                  title="Move down"
-                  @click.stop="moveColumn(col, 1)"
-                >▼</button>
               </div>
             </div>
             <!-- Locked columns that sit after the movable ones (e.g. actions). -->
@@ -648,7 +597,7 @@ watch(() => props.rows, () => { page.value = 0 })
               type="button"
               class="w-full text-left px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-default"
               :disabled="prefs.order.length === 0"
-              @click="onResetOrder"
+              @click="resetOrder"
             >Reset column order</button>
           </div>
         </div>

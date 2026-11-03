@@ -500,8 +500,8 @@ before hand-rolling a `<table>`.
   per-user **persisted column widths**, **"Fit columns" auto-sizing**
   (`fitColumns()`), a **right-pinned column** (`pinned` — the rightmost
   column, typically row actions, stays visible while the rest scrolls),
-  **column reordering** from the Columns picker (drag the grip, or the
-  ▲/▼ buttons for keyboard users), hidden-column and page-size memory, and
+  **column reordering** from the Columns picker (drag the grip; pointer
+  only, there is no keyboard path), hidden-column and page-size memory, and
   CSV export.
 - **`EditableResultsTable`** — `ResultsTable` plus inline cell editing
   (single-value cells and a chip editor for multi-valued attributes).
