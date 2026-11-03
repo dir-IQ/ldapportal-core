@@ -69,7 +69,8 @@ public class AuditQueryService {
         PageRequest pageable = PageRequest.of(page, clampSize(size));
         return auditRepo.findAll(
                         criteria.directoryId(), criteria.actorId(), actionNames(criteria.actions()),
-                        criteria.targetDn(), criteria.source(), criteria.correlationId(),
+                        criteria.targetDn(), containsPattern(criteria.targetDnContains()),
+                        criteria.source(), criteria.correlationId(),
                         criteria.from(), criteria.to(), pageable)
                 .map(AuditEventResponse::from);
     }
@@ -86,7 +87,8 @@ public class AuditQueryService {
         PageRequest pageable = PageRequest.of(page, clampSize(size));
         return auditRepo.findAllByDirectoryIds(
                         directoryIds, criteria.actorId(), actionNames(criteria.actions()),
-                        criteria.targetDn(), criteria.source(), criteria.correlationId(),
+                        criteria.targetDn(), containsPattern(criteria.targetDnContains()),
+                        criteria.source(), criteria.correlationId(),
                         criteria.from(), criteria.to(), pageable)
                 .map(AuditEventResponse::from);
     }
@@ -111,10 +113,7 @@ public class AuditQueryService {
     @Transactional(readOnly = true)
     public ExportResult exportCsv(AuditQueryCriteria criteria, Set<UUID> directoryIds, Writer out) {
         AuditQueryCriteria pinned = criteria.to() != null ? criteria
-                : AuditQueryCriteria.builder().directoryId(criteria.directoryId()).actorId(criteria.actorId())
-                        .actions(criteria.actions()).targetDn(criteria.targetDn()).source(criteria.source())
-                        .correlationId(criteria.correlationId()).from(criteria.from())
-                        .to(OffsetDateTime.now()).build();
+                : criteria.toBuilder().to(OffsetDateTime.now()).build();
         try {
             CsvUtils.writeHeader(out, EXPORT_HEADERS);
             int written = 0;
@@ -143,11 +142,36 @@ public class AuditQueryService {
     private Page<AuditEvent> exportPage(AuditQueryCriteria c, Set<UUID> directoryIds, int page) {
         PageRequest pageable = PageRequest.of(page, EXPORT_PAGE_SIZE);
         String actions = actionNames(c.actions());
+        String dnLike = containsPattern(c.targetDnContains());
         return directoryIds != null
-                ? auditRepo.findAllByDirectoryIds(directoryIds, c.actorId(), actions, c.targetDn(), c.source(),
-                        c.correlationId(), c.from(), c.to(), pageable)
-                : auditRepo.findAll(c.directoryId(), c.actorId(), actions, c.targetDn(), c.source(),
-                        c.correlationId(), c.from(), c.to(), pageable);
+                ? auditRepo.findAllByDirectoryIds(directoryIds, c.actorId(), actions, c.targetDn(), dnLike,
+                        c.source(), c.correlationId(), c.from(), c.to(), pageable)
+                : auditRepo.findAll(c.directoryId(), c.actorId(), actions, c.targetDn(), dnLike,
+                        c.source(), c.correlationId(), c.from(), c.to(), pageable);
+    }
+
+    /** Longest "Target DN contains" text accepted (a DN fits well within it). */
+    static final int MAX_DN_CONTAINS_LENGTH = 512;
+
+    /**
+     * The {@code ILIKE} pattern for a "Target DN contains" search: the trimmed
+     * text with {@code \}, {@code %} and {@code _} escaped (so they match
+     * literally), wrapped in {@code %…%}. {@code null} for blank text, meaning
+     * no filter.
+     *
+     * @throws IllegalArgumentException if the text is longer than {@link #MAX_DN_CONTAINS_LENGTH}
+     */
+    static String containsPattern(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        String t = text.trim();
+        if (t.length() > MAX_DN_CONTAINS_LENGTH) {
+            throw new IllegalArgumentException(
+                    "targetDnContains must be at most " + MAX_DN_CONTAINS_LENGTH + " characters");
+        }
+        String escaped = t.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        return "%" + escaped + "%";
     }
 
     private Map<String, String> exportRow(AuditEvent e) {

@@ -78,6 +78,12 @@ public class AuditLogController {
      * @param actorId     filter by admin actor UUID (optional)
      * @param action      filter by one or more actions (optional; repeat the
      *                    param — {@code ?action=USER_CREATE&action=USER_UPDATE})
+     * @param targetDn    exact DN of the affected entry (optional)
+     * @param targetDnContains case-insensitive text the affected entry's DN
+     *                    contains, e.g. an RDN value (optional). Unlike
+     *                    {@code targetDn} it isn't checked against the
+     *                    caller's OU scope: it only narrows the events of
+     *                    directories the caller can already read in full.
      * @param from        lower bound on {@code occurredAt} (ISO-8601, optional)
      * @param to          upper bound on {@code occurredAt} (ISO-8601, optional)
      * @param page        zero-based page number (default 0)
@@ -91,6 +97,7 @@ public class AuditLogController {
             @RequestParam(required = false) UUID actorId,
             @RequestParam(required = false) List<AuditAction> action,
             @RequestParam(required = false) String targetDn,
+            @RequestParam(required = false) String targetDnContains,
             @RequestParam(required = false) String source,
             @RequestParam(required = false) UUID correlationId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
@@ -102,7 +109,8 @@ public class AuditLogController {
 
         AuditQueryCriteria criteria = AuditQueryCriteria.builder()
                 .directoryId(directoryId).actorId(actorId).actions(action)
-                .targetDn(targetDn).source(source).correlationId(correlationId)
+                .targetDn(targetDn).targetDnContains(targetDnContains)
+                .source(source).correlationId(correlationId)
                 .from(from).to(to).build();
 
         Set<UUID> scope = readableDirectories(principal, directoryId, targetDn);
@@ -127,6 +135,7 @@ public class AuditLogController {
             @RequestParam(required = false) UUID actorId,
             @RequestParam(required = false) List<AuditAction> action,
             @RequestParam(required = false) String targetDn,
+            @RequestParam(required = false) String targetDnContains,
             @RequestParam(required = false) String source,
             @RequestParam(required = false) UUID correlationId,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
@@ -136,7 +145,8 @@ public class AuditLogController {
 
         AuditQueryCriteria criteria = AuditQueryCriteria.builder()
                 .directoryId(directoryId).actorId(actorId).actions(action)
-                .targetDn(targetDn).source(source).correlationId(correlationId)
+                .targetDn(targetDn).targetDnContains(targetDnContains)
+                .source(source).correlationId(correlationId)
                 .from(from).to(to).build();
         Set<UUID> scope = readableDirectories(principal, directoryId, targetDn);
 

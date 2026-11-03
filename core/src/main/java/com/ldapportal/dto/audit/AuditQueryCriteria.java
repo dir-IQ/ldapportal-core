@@ -20,16 +20,21 @@ import java.util.UUID;
  * sites that don't use the new filter are untouched, so a widened query
  * can no longer silently mis-bind an existing call site.
  *
+ * <p>{@code targetDn} matches a DN exactly (an entry's history);
+ * {@code targetDnContains} is a case-insensitive substring of it (the audit
+ * log's "Target DN contains" search, e.g. an RDN value).
+ *
  * <p>{@code directoryId} is ignored by
  * {@link com.ldapportal.service.AuditQueryService#queryForDirectories},
  * which scopes results to an explicit set of directories instead.
  */
-@Builder
+@Builder(toBuilder = true)
 public record AuditQueryCriteria(
         UUID directoryId,
         UUID actorId,
         List<AuditAction> actions,
         String targetDn,
+        String targetDnContains,
         String source,
         UUID correlationId,
         OffsetDateTime from,

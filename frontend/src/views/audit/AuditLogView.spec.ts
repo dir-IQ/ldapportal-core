@@ -66,6 +66,40 @@ describe('AuditLogView', () => {
     wrapper.unmount()
   })
 
+  // The table's own filter box only searches the loaded page (the latest 200
+  // events); "Target DN contains" asks the server, so older events match too.
+  it('searches the target DN server-side, on Filter or Enter, trimmed', async () => {
+    const wrapper = mount(AuditLogView, { attachTo: document.body })
+    await flushPromises()
+    const input = document.getElementById('audit-dn-contains') as HTMLInputElement
+    input.value = '  jdoe '
+    input.dispatchEvent(new Event('input'))
+    input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }))
+    await flushPromises()
+
+    expect(auditApi.getAuditLog).toHaveBeenLastCalledWith(expect.objectContaining({
+      targetDnContains: 'jdoe', directoryId: 'dir-2',
+    }))
+
+    button('Export CSV')!.click()
+    await flushPromises()
+    expect(auditApi.exportAuditLog).toHaveBeenCalledWith(expect.objectContaining({ targetDnContains: 'jdoe' }))
+
+    button('Clear')!.click()
+    await flushPromises()
+    expect(input.value).toBe('')
+    wrapper.unmount()
+  })
+
+  it('sends no DN filter when the field is blank', async () => {
+    const wrapper = mount(AuditLogView, { attachTo: document.body })
+    await flushPromises()
+    button('Filter')!.click()
+    await flushPromises()
+    expect(auditApi.getAuditLog).toHaveBeenLastCalledWith(expect.objectContaining({ targetDnContains: undefined }))
+    wrapper.unmount()
+  })
+
   it('exports every matching event from the server, with the same filters', async () => {
     const wrapper = mount(AuditLogView, { attachTo: document.body })
     await flushPromises()
