@@ -7,6 +7,7 @@ import com.ldapportal.dto.profile.*;
 import com.ldapportal.auth.PermissionService;
 import com.ldapportal.entity.enums.SuperadminPermission;
 import com.ldapportal.service.PasswordGeneratorService;
+import com.ldapportal.service.ProfileExportImportService;
 import com.ldapportal.service.ProvisioningProfileService;
 import com.ldapportal.entity.ProvisioningProfile;
 import jakarta.validation.Valid;
@@ -32,6 +33,8 @@ import java.util.UUID;
  *   DELETE /api/v1/directories/{dirId}/profiles/{profileId}              — delete
  *   POST   /api/v1/directories/{dirId}/profiles/{profileId}/clone                    — clone (body: name, optional targetDirectoryId)
  *   POST   /api/v1/directories/{dirId}/profiles/{profileId}/copy-form                — replace other profiles' user form with this one's (body: targetProfileIds)
+ *   GET    /api/v1/directories/{dirId}/profiles/{profileId}/export                   — the profile as a portable JSON file
+ *   POST   /api/v1/directories/{dirId}/profiles/import                               — import a profile file (new profile, or an existing profile's form)
  *   POST   /api/v1/directories/{dirId}/profiles/{profileId}/evaluate-group-changes   — preview group changes
  *   POST   /api/v1/directories/{dirId}/profiles/{profileId}/apply-group-changes      — apply group changes
  *
@@ -52,6 +55,7 @@ public class ProvisioningProfileController {
     private final ProvisioningProfileService service;
     private final PasswordGeneratorService passwordGenerator;
     private final PermissionService permissionService;
+    private final ProfileExportImportService exportImportService;
 
     // ── Profile CRUD (directory-scoped) ───────────────────────────────────────
 
@@ -166,6 +170,38 @@ public class ProvisioningProfileController {
                                           @Valid @RequestBody CopyFormRequest req,
                                           @AuthenticationPrincipal AuthPrincipal principal) {
         return service.copyForm(directoryId, profileId, req.targetProfileIds(), principal);
+    }
+
+    /**
+     * The profile as a portable JSON file ({@link ProfileExportDocument}), for
+     * importing into another directory or another install.
+     */
+    @GetMapping("/api/v1/directories/{directoryId}/profiles/{profileId}/export")
+    @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
+    public ResponseEntity<ProfileExportDocument> export(@PathVariable UUID directoryId,
+                                                        @PathVariable UUID profileId) {
+        ProfileExportDocument doc = exportImportService.export(directoryId, profileId);
+        String file = doc.profile().name().replaceAll("[^A-Za-z0-9._-]+", "-") + ".profile.json";
+        return ResponseEntity.ok()
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + file + "\"")
+                .body(doc);
+    }
+
+    /**
+     * Imports a profile file into this directory: as a new, disabled profile,
+     * or as the user form of an existing one. {@code dryRun} previews the DN
+     * rewrites and warnings without saving. See
+     * {@link ProfileExportImportService#importProfile}.
+     */
+    @PostMapping("/api/v1/directories/{directoryId}/profiles/import")
+    @PreAuthorize("hasRole('SUPERADMIN')")
+    @RequiresSuperadminPermission(SuperadminPermission.MANAGE_PROVISIONING_PROFILES)
+    public ProfileImportResult importProfile(@PathVariable UUID directoryId,
+                                             @Valid @RequestBody ProfileImportRequest req,
+                                             @AuthenticationPrincipal AuthPrincipal principal) {
+        return exportImportService.importProfile(directoryId, req, principal);
     }
 
     /**

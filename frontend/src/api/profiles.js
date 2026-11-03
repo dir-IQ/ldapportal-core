@@ -42,6 +42,17 @@ export const cloneProfile      = (dirId, profileId, name, targetDirectoryId = nu
 export const copyProfileForm   = (dirId, profileId, targetProfileIds) =>
   client.post(`${dirBase(dirId)}/${profileId}/copy-form`, { targetProfileIds })
 
+// A profile as a portable JSON document (ProfileExportDocument), for importing
+// into another directory or install.
+export const exportProfile     = (dirId, profileId) => client.get(`${dirBase(dirId)}/${profileId}/export`)
+
+/**
+ * Import a profile export into `dirId`. Body: { document, mode: 'CREATE' |
+ * 'REPLACE_FORM', name?, targetProfileId?, rewriteBaseDn, baseDnFrom?,
+ * baseDnTo?, force, dryRun }. Resolves to { profile, dnChanges, warnings }.
+ */
+export const importProfile     = (dirId, body) => client.post(`${dirBase(dirId)}/import`, body)
+
 // Seeds a curated set of attribute configs for a known schema
 // (currently 'inetOrgPerson'). Refuses 409 if the profile already
 // has attribute configs.
