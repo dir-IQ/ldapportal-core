@@ -26,7 +26,7 @@
       <button v-if="canBulkImport" @click="activeTab = 'import'"
         class="px-5 py-2.5 text-sm font-medium -mb-px"
         :class="activeTab === 'import' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500 hover:text-gray-700'">
-        Import
+        {{ entityType === 'groups' ? 'Update' : 'Import' }}
       </button>
       <button v-if="canBulkExport" @click="activeTab = 'export'"
         class="px-5 py-2.5 text-sm font-medium -mb-px"

@@ -303,7 +303,7 @@ class BulkUserServiceGroupsTest {
             java.util.function.Consumer<com.ldapportal.ldap.model.LdapUser> c = inv.getArgument(3);
             c.accept(user);
             return null;
-        }).when(userService).processUsers(eq(dc), anyString(), eq(PARENT), any(), eq("mail"), eq("uid"));
+        }).when(userService).processUsersRaw(eq(dc), anyString(), eq(PARENT), any(), eq("mail"), eq("uid"));
 
         byte[] csv = service.exportCsvFromBases(dc, null, List.of(PARENT), List.of("mail"), index);
 
