@@ -235,6 +235,26 @@ public class AdminManagementService {
             com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
             AuthPrincipal principal,
             Long expectedVersion) {
+        return upsertByUsername(username, req, principal, expectedVersion, true);
+    }
+
+    /**
+     * By-username upsert where the caller can leave profile roles unmanaged.
+     * With {@code manageProfileRoles} false, the admin's existing profile roles
+     * and profile-scoped feature overrides are left as they are; only the
+     * account and the admin-wide feature overrides are reconciled. The
+     * bootstrap reconciler uses this for an admin entry that has no
+     * {@code profileRoles} key, which is how a config export writes admins
+     * (it can't express profile roles yet), so restoring an export never strips
+     * roles granted in the UI. The REST upsert always manages them (§4.2).
+     */
+    @Transactional
+    public AdminUpsertOutcome upsertByUsername(
+            String username,
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            AuthPrincipal principal,
+            Long expectedVersion,
+            boolean manageProfileRoles) {
         if (req.account() == null || !username.equals(req.account().username())) {
             throw new IllegalArgumentException(
                     "username in the path must match the account username in the body");
@@ -252,8 +272,8 @@ public class AdminManagementService {
             throw new ConflictException(
                     "Account [" + username + "] already exists with a non-admin role");
         }
-        return new AdminUpsertOutcome(
-                updateAdminWithPermissions(account.getId(), req, principal, expectedVersion), false);
+        return new AdminUpsertOutcome(updateAdminWithPermissions(
+                account.getId(), req, principal, expectedVersion, manageProfileRoles), false);
     }
 
     /** Result of an idempotent admin upsert: the saved view plus whether a row was created. */
@@ -282,10 +302,47 @@ public class AdminManagementService {
             com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
             AuthPrincipal principal,
             Long expectedVersion) {
+        return updateAdminWithPermissions(adminId, req, principal, expectedVersion, true);
+    }
+
+    /**
+     * As {@link #updateAdminWithPermissions(UUID, com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest,
+     * AuthPrincipal, Long)}, but with {@code manageProfileRoles} false the
+     * admin's profile roles are left untouched and so are its profile-scoped
+     * feature overrides: the request's feature list then replaces only the
+     * admin-wide overrides (any profile-scoped entry it carries must match an
+     * existing role, as {@link #setFeaturePermissions} checks).
+     */
+    @Transactional
+    public AdminAccountResponse updateAdminWithPermissions(
+            UUID adminId,
+            com.ldapportal.dto.admin.CreateAdminWithPermissionsRequest req,
+            AuthPrincipal principal,
+            Long expectedVersion,
+            boolean manageProfileRoles) {
         updateAdmin(adminId, req.account(), principal, expectedVersion);
 
-        var roles = req.profileRolesOrEmpty();
         var features = req.featurePermissionsOrEmpty();
+        if (!manageProfileRoles) {
+            // Keep every existing profile-scoped override the request doesn't
+            // itself set, so the replace below only touches admin-wide ones.
+            java.util.Set<String> requested = features.stream()
+                    .map(f -> scopeKey(f.featureKey(), f.profileId()))
+                    .collect(java.util.stream.Collectors.toCollection(java.util.HashSet::new));
+            List<FeaturePermissionRequest> merged = new java.util.ArrayList<>(features);
+            for (AdminFeaturePermission cur : featureRepo.findAllByAdminAccountId(adminId)) {
+                if (cur.getProfile() == null) continue;
+                UUID profileId = cur.getProfile().getId();
+                // add() also skips a duplicate stored row for the same scope.
+                if (requested.add(scopeKey(cur.getFeatureKey(), profileId))) {
+                    merged.add(new FeaturePermissionRequest(cur.getFeatureKey(), cur.isEnabled(), profileId));
+                }
+            }
+            setFeaturePermissions(adminId, merged, principal);
+            return AdminAccountResponse.from(requireAccount(adminId));
+        }
+
+        var roles = req.profileRolesOrEmpty();
 
         // Per-profile overrides are inert without a matching profile role.
         // Validate up-front against the requested role set so a mismatch is a

@@ -121,8 +121,28 @@ class BootstrapConfigReconcilerTest {
         assertThat(dir.getValue().port()).isEqualTo(636);
         assertThat(dir.getValue().bindPassword()).isEqualTo("s3cret");   // ${ENV} interpolated
 
-        verify(adminService).upsertByUsername(eq("jdoe"), any(), isNull());
+        // profileRoles: [] is declared, so the admin's roles are managed (full-replace).
+        verify(adminService).upsertByUsername(eq("jdoe"), any(), isNull(), isNull(), eq(true));
         verify(contributor).contribute(any());
+    }
+
+    // What a config export writes: no profileRoles key. Applying it (e.g. at
+    // every startup) must leave the admin's existing profile roles alone.
+    @Test
+    void adminWithoutProfileRolesKey_leavesProfileRolesUnmanaged() throws Exception {
+        writeConfig("""
+                admins:
+                  - account:
+                      username: jdoe
+                      role: ADMIN
+                      authType: LOCAL
+                      active: true
+                    featurePermissions: []
+                """);
+
+        run();
+
+        verify(adminService).upsertByUsername(eq("jdoe"), any(), isNull(), isNull(), eq(false));
     }
 
     @Test
