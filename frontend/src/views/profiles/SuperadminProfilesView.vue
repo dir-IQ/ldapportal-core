@@ -6,7 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import {
   listAllProfiles, createProfile, updateProfile, deleteProfile, cloneProfile,
   getApprovalConfig, setApprovalConfig, getApprovers, setApprovers,
-  evaluateGroupChanges, applySelectiveGroupChanges, probeTargetOu
+  evaluateGroupChanges, applySelectiveGroupChanges, probeTargetOu, exportProfile
 } from '@/api/profiles'
 import { listDirectories } from '@/api/directories'
 import { listObjectClasses, getObjectClass } from '@/api/schema'
@@ -24,6 +24,8 @@ import DataTable from '@/components/DataTable.vue'
 import IsvaProfileOverrideControl from '@/components/profiles/IsvaProfileOverrideControl.vue'
 import ThemeColorPreview from '@/components/profiles/ThemeColorPreview.vue'
 import CopyFormDialog from '@/components/profiles/CopyFormDialog.vue'
+import ImportProfileDialog from '@/components/profiles/ImportProfileDialog.vue'
+import { downloadBlob } from '@/composables/useApi'
 import { setIsvaProfileOverride } from '@/api/isvaConfig'
 import { useConfirm } from '@/composables/useConfirm'
 
@@ -562,6 +564,21 @@ const showCopyForm = ref(false)
 function openCopyForm(p: ProfileRow) {
   copyFormSource.value = p
   showCopyForm.value = true
+}
+
+// Export / import as a portable JSON file (another directory or install).
+const showImport = ref(false)
+const importDirectories = computed(() =>
+  directories.value.map(d => ({ id: d.id as string, displayName: (d.displayName ?? d.id) as string })))
+
+async function doExport(p: ProfileRow) {
+  try {
+    const { data } = await exportProfile(p.directoryId, p.id)
+    const file = `${p.name.replace(/[^A-Za-z0-9._-]+/g, '-')}.profile.json`
+    downloadBlob(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), file)
+  } catch (e) {
+    notif.error(errMsg(e))
+  }
 }
 
 async function reload() {
@@ -1532,7 +1549,10 @@ function toggleApprover(accountId: string) {
         <h1 class="text-2xl font-bold text-gray-900">Provisioning Profiles</h1>
         <p class="text-sm text-gray-500 mt-1">Configure provisioning profiles and attribute mappings</p>
       </div>
-      <button v-if="canManage" class="btn-primary" @click="openCreate">+ Create Profile</button>
+      <div v-if="canManage" class="flex items-center gap-2">
+        <button class="btn-secondary" @click="showImport = true">Import</button>
+        <button class="btn-primary" @click="openCreate">+ Create Profile</button>
+      </div>
     </div>
 
     <DataTable :columns="profileCols" :rows="profiles" :loading="loading" row-key="id" empty-text="No provisioning profiles configured.">
@@ -1552,6 +1572,7 @@ function toggleApprover(accountId: string) {
         <ActionMenu :items="[
           { label: 'Clone',  onClick: () => openClone(row as ProfileRow), hidden: !canManage },
           { label: 'Copy form to…', onClick: () => openCopyForm(row as ProfileRow), hidden: !canManage },
+          { label: 'Export', onClick: () => doExport(row as ProfileRow), hidden: !canManage },
           { label: 'Delete', onClick: () => confirmDelete(row as ProfileRow), danger: true, hidden: !canManage },
         ]">
           <template #primary>
@@ -2222,6 +2243,7 @@ function toggleApprover(accountId: string) {
     <!-- Group change preview dialog removed — compliance check is now inline on the Groups tab -->
 
     <CopyFormDialog v-model="showCopyForm" :source="copyFormSource" :profiles="profiles" @copied="reload" />
+    <ImportProfileDialog v-model="showImport" :directories="importDirectories" :profiles="profiles" @imported="reload" />
 
     <!-- Clone modal -->
     <AppModal v-model="showCloneModal" title="Clone Profile" size="sm">

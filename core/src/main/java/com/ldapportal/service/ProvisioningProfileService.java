@@ -506,21 +506,8 @@ public class ProvisioningProfileService {
 
         List<ProfileResponse> updated = new ArrayList<>();
         for (UUID targetId : targetIds) {
-            ProvisioningProfile target = requireProfile(targetId);
-            target.setDnColumnSpan(source.getDnColumnSpan());
-            target.setDnSectionName(source.getDnSectionName());
-            target.setDnDisplayOrder(source.getDnDisplayOrder());
-            target = profileRepo.save(target);
-
-            attrConfigRepo.deleteAllByProfileId(targetId);
-            attrConfigRepo.flush();
-            try {
-                saveAttributeConfigs(target, form);
-            } catch (IllegalArgumentException e) {
-                throw new IllegalArgumentException(
-                        "Profile [" + target.getName() + "] in [" + target.getDirectory().getDisplayName()
-                                + "]: " + e.getMessage(), e);
-            }
+            ProvisioningProfile target = replaceForm(requireProfile(targetId), source.getDnColumnSpan(),
+                    source.getDnSectionName(), source.getDnDisplayOrder(), form);
 
             if (principal != null) {
                 // A form copy is an update of the target; the detail says
@@ -536,8 +523,33 @@ public class ProvisioningProfileService {
         return updated;
     }
 
+    /**
+     * Replace {@code target}'s user form: its attribute configs and where the
+     * DN field sits. Runs the same checks as a manual save against the
+     * target's own settings; a rejection names the target. Shared by
+     * {@link #copyForm} and profile import. No audit; callers record it.
+     */
+    ProvisioningProfile replaceForm(ProvisioningProfile target, Integer dnColumnSpan, String dnSectionName,
+                                    Integer dnDisplayOrder, List<CreateProfileRequest.AttributeConfigEntry> form) {
+        target.setDnColumnSpan(dnColumnSpan);
+        target.setDnSectionName(dnSectionName);
+        target.setDnDisplayOrder(dnDisplayOrder);
+        target = profileRepo.save(target);
+
+        attrConfigRepo.deleteAllByProfileId(target.getId());
+        attrConfigRepo.flush();
+        try {
+            saveAttributeConfigs(target, form);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(
+                    "Profile [" + target.getName() + "] in [" + target.getDirectory().getDisplayName()
+                            + "]: " + e.getMessage(), e);
+        }
+        return target;
+    }
+
     /** A stored attribute config as the entry {@link #saveAttributeConfigs} takes. */
-    private static CreateProfileRequest.AttributeConfigEntry toEntry(ProfileAttributeConfig c) {
+    static CreateProfileRequest.AttributeConfigEntry toEntry(ProfileAttributeConfig c) {
         return new CreateProfileRequest.AttributeConfigEntry(
                 c.getAttributeName(), c.getCustomLabel(), c.getInputType().name(),
                 c.isRequiredOnCreate(), c.isEditableOnCreate(), c.isEditableOnUpdate(),
