@@ -855,7 +855,7 @@ const cols = computed(() => {
   // renders at a known size; the table scrolls horizontally when the columns
   // outgrow the container and parks any spare width to the right otherwise.
   return [
-    { key: 'dn', label: 'DN', alwaysVisible: true, defaultWidth: 360 },
+    { key: 'dn', label: 'DN', alwaysVisible: true, lockPosition: true, defaultWidth: 360 },
     // Row cells are keyed by the backend's lower-cased attribute names
     // (see load(): `row[attr]` where attr comes straight from the
     // server, which lower-cases keys). DEFAULT_USER_COLUMNS keeps the

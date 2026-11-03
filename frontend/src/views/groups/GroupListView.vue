@@ -574,7 +574,7 @@ const cols = computed(() => {
   const defaults = DEFAULT_GROUP_COLUMNS.filter(k => discoveredSet.has(k.toLowerCase()))
   const extras = discoveredAttrs.value.filter(k => !DEFAULT_GROUP_COLUMNS_LC.has(k.toLowerCase()))
   return [
-    { key: 'dn', label: 'DN', alwaysVisible: true },
+    { key: 'dn', label: 'DN', alwaysVisible: true, lockPosition: true },
     ...defaults.map(k => ({ key: k, label: k === 'cn' ? 'Name' : k })),
     // Synthetic, sortable member-count column (numeric sort via the
     // number-typed row field). Sits after the curated defaults so it
@@ -588,7 +588,7 @@ const cols = computed(() => {
     // buttons. Each ~70px with the gap-1 spacing; 240 leaves
     // breathing room. Smaller than UserListView's actions column
     // because there's no kebab to host overflow items here.
-    { key: 'actions', label: '', alwaysVisible: true, sortable: false, defaultWidth: 240 },
+    { key: 'actions', label: '', alwaysVisible: true, lockPosition: true, sortable: false, defaultWidth: 240 },
   ]
 })
 

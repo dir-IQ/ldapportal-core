@@ -24,6 +24,18 @@ vi.mock('@/stores/preferences', () => ({
   }),
 }))
 
+// Capture the options ResultsTable hands sortablejs so a test can play the
+// part of a finished drag (jsdom can't drive real pointer drags).
+const sortableCalls: Array<{ el: HTMLElement, opts: { onEnd?: (e: unknown) => void } }> = []
+vi.mock('sortablejs', () => ({
+  default: {
+    create: (el: HTMLElement, opts: { onEnd?: (e: unknown) => void }) => {
+      sortableCalls.push({ el, opts })
+      return { destroy: () => {} }
+    },
+  },
+}))
+
 import ResultsTable from './ResultsTable.vue'
 import type { ColumnDef } from './ResultsTable.vue'
 
@@ -247,6 +259,7 @@ describe('ResultsTable.vue', () => {
     // Open picker
     const colsBtn = w.findAll('button').find(b => b.text().includes('Columns'))!
     await colsBtn.trigger('click')
+    await flushPromises() // the picker's draggable list is lazy-loaded
     // Find the "Department" item and click it
     const deptItem = w.findAll('div.cursor-pointer').find(d => d.text().includes('Department'))!
     await deptItem.trigger('click')
@@ -260,6 +273,7 @@ describe('ResultsTable.vue', () => {
     const w = makeWrapper()
     const colsBtn = w.findAll('button').find(b => b.text().includes('Columns'))!
     await colsBtn.trigger('click')
+    await flushPromises() // the picker's draggable list is lazy-loaded
     // The 'id' column has alwaysVisible: true, so its row should be marked
     // disabled and clicking it should be a no-op.
     const idItem = w.findAll('div.cursor-not-allowed').find(d => d.text().includes('ID'))
@@ -370,6 +384,7 @@ describe('ResultsTable.vue', () => {
       }
       const w = mount(ResultsTable, { props: { tableKey: key, columns, rows } })
       await w.findAll('button').find(b => b.text().includes('Columns'))!.trigger('click')
+      await flushPromises()
       const deptRow = w.findAll('div.cursor-pointer').find(d => d.text().includes('Department'))!
       await deptRow.trigger('click')
       await flushPromises()
@@ -377,5 +392,96 @@ describe('ResultsTable.vue', () => {
     } finally {
       Element.prototype.scrollIntoView = orig
     }
+  })
+
+  // ── Column reordering ────────────────────────────────────────────────────
+  describe('column order', () => {
+    const lockedCols: ColumnDef[] = [
+      { key: 'dn', label: 'DN', alwaysVisible: true, lockPosition: true },
+      { key: 'name', label: 'Name' },
+      { key: 'dept', label: 'Department' },
+      { key: 'mail', label: 'Mail' },
+      { key: 'actions', label: 'Actions', alwaysVisible: true, pinned: true },
+    ]
+    const headerKeys = (w: ReturnType<typeof mount>) =>
+      w.findAll('thead th[data-col-key]').map(t => t.attributes('data-col-key'))
+
+    async function openPicker(key: string, cols: ColumnDef[] = lockedCols) {
+      const w = mount(ResultsTable, { props: { tableKey: key, columns: cols, rows }, attachTo: document.body })
+      await w.findAll('button').find(b => b.text().includes('Columns'))!.trigger('click')
+      await flushPromises()
+      return w
+    }
+    const moveBtn = (w: ReturnType<typeof mount>, label: string, dir: 'up' | 'down') =>
+      w.find(`button[aria-label="Move ${label} ${dir}"]`)
+
+    it('moves a column with the up/down buttons and persists the order', async () => {
+      const key = 'order-' + Math.random()
+      const w = await openPicker(key)
+      await moveBtn(w, 'Mail', 'up').trigger('click')
+      expect(headerKeys(w)).toEqual(['dn', 'name', 'mail', 'dept', 'actions'])
+      expect((tablePrefs[key] as { order: string[] }).order).toEqual(['name', 'mail', 'dept'])
+      // Announced for screen readers.
+      expect(w.find('[aria-live="polite"]').text()).toBe('Mail moved to position 2 of 3')
+      w.unmount()
+    })
+
+    it('restores a saved order on mount', () => {
+      const key = 'order-' + Math.random()
+      tablePrefs[key] = { widths: {}, hidden: [], pageSize: 50, sortKey: '', sortAsc: true,
+        seenColumns: ['name', 'dept', 'mail'], order: ['mail', 'name', 'dept'] }
+      const w = mount(ResultsTable, { props: { tableKey: key, columns: lockedCols, rows } })
+      expect(headerKeys(w)).toEqual(['dn', 'mail', 'name', 'dept', 'actions'])
+    })
+
+    it('keeps locked and pinned columns out of reordering', async () => {
+      const w = await openPicker('order-' + Math.random())
+      expect(moveBtn(w, 'DN', 'up').exists()).toBe(false)
+      expect(moveBtn(w, 'Actions', 'down').exists()).toBe(false)
+      // Ends of the movable band disable the button that would leave it.
+      expect(moveBtn(w, 'Name', 'up').attributes('disabled')).toBeDefined()
+      expect(moveBtn(w, 'Mail', 'down').attributes('disabled')).toBeDefined()
+      w.unmount()
+    })
+
+    it('keeps focus on the pressed button, falling back at the end of the list', async () => {
+      const w = await openPicker('order-' + Math.random())
+      const up = moveBtn(w, 'Department', 'up')
+      ;(up.element as HTMLButtonElement).focus()
+      await up.trigger('click')
+      await nextTick()
+      // Department is now first: its "up" button is disabled, so focus moves to "down".
+      expect(document.activeElement).toBe(moveBtn(w, 'Department', 'down').element)
+      w.unmount()
+    })
+
+    it('applies a drag from the picker and keeps the picker rows in sync', async () => {
+      const key = 'order-' + Math.random()
+      const w = await openPicker(key)
+      const { el, opts } = sortableCalls[sortableCalls.length - 1]
+      // Emulate Sortable: move the Mail row (index 2) to the top of the list.
+      const item = el.children[2] as HTMLElement
+      el.insertBefore(item, el.children[0])
+      opts.onEnd!({ item, from: el, oldIndex: 2, newIndex: 0 })
+      await nextTick()
+      expect(headerKeys(w)).toEqual(['dn', 'mail', 'name', 'dept', 'actions'])
+      expect((tablePrefs[key] as { order: string[] }).order).toEqual(['mail', 'name', 'dept'])
+      const pickerKeys = [...el.children].map(c => (c as HTMLElement).dataset.pickerKey)
+      expect(pickerKeys).toEqual(['mail', 'name', 'dept'])
+      w.unmount()
+    })
+
+    it('"Reset column order" reverts to the declared order', async () => {
+      const key = 'order-' + Math.random()
+      const w = await openPicker(key)
+      const reset = w.findAll('button').find(b => b.text() === 'Reset column order')!
+      expect(reset.attributes('disabled')).toBeDefined()
+      await moveBtn(w, 'Mail', 'up').trigger('click')
+      expect(reset.attributes('disabled')).toBeUndefined()
+      await reset.trigger('click')
+      expect(headerKeys(w)).toEqual(['dn', 'name', 'dept', 'mail', 'actions'])
+      expect((tablePrefs[key] as { order: string[] }).order).toEqual([])
+      w.unmount()
+    })
   })
 })
